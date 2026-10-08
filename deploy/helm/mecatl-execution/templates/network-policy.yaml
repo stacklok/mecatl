@@ -56,7 +56,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      execution.mecatl.dev/profile: {{ sha256sum $name | trunc 16 }}
+      execution.mecatl.dev/template-id: {{ sha256sum $name | trunc 16 }}
   policyTypes: [Egress]
   egress:
 {{- range $profile.egress }}

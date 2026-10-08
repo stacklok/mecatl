@@ -340,6 +340,10 @@ type Session struct {
 	// process rebuild the same tool surface. The exact EnvironmentRef remains the
 	// sole placement identity.
 	Profile string
+	// ExecutionTemplateID and ExecutionTemplateRevision are opaque, write-once
+	// provenance for retry matching. Reattachment uses EnvironmentRef, never these labels.
+	ExecutionTemplateID       string
+	ExecutionTemplateRevision string
 	// ProviderID and ModelID are the opaque neutral provider+model selector pair
 	// this session was bound to. The aggregate STORES them but never interprets
 	// them — the ProviderSelector type and all resolution stay in composition; only

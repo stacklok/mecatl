@@ -67,7 +67,14 @@ function detailResponse(
   overrides: Partial<SessionDetailResponse> = {},
 ): Response {
   return json({
-    capabilities: { image: false, manualCompaction: false, modelSelection: false },
+    capabilities: {
+      image: false,
+      audio: false,
+      executionFiles: false,
+      builtInShell: false,
+      manualCompaction: false,
+      modelSelection: false,
+    },
     id: sessionId,
     mode: "default",
     state,
@@ -1350,6 +1357,68 @@ describe("mounted chat workspace BFF boundary", () => {
     expect(screen.getAllByText("Tool: Calendar")).toHaveLength(1);
   });
 
+  it("lists eligible templates when negotiated and forwards the pinned revision without fallback", async () => {
+    const user = userEvent.setup();
+    const bff = new BffFixture();
+    const revision = `v1-${"a".repeat(64)}`;
+    bff.nextReplies.set("/api/v1/runtime", [
+      Promise.resolve(
+        json({
+          capabilities: { executionTemplates: true, image: false, posture: "managed" },
+          connection: "online",
+          features: ["execution_templates"],
+        }),
+      ),
+    ]);
+    bff.nextReplies.set("/api/v1/execution-templates", [
+      Promise.resolve(
+        json({
+          inventoryRevision: "1",
+          items: [
+            {
+              template: { id: "safe", revision },
+              name: "Managed workspace",
+              description: "",
+              displayToken: "a",
+              extensions: {},
+            },
+          ],
+        }),
+      ),
+    ]);
+    await mountWorkspace(bff);
+    bff.nextReplies.set("/api/v1/sessions", [
+      Promise.resolve(
+        json(
+          {
+            code: "template_unavailable",
+            detail: "Refresh the catalog",
+            status: 409,
+            title: "Template unavailable",
+            type: "urn:mecatl-studio:problem:template_unavailable",
+            instance: "/api/v1/sessions",
+          },
+          409,
+        ),
+      ),
+    ]);
+    await waitFor(() =>
+      expect(bff.requestsAt("GET", "/api/v1/execution-templates")).toHaveLength(1),
+    );
+    await user.selectOptions(
+      screen.getByLabelText("Execution"),
+      JSON.stringify(["safe", revision]),
+    );
+    typePrompt("Use a pinned workspace");
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(bff.requestsAt("POST", "/api/v1/sessions")).toHaveLength(1));
+    expect(bff.requestsAt("POST", "/api/v1/sessions")[0]?.body).toMatchObject({
+      execution: { template: { id: "safe", revision } },
+    });
+    expect(bff.requestsAt("POST", "/api/v1/sessions")).toHaveLength(1);
+    expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/runs")).toHaveLength(0);
+  });
+
   it("creates a draft with its selected controls and excludes a disabled model", async () => {
     const user = userEvent.setup();
     const bff = new BffFixture();
@@ -1366,7 +1435,7 @@ describe("mounted chat workspace BFF boundary", () => {
     await user.selectOptions(within(options).getByLabelText("Model"), '["provider","allowed"]');
     await user.selectOptions(within(options).getByLabelText("Effort"), "high");
     await user.selectOptions(within(options).getByLabelText("Mode"), "plan");
-    await user.selectOptions(within(options).getByLabelText("Tools"), "noFilesystem");
+    await user.selectOptions(within(options).getByLabelText("Execution"), "none");
     await user.click(within(options).getByRole("button", { name: "Close chat options" }));
 
     typePrompt("Create with these options");
@@ -1376,7 +1445,7 @@ describe("mounted chat workspace BFF boundary", () => {
       mode: "plan",
       model: { id: "allowed", providerId: "provider" },
       reasoningEffort: "high",
-      toolAccess: "noFilesystem",
+      execution: { none: {} },
     });
   });
 
@@ -1385,12 +1454,22 @@ describe("mounted chat workspace BFF boundary", () => {
     const bff = new BffFixture(session("chat-a"));
     hideModel();
     serveModelInventory(bff);
-    const capabilities = { image: false, manualCompaction: false, modelSelection: true };
+    const capabilities = {
+      image: false,
+      audio: false,
+      executionFiles: true,
+      builtInShell: false,
+      manualCompaction: false,
+      modelSelection: true,
+    };
     bff.nextReplies.set("/api/v1/sessions/chat-a", [
       Promise.resolve(detailResponse("chat-a", "idle", { capabilities, model: currentModel })),
     ]);
     const { router } = await mountConnectedWorkspace(bff, "chat-a");
     const controls = screen.getByRole("region", { name: "Chat configuration and usage" });
+    expect(
+      within(controls).getByRole("status", { name: "Session execution capabilities" }).textContent,
+    ).toContain("Files: available · Built-in Shell: unavailable");
 
     bff.nextReplies.set("/api/v1/sessions/chat-a/mode", [Promise.resolve(json({ mode: "plan" }))]);
     bff.nextReplies.set("/api/v1/sessions/chat-a", [
@@ -1675,7 +1754,14 @@ describe("mounted chat workspace BFF boundary", () => {
     bff.nextReplies.set("/api/v1/sessions/chat-a", [
       Promise.resolve(
         detailResponse("chat-a", "idle", {
-          capabilities: { image: true, manualCompaction: false, modelSelection: false },
+          capabilities: {
+            image: true,
+            audio: false,
+            executionFiles: true,
+            builtInShell: true,
+            manualCompaction: false,
+            modelSelection: false,
+          },
         }),
       ),
     ]);

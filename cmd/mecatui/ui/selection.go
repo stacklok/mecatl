@@ -111,7 +111,7 @@ func bodyOwnerOpen(m Model) bool {
 		m.agentsInv.view != agentsInvNone || m.modal != nil ||
 		m.reflections.view != reflectionsNone ||
 		m.dream.view != dreamClosed || m.connect.open || m.effort.view != effortNone ||
-		m.worktrees.view != worktreesNone || m.schedule.view != scheduleNone
+		m.executionPicker.open || m.worktrees.view != worktreesNone || m.schedule.view != scheduleNone
 }
 
 // selectable reports whether a left-click may START a selection right now. It is

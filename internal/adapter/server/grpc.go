@@ -15,7 +15,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/encoding/protowire"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/contracts/sessionaffinity"
@@ -75,19 +74,19 @@ var _ mecatlv1.HarnessServiceServer = (*HarnessServer)(nil)
 
 // CreateSession allocates a new session and returns its id.
 func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateSessionRequest) (*mecatlv1.CreateSessionResponse, error) {
-	if hasLegacyCreateSessionField(req.ProtoReflect().GetUnknown()) {
-		return nil, status.Error(codes.InvalidArgument, "legacy workspace placement fields are unsupported")
+	if len(req.ProtoReflect().GetUnknown()) != 0 {
+		return nil, status.Error(codes.InvalidArgument, "unknown create session fields are unsupported")
 	}
 	if err := validateGRPCCreateSessionAffinity(ctx, req.GetDebugTargetSessionId()); err != nil {
 		return nil, err
 	}
-	// Session profile: "" binds the server-owned default placement and "no-fs"
-	// requests explicit filesystem attenuation; anything else is a loud
-	// InvalidArgument. Binding and exact EnvironmentRef validation happen in the
-	// service, so this transport never accepts or derives a workspace.
-	profile, err := ParseSessionProfile(req.GetProfile())
+	execution, err := executionFromProto(req.GetExecution())
 	if err != nil {
 		return nil, toStatus(err)
+	}
+	profile := ProfileDefault
+	if execution.Kind == PlacementSelectorNoFS {
+		profile = ProfileNoFS
 	}
 	// Per-session provider/model selector (multi-provider Phase 0, S3): the two
 	// fields map to the neutral ProviderSelector; the zero selector keeps the
@@ -95,6 +94,7 @@ func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateS
 	// provider_id, surfaces as InvalidArgument via toStatus.
 	sel := ProviderSelector{ProviderID: req.GetProviderId(), ModelID: req.GetModelId(), ReasoningEffort: req.GetReasoningEffort()}
 	var opts []CreateSessionOption
+	opts = append(opts, WithExecutionSelection(execution))
 	if target := req.GetDebugTargetSessionId(); target != "" {
 		opts = append(opts, WithDebugTarget(session.SessionID(target)))
 	}
@@ -126,34 +126,18 @@ func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateS
 	// read from the composition single source (Service.ResolvedModel) — NEVER from
 	// req.GetModelId(), which is empty for a default session and ambiguous for a
 	// passthrough id. Same single-source discipline as session_capabilities.
+	files, shell := h.svc.executionSessionCapabilities(sess)
 	return &mecatlv1.CreateSessionResponse{
 		SessionId: string(sess.ID),
 		SessionCapabilities: &mecatlv1.SessionCapabilities{
-			Image: scaps.Image,
-			Audio: scaps.Audio,
+			Image:          scaps.Image,
+			Audio:          scaps.Audio,
+			ExecutionFiles: files,
+			BuiltInShell:   shell,
 		},
 		ResolvedModel: resolvedModelToProto(h.svc.resolvedModelFor(sess)),
 		Placement:     placementMetadataToProto(sess.Placement),
 	}, nil
-}
-
-func hasLegacyCreateSessionField(raw []byte) bool {
-	for len(raw) > 0 {
-		number, wireType, n := protowire.ConsumeTag(raw)
-		if n < 0 {
-			return false
-		}
-		raw = raw[n:]
-		if number == 1 || number == 8 {
-			return true
-		}
-		n = protowire.ConsumeFieldValue(number, wireType, raw)
-		if n < 0 {
-			return false
-		}
-		raw = raw[n:]
-	}
-	return false
 }
 
 // clientMCPFromProto maps the wire McpServerSpec list onto the transport-neutral
@@ -199,6 +183,7 @@ func (h *HarnessServer) GetSession(ctx context.Context, req *mecatlv1.GetSession
 		return nil, toStatus(err)
 	}
 	proto := toProtoSession(sess, h.svc.resolvedModelFor(sess), h.svc.capabilitiesFor(ctx), h.svc.sessionCapabilitiesFor(sess))
+	proto.SessionCapabilities.ExecutionFiles, proto.SessionCapabilities.BuiltInShell = h.svc.executionSessionCapabilities(sess)
 	// Lazy display-time fallback: a session whose snapshot Title was never seeded
 	// (or is empty) gets a derived label so GetSession shows one without a
 	// write-on-read — sess.Title is NOT mutated.

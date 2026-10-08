@@ -205,6 +205,7 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	if err := setSessionLabels(created, selector, profileForSession(source), source.Owner, authority); err != nil {
 		return "", err
 	}
+	created.ExecutionTemplateID, created.ExecutionTemplateRevision = source.ExecutionTemplateID, source.ExecutionTemplateRevision
 	created.EnvironmentRef = binding.Ref
 	if copyHistory {
 		if err := created.SeedHistory(s.providerCarryoverSnapshot(source, selector.ProviderID)); err != nil {

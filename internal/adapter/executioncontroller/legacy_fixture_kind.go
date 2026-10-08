@@ -39,8 +39,8 @@ type LegacyMigrationSeed struct {
 // SeedLegacyMigrationFixture creates the narrow security-compatible prototype
 // accepted by MigrateEnvironment plus malformed and insecure negative controls.
 // It is excluded from regular builds.
-func SeedLegacyMigrationFixture(ctx context.Context, d dynamic.Interface, kube kubernetes.Interface, namespace, profilesPath string, quotaReady func(string, time.Duration, []string)) (LegacyMigrationSeed, error) {
-	profiles, err := LoadProfiles(profilesPath)
+func SeedLegacyMigrationFixture(ctx context.Context, d dynamic.Interface, kube kubernetes.Interface, namespace, templatesPath string, quotaReady func(string, time.Duration, []string)) (LegacyMigrationSeed, error) {
+	profiles, err := LoadTemplates(templatesPath)
 	if err != nil {
 		return LegacyMigrationSeed{}, err
 	}
@@ -50,15 +50,15 @@ func SeedLegacyMigrationFixture(ctx context.Context, d dynamic.Interface, kube k
 	}
 	owner := executionenv.Owner{Issuer: "https://oidc-issuer.execution-qualification.svc.cluster.local:8443", Subject: "production-migration"}
 	client := "spiffe://mecatl.test/client/mecak8s"
-	recognized, err := seedOneLegacyEnvironment(ctx, d, kube, namespace, profile, owner, client, "legacy-migration", "legacy-migration-binding", []any{"legacy-migration-binding"}, false, quotaReady)
+	recognized, err := seedOneLegacyEnvironment(ctx, d, kube, namespace, profiles, profile, owner, client, "legacy-migration", "legacy-migration-binding", []any{"legacy-migration-binding"}, false, quotaReady)
 	if err != nil {
 		return LegacyMigrationSeed{}, err
 	}
-	malformed, err := seedOneLegacyEnvironment(ctx, d, kube, namespace, profile, owner, client, "legacy-migration-malformed", "legacy-malformed-binding", []any{""}, false, quotaReady)
+	malformed, err := seedOneLegacyEnvironment(ctx, d, kube, namespace, profiles, profile, owner, client, "legacy-migration-malformed", "legacy-malformed-binding", []any{""}, false, quotaReady)
 	if err != nil {
 		return LegacyMigrationSeed{}, err
 	}
-	insecure, err := seedOneLegacyEnvironment(ctx, d, kube, namespace, profile, owner, client, "legacy-migration-insecure", "legacy-insecure-binding", []any{"legacy-insecure-binding"}, true, quotaReady)
+	insecure, err := seedOneLegacyEnvironment(ctx, d, kube, namespace, profiles, profile, owner, client, "legacy-migration-insecure", "legacy-insecure-binding", []any{"legacy-insecure-binding"}, true, quotaReady)
 	if err != nil {
 		return LegacyMigrationSeed{}, err
 	}
@@ -74,7 +74,7 @@ type seededLegacyEnvironment struct {
 	podUID, pvcUID string
 }
 
-func seedOneLegacyEnvironment(ctx context.Context, d dynamic.Interface, kube kubernetes.Interface, namespace string, profile resolvedProfile, owner executionenv.Owner, client, name, binding string, references []any, insecure bool, quotaReady func(string, time.Duration, []string)) (seededLegacyEnvironment, error) {
+func seedOneLegacyEnvironment(ctx context.Context, d dynamic.Interface, kube kubernetes.Interface, namespace string, profiles *Profiles, profile resolvedProfile, owner executionenv.Owner, client, name, binding string, references []any, insecure bool, quotaReady func(string, time.Duration, []string)) (seededLegacyEnvironment, error) {
 	// Deployment readiness does not imply that quota admission has initialized
 	// accounting, especially for the freshly installed custom resource.
 	started := time.Now()
@@ -127,7 +127,7 @@ func seedOneLegacyEnvironment(ctx context.Context, d dynamic.Interface, kube kub
 		"schemaVersion": int64(1), "allocationID": name, "revision": revision,
 		"ownerHash": ownerHash(owner), "ownerIssuer": owner.Issuer, "ownerSubject": owner.Subject,
 		"clientHash": hashText(client), "bindingID": binding, "requestFingerprint": hashText("legacy-fixture-" + name),
-		"profile": "go", "profileDigest": profile.Digest, "image": profile.Spec.Image,
+		"templateID": "go", "templateRevision": profiles.DefaultRevision("go"), "templateDigest": profile.Digest, "image": profile.Spec.Image,
 		"storageClass": profile.Spec.StorageClass, "storageSize": profile.Spec.StorageSize,
 		"resources": map[string]any{"cpuRequest": profile.Spec.CPURequest, "memoryRequest": profile.Spec.MemoryRequest, "cpuLimit": profile.Spec.CPULimit, "memoryLimit": profile.Spec.MemoryLimit},
 		"desired":   "Active",
@@ -152,7 +152,7 @@ func seedOneLegacyEnvironment(ctx context.Context, d dynamic.Interface, kube kub
 	if err != nil {
 		return seededLegacyEnvironment{}, fmt.Errorf("create legacy environment %s: %w", name, err)
 	}
-	r := NewReconciler(d, kube, namespace, (&Profiles{byName: map[string]resolvedProfile{"go": profile}}).WithExecutorServiceAccount("mecatl-execution-executor"))
+	r := NewReconciler(d, kube, namespace, profiles.WithExecutorServiceAccount("mecatl-execution-executor"))
 	pvcName, podName := resourceName("workspace", name), resourceName("executor", name)
 	pvc, err := r.ensurePVC(ctx, created, profile, pvcName)
 	if err != nil {

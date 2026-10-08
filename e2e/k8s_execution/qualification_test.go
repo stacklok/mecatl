@@ -53,8 +53,9 @@ func TestKindExecutionQualification(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer providerClient.Close()
-	if _, err = providerClient.ValidateProfile(ctx, "go"); err != nil {
-		t.Fatalf("validate profile: %v", err)
+	templateRevision := kindTemplateRevision(t, ctx, providerClient, "go")
+	if _, err = providerClient.ValidateTemplate(ctx, "go", templateRevision); err != nil {
+		t.Fatalf("validate template: %v", err)
 	}
 	if got := resourceCount(t, ctx, kubeconfig, "executionenvironments.execution.mecatl.dev"); got != baseline {
 		t.Fatalf("profile validation changed environment count from %d to %d", baseline, got)
@@ -63,7 +64,7 @@ func TestKindExecutionQualification(t *testing.T) {
 	owner := executionenv.Owner{Issuer: "https://oidc-issuer.execution-qualification.svc.cluster.local:8443", Subject: "alice"}
 	binding := fmt.Sprintf("direct-binding-%d", time.Now().UnixNano())
 	operationID := fmt.Sprintf("direct-ensure-%d", time.Now().UnixNano())
-	first, err := providerClient.Ensure(ctx, binding, "go", owner, operationID)
+	first, err := providerClient.EnsureTemplate(ctx, binding, "go", templateRevision, owner, operationID)
 	if err != nil {
 		t.Fatalf("ensure: %v", err)
 	}
@@ -80,7 +81,7 @@ func TestKindExecutionQualification(t *testing.T) {
 	if ready.Environment != first.Environment {
 		t.Fatalf("ready reference drifted: got %+v want %+v", ready.Environment, first.Environment)
 	}
-	second, err := providerClient.Ensure(ctx, binding, "go", owner, operationID)
+	second, err := providerClient.EnsureTemplate(ctx, binding, "go", templateRevision, owner, operationID)
 	if err != nil {
 		t.Fatalf("repeat ensure: %v", err)
 	}
@@ -104,11 +105,14 @@ func TestKindExecutionQualification(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer intruder.Close()
+	if inventory, err := intruder.ListExecutionTemplates(ctx); err != nil || len(inventory.GetItems()) != 0 {
+		t.Fatalf("ungranted mTLS client saw execution templates: count=%d err=%v", len(inventory.GetItems()), err)
+	}
 	_, err = intruder.Attach(ctx, executionenv.AttachEnvironmentRequest{Context: executionenv.RequestContext{Environment: first.Environment, Owner: owner, BindingID: binding}, Purpose: executionenv.PurposeSession})
 	if err == nil || (!isRemoteCode(err, executionenv.CodePermissionDenied) && !isRemoteCode(err, executionenv.CodeNotFound)) {
 		t.Fatalf("different client attach error = %v, want an existence-hiding denial", err)
 	}
-	rc := executionenv.RequestContext{Environment: first.Environment, Owner: owner, BindingID: binding, Epoch: ready.Epoch, Grant: ready.Grant}
+	rc := executionenv.RequestContext{Environment: first.Environment, Owner: owner, BindingID: binding, Epoch: ready.Epoch}
 	for name, call := range map[string]func() error{
 		"command status": func() error {
 			_, err := intruder.CommandStatus(ctx, executionenv.CommandQueryRequest{Context: rc, CommandID: "not-owned"})
@@ -127,9 +131,15 @@ func TestKindExecutionQualification(t *testing.T) {
 		}
 	}
 	providerForward.stop()
-	if _, err := providerClient.ValidateProfile(ctx, "go"); err == nil {
+	providerClient.Close()
+	unreachable, err := executionclient.New(providerForward.addr, providerTLS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := unreachable.ValidateTemplate(ctx, "go", templateRevision); err == nil {
 		t.Fatal("provider endpoint loss unexpectedly fell back")
 	}
+	unreachable.Close()
 	providerForward = portForward(t, ctx, kubeconfig, "service/mecatl-execution", 8443)
 	providerTLS = loadTLS(t, pki, "mecak8s", "mecatl-execution.execution-qualification.svc.cluster.local")
 	providerClient, err = executionclient.New(providerForward.addr, providerTLS)
@@ -144,17 +154,61 @@ func TestKindExecutionQualification(t *testing.T) {
 	bob := fixtureToken(t, ctx, tokenForward.addr, pki, "bob")
 	tokenForward.stop()
 	agentForward := portForward(t, ctx, kubeconfig, "service/mecak8s", 8081)
+	catalogStatus, catalogBody := request(t, ctx, http.MethodGet, "http://"+agentForward.addr+"/v1/execution-templates", alice, nil)
+	if catalogStatus != http.StatusOK {
+		t.Fatalf("authenticated template catalog status=%d", catalogStatus)
+	}
+	var catalog struct {
+		Items []struct {
+			Template struct {
+				ID       string `json:"id"`
+				Revision string `json:"revision"`
+			} `json:"template"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(catalogBody, &catalog); err != nil {
+		t.Fatal(err)
+	}
+	approved := false
+	for _, item := range catalog.Items {
+		if item.Template.ID == "go" && item.Template.Revision == templateRevision {
+			approved = true
+		}
+	}
+	if !approved {
+		t.Fatalf("authenticated catalog omitted approved go revision %s", templateRevision)
+	}
+	if status, body := request(t, ctx, http.MethodGet, "http://"+agentForward.addr+"/v1/execution-templates", bob, nil); status != http.StatusOK || !bytes.Contains(body, []byte(`"items":[]`)) {
+		t.Fatalf("unapproved owner catalog status=%d; expected empty inventory", status)
+	}
+	if status, _ := request(t, ctx, http.MethodPost, "http://"+agentForward.addr+"/v1/sessions", bob, []byte(`{"mode":"default"}`)); status == http.StatusCreated || status/100 != 4 {
+		t.Fatalf("unapproved owner default template bind status=%d", status)
+	}
 	beforeNoFS := resourceCount(t, ctx, kubeconfig, "executionenvironments.execution.mecatl.dev")
-	status, noFSBody := request(t, ctx, http.MethodPost, "http://"+agentForward.addr+"/v1/sessions", alice, []byte(`{"profile":"no-fs","mode":"default"}`))
+	status, noFSBody := request(t, ctx, http.MethodPost, "http://"+agentForward.addr+"/v1/sessions", alice, []byte(`{"execution":{"none":{}},"mode":"default"}`))
 	if status != http.StatusCreated {
 		t.Fatalf("create no-fs session status=%d body=%s", status, noFSBody)
 	}
 	if afterNoFS := resourceCount(t, ctx, kubeconfig, "executionenvironments.execution.mecatl.dev"); afterNoFS != beforeNoFS {
 		t.Fatalf("no-fs session allocated execution resources: before=%d after=%d", beforeNoFS, afterNoFS)
 	}
+	for name, payload := range map[string]string{
+		"legacy-profile":     `{"profile":"go","mode":"default"}`,
+		"malformed-template": `{"execution":{"template":{"id":"go"}},"mode":"default"}`,
+		"unknown-template":   `{"execution":{"template":{"id":"unapproved","revision":"` + templateRevision + `"}},"mode":"default"}`,
+		"stale-revision":     `{"execution":{"template":{"id":"go","revision":"v1-` + strings.Repeat("0", 64) + `"}},"mode":"default"}`,
+	} {
+		status, _ := request(t, ctx, http.MethodPost, "http://"+agentForward.addr+"/v1/sessions", alice, []byte(payload))
+		if status == http.StatusCreated || status/100 != 4 {
+			t.Fatalf("%s unsafe create status=%d", name, status)
+		}
+	}
+	if got := resourceCount(t, ctx, kubeconfig, "executionenvironments.execution.mecatl.dev"); got != beforeNoFS {
+		t.Fatal("rejected template selection allocated an environment")
+	}
 	logQualificationStage(t, &stageStarted, "authorization_preflight", "scripted_prompt")
 	stepStarted := time.Now()
-	sessionID := createSession(t, ctx, agentForward.addr, alice)
+	sessionID := createSession(t, ctx, agentForward.addr, alice, templateRevision)
 	logQualificationStep(t, &stepStarted, "scripted_prompt", "create_session")
 	body := prompt(t, ctx, agentForward.addr, sessionID, alice, "run the scripted remote qualification")
 	logQualificationStep(t, &stepStarted, "scripted_prompt", "prompt_stream")
@@ -179,6 +233,32 @@ func TestKindExecutionQualification(t *testing.T) {
 	logQualificationStep(t, &stepStarted, "independent_verification", "go_test")
 	releaseVerification()
 	qualifyRemoteFileTools(t, ctx, providerClient, owner, sessionID, lookup)
+	secondSession := createSession(t, ctx, agentForward.addr, alice, templateRevision)
+	secondLookup := environmentForBinding(t, ctx, kubeconfig, secondSession)
+	if secondLookup == lookup {
+		t.Fatal("two sessions selected the same template allocation")
+	}
+	secondReady := waitReady(t, ctx, providerClient, owner, secondSession, secondLookup)
+	if firstPVC, secondPVC := readExecutionStatus(t, ctx, kubeconfig, lookup.ID).PVCUID, readExecutionStatus(t, ctx, kubeconfig, secondLookup.ID).PVCUID; firstPVC == "" || secondPVC == "" || firstPVC == secondPVC {
+		t.Fatalf("sessions share a PVC or lack a PVC: first=%q second=%q", firstPVC, secondPVC)
+	}
+	secondRun, releaseSecond := acquireRun(t, ctx, providerClient, owner, secondSession, secondReady, "second-session-sentinel")
+	if _, err := providerClient.File(ctx, executionenv.FileRequest{Context: secondRun, Operation: executionenv.OpFileCreate, Path: "second-sentinel", Data: []byte("isolated-second\n")}); err != nil {
+		t.Fatal("write second session sentinel:", err)
+	}
+	if content, err := providerClient.File(ctx, executionenv.FileRequest{Context: secondRun, Operation: executionenv.OpFileRead, Path: "proof.txt"}); err == nil || len(content.Data) != 0 {
+		t.Fatal("second session read first session's sentinel")
+	}
+	releaseSecond()
+	firstReady := waitReady(t, ctx, providerClient, owner, sessionID, lookup)
+	firstRun, releaseFirst := acquireRun(t, ctx, providerClient, owner, sessionID, firstReady, "first-session-isolation")
+	if content, err := providerClient.File(ctx, executionenv.FileRequest{Context: firstRun, Operation: executionenv.OpFileRead, Path: "proof.txt"}); err != nil || string(content.Data) != "beta\n" {
+		t.Fatal("first session lost its sentinel")
+	}
+	if content, err := providerClient.File(ctx, executionenv.FileRequest{Context: firstRun, Operation: executionenv.OpFileRead, Path: "second-sentinel"}); err == nil || len(content.Data) != 0 {
+		t.Fatal("first session read second session's sentinel")
+	}
+	releaseFirst()
 	if status := getSession(t, ctx, agentForward.addr, sessionID, bob); status != http.StatusNotFound {
 		t.Fatalf("different OIDC owner read status = %d, want 404", status)
 	}
@@ -215,10 +295,44 @@ func TestKindExecutionQualification(t *testing.T) {
 	if bytes.Contains(body, []byte(`"is_error":true`)) {
 		t.Fatal("reattached remote operation contained an error result")
 	}
-	if got := resourceCount(t, ctx, kubeconfig, "executionenvironments.execution.mecatl.dev"); got != baseline+2 {
-		t.Fatalf("post-restart environments = %d, want baseline + direct + session (%d)", got, baseline+2)
+	if got := resourceCount(t, ctx, kubeconfig, "executionenvironments.execution.mecatl.dev"); got != baseline+3 {
+		t.Fatalf("post-restart environments = %d, want baseline + direct + two sessions (%d)", got, baseline+3)
 	}
 	logQualificationStage(t, &stageStarted, "reattach_prompt", "complete")
+}
+
+func TestKindExecutionDerivativeUtility(t *testing.T) {
+	state, kubeconfig, ctx, cancel := requireProduction(t)
+	defer cancel()
+	client, _ := productionClient(t, ctx, state, kubeconfig)
+	tokenForward := portForward(t, ctx, kubeconfig, "service/oidc-issuer", 8443)
+	alice := fixtureToken(t, ctx, tokenForward.addr, filepath.Join(state, "pki"), "alice")
+	tokenForward.stop()
+	agentForward := portForward(t, ctx, kubeconfig, "service/mecak8s", 8081)
+	defer agentForward.stop()
+	owner := executionenv.Owner{Issuer: "https://oidc-issuer.execution-qualification.svc.cluster.local:8443", Subject: "alice"}
+	for _, tc := range []struct {
+		id      string
+		present bool
+	}{{"go", false}, {"operator-utility", true}} {
+		revision := kindTemplateRevision(t, ctx, client, tc.id)
+		sessionID := createSessionTemplate(t, ctx, agentForward.addr, alice, tc.id, revision)
+		ref := environmentForBinding(t, ctx, kubeconfig, sessionID)
+		ready := waitReady(t, ctx, client, owner, sessionID, ref)
+		rc, release := acquireRun(t, ctx, client, owner, sessionID, ready, "operator-utility-"+tc.id)
+		result, err := client.StartCommand(ctx, executionenv.CommandStartRequest{Context: rc, Command: "/usr/local/bin/mecatl-operator-utility", TimeoutMillis: 30000})
+		release()
+		if err != nil {
+			t.Fatalf("%s bound Shell: %v", tc.id, err)
+		}
+		if tc.present {
+			if result.State != executionenv.CommandSucceeded || result.Result.ExitCode != 0 || string(result.Result.Stdout) != "mecatl-operator-utility-v1\n" {
+				t.Fatalf("derivative utility not executed through bound Shell: state=%s exit=%d output=%q", result.State, result.Result.ExitCode, result.Result.Stdout)
+			}
+		} else if result.State == executionenv.CommandSucceeded || result.Result.ExitCode == 0 || bytes.Contains(result.Result.Stdout, []byte("mecatl-operator-utility-v1")) {
+			t.Fatal("unique utility is present in supported base image")
+		}
+	}
 }
 
 func logQualificationStage(t *testing.T, started *time.Time, completed, next string) {
@@ -336,13 +450,17 @@ func classifyMockToolError(content string) string {
 }
 
 func acquireRun(t *testing.T, ctx context.Context, c *executionclient.Client, owner executionenv.Owner, binding string, attached executionenv.AttachEnvironmentResponse, runID string) (executionenv.RequestContext, func()) {
+	return acquireRunWithTTL(t, ctx, c, owner, binding, attached, runID, time.Minute)
+}
+
+func acquireRunWithTTL(t *testing.T, ctx context.Context, c *executionclient.Client, owner executionenv.Owner, binding string, attached executionenv.AttachEnvironmentResponse, runID string, ttl time.Duration) (executionenv.RequestContext, func()) {
 	t.Helper()
 	operationID := "acquire-" + runID
-	claim, err := c.AcquireRun(ctx, executionenv.RunClaimRequest{Environment: attached.Environment, Owner: owner, BindingID: binding, RunID: runID, OperationID: operationID, TTL: time.Minute})
+	claim, err := c.AcquireRun(ctx, executionenv.RunClaimRequest{Environment: attached.Environment, Owner: owner, BindingID: binding, RunID: runID, OperationID: operationID, TTL: ttl})
 	if err != nil {
 		t.Fatalf("acquire run: %v", err)
 	}
-	rc := executionenv.RequestContext{Environment: claim.Environment, Owner: owner, BindingID: binding, RunID: claim.RunID, ClaimID: claim.ClaimID, Epoch: claim.Epoch, GrantGeneration: claim.GrantGeneration, Grant: claim.Grant}
+	rc := executionenv.RequestContext{Environment: claim.Environment, Owner: owner, BindingID: binding, RunID: claim.RunID, ClaimID: claim.ClaimID, Epoch: claim.Epoch, GrantGeneration: claim.GrantGeneration}
 	release := func() {
 		err := c.ReleaseRun(context.WithoutCancel(ctx), executionenv.RunClaimRequest{Environment: claim.Environment, Owner: owner, BindingID: binding, RunID: claim.RunID, ClaimID: claim.ClaimID, Epoch: claim.Epoch, GrantGeneration: claim.GrantGeneration, OperationID: "release-" + runID})
 		if err != nil {
@@ -384,13 +502,40 @@ func remoteErrorCode(err error) string {
 	return "transport"
 }
 
+func kindTemplateRevision(t *testing.T, ctx context.Context, client *executionclient.Client, id string) string {
+	t.Helper()
+	if id == "go" {
+		if revision := os.Getenv("MECATL_EXECUTION_TEMPLATE_REVISION"); revision != "" {
+			return revision
+		}
+	}
+	inventory, err := client.ListExecutionTemplates(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var selected string
+	for _, item := range inventory.GetItems() {
+		if item.GetTemplate().GetId() != id {
+			continue
+		}
+		if selected != "" {
+			t.Fatalf("multiple %s template revisions: set MECATL_EXECUTION_TEMPLATE_REVISION to the deployed default", id)
+		}
+		selected = item.GetTemplate().GetRevision()
+	}
+	if selected == "" {
+		t.Fatalf("no authorized %s execution template", id)
+	}
+	return selected
+}
+
 func waitProviderRPCReady(t *testing.T, ctx context.Context, c *executionclient.Client, addr string, cfg *tls.Config) {
 	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
 	var lastErr error
 	for time.Now().Before(deadline) {
 		attemptCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		_, lastErr = c.ValidateProfile(attemptCtx, "go")
+		_, lastErr = c.ListExecutionTemplates(attemptCtx)
 		cancel()
 		if lastErr == nil {
 			return
@@ -434,6 +579,9 @@ func classifyTLSFailure(addr string, cfg *tls.Config) string {
 
 func loadTLS(t *testing.T, dir, name, serverName string) *tls.Config {
 	t.Helper()
+	if os.Getenv("MECATL_EXECUTION_LIVE_CLUSTER") != "" {
+		return loadLiveIssuedTLS(t, dir, name, serverName)
+	}
 	ca := filepath.Join(dir, "provider-roots.pem")
 	if _, err := os.Stat(ca); errors.Is(err, os.ErrNotExist) {
 		ca = filepath.Join(dir, "ca.crt")
@@ -449,9 +597,11 @@ func loadTLS(t *testing.T, dir, name, serverName string) *tls.Config {
 }
 
 type forward struct {
-	addr     string
-	cmd      *exec.Cmd
-	stopOnce sync.Once
+	addr       string
+	cmd        *exec.Cmd
+	pidFile    string
+	processArg string
+	stopOnce   sync.Once
 }
 
 func (f *forward) stop() {
@@ -462,6 +612,14 @@ func (f *forward) stop() {
 		if f.cmd == nil || f.cmd.Process == nil {
 			return
 		}
+		if f.pidFile != "" {
+			if pid, err := os.ReadFile(f.pidFile); err == nil {
+				// toolbox run wraps podman exec; signaling its host process does not
+				// terminate kubectl inside the SRE toolbox or its live tunnel.
+				stop := fixtureCommand(context.Background(), "sh", "-c", `pid=$1; expected=$2; args=$(tr '\000' ' ' </proc/"$pid"/cmdline 2>/dev/null) || exit 0; case "$args" in *"$expected"*) kill -TERM "$pid" ;; esac`, "sh", strings.TrimSpace(string(pid)), f.processArg)
+				_ = stop.Run()
+			}
+		}
 		_ = f.cmd.Process.Signal(os.Interrupt)
 		_, _ = f.cmd.Process.Wait()
 	})
@@ -469,14 +627,27 @@ func (f *forward) stop() {
 func portForward(t *testing.T, ctx context.Context, kubeconfig, target string, remote int) *forward {
 	t.Helper()
 	local := freePort(t)
-	cmd := command(ctx, kubeconfig, "port-forward", "-n", namespace, target, fmt.Sprintf("%d:%d", local, remote))
+	args := []string{"--kubeconfig", kubeconfig, "--context", os.Getenv("MECATL_KUBE_CONTEXT"), "port-forward", "-n", namespace, target, fmt.Sprintf("%d:%d", local, remote)}
+	cmd := fixtureCommand(ctx, "kubectl", args...)
+	f := &forward{addr: fmt.Sprintf("127.0.0.1:%d", local)}
+	if os.Getenv("MECATL_EXECUTION_K8S_TOOLBOX") == "sre" {
+		pidFile, err := os.CreateTemp(os.Getenv("MECATL_EXECUTION_QUAL_STATE"), "port-forward-*.pid")
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.pidFile = pidFile.Name()
+		_ = pidFile.Close()
+		f.processArg = strings.Join(args, " ")
+		cmd = fixtureCommand(ctx, "sh", append([]string{"-c", `printf '%s' "$$" >"$1"; shift; exec "$@"`, "sh", f.pidFile, "kubectl"}, args...)...)
+	}
+	cmd.Env = cleanEnv()
 	var stderr bytes.Buffer
 	cmd.Stdout = io.Discard
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	f := &forward{addr: fmt.Sprintf("127.0.0.1:%d", local), cmd: cmd}
+	f.cmd = cmd
 	t.Cleanup(f.stop)
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
@@ -501,12 +672,18 @@ func freePort(t *testing.T) int {
 }
 
 func cleanEnv() []string {
-	return []string{"HOME=" + os.Getenv("HOME"), "PATH=" + os.Getenv("PATH")}
+	return []string{"HOME=" + os.Getenv("HOME"), "PATH=" + os.Getenv("PATH"), "TOOLBOX_PATH=" + os.Getenv("TOOLBOX_PATH"), "XDG_RUNTIME_DIR=" + os.Getenv("XDG_RUNTIME_DIR"), "DBUS_SESSION_BUS_ADDRESS=" + os.Getenv("DBUS_SESSION_BUS_ADDRESS")}
+}
+func fixtureCommand(ctx context.Context, binary string, args ...string) *exec.Cmd {
+	if os.Getenv("MECATL_EXECUTION_K8S_TOOLBOX") == "sre" {
+		return exec.CommandContext(ctx, "toolbox", append([]string{"run", "-c", "sre", binary}, args...)...)
+	}
+	return exec.CommandContext(ctx, binary, args...)
 }
 func command(ctx context.Context, kubeconfig string, args ...string) *exec.Cmd {
 	contextName := os.Getenv("MECATL_KUBE_CONTEXT")
 	fullArgs := append([]string{"--kubeconfig", kubeconfig, "--context", contextName}, args...)
-	cmd := exec.CommandContext(ctx, "kubectl", fullArgs...)
+	cmd := fixtureCommand(ctx, "kubectl", fullArgs...)
 	cmd.Env = cleanEnv()
 	return cmd
 }
@@ -554,16 +731,43 @@ func fixtureToken(t *testing.T, ctx context.Context, addr, pki, sub string) stri
 	}
 	return out.IDToken
 }
-func createSession(t *testing.T, ctx context.Context, addr, token string) string {
+func createSessionTemplate(t *testing.T, ctx context.Context, addr, token, id, revision string) string {
 	t.Helper()
-	status, body := request(t, ctx, http.MethodPost, "http://"+addr+"/v1/sessions", token, []byte(`{"mode":"default","limits":{"max_turns":16,"max_tool_calls":24,"max_consecutive_failures":3}}`))
+	body, err := json.Marshal(map[string]any{"mode": "default", "execution": map[string]any{"template": map[string]string{"id": id, "revision": revision}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, response := request(t, ctx, http.MethodPost, "http://"+addr+"/v1/sessions", token, body)
 	if status != http.StatusCreated {
-		t.Fatalf("create session status=%d body=%s", status, body)
+		t.Fatalf("create %s session status=%d", id, status)
 	}
 	var out struct {
 		SessionID string `json:"session_id"`
 	}
-	if json.Unmarshal(body, &out) != nil || out.SessionID == "" {
+	if json.Unmarshal(response, &out) != nil || out.SessionID == "" {
+		t.Fatal("create session returned no id")
+	}
+	return out.SessionID
+}
+
+func createSession(t *testing.T, ctx context.Context, addr, token string, templateRevision ...string) string {
+	t.Helper()
+	body := map[string]any{"mode": "default", "limits": map[string]int{"max_turns": 16, "max_tool_calls": 24, "max_consecutive_failures": 3}}
+	if len(templateRevision) > 0 {
+		body["execution"] = map[string]any{"template": map[string]string{"id": "go", "revision": templateRevision[0]}}
+	}
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, response := request(t, ctx, http.MethodPost, "http://"+addr+"/v1/sessions", token, encoded)
+	if status != http.StatusCreated {
+		t.Fatalf("create session status=%d body=%s", status, response)
+	}
+	var out struct {
+		SessionID string `json:"session_id"`
+	}
+	if json.Unmarshal(response, &out) != nil || out.SessionID == "" {
 		t.Fatal("create session returned no id")
 	}
 	return out.SessionID

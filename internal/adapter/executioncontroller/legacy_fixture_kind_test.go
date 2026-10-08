@@ -28,7 +28,7 @@ func TestLegacyFixtureUsesDedicatedExecutorServiceAccount(t *testing.T) {
 	kube := kubefake.NewSimpleClientset(quota)
 	d := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	profile, _ := testProfiles().get("go")
-	_, err := seedOneLegacyEnvironment(t.Context(), d, kube, "test", profile, executionenv.Owner{Issuer: "https://issuer.example.com", Subject: "user"}, "spiffe://example.com/client", "legacy", "binding", []any{"binding"}, false, nil)
+	_, err := seedOneLegacyEnvironment(t.Context(), d, kube, "test", testProfiles(), profile, executionenv.Owner{Issuer: "https://issuer.example.com", Subject: "user"}, "spiffe://example.com/client", "legacy", "binding", []any{"binding"}, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestLegacyQuotaWaitCoversDefaultControllerResync(t *testing.T) {
 		t.Fatal("fixture must cover the five-minute quota resync plus margin")
 	}
 	d := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
-	_, err := seedOneLegacyEnvironment(ctx, d, kube, "test", resolvedProfile{}, executionenv.Owner{}, "client", "legacy", "binding", nil, false, nil)
+	_, err := seedOneLegacyEnvironment(ctx, d, kube, "test", testProfiles(), resolvedProfile{}, executionenv.Owner{}, "client", "legacy", "binding", nil, false, nil)
 	if !errors.Is(err, context.Canceled) || len(d.Actions()) != 0 {
 		t.Fatal("cancellation must stop before creating fixtures")
 	}
@@ -100,7 +100,7 @@ func TestLegacyFixtureWaitsForQuotaAccountingBeforeCreate(t *testing.T) {
 				return true, nil, stop
 			})
 			reported := 0
-			_, err := seedOneLegacyEnvironment(ctx, d, kube, "test", resolvedProfile{}, executionenv.Owner{}, "client", "legacy", "binding", nil, false, func(name string, elapsed time.Duration, missing []string) {
+			_, err := seedOneLegacyEnvironment(ctx, d, kube, "test", testProfiles(), resolvedProfile{}, executionenv.Owner{}, "client", "legacy", "binding", nil, false, func(name string, elapsed time.Duration, missing []string) {
 				reported++
 				if mode != "delayed" || name != "legacy" || reads != 2 || creates != 0 || elapsed <= 0 || strings.Join(missing, ",") != "count/executionenvironments.execution.mecatl.dev" {
 					t.Errorf("quota ready report: mode=%s name=%s reads=%d creates=%d elapsed=%s missing=%v", mode, name, reads, creates, elapsed, missing)

@@ -40,7 +40,7 @@ function session() {
       providerId: "provider",
       reasoningEffort: "high",
     },
-    sessionCapabilities: { audio: true, image: false },
+    sessionCapabilities: { audio: true, image: false, executionFiles: false, builtInShell: false },
     latestContextOccupancy: { estimated: true, inputTokens: 42_000n },
     sessionId: "session",
     state: "future-state",
@@ -98,7 +98,7 @@ describe("session projections", () => {
         providerId: "provider",
         reasoningEffort: "high",
       },
-      sessionCapabilities: { audio: true, image: false },
+      sessionCapabilities: { audio: true, image: false, executionFiles: false, builtInShell: false },
       latestContextOccupancy: { estimated: true, inputTokens: 42_000n },
       sessionId: "session",
       state: "future-state",
@@ -295,6 +295,7 @@ describe("session projections", () => {
         "audio",
         "shell",
         "debugMcp",
+        "executionTemplates",
         "image",
         "learnedSkills",
         "learningProposals",
@@ -321,7 +322,7 @@ describe("session projections", () => {
         "worktrees",
       ].sort(),
     );
-    expect(fields(SessionCapabilitiesSchema)).toEqual(["audio", "image"]);
+    expect(fields(SessionCapabilitiesSchema)).toEqual(["audio", "image", "executionFiles", "builtInShell"].sort());
     expect(fields(ManualDreamCapabilitiesSchema)).toEqual(["projectMemory", "userModel"]);
     expect(fields(DreamTargetCapabilitySchema)).toEqual([
       "decide",

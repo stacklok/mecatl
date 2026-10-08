@@ -52,6 +52,10 @@ service HarnessService {
   // UNIMPLEMENTED stay distinguishable. See ADR 0248.
   rpc GetCompatibilityInfo(GetCompatibilityInfoRequest) returns (GetCompatibilityInfoResponse);
 
+  // ListExecutionTemplates returns the authenticated caller's bounded eligible
+  // catalog. It allocates nothing; CreateSession rechecks exact eligibility.
+  rpc ListExecutionTemplates(ListExecutionTemplatesRequest) returns (ListExecutionTemplatesResponse);
+
   // CreateSession allocates a new server-side session and returns its id.
   rpc CreateSession(CreateSessionRequest) returns (CreateSessionResponse);
 
@@ -547,12 +551,14 @@ message CreateSessionRequest {
   // InvalidArgument (a bare model on an env-derived default provider is ambiguous).
   string model_id = 5;
 
-  // profile selects the session's TOOL-SURFACE profile. Empty binds the
-  // deployment default; "no-fs" explicitly attenuates filesystem access.
-  string profile = 6;
+  // execution selects the deployment default when omitted, explicit no-filesystem
+  // attenuation, or one exact operator-owned template revision.
+  ExecutionSelection execution = 12;
+  reserved 6;
+  reserved "profile";
 
   // reasoning_effort sets this session's reasoning-effort tier, enum-as-string
-  // (the profile / Result.stop idiom — NO proto enum, additive values):
+  // (the Result.stop string idiom — NO proto enum, additive values):
   //
   //   - "" or "auto": UNSET — do not send a reasoning-effort field; the
   //     operator default (and ultimately the provider default) applies.
@@ -595,6 +601,32 @@ message CreateSessionRequest {
   // policy: a stdio entry and an sse entry are hard-rejected as such (AGENTS.md:
   // "No stdio MCP, ever" — mecatl never spawns an MCP server process).
   repeated McpServerSpec mcp_servers = 11;
+}
+
+// ExecutionSelection is an exclusive choice; absence means deployment default.
+message ExecutionSelection {
+  ExecutionNone none = 1;
+  ExecutionTemplate template = 2;
+}
+message ExecutionNone {}
+message ExecutionTemplate {
+  string id = 1;
+  string revision = 2;
+}
+
+// ListExecutionTemplates is authenticated and returns only eligible, bounded
+// display metadata. An empty list is distinct from an unavailable backend.
+message ListExecutionTemplatesRequest {}
+message ListExecutionTemplatesResponse {
+  repeated ExecutionTemplateInfo items = 1;
+  string inventory_revision = 2;
+}
+message ExecutionTemplateInfo {
+  ExecutionTemplate template = 1;
+  string name = 2;
+  string description = 3;
+  string display_token = 4;
+  map<string, string> extensions = 5;
 }
 
 // McpServerSpec is one client-provided MCP server on CreateSessionRequest. It
@@ -807,6 +839,9 @@ message ServerCapabilities {
   // mcp_refresh is true when direct/global MCP source reconciliation is wired.
   // It is mutually exclusive with workspace_enrollment in a valid deployment.
   bool mcp_refresh = 30;
+  // execution_templates is true only when an authenticated template catalog is
+  // wired; an eligible inventory may still be empty.
+  bool execution_templates = 31;
 }
 
 // ListSessionMcpConnectorsRequest names an owned, broker-bound session.
@@ -900,19 +935,20 @@ message ResolvedModel {
   string reasoning_effort = 4;
 }
 
-// SessionCapabilities is the per-session resolved input capability: ONLY the
-// model-varying input bits (image/audio). A dedicated message (not a reuse of
-// ServerCapabilities) keeps the per-session surface MINIMAL — the other
-// ServerCapabilities bits (mcp/skills/teams/...) are server-wide and would be
-// misleading per session. Reasoning is intentionally EXCLUDED: it is discoverable
-// via ListModels for the selected id and is not a per-session input-gating
-// concern (no adapter "can replay reasoning" authority bit exists). The value is
-// the catalog ∩ adapter intersection computed in composition. (Phase 0, S5.)
+// SessionCapabilities is the per-session effective capability projection.
+// Image/audio are the resolved model's media input support (catalog ∩ adapter);
+// execution_files/built_in_shell report actual session environment, tool catalog
+// and authority instead. Unlike ServerCapabilities these bits may differ for
+// two sessions on the same deployment. Reasoning is discovered via ListModels.
 message SessionCapabilities {
   // image is true when the resolved provider+model can consume image prompt parts.
   bool image = 1;
   // audio is true when the resolved provider+model can consume audio prompt parts.
   bool audio = 2;
+  // execution_files and built_in_shell are effective session tool affordances,
+  // separate from the provider's image/audio input modalities.
+  bool execution_files = 3;
+  bool built_in_shell = 4;
 }
 
 // GetSessionRequest looks up an existing session by id.

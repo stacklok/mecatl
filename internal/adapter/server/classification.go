@@ -248,6 +248,7 @@ func requireCallerOwnedContext(surface string, t reflect.Type, table map[string]
 // TestInvariant_owned_access_is_classified fails, naming the method.
 var serviceAccessTable = map[string]ClassificationEntry{
 	// --- caller-owned: sessions ---
+	"ListExecutionTemplates":      {KindCallerOwned, "requires verified owner and ownership enforcement before using operator-scoped provider catalog"},
 	"CreateSession":               {KindCallerOwned, "binds the verified context principal as owner atomically with visibility (reserveSessionID)"},
 	"CreateSessionWithProvider":   {KindCallerOwned, "delegates to CreateSessionWithProfile's atomic owner bind"},
 	"CreateSessionWithProfile":    {KindCallerOwned, "atomic owner bind at creation (reserveSessionID); ForkSession/carryover sources are authorized via authorizeSession before copying history"},

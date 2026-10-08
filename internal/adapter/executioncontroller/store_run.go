@@ -24,7 +24,9 @@ func generationMatches(o *unstructured.Unstructured, generation uint64) bool {
 	return generation > 0 && generation <= math.MaxInt64 && intNested(o.Object, "status", "grantGeneration") == int64(generation)
 }
 
-// ValidateRunClaim rechecks durable generation and ownership before any grant-authorized operation.
+// ValidateRunClaim checks the durable run, binding, client and current policy before dispatch.
+//
+//nolint:gocyclo // Every durable claim, reference, and policy precondition is checked before dispatch.
 func (s *Store) ValidateRunClaim(ctx context.Context, client, owner string, rc executionenv.RequestContext) error {
 	if rc.Epoch == 0 || rc.Epoch > math.MaxInt64 || rc.GrantGeneration == 0 || rc.GrantGeneration > math.MaxInt64 {
 		return &executionenv.Error{Code: executionenv.CodeInvalidArgument, Message: "run claim identity is invalid"}
@@ -36,12 +38,25 @@ func (s *Store) ValidateRunClaim(ctx context.Context, client, owner string, rc e
 	if err := requireCurrentSchema(o); err != nil {
 		return err
 	}
+	if s.profiles.isRevoked(o) {
+		return &executionenv.Error{Code: executionenv.CodeNotReady, Message: templateRevokedMessage}
+	}
 	claim, _, expiry, ok := activeRunFrom(o)
 	if !ok || !s.now().Before(expiry) || claim.Environment != rc.Environment || claim.BindingID != rc.BindingID || claim.RunID != rc.RunID || claim.ClaimID != rc.ClaimID || claim.Epoch != rc.Epoch || claim.GrantGeneration != rc.GrantGeneration || !generationMatches(o, rc.GrantGeneration) {
 		return &executionenv.Error{Code: executionenv.CodeConflict, Message: "run claim is not current"}
 	}
 	if textNested(o.Object, "spec", "ownerHash") != owner || textNested(o.Object, "spec", "clientHash") != hashText(client) {
 		return &executionenv.Error{Code: executionenv.CodeNotFound, Message: environmentNotFoundMessage}
+	}
+	refs, err := referenceRecords(o)
+	if err != nil {
+		return err
+	}
+	if !publishedReference(refs, rc.BindingID) || textNested(o.Object, "spec", "desired") != activeDesired || !conditionTrue(o, "Ready") || textNested(o.Object, "status", "fenceState") != fenceHealthy {
+		return &executionenv.Error{Code: executionenv.CodeNotReady, Message: "run binding is not ready"}
+	}
+	if !s.operationPolicyCurrent(ctx, operationLeaseAuthority{client: client}, o) {
+		return &executionenv.Error{Code: executionenv.CodeNotReady, Message: "client policy is unavailable or revoked"}
 	}
 	return nil
 }
@@ -72,6 +87,9 @@ func (s *Store) AcquireRun(ctx context.Context, ref executionenv.EnvironmentRef,
 	}
 	var out executionenv.RunClaim
 	err = s.retryUpdateStatus(ctx, ref.ID, func(o *unstructured.Unstructured) error {
+		if s.profiles.isRevoked(o) {
+			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: templateRevokedMessage}
+		}
 		if textNested(o.Object, "status", "lifecycleOperation", "id") != "" {
 			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: transitioningMessage}
 		}
@@ -85,7 +103,7 @@ func (s *Store) AcquireRun(ctx context.Context, ref executionenv.EnvironmentRef,
 		if !publishedReference(refs, binding) {
 			return &executionenv.Error{Code: executionenv.CodeNotFound, Message: "published reference not found"}
 		}
-		if textNested(o.Object, "spec", "desired") != "Active" || !conditionTrue(o, "Ready") || textNested(o.Object, "status", "fenceState") != fenceHealthy {
+		if textNested(o.Object, "spec", "desired") != activeDesired || !conditionTrue(o, "Ready") || textNested(o.Object, "status", "fenceState") != fenceHealthy {
 			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: "environment is not ready"}
 		}
 		if current, currentOp, expires, found := activeRunFrom(o); found {
@@ -180,6 +198,9 @@ func (s *Store) RenewRun(ctx context.Context, ref executionenv.EnvironmentRef, c
 	requestFingerprint := renewFingerprint(ref, client, owner, req)
 	var out executionenv.RunClaim
 	err = s.retryUpdateStatus(ctx, ref.ID, func(o *unstructured.Unstructured) error {
+		if s.profiles.isRevoked(o) {
+			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: templateRevokedMessage}
+		}
 		cur, _, expiry, ok := activeRunFrom(o)
 		if !ok || textNested(o.Object, "spec", "ownerHash") != owner || textNested(o.Object, "spec", "clientHash") != hashText(client) || cur.Environment != ref || cur.BindingID != req.BindingID || cur.RunID != req.RunID || cur.ClaimID != req.ClaimID || cur.Epoch != req.Epoch || cur.GrantGeneration != req.GrantGeneration || !generationMatches(o, req.GrantGeneration) {
 			return &executionenv.Error{Code: executionenv.CodeConflict, Message: "run claim mismatch"}

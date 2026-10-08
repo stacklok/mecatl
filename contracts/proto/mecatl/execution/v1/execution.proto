@@ -13,8 +13,9 @@ import "google/protobuf/timestamp.proto";
 option go_package = "github.com/stacklok/mecatl/contracts/gen/go/mecatl/execution/v1;executionv1";
 
 service ExecutionProviderService {
-  rpc ValidateProfile(ValidateProfileRequest) returns (ValidateProfileResponse);
-  rpc EnsureEnvironment(EnsureEnvironmentRequest) returns (EnsureEnvironmentResponse);
+  rpc ListExecutionTemplates(ListExecutionTemplatesRequest) returns (ListExecutionTemplatesResponse);
+  rpc ValidateTemplate(ValidateTemplateRequest) returns (ValidateTemplateResponse);
+  rpc EnsureTemplate(EnsureTemplateRequest) returns (EnsureEnvironmentResponse);
   rpc AttachEnvironment(AttachEnvironmentRequest) returns (AttachEnvironmentResponse);
   rpc AcquireRun(AcquireRunRequest) returns (RunClaimResponse);
   rpc RenewRun(RenewRunRequest) returns (RunClaimResponse);
@@ -46,28 +47,47 @@ message RequestContext {
   Owner owner = 2;
   string binding_id = 3;
   uint64 epoch = 4;
-  string grant = 5;
+  reserved 5;
+  reserved "grant";
   string run_id = 6;
   string claim_id = 7;
   uint64 grant_generation = 8;
 }
 
-message ValidateProfileRequest { string profile = 1; }
-message ValidateProfileResponse {
-  string profile = 1;
-  string digest = 2;
-  repeated string capabilities = 3;
-  int64 max_file_bytes = 4;
-  int64 max_command_bytes = 5;
-  int64 max_command_duration_millis = 6;
+message TemplateSelector { string id = 1; string revision = 2; }
+message TemplateCatalogItem {
+  TemplateSelector template = 1;
+  string name = 2;
+  string description = 3;
+  string display_token = 4;
+  map<string, string> extensions = 5; // namespace/key -> inert value
 }
-message EnsureEnvironmentRequest { string binding_id = 1; string profile = 2; Owner owner = 3; string operation_id = 4; }
+message ListExecutionTemplatesRequest {}
+message ListExecutionTemplatesResponse {
+  repeated TemplateCatalogItem items = 1;
+  string inventory_revision = 2;
+}
+message ValidateTemplateRequest { TemplateSelector template = 1; }
+message ValidateTemplateResponse {
+  TemplateSelector template = 1;
+  repeated string capabilities = 2;
+  int64 max_file_bytes = 3;
+  int64 max_command_bytes = 4;
+  int64 max_command_duration_millis = 5;
+}
+message EnsureTemplateRequest {
+  string binding_id = 1;
+  TemplateSelector template = 2;
+  Owner owner = 3;
+  string operation_id = 4;
+}
+
 message EnsureEnvironmentResponse {
   EnvironmentRef environment = 1;
   uint64 epoch = 2;
   bool ready = 3;
-  string grant = 4;
-  google.protobuf.Timestamp grant_expires_at = 5;
+  reserved 4, 5;
+  reserved "grant", "grant_expires_at";
   uint64 grant_generation = 6;
 }
 message AttachEnvironmentRequest { RequestContext context = 1; string purpose = 2; }
@@ -75,8 +95,8 @@ message AttachEnvironmentResponse {
   EnvironmentRef environment = 1;
   uint64 epoch = 2;
   bool ready = 3;
-  string grant = 4;
-  google.protobuf.Timestamp grant_expires_at = 5;
+  reserved 4, 5;
+  reserved "grant", "grant_expires_at";
   uint64 grant_generation = 6;
 }
 message AcquireRunRequest {
@@ -115,7 +135,8 @@ message RunClaimResponse {
   string claim_id = 4;
   uint64 epoch = 5;
   uint64 grant_generation = 6;
-  string grant = 7;
+  reserved 7;
+  reserved "grant";
   google.protobuf.Timestamp expires_at = 8;
 }
 message ReferenceMutationRequest {

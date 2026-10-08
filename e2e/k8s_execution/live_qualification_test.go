@@ -6,6 +6,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,6 +23,9 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/session"
@@ -32,6 +37,40 @@ const (
 	liveModel         = "anthropic/claude-haiku-4.5"
 	liveCredentialKey = "OPENROUTER_API_KEY"
 )
+
+// Read only task-issued execution identities into memory; never read the live
+// provider credential. Retained fixtures outlive their initial one-hour leaves.
+func loadLiveIssuedTLS(t *testing.T, dir, name, serverName string) *tls.Config {
+	t.Helper()
+	secretName := map[string]string{"mecak8s": "execution-client-tls", "intruder": "execution-intruder-tls"}[name]
+	if secretName == "" {
+		t.Fatal("unsupported live fixture identity")
+	}
+	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(&clientcmd.ClientConfigLoadingRules{ExplicitPath: filepath.Join(filepath.Dir(dir), "kubeconfig")}, &clientcmd.ConfigOverrides{CurrentContext: os.Getenv("MECATL_KUBE_CONTEXT")}).ClientConfig()
+	if err != nil {
+		t.Fatal("load owned live kube configuration failed")
+	}
+	k8s, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		t.Fatal("create owned live Kubernetes client failed")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	secret, err := k8s.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal("read task-issued execution identity failed")
+	}
+	pair, err := tls.X509KeyPair(secret.Data[corev1.TLSCertKey], secret.Data[corev1.TLSPrivateKeyKey])
+	if err != nil {
+		t.Fatal("task-issued execution identity has invalid TLS pair")
+	}
+	pool := x509.NewCertPool()
+	ca, err := os.ReadFile(filepath.Join(dir, "ca.crt"))
+	if err != nil || !pool.AppendCertsFromPEM(ca) {
+		t.Fatal("fixture public CA invalid")
+	}
+	return &tls.Config{MinVersion: tls.VersionTLS13, ServerName: serverName, RootCAs: pool, Certificates: []tls.Certificate{pair}}
+}
 
 func TestKindExecutionLiveQualification(t *testing.T) {
 	if os.Getenv("MECATL_EXECUTION_LIVE") != "1" {
@@ -57,7 +96,57 @@ func TestKindExecutionLiveQualification(t *testing.T) {
 		t.Fatalf("live stage=authenticated_http_preflight reason=rejected status=%d", preflightStatus)
 	}
 	t.Log("live stage=authenticated_http_preflight reason=ok")
-	created := createLiveSession(t, ctx, agentForward.addr, alice)
+	// HTTP liveness does not establish that the freshly restarted execution
+	// client has connected. Wait on the read-only authorized catalog first.
+	catalogCtx, catalogCancel := context.WithTimeout(ctx, 30*time.Second)
+	defer catalogCancel()
+	for {
+		status, body := request(t, catalogCtx, http.MethodGet, "http://"+agentForward.addr+"/v1/execution-templates", alice, nil)
+		if status == http.StatusOK {
+			var catalog struct {
+				Items []struct {
+					Template struct {
+						ID       string `json:"id"`
+						Revision string `json:"revision"`
+					} `json:"template"`
+				} `json:"items"`
+			}
+			if json.Unmarshal(body, &catalog) != nil {
+				t.Fatal("invalid live template catalog")
+			}
+			approved := false
+			for _, item := range catalog.Items {
+				approved = approved || (item.Template.ID == "go" && item.Template.Revision == os.Getenv("MECATL_EXECUTION_TEMPLATE_REVISION"))
+			}
+			if !approved {
+				t.Fatal("exact live template absent from authorized catalog")
+			}
+			break
+		}
+		if status != http.StatusServiceUnavailable {
+			t.Fatalf("live catalog rejected (HTTP %d)", status)
+		}
+		select {
+		case <-catalogCtx.Done():
+			t.Fatal("live execution catalog readiness deadline")
+		case <-time.After(time.Second):
+		}
+	}
+	t.Log("live stage=authorized_catalog reason=ok")
+	var created liveCreateResponse
+	resumeID := os.Getenv("MECATL_EXECUTION_LIVE_SESSION")
+	if resumeID == "" {
+		created = createLiveSession(t, ctx, agentForward.addr, alice)
+	} else {
+		if len(resumeID) != 32 || strings.Trim(resumeID, "0123456789abcdef") != "" {
+			t.Fatal("invalid live resume session identity")
+		}
+		status, body := request(t, ctx, http.MethodGet, "http://"+agentForward.addr+"/v1/sessions/"+resumeID, alice, nil)
+		if status != http.StatusOK || json.Unmarshal(body, &created) != nil || created.SessionId != resumeID {
+			t.Fatalf("authenticated live resume failed (HTTP %d)", status)
+		}
+		t.Log("live stage=session_resume reason=ok")
+	}
 	secretName := os.Getenv("MECATL_EXECUTION_LIVE_SECRET")
 	if !strings.HasPrefix(secretName, "mecak8s-live-") {
 		t.Fatal("run-scoped provider Secret name is unavailable")
@@ -67,33 +156,71 @@ func TestKindExecutionLiveQualification(t *testing.T) {
 		t.Fatal("live session resolved an unexpected provider or model")
 	}
 	nonce := fmt.Sprintf("qual_%d", time.Now().UnixNano())
-	promptText := "Create a small Go 1.27 module with arithmetic/sum.go defining Sum(a, b int) int and a table-driven arithmetic/sum_test.go covering positive, negative, and zero inputs. Include the comment // qualification: " + nonce + " in sum.go. Use the Write tool to create the files, then use Shell with the exact command `go test ./...`. Fix any failures and finish with a concise result only after that exact command passes. Do not add external dependencies."
-	events := livePrompt(t, ctx, agentForward.addr, created.SessionId, alice, promptText)
+	promptText := "Inspect the workspace with ListDir. Create a small Go 1.27 module with arithmetic/sum.go defining Sum(a, b int) int and a table-driven arithmetic/sum_test.go covering positive, negative, and zero inputs. Include the comment // qualification: " + nonce + " in sum.go, and initially include the comment // implementation: initial. Use Write to create the files. Then Read sum.go and use Edit to replace only // implementation: initial with // implementation: reviewed. Finally use Shell with the exact command `go test ./...`. Fix any failures and finish with a concise result only after that exact command passes. Do not add external dependencies."
+	if resumeID != "" {
+		promptText = "Continue our arithmetic module qualification in the existing workspace. Inspect it with ListDir and Read arithmetic/sum.go and arithmetic/sum_test.go. Preserve the implementation and tests. Use Edit to replace the existing qualification comment in sum.go with // qualification: " + nonce + ". Preserve // implementation: reviewed. Use Write to create the new file qualification-resumed-" + nonce + ".txt with a short verification note. Then use Shell with the exact command `go test ./...`. Finish only after it passes. Do not add dependencies or recreate existing files."
+	}
+	var events []*mecatlv1.Event
+	if resumeID != "" {
+		status, body := request(t, ctx, http.MethodGet, "http://"+agentForward.addr+"/v1/sessions/"+resumeID+"/events", alice, nil)
+		if status != http.StatusOK {
+			t.Fatalf("read retained live events failed (HTTP %d)", status)
+		}
+		var retainedNonce string
+		events, retainedNonce = completedLiveCoding(decodeLiveEvents(t, bytes.NewReader(body)))
+		if len(events) > 0 {
+			nonce = retainedNonce
+			t.Log("live stage=model_coding_evidence reason=retained_successful_run")
+		}
+	}
+	if len(events) == 0 {
+		events = livePrompt(t, ctx, agentForward.addr, created.SessionId, alice, promptText)
+	}
 
 	calls := map[string]bool{}
+	pendingCalls := map[string]string{}
+	toolCounts := map[string]int{}
+	modelCalls := 0
 	modelShellPassed := modelRanExactShell(events, "go test ./...")
 	var usage *mecatlv1.Usage
 	stop := ""
 	for _, ev := range events {
-		if ev.ToolCall != nil {
-			calls[ev.ToolCall.Name] = true
+		if ev.TurnEnd != nil {
+			modelCalls++
 		}
-		if ev.ToolResult != nil && ev.ToolResult.IsError {
-			t.Fatal("live coding smoke had a tool error")
+		if ev.ToolCall != nil {
+			pendingCalls[ev.ToolCall.Id] = ev.ToolCall.Name
+		}
+		if ev.ToolResult != nil {
+			if ev.ToolResult.IsError {
+				t.Fatal("live coding smoke had a tool error")
+			}
+			name := pendingCalls[ev.ToolResult.CallId]
+			if name != "" {
+				calls[name] = true
+				toolCounts[name]++
+				delete(pendingCalls, ev.ToolResult.CallId)
+			}
 		}
 		if ev.Result != nil {
 			stop = ev.Result.Stop
 			usage = ev.Result.Usage
 		}
 	}
+	if usage != nil {
+		t.Logf("live stage=model_usage completed_calls=%d input_tokens=%d output_tokens=%d", modelCalls, usage.InputTokens, usage.OutputTokens)
+	}
 	if stop != string(session.StopEndTurn) {
 		t.Fatalf("real provider run did not finish successfully (stop=%s)", stop)
 	}
-	if !calls["Write"] {
-		t.Fatal("real provider did not call a filesystem write tool")
+	for _, name := range []string{"ListDir", "Read", "Write", "Edit", "Shell"} {
+		if !calls[name] {
+			t.Fatalf("real provider did not complete %s", name)
+		}
+		t.Logf("live stage=model_tool reason=ok tool=%s count=%d", name, toolCounts[name])
 	}
-	if !calls["Shell"] {
-		t.Fatal("real provider did not call Shell")
+	if len(pendingCalls) != 0 {
+		t.Fatal("real provider had unmatched tool calls")
 	}
 	if !modelShellPassed {
 		t.Fatal("real provider Shell result did not report exit code 0")
@@ -115,14 +242,22 @@ func TestKindExecutionLiveQualification(t *testing.T) {
 	defer closeClient()
 	owner := executionenv.Owner{Issuer: "https://oidc-issuer.execution-qualification.svc.cluster.local:8443", Subject: "alice"}
 	lookup := environmentForBinding(t, ctx, kubeconfig, created.SessionId)
+	beforeStatus := readExecutionStatus(t, ctx, kubeconfig, lookup.ID)
+	if beforeStatus.PVCUID == "" || beforeStatus.PodUID == "" {
+		t.Fatal("live workspace lacks native Pod/PVC identity")
+	}
+	assertProductionExecutorPod(t, ctx, kubeconfig, lookup.ID)
 	attached := waitReady(t, ctx, client, owner, created.SessionId, lookup)
 	if attached.Environment != lookup {
 		t.Fatal("typed execution reattachment returned a different environment")
 	}
-	rc, release := acquireRun(t, ctx, client, owner, created.SessionId, attached, fmt.Sprintf("live-verify-%d", time.Now().UnixNano()))
+	rc, release := acquireRunWithTTL(t, ctx, client, owner, created.SessionId, attached, fmt.Sprintf("live-verify-%d", time.Now().UnixNano()), 3*time.Minute)
 	release = cleanupOnce(release)
 	defer release()
 	before := readQualificationArtifacts(ctx, t, client, rc, nonce)
+	if !containsExactLine(before["arithmetic/sum.go"], "// implementation: reviewed") {
+		t.Fatal("independent artifact verification did not find model edit")
+	}
 	installQualificationHelper(ctx, t, client, rc)
 	beforeCommand := runQualificationTests(ctx, t, client, rc)
 	t.Logf("live stage=independent_typed_verification reason=ok artifact_count=%d command_exit_code=%d", len(before), beforeCommand.Result.ExitCode)
@@ -153,6 +288,9 @@ func TestKindExecutionLiveQualification(t *testing.T) {
 	if postRestartLookup != lookup {
 		t.Fatal("session binding resolved a different environment after restart")
 	}
+	if afterStatus := readExecutionStatus(t, ctx, kubeconfig, lookup.ID); afterStatus.PVCUID != beforeStatus.PVCUID {
+		t.Fatal("native workspace PVC changed across restart")
+	}
 	freshProviderForward := portForward(t, ctx, kubeconfig, "service/mecatl-execution", 8443)
 	defer freshProviderForward.stop()
 	freshClient, err := executionclient.New(freshProviderForward.addr, loadTLS(t, filepath.Join(state, "pki"), "mecak8s", "mecatl-execution.execution-qualification.svc.cluster.local"))
@@ -165,7 +303,8 @@ func TestKindExecutionLiveQualification(t *testing.T) {
 	if postRestartAttached.Environment != lookup {
 		t.Fatal("typed execution reattachment changed the persisted environment after restart")
 	}
-	postRestartRC, releasePostRestart := acquireRun(t, ctx, freshClient, owner, created.SessionId, postRestartAttached, fmt.Sprintf("live-restart-verify-%d", time.Now().UnixNano()))
+	postRestartRC, releasePostRestart := acquireRunWithTTL(t, ctx, freshClient, owner, created.SessionId, postRestartAttached, fmt.Sprintf("live-restart-verify-%d", time.Now().UnixNano()), 3*time.Minute)
+	releasePostRestart = cleanupOnce(releasePostRestart)
 	defer releasePostRestart()
 	after := readQualificationArtifacts(ctx, t, freshClient, postRestartRC, nonce)
 	if !qualificationArtifactsEqual(before, after) {
@@ -174,6 +313,46 @@ func TestKindExecutionLiveQualification(t *testing.T) {
 	assertQualificationHelper(ctx, t, freshClient, postRestartRC)
 	afterCommand := runQualificationTests(ctx, t, freshClient, postRestartRC)
 	t.Logf("live stage=restart_verification reason=ok artifact_count=%d before_exit_code=%d after_exit_code=%d", len(after), beforeCommand.Result.ExitCode, afterCommand.Result.ExitCode)
+	releasePostRestart()
+	assertRunReleased(ctx, t, freshClient, postRestartRC)
+
+	followup := livePrompt(t, ctx, freshAgentForward.addr, created.SessionId, freshAlice, "This read-only verification supersedes any older unfinished requests. Verify the arithmetic module is still present. Use Read on arithmetic/sum.go and arithmetic/sum_test.go, then Shell with the exact command `go test ./...`. Do not Write, Edit, or modify any files, including qualification markers or notes. Report the current qualification marker and whether tests pass.")
+	followupRead := false
+	followupFinished := false
+	for _, ev := range followup {
+		if ev.TurnEnd != nil {
+			modelCalls++
+		}
+		if ev.ToolCall != nil && ev.ToolCall.Name != "Read" && ev.ToolCall.Name != "ListDir" && ev.ToolCall.Name != "Shell" {
+			t.Fatal("post-restart model did not remain within requested verification tools")
+		}
+		if ev.ToolCall != nil && ev.ToolCall.Name == "Shell" {
+			var args struct {
+				Command string `json:"command"`
+			}
+			if json.Unmarshal([]byte(ev.ToolCall.Args), &args) != nil || strings.TrimSpace(args.Command) != "go test ./..." {
+				t.Fatal("post-restart model ran an unexpected verification command")
+			}
+		}
+		if ev.ToolResult != nil {
+			if ev.ToolResult.IsError {
+				t.Fatal("post-restart model tool failed")
+			}
+			if strings.Contains(ev.ToolResult.Content, nonce) {
+				followupRead = true
+			}
+		}
+		if ev.Result != nil && ev.Result.Stop == string(session.StopEndTurn) && ev.Result.Usage != nil {
+			followupFinished = true
+			usage.InputTokens += ev.Result.Usage.InputTokens
+			usage.OutputTokens += ev.Result.Usage.OutputTokens
+		}
+	}
+	if !followupFinished || !followupRead || !modelRanExactShell(followup, "go test ./...") {
+		t.Fatal("post-restart model failed to read persisted artifact and test it")
+	}
+	t.Log("live stage=post_restart_model reason=ok read_persisted_marker=true shell_exit_code=0")
+	assertCredentialScope(t, ctx, kubeconfig, secretName)
 
 	observedTools := make([]string, 0, 4)
 	for _, name := range []string{"Write", "Read", "Edit", "Shell"} {
@@ -187,6 +366,12 @@ func TestKindExecutionLiveQualification(t *testing.T) {
 	}
 	summary := liveSummary{
 		Cluster:               cluster,
+		SessionID:             created.SessionId,
+		EnvironmentID:         lookup.ID,
+		TemplateRevision:      os.Getenv("MECATL_EXECUTION_TEMPLATE_REVISION"),
+		PVCUID:                beforeStatus.PVCUID,
+		ModelCalls:            modelCalls,
+		ToolCounts:            toolCounts,
 		Provider:              created.ResolvedModel.ProviderId,
 		Model:                 created.ResolvedModel.ModelId,
 		InputTokens:           usage.InputTokens,
@@ -270,6 +455,16 @@ func containsExactLine(content []byte, want string) bool {
 
 func installQualificationHelper(ctx context.Context, t *testing.T, client *executionclient.Client, rc executionenv.RequestContext) {
 	t.Helper()
+	file, err := client.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileRead, Path: qualificationHelperPath})
+	if err == nil {
+		if !bytes.Equal(file.Data, []byte(qualificationHelperFile)) {
+			t.Fatal("existing qualification helper differs; refusing overwrite")
+		}
+		return
+	}
+	if !isRemoteCode(err, executionenv.CodeNotFound) {
+		t.Fatal("inspect existing qualification helper failed")
+	}
 	if _, err := client.File(ctx, executionenv.FileRequest{
 		Context:   rc,
 		Operation: executionenv.OpFileCreate,
@@ -351,17 +546,23 @@ func modelRanExactShell(events []*mecatlv1.Event, command string) bool {
 }
 
 type liveSummary struct {
-	Cluster               string   `json:"cluster"`
-	Provider              string   `json:"provider"`
-	Model                 string   `json:"model"`
-	InputTokens           int64    `json:"input_tokens"`
-	OutputTokens          int64    `json:"output_tokens"`
-	ToolNames             []string `json:"tool_names"`
-	ArtifactCount         int      `json:"artifact_count"`
-	RestartVerified       bool     `json:"restart_verified"`
-	BeforeRestartExitCode int      `json:"before_restart_exit_code"`
-	AfterRestartExitCode  int      `json:"after_restart_exit_code"`
-	Timestamp             string   `json:"timestamp"`
+	SessionID             string         `json:"session_id"`
+	EnvironmentID         string         `json:"environment_id"`
+	TemplateRevision      string         `json:"template_revision"`
+	PVCUID                string         `json:"pvc_uid"`
+	ModelCalls            int            `json:"completed_model_calls"`
+	ToolCounts            map[string]int `json:"initial_successful_tool_counts"`
+	Cluster               string         `json:"cluster"`
+	Provider              string         `json:"provider"`
+	Model                 string         `json:"model"`
+	InputTokens           int64          `json:"input_tokens"`
+	OutputTokens          int64          `json:"output_tokens"`
+	ToolNames             []string       `json:"tool_names"`
+	ArtifactCount         int            `json:"artifact_count"`
+	RestartVerified       bool           `json:"restart_verified"`
+	BeforeRestartExitCode int            `json:"before_restart_exit_code"`
+	AfterRestartExitCode  int            `json:"after_restart_exit_code"`
+	Timestamp             string         `json:"timestamp"`
 }
 
 func assertCredentialScope(t *testing.T, ctx context.Context, kubeconfig, secretName string) {
@@ -434,7 +635,7 @@ func realProviderConfigError(spec corev1.PodSpec) error {
 				return errors.New("live deployment overrides the provider endpoint")
 			}
 		}
-		for _, required := range []string{"--default-provider=openrouter", "--model=" + liveModel, "--max-run-tokens=32000"} {
+		for _, required := range []string{"--default-provider=openrouter", "--model=" + liveModel, "--max-run-tokens=256000"} {
 			if !seen[required] {
 				return fmt.Errorf("live deployment is missing required argument %s", required)
 			}
@@ -516,7 +717,18 @@ func createLiveSession(t *testing.T, ctx context.Context, addr, token string) li
 		WroteHeaders:         func() { t.Log("live stage=http_create reason=headers_sent") },
 		GotFirstResponseByte: func() { t.Log("live stage=http_create reason=response_started") },
 	})
-	status, body := request(t, ctx, http.MethodPost, "http://"+addr+"/v1/sessions", token, []byte(`{"mode":"default","limits":{"max_turns":8,"max_tool_calls":20,"max_consecutive_failures":3}}`))
+	revision := os.Getenv("MECATL_EXECUTION_TEMPLATE_REVISION")
+	if revision == "" {
+		t.Fatal("exact live execution template revision unavailable")
+	}
+	bodyJSON, err := json.Marshal(map[string]any{
+		"mode": "default", "limits": map[string]int{"max_turns": 8, "max_tool_calls": 20, "max_consecutive_failures": 3},
+		"execution": map[string]any{"template": map[string]string{"id": "go", "revision": revision}},
+	})
+	if err != nil {
+		t.Fatal("encode live session request failed")
+	}
+	status, body := request(t, ctx, http.MethodPost, "http://"+addr+"/v1/sessions", token, bodyJSON)
 	if status != http.StatusCreated {
 		t.Fatalf("live session creation failed (HTTP %d)", status)
 	}
@@ -525,6 +737,35 @@ func createLiveSession(t *testing.T, ctx context.Context, addr, token string) li
 		t.Fatal("live session response invalid")
 	}
 	return out
+}
+
+func completedLiveCoding(events []*mecatlv1.Event) ([]*mecatlv1.Event, string) {
+	var current, completed []*mecatlv1.Event
+	var nonce, completedNonce string
+	for _, ev := range events {
+		current = append(current, ev)
+		if ev.ToolCall != nil && (ev.ToolCall.Name == "Write" || ev.ToolCall.Name == "Edit") {
+			var args struct {
+				Path      string `json:"path"`
+				Content   string `json:"content"`
+				NewString string `json:"new_string"`
+			}
+			if json.Unmarshal([]byte(ev.ToolCall.Args), &args) == nil && args.Path == "arithmetic/sum.go" {
+				for _, line := range strings.Split(args.Content+"\n"+args.NewString, "\n") {
+					if candidate, ok := strings.CutPrefix(line, "// qualification: qual_"); ok && candidate != "" && strings.Trim(candidate, "0123456789") == "" {
+						nonce = "qual_" + candidate
+					}
+				}
+			}
+		}
+		if ev.Result != nil {
+			if ev.Result.Stop == string(session.StopEndTurn) && nonce != "" {
+				completed, completedNonce = append([]*mecatlv1.Event(nil), current...), nonce
+			}
+			current, nonce = nil, ""
+		}
+	}
+	return completed, completedNonce
 }
 
 func livePrompt(t *testing.T, ctx context.Context, addr, id, token, text string) []*mecatlv1.Event {
@@ -538,13 +779,43 @@ func livePrompt(t *testing.T, ctx context.Context, addr, id, token, text string)
 	if err != nil {
 		t.Fatal("live prompt transport failed")
 	}
+	deadline := time.Now().Add(90 * time.Second)
+	for resp.StatusCode == http.StatusConflict && time.Now().Before(deadline) {
+		var problem struct {
+			Code string `json:"code"`
+		}
+		err := json.NewDecoder(io.LimitReader(resp.Body, 16<<10)).Decode(&problem)
+		resp.Body.Close()
+		if err != nil || problem.Code != "session_leased_elsewhere" {
+			t.Fatal("live prompt conflict was not a retryable session lease")
+		}
+		t.Log("live stage=run_admission reason=session_leased_elsewhere")
+		select {
+		case <-ctx.Done():
+			t.Fatal("live prompt lease wait cancelled")
+		case <-time.After(time.Second):
+		}
+		req.Body, err = req.GetBody()
+		if err != nil {
+			t.Fatal("restore live prompt body failed")
+		}
+		resp, err = http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal("live prompt transport failed")
+		}
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 2<<20))
 		t.Fatalf("live prompt rejected (HTTP %d; body redacted)", resp.StatusCode)
 	}
+	return decodeLiveEvents(t, resp.Body)
+}
+
+func decodeLiveEvents(t *testing.T, reader io.Reader) []*mecatlv1.Event {
+	t.Helper()
 	var events []*mecatlv1.Event
-	s := bufio.NewScanner(io.LimitReader(resp.Body, 4<<20))
+	s := bufio.NewScanner(io.LimitReader(reader, 4<<20))
 	s.Buffer(make([]byte, 64<<10), 1<<20)
 	for s.Scan() {
 		line := s.Text()

@@ -20,16 +20,18 @@ import (
 const sessionStateIdle = "idle"
 
 type sessionDetailsView struct {
-	ID            string
-	DebugTargetID string
-	Title         string
-	State         string
-	Connection    string
-	Placement     client.Placement
-	CreatedAt     int64
-	ModifiedAt    int64
-	ProviderID    string
-	ModelID       string
+	ID             string
+	DebugTargetID  string
+	Title          string
+	State          string
+	Connection     string
+	Placement      client.Placement
+	CreatedAt      int64
+	ModifiedAt     int64
+	ProviderID     string
+	ModelID        string
+	ExecutionFiles bool
+	BuiltInShell   bool
 }
 
 type debugTargetSource interface {
@@ -120,7 +122,9 @@ func (m Model) sessionDetails() sessionDetailsView {
 		Connection: sessionConnectionLabel(m.deps.ConnectionMode, m.deps.Server),
 		Placement:  m.activePlacement, CreatedAt: m.sessionCreatedAt,
 		ModifiedAt: m.sessionModifiedAt, ProviderID: m.resolvedSessionModel.ProviderID,
-		ModelID: m.resolvedSessionModel.ModelID,
+		ModelID:        m.resolvedSessionModel.ModelID,
+		ExecutionFiles: m.caps.ExecutionFiles,
+		BuiltInShell:   m.caps.BuiltInShell,
 	}
 }
 
@@ -240,6 +244,8 @@ func renderSessionDetails(th theme.Theme, details sessionDetailsView, hk helpKey
 	b.WriteString(row("State: ", details.State) + "\n")
 	b.WriteString(row("Connection: ", details.Connection) + "\n")
 	b.WriteString(row("Placement: ", details.Placement.Label) + "\n")
+	b.WriteString("Execution files: " + strconv.FormatBool(details.ExecutionFiles) + "\n")
+	b.WriteString("Built-in Shell: " + strconv.FormatBool(details.BuiltInShell) + "\n")
 	b.WriteString("Created: " + formatSessionTimestamp(details.CreatedAt) + "\n")
 	b.WriteString("Modified: " + formatSessionTimestamp(details.ModifiedAt) + "\n")
 	b.WriteString(row("Provider: ", details.ProviderID) + "\n")

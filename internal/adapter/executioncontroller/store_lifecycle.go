@@ -174,8 +174,15 @@ func (s *Store) ReserveSuccessor(ctx context.Context, ref executionenv.Environme
 		if !publishedReference(refs, source) {
 			return &executionenv.Error{Code: executionenv.CodeNotFound, Message: "source reference not found"}
 		}
-		if textNested(o.Object, "status", "activeOperation", "id") != "" || textNested(o.Object, "status", "activeRun", "claimID") != "" || textNested(o.Object, "status", "fenceState") != fenceHealthy {
+		if textNested(o.Object, "status", "activeOperation", "id") != "" || textNested(o.Object, "status", "fenceState") != fenceHealthy {
 			return &executionenv.Error{Code: executionenv.CodeConflict, Message: "environment is not quiescent"}
+		}
+		if textNested(o.Object, "status", "activeRun", "claimID") != "" {
+			_, _, expires, ok := activeRunFrom(o)
+			if !ok || s.now().Before(expires) {
+				return &executionenv.Error{Code: executionenv.CodeConflict, Message: "environment is not quiescent"}
+			}
+			unstructured.RemoveNestedField(o.Object, "status", "activeRun")
 		}
 		for _, r := range refs {
 			if r.BindingID == destination {

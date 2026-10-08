@@ -4,6 +4,6 @@ package k8s_execution_test
 
 import "testing"
 
-func TestKindExecutionProductionCompatiblePrototypeMigration(t *testing.T) {
-	runKindExecutionProductionCompatiblePrototypeMigration(t)
+func TestKindExecutionProductionLegacyProfileHardCut(t *testing.T) {
+	runKindExecutionProductionLegacyProfileHardCut(t)
 }

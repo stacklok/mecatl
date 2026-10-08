@@ -39,6 +39,7 @@ type wiredCollaborators struct {
 	Reflections  bool
 	Dream        bool
 	Compactor    bool
+	Execution    bool
 	Models       bool // mirrors client.Capabilities.ModelSelection
 	Guardrails   bool
 	Worktrees    bool
@@ -61,8 +62,10 @@ type wiredCollaborators struct {
 func (m Model) wiredCollaborators() wiredCollaborators {
 	_, mcpConnector := m.deps.MCP.(client.MCPConnectorReader)
 	_, mcpRefresh := m.deps.MCP.(client.MCPRefresher)
+	_, execution := m.deps.Session.(ExecutionCreator)
 	return wiredCollaborators{
-		MCP: m.deps.MCP != nil, MCPRefresh: mcpRefresh, MCPConnector: mcpConnector,
+		Execution: execution && m.deps.DebugTarget == "",
+		MCP:       m.deps.MCP != nil, MCPRefresh: mcpRefresh, MCPConnector: mcpConnector,
 		Agents: m.deps.Agents != nil, Skills: m.deps.Skills != nil,
 		Soul: m.deps.Soul != nil, UserModel: m.deps.UserModel != nil, Models: m.deps.Models != nil,
 		Guardrails:  m.deps.Guardrails != nil,
@@ -148,6 +151,9 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 			desc: "send a concise client and server diagnostics report",
 			run:  Model.runDiagnostics,
 		},
+	}
+	if w.Execution {
+		out = append(out, builtin{name: "execution", desc: "start a new session with default, none, or an eligible template", run: Model.openExecution})
 	}
 	if caps.ManualCompaction && w.Compactor {
 		out = append(out, builtin{
@@ -650,7 +656,7 @@ var builtinNameRegistry = []builtinName{
 	{name: "retry", acceptsArgs: false}, {name: "toolcalls", acceptsArgs: false}, {name: "diagnostics", acceptsArgs: false}, {name: "compact", acceptsArgs: false},
 	{name: "mcp", acceptsArgs: false}, {name: "agents", acceptsArgs: false}, {name: "team", acceptsArgs: false},
 	{name: "skills", acceptsArgs: false}, {name: "soul", acceptsArgs: false}, {name: "memory", acceptsArgs: false},
-	{name: "models", acceptsArgs: false}, {name: "effort", acceptsArgs: false}, {name: "worktrees", acceptsArgs: false},
+	{name: "execution", acceptsArgs: false}, {name: "models", acceptsArgs: false}, {name: "effort", acceptsArgs: false}, {name: "worktrees", acceptsArgs: false},
 	{name: "schedule", acceptsArgs: false}, {name: "sessions", acceptsArgs: false}, {name: "learning", acceptsArgs: false},
 	{name: "learning-sensitivity", acceptsArgs: false}, {name: "posture", acceptsArgs: false},
 }

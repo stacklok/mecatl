@@ -435,8 +435,8 @@ func completedMigrationMatches(o *unstructured.Unstructured, q adminLifecycleReq
 }
 
 func (s *Store) verifyRuntimeUIDs(ctx context.Context, o *unstructured.Unstructured, q adminLifecycleRequest) error {
-	profile, ok := s.profiles.get(textNested(o.Object, "spec", "profile"))
-	if !ok || profile.Digest != textNested(o.Object, "spec", "profileDigest") {
+	profile, ok := s.profiles.forEnvironment(o)
+	if !ok {
 		return &executionenv.Error{Code: executionenv.CodeConflict, Message: "prototype profile is unavailable or changed"}
 	}
 	pod, err := s.kube.CoreV1().Pods(s.namespace).Get(ctx, textNested(o.Object, "status", "pod", "name"), metav1.GetOptions{})

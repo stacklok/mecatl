@@ -243,14 +243,15 @@ func TestFoldContractDocMatchesSessionFields(t *testing.T) {
 	//     SetTitle)
 	//   run-scoped (latest segment): Counters
 	//   supplied via SessionMeta (not event-carried): ID, Mode, Limits,
-	//     EnvironmentRef, Placement, Profile, ProviderID, ModelID, ReasoningEffort,
+	//     EnvironmentRef, Placement, Profile, ExecutionTemplateID, ExecutionTemplateRevision,
+	//     ProviderID, ModelID, ReasoningEffort,
 	//     DebugMCPServers, DebugMCPTools, DebugTargetFingerprint, Title,
 	//     TitleProvenance, TitleGeneration, TitleRevision, Kind, Relationship, CreatedAt, ExternalBinding
 	//   not-event-carried identity labels (also supplied via SessionMeta, via a
 	//     validating helper rather than direct assignment): Owner, Authority
 	wantSessionFields := map[string]struct{}{
 		"ID": {}, "State": {}, "Mode": {}, "Conversation": {}, "Limits": {},
-		"Counters": {}, "Profile": {}, "EnvironmentRef": {}, "Placement": {},
+		"Counters": {}, "Profile": {}, "ExecutionTemplateID": {}, "ExecutionTemplateRevision": {}, "EnvironmentRef": {}, "Placement": {},
 		"ProviderID": {}, "ModelID": {}, "ReasoningEffort": {}, "DebugMCPServers": {}, "DebugMCPTools": {}, "DebugTargetFingerprint": {}, "Kind": {},
 		"Relationship": {}, "CreatedAt": {},
 		"Title": {}, "TitleProvenance": {}, "TitleGeneration": {}, "TitleRevision": {}, "Owner": {}, "Authority": {},

@@ -22,6 +22,7 @@ export function sampleCapabilities(): ServerCapabilitiesResponse {
     audio: false,
     bash: true,
     debugMcp: false,
+    executionTemplates: false,
     image: true,
     learnedSkills: false,
     learningProposals: false,

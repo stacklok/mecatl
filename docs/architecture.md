@@ -68,7 +68,7 @@ This page is the overview and router; the big picture and the layering rule are 
 - **[Parallelism — fork-join](architecture/parallelism.md)**
 - **[Extensibility — MCP, tools & progressive disclosure](architecture/extensibility.md)**
 - **[Session titles & durable token accounting](architecture/domain-model.md#session-titles-and-durable-token-accounting)** — operator renaming, opt-in asynchronous generation, and canonical token usage.
-- **[Deployment & server hardening](architecture/deployment-and-hardening.md)**
+- **[Kubernetes execution environments](architecture/deployment-and-hardening.md#kubernetes-execution-environments)** — template selection, reattachment, and provider authority boundaries.
 
 ### Protected-resource discovery
 
@@ -647,23 +647,14 @@ stale-guarded cancellation, terminal SSE cursor errors, and default log-only fil
 
 ### Mecatl Studio
 
-Mecatl Studio is the browser UI, kept in the repository as the self-contained pnpm
-workspace `apps/` (`apps/web`, `apps/server`, `apps/contracts`; its own lockfile, pnpm
-12 pin, Biome config, and `apps/Taskfile.yml`, included in the root Taskfile as
-`studio:*`). It is a **client** of mecatl in the same sense the TypeScript SDK is, one
-layer further out: `apps/server` is a Hono backend for frontend (BFF) that depends on the
-**published** `@stacklok-oss/mecatl-sdk` from npm by a semver range — never on
-`sdk/typescript` by path or `workspace:` link — so Studio builds without a Go toolchain
-or the SDK's build, its Docker build context is `apps/` alone, and the UI lags the daemon
-by one SDK release on purpose. The boundary has three sides: the **browser** runs the
-Vite + React SPA in `apps/web` and calls only the BFF's `/api/v1` product API, importing
-`@mecatl-studio/contracts` and its generated query client but neither the SDK nor any
-daemon protocol type; the **BFF** holds the user's credential and forwards it per request
-through the SDK credential provider bound to the request's `AsyncLocalStorage` context,
-serving the SPA and `/api` from one origin; **mecatl** is reached only by the BFF. The
-BFF's `/api/v1` routes describe product capabilities rather than mirroring daemon
-endpoints, and `apps/contracts` (Zod schemas, the generated `openapi.json`, the generated
-Hey API client) is committed and drift-gated like `contracts/gen` and `engine/api/*.txt`.
+Mecatl Studio is the browser UI in the `apps/` pnpm workspace (`apps/web`,
+`apps/server`, and `apps/contracts`). `apps/server` is a Hono backend for
+frontend (BFF). It uses the checked-out `@stacklok-oss/mecatl-sdk` through a
+`file:` dependency, so local and image builds use the repository root as their
+Docker build context and build the SDK before Studio. The browser calls only the
+BFF's `/api/v1` product API. It imports neither the SDK nor daemon protocol
+types. The BFF holds the user's credential and is the only Studio component that
+connects to Mecatl.
 
 At startup the BFF resolves exactly one **runtime mode** from the environment:
 `external` (`MECATL_BASE_URL`, an existing gRPC listener), `spawn` (a local `mecated`
@@ -701,9 +692,10 @@ the verified ID token. The raw subject stays in sealed server-readable
 credentials; the browser receives only the opaque account key for identity
 comparison. An OIDC session without that identity fails closed.
 
-The **image** is one origin: a multi-stage `Dockerfile` compiles `apps/web` and
-`apps/server` to `dist`, prunes the server to production dependencies with
-`pnpm deploy --prod`, and copies them onto `cgr.dev/chainguard/node` pinned by digest
+The **image** is one origin: a multi-stage `Dockerfile` compiles the checked-out
+SDK, `apps/web`, and `apps/server`, installs production dependencies with
+`pnpm install --prod --frozen-lockfile`, and copies the application onto
+`cgr.dev/chainguard/node` pinned by digest
 (the `.ko.yaml` posture), running `node dist/index.js` as the base's non-root user with
 `STUDIO_IMAGE=1` set — which refuses the spawn and mock modes and requires
 `STUDIO_ALLOW_UNAUTHENTICATED=1` for static/none auth. It is published as
@@ -712,15 +704,16 @@ SBOM, and provenance steps as the Slack bot image, labelled
 `org.stacklok.mecatl.studio.stability=early-access` because Studio can change without
 notice between versions; `apps/docker-compose.yml` runs it against a locally built `mecated` for
 development. CI gates it with its own `studio` job and path-relevance category
-(`apps/*|.github/*|Taskfile.yml`), separate from the Go and SDK families because
-neither can change it. The bootstrap shipped health, runtime status, auth, and the shell;
-each feature port is a Bounded follow-up with its own acceptance plan, since new
-`/api/v1` routes and contract schemas are a public BFF interface. **Chat** is the first
-feature: `/api/v1/sessions…` carries the session inventory (paged through the SDK,
-`inspect_only_kind` rows filtered, delete/rename capabilities relayed from the daemon),
-creation with mode / model / reasoning effort / `toolAccess` (`noFilesystem` → the
-`no-fs` profile), detail with cumulative usage, rename, delete, mode, compaction, fork,
-clear, and the transcript; runs, replays (`…/activity`), and retries stream as
+(`apps/*|sdk/typescript/*|.github/*|Taskfile.yml`). SDK changes also run Studio's
+checks because the application consumes that checkout. The BFF's `/api/v1` routes
+and contract schemas form its public interface. **Chat** exposes
+`/api/v1/sessions…`: session inventory paged through the SDK, `inspect_only_kind`
+rows filtered, and delete/rename capabilities relayed from the daemon. Session
+creation accepts mode, model, reasoning effort, and `execution`: omission uses the
+deployment default, `{none:{}}` selects no filesystem, and
+`{template:{id,revision}}` selects an exact eligible template revision. Debug
+sessions select `none`. The API also exposes detail with cumulative usage, rename,
+delete, mode, compaction, fork, clear, and the transcript; runs, replays (`…/activity`), and retries stream as
 Server-Sent Events carrying Studio's own `type`-discriminated union — `run.started`,
 `run.event`, `run.truncated`, `run.error` — where `run.event` wraps the SDK event with `bigint` counters
 as decimal strings and an SDK kind the SDK does not model forwarded as `unknown: true`

@@ -323,14 +323,14 @@ func TestMecak8sRejectsUnsupportedFilesystemProfile(t *testing.T) {
 	defer built.Close()
 
 	harness := server.NewHarnessServer(built.Service)
-	if _, err := harness.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{Profile: string(server.ProfileNoFS)}); err != nil {
+	if _, err := harness.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{Execution: &mecatlv1.ExecutionSelection{None: &mecatlv1.ExecutionNone{}}}); err != nil {
 		t.Fatalf("CreateSession(no-fs, empty workspace): %v", err)
 	}
 	for _, tc := range []struct {
 		name string
 		req  *mecatlv1.CreateSessionRequest
 	}{
-		{name: "unsupported filesystem profile", req: &mecatlv1.CreateSessionRequest{Profile: "filesystem"}},
+		{name: "unsupported filesystem profile", req: &mecatlv1.CreateSessionRequest{Execution: &mecatlv1.ExecutionSelection{}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := harness.CreateSession(context.Background(), tc.req)

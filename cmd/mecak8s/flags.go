@@ -28,6 +28,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -35,6 +36,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
@@ -111,27 +113,29 @@ type config struct {
 	logLevelWarning string
 	// diagnostics is installed by run after the command root builds its operator
 	// sink; tests and alternate callers may leave it nil for a silent edge.
-	diagnostics            port.Diagnostics
-	grpcAddr               string
-	httpAddr               string
-	drainAddr              string
-	drainTimeout           time.Duration
-	grpcStopTimeout        time.Duration
-	httpShutdownTimeout    time.Duration
-	closeTimeout           time.Duration
-	workspace              string
-	executionEnabled       bool
-	executionEndpoint      string
-	executionProfile       string
-	executionTLSCA         string
-	executionTLSCert       string
-	executionTLSKey        string
-	model                  string
-	defaultProvider        string
-	defaultModel           string
-	defaultProviderFlagSet bool
-	useOpenAI              bool
-	openAIBearerTokenFile  string
+	diagnostics               port.Diagnostics
+	grpcAddr                  string
+	httpAddr                  string
+	drainAddr                 string
+	drainTimeout              time.Duration
+	grpcStopTimeout           time.Duration
+	httpShutdownTimeout       time.Duration
+	closeTimeout              time.Duration
+	workspace                 string
+	executionEnabled          bool
+	executionEndpoint         string
+	executionTemplateID       string
+	executionTemplateRevision string
+	executionAllowedSubjects  string
+	executionTLSCA            string
+	executionTLSCert          string
+	executionTLSKey           string
+	model                     string
+	defaultProvider           string
+	defaultModel              string
+	defaultProviderFlagSet    bool
+	useOpenAI                 bool
+	openAIBearerTokenFile     string
 	// providerFlags holds shared provider flag bindings; providerCredentials is
 	// the once-resolved snapshot projected by appConfig without further I/O.
 	providerFlags       *cliconfig.ProviderFlags
@@ -361,7 +365,9 @@ func parseFlags(argv []string) (config, error) {
 	fs.StringVar(&cfg.workspace, "workspace", "", "Shared agent workspace root, such as a mounted PVC. Empty gives every session a shell-less, file-less workspace; clients cannot choose another root")
 	fs.BoolVar(&cfg.executionEnabled, "execution-enabled", false, "Use an independently deployed Kubernetes execution provider for default sessions")
 	fs.StringVar(&cfg.executionEndpoint, "execution-endpoint", "", "Host:port endpoint of the mTLS gRPC execution provider. Requires --execution-enabled")
-	fs.StringVar(&cfg.executionProfile, "execution-profile", "", "Operator-configured execution provider profile")
+	fs.StringVar(&cfg.executionTemplateID, "execution-template-id", "", "Operator-configured default execution template ID")
+	fs.StringVar(&cfg.executionTemplateRevision, "execution-template-revision", "", "Exact versioned default execution template revision")
+	fs.StringVar(&cfg.executionAllowedSubjects, "execution-allowed-subjects", "", "Comma-separated OIDC subject allowlist for execution template inventory and binding; empty denies all")
 	fs.StringVar(&cfg.executionTLSCA, "execution-tls-ca", "", "Mounted CA bundle used only by the execution client")
 	fs.StringVar(&cfg.executionTLSCert, "execution-tls-cert", "", "Mounted execution-provider mTLS client certificate")
 	fs.StringVar(&cfg.executionTLSKey, "execution-tls-key", "", "Mounted execution-provider mTLS client private key")
@@ -627,8 +633,13 @@ func parseFlags(argv []string) (config, error) {
 		return config{}, fmt.Errorf("--workspace %q must be a clean absolute path (a mounted filesystem root); leave it empty for a file-less deployment", cfg.workspace)
 	}
 	if cfg.executionEnabled {
-		if cfg.executionEndpoint == "" || cfg.executionProfile == "" || cfg.executionTLSCA == "" || cfg.executionTLSCert == "" || cfg.executionTLSKey == "" {
-			return config{}, errors.New("--execution-enabled requires --execution-endpoint, --execution-profile, --execution-tls-ca, --execution-tls-cert, and --execution-tls-key")
+		if cfg.executionEndpoint == "" || cfg.executionTemplateID == "" || cfg.executionTemplateRevision == "" || cfg.executionAllowedSubjects == "" || cfg.executionTLSCA == "" || cfg.executionTLSCert == "" || cfg.executionTLSKey == "" {
+			return config{}, errors.New("--execution-enabled requires --execution-endpoint, --execution-template-id, --execution-template-revision, --execution-allowed-subjects, --execution-tls-ca, --execution-tls-cert, and --execution-tls-key")
+		}
+		for _, subject := range strings.Split(cfg.executionAllowedSubjects, ",") {
+			if subject == "" || strings.TrimSpace(subject) != subject {
+				return config{}, errors.New("--execution-allowed-subjects requires nonempty, unpadded OIDC subjects")
+			}
 		}
 		if !cfg.oidc.Enabled() {
 			return config{}, errors.New("--execution-enabled requires OIDC caller ownership enforcement")
@@ -693,7 +704,16 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		// The legacy --mcp-server surface is global-only.
 		mcpAuthorityDefault = mcpauthority.Global
 	}
+	ownerAllowed := func(p *session.Principal) bool {
+		return cfg.executionEnabled && cfg.oidc.Enabled() && p != nil && p.Issuer != "" && p.Subject != "" &&
+			(p.GrantType == session.GrantTypeUser || p.GrantType == session.GrantTypeClientCredentials) &&
+			slices.Contains(strings.Split(cfg.executionAllowedSubjects, ","), p.Subject)
+	}
 	out := app.Config{
+		ExecutionTemplateAllowed: func(p *session.Principal, _, _ string) bool {
+			return ownerAllowed(p)
+		},
+		ExecutionOwnerAllowed:  ownerAllowed,
 		RemoteExecution:        cfg.executionEnabled,
 		Workspace:              cfg.workspace,
 		Model:                  cfg.model,

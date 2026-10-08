@@ -19,6 +19,7 @@ import { projectServerCapabilities, type ServerCapabilities } from "./session-pr
 /** Known server feature identifiers. Unknown identifiers remain observable. @public */
 export const ServerFeature = {
   ExactPlanAskControl: "exact_plan_ask_control",
+  ExecutionTemplates: "execution_templates",
   HttpSteer: "http_steer",
   McpServersOnCreate: "mcp_servers_on_create",
   PromptFreeControls: "prompt_free_controls",
@@ -72,8 +73,25 @@ export interface ServerInfoOptions {
   readonly providerId?: string;
 }
 
+/** Operator-projected eligible revision; never a recipe or execution authority. @public */
+export interface ExecutionTemplateInfo {
+  readonly template: { readonly id: string; readonly revision: string };
+  readonly name: string;
+  readonly description: string;
+  readonly displayToken: string;
+  readonly extensions: Readonly<Record<string, string>>;
+}
+
+/** Bounded authenticated template inventory. @public */
+export interface ExecutionTemplateInventory {
+  readonly items: readonly ExecutionTemplateInfo[];
+  readonly inventoryRevision: string;
+}
+
 /** Pre-session compatibility and safe server-identity operations. @public */
 export interface Server {
+  /** List eligible templates for the authenticated caller; requires enabled capability. */
+  executionTemplates(options?: RequestOptions): Promise<ExecutionTemplateInventory>;
   /**
    * Starts a fresh compatibility negotiation and makes it the generation shared
    * by subsequent ordinary operations.
@@ -271,6 +289,19 @@ export function projectServerInfo(
 /** Internal constructor used by the transport-neutral client. */
 export function createServer(operations: ServerOperations): Server {
   return {
+    executionTemplates: async (options) => {
+      const compatibility = await operations.compatibility(options, false);
+      if (!compatibility.features.has(ServerFeature.ExecutionTemplates) || !compatibility.capabilities.executionTemplates) {
+        throw new UnsupportedFeatureError(ServerFeature.ExecutionTemplates, { transport: operations.transportKind });
+      }
+      const result = await operations.unary(HarnessService.method.listExecutionTemplates, {}, options);
+      if (result.items.length > 64) throw protocol("ListExecutionTemplates exceeded inventory bound", operations.transportKind);
+      return { inventoryRevision: result.inventoryRevision, items: result.items.map((item) => ({
+        template: { id: item.template?.id ?? "", revision: item.template?.revision ?? "" },
+        name: item.name, description: item.description, displayToken: item.displayToken,
+        extensions: { ...item.extensions },
+      })) };
+    },
     compatibility: (options) => operations.compatibility(options, true),
     info: async (options = {}, requestOptions) => {
       const compatibility = await operations.compatibility(

@@ -5,13 +5,10 @@
 package main
 
 import (
-	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"math/big"
@@ -32,7 +29,6 @@ func generate(initial, out string) {
 	must(os.MkdirAll(out, 0o700))
 	now := time.Now().UTC()
 	oldCA := read(filepath.Join(initial, "ca.crt"))
-	oldGrant := readGrant(filepath.Join(initial, "grant-key.pem"))
 
 	caKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	must(err)
@@ -47,44 +43,22 @@ func generate(initial, out string) {
 	issue(out, "provider-new", ca, caKey, []string{"mecatl-execution", "mecatl-execution.execution-qualification.svc", "mecatl-execution.execution-qualification.svc.cluster.local"}, "", []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
 	issue(out, "mecak8s-new", ca, caKey, nil, "spiffe://mecatl.test/client/mecak8s", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
 
-	pub2, key2, err := ed25519.GenerateKey(rand.Reader)
-	must(err)
-	der2, err := x509.MarshalPKCS8PrivateKey(key2)
-	must(err)
-	write(filepath.Join(out, "grant-k2.pem"), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der2}))
-
-	writeManifest(filepath.Join(out, "invalid-same-generation.json"), manifest(1, "changed-policy.invalid", "k1", []keyEntry{key("k1", 1, "grant-k1.pem", oldGrant.Public().(ed25519.PublicKey), "active", now.Add(5*time.Hour))}, "tls.crt", "tls.key", "clients.pem"))
-	keys := []keyEntry{
-		key("k1", 1, "grant-k1.pem", oldGrant.Public().(ed25519.PublicKey), "active", now.Add(5*time.Hour)),
-		key("k2", 2, "grant-k2.pem", pub2, "active", now.Add(5*time.Hour)),
-	}
-	writeManifest(filepath.Join(out, "bridge.json"), manifest(2, "mecatl-execution", "k2", keys, "tls.crt", "tls.key", "bridge-clients.pem"))
-	keys[0].State = "revoked"
-	writeManifest(filepath.Join(out, "final.json"), manifest(3, "mecatl-execution", "k2", keys, "provider-new.crt", "provider-new.key", "final-clients.pem"))
-	writeManifest(filepath.Join(out, "restore-fixture-clients.json"), manifest(4, "mecatl-execution", "k2", keys, "provider-new.crt", "provider-new.key", "bridge-clients.pem"))
+	writeManifest(filepath.Join(out, "invalid-same-generation.json"), manifest(1, false, "tls.crt", "tls.key", "clients.pem"))
+	writeManifest(filepath.Join(out, "bridge.json"), manifest(2, true, "tls.crt", "tls.key", "clients.pem"))
+	writeManifest(filepath.Join(out, "final.json"), manifest(3, true, "tls.crt", "tls.key", "clients.pem"))
+	writeManifest(filepath.Join(out, "restore-fixture-clients.json"), manifest(4, true, "tls.crt", "tls.key", "clients.pem"))
 }
 
-type keyEntry struct {
-	ID, File, Fingerprint, State string
-	Version                      uint64
-	ActivateAt, VerifyUntil      time.Time
-}
-
-func key(id string, version uint64, file string, pub ed25519.PublicKey, state string, until time.Time) keyEntry {
-	sum := sha256.Sum256(pub)
-	return keyEntry{id, file, hex.EncodeToString(sum[:]), state, version, time.Now().UTC().Add(-time.Minute), until}
-}
-
-func manifest(generation uint64, audience, active string, keys []keyEntry, cert, privateKey, clients string) map[string]any {
-	entries := make([]any, 0, len(keys))
-	for _, k := range keys {
-		entries = append(entries, map[string]any{"id": k.ID, "version": k.Version, "file": k.File, "publicKeySHA256": k.Fingerprint, "activateAt": k.ActivateAt.Format(time.RFC3339), "verifyUntil": k.VerifyUntil.Format(time.RFC3339), "state": k.State})
+func manifest(generation uint64, enabled bool, cert, privateKey, clients string) map[string]any {
+	templates := []string{"go", "operator-utility", "quota-cas", "quota-kube"}
+	if !enabled {
+		templates = nil
 	}
 	return map[string]any{
-		"version": 1, "generation": generation, "issuer": "https://mecatl.execution.test", "audience": audience, "activeKeyID": active, "grantTTL": "1m", "clockSkew": "5s", "keys": entries,
+		"version": 1, "generation": generation,
 		"tls": map[string]any{"certificateFile": cert, "privateKeyFile": privateKey, "clientCAFile": clients},
 		"clients": []any{
-			map[string]any{"uri": "spiffe://mecatl.test/client/mecak8s", "mayAttestOwner": true, "administrator": true},
+			map[string]any{"uri": "spiffe://mecatl.test/client/mecak8s", "mayAttestOwner": enabled, "administrator": true, "executionTemplates": templates},
 			map[string]any{"uri": "spiffe://mecatl.test/client/intruder", "mayAttestOwner": true, "administrator": false},
 			map[string]any{"uri": "spiffe://mecatl.test/client/operations", "mayAttestOwner": true, "administrator": true, "administratorFor": []string{"spiffe://mecatl.test/client/mecak8s"}},
 			map[string]any{"uri": "spiffe://mecatl.test/client/wrong-scope", "mayAttestOwner": true, "administrator": true, "administratorFor": []string{"spiffe://mecatl.test/client/intruder"}},
@@ -96,19 +70,6 @@ func writeManifest(path string, value any) {
 	data, err := json.Marshal(value)
 	must(err)
 	write(path, append(data, '\n'))
-}
-func readGrant(path string) ed25519.PrivateKey {
-	block, _ := pem.Decode(read(path))
-	if block == nil {
-		panic("invalid synthetic grant key")
-	}
-	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-	must(err)
-	out, ok := key.(ed25519.PrivateKey)
-	if !ok {
-		panic("unexpected synthetic grant key type")
-	}
-	return out
 }
 func issue(dir, name string, ca *x509.Certificate, caKey *rsa.PrivateKey, dns []string, uri string, usages []x509.ExtKeyUsage) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)

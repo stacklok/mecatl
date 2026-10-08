@@ -92,6 +92,10 @@ type SessionMeta struct {
 	Placement session.PlacementMetadata
 	// Profile is the opaque tool-surface profile label ("" = default).
 	Profile string
+	// ExecutionTemplateID/Revision select an exact versioned recipe; neither
+	// value can be reconstructed from events or inferred from EnvironmentRef.
+	ExecutionTemplateID       string
+	ExecutionTemplateRevision string
 	// ProviderID and ModelID are the opaque neutral provider+model selector pair
 	// ("" / "" = server default).
 	ProviderID string
@@ -206,6 +210,8 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	// through RestoreTitleMetadata below.
 	s.Placement = meta.Placement
 	s.Profile = meta.Profile
+	s.ExecutionTemplateID = meta.ExecutionTemplateID
+	s.ExecutionTemplateRevision = meta.ExecutionTemplateRevision
 	s.ProviderID = meta.ProviderID
 	s.ModelID = meta.ModelID
 	s.ReasoningEffort = meta.ReasoningEffort

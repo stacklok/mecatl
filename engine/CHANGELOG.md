@@ -13,6 +13,10 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Execution-template provenance** — adds opaque `session.Session.ExecutionTemplateID`
+  and `ExecutionTemplateRevision` labels for exact public-create retry matching.
+  Execution reattachment still uses the durable environment reference. Added (minor).
+
 - **File-backed hierarchy prompt flag** — adds `prompt.Config.ProjectInstructionHierarchy`
   to render the next-request discovery limitation through the default builder,
   without appending to host-owned prompts. Added (minor).

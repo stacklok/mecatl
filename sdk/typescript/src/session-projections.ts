@@ -50,6 +50,8 @@ export interface SessionResolvedModel {
 export interface SessionCapabilities {
   readonly image: boolean;
   readonly audio: boolean;
+  readonly executionFiles: boolean;
+  readonly builtInShell: boolean;
 }
 
 /** Bounded display metadata for a session placement. @public */
@@ -114,6 +116,7 @@ export interface ServerCapabilities {
   readonly skills: boolean;
   readonly teams: boolean;
   readonly shell: boolean;
+  readonly executionTemplates: boolean;
   readonly image: boolean;
   readonly audio: boolean;
   readonly agents: boolean;
@@ -248,6 +251,7 @@ export function projectServerCapabilities(value: ProtoServerCapabilities): Serve
     agents: value.agents,
     audio: value.audio,
     shell: value.shell,
+    executionTemplates: value.executionTemplates,
     debugMcp: value.debugMcp,
     image: value.image,
     learnedSkills: value.learnedSkills,
@@ -419,6 +423,8 @@ export function projectSessionSnapshot(
           sessionCapabilities: {
             audio: value.sessionCapabilities.audio,
             image: value.sessionCapabilities.image,
+            executionFiles: value.sessionCapabilities.executionFiles,
+            builtInShell: value.sessionCapabilities.builtInShell,
           },
         }),
     ...(value.latestContextOccupancy === undefined

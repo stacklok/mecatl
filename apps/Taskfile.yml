@@ -1,10 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Taskfile for Mecatl Studio (apps/), included in the root Taskfile as `studio:`.
-# The workspace is self-contained (ADR 0351): its own pnpm lockfile, pnpm pin
-# (`packageManager` in package.json), Biome config, and Dockerfile. Nothing here
-# reaches into sdk/typescript — Studio consumes only the published
-# @stacklok-oss/mecatl-sdk.
+# The checked-out SDK is compiled before pnpm installs the BFF's local file
+# dependency; the browser never imports SDK sources.
 version: '3'
 
 tasks:
@@ -15,11 +13,17 @@ tasks:
       - pnpm-lock.yaml
       - pnpm-workspace.yaml
       - contracts/package.json
+      - ../sdk/typescript/package.json
+      - ../sdk/typescript/pnpm-lock.yaml
+      - ../sdk/typescript/src/**/*.ts
       - server/package.json
       - web/package.json
     generates:
       - node_modules/.modules.yaml
+      - ../sdk/typescript/dist/index.js
     cmds:
+      - pnpm --dir ../sdk/typescript install --frozen-lockfile
+      - pnpm --dir ../sdk/typescript exec tsc -p tsconfig.build.json
       - pnpm install --frozen-lockfile
 
   lint:
@@ -121,4 +125,4 @@ tasks:
   image:
     desc: Build the Studio container image locally as mecatl-studio:dev (context = apps/)
     cmds:
-      - docker build -f Dockerfile -t mecatl-studio:dev .
+      - docker build -f Dockerfile -t mecatl-studio:dev ..

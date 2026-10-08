@@ -289,6 +289,39 @@ export function createApp(dependencies: AppDependencies = {}) {
           "Mecatl rejected the current session; sign in again.",
         );
       }
+      if (
+        context.req.path === "/api/v1/execution-templates" ||
+        (context.req.path === "/api/v1/sessions" && context.req.method === "POST")
+      ) {
+        if (
+          error.code === "execution_templates_disabled" ||
+          (context.req.path === "/api/v1/execution-templates" &&
+            error.code === "unsupported_feature")
+        )
+          return problem(
+            context,
+            501,
+            "execution_templates_disabled",
+            "Template catalog disabled",
+            "Use the deployment default or no execution, or ask an operator to enable template discovery.",
+          );
+        if (error.code === "placement_unavailable")
+          return problem(
+            context,
+            503,
+            error.code,
+            "Execution backend unavailable",
+            "Retry later or choose no execution.",
+          );
+        if (context.req.path === "/api/v1/execution-templates" && error.code === "not_found")
+          return problem(
+            context,
+            404,
+            "template_unavailable",
+            "Template unavailable",
+            "Refresh the catalog and select another template; no fallback was created.",
+          );
+      }
       return problem(
         context,
         errorStatus(error),

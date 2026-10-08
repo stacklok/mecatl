@@ -250,7 +250,7 @@ func TestSessionDebuggerCrossBoundaryAcceptance(t *testing.T) {
 	defer built2.Close()
 	client, closeGRPC := debugAcceptanceGRPC(t, built2.Service)
 	defer closeGRPC()
-	created, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Profile: string(server.ProfileNoFS), DebugTargetSessionId: string(target.ID), DebugMcpServers: []string{"github"}})
+	created, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Execution: &mecatlv1.ExecutionSelection{None: &mecatlv1.ExecutionNone{}}, DebugTargetSessionId: string(target.ID), DebugMcpServers: []string{"github"}})
 	if err != nil {
 		t.Fatal(err)
 	}

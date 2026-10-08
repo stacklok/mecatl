@@ -3,15 +3,58 @@
 package k8s_execution_test
 
 import (
+	"context"
 	"encoding/json"
 	"go/format"
+	"net/http"
+	"net/http/httptest"
+	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/internal/executionenv"
 )
+
+func TestLivePromptWaitsForLeaseBeforeAcceptedStream(t *testing.T) {
+	calls := make(chan string, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Text string `json:"text"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) != nil || r.Header.Get("Authorization") != "Bearer synthetic" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if len(calls) == 0 {
+			calls <- body.Text
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"code":"session_leased_elsewhere"}`))
+			return
+		}
+		calls <- body.Text
+		_, _ = w.Write([]byte("data: {\"result\":{\"stop\":\"end_turn\"}}\n\n"))
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	events := livePrompt(t, ctx, strings.TrimPrefix(server.URL, "http://"), "owned", "synthetic", "verify")
+	if len(events) != 1 || events[0].Result == nil || len(calls) != 2 || <-calls != "verify" || <-calls != "verify" {
+		t.Fatal("lease recovery did not preserve the request and accepted stream")
+	}
+}
+
+func TestFixtureKubectlUsesSREToolboxWithExactContext(t *testing.T) {
+	t.Setenv("MECATL_EXECUTION_K8S_TOOLBOX", "sre")
+	t.Setenv("MECATL_KUBE_CONTEXT", "kind-owned-fixture")
+	cmd := command(context.Background(), "/owned/state/kubeconfig", "get", "pods")
+	if !slices.Equal(cmd.Args, []string{"toolbox", "run", "-c", "sre", "kubectl", "--kubeconfig", "/owned/state/kubeconfig", "--context", "kind-owned-fixture", "get", "pods"}) {
+		t.Fatalf("kubectl command lost explicit SRE context: %v", cmd.Args)
+	}
+}
 
 func TestReplacementProofRequestsUsePostClaimEpochForPositiveRequest(t *testing.T) {
 	ref := executionenv.EnvironmentRef{ID: "fixture", Revision: "revision"}
@@ -51,6 +94,19 @@ func TestModelRanExactShellRequiresDecodedCommandAndMatchingCallID(t *testing.T)
 	}
 	if !modelRanExactShell([]*mecatlv1.Event{call("test", `{"command":"  go test ./...  "}`), result("test")}, "go test ./...") {
 		t.Fatal("matching successful Shell call was not counted")
+	}
+}
+
+func TestLiveCompletedCodingRetainsOnlySuccessfulMarkerRun(t *testing.T) {
+	edit := &mecatlv1.Event{ToolCall: &mecatlv1.ToolCall{Name: "Edit", Args: `{"path":"arithmetic/sum.go","new_string":"// qualification: qual_123"}`}}
+	success := &mecatlv1.Event{Result: &mecatlv1.Result{Stop: "end_turn"}}
+	budget := &mecatlv1.Event{Result: &mecatlv1.Result{Stop: "budget"}}
+	if got, _ := completedLiveCoding([]*mecatlv1.Event{edit, budget}); len(got) != 0 {
+		t.Fatal("budget-stopped run accepted as completed coding")
+	}
+	got, nonce := completedLiveCoding([]*mecatlv1.Event{budget, edit, success, budget, success})
+	if nonce != "qual_123" || len(got) != 2 || got[0] != edit || got[1] != success {
+		t.Fatal("later empty or failed run displaced original coding evidence")
 	}
 }
 
@@ -110,13 +166,13 @@ func TestLiveSummaryIncludesFixedRestartEvidence(t *testing.T) {
 	if err := json.Unmarshal(blob, &fields); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"restart_verified", "before_restart_exit_code", "after_restart_exit_code"} {
+	for _, name := range []string{"cluster", "provider", "model", "input_tokens", "output_tokens", "tool_names", "artifact_count", "timestamp", "restart_verified", "before_restart_exit_code", "after_restart_exit_code", "session_id", "environment_id", "template_revision", "pvc_uid", "completed_model_calls", "initial_successful_tool_counts"} {
 		if _, ok := fields[name]; !ok {
 			t.Fatalf("summary omitted %s", name)
 		}
 	}
-	if len(fields) != 11 {
-		t.Fatalf("summary field count=%d, want fixed allowlist of 11", len(fields))
+	if len(fields) != 17 {
+		t.Fatalf("summary field count=%d, want fixed allowlist of 17", len(fields))
 	}
 	var verified bool
 	if err := json.Unmarshal(fields["restart_verified"], &verified); err != nil || !verified {

@@ -36,7 +36,7 @@ func nativeSteps(t *testing.T) map[string]workflowStep {
 		t.Fatal(err)
 	}
 	job := workflow.Jobs["native-execution-live"]
-	if strings.Join(strings.Fields(job.If), " ") != "github.repository == 'stacklok/mecatl' && github.event_name == 'workflow_dispatch' && inputs.native_execution" || job.Timeout != 100 {
+	if strings.Join(strings.Fields(job.If), " ") != "github.repository == 'stacklok/mecatl' && github.event_name == 'workflow_dispatch' && inputs.native_execution" || job.Timeout != 270 {
 		t.Fatal("native job must remain explicitly dispatched, repo-gated, and bounded")
 	}
 	steps := make(map[string]workflowStep)

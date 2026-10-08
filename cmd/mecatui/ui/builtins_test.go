@@ -992,7 +992,7 @@ func TestDispatchBareBuiltinUnicodeWhitespaceThroughTextarea(t *testing.T) {
 func TestIsKnownBuiltinName(t *testing.T) {
 	known := []string{
 		"clear", "help", "quit", "title", "session", "retry", "toolcalls", "diagnostics", "compact", "mcp", "agents", "team", "skills", "soul", "memory",
-		"models", "effort", "worktrees", "schedule", "sessions", "learning", "learning-sensitivity", "posture",
+		"execution", "models", "effort", "worktrees", "schedule", "sessions", "learning", "learning-sensitivity", "posture",
 		"debug-ask",
 	}
 	for _, name := range known {

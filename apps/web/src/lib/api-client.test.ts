@@ -34,7 +34,7 @@ describe("protected request boundary", () => {
     });
     await expect(
       createSession({
-        body: { mode: "default", reasoningEffort: "default", toolAccess: "all" },
+        body: { mode: "default", reasoningEffort: "default" },
         throwOnError: true,
       }),
     ).rejects.toMatchObject({ code: "session_verification_required" });
@@ -46,7 +46,7 @@ describe("protected request boundary", () => {
       workspaceMounted: true,
     });
     await createSession({
-      body: { mode: "default", reasoningEffort: "default", toolAccess: "all" },
+      body: { mode: "default", reasoningEffort: "default" },
       throwOnError: true,
     });
     expect(fetch).toHaveBeenCalledTimes(1);

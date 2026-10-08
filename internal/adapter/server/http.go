@@ -61,6 +61,7 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 	h := &HTTPHandler{svc: svc, mux: http.NewServeMux()}
 	h.mux.HandleFunc("GET /v1/info", h.getServerInfo)
 	h.mux.HandleFunc("GET /v1/compatibility", h.getCompatibilityInfo)
+	h.mux.HandleFunc("GET /v1/execution-templates", h.listExecutionTemplates)
 	h.mux.HandleFunc("POST /v1/sessions", h.createSession)
 	for _, route := range []struct {
 		pattern string
@@ -218,6 +219,15 @@ func (h *HTTPHandler) getServerInfo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, h.svc.serverInfoResponse(providerID))
 }
 
+func (h *HTTPHandler) listExecutionTemplates(w http.ResponseWriter, r *http.Request) {
+	items, revision, err := h.svc.ListExecutionTemplates(r.Context())
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	h.writeExecutionCatalog(w, items, revision)
+}
+
 // --- request/response bodies ------------------------------------------------
 
 type createSessionBody struct {
@@ -227,12 +237,9 @@ type createSessionBody struct {
 	// Phase 0, S3). Empty both => the server default provider. ProviderID without
 	// ModelID => the provider's default model; ModelID without ProviderID is a
 	// client error (a bare model on the default provider is ambiguous).
-	ProviderID string `json:"provider_id,omitempty"`
-	ModelID    string `json:"model_id,omitempty"`
-	// Profile selects server-owned placement: "" binds the deployment default and
-	// "no-fs" explicitly attenuates filesystem access. The public request carries
-	// no workspace, cwd, placement ID, or selector. Any other value is a 400.
-	Profile string `json:"profile,omitempty"`
+	ProviderID string          `json:"provider_id,omitempty"`
+	ModelID    string          `json:"model_id,omitempty"`
+	Execution  json.RawMessage `json:"execution,omitempty"`
 	// ReasoningEffort sets the session's reasoning-effort tier (ADR 0055),
 	// mirroring the proto field: "" / "auto" = unset (operator/provider default),
 	// else low/medium/high/xhigh/max. The server normalises + per-provider-clamps +
@@ -315,12 +322,13 @@ type placementMetadataJSON struct {
 	Revision string `json:"revision,omitempty"`
 }
 
-// sessionCapabilitiesJSON mirrors mecatlv1.SessionCapabilities for the JSON
-// surface. Bools-only by design (the per-session surface is ONLY the model-varying
-// image/audio input axis); it structurally cannot leak a secret.
+// sessionCapabilitiesJSON mirrors per-session media inputs and effective
+// execution tool affordances; it structurally cannot leak a secret.
 type sessionCapabilitiesJSON struct {
-	Image bool `json:"image"`
-	Audio bool `json:"audio"`
+	Image          bool `json:"image"`
+	Audio          bool `json:"audio"`
+	ExecutionFiles bool `json:"execution_files"`
+	BuiltInShell   bool `json:"built_in_shell"`
 }
 
 // resolvedModelJSON mirrors mecatlv1.ResolvedModel for the JSON surface. It carries
@@ -502,7 +510,13 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 	// It is a deliberate behaviour CHANGE: a request carrying a stray field used to
 	// succeed. The strictness matches decodeLearningJSON's existing posture on this
 	// same handler set.
-	decoder := json.NewDecoder(r.Body)
+	const maxCreateBytes = 16 << 20
+	raw, readErr := io.ReadAll(io.LimitReader(r.Body, maxCreateBytes+1))
+	if readErr != nil || len(raw) > maxCreateBytes || rejectDuplicateJSONKeys(raw) != nil {
+		writeServiceError(w, ErrInvalidArgument)
+		return
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
@@ -515,13 +529,14 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 	if !requireCreateSessionAffinity(w, r, body.DebugTargetSessionID) {
 		return
 	}
-	// Parse only the public profile attenuation. The service binds either the
-	// deployment default or no-FS placement and validates the exact EnvironmentRef;
-	// this transport has no workspace-derived fallback.
-	profile, err := ParseSessionProfile(body.Profile)
+	execution, err := executionFromJSON(body.Execution)
 	if err != nil {
 		writeServiceError(w, err)
 		return
+	}
+	profile := ProfileDefault
+	if execution.Kind == PlacementSelectorNoFS {
+		profile = ProfileNoFS
 	}
 	var limits session.Limits
 	if body.Limits != nil {
@@ -533,6 +548,7 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 	}
 	sel := ProviderSelector{ProviderID: body.ProviderID, ModelID: body.ModelID, ReasoningEffort: body.ReasoningEffort}
 	var opts []CreateSessionOption
+	opts = append(opts, WithExecutionSelection(execution))
 	if body.DebugTargetSessionID != "" {
 		opts = append(opts, WithDebugTarget(session.SessionID(body.DebugTargetSessionID)))
 	}
@@ -557,9 +573,10 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 	}
 	responseDone := creatediag.Begin(r.Context(), "http_response")
 	scaps := h.svc.sessionCapabilitiesFor(sess)
+	files, shell := h.svc.executionSessionCapabilities(sess)
 	writeJSON(w, http.StatusCreated, createSessionResp{
 		SessionID:           string(sess.ID),
-		SessionCapabilities: &sessionCapabilitiesJSON{Image: scaps.Image, Audio: scaps.Audio},
+		SessionCapabilities: &sessionCapabilitiesJSON{Image: scaps.Image, Audio: scaps.Audio, ExecutionFiles: files, BuiltInShell: shell},
 		ResolvedModel:       resolvedModelToJSON(h.svc.resolvedModelFor(sess)),
 		Placement:           placementMetadataToJSON(sess.Placement),
 	})
@@ -682,6 +699,7 @@ func (h *HTTPHandler) writeSuccessor(ctx context.Context, w http.ResponseWriter,
 
 func (h *HTTPHandler) writeSession(w http.ResponseWriter, status int, sess *session.Session) {
 	scaps := h.svc.sessionCapabilitiesFor(sess)
+	files, shell := h.svc.executionSessionCapabilities(sess)
 	writeJSON(w, status, sessionResp{
 		SessionID:              string(sess.ID),
 		State:                  string(sess.State),
@@ -689,7 +707,7 @@ func (h *HTTPHandler) writeSession(w http.ResponseWriter, status int, sess *sess
 		Placement:              placementMetadataToJSON(sess.Placement),
 		Turns:                  sess.Counters.Turns,
 		ToolCalls:              sess.Counters.ToolCalls,
-		SessionCapabilities:    &sessionCapabilitiesJSON{Image: scaps.Image, Audio: scaps.Audio},
+		SessionCapabilities:    &sessionCapabilitiesJSON{Image: scaps.Image, Audio: scaps.Audio, ExecutionFiles: files, BuiltInShell: shell},
 		TitleMetadata:          sessionTitleToJSON(titlePayload(sess)),
 		TokenUsage:             tokenUsageToJSON(sess.TokenUsageSnapshot()),
 		ResolvedModel:          resolvedModelToJSON(h.svc.resolvedModelFor(sess)),
@@ -1786,16 +1804,16 @@ func (h *HTTPHandler) cleanupTeam(w http.ResponseWriter, r *http.Request) {
 // embedded in ScheduleSpec (the one_shot google.protobuf.Timestamp, the Content
 // oneof, the PermissionMode/MisfirePolicy enums) decode correctly from their
 // wire JSON forms (RFC3339 string, oneof field, enum name-or-number). It is run
-// through protoToScheduleSpec, the SAME mapping path the gRPC handler uses —
-// one validation/mapping chokepoint, not two. DiscardUnknown preserves the
-// previous lenient (ignore-unknown-field) decode behavior.
+// through protoToScheduleSpec, the SAME mapping path the gRPC handler uses.
+// Reject unknown fields, especially unsupported execution selectors: silently
+// discarding one would run a schedule under the deployment default instead.
 func decodeScheduleSpec(r *http.Request) (*mecatlv1.ScheduleSpec, error) {
 	data, err := io.ReadAll(r.Body)
 	if err != nil {
 		return nil, err
 	}
 	spec := &mecatlv1.ScheduleSpec{}
-	unmarshaler := protojson.UnmarshalOptions{DiscardUnknown: true}
+	unmarshaler := protojson.UnmarshalOptions{}
 	if err := unmarshaler.Unmarshal(data, spec); err != nil {
 		return nil, err
 	}

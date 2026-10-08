@@ -25,6 +25,23 @@ action or released a result; findings, failures, unresolved reviews, and
 approvals remain visible. To keep benign notices visible, configure
 [`hook_notices.show_benign`](./customization.md#show-benign-guardrail-notices).
 
+## Start a session with an execution choice
+
+Enter `/execution` while idle. Use `↑` and `↓` to choose **Deployment default**,
+**None**, or an eligible template, then press `enter` to create a new session.
+The existing session stays intact if creation fails. **None** binds no execution
+filesystem or built-in Shell; the default uses the deployment's configured
+execution. Template rows show operator-provided display names and exact pinned
+revisions, not paths or container settings. The server checks the selected revision
+and your access again at creation time; a stale or full template never falls back
+to the default. The success status and `/session` details report whether the new
+session actually has execution files and a built-in Shell.
+
+When catalog discovery is disabled or temporarily unavailable, the picker still
+allows default and none. An empty catalog has no templates eligible for your
+account. If a selected template becomes unavailable, reopen `/execution` to refresh
+and retry. Debug chats stay file-less and do not offer this switch.
+
 ## Attach a local file
 
 Type `@` to complete and attach a file. Ordinary `@path` and `@./path` completion

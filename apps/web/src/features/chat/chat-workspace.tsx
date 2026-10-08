@@ -27,6 +27,7 @@ import {
   getRuntimeSettingsOptions,
   getSessionDetailOptions,
   getSessionTranscriptOptions,
+  listExecutionTemplatesOptions,
   listSessionsOptions,
   listSessionsQueryKey,
   renameSessionMutation,
@@ -276,7 +277,6 @@ interface TextPrompt {
 const defaultDraftConfiguration: DraftChatConfiguration = {
   mode: "default",
   reasoningEffort: "default",
-  toolAccess: "all",
 };
 
 function delegationFamilyForKind(kind: string): DelegationFocus["family"] | undefined {
@@ -331,6 +331,14 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const sessions = useQuery(listSessionsOptions());
   const runtime = useQuery(getRuntimeOptions());
   const runtimeSettings = useQuery(getRuntimeSettingsOptions());
+  const templatesEnabled =
+    runtime.data?.capabilities.executionTemplates === true &&
+    runtime.data.features.includes("execution_templates");
+  const templates = useQuery({
+    ...listExecutionTemplatesOptions(),
+    enabled: !sessionId && templatesEnabled,
+    retry: false,
+  });
   const transcript = useQuery({
     ...getSessionTranscriptOptions({ path: { sessionId: sessionId ?? "" } }),
     enabled: Boolean(sessionId),
@@ -809,7 +817,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     ? {
         ...sessionDetail.data,
         capabilities: {
-          image: sessionDetail.data.capabilities.image,
+          ...sessionDetail.data.capabilities,
           manualCompaction:
             sessionDetail.data.capabilities.manualCompaction ||
             runtime.data?.capabilities.manualCompaction === true,
@@ -842,11 +850,15 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           : seedMode === "acceptEdits"
             ? "Accept edits"
             : "Loading permission mode",
-    toolAccess: sessionId
-      ? undefined
-      : draftConfiguration.toolAccess === "all"
-        ? "All"
-        : "No filesystem",
+    execution: sessionId
+      ? displayedDetail
+        ? `Files: ${displayedDetail.capabilities.executionFiles ? "available" : "unavailable"}; built-in Shell: ${displayedDetail.capabilities.builtInShell ? "available" : "unavailable"}`
+        : "Loading execution capabilities"
+      : draftConfiguration.execution === undefined
+        ? "Deployment default (files and Shell depend on server)"
+        : "none" in draftConfiguration.execution
+          ? "No files or built-in Shell"
+          : `Template ${draftConfiguration.execution.template.id} (${draftConfiguration.execution.template.revision.slice(0, 14)}…)`,
   };
 
   // A proven server-owned continuation may need a new reader even before the
@@ -1181,7 +1193,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     setNotice("Creating a diagnostic chat…");
     try {
       const created = await createSession.mutateAsync({
-        body: { debugTargetSessionId: targetSessionId },
+        body: { debugTargetSessionId: targetSessionId, execution: { none: {} } },
       });
       await queryClient.invalidateQueries({ queryKey: listSessionsQueryKey() });
       await selectSession(created.id);
@@ -1333,7 +1345,14 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     } catch (caught) {
       end = { kind: "uncertain" };
       if (!controller.signal.aborted) {
-        if (owns()) setError(`Could not confirm this run's outcome: ${errorMessage(caught)}`);
+        if (owns())
+          setError(
+            !activeSessionId &&
+              draftConfiguration.execution &&
+              "template" in draftConfiguration.execution
+              ? "Could not create this chat with the selected template. Refresh the catalog or choose another revision; capacity may be full. Your draft was not sent, and no default was substituted."
+              : `Could not confirm this run's outcome: ${errorMessage(caught)}`,
+          );
       }
     } finally {
       if (!accepted) onAccepted?.(false);
@@ -2946,11 +2965,26 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         />
         <ChatComposer
           clearDraftSignal={clearDraftSignal}
+          executionInventory={templates.data}
+          executionStatus={
+            !runtime.data
+              ? "loading"
+              : !templatesEnabled
+                ? "disabled"
+                : templates.isError
+                  ? "unavailable"
+                  : templates.isPending
+                    ? "loading"
+                    : "ready"
+          }
           configuration={sessionId ? undefined : draftConfiguration}
           disabled={createSession.isPending}
           imageAttachmentsSupported={imageAttachmentsSupported}
           models={models}
           onConfigurationChange={setDraftConfiguration}
+          onRefreshExecution={() => {
+            void templates.refetch();
+          }}
           onDraftChange={setComposerDraftPresent}
           onPreviewImage={(image) =>
             setContentPreview({ file: imagePreview(image, false), kind: "file" })

@@ -107,15 +107,15 @@ func newADR0291Service(t *testing.T) *Service {
 
 func TestADR_0291_CreateSessionAcceptsOnlyDefaultOrNoFS(t *testing.T) {
 	h := NewHarnessServer(newADR0291Service(t))
-	for _, req := range []*mecatlv1.CreateSessionRequest{{}, {Profile: "no-fs"}} {
+	for _, req := range []*mecatlv1.CreateSessionRequest{{}, {Execution: &mecatlv1.ExecutionSelection{None: &mecatlv1.ExecutionNone{}}}} {
 		resp, err := h.CreateSession(context.Background(), req)
 		if err != nil {
-			t.Fatalf("CreateSession(%q): %v", req.GetProfile(), err)
+			t.Fatalf("CreateSession(%q): %v", req.GetExecution(), err)
 		}
 		if resp.GetSessionId() == "" || resp.GetPlacement() == nil {
 			t.Fatalf("response = %+v", resp)
 		}
-		if got := resp.GetPlacement(); req.GetProfile() == "" && (got.GetLabel() != "Primary repository" || got.GetBranch() != "main" || got.GetRevision() != "display-rev") {
+		if got := resp.GetPlacement(); req.GetExecution() == nil && (got.GetLabel() != "Primary repository" || got.GetBranch() != "main" || got.GetRevision() != "display-rev") {
 			t.Fatalf("create placement metadata = %+v", got)
 		}
 		if strings.Contains(resp.String(), adrPrivateRoot) || strings.Contains(resp.String(), "rev-private") {

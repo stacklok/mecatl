@@ -276,15 +276,15 @@ jobs:
       github.repository == 'stacklok/mecatl' &&
       github.event_name == 'workflow_dispatch' && inputs.native_execution
     runs-on: ubuntu-24.04
-    timeout-minutes: 100
+    timeout-minutes: 270
     concurrency:
       group: e2e-live-native-execution
       cancel-in-progress: false
     env:
       NATIVE_CI_DIR: ${{ github.workspace }}/.scratch/native-live-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
-      # Step ceilings sum to 98m: setup 9, production 50, credential 1,
-      # live 25, cleanup 10, reporting 3. The job retains 2m overhead.
+      # Step ceilings sum to 258m: setup 9, production 210, credential 1,
+      # live 25, cleanup 10, reporting 3. The job retains 12m overhead.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         timeout-minutes: 1
         with:
@@ -330,12 +330,12 @@ jobs:
       # No provider secret here. run.sh installs pinned Calico and retains the
       # owned cluster; the success dependency, not ownership.profile, admits live.
       - name: Qualify production execution
-        timeout-minutes: 50
+        timeout-minutes: 210
         id: production
         env:
           CONTAINER_ENGINE: docker
           MECATL_EXECUTION_QUAL_CI: "0"
-        run: MECATL_EXECUTION_QUAL_OUTPUT="$GITHUB_OUTPUT" timeout --kill-after=15s 49m task e2e:k8s:execution:production
+        run: MECATL_EXECUTION_QUAL_OUTPUT="$GITHUB_OUTPUT" timeout --kill-after=15s 208m task e2e:k8s:execution:production
       - name: Stage private provider credential
         timeout-minutes: 1
         id: credential

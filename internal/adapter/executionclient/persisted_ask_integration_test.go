@@ -32,19 +32,12 @@ func TestNativeBuildResolvePersistedShellAskAfterRestart(t *testing.T) {
 	for _, key := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"} {
 		t.Setenv(key, t.TempDir())
 	}
-	profilePath := filepath.Join(t.TempDir(), "profiles.yaml")
-	profileYAML := []byte("profiles:\n  coding:\n    image: example.test/executor@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n    storageClass: standard\n    storageSize: 1Gi\n    cpuRequest: 100m\n    memoryRequest: 128Mi\n    cpuLimit: 1\n    memoryLimit: 1Gi\n    ephemeralStorageRequest: 256Mi\n    ephemeralStorageLimit: 1Gi\n    tmpSizeLimit: 128Mi\n    runtimeClassName: gvisor\n    maxFileBytes: 5242880\n    maxCommandBytes: 1048576\n    maxCommandDuration: 1m\n    maxEnvironments: 10\n")
-	if err := os.WriteFile(profilePath, profileYAML, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	profiles, err := executioncontroller.LoadProfiles(profilePath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	profiles := explicitIDProfiles(t)
 	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{executioncontroller.ExecutionEnvironmentGVR: "ExecutionEnvironmentList"})
 	executor := &recordingExecutor{}
 	controllerStore := executioncontroller.NewStore(dyn, "ns", profiles, executor)
-	profile, err := controllerStore.ValidateProfile(t.Context(), "coding")
+	revision := profiles.DefaultRevision("coding")
+	profile, err := controllerStore.ValidateTemplate(t.Context(), "coding", revision)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +49,7 @@ func TestNativeBuildResolvePersistedShellAskAfterRestart(t *testing.T) {
 	ref := session.EnvironmentRef{Kind: session.EnvironmentKind("kubernetes"), ID: "env-persisted", Revision: "rev-1"}
 	envObj := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": ref.ID, "namespace": "ns"},
-		"spec":   map[string]any{"schemaVersion": int64(2), "revision": ref.Revision, "ownerHash": hex.EncodeToString(ownerSum[:]), "ownerIssuer": owner.Issuer, "ownerSubject": owner.Subject, "clientHash": hex.EncodeToString(clientSum[:]), "bindingID": string(sessionID), "profile": "coding", "profileDigest": profile.Digest, "desired": "Active"},
+		"spec":   map[string]any{"schemaVersion": int64(2), "revision": ref.Revision, "ownerHash": hex.EncodeToString(ownerSum[:]), "ownerIssuer": owner.Issuer, "ownerSubject": owner.Subject, "clientHash": hex.EncodeToString(clientSum[:]), "bindingID": string(sessionID), "templateID": "coding", "templateRevision": revision, "templateDigest": profile.Digest, "desired": "Active"},
 		"status": map[string]any{"schemaVersion": int64(2), "epoch": int64(1), "grantGeneration": int64(1), "fenceState": "Healthy", "pod": map[string]any{"name": "executor-pod"}, "references": []any{map[string]any{"bindingID": string(sessionID), "state": "Published", "operationID": "seed", "createdAt": now.Format(time.RFC3339Nano)}}, "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}},
 	}}
 	if _, err := dyn.Resource(executioncontroller.ExecutionEnvironmentGVR).Namespace("ns").Create(t.Context(), envObj, metav1.CreateOptions{}); err != nil {
@@ -69,7 +62,7 @@ func TestNativeBuildResolvePersistedShellAskAfterRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer client.Close()
-	provider, err := NewProvider(client, "coding")
+	provider, err := NewTemplateProvider(client, "coding", revision)
 	if err != nil {
 		t.Fatal(err)
 	}

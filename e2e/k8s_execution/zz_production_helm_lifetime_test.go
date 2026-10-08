@@ -5,11 +5,9 @@ package k8s_execution_test
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
-	"crypto/x509"
-	"encoding/base64"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -21,10 +19,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/goccy/go-yaml"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 
-	"github.com/stacklok/mecatl/internal/adapter/executionclient"
+	"github.com/stacklok/mecatl/internal/adapter/executioncontroller"
 	"github.com/stacklok/mecatl/internal/executionenv"
 )
 
@@ -45,16 +44,16 @@ func TestKindExecutionProductionHelmLifetime(t *testing.T) {
 			t.Fatal("create lifetime workspace data:", remoteErrorCode(err))
 		}
 	}
-	built, err := client.StartCommand(ctx, executionenv.CommandStartRequest{Context: rc, Command: "go build -o helm-probe helm-probe.go", TimeoutMillis: 30000})
+	built, err := client.StartCommand(ctx, executionenv.CommandStartRequest{Context: rc, Command: "go build -o helm-probe helm-probe.go", TimeoutMillis: 120000})
 	if err != nil || built.State != executionenv.CommandSucceeded || built.Result.ExitCode != 0 {
 		t.Fatal("build lifetime probe failed")
 	}
-	assertRetiredFixtureKeyDenied(ctx, t, client, state, rc, "helm-sentinel", "retained-helm-data\n")
+	waitFileContent(t, ctx, client, rc, "helm-sentinel", "retained-helm-data\n", "current run after provisioning")
 	release()
 	// Occupy the single-slot profile; its reservation must still constrain Ensure
 	// after adoption, rather than only matching a ConfigMap annotation.
 	quotaBinding := fmt.Sprintf("helm-quota-%d", time.Now().UnixNano())
-	quota, err := client.Ensure(ctx, quotaBinding, "quota-cas", owner, "ensure-"+quotaBinding)
+	quota, err := client.EnsureTemplate(ctx, quotaBinding, "quota-cas", kindTemplateRevision(t, ctx, client, "quota-cas"), owner, "ensure-"+quotaBinding)
 	if err != nil {
 		t.Fatal("reserve lifetime capacity:", remoteErrorCode(err))
 	}
@@ -123,12 +122,19 @@ func TestKindExecutionProductionHelmLifetime(t *testing.T) {
 		_, err := helmLifetime(ctx, kubeconfig, "upgrade", "--install", "mecatl-execution", chart, "-f", valuesPath, "--wait", "--timeout=4m")
 		return err
 	}
+	var restoreDefaultChoice func() error
 	t.Cleanup(func() {
 		cleanupStarted := time.Now()
 		t.Log("stage=helm_cleanup starting")
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 7*time.Minute)
 		defer cleanupCancel()
 		requireOwnedHelmFixture(t, state, kubeconfig)
+		if restoreDefaultChoice != nil {
+			if err := restoreDefaultChoice(); err != nil {
+				t.Error("restore default template selection failed:", err)
+				return
+			}
+		}
 		if err := restore(cleanupCtx); err != nil {
 			t.Error("restore owned release/current authority failed:", err)
 		}
@@ -136,15 +142,16 @@ func TestKindExecutionProductionHelmLifetime(t *testing.T) {
 	})
 	capacityBefore := lifetimeConfigMap(ctx, t, kubeconfig, "mecatl-execution-profile-allocations")
 	authorityBefore := lifetimeConfigMap(ctx, t, kubeconfig, "mecatl-execution-security-authority")
-	var priorHistory struct {
-		Fingerprints map[string]string `json:"fingerprints"`
+	var beforePolicy struct {
+		Generation uint64 `json:"generation"`
+		Digest     string `json:"digest"`
 	}
-	if err := json.Unmarshal([]byte(authorityBefore.Data["state.json"]), &priorHistory); err != nil || len(priorHistory.Fingerprints) == 0 {
-		t.Fatal("missing pre-upgrade authority history")
+	if err := json.Unmarshal([]byte(authorityBefore.Data["state.json"]), &beforePolicy); err != nil || beforePolicy.Generation == 0 || beforePolicy.Digest == "" {
+		t.Fatal("missing pre-upgrade policy authority")
 	}
 	policiesBefore := lifetimePolicies(ctx, t, kubeconfig)
 	liveLedgers := map[string]corev1.ConfigMap{capacityBefore.Name: capacityBefore, authorityBefore.Name: authorityBefore, current.Name: current}
-	liveLedgers["mecatl-execution-profiles"] = lifetimeConfigMap(ctx, t, kubeconfig, "mecatl-execution-profiles")
+	liveLedgers["mecatl-execution-templates"] = lifetimeConfigMap(ctx, t, kubeconfig, "mecatl-execution-templates")
 	waitProviderReadyReplicas(t, ctx, kubeconfig, 2)
 	logQualificationStage(t, &stageStarted, "prepare_upgrade_fixture", "live_upgrade_rejection")
 	if _, err := helmLifetime(ctx, kubeconfig, "upgrade", "mecatl-execution", chart, "-f", valuesPath, "--wait", "--timeout=4m"); !errors.Is(err, errLifetimeNotQuiesced) {
@@ -159,17 +166,18 @@ func TestKindExecutionProductionHelmLifetime(t *testing.T) {
 	if err := restore(ctx); err != nil {
 		t.Fatal("compatible Helm upgrade failed:", err)
 	}
+	waitSecurityGeneration(ctx, t, kubeconfig, uint64(generation+1))
 	waitProviderReadyReplicas(t, ctx, kubeconfig, 2)
 	ledgers := map[string]corev1.ConfigMap{}
-	for _, name := range []string{"mecatl-execution-security-authority", "mecatl-execution-profile-allocations", "mecatl-execution-profiles", "mecatl-execution-security-manifest"} {
+	for _, name := range []string{"mecatl-execution-security-authority", "mecatl-execution-profile-allocations", "mecatl-execution-templates", "mecatl-execution-security-manifest"} {
 		ledgers[name] = lifetimeConfigMap(ctx, t, kubeconfig, name)
 	}
 	var highWater struct {
-		Generation   uint64            `json:"generation"`
-		Fingerprints map[string]string `json:"fingerprints"`
+		Generation uint64 `json:"generation"`
+		Digest     string `json:"digest"`
 	}
-	if err := json.Unmarshal([]byte(ledgers["mecatl-execution-security-authority"].Data["state.json"]), &highWater); err != nil || highWater.Generation != uint64(generation+1) || !reflect.DeepEqual(highWater.Fingerprints, priorHistory.Fingerprints) {
-		t.Fatal("upgrade did not preserve key history and publish higher authority")
+	if err := json.Unmarshal([]byte(ledgers["mecatl-execution-security-authority"].Data["state.json"]), &highWater); err != nil || highWater.Generation != uint64(generation+1) || highWater.Digest == "" || highWater.Digest == beforePolicy.Digest {
+		t.Fatal("upgrade did not advance the generation-bound client policy authority")
 	}
 	if capacityAfter := ledgers[capacityBefore.Name]; capacityAfter.UID != capacityBefore.UID || !reflect.DeepEqual(capacityAfter.Data, capacityBefore.Data) {
 		t.Fatal("compatible upgrade changed capacity reservations")
@@ -199,8 +207,10 @@ func TestKindExecutionProductionHelmLifetime(t *testing.T) {
 		t.Fatal("retained workspace data changed during provider absence")
 	}
 	logQualificationStage(t, &stageStarted, "uninstall_and_retained_workload", "negative_adoption")
-	// An incompatible profile is refused before a new release can mutate anything.
-	if _, err := helmLifetime(ctx, kubeconfig, "install", "mecatl-execution", chart, "-f", valuesPath, "--set", "profiles.go.maxEnvironments=30", "--dry-run=server"); err == nil {
+	// A changed historical recipe is refused before any resource can be adopted.
+	goTemplate := values["templates"].(map[string]any)["go"].(map[string]any)
+	oldRevision := goTemplate["default"].(string)
+	if _, err := helmLifetime(ctx, kubeconfig, "install", "mecatl-execution", chart, "-f", valuesPath, "--set", "templates.go.revisions."+oldRevision+".execution.maxEnvironments=30", "--dry-run=server"); err == nil {
 		t.Fatal("incompatible reinstall was accepted")
 	}
 	// Refusal must happen without adopting another release or bootstrapping a
@@ -230,9 +240,9 @@ func TestKindExecutionProductionHelmLifetime(t *testing.T) {
 	}
 	rc, release = acquireRun(t, ctx, reattachedClient, owner, binding, reattached, "helm-lifetime-read")
 	waitFileContent(t, ctx, reattachedClient, rc, "helm-sentinel", "retained-helm-data\n", "same-release Helm adoption")
-	assertRetiredFixtureKeyDenied(ctx, t, reattachedClient, state, rc, "helm-sentinel", "retained-helm-data\n")
+	waitFileContent(t, ctx, reattachedClient, rc, "helm-sentinel", "retained-helm-data\n", "current run after reattach")
 	release()
-	if _, err := reattachedClient.Ensure(ctx, quotaBinding+"-excess", "quota-cas", owner, "ensure-"+quotaBinding+"-excess"); !isRemoteCode(err, executionenv.CodeResourceExhausted) {
+	if _, err := reattachedClient.EnsureTemplate(ctx, quotaBinding+"-excess", "quota-cas", kindTemplateRevision(t, ctx, reattachedClient, "quota-cas"), owner, "ensure-"+quotaBinding+"-excess"); !isRemoteCode(err, executionenv.CodeResourceExhausted) {
 		t.Fatal("retained capacity did not reject excess allocation:", remoteErrorCode(err))
 	}
 	logQualificationStage(t, &stageStarted, "reinstall_and_reattach", "stale_authority_restore")
@@ -258,104 +268,208 @@ func TestKindExecutionProductionHelmLifetime(t *testing.T) {
 	waitProviderReadyReplicas(t, ctx, kubeconfig, 2)
 	restoredClient, _ := productionClient(t, ctx, state, kubeconfig)
 	waitReady(t, ctx, restoredClient, owner, binding, attached.Environment)
-	logQualificationStage(t, &stageStarted, "stale_authority_restore", "cleanup")
+	logQualificationStage(t, &stageStarted, "stale_authority_restore", "publish_new_revision")
+
+	definitions := goTemplate["revisions"].(map[string]any)
+	oldExecution := definitions[oldRevision].(map[string]any)["execution"].(map[string]any)
+	newExecution := make(map[string]any, len(oldExecution))
+	for key, value := range oldExecution {
+		newExecution[key] = value
+	}
+	newExecution["maxCommandDuration"] = "4m"
+	canonicalInput, err := json.Marshal(newExecution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var spec executioncontroller.ProfileSpec
+	if err := yaml.Unmarshal(canonicalInput, &spec); err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(append([]byte("mecatl/execution-template/v1\x00"), canonical...))
+	newRevision := "v1-" + hex.EncodeToString(sum[:])
+	if newRevision == oldRevision {
+		t.Fatal("new recipe did not change revision")
+	}
+	definitions[newRevision] = map[string]any{"execution": newExecution}
+	goTemplate["default"] = newRevision
+	writeValues := func() {
+		t.Helper()
+		content, err := json.Marshal(values)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(valuesPath, content, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	restoreDefaultChoice = func() error {
+		goTemplate["default"] = oldRevision
+		delete(definitions[oldRevision].(map[string]any), "deprecated")
+		content, err := json.Marshal(values)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(valuesPath, content, 0o600)
+	}
+	writeValues()
+	if err := restore(ctx); err != nil {
+		t.Fatal("publish additive execution revision:", err)
+	}
+	newClient, _ := productionClient(t, ctx, state, kubeconfig)
+	if _, err := newClient.ValidateTemplate(ctx, "go", newRevision); err != nil {
+		t.Fatal("new published revision unavailable:", err)
+	}
+	runKubectl(t, ctx, kubeconfig, "rollout", "restart", "deployment/mecak8s", "-n", namespace)
+	runKubectl(t, ctx, kubeconfig, "rollout", "status", "deployment/mecak8s", "-n", namespace, "--timeout=240s")
+	issuerForward := portForward(t, ctx, kubeconfig, "service/oidc-issuer", 8443)
+	aliceToken := fixtureToken(t, ctx, issuerForward.addr, filepath.Join(state, "pki"), "alice")
+	issuerForward.stop()
+	agentForward := portForward(t, ctx, kubeconfig, "service/mecak8s", 8081)
+	defer agentForward.stop()
+	status, publicCatalog := request(t, ctx, "GET", "http://"+agentForward.addr+"/v1/execution-templates", aliceToken, nil)
+	if status != 200 || !bytes.Contains(publicCatalog, []byte(newRevision)) || !bytes.Contains(publicCatalog, []byte(oldRevision)) {
+		t.Fatal("authenticated public catalog did not publish both retained revisions")
+	}
+	newSession := createSession(t, ctx, agentForward.addr, aliceToken, newRevision)
+	newRef := environmentForBinding(t, ctx, kubeconfig, newSession)
+	if newRef == attached.Environment {
+		t.Fatal("new public revision reused the old allocation")
+	}
+	newOwner := executionenv.Owner{Issuer: owner.Issuer, Subject: "alice"}
+	if got := waitReady(t, ctx, newClient, newOwner, newSession, newRef); got.Environment != newRef {
+		t.Fatal("new public revision failed to bind")
+	}
+	oldReady := waitReady(t, ctx, newClient, owner, binding, attached.Environment)
+	oldRun, done := acquireRun(t, ctx, newClient, owner, binding, oldReady, "historical-revision-shell")
+	waitFileContent(t, ctx, newClient, oldRun, "helm-sentinel", "retained-helm-data\n", "historical template after provider restart")
+	shell, err := newClient.StartCommand(ctx, executionenv.CommandStartRequest{Context: oldRun, Command: "go version", TimeoutMillis: 30000})
+	if err != nil || shell.State != executionenv.CommandSucceeded || shell.Result.ExitCode != 0 {
+		t.Fatal("historical revision lost its bound Shell")
+	}
+	done()
+
+	// Only new binds are blocked by deprecation; old exact references and the
+	// PVC remain readable after another provider restart.
+	definitions[oldRevision].(map[string]any)["deprecated"] = true
+	writeValues()
+	if err := restore(ctx); err != nil {
+		t.Fatal("deprecate historical revision:", err)
+	}
+	deprecatedClient, _ := productionClient(t, ctx, state, kubeconfig)
+	if _, err := deprecatedClient.ValidateTemplate(ctx, "go", oldRevision); err == nil {
+		t.Fatal("deprecated revision remained eligible for new binding")
+	}
+	if _, err := deprecatedClient.EnsureTemplate(ctx, "deprecated-new-binding", "go", oldRevision, owner, "deprecated-ensure"); err == nil {
+		t.Fatal("deprecated revision accepted a new allocation")
+	}
+	deprecatedRequest, err := json.Marshal(map[string]any{"execution": map[string]any{"template": map[string]string{"id": "go", "revision": oldRevision}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status, _ := request(t, ctx, "POST", "http://"+agentForward.addr+"/v1/sessions", aliceToken, deprecatedRequest); status == 201 || status/100 != 4 {
+		t.Fatalf("deprecated public template bind status=%d", status)
+	}
+	if got := waitReady(t, ctx, deprecatedClient, owner, binding, attached.Environment); got.Environment != attached.Environment {
+		t.Fatal("deprecation broke an existing exact reference")
+	}
+	if uid := readExecutionStatus(t, ctx, kubeconfig, attached.Environment.ID).PVCUID; uid != before.PVCUID {
+		t.Fatal("revision publication/deprecation replaced retained PVC")
+	}
+	// Exercise revocation only on the disposable allocation of the newly
+	// published revision. Make the old revision eligible again as the default,
+	// then revoke the active non-default revision across a Helm/provider restart.
+	goTemplate["default"] = oldRevision
+	delete(definitions[oldRevision].(map[string]any), "deprecated")
+	newReady := waitReady(t, ctx, deprecatedClient, newOwner, newSession, newRef)
+	claim, err := deprecatedClient.AcquireRun(ctx, executionenv.RunClaimRequest{Environment: newReady.Environment, Owner: newOwner, BindingID: newSession, RunID: "helm-revoked-active", OperationID: "helm-revoked-active", TTL: 5 * time.Minute})
+	if err != nil {
+		t.Fatal("acquire revocation proof run:", remoteErrorCode(err))
+	}
+	active := executionenv.RequestContext{Environment: claim.Environment, Owner: newOwner, BindingID: newSession, RunID: claim.RunID, ClaimID: claim.ClaimID, Epoch: claim.Epoch, GrantGeneration: claim.GrantGeneration}
+	commandResult := make(chan executionenv.CommandStartResponse, 1)
+	commandError := make(chan error, 1)
+	go func() {
+		result, err := deprecatedClient.StartCommand(ctx, executionenv.CommandStartRequest{Context: active, Command: "printf 'running\\n' > revoke-running; sleep 220", TimeoutMillis: 240000})
+		commandResult <- result
+		commandError <- err
+	}()
+	newPod := kubeValue(t, ctx, kubeconfig, "get", "pods", "-n", namespace, "-l", "execution.mecatl.dev/environment="+newRef.ID, "-o", "jsonpath={.items[0].metadata.name}")
+	startDeadline := time.Now().Add(30 * time.Second)
+	for {
+		marker, err := command(ctx, kubeconfig, "exec", "-n", namespace, newPod, "--", "cat", "/workspace/revoke-running").CombinedOutput()
+		if err == nil && string(marker) == "running\n" {
+			break
+		}
+		if time.Now().After(startDeadline) || ctx.Err() != nil {
+			t.Fatal("active command did not start before revocation")
+		}
+		time.Sleep(time.Second)
+	}
+	newStatus := readExecutionStatus(t, ctx, kubeconfig, newRef.ID)
+	definitions[newRevision].(map[string]any)["revoked"] = true
+	writeValues()
+	if err := restore(ctx); err != nil {
+		t.Fatal("revoke actively used revision through Helm:", err)
+	}
+	revokedClient, _ := productionClient(t, ctx, state, kubeconfig)
+	// Revocation retains the Pod finalizer as evidence; require kubelet termination, not deletion.
+	waitExecutorTerminal(ctx, t, kubeconfig, newRef.ID, newStatus.PodUID)
+	select {
+	case result := <-commandResult:
+		if result.State == executionenv.CommandSucceeded {
+			t.Fatal("revoked active command completed successfully")
+		}
+		<-commandError
+	case <-time.After(30 * time.Second):
+		t.Fatal("revoked active command was not canceled after executor termination")
+	}
+	if uid := readExecutionStatus(t, ctx, kubeconfig, newRef.ID).PVCUID; uid != newStatus.PVCUID || uid == "" {
+		t.Fatal("revocation changed retained workspace PVC")
+	}
+	if _, err := revokedClient.Attach(ctx, executionenv.AttachEnvironmentRequest{Context: executionenv.RequestContext{Environment: newRef, Owner: newOwner, BindingID: newSession}, Purpose: executionenv.PurposeSession}); err == nil {
+		t.Fatal("revoked allocation reattached")
+	}
+	if _, err := revokedClient.AcquireRun(ctx, executionenv.RunClaimRequest{Environment: newRef, Owner: newOwner, BindingID: newSession, RunID: "revoked-new-run", OperationID: "revoked-new-run", TTL: time.Minute}); err == nil {
+		t.Fatal("revoked allocation admitted a new run")
+	}
+	if _, err := revokedClient.File(ctx, executionenv.FileRequest{Context: active, Operation: executionenv.OpFileRead, Path: "revoke-running"}); err == nil {
+		t.Fatal("revoked allocation admitted file access")
+	}
+	// The derivative has only one published revision. Remove its default and
+	// revoke that last revision through the real Helm ConfigMap/provider restart.
+	utility := values["templates"].(map[string]any)["operator-utility"].(map[string]any)
+	utilityRevision := utility["default"].(string)
+	utilityBinding := "helm-sole-revocation"
+	utilityAllocation, err := revokedClient.EnsureTemplate(ctx, utilityBinding, "operator-utility", utilityRevision, owner, "helm-sole-ensure")
+	if err != nil {
+		t.Fatal("create retained sole-revision allocation:", err)
+	}
+	utilityRef := utilityAllocation.Environment
+	utilityReady := waitReady(t, ctx, revokedClient, owner, utilityBinding, utilityRef)
+	utilityPVC := readExecutionStatus(t, ctx, kubeconfig, utilityReady.Environment.ID).PVCUID
+	delete(utility, "default")
+	utility["revisions"].(map[string]any)[utilityRevision].(map[string]any)["revoked"] = true
+	writeValues()
+	if err := restore(ctx); err != nil {
+		t.Fatal("revoke sole revision through Helm:", err)
+	}
+	soleClient, _ := productionClient(t, ctx, state, kubeconfig)
+	if _, err := soleClient.ValidateTemplate(ctx, "operator-utility", utilityRevision); err == nil {
+		t.Fatal("revoked sole revision remained selectable")
+	}
+	if _, err := soleClient.Attach(ctx, executionenv.AttachEnvironmentRequest{Context: executionenv.RequestContext{Environment: utilityRef, Owner: owner, BindingID: utilityBinding}, Purpose: executionenv.PurposeSession}); err == nil {
+		t.Fatal("revoked sole revision reattached")
+	}
+	if got := readExecutionStatus(t, ctx, kubeconfig, utilityRef.ID).PVCUID; got != utilityPVC || got == "" {
+		t.Fatal("sole revision revocation lost retained PVC")
+	}
+	logQualificationStage(t, &stageStarted, "publish_new_revision", "cleanup")
 	// Retain the test's data by default, as the chart does; no forced cleanup or
 	// finalizer removal. The explicit test-cluster owner controls final disposal.
-}
-
-// Quiesced upgrades can outlive a grant/claim. Re-sign the CURRENT claim with
-// the fixture's retired k1, before and after adoption: expiry, released claims,
-// and stale epochs cannot masquerade as durable authority rejection.
-func assertRetiredFixtureKeyDenied(ctx context.Context, t *testing.T, client *executionclient.Client, state string, rc executionenv.RequestContext, path, want string) {
-	t.Helper()
-	old := resignFixtureGrant(t, rc, filepath.Join(state, "pki", "grant-key.pem"), "k1", rc.GrantGeneration)
-	waitFileContent(t, ctx, client, rc, path, want, "current authority before retired-key probe")
-	if _, err := client.File(ctx, executionenv.FileRequest{Context: old, Operation: executionenv.OpFileRead, Path: path}); !isRemoteCode(err, executionenv.CodePermissionDenied) {
-		var remote *executionenv.Error
-		t.Fatalf("retired signing authority rejection: errorCode=%s retryable=%t", remoteErrorCode(err), errors.As(err, &remote) && remote.Retryable)
-	}
-	waitFileContent(t, ctx, client, rc, path, want, "current authority after retired-key probe")
-}
-
-func resignFixtureGrant(t *testing.T, rc executionenv.RequestContext, keyPath, keyID string, generation uint64) executionenv.RequestContext {
-	t.Helper()
-	parts := strings.Split(rc.Grant, ".")
-	if len(parts) != 3 {
-		t.Fatal("invalid current fixture grant")
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		t.Fatal("decode current fixture grant")
-	}
-	var claims executionenv.GrantClaims
-	if err := json.Unmarshal(payload, &claims); err != nil {
-		t.Fatal("decode current fixture claims")
-	}
-	material, err := os.ReadFile(keyPath)
-	if err != nil {
-		t.Fatal("read test-owned signing key")
-	}
-	block, _ := pem.Decode(material)
-	if block == nil {
-		t.Fatal("decode test-owned signing key")
-	}
-	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-	if err != nil {
-		t.Fatal("parse test-owned signing key")
-	}
-	private, ok := key.(ed25519.PrivateKey)
-	if !ok {
-		t.Fatal("fixture signing key is not Ed25519")
-	}
-	claims.KeyID = keyID
-	claims.GrantGeneration = generation
-	probe := rc
-	probe.GrantGeneration = generation
-	probe.Grant, err = executionenv.SignGrant(private, claims)
-	if err != nil {
-		t.Fatal("sign fixture grant")
-	}
-	verifier := executionenv.GrantVerifier{Keys: map[string]ed25519.PublicKey{keyID: private.Public().(ed25519.PublicKey)}, Issuer: claims.Issuer, Audience: claims.Audience, MaxLifetime: time.Minute}
-	if _, err := verifier.Verify(probe.Grant, executionenv.GrantExpectation{Client: claims.Client, OwnerHash: claims.OwnerHash, BindingID: rc.BindingID, RunID: rc.RunID, ClaimID: rc.ClaimID, Environment: rc.Environment, Epoch: rc.Epoch, GrantGeneration: generation, Operation: executionenv.OpFileRead}); err != nil {
-		t.Fatal("fixture probe is not cryptographically valid and current")
-	}
-	return probe
-}
-
-func TestResignFixtureGrantChangesOnlyRequestedAuthority(t *testing.T) {
-	key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{7}, ed25519.SeedSize))
-	der, err := x509.MarshalPKCS8PrivateKey(key)
-	if err != nil {
-		t.Fatal("marshal synthetic signing key")
-	}
-	keyPath := filepath.Join(t.TempDir(), "synthetic.pem")
-	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600); err != nil {
-		t.Fatal("write synthetic signing key")
-	}
-	now := time.Now().UTC().Truncate(time.Second)
-	claims := executionenv.GrantClaims{KeyID: "k2", Issuer: "fixture", Audience: "fixture", Client: "fixture-client", OwnerHash: "fixture-owner", BindingID: "binding", RunID: "run", ClaimID: "claim", Environment: executionenv.EnvironmentRef{ID: "env", Revision: "rev"}, Epoch: 3, GrantGeneration: 2, Operations: []executionenv.Operation{executionenv.OpFileRead}, NotBefore: now.Add(-time.Second), ExpiresAt: now.Add(30 * time.Second), Nonce: "fixture-nonce"}
-	grant, err := executionenv.SignGrant(key, claims)
-	if err != nil {
-		t.Fatal("sign synthetic control")
-	}
-	rc := executionenv.RequestContext{Environment: claims.Environment, Owner: executionenv.Owner{Issuer: "issuer", Subject: "subject"}, BindingID: claims.BindingID, RunID: claims.RunID, ClaimID: claims.ClaimID, Epoch: claims.Epoch, GrantGeneration: claims.GrantGeneration, Grant: grant}
-	for _, probe := range []struct {
-		keyID      string
-		generation uint64
-	}{{"k2", 1}, {"k1", 2}} {
-		resigned := resignFixtureGrant(t, rc, keyPath, probe.keyID, probe.generation)
-		verifier := executionenv.GrantVerifier{Keys: map[string]ed25519.PublicKey{probe.keyID: key.Public().(ed25519.PublicKey)}, Issuer: claims.Issuer, Audience: claims.Audience, MaxLifetime: time.Minute}
-		got, err := verifier.Verify(resigned.Grant, executionenv.GrantExpectation{Client: claims.Client, OwnerHash: claims.OwnerHash, BindingID: rc.BindingID, RunID: rc.RunID, ClaimID: rc.ClaimID, Environment: rc.Environment, Epoch: rc.Epoch, GrantGeneration: probe.generation, Operation: executionenv.OpFileRead})
-		want := claims
-		want.KeyID, want.GrantGeneration = probe.keyID, probe.generation
-		if err != nil || !reflect.DeepEqual(got, want) {
-			t.Fatal("probe changed claims beyond key ID and generation")
-		}
-		resigned.Grant, resigned.GrantGeneration = rc.Grant, rc.GrantGeneration
-		if resigned != rc {
-			t.Fatal("probe changed request identity")
-		}
-	}
 }
 
 func requireOwnedHelmFixture(t *testing.T, state, kubeconfig string) {
@@ -474,7 +588,7 @@ var errLifetimeNotQuiesced = errors.New("execution provider must be quiesced")
 func helmLifetime(ctx context.Context, kubeconfig string, args ...string) ([]byte, error) {
 	if helmLifecycleMutation(args) {
 		versionArgs := []string{"version", "--template", "{{.Version}}"}
-		cmd := exec.CommandContext(ctx, "helm", versionArgs...)
+		cmd := fixtureCommand(ctx, "helm", versionArgs...)
 		cmd.Env = cleanEnv()
 		version, err := cmd.Output()
 		if err != nil {
@@ -489,7 +603,7 @@ func helmLifetime(ctx context.Context, kubeconfig string, args ...string) ([]byt
 		}
 	}
 	full := append([]string{"--kubeconfig", kubeconfig, "--kube-context", os.Getenv("MECATL_KUBE_CONTEXT"), "--namespace", namespace}, args...)
-	cmd := exec.CommandContext(ctx, "helm", full...)
+	cmd := fixtureCommand(ctx, "helm", full...)
 	cmd.Env = cleanEnv()
 	var out, stderr lifetimeOutput
 	cmd.Stdout = &out
@@ -536,6 +650,7 @@ func TestHelmLifetimeSelectsClientSideWritesOnlyForHelm4(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(dir, "helm"), []byte(script), 0o700); err != nil {
 				t.Fatal(err)
 			}
+			t.Setenv("MECATL_EXECUTION_K8S_TOOLBOX", "")
 			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 			if _, err := helmLifetime(t.Context(), "fixture-kubeconfig", tc.args...); err != nil {
 				t.Fatal(err)

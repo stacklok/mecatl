@@ -64,7 +64,8 @@ forward compatibility. `build_id` is not a semantic-version API.
 
 |Method & path|Body|Response|
 |-|-|-|
-|`POST /v1/sessions`|`{mode?, limits?, provider_id?, model_id?, profile?, mcp_servers?}`; `profile` omitted = server default, `"no-fs"` = explicit attenuation|`201` `{session_id, placement}` where placement is bounded display metadata; no path or exact private ref|
+|`POST /v1/sessions`|`{mode?, limits?, provider_id?, model_id?, execution?, mcp_servers?}`; `execution` omitted = server default, `{none:{}}` = no filesystem, `{template:{id,revision}}` = exact operator-approved revision|`201` `{session_id, placement, session_capabilities}` where placement is bounded display metadata; no path or exact private ref|
+|`GET /v1/execution-templates`|authenticated, no body; enabled catalog only|`200` `{items:[{template:{id,revision},name,description,display_token,extensions}],inventory_revision}`; at most 64 eligible rows|
 |`GET /v1/sessions`|—|`200` `{sessions: [...]}` — path-free stored-session inventory|
 |`GET /v1/sessions/{id}`|—|`200` authoritative session snapshot, including title/provenance, title-generation lifecycle, and canonical durable token usage when present|
 |`GET /v1/sessions/{id}/events`|—|`200` `text/event-stream` — replay a session's durable event log (including `session.title` changes and the log-only `approval`/`compaction_archive`/`user_prompt` a live prompt stream skips). A replayed `user_prompt.synthetic` value of `true` identifies a server-authored continuation; absent/false means genuine or legacy-unknown. Never infer origin from text. Empty for an unknown id; `501` when no durable `EventLog` is wired|
@@ -239,7 +240,7 @@ A `workspace`, `cwd`, placement ID, or exact environment ref is an unknown field
 and the strict decoder returns `400`; configure local `--workspace` on the
 server.
 
-### Create a no-filesystem session (`profile: "no-fs"`)
+### Create a no-filesystem session (`execution: {none:{}}`)
 
 A session can opt out of the filesystem entirely — useful for pure
 research/coordination agents (MCP tools + memory + web fetch) that should never
@@ -247,16 +248,25 @@ touch a disk:
 
 ```sh
 $ curl -s -X POST http://127.0.0.1:8081/v1/sessions \
-       -d '{"profile":"no-fs"}'
+       -d '{"execution":{"none":{}}}'
 {"session_id":"..."}
 ```
 
-The same `profile` field exists on the gRPC `CreateSessionRequest` (enum-as-
-string: `""` = default, `"no-fs"`). Rules, all enforced server-side:
+The same `execution` union exists on gRPC `CreateSessionRequest`. Rules, all
+enforced server-side:
 
-- `"no-fs"` binds the server's filesystem-free placement; no workspace field
-  exists. Omitted profile binds the server's deployment default.
-- Any other profile value is rejected loudly — never a silent fallback.
+- `{ "none": {} }` creates a file-less session. Omission binds the deployment
+  default. `{ "template": { "id": "coding", "revision":
+  "v1-<64 lowercase hex characters>" } }` selects an exact eligible operator
+  revision; list `GET /v1/execution-templates` first. The example revision is
+  illustrative, not a deployable identifier.
+- The request accepts one complete `execution` variant. Invalid variants return
+  `400`. Unauthorized and absent templates both return `404`; disabled catalog
+  returns `501`, and a temporarily unavailable catalog returns `503`. `features`
+  must include `execution_templates` and `capabilities.execution_templates` must
+  be true to offer a picker.
+- `session_capabilities.execution_files` and `built_in_shell` on create and get
+  report effective registered tools, separately from image/audio media input.
 - The no-FS session has **no**
   Read/ListDir/Edit/Write/Copy/Move/Remove/Grep/Glob/Shell/ShellStatus, no
   Parallel, and no SkillDraft. It keeps MCP tools (server-global + resource
@@ -267,7 +277,7 @@ string: `""` = default, `"no-fs"`). Rules, all enforced server-side:
 - The model is told up front (a system-prompt posture note plus an honest
   Subagent tool description), so it plans around MCP/memory/web search+fetch
   instead of burning turns on unknown-tool errors.
-- The profile composes with `provider_id`/`model_id` and is FIXED for the
+- The execution selection composes with `provider_id`/`model_id` and is FIXED for the
   session lifetime.
 
 ### Inspect a session

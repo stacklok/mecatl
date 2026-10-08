@@ -2,6 +2,9 @@ package executionclient
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -11,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/goccy/go-yaml"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -90,7 +94,8 @@ func TestServiceExplicitIDConcurrentMismatchCannotAbortPersistedWinner(t *testin
 	for _, sharedEngine := range []bool{true, false} {
 		t.Run(map[bool]string{true: "shared_engine", false: "per_session_engine"}[sharedEngine], func(t *testing.T) {
 			dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{executioncontroller.ExecutionEnvironmentGVR: "ExecutionEnvironmentList"})
-			controllerStore := executioncontroller.NewStore(dyn, "ns", explicitIDProfiles(t), &recordingExecutor{})
+			profiles := explicitIDProfiles(t)
+			controllerStore := executioncontroller.NewStore(dyn, "ns", profiles, &recordingExecutor{})
 			fixture := startFixture(t, controllerStore, nil)
 			defer fixture.stop()
 			client, err := New(fixture.endpoint, fixture.clientTLS)
@@ -98,7 +103,7 @@ func TestServiceExplicitIDConcurrentMismatchCannotAbortPersistedWinner(t *testin
 				t.Fatal(err)
 			}
 			defer client.Close()
-			provider, err := NewProvider(client, "coding")
+			provider, err := NewTemplateProvider(client, "coding", profiles.DefaultRevision("coding"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -182,7 +187,8 @@ func TestServiceExplicitIDConcurrentMismatchCannotAbortPersistedWinner(t *testin
 
 func TestServiceExplicitIDPrepublicationFailureCannotAbortPersistedWinner(t *testing.T) {
 	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{executioncontroller.ExecutionEnvironmentGVR: "ExecutionEnvironmentList"})
-	controllerStore := executioncontroller.NewStore(dyn, "ns", explicitIDProfiles(t), &recordingExecutor{})
+	profiles := explicitIDProfiles(t)
+	controllerStore := executioncontroller.NewStore(dyn, "ns", profiles, &recordingExecutor{})
 	fixture := startFixture(t, controllerStore, nil)
 	defer fixture.stop()
 	client, err := New(fixture.endpoint, fixture.clientTLS)
@@ -190,7 +196,7 @@ func TestServiceExplicitIDPrepublicationFailureCannotAbortPersistedWinner(t *tes
 		t.Fatal(err)
 	}
 	defer client.Close()
-	provider, err := NewProvider(client, "coding")
+	provider, err := NewTemplateProvider(client, "coding", profiles.DefaultRevision("coding"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +283,7 @@ func TestServiceExplicitIDRetryReusesRemoteAllocationAcrossRestartAndConcurrency
 		t.Fatal(err)
 	}
 	defer client.Close()
-	provider, err := NewProvider(client, "coding")
+	provider, err := NewTemplateProvider(client, "coding", profiles.DefaultRevision("coding"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,12 +398,22 @@ func TestServiceExplicitIDRetryReusesRemoteAllocationAcrossRestartAndConcurrency
 
 func explicitIDProfiles(t *testing.T) *executioncontroller.Profiles {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "profiles.yaml")
-	body := []byte("profiles:\n  coding:\n    image: example.test/executor@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n    storageClass: standard\n    storageSize: 1Gi\n    cpuRequest: 100m\n    memoryRequest: 128Mi\n    cpuLimit: 1\n    memoryLimit: 1Gi\n    ephemeralStorageRequest: 256Mi\n    ephemeralStorageLimit: 1Gi\n    tmpSizeLimit: 128Mi\n    runtimeClassName: gvisor\n    maxFileBytes: 5242880\n    maxCommandBytes: 1048576\n    maxCommandDuration: 1m\n    maxEnvironments: 10\n")
+	path := filepath.Join(t.TempDir(), "templates.yaml")
+	spec := executioncontroller.ProfileSpec{Image: "example.test/executor@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", StorageClass: "standard", StorageSize: "1Gi", CPURequest: "100m", MemoryRequest: "128Mi", CPULimit: "1", MemoryLimit: "1Gi", EphemeralStorageRequest: "256Mi", EphemeralStorageLimit: "1Gi", TmpSizeLimit: "128Mi", RuntimeClassName: "gvisor", MaxFileBytes: 5242880, MaxCommandBytes: 1048576, MaxCommandDuration: time.Minute, MaxEnvironments: 10}
+	canonical, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(append([]byte("mecatl/execution-template/v1\x00"), canonical...))
+	revision := "v1-" + hex.EncodeToString(sum[:])
+	body, err := yaml.Marshal(executioncontroller.TemplatesFile{Templates: map[string]executioncontroller.TemplateDefinition{"coding": {Default: revision, Revisions: map[string]executioncontroller.TemplateRevision{revision: {Execution: spec}}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(path, body, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	profiles, err := executioncontroller.LoadProfiles(path)
+	profiles, err := executioncontroller.LoadTemplates(path)
 	if err != nil {
 		t.Fatal(err)
 	}

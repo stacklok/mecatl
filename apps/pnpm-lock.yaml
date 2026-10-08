@@ -204,8 +204,8 @@ importers:
         specifier: 1.6.3
         version: 1.6.3(hono@4.13.9)(zod@4.6.5)
       '@stacklok-oss/mecatl-sdk':
-        specifier: 0.4.0
-        version: 0.4.0
+        specifier: file:../../sdk/typescript
+        version: file:../sdk/typescript
       hono:
         specifier: 4.13.9
         version: 4.13.9
@@ -1403,8 +1403,8 @@ packages:
   '@shikijs/vscode-textmate@10.0.2':
     resolution: {integrity: sha512-83yeghZ2xxin3Nj8z1NMd/NCuca+gsYXswywDy5bHvwlWL8tpTQmzGeUuHd9FC3E/SBEMvzJRwWEOz5gGes9Qg==}
 
-  '@stacklok-oss/mecatl-sdk@0.4.0':
-    resolution: {integrity: sha512-Ii03oT378bVhwntthEcteyKgoM8QCYL5XBprpEX/+GjNgBlTxCkU8byG54c7JkAOYeAoRl8dlKpQ4K7tP2VT9w==}
+  '@stacklok-oss/mecatl-sdk@file:../sdk/typescript':
+    resolution: {directory: ../sdk/typescript, type: directory}
     engines: {deno: '>=2.9.3 <3', node: '>=22'}
 
   '@standard-schema/spec@1.1.0':
@@ -3929,7 +3929,7 @@ snapshots:
 
   '@shikijs/vscode-textmate@10.0.2': {}
 
-  '@stacklok-oss/mecatl-sdk@0.4.0':
+  '@stacklok-oss/mecatl-sdk@file:../sdk/typescript':
     dependencies:
       '@bufbuild/protobuf': 2.15.0
       '@connectrpc/connect': 2.2.0(@bufbuild/protobuf@2.15.0)
