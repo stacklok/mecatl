@@ -314232,6 +314232,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791473087131,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "github@daniel-kantor.com",
+            "name": "Dániel Kántor",
+            "username": "kantord"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e70ad22da2813825ada7b9e7ac7dece852640d63",
+          "message": "test(studio): run vitest without isolation in web and server (#2203)",
+          "timestamp": "2026-10-08T18:28:54+02:00",
+          "tree_id": "67ae0f38b6e53d76d44b2851542fdc7c072d00df",
+          "url": "https://github.com/stacklok/mecatl/commit/e70ad22da2813825ada7b9e7ac7dece852640d63"
+        },
+        "date": 1791477654776,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3281,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 81.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -411056,6 +411095,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791477651588,
+  "lastUpdate": 1791477655738,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
