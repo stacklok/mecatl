@@ -46,11 +46,25 @@ func (r *renderer) renderConversation(c *conversation, expand bool) string {
 	for i := range kinds {
 		kinds[i] = c.scrollback.MetadataAt(i).Kind
 	}
+	var previousText string
+	previousVisible := -1
 	for i := range snapshots {
-		if i > 0 {
-			b.WriteString(blockSepAfter(kinds, i-1))
+		text := r.renderSnapshot(i, snapshots[i], expand)
+		if text == "" {
+			continue
 		}
-		b.WriteString(r.renderSnapshot(i, snapshots[i], expand))
+		if previousVisible >= 0 {
+			if kinds[i] == scrollback.KindAssistant &&
+				(kinds[previousVisible] == scrollback.KindTool || kinds[previousVisible] == scrollback.KindSubagent || kinds[previousVisible] == scrollback.KindTeam) &&
+				!strings.Contains(previousText, "\n") {
+				b.WriteString(interBlockSepCompact)
+			} else {
+				b.WriteString(blockSepAfter([]scrollback.Kind{kinds[previousVisible], kinds[i]}, 0))
+			}
+		}
+		previousText = text
+		previousVisible = i
+		b.WriteString(text)
 		b.WriteByte('\n')
 	}
 	return b.String()
@@ -426,10 +440,10 @@ func TestSettledBlocksRenderOnceDuringStreaming(t *testing.T) {
 	}
 
 	// And the cache is output-invisible: the cached render matches a fresh one.
-	got := m.rend.renderConversation(&m.conv, m.expandTools)
+	got := m.rend.renderConversation(&m.conv, m.expandConversation)
 	fresh := newRenderer(m.rend.th, defaultHelpKeys())
 	fresh.setWidth(m.rend.width)
-	if want := fresh.renderConversation(&m.conv, m.expandTools); got != want {
+	if want := fresh.renderConversation(&m.conv, m.expandConversation); got != want {
 		t.Errorf("cached render diverged from fresh render after streaming:\n got %q\nwant %q",
 			stripANSIstr(got), stripANSIstr(want))
 	}
@@ -473,8 +487,8 @@ func TestBlockCacheInvalidatesOnWidthChange(t *testing.T) {
 	}
 }
 
-// TestBlockCacheInvalidatesOnExpandToggle: settled blocks re-render exactly once
-// after the ctrl+t expand flip, and the result matches a fresh render.
+// TestBlockCacheInvalidatesOnExpandToggle: only reasoning and permanent-error
+// blocks re-render on a conversation detail flip; tool cache entries remain stable.
 func TestBlockCacheInvalidatesOnExpandToggle(t *testing.T) {
 	c := cacheTestConversation()
 	r := newCacheRenderer()
@@ -482,8 +496,8 @@ func TestBlockCacheInvalidatesOnExpandToggle(t *testing.T) {
 	base := r.blockRenders
 
 	got := r.renderConversation(c, true)
-	if n := r.blockRenders - base; n != len(c.testBlocks()) {
-		t.Errorf("expand flip should re-render every block exactly once: got %d renders, want %d", n, len(c.testBlocks()))
+	if n := r.blockRenders - base; n != 2 {
+		t.Errorf("detail flip should re-render only reasoning/error blocks: got %d renders, want 2", n)
 	}
 	fresh := newRenderer(r.th, defaultHelpKeys())
 	fresh.setWidth(r.width)
@@ -539,13 +553,13 @@ func TestNonTailResolveRendersThroughUpdateFlow(t *testing.T) {
 		client.ToolResultMsg{CallID: "call-1", Content: "ok: 12 passed", IsError: false},
 		renderTickMsg{},
 	)
-	got := m.rend.renderConversation(&m.conv, m.expandTools)
-	if !strings.Contains(stripANSIstr(got), "ok: 12 passed") {
-		t.Errorf("non-tail resolve through Update must render the result (stale cached card?), got:\n%s", stripANSIstr(got))
+	got := m.rend.renderConversation(&m.conv, m.expandConversation)
+	if !strings.Contains(stripANSIstr(got), "✓ Shell · go test ./...") {
+		t.Errorf("non-tail resolve through Update must render the settled summary (stale cached card?), got:\n%s", stripANSIstr(got))
 	}
 	fresh := newRenderer(m.rend.th, defaultHelpKeys())
 	fresh.setWidth(m.rend.width)
-	if want := fresh.renderConversation(&m.conv, m.expandTools); got != want {
+	if want := fresh.renderConversation(&m.conv, m.expandConversation); got != want {
 		t.Errorf("cached render diverged from fresh after the non-tail resolve:\n got %q\nwant %q",
 			stripANSIstr(got), stripANSIstr(want))
 	}
@@ -579,10 +593,10 @@ func TestResetSessionDropsRenderCaches(t *testing.T) {
 	m.conv.addUser("a completely different prompt")
 	m.conv.addNotice("a different notice")
 	m.refreshView()
-	got := m.rend.renderConversation(&m.conv, m.expandTools)
+	got := m.rend.renderConversation(&m.conv, m.expandConversation)
 	fresh := newRenderer(m.rend.th, defaultHelpKeys())
 	fresh.setWidth(m.rend.width)
-	if want := fresh.renderConversation(&m.conv, m.expandTools); got != want {
+	if want := fresh.renderConversation(&m.conv, m.expandConversation); got != want {
 		t.Errorf("post-reset rebuild diverged from fresh render (index aliasing?):\n got %q\nwant %q",
 			stripANSIstr(got), stripANSIstr(want))
 	}
@@ -672,8 +686,8 @@ func TestIncrementalJoinTailChangesMidScrollback(t *testing.T) {
 		t.Fatalf("post-non-tail-resolve incremental join diverged from fresh oracle (stale prefix served past the changed index?)\n got %q\nwant %q",
 			stripANSIstr(got), stripANSIstr(want))
 	}
-	if !strings.Contains(stripANSIstr(got), "ok: passed") {
-		t.Error("non-tail resolve must render the result through the incremental path (stale prefix?)")
+	if !strings.Contains(stripANSIstr(got), "✓ Shell · go test ./...") {
+		t.Error("non-tail resolve must render the settled summary through the incremental path (stale prefix?)")
 	}
 }
 
@@ -772,8 +786,8 @@ func TestIncrementalJoinResetDropsPrefix(t *testing.T) {
 // TestRefreshViewLinesMatchString proves the refreshView line-slice fast path
 // (SetContentLines) yields the SAME viewport content as the string SetContent path
 // the gate falls back to. It drives the EXACT production gate
-// (!m.sel.active && !m.expandTools) by actually setting m.sel.active and
-// m.expandTools — the prior version of this test never set either, so it only ever
+// (!m.sel.active && !m.expandConversation) by actually setting m.sel.active and
+// m.expandConversation — the prior version of this test never set either, so it only ever
 // drove the fast path and proved nothing about the fallback. This is the gate the
 // path-switch stale-prefix bug exploits, so we must compare across it.
 func TestRefreshViewLinesMatchString(t *testing.T) {
@@ -807,17 +821,17 @@ func TestRefreshViewLinesMatchString(t *testing.T) {
 			stripANSIstr(selContent), stripANSIstr(fastContent))
 	}
 
-	// Fallback path B — expandTools on. This re-renders every block at expand=true
+	// Fallback path B — expandConversation on. This re-renders every block at expand=true
 	// (a DIFFERENT content from the collapsed fast path), so it compares against the
 	// fresh oracle at expand=true. It exercises the OTHER half of the gate. We render
 	// the line path at expand=true directly as well so both sides of the gate are
 	// proven equal at expand=true.
 	mExp := build()
-	mExp.expandTools = true
+	mExp.expandConversation = true
 	mExp.refreshView()
 	expContent := mExp.vp.GetContent()
 	if want := freshConvString(mExp.rend.th, mExp.rend.width, &mExp.conv, true); expContent != want {
-		t.Fatalf("expandTools string path diverged from the fresh oracle at expand=true\n got %q\nwant %q",
+		t.Fatalf("expandConversation string path diverged from the fresh oracle at expand=true\n got %q\nwant %q",
 			stripANSIstr(expContent), stripANSIstr(want))
 	}
 
@@ -942,8 +956,8 @@ func TestPathSwitchStalePrefix(t *testing.T) {
 		t.Fatalf("path-switch served a STALE prefix: lines join diverged from fresh oracle after a string-path re-render of a non-tail block\n got %q\nwant %q",
 			stripANSIstr(got), stripANSIstr(want))
 	}
-	if !strings.Contains(stripANSIstr(got), "ok: passed") {
-		t.Error("the resolved card must render through the line path after the path switch (stale prefix served?)")
+	if !strings.Contains(stripANSIstr(got), "✓ Shell · go test ./...") {
+		t.Error("the resolved summary must render through the line path after the path switch (stale prefix served?)")
 	}
 }
 
@@ -989,8 +1003,8 @@ func TestIncrementalJoinMultiBlockOneFrame(t *testing.T) {
 		t.Fatalf("multi-block frame: incremental join diverged from fresh oracle (firstChanged took max not min?)\n got %q\nwant %q",
 			stripANSIstr(got), stripANSIstr(want))
 	}
-	if !strings.Contains(stripANSIstr(got), "ok: passed") {
-		t.Error("the mid-block resolve must render (firstChanged must be the MIN changed index)")
+	if !strings.Contains(stripANSIstr(got), "✓ Read · f.go") {
+		t.Error("the mid-block settled summary must render (firstChanged must be the MIN changed index)")
 	}
 }
 

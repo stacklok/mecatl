@@ -326,7 +326,7 @@ func TestAuxiliaryTokenUsage_Scenario1_PreservesOpaqueKindsWithoutBudgetEffect(t
 	}
 }
 
-func TestADR_0350_RouterUsageRetainsSpendBound(t *testing.T) {
+func TestRouterUsageRetainsSpendBound(t *testing.T) {
 	const budget = 350
 	llm := &countingProvider{inner: mockllm.New(mockllm.TextTurn("should-never-run"))}
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, loopTool()), MaxRunTokens: budget})
@@ -363,8 +363,8 @@ func (p *countingProvider) Stream(ctx context.Context, req port.LLMRequest) (ite
 	return p.inner.Stream(ctx, req)
 }
 
-// TestOrdinaryRunUsesZeroBudgetBaseline is the restart-budget guard (cloud-native
-// Phase 1): an ordinary Engine.Run always has a zero baseline, so a session loaded
+// TestOrdinaryRunUsesZeroBudgetBaseline is the restart-budget guard: an
+// ordinary Engine.Run always has a zero baseline, so a session loaded
 // carrying cumulative Usage ALREADY past the MaxRunTokens ceiling trips StopBudget
 // at the FIRST turn boundary — before any model call — instead of re-granting a
 // fresh budget. Internal cleanup/synthesis baselines must never leak into this

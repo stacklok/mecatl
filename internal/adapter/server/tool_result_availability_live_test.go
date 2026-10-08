@@ -54,9 +54,9 @@ func (p *blockedReadPreparationPolicy) Evaluate(ctx context.Context, id session.
 	return p.PermissionPolicy.Evaluate(ctx, id, mode, call, ws)
 }
 
-// TestADR_0370_Scenario3_LiveOnlyProjection pins the live/durable split at
+// TestToolResultLiveOnlyProjection pins the live/durable split at
 // the transport boundary, rather than only checking the recorder in isolation.
-func TestADR_0370_Scenario3_LiveOnlyProjection(t *testing.T) {
+func TestToolResultLiveOnlyProjection(t *testing.T) {
 	for _, transport := range []string{"grpc", "http", "subscription"} {
 		t.Run(transport, func(t *testing.T) {
 			log := memstore.NewEventLog()

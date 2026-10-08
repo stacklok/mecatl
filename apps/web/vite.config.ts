@@ -3,7 +3,7 @@
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   plugins: [tanstackRouter({ target: "react" }), react(), tailwindcss()],
@@ -25,5 +25,19 @@ export default defineConfig({
       },
     },
     strictPort: true,
+  },
+  test: {
+    // Node 25+ ships a global Web Storage that, without --localstorage-file,
+    // shadows the jsdom localStorage/sessionStorage the browser tests rely on.
+    execArgv: ["--no-experimental-webstorage"],
+    // DECISION: no test isolation, in both apps, period. Why it is safe and what
+    // not to do: NO-ISOLATE RULES in src/test-setup.ts (enforced by biome).
+    isolate: false,
+    setupFiles: ["./src/test-setup.ts"],
+    // DECISION: let vitest undo spies, stubbed globals and stubbed env between
+    // tests (config flags) instead of re-implementing that in test-setup.ts.
+    restoreMocks: true,
+    unstubGlobals: true,
+    unstubEnvs: true,
   },
 });

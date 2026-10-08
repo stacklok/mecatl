@@ -893,7 +893,7 @@ func TestSubagentResumePreservesStoredLimits(t *testing.T) {
 }
 
 // TestSubagentResumeBudgetCarriesPriorSpend is the resume-leg of the restart-budget
-// property (cloud-native Phase 1, QA SHOULD-ADD): a persisted child whose cumulative
+// property (QA SHOULD-ADD): a persisted child whose cumulative
 // Usage is already at/over the engine's MaxRunTokens ceiling, when RESUMED, must trip
 // StopBudget at the FIRST boundary — starting from its PRIOR spend, never re-granting a
 // fresh budget. This is the same property the main e2e proves for the parent, exercised

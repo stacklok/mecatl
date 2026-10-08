@@ -130,6 +130,9 @@ func harnessContextSubtree(docs Docs) *Subtree {
 		}
 	}
 	for _, field := range fields {
+		if field.Key == "project_instruction_max_bytes" {
+			field.ExampleValue = "65536"
+		}
 		if field.Key != "kinds" {
 			continue
 		}
@@ -417,7 +420,7 @@ func reasoningEffortSubtree(docs Docs) *Subtree {
 	return &Subtree{
 		Key:  "reasoning-effort",
 		Tier: TierOperator,
-		Doc: "OPERATOR-TIER reasoning-effort scalar (ADR 0055): \"\" / \"auto\" (unset — " +
+		Doc: "OPERATOR-TIER reasoning-effort scalar: \"\" / \"auto\" (unset — " +
 			"the provider default) / \"low\" / \"medium\" / \"high\" / \"xhigh\" / \"max\". " +
 			"OpenAI clamps xhigh/max down to high; Anthropic maps all five. A per-session " +
 			"CreateSession.reasoning_effort out-ranks this default. A project-tier " +
@@ -488,7 +491,7 @@ func modelsSubtree(docs Docs) *Subtree {
 			f.ExampleValue = "coder"
 		case "router":
 			f.EnableNote = "A non-empty `categories` list ENABLES the router (taxonomy-presence " +
-				"enable, ADR 0042 — NOT a CLI enable-flag); `disabled: true` (or " +
+				"enable — NOT a CLI enable-flag); `disabled: true` (or " +
 				"--subagent-model-router=false) is the kill-switch. Operator-tier only."
 			rf := fieldsOf("RouterSection", permconfig.RouterSection{}, docs)
 			for _, nf := range rf {
@@ -533,8 +536,8 @@ func modelsSubtree(docs Docs) *Subtree {
 	return &Subtree{
 		Key:  "models",
 		Tier: TierProject,
-		Doc: "Per-slot/alias/default model config (ADR 0030) + the operator allowlist cap and " +
-			"the semantic Subagent model-router taxonomy (ADR 0031/0042). At the operator tier all " +
+		Doc: "Per-slot/alias/default model config + the operator allowlist cap and " +
+			"the semantic Subagent model-router taxonomy. At the operator tier all " +
 			"fields are honoured; a project tier honours slots/aliases/default within the operator " +
 			"allowlist on a trusted workspace (router/allowlist are operator-only).",
 		CommentedOut: true,
@@ -607,7 +610,7 @@ func mcpSubtree(docs Docs) *Subtree {
 	return &Subtree{
 		Key:          "mcp",
 		Tier:         TierOperator,
-		Doc:          "Strict OPERATOR-TIER Streamable HTTP MCP authority configuration. Mode selects one mutually exclusive global or session-broker authority; broker mode carries its callback configuration and neutral route declarations. Authentication is a closed none/static_bearer/oauth union. Broker OAuth may use trusted explicit OAuth2 endpoints; all secret-shaped values are MECATL_* environment references, never values in YAML. Project mcp blocks are ignored with a value-free warning.",
+		Doc:          "Strict OPERATOR-TIER Streamable HTTP MCP authority configuration. Mode selects one mutually exclusive global or session-broker authority; broker mode carries its callback configuration and neutral route declarations. Authentication is a closed none/static_bearer/oauth union. Broker OAuth may use trusted explicit OAuth2 endpoints; preregistered clients take the client secret from secret_file (an absolute path) or secret_env (a MECATL_* environment variable name), in either mode; never put secret values in YAML. Keep secret files outside the workspace (mode 0400 recommended): agent shell commands run as the same user and can read a known file path. Other secret-shaped values are MECATL_* environment references. Project mcp blocks are ignored with a value-free warning.",
 		CommentedOut: true,
 		Fields:       fields,
 		Example: []string{
@@ -634,7 +637,8 @@ func mcpSubtree(docs Docs) *Subtree {
 			"            mode: preregistered",
 			"            preregistered:",
 			"              id: mecatl-github-mcp",
-			"              secret_env: MECATL_GITHUB_MCP_CLIENT_SECRET",
+			"              secret_file: /var/run/secrets/mecatl/github-mcp-client-secret",
+			"              # or: secret_env: MECATL_GITHUB_MCP_CLIENT_SECRET",
 			"          scopes: [repo]",
 			"          request_refresh_token: true",
 			"          network: {}",

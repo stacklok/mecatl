@@ -20,7 +20,7 @@ metadata:
 # Perf optimization (mecatl offline harness)
 
 The companion to the regression-tracking design in
-[`docs/adr/0019-perf-tracking.md`](../../../docs/adr/0019-perf-tracking.md). This skill
+[`docs/perf-tracking.md`](../../../docs/perf-tracking.md). This skill
 is the **offline benchmark/scenario** workflow: measure → profile → optimize →
 prove → guard. For diagnosing a **running** harness via the perf MCP server, use
 the `perf-mcp-interpretation` skill instead — different tool, different signals.
@@ -29,7 +29,7 @@ the `perf-mcp-interpretation` skill instead — different tool, different signal
 
 - `task bench` — hot-path microbenchmarks (`engine/prompt`, `engine/governance`,
   `engine/agent`). `BENCHCOUNT` default 10. Offline (mockllm + memfs). Not part of
-  `task test`. **The engine is its own Go module** (ADR 0036), so `task bench`/`task fuzz`
+  `task test`. **The engine is its own Go module**, so `task bench`/`task fuzz`
   run these as `cd engine && go test … ./prompt/ ./governance/ ./agent/`. An ad-hoc
   re-run on an engine package must do the same: `cd engine && go test -bench=… ./agent/`
   (an explicit `./engine/agent/` path also resolves via the committed `go.work`, but the
@@ -95,7 +95,7 @@ benchstat .scratch/before.txt .scratch/after.txt   # go install golang.org/x/per
 
 `allocs/op` / `B/op` must drop with a statistically significant delta. Re-run
 `task perf:scenarios` and confirm the scenario KPI moved in the expected direction.
-Update the baseline snapshot in `docs/adr/0019-perf-tracking.md`.
+Update the baseline snapshot in `docs/perf-tracking.md`.
 
 ### 5. Guard — keep behaviour identical, prove the guard isn't vacuous
 
@@ -109,7 +109,7 @@ Update the baseline snapshot in `docs/adr/0019-perf-tracking.md`.
   restore with `cp` — never `git checkout`, it wipes uncommitted work). A guard that
   stays green when the behaviour is broken is worse than none.
 - **A perf change touching an EXPORTED `engine/` symbol trips the `api-compat` CI gate**
-  (`task api:check`, ADR 0036/0037) — a failure mode a perf optimizer wouldn't expect. Keep
+  (`task api:check`) — a failure mode a perf optimizer wouldn't expect. Keep
   pure-perf changes byte-identical to the engine's public surface and it never fires; if the
   surface legitimately changed, run `task api:update` and add an `engine/CHANGELOG.md` entry
   classified per `engine/COMPATIBILITY.md`.
@@ -143,14 +143,14 @@ The mechanism is already wired:
   `mecated` under load.
 
 Full rationale, the per-binary decision, and the production refresh + staleness
-process live in [`perf-tracking.md` Phase 4](../../../docs/adr/0019-perf-tracking.md) —
+process live in [`perf-tracking.md` "Profile-guided optimization"](../../../docs/perf-tracking.md#profile-guided-optimization) —
 read it before touching PGO.
 
 ## See Also
 
 - [`references/playbook.md`](references/playbook.md) — pprof flag cookbook + two
   worked examples (a real win and a real NO-GO) showing the discipline end to end.
-- [`docs/adr/0019-perf-tracking.md`](../../../docs/adr/0019-perf-tracking.md) — the KPI
-  design, gating posture, baselines, and the full roadmap.
+- [`docs/perf-tracking.md`](../../../docs/perf-tracking.md) — the KPI
+  design, gating posture, and baselines.
 - `perf-mcp-interpretation` skill — the **live** counterpart (running-harness
   diagnosis via the perf MCP server).

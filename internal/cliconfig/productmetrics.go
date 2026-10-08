@@ -28,7 +28,7 @@ file path, raw tool name, or model id) to help Stacklok understand community
 adoption. This is on by default. To opt out: pass
 --product-metrics=false, set MECATL_PRODUCT_METRICS=false, set DO_NOT_TRACK=1,
 or set telemetry.productMetrics.enabled: false in your settings.yaml. Details:
-see docs/adr/0338-product-metrics.md.
+see the Anonymous product metrics section of the Mecatl observability docs.
 `
 
 // ProductMetricsHandles bundles the handles a cmd main threads into its
@@ -66,7 +66,7 @@ type ProductMetricsHandles struct {
 //
 // installIDOverride, when non-empty, is used verbatim as the install id and
 // the local-file mechanism (LoadOrCreateInstallIDDefault) is skipped entirely.
-// It exists for mecak8s, which runs storage-free with no PVC (ADR 0048): its
+// It exists for mecak8s, which runs storage-free with no PVC: its
 // Helm chart provisions ONE stable id per release in a ConfigMap and threads
 // it in via MECATL_PRODUCT_METRICS_INSTALL_ID, because a local file would mint
 // a fresh, never-reused id on every pod restart. An override never reports
@@ -77,7 +77,7 @@ type ProductMetricsHandles struct {
 // notify, when firstRun is true, is called EXACTLY ONCE, SYNCHRONOUSLY,
 // BEFORE this function starts the heartbeat goroutine (whose first
 // Heartbeat call fires immediately — see RunHeartbeat) and before it
-// returns. ADR 0338 makes visible advance disclosure load-bearing for
+// returns. Visible advance disclosure is load-bearing for
 // opt-out collection: printing the notice only after the caller later
 // notices ProductMetricsHandles.FirstRun — e.g. after its own startup work,
 // or worse, only at shutdown/flush time — leaves a window where the
@@ -176,7 +176,7 @@ func BuildProductMetrics(
 // recorder — EXCEPT when installIDOverride is non-empty (mecak8s), where it
 // deliberately does nothing.
 //
-// mecak8s runs storage-free with no PVC (ADR 0048) — the SAME reason its
+// mecak8s runs storage-free with no PVC — the SAME reason its
 // install-id comes from a Helm ConfigMap rather than a local file (see
 // provider.go's doc comment). The once-ever contract of time_to_first_value
 // depends on the SAME kind of durable local marker
@@ -190,7 +190,7 @@ func BuildProductMetrics(
 // brand-new installs onboarding continuously. Silently shipping that under a
 // "once per install, ever" label would be worse than not shipping the metric
 // at all for this one binary; a future durable marker (the ConfigMap, or
-// Redis, since mecak8s already depends on it — ADR 0048) can lift this
+// Redis, since mecak8s already depends on it) can lift this
 // restriction later.
 //
 // firstSeenAt is time.Now(): this process's start, not the install-id file's

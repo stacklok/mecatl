@@ -148,8 +148,8 @@ func WithRelaxedReads() Option {
 // workspace only at every posture (never a child engine), and always pairs it
 // with the root-aware wrapping permission policy that resolves a write escape
 // Allow at yolo / Ask below yolo and hard-denies
-// pseudo-fs (/proc, /sys, /dev) before the tool body — docs/acceptance/
-// path-escape-posture.md Scenario 3. A relaxed workspace without the policy
+// pseudo-fs (/proc, /sys, /dev) before the tool body. A relaxed workspace
+// without the policy
 // wrapper is a mis-wire: the workspace's job is only to SERVE the path the
 // policy already authorized.
 //
@@ -157,8 +157,8 @@ func WithRelaxedReads() Option {
 // (vetted by the same Canonicalize-based vetRelaxedParent containment check
 // the relaxed read uses) and writes the leaf through it — never a bare os.WriteFile — so a symlinked
 // component that escapes further is refused by that root's containment,
-// exactly as the workspace root's own containment refuses an in-root escape
-// (ADR-0047). Glob and Grep stay workspace-confined regardless of this
+// exactly as the workspace root's own containment refuses an in-root escape.
+// Glob and Grep stay workspace-confined regardless of this
 // option.
 func WithRelaxedWrites() Option {
 	return func(o *fsOptions) {
@@ -494,7 +494,7 @@ func (f *FileSystem) Glob(ctx context.Context, pattern string) ([]string, error)
 
 // globWalkFS makes cancellation visible to doublestar as an I/O error at every
 // traversal boundary while masking ordinary filesystem errors to preserve
-// GlobWalk's historical ignore-and-continue semantics. It exposes only the
+// GlobWalk's ignore-and-continue semantics. It exposes only the
 // interfaces doublestar currently consults: fs.FS, fs.ReadDirFS, and fs.StatFS.
 // Deliberately do not forward optional interfaces from base; doing so would
 // couple cancellation behavior to speculative traversal paths instead of
@@ -537,7 +537,7 @@ func (g globWalkFS) Stat(name string) (fs.FileInfo, error) {
 	return info, nil
 }
 
-// globNotExist preserves GlobWalk's historical ignore-and-continue behavior for
+// globNotExist preserves GlobWalk's ignore-and-continue behavior for
 // ordinary Stat errors while WithFailOnIOErrors propagates context cancellation.
 // This masking depends on not enabling doublestar.WithFailOnPatternNotExist.
 func globNotExist(op, name string) error {
@@ -713,8 +713,7 @@ func ResolveRoot(path string) (string, error) { return resolveRoot(path) }
 // resolveInRoot. The only I/O is the Lstat/EvalSymlinks ancestor resolution
 // resolveInRoot itself performs. The path-escape-posture composition
 // classifier consumes this with LocalizeInRoot so its in-root/escape verdict is
-// single-sourced with the tool body (docs/acceptance/path-escape-posture.md
-// Scenario 1) instead of reimplementing the algorithms.
+// single-sourced with the tool body instead of reimplementing the algorithms.
 func Canonicalize(base, path string) (string, error) {
 	abs := path
 	if !filepath.IsAbs(abs) {
@@ -770,7 +769,7 @@ func LocalizeInRoot(path string) (string, bool) {
 
 // pathLocks is a fixed process-wide set of striped mutexes. Hashing a physical
 // canonical mutation target to the same stripe serializes aliases of that file across
-// Workspace instances over the same root (ADR 0208). Stripe collisions only
+// Workspace instances over the same root. Stripe collisions only
 // serialize unrelated files; the fixed array avoids an unbounded path-key map.
 //
 // This is PROCESS-SCOPED same-process cooperation, not a POSIX lock:
@@ -788,8 +787,8 @@ func LocalizeInRoot(path string) (string, bool) {
 //     *os.Root, which refuses a symlink traversal that escapes the root, but a
 //     race against an in-root symlink swap is not closed by the lock alone.
 //     A future remote backend provides true backend CAS, which closes the gap
-//     by making the conditional replace atomic at the storage layer (ADR 0208,
-//     remote transport deferred).
+//     by making the conditional replace atomic at the storage layer (remote
+//     transport deferred).
 const pathLockStripes = 256
 
 var pathLocks [pathLockStripes]sync.Mutex
@@ -809,8 +808,8 @@ func pathLock(canon string) *sync.Mutex {
 
 // Workspace is the session-scoped seam over the real OS filesystem. It composes
 // a FileSystem, performs an in-Go recursive Grep, and carries the read-ledger
-// plus the explicit create-only / conditional-replace mutation operations
-// (ADR 0208). Command execution is NOT part of the Workspace: it lives behind
+// plus the explicit create-only / conditional-replace mutation operations.
+// Command execution is NOT part of the Workspace: it lives behind
 // the separate CommandRunner type (see NewCommandRunner) so the harness can run
 // without any shell at all.
 type Workspace struct {
@@ -1318,7 +1317,7 @@ func (w *Workspace) readResolved(rel string, root *os.Root, leaf string) ([]byte
 // CreateFile creates a NEW file at path with the given content, atomically. It
 // fails (wrapping fs.ErrExist) if a file already exists. Parent directories are
 // created as needed. It serializes aliases through process-wide physical-target
-// lock striping and performs the create with O_CREATE|O_EXCL (ADR 0208 §5).
+// lock striping and performs the create with O_CREATE|O_EXCL.
 func (w *Workspace) CreateFile(ctx context.Context, path string, data []byte) (tool.FileVersion, error) {
 	rel, root, leaf, release, err := w.lockMutationTarget(ctx, path)
 	if err != nil {
@@ -1339,8 +1338,7 @@ func (w *Workspace) CreateFile(ctx context.Context, path string, data []byte) (t
 // mismatch it returns a *tool.VersionMismatchError; on a missing file it returns
 // an error wrapping fs.ErrNotExist. It serializes against other same-path
 // mutations through process-wide canonical-path lock striping, so the
-// compare+write is atomic with respect to cooperating Workspace writers
-// (ADR 0208 §5).
+// compare+write is atomic with respect to cooperating Workspace writers.
 func (w *Workspace) ReplaceFile(ctx context.Context, path string, old tool.FileVersion, data []byte) (tool.FileVersion, error) {
 	rel, root, leaf, release, err := w.lockMutationTarget(ctx, path)
 	if err != nil {
@@ -1514,7 +1512,7 @@ func (w *Workspace) grepAll(search *grepSearch) error {
 
 // CommandRunner runs shell commands via /bin/sh -c with a fixed working
 // directory (the session root). It is the local implementation of
-// tool.CommandRunner; a Workspace no longer runs commands itself, so a
+// tool.CommandRunner; a Workspace does not run commands itself, so a
 // shell-less deployment simply omits this runner.
 type CommandRunner struct {
 	root  string

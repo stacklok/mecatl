@@ -2,7 +2,7 @@
 // KPIs (the []kpi.ScenarioResult that `task perf:scenarios` writes to
 // $MECATL_PERF_JSON) into the THREE github-action-benchmark custom-format files
 // the perf workflow feeds to the trend dashboard + alert gate. See
-// docs/adr/0019-perf-tracking.md (Phase 3) and .github/workflows/perf.yml.
+// docs/perf-tracking.md ("Regression gating") and .github/workflows/perf.yml.
 //
 // THREE suites (a "customSmallerIsBetter" gate, a "customBiggerIsBetter" gate, and
 // a "customSmallerIsBetter" ADVISORY suite):
@@ -61,8 +61,8 @@ type benchPoint struct {
 // The by-design-0 scenarios (compaction_cycle exercises compact-and-replace, not
 // prefix caching; the tui_* render benches carry no model tokens at all) MUST NOT
 // emit a cache-hit point — their honest 0 is not a regression. See
-// docs/adr/0019-perf-tracking.md ("The non-obvious KPI: prompt-cache-hit-rate" and
-// the JSON-KPI-shape whitelist note).
+// docs/perf-tracking.md ("The non-obvious KPI: prompt-cache-hit-rate" and
+// "Regression gating").
 var cacheHitWhitelist = map[string]bool{
 	"single_session_long": true,
 	"team_fanout":         true,
@@ -77,7 +77,7 @@ var cacheHitWhitelist = map[string]bool{
 // on zero-TUI-code commits. Gating them at the shared 2% threshold false-positives;
 // the advisory suite keeps the trend visible without failing a PR. Their other
 // metrics (tokens_total, goroutine_delta) stay in SMALLER — those ARE deterministic
-// (always 0 for a render bench). Mirror this set in the docs/adr/0019 RENDER prose
+// (always 0 for a render bench). Mirror this set in the docs/perf-tracking.md render prose
 // + perf.yml when a new render bench is added.
 var renderAllocAdvisory = map[string]bool{
 	"tui_scrollback_view":        true,

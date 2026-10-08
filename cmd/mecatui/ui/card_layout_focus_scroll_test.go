@@ -66,8 +66,8 @@ func TestMecatuiCardLayout_Scenario3_FocusAndScrollableViewsRemainUsable(t *test
 		out, _ := state.Render(width, 20)
 		assertFits(t, "resource preview", out)
 		plain := stripANSIstr(out)
-		if !strings.Contains(plain, hk.expandTools) {
-			t.Fatalf("resource preview lost its existing truncation cue: %q", plain)
+		if !strings.Contains(plain, "+1 more line") || strings.Contains(plain, hk.toolcalls) {
+			t.Fatalf("resource preview should keep a plain truncation count without a dead shortcut: %q", plain)
 		}
 	})
 }

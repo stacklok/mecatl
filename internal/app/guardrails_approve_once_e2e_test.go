@@ -34,7 +34,7 @@ func markerExists(t *testing.T, ws string) bool {
 	return err == nil
 }
 
-// guardrails_approve_once_e2e_test.go is the FULL-composition e2e for the ADR-0062
+// guardrails_approve_once_e2e_test.go is the FULL-composition e2e for the guardrail
 // approve-once flow: app.Build + server.Service over the HTTP SSE relay, offline. The
 // model issues a single mutating Shell call (`gh pr merge`); the engine-backed guardrail
 // checker (driven by the SAME mock provider, which scripts the verdict turn between the
@@ -91,7 +91,7 @@ func guardrailE2ECfg(t *testing.T, interactive bool, posture Posture, cmd string
 
 // sseGuardEvent decodes only the fields the guardrail e2e asserts. NOTE:
 // PendingAsk.HookOriginated is an engine-internal + snapshot field, NOT on the proto
-// wire (ADR 0062 added no proto field), so the e2e asserts only that an ask SURFACED;
+// wire (approve-once added no proto field), so the e2e asserts only that an ask SURFACED;
 // the HookOriginated marker + its snapshot round-trip are pinned by the engine unit
 // tests (engine/agent/guardrail_ask_test.go).
 type sseGuardEvent struct {

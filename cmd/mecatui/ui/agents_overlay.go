@@ -767,8 +767,8 @@ func newAgentsOverlayLayout(th theme.Theme, tab agentsTab, width, height int) ag
 // renderBody lets the existing section renderers reduce their content window
 // against the real physical result. It never crops assembled output: a body is
 // accepted whole, or the normal card is declined. The added frameRows translate
-// the body-only capacity to the historical renderer-height convention while R2/R3
-// replace the current cursor windows.
+// the body-only capacity to the section renderers' height parameter, which
+// includes the frame rows.
 func (l agentsOverlayLayout) renderBody(build func(int) string, essential func() string) (string, bool) {
 	if !l.bounded {
 		return build(0), true
@@ -1019,7 +1019,7 @@ func centerAgentsCard(th theme.Theme, body string, outerWidth, width, height int
 // agentsEmptyHint is the "tab switch · esc close" footer used by the empty
 // subagent/parallel/team-tab states. The chords read the LIVE NextTab/Close
 // markings so an override propagates (issue #457); with defaults it is
-// byte-identical to the historical literal.
+// "tab switch · esc close".
 func agentsEmptyHint(hk helpKeys) string {
 	return hk.nextTab + " switch · " + hk.closeOnly + " close"
 }
@@ -1432,7 +1432,7 @@ const childIDHashLen = 6
 
 // renderSubagentFocus renders ONE child's detail: a header line (glyph + goal +
 // current/last tool + count + usage), the bounded-previews honesty note (the
-// previews are bounded + scrubbed + client-only per ADR 0079 — gauntlet #7 is about
+// previews are bounded + scrubbed + client-only — gauntlet #7 is about
 // the conversation, not the client), and the interleaved child trace in the Team
 // focus format (tool chips with bounded previews + capped message lines),
 // height-bounded to the rows that fit. A focused ChildID with no matching lane (the
@@ -1654,7 +1654,7 @@ func branchHumanLabel(g *parallelGroup, index int) string {
 
 // renderParallelGroupFocus renders ONE Parallel group's detail (ONE level — plan Q4): a
 // header (join + branch tally + run stop), the bounded-previews honesty note (the
-// previews are bounded + scrubbed + client-only per ADR 0079 — gauntlet #7 is about the
+// previews are bounded + scrubbed + client-only — gauntlet #7 is about the
 // conversation, not the client), every branch inline (glyph + label + goal +
 // current/last tool + count + usage; the SELECTED row carries the "▶" cursor the `x`
 // cancel key addresses, the WINNER row a "★") with its interleaved trace in the same

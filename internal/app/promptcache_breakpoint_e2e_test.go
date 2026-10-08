@@ -61,12 +61,12 @@ func lastInputTextMarked(t *testing.T, raw string) bool {
 	return false
 }
 
-// TestADR_0346_BreakpointCacheReadE2E is AC1.7: the whole point of ADR 0346,
+// TestBreakpointCacheReadE2E is AC1.7: the whole point of the protocol-native breakpoint,
 // driven end to end offline through the REAL openai adapter.
 //
 // The endpoint is an operator-overridden base URL, which resolves to
 // CacheDialectNone via cacheDialectFor. That is the EXACT deployment shape the
-// reported incident came from: before ADR 0346 the dialect gate meant such an
+// reported incident came from: before the protocol-native breakpoint the dialect gate meant such an
 // endpoint got no cache ask at all, so a Claude model there re-paid full input
 // every single turn. providerConstructor stays nil so nothing is mocked between
 // the loop and the HTTP body.
@@ -83,7 +83,7 @@ func lastInputTextMarked(t *testing.T, raw string) bool {
 // the cached_tokens the upstream reports back through the adapter's usage
 // mapping and out to the client-visible event, so a regression anywhere along
 // that path fails here.
-func TestADR_0346_BreakpointCacheReadE2E(t *testing.T) {
+func TestBreakpointCacheReadE2E(t *testing.T) {
 	ctx := context.Background()
 
 	capture := &breakpointCapture{}
@@ -132,7 +132,7 @@ func TestADR_0346_BreakpointCacheReadE2E(t *testing.T) {
 	svc := built.Service
 
 	// The overridden base URL must genuinely be dialect-less, or the test proves
-	// nothing about the case ADR 0346 fixed.
+	// nothing about the dialect-less case.
 	reg, err := buildProviderRegistry(Config{
 		OpenRouterKey:     "sk-test",
 		ProviderOverrides: permconfig.ProviderOverrides{providerOpenRouter: {BaseURL: srv.URL + "/v1"}},
@@ -181,18 +181,18 @@ func TestADR_0346_BreakpointCacheReadE2E(t *testing.T) {
 		t.Errorf("turn 1 carried a prompt_cache_breakpoint; it must mark nothing before an assistant turn exists.\nbody=%s", bodies[0])
 	}
 	if !marked[1] {
-		t.Errorf("turn 2 carried NO prompt_cache_breakpoint on a dialect-less endpoint — this is the ADR 0346 bug.\nbody=%s", bodies[1])
+		t.Errorf("turn 2 carried NO prompt_cache_breakpoint on a dialect-less endpoint — the dialect-gated breakpoint bug.\nbody=%s", bodies[1])
 	}
 	if cacheReads[1] == 0 {
 		t.Errorf("turn 2 EvResult.Usage.CacheReadTokens = 0, want the upstream's 80 cached_tokens (reads = %v)", cacheReads)
 	}
 }
 
-// TestADR_0346_AnthropicCacheTTLStampedOnOpenRouterAnthropic is AC2.3: the
+// TestAnthropicCacheTTLStampedOnOpenRouterAnthropic is AC2.3: the
 // --anthropic-cache-ttl an operator sets must reach the openrouter-anthropic
 // entry's wire, on EVERY cache_control marker the adapter emits.
 //
-// The TTL is the concrete reason ADR 0346 registers a second, Messages-speaking
+// The TTL is the concrete reason mecatl registers a second, Messages-speaking
 // provider for one OpenRouter credential at all: the Responses protocol cannot
 // express a cache lifetime, so a Claude session routed over Responses gets the
 // API's default 5m whether the operator asked for an hour or not. If the flag
@@ -202,7 +202,7 @@ func TestADR_0346_BreakpointCacheReadE2E(t *testing.T) {
 // It drives the REAL anthropic adapter (providerConstructor nil) against an
 // Anthropic-Messages SSE handler: the flag set stamps its value on every
 // marker, and the flag UNSET stamps the shared built-in default of 1h.
-func TestADR_0346_AnthropicCacheTTLStampedOnOpenRouterAnthropic(t *testing.T) {
+func TestAnthropicCacheTTLStampedOnOpenRouterAnthropic(t *testing.T) {
 	for _, tc := range []struct {
 		name, ttl string
 		wantTTL   string // "" => no ttl key anywhere in the body
@@ -246,7 +246,7 @@ func TestADR_0346_AnthropicCacheTTLStampedOnOpenRouterAnthropic(t *testing.T) {
 			// A MULTI-TURN request with a layered system prompt, not driveStream's
 			// single bare message: that shape fires only the top-level marker, and a
 			// TTL test that sees one marker cannot tell "uniform" from "stamped once".
-			// This shape fires three of the four ADR 0100 slots (see the floor
+			// This shape fires three of the four cache_control slots (see the floor
 			// assertion below), so the uniformity check has something to check.
 			if err := driveCacheRichStream(entry.provider); err != nil {
 				t.Fatalf("drive stream: %v", err)
@@ -268,7 +268,7 @@ func TestADR_0346_AnthropicCacheTTLStampedOnOpenRouterAnthropic(t *testing.T) {
 			//
 			// Not four: the second conversation anchor (leadingFragmentEnd) resolves
 			// only when the history opens with an injected turn-0 fragment, and
-			// ADR 0043 made those ephemeral, so a normal conversation never has one.
+			// those are ephemeral, so a normal conversation never has one.
 			markers := countCacheControlMarkers(t, body)
 			if markers < 3 {
 				t.Fatalf("%d cache_control marker(s) on the wire, want >= 3 "+

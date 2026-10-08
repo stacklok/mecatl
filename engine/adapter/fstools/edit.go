@@ -82,7 +82,7 @@ func (EditTool) Spec() tool.ToolSpec {
 func (EditTool) ReadOnly() bool { return false }
 
 // Execute enforces the three Edit invariants and writes the modified file via a
-// conditional replace (ADR 0208).
+// conditional replace.
 func (EditTool) Execute(ctx context.Context, in session.ToolCall, env tool.Environment) (session.ToolResult, error) {
 	ws := env.Workspace()
 	var args editArgs
@@ -106,7 +106,7 @@ func (EditTool) Execute(ctx context.Context, in session.ToolCall, env tool.Envir
 	// Invariant #1a: read-before-edit. RecordedVersion is an I/O-free lookup of
 	// the version a prior Read recorded; ok=false means the file was not read
 	// this session. A non-nil err means the ledger lookup itself is
-	// UNAVAILABLE or CORRUPT (ADR 0281) — DISTINCT from ordinary absence — and
+	// UNAVAILABLE or CORRUPT — DISTINCT from ordinary absence — and
 	// must refuse BEFORE ReplaceFile is ever called; it is never treated as an
 	// unrecorded-but-otherwise-authorized read.
 	ledger := env.ReadLedger()
@@ -192,7 +192,7 @@ func (EditTool) Execute(ctx context.Context, in session.ToolCall, env tool.Envir
 	// Re-record the new version so subsequent edits in the same turn remain
 	// valid. The edit ALREADY SUCCEEDED (ReplaceFile above); a failure here is
 	// reported honestly WITHOUT rollback and establishes no new evidence. Any
-	// older evidence retains only its exact-version meaning (ADR 0281).
+	// older evidence retains only its exact-version meaning.
 	if err := ledger.RecordRead(ctx, tool.LedgerKey(ws.Root(), args.Path), newVer); err != nil {
 		return session.NewToolError(in.ID, fmt.Sprintf(
 			"edited %q: replaced %d occurrence(s), but failed to retain read evidence for the new version: %v. No new evidence was stored; any earlier evidence remains subject to version checks.",

@@ -13,8 +13,8 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
-// relaxed_read_test.go pins the path-escape-posture Scenario 2 osfs half
-// (docs/acceptance/path-escape-posture.md): Read/Stat serve a canonicalized
+// relaxed_read_test.go pins the osfs half of relaxed reads: Read/Stat serve a
+// canonicalized
 // out-of-root absolute path ONLY under the explicit WithRelaxedReads
 // construction option (the zero-value workspace stays deny), serving the leaf
 // through a FRESH *os.Root opened on the target's canonical parent so a

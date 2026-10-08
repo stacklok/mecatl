@@ -41,6 +41,7 @@ import {
   useUiScale,
 } from "../../lib/profile-preferences";
 import { type Theme, useTheme } from "../../lib/theme";
+import { SettingsCard } from "./settings-card";
 
 const THEME_OPTIONS = [
   { icon: Sun, label: "Light", description: "Always light.", value: "light" },
@@ -80,20 +81,8 @@ export function InterfaceSettings() {
   const startOn = useStartOn();
 
   return (
-    <section className="rounded-2xl border bg-card p-5 sm:p-6">
-      <div className="flex items-center gap-3">
-        <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand-ink">
-          <MonitorCog aria-hidden="true" className="size-5" />
-        </span>
-        <div>
-          <h2 className="text-lg font-semibold">Appearance</h2>
-          <p className="text-sm text-muted-foreground">
-            Source: browser appearance and chat preferences. Owner: personal.
-          </p>
-        </div>
-      </div>
-
-      <div className="mt-5 divide-y">
+    <SettingsCard title="Appearance">
+      <div className="divide-y">
         <PreferenceRow description="Light, dark, or follow this device." label="Theme">
           <OptionField
             label="Theme"
@@ -190,7 +179,7 @@ export function InterfaceSettings() {
         </PreferenceRow>
         <NotificationPreference />
       </div>
-    </section>
+    </SettingsCard>
   );
 }
 

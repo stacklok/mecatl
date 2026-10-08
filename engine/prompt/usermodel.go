@@ -61,28 +61,33 @@ type UserModelAssembler struct {
 // Compile-time assertion that UserModelAssembler satisfies the interface.
 var _ InstructionAssembler = UserModelAssembler{}
 
-// Assemble renders the capped user-model into one user-role message. The
-// workspace is unused (the user model is user-scoped at the adapter, cross-project,
-// not workspace files). It fails soft on a nil source, a source error, or an
-// empty set.
-func (a UserModelAssembler) Assemble(ctx context.Context) ([]session.Message, error) {
+// TargetScoped reports that the user model does not depend on a selected workspace target.
+func (UserModelAssembler) TargetScoped() bool { return false }
+
+// Assemble renders the capped user-model into one user-role message.
+func (a UserModelAssembler) Assemble(ctx context.Context, _ []string, _ *session.InstructionSnapshot, _ int) ([]session.Message, []InstructionManifest, error) {
+	messages := a.assembleUserModel(ctx)
+	return messages, manifestFor(messages, InstructionProvenanceUserModel), nil
+}
+
+func (a UserModelAssembler) assembleUserModel(ctx context.Context) []session.Message {
 	if a.Src == nil {
-		return nil, nil
+		return nil
 	}
 	entries, err := a.Src.Index(ctx)
 	if err != nil {
 		// Best-effort context: never fail a run on a user-model fault.
-		return nil, nil
+		return nil
 	}
 	if len(entries) == 0 {
-		return nil, nil
+		return nil
 	}
 
 	text := renderUserModel(entries, a.maxEntries(), a.maxBytes())
 	if text == "" {
-		return nil, nil
+		return nil
 	}
-	return []session.Message{session.NewUserMessage(text)}, nil
+	return []session.Message{session.NewUserMessage(text)}
 }
 
 func (a UserModelAssembler) maxEntries() int {

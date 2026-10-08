@@ -152,8 +152,8 @@ func TestCloudNativeLearning_Scenario3_ExplicitProcedureAttemptSurvivesRestart(t
 	if closed != nil {
 		closed.Close()
 	}
-	if closedErr == nil || !strings.Contains(closedErr.Error(), "ADR-0213") {
-		t.Fatalf("OwnershipEnforced remote Build error = %v, want ADR-0213 fail closed", closedErr)
+	if closedErr == nil || !strings.Contains(closedErr.Error(), "unavailable with ownership enforcement") {
+		t.Fatalf("OwnershipEnforced remote Build error = %v, want ownership-enforcement fail closed", closedErr)
 	}
 }
 
@@ -229,7 +229,7 @@ func driveLearningConverse(t *testing.T, client mecatlv1.HarnessServiceClient, s
 	}
 }
 
-func TestADR_0259_WorkerSourceAuthorityFailsClosedWhenSourceDeletedAcrossBuild(t *testing.T) {
+func TestWorkerSourceAuthorityFailsClosedWhenSourceDeletedAcrossBuild(t *testing.T) {
 	ctx := context.Background()
 	workspace := t.TempDir()
 	storeDir := t.TempDir()

@@ -12,7 +12,7 @@ import (
 )
 
 // DefaultMCPServerFlagHelp is the shared --mcp-server help text (the mecated
-// wording plus the ADR-0082 hardening notes). A caller may override it
+// wording plus the hardening notes). A caller may override it
 // per-main (mirroring the other Register* helpers), but the default keeps the
 // three mains' --help identical.
 const DefaultMCPServerFlagHelp = "remote MCP server as name=URL (repeatable); auth token read from MCP_<NAME>_TOKEN. " +
@@ -20,13 +20,13 @@ const DefaultMCPServerFlagHelp = "remote MCP server as name=URL (repeatable); au
 	"a token-bearing URL must use HTTPS, or HTTP to a loopback host. --mcp-server-insecure-http is the explicit per-server opt-out."
 
 // DefaultMCPServerInsecureHTTPFlagHelp is the shared --mcp-server-insecure-http
-// help text (issue #358, ADR 0090). Unlike --mcp-server it is NOT overridable
+// help text (issue #358). Unlike --mcp-server it is NOT overridable
 // per-main: the acknowledgment wording is the point of the flag, so all three
 // mains state it identically.
 const DefaultMCPServerInsecureHTTPFlagHelp = "name of an MCP server entry allowed to send its MCP_<NAME>_TOKEN bearer token over plain HTTP to a non-loopback host. The token travels in cleartext on the network path. The flag can appear before or after the matching server entry. The name must identify an HTTP non-loopback server entry."
 
-// mcpServerName is the allowed shape of an --mcp-server name (ADR 0082
-// hardening, CWE-178): the name derives the MCP_<NAME>_TOKEN env var by ASCII
+// mcpServerName is the allowed shape of an --mcp-server name (CWE-178
+// hardening): the name derives the MCP_<NAME>_TOKEN env var by ASCII
 // upper-casing, so it is restricted to characters that map 1:1 into a settable
 // POSIX env name. A hyphen/space/dot would derive an env var a scheduler
 // cannot set (MCP_MY-SVC_TOKEN), silently connecting unauthenticated; a
@@ -98,7 +98,7 @@ func (l *MCPServerList) String() string {
 // deliberately does not read it; Finalize or LoadMCPProfiles performs runtime
 // secret resolution after command selection.
 //
-// Two ADR-0082 hardenings (applied to all three mains, deliberately tightening
+// Two hardenings (applied to all three mains, deliberately tightening
 // mecated's original behavior):
 //
 //   - CWE-178: the name must match mcpServerName, and two entries whose

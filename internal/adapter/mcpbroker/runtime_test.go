@@ -56,7 +56,7 @@ func TestCompileProducesStableNeutralCatalogue(t *testing.T) {
 	}
 }
 
-func TestADR_0298_CompileAdmitsMultipleOAuthRoutes(t *testing.T) {
+func TestCompileAdmitsMultipleOAuthRoutes(t *testing.T) {
 	config := protectedConfig("https://accounts.example/token")
 	second := config.Routes[0]
 	second.Name = "calendar"
@@ -291,7 +291,7 @@ func TestCallMcpWithQueryBrokerSupport_Scenario1_AuthorizationDelegatesExactNati
 		return session.ToolResult{}, errors.New("must not execute before authorization")
 	}), WithAuthorizedCaller(func(context.Context, SessionRef, string, session.ToolCall, oauth2.TokenSource) (session.ToolResult, error) {
 		return session.ToolResult{}, errors.New("must not execute before authorization")
-	}), WithOAuthSecretResolver(func(context.Context, string) (string, error) { return "secret", nil }))
+	}), WithOAuthSecretFileReader(func(context.Context, string) (string, error) { return "secret", nil }))
 	if err != nil {
 		t.Fatal(err)
 	}

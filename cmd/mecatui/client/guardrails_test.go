@@ -22,7 +22,14 @@ func (f *fakeGuardrailClient) GetGuardrailReviewDetail(context.Context, *mecatlv
 	return f.detail, nil
 }
 
-func TestADR_0363_ContextualGuardrails_Scenario7_InterfaceProjectionSafety(t *testing.T) {
+func TestProjectInstructionWarningClientMessage(t *testing.T) {
+	msg, ok := EventToMsg(&mecatlv1.Event{Type: "hook", Text: "Project instructions: scope guidance truncated or omitted (content limit reached).", Hook: &mecatlv1.Hook{Phase: "ProjectInstructions", Decision: mecatlv1.HookDecision_HOOK_DECISION_ADVISORY}}).(HookMsg)
+	if !ok || msg.Decision != HookAdvisory || msg.Phase != "ProjectInstructions" || msg.Text != "Project instructions: scope guidance truncated or omitted (content limit reached)." || msg.Tool != "" {
+		t.Fatalf("client warning = %+v (ok=%v)", msg, ok)
+	}
+}
+
+func TestContextualGuardrailsInterfaceProjectionSafety(t *testing.T) {
 	event := &mecatlv1.Event{Type: "permission.ask", RunId: "run-1", Ask: &mecatlv1.PermissionAsk{AskId: "a", Tool: "Shell", Guardrail: &mecatlv1.GuardrailApprovalScope{ReviewId: "r", Kind: mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_RESULT_RELEASE}}}
 	ask, ok := EventToMsg(event).(PermissionAskMsg)
 	if !ok || ask.ExpectedRunID != "run-1" || ask.Guardrail == nil || ask.Guardrail.Kind != "result_release" || ask.Guardrail.RepeatAvailable {

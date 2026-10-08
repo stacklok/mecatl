@@ -6,7 +6,7 @@ Reference is a map. The reader is working and needs to look something up: a flag
 
 Reference material typically covers CLI commands, API and schema specs, configuration fields, and compatibility tables, either in a dedicated reference section or as reference pages inside product sections.
 
-**Check what's auto-generated first.** CLI reference pages, CRD reference pages, and API specs are often generated from upstream sources; check the project's conventions (CLAUDE.md or a docs README usually lists the paths and rules). Never hand-edit generated files: fixes go upstream, and hand-written framing usually has a designated home the generator preserves. This reference file applies to hand-written reference pages and to reference sections within other pages.
+**Check what's auto-generated first.** CLI reference pages, CRD reference pages, and API specs are often generated from upstream sources; check the project's conventions (Mecatl's [authoring contract](../../../../user-docs/_README.md) lists the generated pages, owning sources, and generators). Never hand-edit generated files: fixes go upstream, and hand-written framing usually has a designated home the generator preserves. This reference file applies to hand-written reference pages and to reference sections within other pages.
 
 ## Principles
 
@@ -36,4 +36,4 @@ Reference structure follows the shape of the thing described, so there is no fix
 
 - Tables for enumerable facts (clients, versions, fields, defaults) with explanation kept to prose around the table, not crammed into cells
 - One heading per command, resource, or field group, in the product's own order
-- Front matter `title` and `description` like every page; a "Related information" closing section linking to the guides that use this machinery
+- For hand-written public pages, front matter `title` and `description` followed by a matching H1; link to the guides that use this machinery where helpful. Reference pages do not require a Next steps section.

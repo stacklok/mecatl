@@ -757,8 +757,8 @@ func TestNoSavedAuthFlagIsUnknownFlagError(t *testing.T) {
 }
 
 func TestOutputEconomyFlagIsUnknownFlagError(t *testing.T) {
-	// The --output-economy compatibility flag is DELETED (ADR 0089, the clean
-	// break superseding ADR 0086's parse-compat shim): it now fails at flag-parse
+	// The --output-economy compatibility flag is DELETED (a clean
+	// break that replaced the earlier parse-compat shim): it now fails at flag-parse
 	// time with the standard unknown-flag error instead of parsing as a no-op —
 	// in BOTH modes (unregistration is total).
 	for _, mode := range []transportMode{modeLocal, modeConnect} {

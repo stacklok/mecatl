@@ -14,7 +14,7 @@ How-to guides are usually the bulk of a documentation set: the task-oriented gui
 
 **Prefer usability over completeness.** A how-to guide gets the reader to a working result; it doesn't enumerate everything the feature can do. Cover the common path thoroughly, cover the most likely failure the reader will hit, and link to reference material for the full option surface. An incomplete guide the reader can follow beats a complete one they can't.
 
-**Sequence the actions.** The heart of a guide is an ordered series of steps toward the goal. Keep each step an action; put decisions the reader must make at the point they must make them, with just enough context to choose ("Use the `sse` transport if your client doesn't support streamable HTTP").
+**Sequence the actions.** The heart of a guide is an ordered series of steps toward the goal. Keep each step an action; put decisions the reader must make at the point they must make them, with just enough context to choose ("Use the operator-provided server address and credentials when connecting to a shared deployment").
 
 **Omit teaching and background.** The reader is working, not studying. A sentence of orientation is fine; paragraphs of theory are not. Link to concept pages for the why and to reference material for the details, and keep the guide moving.
 
@@ -32,10 +32,12 @@ How-to guides are usually the bulk of a documentation set: the task-oriented gui
 
 ## Structure
 
-1. Front matter: `title` and `description` (see the style guide)
+Follow the [authoring contract](../../../../user-docs/_README.md) for Mecatl-specific page and closing-section requirements. A typical guide has:
+
+1. Front matter: `title` and `description`, then a matching H1
 2. A sentence or two on what the guide accomplishes and when you'd want it
 3. Prerequisites, with operational context
 4. The steps, organized by the reader's workflow; use tabs (where the site supports them) for genuinely parallel variants (UI vs. CLI, macOS vs. Windows), not for optional extras
 5. Verification: how the reader confirms it worked
-6. Next steps (required: 1-3 links following the reader's journey, for example: install, use, secure, operate, optimize)
-7. Related information, then Troubleshooting, in that order, if applicable
+6. Next steps when readers have a clear next action, with links following their journey
+7. Related information and Troubleshooting when useful for this task

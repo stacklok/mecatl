@@ -11,7 +11,7 @@ import (
 )
 
 // flagApplicability annotates a registered mecatui flag for mode-specific
-// applicability (ADR 0087) and progressive help. The applicability axis
+// applicability and progressive help. The applicability axis
 // is BY NAME: a flag explicitly passed in a mode where it is not applicable is
 // REJECTED (connect rejects embedded-only flags; the bare/local mode rejects
 // remote-only flags). A flag NOT listed here is treated as advanced (excluded
@@ -111,6 +111,8 @@ var flagApplicabilityByFlag = map[string]flagApplicability{
 	"anthropic-cache-ttl":   {group: groupProvider, common: false, local: true, connect: false},
 
 	// ── LLM resilience (embedded-only) ────────────────────────────────────
+	"llm-max-attempts":        {group: groupLLMResilience, common: false, local: true, connect: false},
+	"llm-recovery-budget":     {group: groupLLMResilience, common: false, local: true, connect: false},
 	"llm-per-attempt-timeout": {group: groupLLMResilience, common: false, local: true, connect: false},
 	"llm-stream-idle-timeout": {group: groupLLMResilience, common: false, local: true, connect: false},
 	"context-window-override": {group: groupLLMResilience, common: false, local: true, connect: false},

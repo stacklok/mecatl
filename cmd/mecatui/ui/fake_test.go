@@ -228,7 +228,7 @@ type fakeConv struct {
 	getSessionCaps      client.Capabilities
 	getSessionSnapshots []client.SessionSnapshot
 
-	// ForkSession recorders (ADR 0068 effort fork-resume). forkedFrom/forkedEffort
+	// ForkSession recorders (effort fork-resume). forkedFrom/forkedEffort
 	// record the LAST fork's source id + effort override; forkCount counts calls.
 	// forkedID, when non-empty, is the id the fork returns (default "sess-fork-N");
 	// forkErr forces the recoverable-failure path (the source is NOT closed).
@@ -259,7 +259,7 @@ func flattenBatch(cmd tea.Cmd) []tea.Msg {
 	return []tea.Msg{msg}
 }
 
-// ForkSession implements the ui SessionCreator's fork seam (ADR 0068): it records
+// ForkSession implements the ui SessionCreator's fork seam: it records
 // the source id + effort override and returns a DISTINCT fork id so the /effort
 // fork-resume handoff can assert the rebind. forkErr drives the recoverable-failure
 // path. The fake carries NO history (the transcript-preservation guard asserts the
@@ -390,7 +390,7 @@ func (c *fakeConv) CreateSession(_ context.Context, sel client.ModelSelection, m
 	if n >= 2 && c.secondCreateErr != nil {
 		return "", client.Capabilities{}, client.ResolvedModel{}, c.secondCreateErr
 	}
-	// The first session keeps the historical id; a re-create (restart-now) gets a
+	// The first session gets the fixed id; a re-create (restart-now) gets a
 	// distinct id so the handoff e2e can prove the session was rebound.
 	id := "sess-test-0001"
 	if n > 1 {

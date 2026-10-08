@@ -153,13 +153,17 @@ func TestKindExecutionQualification(t *testing.T) {
 		t.Fatalf("no-fs session allocated execution resources: before=%d after=%d", beforeNoFS, afterNoFS)
 	}
 	logQualificationStage(t, &stageStarted, "authorization_preflight", "scripted_prompt")
+	stepStarted := time.Now()
 	sessionID := createSession(t, ctx, agentForward.addr, alice)
+	logQualificationStep(t, &stepStarted, "scripted_prompt", "create_session")
 	body := prompt(t, ctx, agentForward.addr, sessionID, alice, "run the scripted remote qualification")
+	logQualificationStep(t, &stepStarted, "scripted_prompt", "prompt_stream")
 	if err := os.WriteFile(filepath.Join(state, "mock-journey.sse"), body, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	assertMockJourney(t, body)
 	logQualificationStage(t, &stageStarted, "scripted_prompt", "independent_verification")
+	stepStarted = time.Now()
 	lookup := environmentForBinding(t, ctx, kubeconfig, sessionID)
 	attached := waitReady(t, ctx, providerClient, owner, sessionID, lookup)
 	rc, releaseVerification := acquireRun(t, ctx, providerClient, owner, sessionID, attached, fmt.Sprintf("independent-verify-%d", time.Now().UnixNano()))
@@ -167,16 +171,19 @@ func TestKindExecutionQualification(t *testing.T) {
 	if err != nil || string(proof.Data) != "beta\n" {
 		t.Fatalf("independent file proof failed: err=%v", err)
 	}
+	logQualificationStep(t, &stepStarted, "independent_verification", "attach_and_read")
 	verification, err := providerClient.StartCommand(ctx, executionenv.CommandStartRequest{Context: rc, Command: "go test ./...", TimeoutMillis: 120000})
 	if err != nil || verification.State != executionenv.CommandSucceeded || verification.Result.ExitCode != 0 {
 		t.Fatalf("independent go test proof failed: err=%v state=%s", err, verification.State)
 	}
+	logQualificationStep(t, &stepStarted, "independent_verification", "go_test")
 	releaseVerification()
 	qualifyRemoteFileTools(t, ctx, providerClient, owner, sessionID, lookup)
 	if status := getSession(t, ctx, agentForward.addr, sessionID, bob); status != http.StatusNotFound {
 		t.Fatalf("different OIDC owner read status = %d, want 404", status)
 	}
 	agentForward.stop()
+	logQualificationStep(t, &stepStarted, "independent_verification", "file_tools_and_owner")
 	logQualificationStage(t, &stageStarted, "independent_verification", "provider_restart")
 
 	applyReattachScript(t, ctx, kubeconfig, state)
@@ -217,6 +224,12 @@ func TestKindExecutionQualification(t *testing.T) {
 func logQualificationStage(t *testing.T, started *time.Time, completed, next string) {
 	t.Helper()
 	t.Logf("stage=%s elapsed=%s next=%s", completed, time.Since(*started).Round(time.Millisecond), next)
+	*started = time.Now()
+}
+
+func logQualificationStep(t *testing.T, started *time.Time, stage, step string) {
+	t.Helper()
+	t.Logf("stage=%s step=%s elapsed=%s", stage, step, time.Since(*started).Round(time.Millisecond))
 	*started = time.Now()
 }
 
@@ -558,7 +571,7 @@ func createSession(t *testing.T, ctx context.Context, addr, token string) string
 func prompt(t *testing.T, ctx context.Context, addr, id, token, text string) []byte {
 	t.Helper()
 	raw, _ := json.Marshal(map[string]string{"text": text})
-	status, body := request(t, ctx, http.MethodPost, "http://"+addr+"/v1/sessions/"+id+"/prompt", token, raw)
+	status, body := requestWithPromptTiming(t, ctx, http.MethodPost, "http://"+addr+"/v1/sessions/"+id+"/prompt", token, raw, &promptTiming{logf: t.Logf, calls: make(map[string]time.Time), indices: make(map[string]int)})
 	if status/100 != 2 {
 		t.Fatalf("prompt status=%d body=%s", status, body)
 	}
@@ -586,23 +599,135 @@ func getSession(t *testing.T, ctx context.Context, addr, id, token string) int {
 }
 func request(t *testing.T, ctx context.Context, method, url, token string, body []byte) (int, []byte) {
 	t.Helper()
+	return requestWithPromptTiming(t, ctx, method, url, token, body, nil)
+}
+
+func requestWithPromptTiming(t *testing.T, ctx context.Context, method, url, token string, body []byte, timing *promptTiming) (int, []byte) {
+	t.Helper()
 	req, _ := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+token)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Accept", "text/event-stream")
+	if timing != nil {
+		timing.started = time.Now()
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	var reader io.Reader = resp.Body
+	if timing != nil && resp.StatusCode/100 == 2 {
+		reader = io.TeeReader(reader, timing)
+	}
+	raw, err := io.ReadAll(io.LimitReader(reader, 2<<20))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return resp.StatusCode, raw
 }
+
+// promptTiming observes complete SSE lines as they arrive; no event text, tool
+// arguments, result content, session IDs, or credentials enter the test log.
+type promptTiming struct {
+	logf        func(string, ...any)
+	started     time.Time
+	turnStarted time.Time
+	pending     []byte
+	calls       map[string]time.Time
+	indices     map[string]int
+	callCount   int
+}
+
+func (p *promptTiming) Write(data []byte) (int, error) {
+	length := len(data)
+	for len(data) > 0 {
+		end := bytes.IndexByte(data, '\n')
+		if end < 0 {
+			p.pending = append(p.pending, data...)
+			break
+		}
+		p.pending = append(p.pending, data[:end]...)
+		p.observeLine()
+		p.pending = p.pending[:0]
+		data = data[end+1:]
+	}
+	return length, nil
+}
+
+func (p *promptTiming) observeLine() {
+	if !bytes.HasPrefix(p.pending, []byte("data: ")) {
+		return
+	}
+	var event struct {
+		Type     string `json:"type"`
+		Turn     int32  `json:"turn"`
+		ToolCall *struct {
+			Id string `json:"id"`
+		} `json:"tool_call"`
+		ToolResult *struct {
+			CallId string `json:"call_id"`
+		} `json:"tool_result"`
+	}
+	if json.Unmarshal(p.pending[len("data: "):], &event) != nil {
+		return
+	}
+	now := time.Now()
+	switch event.Type {
+	case "turn.start":
+		p.turnStarted = now
+		p.logf("stage=prompt_timing event=turn_start turn=%d since_prompt=%s", event.Turn, now.Sub(p.started).Round(time.Millisecond))
+	case "turn.end":
+		if !p.turnStarted.IsZero() {
+			p.logf("stage=prompt_timing event=turn_end turn=%d elapsed=%s", event.Turn, now.Sub(p.turnStarted).Round(time.Millisecond))
+		}
+	case "tool.call":
+		if event.ToolCall != nil {
+			p.callCount++
+			p.calls[event.ToolCall.Id] = now
+			p.indices[event.ToolCall.Id] = p.callCount
+		}
+	case "tool.result":
+		if event.ToolResult != nil {
+			if started, ok := p.calls[event.ToolResult.CallId]; ok {
+				p.logf("stage=prompt_timing event=tool_result turn=%d tool_index=%d elapsed=%s", event.Turn, p.indices[event.ToolResult.CallId], now.Sub(started).Round(time.Millisecond))
+				delete(p.calls, event.ToolResult.CallId)
+				delete(p.indices, event.ToolResult.CallId)
+			}
+		}
+	}
+}
+
+func TestPromptTiming_TracksStreamBoundariesWithoutLoggingPayloads(t *testing.T) {
+	var log bytes.Buffer
+	p := &promptTiming{
+		logf:    func(format string, args ...any) { fmt.Fprintf(&log, format+"\n", args...) },
+		started: time.Now(), calls: make(map[string]time.Time), indices: make(map[string]int),
+	}
+	first := "data: {\"type\":\"turn.start\",\"turn\":1,\"text\":\"secret-marker\"}\n" +
+		"data: {\"type\":\"tool.call\",\"turn\":1,\"tool_call\":{\"id\":\"secret-marker\",\"args\":\"secret-marker\"}}\n" +
+		"data: {\"type\":\"tool.result.available\",\"turn\":1,\"tool_result\":{\"call_id\":\"secret-marker\"}}\n" +
+		"data: {\"type\":\"tool.res"
+	second := "ult\",\"turn\":1,\"tool_result\":{\"call_id\":\"secret-marker\",\"content\":\"secret-marker\"}}\n" +
+		"data: {\"type\":\"turn.end\",\"turn\":1}\n"
+	for _, chunk := range []string{first, second} {
+		if n, err := p.Write([]byte(chunk)); err != nil || n != len(chunk) {
+			t.Fatalf("timing observer wrote %d/%d bytes: %v", n, len(chunk), err)
+		}
+	}
+	output := log.String()
+	for _, marker := range []string{"event=turn_start turn=1", "event=turn_end turn=1 elapsed=", "event=tool_result turn=1 tool_index=1 elapsed="} {
+		if !strings.Contains(output, marker) {
+			t.Fatalf("timing log missing %q: %s", marker, output)
+		}
+	}
+	if strings.Count(output, "event=tool_result") != 1 || strings.Contains(output, "secret-marker") || len(p.calls) != 0 {
+		t.Fatalf("timing observer emitted payload or failed to correlate canonical result: %s", output)
+	}
+}
+
 func applyReattachScript(t *testing.T, ctx context.Context, kubeconfig, state string) {
 	t.Helper()
 	root := filepath.Clean(filepath.Join(state, "..", "..", ".."))

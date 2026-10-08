@@ -7,7 +7,7 @@ import "context"
 // source's private business, matching SoulSource/CommandSource). A rule with an
 // empty Paths slice is UNCONDITIONAL (always applies); a non-empty Paths slice
 // scopes it to the listed globs, stated to the model as a condition the model
-// applies itself (eager v1 — see ADR 0081). Paths rides the port from day one so
+// applies itself (eager v1). Paths rides the port from day one so
 // a future lazy, path-triggered activation is additive, not a breaking change.
 type Rule struct {
 	Name   string     // logical id from the filename stem (e.g. "testing"); non-empty

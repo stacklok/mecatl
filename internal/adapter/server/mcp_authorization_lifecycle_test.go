@@ -511,7 +511,7 @@ func TestAuthenticatedMCPMetadataReplacement_Scenario2_RebuildsParkedContinuatio
 // TestAuthenticatedMCPMetadataReplacement_RebuildPreservesClientMCPSpecs pins
 // the fix for a session-engine rebuild silently dropping client-provided MCP
 // tools: buildAndRegisterSessionEngineWithBrokerTools hardcoded nil specs on
-// every rebuild (mode change, ADR-0310 enrollment freeze, and a lazy grant
+// every rebuild (mode change, enrollment freeze, and a lazy grant
 // refresh), so a session with client MCP configured lost it the first time any
 // of those rebuilt its engine. The Service must thread the session's original
 // specs (recorded at creation/load, s.clientMCPSpecs) through instead.
@@ -1124,10 +1124,9 @@ func TestMCPAuthorizationTerminalFallbackAppendFailureIsExplicit(t *testing.T) {
 	if loadErr != nil {
 		t.Fatal(loadErr)
 	}
-	// Idle, not the stranded StateRunning of before: an ambiguous append
-	// failure here used to return early and skip settlement entirely — the
-	// unconditional defer in resolveAuthorizationLocked now settles it
-	// regardless of whether the append succeeded or failed.
+	// Idle, not stranded StateRunning: the unconditional defer in
+	// resolveAuthorizationLocked settles it regardless of whether the
+	// ambiguous append succeeded or failed.
 	if persisted.State != session.StateIdle {
 		t.Fatalf("settled snapshot state = %q, want idle", persisted.State)
 	}
@@ -1513,7 +1512,7 @@ func TestMCPAuthorizationExpiryRetriesTransientFailure(t *testing.T) {
 
 // alwaysFailStore fails every Load, proving scheduleAuthorizationExpiry never
 // consults the store at all when the caller already has the pending
-// authorization in memory (P1-6).
+// authorization in memory.
 type alwaysFailStore struct{ port.SessionStore }
 
 func (alwaysFailStore) Load(context.Context, session.SessionID) (*session.Session, error) {
@@ -1740,7 +1739,7 @@ func TestMCPAuthorizationTerminalResolutionCancellationAtHandoffDoesNotLeaveRun(
 		t.Fatalf("settled pairing: %v", err)
 	}
 
-	// P1-5: the settled snapshot must not be the only place this resolution is
+	// The settled snapshot must not be the only place this resolution is
 	// recorded — a pre-start cancellation at the registration handoff must
 	// still append the terminal EvToolResult/EvAuthorizationResolved events, or
 	// a later event-sourced fold sees the authorization as still pending.
@@ -2192,10 +2191,10 @@ func TestMCPAuthorizationCloseSessionSaveFailureRetainsAuthorityForRetry(t *test
 	}
 }
 
-// TestMCPAuthorizationServiceCloseCompletesDespiteSaveFailure pins the P1-7
-// fix: a session whose settlement save fails is reported and left untouched,
+// TestMCPAuthorizationServiceCloseCompletesDespiteSaveFailure pins that
+// a session whose settlement save fails is reported and left untouched,
 // but Close() still runs to completion (shutdownComplete set) in that SAME
-// call — unlike the old "retryable" contract, a second Close() is a no-op and
+// call — a second Close() is a no-op and
 // does NOT get a second chance to settle the session (shutdown is a one-shot,
 // once-only sequence; a session stuck in StateAuthorizing after shutdown must
 // be repaired through the ordinary run-entry recovery paths, not by calling

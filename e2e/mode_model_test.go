@@ -11,8 +11,7 @@ import (
 	"github.com/stacklok/mecatl/e2e/harness"
 )
 
-// modeModelSpecs covers ADR 0030 Layer 3 (mode→model re-resolution, the opusplan
-// pattern) LIVE: a mecated spawned with `--model-slot plan=reasoning --model-alias
+// modeModelSpecs covers mode→model re-resolution (the opusplan pattern) LIVE: a mecated spawned with `--model-slot plan=reasoning --model-alias
 // reasoning=<model>` must wire the `plan` slot — proven by the build-once "model slot
 // ACTIVE" fact naming the plan slot + the resolved model (logSlotConfigFacts).
 //
@@ -21,13 +20,13 @@ import (
 // mockllm request observer to assert the provider saw the session model on turn 1 and
 // the plan model on turn 2 across a real SetMode. The live harness driver currently
 // exposes no SetMode primitive (RunOpts carries no Mode field and the driver issues no
-// session/set_mode), so a live plan↔execute flip cannot be driven here yet — this spec
-// asserts the slot WIRING (the only live-observable half) and the flip is a follow-up
-// once the harness driver gains a SetMode verb. A plan slot that failed to resolve
+// session/set_mode), so a live plan↔execute flip cannot be driven here — this spec
+// asserts the slot WIRING (the only live-observable half); the flip itself is not
+// covered live. A plan slot that failed to resolve
 // would WARN+degrade (no ACTIVE line) and fail this spec.
 func modeModelSpecs() {
 	ginkgo.Describe("mode model (plan slot)", func() {
-		ginkgo.It("wires the plan slot to the reasoning model (opusplan, ADR 0030 Layer 3)",
+		ginkgo.It("wires the plan slot to the reasoning model (opusplan)",
 			ginkgo.SpecTimeout(4*time.Minute),
 			func(ginkgo.SpecContext) {
 				if !target.IsLocal() {

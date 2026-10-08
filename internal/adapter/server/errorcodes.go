@@ -10,7 +10,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 )
 
-// An error code is a STABLE OPEN STRING, not an enum value (ADR 0248).
+// An error code is a STABLE OPEN STRING, not an enum value.
 //
 // A closed proto enum would make every added code a wire-compat event needing
 // codegen and a proto review, and would leave an older client decoding new
@@ -130,7 +130,7 @@ var errorRegistry = []errorCodeEntry{
 	{Sentinel: ErrTooManySessionEngines, Code: "too_many_session_engines", GRPC: codes.ResourceExhausted, HTTPStatus: http.StatusTooManyRequests, Title: "Too many live per-session engines"},
 	{Sentinel: ErrNoScheduleStore, Code: "no_schedule_store", GRPC: codes.Unimplemented, HTTPStatus: http.StatusNotImplemented, Title: "Scheduled tasks are not supported by the configured store"},
 	{Sentinel: ErrNoEventLog, Code: "no_event_log", GRPC: codes.Unimplemented, HTTPStatus: http.StatusNotImplemented, Title: "No durable event log configured"},
-	// The listener-scoped client-MCP refusal (ADR 0237, Scenario 9). It sits with
+	// The listener-scoped client-MCP refusal (Scenario 9). It sits with
 	// the two Unimplemented siblings above because it reports the same class of
 	// fact: the surface exists in this BUILD but this DEPLOYMENT does not offer it.
 	// It is deliberately NOT PermissionDenied — nothing about the CALLER is being
@@ -141,7 +141,7 @@ var errorRegistry = []errorCodeEntry{
 	// Distinct from client_mcp_unsupported above (permanent, stop asking) so an SDK
 	// can retry one and not the other.
 	{Sentinel: ErrClientMCPUnreachable, Code: "client_mcp_unreachable", GRPC: codes.Unavailable, HTTPStatus: http.StatusServiceUnavailable, Title: "A requested client-provided MCP server could not be connected"},
-	// The durable watch surface (ADR 0250). ErrWatchUnsupported sits beside
+	// The durable watch surface. ErrWatchUnsupported sits beside
 	// ErrNoEventLog because it is the same class of honest refusal one level in:
 	// a log exists, it just cannot serve positions.
 	{Sentinel: ErrWatchUnsupported, Code: "watch_unsupported", GRPC: codes.Unimplemented, HTTPStatus: http.StatusNotImplemented, Title: "Durable event watch is not supported by the configured event log"},

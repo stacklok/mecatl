@@ -9,10 +9,10 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 )
 
-// trust.go is the COMPOSITION-LAYER workspace-trust resolver (Workspace-Trust
-// feature, Phase 1; MUST-FIX 2). It folds the per-invocation --trust-project flag
-// and the declarative `trustedWorkspaces:` list (read from the user-global
-// settings.yaml by the workspacetrust adapter) into ONE answer — a TrustDecision
+// trust.go is the COMPOSITION-LAYER workspace-trust resolver. It folds the
+// per-invocation --trust-project flag, the declarative `trustedWorkspaces:` list
+// (read from the user-global settings.yaml by the workspacetrust adapter), and the
+// machine-written trust.yaml registry into ONE answer — a TrustDecision
 // — produced once per process here in internal/app.
 //
 // The decision's Trusted bool becomes Config.TrustProject and feeds the named
@@ -23,8 +23,7 @@ import (
 // evaluator regardless — see internal/adapter/permconfig).
 //
 // TrustDecision / TrustSource are COMPOSITION types, not domain or adapter types
-// — governance/session/prompt/tool stay trust-unaware, exactly as they are for
-// --trust-project today. Trust is a composition gate that FEEDS admission.
+// — governance/session/prompt/tool stay trust-unaware. Trust is a composition gate that FEEDS admission.
 
 // TrustSource records WHY a workspace is (or is not) trusted, for the slog
 // narration that mirrors the soul-selection narration (soulMeta).
@@ -38,9 +37,8 @@ const (
 	// TrustDeclared means the workspace's realpath is in the operator-authored
 	// settings.yaml `trustedWorkspaces:` list.
 	TrustDeclared
-	// TrustRemembered is reserved for Phase 2 (the machine-written trust.yaml
-	// registry). It is declared here so the value taxonomy is stable across
-	// phases; Phase 1 never produces it.
+	// TrustRemembered means the workspace has an undrifted entry in the
+	// machine-written trust.yaml registry.
 	TrustRemembered
 )
 
@@ -59,11 +57,11 @@ func (s TrustSource) String() string {
 }
 
 // TrustDecision is the single composition-level answer to "is this workspace
-// trusted, and why?" (MUST-FIX 2). Its Trusted field is the effective bool fed to
+// trusted, and why?". Its Trusted field is the effective bool fed to
 // the admission consumers; Source drives the log narration. Drifted is true when a
 // remembered (trust.yaml) registry entry existed but its identity-anchor hash no
-// longer matches the live anchor (Phase 2b) — a drifted entry FAILS SAFE to
-// untrusted here (mecated has no prompt; Phase 2c's mecatui turns Drifted into a
+// longer matches the live anchor — a drifted entry FAILS SAFE to
+// untrusted here (mecated has no prompt; mecatui turns Drifted into a
 // re-prompt).
 type TrustDecision struct {
 	// Trusted is the effective admission bool: honour the project's ALLOW rules
@@ -121,7 +119,7 @@ func resolveTrust(cfg Config) TrustDecision {
 	// identity-anchor hash ONCE and ask the registry whether a matching/drifted
 	// entry exists. A remembered+undrifted entry grants TrustRemembered; a
 	// remembered+drifted entry FAILS SAFE to untrusted (Drifted=true) — mecated has
-	// no prompt, and Phase 2c's mecatui turns Drifted into a re-prompt.
+	// no prompt, and mecatui turns Drifted into a re-prompt.
 	anchor := reader.AnchorHash(cfg.Workspace)
 	remembered, drifted := reader.Remembered(cfg.Workspace, anchor)
 	if remembered {
@@ -135,9 +133,9 @@ func resolveTrust(cfg Config) TrustDecision {
 
 // ResolveTrust is the EXPORTED composition-level trust fold, for a SECOND
 // composition root that must learn the trust decision BEFORE it calls Build —
-// specifically the mecatui pre-TUI first-encounter prompt (Workspace-Trust Phase
-// 2c). It returns the SAME TrustDecision Build computes internally (it delegates to
-// the same unexported resolveTrust), so the prompt and Build never disagree.
+// specifically the mecatui pre-TUI first-encounter prompt. It returns the SAME
+// TrustDecision Build computes internally (it delegates to the same unexported
+// resolveTrust), so the prompt and Build never disagree.
 //
 // The prompt uses it to decide whether to fire: a TrustNone-with-authority or a
 // Drifted decision prompts; an already-trusted (Flag/Declared/Remembered) decision
@@ -166,7 +164,7 @@ func HasProjectAuthority(cfg Config) bool {
 
 // RememberTrust persists a "trust" grant for cfg.Workspace to the machine-written
 // trust.yaml registry, capturing the LIVE identity-anchor hash at trustedAt. It is
-// the ONLY production caller of workspacetrust.Remember (Phase 2c), invoked by the
+// the ONLY production caller of workspacetrust.Remember, invoked by the
 // mecatui prompt when the operator answers "trust" (persist). "trust-once" trusts
 // the run WITHOUT calling this (nothing is persisted). trustedAt is injected by the
 // caller (composition supplies time.Now via a clock seam) so tests are
@@ -185,8 +183,8 @@ func RememberTrust(cfg Config, trustedAt time.Time) error {
 // composition log exactly like the soul selection is. A DRIFTED decision (a
 // remembered entry whose identity anchor changed) logs at Warn in the
 // applyTrustGate drop-report style — the workspace's identity surface changed since
-// it was trusted, so it has been re-gated to UNTRUSTED for this run (Phase 2c's
-// mecatui will turn this into a re-prompt; mecated stays declarative).
+// it was trusted, so it has been re-gated to UNTRUSTED for this run (mecatui
+// turns this into a re-prompt; mecated stays declarative).
 func narrateTrust(diag port.Diagnostics, d TrustDecision, workspace string) {
 	if d.Drifted {
 		diag.Log(context.Background(), port.LevelWarn, "workspace trust: identity anchor DRIFTED since the workspace was trusted; re-gated to untrusted (run mecatui to re-confirm trust)",

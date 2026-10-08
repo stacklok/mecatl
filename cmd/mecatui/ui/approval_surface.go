@@ -72,7 +72,6 @@ type approvalSurface struct {
 	sessionID    string
 	modelID      string
 	debugSession bool
-	expandTools  bool
 
 	// hits is the current render frame's verdict hit map.
 	hits map[HitID]client.Verdict
@@ -113,13 +112,12 @@ func (s *approvalSurface) Render(width, height int) (string, []ClickableRegion) 
 }
 
 func (s *approvalSurface) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
-	if key.Matches(msg, s.deps.keys.ExpandTools) {
-		if s.approvalExpandToggle() {
-			s.intent = nil
+	if key.Matches(msg, s.deps.keys.Toolcalls) {
+		if isPlanAsk(s.ask.Tool) {
 			return nil, true, false
 		}
-		s.expandTools = !s.expandTools
-		s.intent = setExpandToolsIntent{expand: s.expandTools}
+		s.approvalExpandToggle()
+		s.intent = nil
 		return nil, true, false
 	}
 	cmd, intent := s.onApprovalKey(msg)
@@ -241,10 +239,6 @@ type approvalRetractedIntent struct {
 
 func (approvalRetractedIntent) isSurfaceIntent() {}
 
-type setExpandToolsIntent struct{ expand bool }
-
-func (setExpandToolsIntent) isSurfaceIntent() {}
-
 func (s *approvalSurface) takeSurfaceIntent() surfaceIntent {
 	intent := s.intent
 	s.intent = nil
@@ -260,8 +254,8 @@ func (s *approvalSurface) takeSurfaceIntent() surfaceIntent {
 // contract (engine/agent/dispatch.go newAskID; CLAUDE.md: "the child session id
 // IS the namespace") is "<sessionID>:<n>:<callID>:<discriminator>" — only the
 // LEADING "<sessionID>:" prefix is consumed here (the trailing discriminator is the
-// server's per-run uniqueness suffix — a host-supplied value or "r<runSerial>",
-// ADR-0044 — and is opaque to the client). A MAIN-agent
+// server's per-run uniqueness suffix — a host-supplied value or "r<runSerial>"
+// — and is opaque to the client). A MAIN-agent
 // ask is prefixed with the live session id, a child ask is prefixed with the
 // CHILD session id. So an askID that contains a colon but is NOT prefixed by
 // "<sessionID>:" is a child ask. Fail-safe both directions: a colon-free fixture
@@ -998,7 +992,7 @@ func (s *approvalSurface) permissionModalBodyParts(width, height int) (body stri
 		// the full-screen args view on ctrl+t (a conditional hint hid the affordance
 		// on exactly the short asks that still benefit from the full view).
 		hk := s.deps.marks
-		hint := hk.expandTools + " full args"
+		hint := hk.toolcalls + " full args"
 		if argsRegion.maxOffset > 0 {
 			hint = "… " + hk.scroll + " scroll · " + hint
 		}
@@ -1021,7 +1015,7 @@ func (s *approvalSurface) permissionModalBodyParts(width, height int) (body stri
 	if ask.offerAlways {
 		actionRows++
 	}
-	preActions := capApprovalCardBody(b.String(), height, actionRows, th.Style("muted").Render("… ctrl+t details"))
+	preActions := capApprovalCardBody(b.String(), height, actionRows, th.Style("muted").Render("… "+s.deps.marks.toolcalls+" details"))
 	b.Reset()
 	b.WriteString(preActions)
 
@@ -1034,7 +1028,7 @@ func (s *approvalSurface) permissionModalBodyParts(width, height int) (body stri
 	// approval chords (a/w/d) the bracketed letter sits inside "Allow"/"Always"/
 	// "Deny" at its natural position, so the case follows the WORD's spelling
 	// (the "w" in "Al[w]ays" is lowercase because it is a middle letter, not
-	// because the chord is) — the historical word-embedded form renders
+	// because the chord is) — the default word-embedded form renders
 	// byte-for-byte. When an approval chord is rebound AWAY from its default
 	// word letter, the wordplay no longer holds, so the button degrades to an
 	// honest STANDALONE form ("[Y] allow" / "[Q] always allow" / "[N] deny", or
@@ -1058,8 +1052,7 @@ func (s *approvalSurface) permissionModalBodyParts(width, height int) (body stri
 // askArgsRegion is the wrapped + capped + budget-bounded layout of the modal's
 // args mini-viewport, computed ONCE (by askArgsMiniViewport) so the
 // render path, the wheel/key scroll bound, and the hint's "rows hidden" clause
-// can never disagree (the scroll-range helper used to duplicate this arithmetic
-// and drifted).
+// can never disagree.
 type askArgsRegion struct {
 	lines      []string // the wrapped args lines (all of them)
 	viewRows   int      // how many lines the modal shows at once
@@ -1513,7 +1506,7 @@ func planBodyFromArgs(rawArgs string) string {
 func approvalNotice(msg client.ApprovalMsg) string {
 	tool := msg.Tool
 	if tool == "" {
-		tool = "tool"
+		tool = toolKind
 	}
 	switch msg.Verdict {
 	case "allow_once":
@@ -1533,7 +1526,7 @@ func approvalNotice(msg client.ApprovalMsg) string {
 // approvalButtonLabel renders a generic permission-modal button label that is
 // honest about the LIVE approval chord. With the DEFAULT word-embedded chord
 // ("a"/"w"/"d") the bracketed letter sits inside the word at its natural
-// position, so the case follows the word's spelling and the historical form
+// position, so the case follows the word's spelling and the word-embedded form
 // ("[A]llow" / "Al[w]ays" / "[D]eny") renders byte-for-byte. When the chord is
 // rebound AWAY from its default word letter the wordplay no longer holds, so
 // the button degrades to an honest standalone form: the bracketed live chord
@@ -1561,7 +1554,7 @@ func approvalButtonLabel(chord, word, standalone string) string {
 
 // planApprovalButtonLabel renders a PLAN-review action-bar button label that is
 // honest about the LIVE approval chord. With the DEFAULT a/w/d chords the
-// historical word-embedded plan form ("[A]pprove & run" / "[W] auto-accept
+// word-embedded plan form ("[A]pprove & run" / "[W] auto-accept
 // edits" / "[D] iterate") renders byte-for-byte. Under an override the plan
 // wordplay ("[Y]pprove & run") would read as a typo — and for a MODIFIED chord
 // ("ctrl+y") the stem-glued form ("[ctrl+y]pprove & run") is outright broken —
@@ -1586,7 +1579,7 @@ func planApprovalButtonLabel(chord, word, standalone string) string {
 
 // approvalAlwaysFootnote renders the "always allows this exact command …"
 // footnote under the always-allow button. With the default chord ("w") it is
-// the historical byte-for-byte "al[w]ays allows …" word-embedded form; under
+// the byte-for-byte "al[w]ays allows …" word-embedded form; under
 // an override it states the live chord honestly ("always (q) allows …"). Issue #457.
 func approvalAlwaysFootnote(chord string) string {
 	if isDefaultApprovalChord(chord, "Always") {
@@ -1614,7 +1607,7 @@ func isDefaultApprovalChord(chord, word string) bool {
 
 // approvalMnemonic renders the footer/plan-review approval affordance mnemonic for a
 // rebindable approval chord: the chord with its first rune upper-cased, so the
-// default Allow/AllowAlways/Deny chords ("a"/"w"/"d") render as the historical "A"/
+// default Allow/AllowAlways/Deny chords ("a"/"w"/"d") render as the "A"/
 // "W"/"D" mnemonics byte-for-byte, while a remapped bare rune ("y") renders as its
 // upper-case ("Y"). A modified chord ("ctrl+y") is returned unchanged — upper-casing
 // only the first LETTER of a modified chord would mangle it, and a modified approval

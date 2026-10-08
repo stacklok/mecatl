@@ -1,4 +1,4 @@
-# kind-based k8s e2e suite for mecak8s (ADR 0048).
+# kind-based k8s e2e suite for mecak8s.
 #
 # Spins a real kind cluster + Redis StatefulSet + two storage-free mecak8s agent
 # replicas and asserts lease exclusion, graceful failover, session persistence,
@@ -197,7 +197,7 @@ jobs:
       # the job log instead of silent.
       - name: Upload failure artifacts
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: k8s-e2e-artifacts-${{ github.run_id }}
           path: k8s-e2e-output.log
@@ -241,7 +241,7 @@ jobs:
         run: task e2e:k8s:execution:production
       - name: Upload bounded failure artifact
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: execution-e2e-artifacts-${{ github.run_id }}
           path: .scratch/k8s-execution/*/production-failure-artifact.txt

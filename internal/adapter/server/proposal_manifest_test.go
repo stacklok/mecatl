@@ -102,7 +102,7 @@ func (f *proposalManifestFixture) service() *Service {
 	}}
 }
 
-func TestADR_0300_ProposalVerificationBuildsSelectedEvidenceOnly(t *testing.T) {
+func TestProposalVerificationBuildsSelectedEvidenceOnly(t *testing.T) {
 	original := 0
 	messages := []session.Message{
 		session.NewUserMessage("remember selected evidence"),
@@ -243,7 +243,7 @@ func TestScalableReflectionEvidence_Scenario4_MismatchFailsPreconditionWithoutPr
 	}
 }
 
-func TestADR_0300_EvidencePreviewCompatibilityRemainsRedactedAndBounded(t *testing.T) {
+func TestEvidencePreviewCompatibilityRemainsRedactedAndBounded(t *testing.T) {
 	f := newProposalManifestFixture(t)
 	detail, err := f.service().GetLearningProposal(context.Background(), string(f.record.ID), "")
 	if err != nil {
@@ -256,7 +256,7 @@ func TestADR_0300_EvidencePreviewCompatibilityRemainsRedactedAndBounded(t *testi
 	}
 }
 
-func TestADR_0300_V1EventEvidencePreviewUsesSessionStreamOrdinal(t *testing.T) {
+func TestV1EventEvidencePreviewUsesSessionStreamOrdinal(t *testing.T) {
 	const sourceID = session.SessionID("event-preview-source")
 	events := []session.Event{
 		{Type: session.EvToolResult, Seq: 1, RunID: "run-one", ToolResult: &session.ToolResult{CallID: "first", Content: "first run result"}},
@@ -293,7 +293,7 @@ func TestADR_0300_V1EventEvidencePreviewUsesSessionStreamOrdinal(t *testing.T) {
 	}
 }
 
-func TestADR_0300_StagingPromotionAndUndoControlsUnchanged(t *testing.T) {
+func TestStagingPromotionAndUndoControlsUnchanged(t *testing.T) {
 	f := newProposalManifestFixture(t)
 	svc := f.service()
 	promoted, err := svc.DecideLearningProposal(context.Background(), string(f.record.ID), string(f.record.Version), "approve", "", "")

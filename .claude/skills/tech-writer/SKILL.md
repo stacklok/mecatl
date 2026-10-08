@@ -14,18 +14,19 @@ Everything in this skill and its references is guidelines, not rules. Each one e
 
 Don't duplicate guidance; read it from where it lives:
 
-1. **[Mecatl's style guide](references/style-guide.md)** is the canonical prose and style guide.
-2. **`user-docs/_README.md`** is the canonical information-architecture,
+1. **[Mecatl's style guide](../../../user-docs/_STYLE.md)** is the canonical prose and style guide.
+2. **[The user-docs authoring contract](../../../user-docs/_README.md)** is the canonical information-architecture,
    ownership, link, and verification contract for public documentation. Its
-   Mecatl-specific mechanics take precedence over general guidance here.
-3. **`website/AGENTS.md`** owns Docusaurus infrastructure and preview mechanics.
+   Mecatl-specific placement, page structure, and verification requirements take
+   precedence over the style guide and mode references.
+3. **[The website instructions](../../../website/AGENTS.md)** own Docusaurus infrastructure and preview mechanics.
 4. **The mode references** in [`references/`](references/) provide Diataxis discipline and
    write-time anti-patterns.
 
 ## Workflow
 
 1. **Classify.** Use the compass below to decide the page's primary mode. Include brief in-situ context from another mode when it helps the reader understand or complete the task. Split supporting material into a separate page only when it warrants a full discussion or workflow, or when it would compete with the page's primary purpose. Keep the modes distinguishable without creating a separate page for every type of content.
-2. **Place.** For public documentation, follow `user-docs/_README.md`. For contributor documentation, use the owning architecture topic from `docs/READING.md` and the documentation change review in `docs/development-process.md`. Update that owner; do not append the same feature narrative to several pages. Create a page only for a distinct reader need.
+2. **Place.** For public documentation, follow the ownership map in `user-docs/_README.md`. Diataxis determines the page's mode, not its directory: use the terminal-client, operator, or builder journey that owns the task; shared capability behavior stays in `features/`, and exact contracts stay in `reference/`. For contributor documentation, use the owning architecture topic from `docs/READING.md`. Update that owner; do not append the same feature narrative to several pages. Create a page only for a distinct reader need.
 3. **Read.** Read the reference file for your mode, plus [the write-time anti-patterns](references/anti-patterns.md), plus the style guide sections your task touches. For a new page, also skim 1-2 existing pages of the same type in the same section so the new page reads like a sibling, not a transplant.
 4. **Draft.** Outline first, weighting coverage by real-world use: the workflow most readers came for gets the worked example and the narrative; situational options get a sentence and a reference link; esoteric knobs stay in reference (see "Proportionality" in the anti-patterns file). Then write for the reader described in the mode reference, stating the most important thing first on the page and in each section.
 5. **Self-check.** Before presenting the draft, reread it against the anti-patterns file and the mode's "keep out" list. Cut what fails. For substantial new content, use an independent editorial review when available; for small edits, the self-check is enough.
@@ -59,7 +60,7 @@ A quick tiebreaker: ask what the reader is doing when they open the page. Learni
 | Writing or editing reference material          | [Reference](references/reference.md)              |
 | Writing or editing concept/explanation content | [Explanation](references/explanation.md)          |
 | Drafting anything (always, before self-check)  | [Write-time anti-patterns](references/anti-patterns.md) |
-| Checking style, structure, or terminology      | [Style guide](references/style-guide.md)           |
+| Checking style, structure, or terminology      | [Style guide](../../../user-docs/_STYLE.md)           |
 
 ## Self-check
 
@@ -72,7 +73,7 @@ Before presenting a draft, verify:
 - [ ] Outdated and duplicate text was replaced or deleted. Only unique, verified knowledge was migrated; implementation chronology stays in PRs/Git rather than a catch-all notes page.
 - [ ] Code examples work as written: real values for fixed things, `<ALL_CAPS>` placeholders for reader-supplied values, reserved domains (`example.com`) in URLs.
 - [ ] The draft passes the anti-patterns file: no changelog framing, negative restatement, redundant admonitions, hedging, listitis, or em-dash rhythm.
-- [ ] Front matter (where the site uses it) has `title` and a `description` whose first 70 characters stand alone.
-- [ ] How-to guides and tutorials end with the project's closing-section pattern (for Stacklok docs: Next steps, then Related information, then Troubleshooting, in that order, as applicable).
-- [ ] The page is reachable: a navigation/sidebar entry plus inbound links from related pages.
+- [ ] Public pages have sentence-case `title`, a reader-focused `description` whose first 70 characters stand alone, and an explicit matching H1, as required by the authoring contract.
+- [ ] Closing sections follow the authoring contract: include Next steps in tutorials and task guides when readers have a clear next action; reference, explanation, index, and narrow troubleshooting pages do not need that section.
+- [ ] The page is reachable through the autogenerated sidebar and inbound links from related pages. New sections follow the authoring contract's entry-page and category rules; published URL changes follow the website instructions.
 - [ ] Terminology matches the style guide's word list.

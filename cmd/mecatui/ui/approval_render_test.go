@@ -31,7 +31,7 @@ func renderApprovalModalWithRenderer(r *renderer, ask pendingAsk, expand bool, w
 }
 
 func approvalSurfaceForRender(r *renderer, ask pendingAsk, expand bool, queued, argsOffset int) approvalSurface {
-	// Approval cards no longer expand in place; keep this fixture parameter so
+	// Approval cards do not expand in place; keep this fixture parameter so
 	// callers can prove an ambient expanded-tools state cannot change that.
 	_ = expand
 	return approvalSurface{
@@ -161,7 +161,7 @@ func assertApprovalCardIsBounded(t *testing.T, ask pendingAsk, hidden string) {
 	m := approvalModel(t, ask)
 	m.closeModal()
 	m.phase = phaseRunning
-	m.expandTools = true // Ambient transcript detail state must not expand an approval card.
+	m.expandConversation = true // Ambient transcript detail state must not expand an approval card.
 	m = applyAll(m, client.PermissionAskMsg{AskID: "sess-test-0001:1:write-1", Tool: ask.Tool, Args: ask.Args, Reason: ask.Reason})
 
 	rendered := stripANSIstr(m.View().Content)

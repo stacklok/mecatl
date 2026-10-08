@@ -14,6 +14,12 @@ views expose a serializable cursor for application-owned checkpoint storage.
 Watching and controlling are independent. A stored session ID and run ID are
 enough to create controls without opening a durable view.
 
+## Prerequisites
+
+Connect to a deployment with durable session and event storage, and retain the
+session ID your application is authorized to read. For reconnects, store the
+cursor alongside any run ID you need to control.
+
 ## Follow a session timeline
 
 Load the session, restore its previous cursor when present, and open the
@@ -77,8 +83,8 @@ direct the application to `session.controls(attached.runId)`.
 
 ## Control a stored run without watching
 
-Persist the run ID alongside the activity cursor. A replacement process can
-load a fresh session handle and address that exact run:
+Persist the run ID alongside the activity cursor. A replacement process can load
+a fresh session handle and address that exact run:
 
 ```ts
 const session = await client.sessions.get(storedSessionId);
@@ -96,10 +102,10 @@ The server applies the operation only when `storedRunId` is still the exact
 eligible run.
 
 A transport failure, caller cancellation, or deadline can happen after the
-server accepts a control but before the acknowledgement reaches the
-application. Reconcile that ambiguous case from the authoritative session
-snapshot and durable activity before retrying. Approval, steer, retraction, and
-terminal events provide the durable observation path.
+server accepts a control but before the acknowledgement reaches the application.
+Reconcile that ambiguous case from the authoritative session snapshot and
+durable activity before retrying. Approval, steer, retraction, and terminal
+events provide the durable observation path.
 
 ## Include log-only events
 
@@ -127,8 +133,8 @@ controls, mutations, or owned runs automatically.
 
 - [Handle permissions and plans](./permissions-and-plans.md) to resolve ordinary
   asks on an exact run and keep plan resolution separate.
-- [Session continuity](/features/session-continuity.md) for the server-side
-  persistence model.
+- [Session continuity](/features/sessions/session-continuity.md) for the
+  server-side persistence model.
 
 ## Related information
 

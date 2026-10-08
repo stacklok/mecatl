@@ -23,8 +23,10 @@ import (
 
 type hcAssembler string
 
-func (a hcAssembler) Assemble(context.Context) ([]session.Message, error) {
-	return []session.Message{session.NewUserMessage(string(a))}, nil
+func (hcAssembler) TargetScoped() bool { return false }
+
+func (a hcAssembler) Assemble(context.Context, []string, *session.InstructionSnapshot, int) ([]session.Message, []prompt.InstructionManifest, error) {
+	return []session.Message{session.NewUserMessage(string(a))}, []prompt.InstructionManifest{{Kind: prompt.InstructionKindTurn0, Provenance: prompt.InstructionProvenanceCustom, HasGuidance: true}}, nil
 }
 
 type hcCommands struct {
@@ -73,14 +75,14 @@ func hcConfiguredFiles(t *testing.T, source tool.Workspace) Config {
 	}
 	return Config{Workspace: t.TempDir(), UseMock: true, Headless: true, TrustProject: true, UserModelDir: t.TempDir(), SoulPath: filepath.Join(t.TempDir(), "soul.md"), PermissionConfigs: []string{file},
 		HarnessInstructionSources: []HarnessSourceRegistration[prompt.InstructionAssembler]{{ID: "source", Provenance: HarnessProvenancePolicy{Fixed: "project"}, Bind: func(context.Context, HarnessSourceScope) (prompt.InstructionAssembler, func() error, error) {
-			return prompt.RootAssembler{Source: source}, nil, nil
+			return prompt.RootAssembler{Source: source, SourceID: "source", SourcePrefix: "."}, nil, nil
 		}}},
 		HarnessCommandSources: []HarnessSourceRegistration[server.CommandSourceBinding]{{ID: "source", Provenance: HarnessProvenancePolicy{Fixed: "project"}, Bind: func(context.Context, HarnessSourceScope) (server.CommandSourceBinding, func() error, error) {
 			return prompt.NewDirCommandExpander(source), nil, nil
 		}}}}
 }
 
-func TestADR_0359_HarnessContext_Scenario1_SourceIndependentOfExecution(t *testing.T) {
+func TestHarnessContext_SourceIndependentOfExecution(t *testing.T) {
 	source := memfs.NewWorkspace("/not-a-host-path")
 	if _, err := source.CreateFile(t.Context(), "AGENTS.md", []byte("SELECTED-CONTEXT")); err != nil {
 		t.Fatal(err)
@@ -129,7 +131,7 @@ func TestADR_0359_HarnessContext_Scenario1_SourceIndependentOfExecution(t *testi
 	}
 }
 
-func TestADR_0359_HarnessContext_Scenario1_NoFSKeepsConfiguredSources(t *testing.T) {
+func TestHarnessContext_NoFSKeepsConfiguredSources(t *testing.T) {
 	sourceDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(sourceDir, "AGENTS.md"), []byte("FILE-BACKED-LOGICAL-SOURCE"), 0o600); err != nil {
 		t.Fatal(err)

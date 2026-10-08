@@ -43,12 +43,12 @@ Read the [Mecatl documentation](https://mecatl.dev/docs) to get started.
 
 | Goal | Start with |
 | --- | --- |
-| Run an agent service | [`mecated`](./cmd/mecated) and the [deployment guide](./user-docs/building/deployment/mecated.md) |
-| Run agents on Kubernetes | [`mecak8s`](./cmd/mecak8s) and the [Kubernetes deployment guide](./user-docs/building/deployment/mecak8s.md) |
+| Run an agent service | [`mecated`](./cmd/mecated) and the [deployment guide](https://mecatl.dev/docs/operating/mecated) |
+| Run agents on Kubernetes | [`mecak8s`](./cmd/mecak8s) and the [Kubernetes deployment guide](https://mecatl.dev/docs/operating/mecak8s) |
 | Use an agent locally | [Install](#install), then use [`mecatui`](./cmd/mecatui) — or [run the offline demo](#try-it-locally) from a checkout |
-| Connect an application | The [TypeScript SDK guides](./user-docs/building/typescript-sdk/index.md) or the [gRPC and HTTP/SSE integration guide](./user-docs/building/deployment/grpc-http.md) |
+| Connect an application | The [TypeScript SDK guides](https://mecatl.dev/docs/building/typescript-sdk/) or the [gRPC and HTTP/SSE integration guide](https://mecatl.dev/docs/building/grpc-http) |
 | Build unattended automation | [`mecatequi`](./cmd/mecatequi) for one prompt, a patch, and a machine-readable result |
-| Embed the runtime | [`engine`](./engine) and the [embedding guide](./user-docs/building/deployment/embed-engine.md) |
+| Embed the runtime | [`engine`](./engine) and the [embedding guide](https://mecatl.dev/docs/building/embed-engine) |
 
 ## Install
 
@@ -59,7 +59,7 @@ Homebrew:
 brew install stacklok/tap/mecatl
 ```
 
-[Install and verify Mecatl](./user-docs/install.md) covers Conda-forge,
+[Install and verify Mecatl](./user-docs/mecatui/installation.md) covers Conda-forge,
 release archives, verification, and source builds. Build `mecademo`,
 `mecatequi`, and `mecak8s` from a checkout with `task build`.
 
@@ -75,7 +75,7 @@ The supplied `mecak8s` runtime demonstrates this deployment model. It uses
 Redis for session state and event logs, Kubernetes leases to ensure one writer
 per session, and a drain path for replacing pods. You can also embed the engine
 and provide the backing services and execution environment yourself. See
-[What is a cloud-native harness?](./user-docs/building/cloud-native-harness.md)
+[What is a cloud-native harness?](./user-docs/cloud-native-harness.md)
 for the runtime guarantees and boundaries.
 
 ## Open and modular by design
@@ -109,7 +109,7 @@ Caller identity and audit records are useful building blocks, not a complete
 tenant-isolation boundary. Cross-process cryptographic proof and authority
 attenuation remain active design work. See the
 [agent identity tracker](https://github.com/stacklok/mecatl/issues/377) and the
-[working identity model](./docs/agent-identity-model.md).
+[working identity model](./docs/drafts/agent-identity-model.md).
 
 ## Try it locally
 
@@ -129,12 +129,12 @@ task build
 
 For an embedded deployment, see the
 [engine compatibility contract](./engine/COMPATIBILITY.md) and the
-[embedding guide](./user-docs/building/deployment/embed-engine.md).
+[embedding guide](https://mecatl.dev/docs/building/embed-engine).
 
 > **Security:** `mecated` is unauthenticated by default and intended for
 > loopback, single-user use. Configure authentication and transport protection
 > before binding it off-loopback. The
-> [deployment guide](./user-docs/building/deployment/mecated.md) covers
+> [deployment guide](https://mecatl.dev/docs/operating/mecated) covers
 > bearer auth, TLS/mTLS, OIDC, rate limits, and deployment posture.
 
 ## Local microVM execution
@@ -143,7 +143,7 @@ For optional isolated local execution on Linux amd64, install and authenticate t
 release-stamped host binaries: both `mecatui` and `mecated` for interactive use, or
 just `mecated` for headless use. `mecatui` runs the embedded interactive server;
 `mecated` supplies local microVM administration. Follow the
-[verified host-binary installation steps](https://mecatl.dev/docs/building/deployment/microvm-environments#local-microvm-environments)
+[verified host-binary installation steps](https://mecatl.dev/docs/operating/microvm-environments#local-microvm-environments)
 before running either command sequence:
 
 ```sh
@@ -164,7 +164,7 @@ mecated serve --headless --default-placement microvm-local
 
 Release binaries verify and prepare the required runtime when the deployment selects
 `microvm-local`. Source builds do not support this profile; repository developers can
-use the separate [developer source workflow](./docs/usage/microvm-environments.md#developer-source-workflow).
+use the separate [developer source workflow](./docs/architecture/microvm-environments.md#qualify-local-microvm-source-builds).
 `microvm doctor` and `microvm status` are read-only `mecated` administration commands.
 Guest IPv4 egress is permissive by default; external IPv6 is unrouted and unsupported.
 The local host operator can instead select `deny-all` or `allowlist` in
@@ -174,17 +174,17 @@ The local host operator can instead select `deny-all` or `allowlist` in
 valid hostname rule; invalid input or enforcement failure stops startup. HTTP/gRPC
 clients and project configuration cannot set or weaken this host-only policy. Agent
 edits live in an isolated session worktree, not in the original checkout. The [local
-microVM operator guide](https://mecatl.dev/docs/building/deployment/microvm-environments) covers
+microVM operator guide](https://mecatl.dev/docs/operating/microvm-environments) covers
 verified installation, headless use, guest-egress controls, host-versus-guest
 boundaries, and platform limits.
 
 ## User documentation
 
-- [Mecatl documentation](./user-docs/intro.md) for user guides and
+- [Mecatl documentation](https://mecatl.dev/docs/) for user guides and
   deployment information.
-- [Client integration guide](./user-docs/building/deployment/grpc-http.md)
+- [Client integration guide](https://mecatl.dev/docs/building/grpc-http)
   for gRPC and HTTP/SSE clients.
-- [TypeScript SDK guides](./user-docs/building/typescript-sdk/index.md) for
+- [TypeScript SDK guides](https://mecatl.dev/docs/building/typescript-sdk/) for
   Node.js, Bun, and browser applications.
 
 ## Architecture and engineering documentation

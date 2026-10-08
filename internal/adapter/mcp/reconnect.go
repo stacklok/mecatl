@@ -160,7 +160,7 @@ func (s *Server) reconnect(ctx context.Context, stale *mcpsdk.ClientSession) (*m
 	// terminal flag), NOT `dropped`: `dropped` is ALSO set by a dial FAILURE
 	// (the retry flag), and a bare `if s.dropped` here would make one transient
 	// dial failure permanently kill the server — blocking the next call's
-	// retry, contrary to ADR 0056's "each call pays at most one reconnect
+	// retry, contrary to the "each call pays at most one reconnect
 	// timeout" per-call retry semantics. `closed` is set ONLY by Close, so the
 	// `s.dropped = false` on a successful dial (further down) can only clear a
 	// self-set retry flag — never the Close flag.
@@ -235,8 +235,8 @@ func (s *Server) withSession(ctx context.Context, fn func(*mcpsdk.ClientSession)
 
 // clampErr renders err to a length-bounded string for a diagnostics arg, so a
 // verbose transport error cannot blow a log line. It mirrors the local helper
-// in internal/adapter/llmresilience (kept local rather than cross-imported);
-// see ADR 0056. nil → "".
+// in internal/adapter/llmresilience (kept local rather than cross-imported).
+// nil → "".
 func clampErr(err error) string {
 	if err == nil {
 		return ""

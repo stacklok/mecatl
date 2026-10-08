@@ -303,7 +303,8 @@ describe("settings facts", () => {
       status: "authenticated",
     });
     const profile = await renderSection("profile", client);
-    expect(profile).toContain("browser profile preferences");
+    expect(profile).toContain("These details appear beside your chat messages");
+    expect(profile).not.toContain("Source:");
     expect(profile).toContain("Your display name");
     expect(profile).toContain("Sign-in session");
     expect(profile).toContain("Signed in");
@@ -317,7 +318,9 @@ describe("settings facts", () => {
     expect(sharedIdentity).toContain("Shared static identity");
     expect(sharedIdentity).not.toContain("safe-opaque-account-key");
     const appearance = await renderSection("appearance", client);
-    expect(appearance).toContain("browser appearance");
+    expect(appearance).toContain("Appearance");
+    expect(appearance).toContain("Theme");
+    expect(appearance).not.toContain("Source:");
     const agent = await renderSection("agent", client);
     expect(agent).toContain("Agent name");
     expect(agent).toContain("Picture");
@@ -358,6 +361,49 @@ describe("settings facts", () => {
     expect(learning).toContain("Reject");
   });
 
+  it("titles every section with a plain card heading and no implementation line", async () => {
+    const client = seededClient();
+    client.setQueryData(getAuthSessionQueryKey(), { mode: "static", status: "disabled" });
+    client.setQueryData(getStorageHealthQueryKey(), {
+      activeJob: false,
+      available: true,
+      childCount: "0",
+      corruptCount: "0",
+      currentBytes: "2048",
+      lastFailure: false,
+      mainCount: "1",
+      reclaimableBytes: null,
+      scheduledCount: "0",
+      sessionCount: "1",
+      supported: true,
+      unknownCount: "0",
+    });
+    const titles = {
+      about: ["About"],
+      agent: ["Agent", "Agent behavior"],
+      appearance: ["Appearance"],
+      diagnostics: ["Diagnostics"],
+      labs: ["Labs"],
+      learning: ["Learning settings"],
+      "mcp-tools": ["MCP tools"],
+      models: ["Models"],
+      permissions: ["Permissions"],
+      profile: ["You", "Sign-in session"],
+      providers: ["Providers"],
+      storage: ["Storage"],
+    } as const;
+    for (const [section, expected] of Object.entries(titles)) {
+      const page = await renderSection(section as keyof typeof titles, client);
+      const document = new DOMParser().parseFromString(page, "text/html");
+      const headings = [...document.querySelectorAll("section > h2")].map(
+        (heading) => heading.textContent,
+      );
+      expect(headings, section).toEqual(expected);
+      expect(page, section).not.toMatch(/Source:|Owner:/);
+      expect(document.querySelector(".bg-brand\\/10"), section).toBeNull();
+    }
+  });
+
   it("keeps memory consolidation on the settings list", async () => {
     const client = seededClient();
     client.setQueryData(listUserMemoryQueryKey(), {
@@ -391,17 +437,16 @@ describe("settings facts", () => {
       unknownCount: "0",
     });
     const expectations = [
-      ["permissions", "Ask", "deployment", "runtime"],
-      ["mcp-tools", "MCP", "deployment", "runtime"],
-      ["storage", "3", "deployment", "storage"],
-      ["diagnostics", "mecated", "deployment", "runtime"],
-      ["labs", "Labs", "deployment", "runtime"],
+      ["permissions", "Ask", "deployment"],
+      ["mcp-tools", "MCP", "deployment"],
+      ["storage", "3", "deployment"],
+      ["diagnostics", "mecated", "deployment"],
+      ["labs", "Labs", "No Labs features are available"],
     ] as const;
-    for (const [section, fact, owner, source] of expectations) {
+    for (const [section, fact, note] of expectations) {
       const page = await renderSection(section, client);
       expect(page).toContain(fact);
-      expect(page).toContain(owner);
-      expect(page).toContain(source);
+      expect(page).toContain(note);
       const document = new DOMParser().parseFromString(page, "text/html");
       const forbiddenControls = [
         ...document.querySelectorAll("input, select, textarea, button"),

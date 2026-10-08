@@ -1,47 +1,40 @@
 ---
 sidebar_position: 1
-title: Building on Mecatl
-description:
-  Embed, extend, and deploy Mecatl using its Go engine, services, and adapter
-  ports.
+title: Build with Mecatl
+description: Embed the Go engine or integrate applications and CI through Mecatl APIs.
 ---
 
-# Building on Mecatl
+# Build with Mecatl
 
-Build on Mecatl when you want to embed the agent loop, integrate a client, or
-run agents as services on infrastructure you control. Mecatl provides an
-importable Go engine, remote APIs, a standalone server, and a Kubernetes
-deployment.
+Build an agent into your Go application, connect a client to a Mecatl service,
+or automate a bounded task in CI. Choose the integration that matches the
+lifecycle your application should own.
 
-## Choose where to start
+## Embed the Go engine
 
-- [Build your first agent](/building/getting-started/first-agent.md) to embed
-  the Go engine in a small application.
-- [Use the TypeScript SDK](/building/getting-started/typescript-sdk.md) to
-  connect a Node.js, Bun, or browser application.
-- [Pick a deployment](/building/getting-started/deployment-decision.md) to
-  compare the embedded engine, `mecated`, `mecak8s`, and `mecatequi`.
-- [Try Mecatl on Kubernetes](/building/getting-started/kubernetes.md) to run two
-  `mecak8s` replicas in a local Kind cluster.
-- [Run the offline demo](/building/getting-started/demo.md) to see an engine
-  turn without a model provider account.
+The [Go engine track](go/index.md) starts with a working agent, explains the
+objects your application holds, and develops that example into a production
+host. Continue to the extension points when you need custom tools, providers,
+permissions, or persistence. The compatibility guide explains what to review
+when upgrading your dependencies.
 
-## Explore by topic
+## Connect a client application
 
-- [What Mecatl provides](/building/what-you-get/engine-and-session.md) explains
-  the engine, session model, agent loop, tools, permissions, hooks, and other
-  built-in capabilities.
-- [TypeScript SDK](/building/typescript-sdk/index.md) covers application
-  connections, sessions and runs, approvals, durable activity, and callback
-  tools.
-- [Extension points](/building/extension-points/index.md) covers the Go ports
-  for model providers, storage, permissions, tools, and other adapters.
-- [Deployment guides](/building/deployment/index.md) cover embedding the engine,
-  operating `mecated` or `mecak8s`, using `mecatequi` in CI, and connecting
-  remote clients.
-- [What is a cloud-native harness?](/building/cloud-native-harness.md) explains how
-  Mecatl separates the agent process from durable state and execution.
-- [API stability](/building/api-stability.md) identifies the supported Go
-  packages and compatibility guarantees.
-- [Reference](/reference/index.md) provides exact configuration fields and gRPC
-  and HTTP/SSE contracts.
+Use the [TypeScript SDK](typescript-sdk/index.md) for Node.js, Bun, Deno, or a
+browser application. Its tutorial runs one prompt against a private offline
+daemon; the task guides cover operator-owned services, sessions, approvals,
+and durable activity.
+
+For another language or a custom transport integration, start with
+[Connect with gRPC or HTTP](grpc-http.md). Exact protocol behavior belongs in
+[Reference](/reference/index.md). If your wrapper owns the server process, use
+[private daemon hosting](local-daemon.md) for startup and shutdown.
+
+## Automate CI work
+
+[CI integration](ci/index.md) runs a single bounded task and produces a patch,
+summary, and exit status. Your workflow supplies credentials and decides how
+to publish the result.
+
+If your task is to host a shared service rather than integrate an application,
+start with [Deploy and operate Mecatl](/operating/index.md).

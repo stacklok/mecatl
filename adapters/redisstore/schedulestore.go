@@ -42,8 +42,8 @@ const (
 	fieldDeletionID        = "deletion_id"
 	fieldLastFireSessionID = "last_fire_session_id"
 	fieldCreatedAt         = "created_at"
-	// fieldOneShotRetryCount is the durable counter of one-shot re-arms (ADR
-	// 0059 Phase 2). Absent on pre-Phase-2 records (treated as 0 by the script
+	// fieldOneShotRetryCount is the durable counter of one-shot re-arms.
+	// Absent on older records (treated as 0 by the script
 	// and scheduleFromHash).
 	fieldOneShotRetryCount = "one_shot_retry_count"
 	// The in-flight scheduled-fire state fields (issue #386). Absent on
@@ -268,7 +268,7 @@ return 'OK'
 `)
 
 // reArmOneShotScript is the at-least-once re-arm primitive for a one-shot
-// schedule (ADR 0059 Phase 2). Under Redis's single-threaded execution it
+// schedule. Under Redis's single-threaded execution it
 // atomically: checks the key exists, re-enables the schedule (enabled=1), sets
 // next_fire_at to nextFire, and increments one_shot_retry_count. The atomicity
 // (the EVAL) is the re-arm fence: two concurrent re-arms cannot double-increment
@@ -335,7 +335,7 @@ return 1
 
 // scheduleStore is a Redis-backed port.ScheduleStore sharing the parent Store's
 // replaceable client-generation manager. It is the MULTI-REPLICA production schedule backend
-// (scheduled-tasks issue #189, Phase 1d): the SAME logic as
+// (scheduled-tasks issue #189): the SAME logic as
 // memschedulestore/jsonlstore.scheduleStore with Redis persistence + a Lua-script
 // atomic Claim. No client-side mutex is needed — Redis serializes commands
 // single-threaded, and the Claim script is the cross-replica at-most-once fence
@@ -352,7 +352,7 @@ type scheduleStore struct {
 var _ port.ScheduleStore = (*scheduleStore)(nil)
 
 // compile-time assertion that scheduleStore satisfies the OPTIONAL
-// ScheduleOneShotReArmer seam (ADR 0059 Phase 2).
+// ScheduleOneShotReArmer seam.
 var _ port.ScheduleOneShotReArmer = (*scheduleStore)(nil)
 
 // compile-time assertion that scheduleStore satisfies the OPTIONAL
@@ -507,8 +507,8 @@ func (s *scheduleStore) SetEnabled(ctx context.Context, name string, enabled boo
 	return nil
 }
 
-// ReArmOneShot is the at-least-once re-arm primitive for a one-shot schedule
-// (ADR 0059 Phase 2). It EVALs reArmOneShotScript, which — under Redis's
+// ReArmOneShot is the at-least-once re-arm primitive for a one-shot schedule.
+// It EVALs reArmOneShotScript, which — under Redis's
 // single-threaded execution — atomically re-enables the schedule (enabled=1),
 // sets next_fire_at to nextFire, and increments one_shot_retry_count. The
 // atomicity (the EVAL) is the re-arm fence: two concurrent re-arms cannot

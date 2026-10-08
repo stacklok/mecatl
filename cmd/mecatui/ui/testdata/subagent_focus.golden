@@ -11,8 +11,8 @@
   ┃    bounded previews — child content is clamped + scrubbed, never in the parent               ┃
   ┃      conversation                                                                            ┃
   ┃                                                                                              ┃
-  ┃    ✓ Grep                                                                                    ┃
-  ┃    ✓ Grep — pattern: auth                                                                    ┃
+  ┃    … Grep · pending                                                                          ┃
+  ┃    … Grep · pending                                                                          ┃
   ┃    checking the login flow                                                                   ┃
   ┃                                                                                              ┃
   ┃  x cancel · esc back · ↑/↓ scroll · pgup/pgdn · home/end                                     ┃

@@ -19,8 +19,7 @@ func TestCatalogParses(t *testing.T) {
 }
 
 // TestCatalogHasInScopeProviders: openai, openrouter, AND anthropic must all be
-// present. anthropic is the "ready for P1" guard — its absence is a curation
-// regression even though the S2 registry does not yet construct it.
+// present; a missing entry is a curation regression.
 func TestCatalogHasInScopeProviders(t *testing.T) {
 	c := Default()
 	for _, id := range []string{"openai", "openrouter", "anthropic"} {

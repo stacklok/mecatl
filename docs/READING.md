@@ -1,74 +1,64 @@
-# mecatl — Progressive reading map
+# Reading map
 
-This is the canonical reader map for this repo. It is a **self-contained index**
-organized by audience. Pick the row that fits. Every link points to an existing
-living guide (the code as it exists today) or a reference.
+These pages explain how Mecatl works today, for people building a mental model of the
+code. They describe current behavior only; designs that aren't built yet are in
+[drafts](drafts/README.md). For where to change what, read the `AGENTS.md` file
+in the directory you're working in.
 
-**Living docs** describe **current behavior** (architecture pages, the usage guide).
-**ADRs** in `docs/adr/` are **frozen rationale on demand** — reach for them to
-understand a decision's *why*, never as the primary introduction to a feature.
+## Contributors
 
----
-
-## Contributor / agent (core path)
-
-### Foundation spine (read in order)
+Start with the foundations, in order:
 
 | Step | Page | What it answers |
 | --- | --- | --- |
-| 1 | [Architecture overview](architecture.md) | What is mecatl? How is it layered (hexagonal/DDD)? What lives where? |
-| 2 | [The domain model](architecture/domain-model.md) | What are the core entities — Session, Conversation, Events, ToolCall, ToolResult? How does the state machine work? |
-| 3 | [The ports](architecture/ports.md) | What seams does the loop consume (`LLMProvider`, `SessionStore`, `PermissionPolicy`, …)? What is the tool contract and the FS seam? |
-| 4 | [The agent loop](architecture/agent-loop.md) | How does `Engine.Run` work? What is the drive algorithm, dispatch (read-parallel / mutate-serial), and permission pause/resume? |
+| 1 | [Architecture overview](architecture.md) | What Mecatl is, its layers, how one prompt flows, where code lives, and the platform principles |
+| 2 | [Domain model](architecture/domain-model.md) | The `Session` aggregate, its state machine, events, and why tool history must stay paired |
+| 3 | [Ports](architecture/ports.md) | The interfaces the loop consumes, the tool contract, and the `Environment` seam |
+| 4 | [Agent loop](architecture/agent-loop.md) | How a run is driven, how tool calls are dispatched, and how approvals pause and resume |
 
-### Topic branches
+Then read the chapters for the area you're changing. Each stands alone after the
+foundations.
 
-After the foundation spine, each architecture page stands alone — its prerequisite
-is listed, and its follow-on reading is noted. Read any that cover your area.
+| Page | What it answers |
+| --- | --- |
+| [Context and compaction](architecture/context-and-compaction.md) | How a long run stays inside the context window |
+| [Subagents and teams](architecture/subagents-and-teams.md) | How work is delegated to child loops, fork-join, and teams, and what children may not do |
+| [Governance](architecture/governance.md) | How permissions, posture, workspace trust, environment scrubbing, hooks, and guardrails decide what runs |
+| [Providers](architecture/providers.md) | How sessions bind to providers and models, and how the model router decides |
+| [Observability](architecture/observability.md) | Diagnostics, audit, and events; persistence and the session lease; provider resilience |
+| [API surface](architecture/api-surface.md) | How gRPC, HTTP/SSE, and ACP share one service; watches, scheduled tasks, and clients |
+| [Deployment and hardening](architecture/deployment-and-hardening.md) | Edge authentication, caller identity and ownership, credentials, and deployment shapes |
+| [Extensibility](architecture/extensibility.md) | MCP and the broker, skills and slash commands, and web retrieval |
+| [Memory](architecture/memory.md) | Cross-session memory, the user model, and evidence-backed reflection |
+| [MicroVM environments](architecture/microvm-environments.md) | Server-owned placement and the local microVM runtime |
 
-| Page | What it answers | Prerequisite |
-| --- | --- | --- |
-| [Hooks & guardrails](architecture/hooks-and-guardrails.md) | How do lifecycle hooks fire (SessionStart, PreToolUse, …)? How do model-backed guardrail checks work? | [agent loop](architecture/agent-loop.md) |
-| [Subagents & teams](architecture/subagents-and-teams.md) | How does the Subagent tool delegate to child loops? What per-call knobs exist (fork, read-write, background, resume)? How do agent teams coordinate? | [agent loop](architecture/agent-loop.md) |
-| [Providers](architecture/providers.md) | How does the OpenAI adapter translate requests? How does multi-provider routing + model resolution work? What is the semantic model router? | [ports](architecture/ports.md) |
-| [The API surface](architecture/api-surface.md) | What gRPC, HTTP/SSE, and ACP surfaces expose the loop? What is the engine-as-library stability contract? | [agent loop](architecture/agent-loop.md) |
-| [Context & compaction](architecture/context-and-compaction.md) | How does the token budget + compaction cascade keep a long run inside the context window? | [agent loop](architecture/agent-loop.md) |
-| [Memory](architecture/memory.md) | How does cross-session recall (Remember/Recall/SearchMemory) work? What is the user model? | [agent loop](architecture/agent-loop.md) |
-| [Observability](architecture/observability.md) | What telemetry, persistence, and reliability seams exist? How do the event log, session lease, and remote drivers work? | [ports](architecture/ports.md) |
-| [Local microVM environments](architecture/microvm-environments.md) | How does the opt-in local runtime preserve environment affinity, isolate paths and credentials, verify artifacts, govern guest egress, recover lifecycle state, and report readiness? | [ports](architecture/ports.md) |
-| [Parallelism](architecture/parallelism.md) | How does fork-join parallelism (the Parallel tool) work? How are team-member workspaces isolated? What is worktree binding? | [subagents & teams](architecture/subagents-and-teams.md) |
-| [Extensibility](architecture/extensibility.md) | What MCP, skills, progressive disclosure, and engine-as-library seams exist? | [ports](architecture/ports.md) |
-| [Deployment & hardening](architecture/deployment-and-hardening.md) | How is the server hardened (auth, rate limiting, health, graceful shutdown)? How do workspace trust, the posture ladder, and permission/bash governance work? | [API surface](architecture/api-surface.md) |
+Also for contributors:
 
-### After the architecture pages
+- [Developing the `mecatui` terminal UI](tui.md): client boundaries and UI conventions.
+- [Performance regression tracking](perf-tracking.md) and
+  [measuring performance](perf-measurement-survey.md): benchmarks, gates, and live
+  diagnosis.
+- [Qualify local microVM source builds](architecture/microvm-environments.md#qualify-local-microvm-source-builds):
+  contributor procedure for the macOS development path.
+- The [formal domain model](architecture/mecatl.modelith.md), generated from its `.yaml`.
+- [User-docs authoring contract](../user-docs/_README.md) and
+  [style guide](../user-docs/_STYLE.md), for public documentation.
 
-- [Developing the mecatui terminal UI](tui.md) - contributor UI standards, layout, and client boundaries; [public mecatui guides](../user-docs/mecatui/index.md) own terminal usage.
-- [Agent Fabric Protocol](agent-fabric-protocol.md) — draft protocol proposal for remote agent capabilities over HTTP/JSON; not a shipped mecatl surface.
-- [Documentation change review](development-process.md#documentation-change-review) — choose one owner, verify current behavior, and prune obsolete material.
-- [ADR index](adr/README.md) — the frozen *why* archive; reach for it on demand to understand a decision's rationale.
+## Operators
 
----
+Start with [Deploy and operate Mecatl](../user-docs/operating/index.md). Use the
+[lightweight server guide](../user-docs/operating/mecated.md), then the
+[Kubernetes tutorial](../user-docs/operating/kubernetes.md) and
+[shared deployment guide](../user-docs/operating/mecak8s.md). The
+[capability matrix](../user-docs/features/get-oriented/capability-matrix.md)
+compares availability; public operator pages own procedures and prerequisites.
 
-## Operator
+## Library consumers
 
 | Step | Page |
 | --- | --- |
-| 1 | [Project README](../README.md) — feature overview and quick start |
-| 2 | [Build your first agent](../user-docs/building/getting-started/first-agent.md) |
-| 3 | [See Mecatl in 60 seconds](../user-docs/building/getting-started/demo.md) |
-| 4 | [Run `mecated` standalone](../user-docs/building/deployment/mecated.md) |
-| Optional | [Local microVM environments](../user-docs/building/deployment/microvm-environments.md) |
-| Then | Choose a task, feature, deployment, or reference from the [public documentation](../user-docs/intro.md) |
-
----
-
-## Library consumer
-
-| Step | Page |
-| --- | --- |
-| 1 | [Building on mecatl](../user-docs/building/index.md) |
-| 2 | [`engine/session`](../engine/session) — the domain entry point |
-| 3 | [Extension points](../user-docs/building/extension-points/index.md) |
-| 4 | [`engine/COMPATIBILITY.md`](../engine/COMPATIBILITY.md) — the stability contract |
-| Persistence | [Built-in stores and remote drivers](../user-docs/building/extension-points/session-store.md) — external Go integration |
-| Adapter releases | [`adapters/COMPATIBILITY.md`](../adapters/COMPATIBILITY.md) — public exports, wire compatibility, and independent module releases |
+| 1 | [Building on Mecatl](../user-docs/building/index.md) |
+| 2 | [`engine/session`](../engine/session), the domain entry point |
+| 3 | [Extension points](../user-docs/building/go/extension-points/index.md) |
+| 4 | [`engine/COMPATIBILITY.md`](../engine/COMPATIBILITY.md), the stability contract |
+| Adapters | [`adapters/COMPATIBILITY.md`](../adapters/COMPATIBILITY.md): published stores and the remote driver |

@@ -25,7 +25,7 @@ func writableSpecialistEngineForTest(t *testing.T, summary string, recordedRoot 
 // writable specialist engine the agentWritableFactory minted (distinguished by a marker
 // summary + a Write tool that ran against the REAL parent workspace /ws), NOT the
 // pre-built agentEngines["reviewer"] engine (which must not run — no map reuse) and NOT
-// the generic writable explorer. No fork happens (failingForker) — direct-write, ADR 0041.
+// the generic writable explorer. No fork happens (failingForker) — direct-write.
 func TestSubagentWritableAgentRoutesToFactoryEngine(t *testing.T) {
 	var recordedRoot atomic.Pointer[string]
 	writableSpec := writableSpecialistEngineForTest(t, "WRITABLE SPECIALIST RAN", &recordedRoot)
@@ -115,7 +115,7 @@ func TestSubagentWritableAgentPerDefLimitsBind(t *testing.T) {
 }
 
 // TestSubagentWritableAgentMutatesParentTrue pins the MutatesParent OR gate for the
-// writable specialist (ADR 0058): it returns true for mode:"read-write",agent:"reviewer"
+// writable specialist: it returns true for mode:"read-write",agent:"reviewer"
 // when WithAgentWritableEngineFactory is wired (even if WithWritableChildEngine is also
 // wired — the OR gate); false for plain mode:"read-write" (no agent) when NEITHER is
 // wired; false for mode:"read-only".
@@ -135,7 +135,7 @@ func TestSubagentWritableAgentMutatesParentTrue(t *testing.T) {
 
 	rwAgent := `{"prompt":"go","mode":"read-write","agent":"reviewer"}`
 	if !wired.MutatesParent(toolCall("p1", "Subagent", rwAgent)) {
-		t.Fatalf("MutatesParent(read-write+agent) with factory wired must be true (the writable specialist mutates the real tree — ADR 0058)")
+		t.Fatalf("MutatesParent(read-write+agent) with factory wired must be true (the writable specialist mutates the real tree)")
 	}
 
 	// read-only agent does NOT mutate.
@@ -222,7 +222,7 @@ func TestSubagentWritableAgentFactoryNilIsUnsupported(t *testing.T) {
 // TestSubagentWritableAgentNotIsolatedSkipsA2 mirrors TestSubagentWritableNotIsolatedSkipsA2
 // for the writable SPECIALIST (mode:"read-write"+agent): the child's isolation-approvable
 // Shell substitution under a HEADLESS parent must AUTO-DENY — because a writable specialist
-// is isolated:false (ADR 0041/0058 — it mutates the real tree, no fork), so the A2
+// is isolated:false (it mutates the real tree, no fork), so the A2
 // isolation auto-approve (which only fires when isolated) does NOT apply. The read-only
 // childForker is a failingForker to also prove no fork happens.
 func TestSubagentWritableAgentNotIsolatedSkipsA2(t *testing.T) {

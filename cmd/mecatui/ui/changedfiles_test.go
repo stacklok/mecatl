@@ -157,7 +157,7 @@ func TestChangedFilesHeaderShowsIndicator(t *testing.T) {
 	if strings.Contains(collapsed, "changed this session") {
 		t.Errorf("collapsed view should not show the changed-files list")
 	}
-	m.expandTools = true
+	m.expandConversation = true
 	m.refreshView()
 	expanded := stripANSIstr(m.vp.View())
 	if !strings.Contains(expanded, "out.txt") || !strings.Contains(expanded, "changed this session") {

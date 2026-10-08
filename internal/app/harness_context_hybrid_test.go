@@ -29,16 +29,18 @@ type harnessFileInstructions struct {
 	file   string
 }
 
-func (s harnessFileInstructions) Assemble(ctx context.Context) ([]session.Message, error) {
+func (harnessFileInstructions) TargetScoped() bool { return false }
+
+func (s harnessFileInstructions) Assemble(ctx context.Context, _ []string, _ *session.InstructionSnapshot, _ int) ([]session.Message, []prompt.InstructionManifest, error) {
 	data, err := s.source.Read(ctx, s.file)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	body := strings.TrimSpace(string(data))
 	if body == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
-	return []session.Message{session.NewUserMessage(body)}, nil
+	return []session.Message{session.NewUserMessage(body)}, []prompt.InstructionManifest{{Kind: prompt.InstructionKindTurn0, HasGuidance: true}}, nil
 }
 
 func harnessHybridConfig(t *testing.T, includeRepository bool, instructionMode string) (Config, string) {
@@ -93,7 +95,7 @@ func harnessHybridConfig(t *testing.T, includeRepository bool, instructionMode s
 			return hcAssembler("ORGANIZATION-INSTRUCTIONS"), nil, nil
 		}},
 		{ID: "repository", Provenance: HarnessProvenancePolicy{Fixed: "project"}, Bind: func(context.Context, HarnessSourceScope) (prompt.InstructionAssembler, func() error, error) {
-			return prompt.RootAssembler{Source: repoWS}, nil, nil
+			return prompt.RootAssembler{Source: repoWS, SourceID: "repository", SourcePrefix: "."}, nil, nil
 		}},
 	}
 	cfg.HarnessRulesSources = []HarnessSourceRegistration[prompt.RulesSource]{
@@ -125,7 +127,7 @@ func harnessRequestText(request port.LLMRequest) string {
 	return out.String()
 }
 
-func TestADR_0359_HarnessContext_Scenario5_HelpdeskDeploymentAndServiceSources(t *testing.T) {
+func TestHarnessContext_HelpdeskDeploymentAndServiceSources(t *testing.T) {
 	var contexts [][]session.Message
 	for _, transport := range []string{"file", "service"} {
 		t.Run(transport, func(t *testing.T) {
@@ -183,7 +185,7 @@ func TestADR_0359_HarnessContext_Scenario5_HelpdeskDeploymentAndServiceSources(t
 	}
 }
 
-func TestADR_0359_HarnessContext_Scenario5_HybridCodingContext(t *testing.T) {
+func TestHarnessContext_HybridCodingContext(t *testing.T) {
 	cfg, _ := harnessHybridConfig(t, true, "combine")
 	cfg.Shell = "/bin/sh"
 	var requests []port.LLMRequest
@@ -225,7 +227,7 @@ func TestADR_0359_HarnessContext_Scenario5_HybridCodingContext(t *testing.T) {
 	}
 }
 
-func TestADR_0359_HarnessContext_Scenario5_CombineExcludeAndDisableRepositoryContext(t *testing.T) {
+func TestHarnessContext_CombineExcludeAndDisableRepositoryContext(t *testing.T) {
 	for _, tc := range []struct {
 		name, mode                 string
 		repository                 bool

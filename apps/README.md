@@ -9,12 +9,11 @@
 > `org.stacklok.mecatl.studio.stability=early-access` for the same reason.
 
 Studio ships the bootstrap (health, runtime status, browser login, the shell) plus its
-product features, starting with chat. Each feature lands with its own acceptance plan
-under `docs/acceptance/studio-*.md`, which lists exactly what it ships. The published image is
+product features, starting with chat. The published image is
 `ghcr.io/stacklok/mecatl/studio`.
 
 Mecatl Studio is a browser UI for a mecatl deployment, split in three packages that form
-one self-contained pnpm workspace (pnpm 12.4.2, Node 24, see `package.json`):
+one self-contained pnpm workspace (pnpm 12.4.2, Node 26, see `package.json`):
 
 | Package                               | What it is                                                                                                                                                            |
 | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -22,18 +21,27 @@ one self-contained pnpm workspace (pnpm 12.4.2, Node 24, see `package.json`):
 | `web/` (`@mecatl-studio/web`)         | A Vite + React SPA. Calls only the BFF's `/api/v1`; imports neither the SDK nor daemon protocol types.                                                                  |
 | `contracts/` (`@mecatl-studio/contracts`) | Zod schemas, the generated `openapi.json`, and the generated Hey API / TanStack Query client. Generated files are committed and drift-gated.                        |
 
-The design and its rationale are in
-[ADR 0351](../docs/adr/0351-mecatl-studio-in-repo-web-ui.md); the acceptance contract is
-[docs/acceptance/studio-bootstrap.md](../docs/acceptance/studio-bootstrap.md); the
-architecture guide has a [Mecatl Studio](../docs/architecture.md#mecatl-studio) section.
-Two rules from the ADR shape everything here:
+The architecture guide has a [Mecatl Studio](../docs/architecture/api-surface.md#mecatl-studio)
+section.
 
-- **Published SDK only.** `apps/` depends on `@stacklok-oss/mecatl-sdk` by a semver range
-  from npm and never references `sdk/typescript` by path or `workspace:` link (Biome's
-  `noRestrictedImports` rejects it). A UI change that needs an unreleased SDK change waits
-  for the SDK release.
-- **The browser never talks to mecatl.** Only the BFF holds a credential; the browser
-  holds four cookies (see the [security model](../user-docs/building/deployment/studio.md)).
+## Boundary
+
+Studio is a consumer of Mecatl's public surface, not part of the Go build:
+
+- **Published SDK only.** `server/` depends on a released `@stacklok-oss/mecatl-sdk`
+  version from npm (`server/package.json`). Nothing in `apps/` references
+  `sdk/typescript` by path or `file:` / `link:` dependency; `workspace:*` links only the
+  Studio packages to each other. Biome's `noRestrictedImports` rejects relative imports
+  of the in-repo SDK. A UI change that needs an unreleased SDK change waits for the SDK
+  release.
+- **The browser never talks to Mecatl.** `web/` imports neither the SDK nor its
+  generated protocol types (Biome rejects `@stacklok-oss/mecatl-sdk`, `/node`, and
+  `/gen` there). Only the BFF holds a credential; the browser holds four cookies (see
+  the [security model](../user-docs/operating/studio.md)).
+- **One local gate.** `task studio:check` (lint, typecheck, offline tests,
+  generated-artifact drift check) must pass for any change under `apps/`. CI runs those
+  steps plus a dependency audit, integration tests against a spawned `mecated --mock`,
+  the browser journeys, and an image build.
 
 ## Run locally
 
@@ -75,7 +83,7 @@ task studio:typecheck        # tsc --noEmit for contracts, server, web
 task studio:test             # Vitest (offline; never spawns mecated)
 task studio:test:integration # Vitest over the REAL SDK against a spawned `mecated --mock`; runs `task build` first (needs Go)
 task studio:generated-check  # regenerate contracts artifacts, fail if the committed copies differ
-task studio:check            # lint + typecheck + test + generated-check — what CI runs
+task studio:check            # lint + typecheck + test + generated-check — the local gate
 task studio:format           # apply Biome formatting / import organization
 task studio:generate         # regenerate contracts/openapi.json + contracts/src/generated
 task studio:build            # build server/dist and web/dist
@@ -105,9 +113,9 @@ reported as `mode: "static"` / `"none"`; inside the image they additionally requ
 
 Deploying Studio, its full environment reference, the image, browser login, and the
 security model are documented on the public
-[Mecatl Studio web UI](../user-docs/building/deployment/studio.md) page; this README covers
+[Mecatl Studio web UI](../user-docs/operating/studio.md) page; this README covers
 only local development. All configuration is environment variables read once at startup:
-`MECATL_*` describe the target, `STUDIO_*` are Studio's own (ADR 0351, decision 5).
+`MECATL_*` describe the target, `STUDIO_*` are Studio's own.
 `.env.example` lists them with comments; `pnpm dev` reads `../.env` when it exists, and
 `docker compose` reads `apps/.env`.
 

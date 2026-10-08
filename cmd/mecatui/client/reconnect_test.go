@@ -154,10 +154,10 @@ func restoreBackoff(t *testing.T) func() {
 	return RestoreBackoffForTest()
 }
 
-// TestADR_0096_AttemptTwoWaitsDeterministicBackoff proves the client loop, not
+// TestReconnectAttemptTwoWaitsDeterministicBackoff proves the client loop, not
 // just delay helper math, requests the exact attempt-two delay and cannot open
 // the probe until the controlled waiter releases it.
-func TestADR_0096_AttemptTwoWaitsDeterministicBackoff(t *testing.T) {
+func TestReconnectAttemptTwoWaitsDeterministicBackoff(t *testing.T) {
 	restore := restoreBackoff(t)
 	defer restore()
 	liveReconnectBaseBackoff = 100 * time.Millisecond
@@ -725,7 +725,7 @@ func (s *rejectedReconnectLiveStreamer) StreamSessionLive(context.Context, strin
 
 func (*rejectedReconnectLiveStreamer) BearerBackedStream() bool { return true }
 
-func TestADR_0096_ReconnectProbeOpenAuthRejectedStopsRetry(t *testing.T) {
+func TestReconnectProbeOpenAuthRejectedStopsRetry(t *testing.T) {
 	defer restoreBackoff(t)()
 	liveReconnectBaseBackoff = time.Millisecond
 	liveReconnectJitterFrac = 0

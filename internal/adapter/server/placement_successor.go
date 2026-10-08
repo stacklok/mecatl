@@ -159,6 +159,11 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	if err != nil || absent {
 		return "", err
 	}
+	if copyHistory {
+		if err := s.attachLiveInstructions(source, false); err != nil {
+			return "", err
+		}
+	}
 	destinationID := s.cfg.NewID()
 	releaseDestination, reserveErr := s.reserveGeneratedSessionID(mutationCtx, destinationID)
 	if reserveErr != nil {
@@ -214,6 +219,35 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 			return "", fmt.Errorf("%w: %v", ErrInvalidArgument, err)
 		}
 	}
+	// A same-placement fork starts with the source's live examined guidance, not
+	// the store's history. A new placement (or process with no cached source)
+	// discovers independently on its first run.
+	var inheritedSource session.SessionID
+	if copyHistory && source.EnvironmentRef == created.EnvironmentRef {
+		snap := source.InstructionSnapshot()
+		if len(snap.Scopes) > 0 || len(snap.Directories) > 0 || snap.DiscoveryExhausted {
+			s.mu.Lock()
+			if s.draining.Load() {
+				s.mu.Unlock()
+				return "", ErrUnavailable
+			}
+			if len(s.instructionSnapshots) >= s.cfg.MaxSessionEngines {
+				s.mu.Unlock()
+				return "", fmt.Errorf("%w: live instruction capacity %d", ErrTooManySessionEngines, s.cfg.MaxSessionEngines)
+			}
+			created.ReplaceInstructionSnapshot(snap)
+			inheritedSource = source.ID
+			s.instructionSnapshots[created.ID] = liveInstructionSnapshot{incarnation: created.Incarnation(), snapshot: created.InstructionSnapshot()}
+			s.mu.Unlock()
+			defer func() {
+				if !publishedPlacement {
+					s.mu.Lock()
+					delete(s.instructionSnapshots, created.ID)
+					s.mu.Unlock()
+				}
+			}()
+		}
+	}
 	profile := profileForSession(created)
 	var (
 		builtEngine     *sessionEngine
@@ -242,9 +276,9 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 			return "", fmt.Errorf("%w: per-session engine not supported (no session-engine factory configured)", ErrInvalidArgument)
 		}
 		if broker != nil {
-			builtEngine, err = s.buildAndRegisterSessionEngineWithBrokerTools(mutationCtx, created, selector, profile, created.Mode, false, brokerTools(broker), true)
+			builtEngine, err = s.buildAndRegisterSessionEngineWithBrokerTools(mutationCtx, created, selector, profile, created.Mode, false, brokerTools(broker), true, inheritedSource)
 		} else {
-			builtEngine, err = s.buildAndRegisterSessionEngine(mutationCtx, created, selector, profile, created.Mode, false)
+			builtEngine, err = s.buildAndRegisterSessionEngine(mutationCtx, created, selector, profile, created.Mode, false, inheritedSource)
 		}
 		if err != nil {
 			return "", err
@@ -264,7 +298,7 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	// The lease context covers provider binding and engine construction. Recheck
 	// ownership immediately before the only publication point.
 	//
-	// TODO(ADR 0291 follow-up): SessionStore has no lease-token CAS Save. A lease
+	// TODO: SessionStore has no lease-token CAS Save. A lease
 	// can therefore be lost after stillHeld and before/while Save publishes. Context
 	// cancellation is advisory because supported stores may already be committing;
 	// closing this residual window requires a new token-fenced store seam.

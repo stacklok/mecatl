@@ -23,6 +23,8 @@ function sdkSkill(over: Record<string, unknown> = {}) {
       version: "v2",
       ...over,
     },
+    publicationError: "",
+    publicationStatus: "",
   };
 }
 
@@ -93,7 +95,11 @@ describe("Mecatl knowledge adapter", () => {
 
   it("maps learned-skill actions onto the SDK operations with the expected revision and rollback target", async () => {
     const learnedSkills = {
-      activate: vi.fn().mockResolvedValue(sdkSkill({ state: "active" })),
+      activate: vi.fn().mockResolvedValue({
+        ...sdkSkill({ state: "active" }),
+        publicationError: "catalog unavailable",
+        publicationStatus: "failed",
+      }),
       archive: vi.fn().mockResolvedValue(sdkSkill({ state: "archived" })),
       reject: vi.fn().mockResolvedValue(sdkSkill({ state: "rejected" })),
       rollback: vi.fn().mockResolvedValue(sdkSkill({ version: "v1" })),
@@ -119,6 +125,9 @@ describe("Mecatl knowledge adapter", () => {
         version: "v2",
       });
       expect(result.id).toBe("review");
+      // The daemon's publication outcome must reach the browser, never be dropped.
+      expect(result.publicationError).toBe(action === "activate" ? "catalog unavailable" : "");
+      expect(result.publicationStatus).toBe(action === "activate" ? "failed" : "");
     }
     // Rollback reactivates an archived version; defaulting to the active one
     // would ask the daemon for something it always refuses.

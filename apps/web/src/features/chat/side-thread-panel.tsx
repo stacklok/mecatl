@@ -3,12 +3,14 @@
 import type { RunStreamEvent } from "@mecatl-studio/contracts";
 import {
   cancelRun,
+  resolvePlanAsk,
   resolveRunPermission,
   startRun,
   watchSessionActivity,
 } from "@mecatl-studio/contracts/generated";
 import {
   forkSessionMutation,
+  getRuntimeOptions,
   getRuntimeSettingsOptions,
   getSessionDetailOptions,
   getSessionTranscriptOptions,
@@ -22,20 +24,12 @@ import {
   ArrowUp,
   Copy,
   LoaderCircle,
-  Maximize2,
   Mic,
   MicOff,
   MoreHorizontal,
-  PanelRightClose,
   Square,
 } from "lucide-react";
-import {
-  type CSSProperties,
-  type PointerEvent as ReactPointerEvent,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "../../components/ui/button";
 import {
   DropdownMenu,
@@ -48,7 +42,6 @@ import {
 import { Textarea } from "../../components/ui/textarea";
 import { captureSseFailure, protectedRequestsPaused } from "../../lib/api-client";
 import { modelPreferenceId, useDisabledModels } from "../../lib/model-preferences";
-import { maxPanelWidth, minPanelWidth, usePanelWidth } from "../../lib/panel-width";
 import {
   defaultAgentName,
   useAgentAvatar,
@@ -59,16 +52,22 @@ import {
 import { useAuthRecovery } from "../auth/auth-recovery-context";
 import { ApprovalPanel, type ApprovalRequest, type ApprovalVerdict } from "./approval-panel";
 import type { ComposerModelOption } from "./chat-composer";
+import { useChatEscape } from "./chat-escape";
 import {
   applyRunDelivery,
   type ChatMessage,
   errorMessage,
   initialRunDeliveryState,
+  messageOwnsApproval,
   messagesFromTranscript,
   retractApproval,
+  unmatchedApprovals,
 } from "./chat-state";
 import { Message } from "./chat-workspace";
+import { EscapeHintContext } from "./escape-hint-context";
 import { groupModels, ModelEffortMenu } from "./model-effort-menu";
+import { exactPlanControlAvailability, followPlanContinuationFromBff } from "./plan-continuation";
+import { PlanReviewCard, type PlanVerdict } from "./plan-review-card";
 import {
   CATCHING_UP_NOTICE,
   decideTruncation,
@@ -76,8 +75,10 @@ import {
   type RunStreamEnd,
   runStreamEnd,
 } from "./run-stream";
+import { SidePanelShell } from "./side-panel-shell";
 import { registerThreadSession } from "./thread-map";
 import { useVoiceInput } from "./use-voice-input";
+import { VerdictLedger } from "./verdict-ledger";
 
 /** Collects an SSE transport failure for any of a thread run's streams, including reattached ones. */
 interface StreamFailure {
@@ -106,11 +107,11 @@ export function SideThreadPanel({
   const recovery = useAuthRecovery();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const width = usePanelWidth("contentPreview");
   const [activeSessionId, setActiveSessionId] = useState(sessionId);
-  const [maximized, setMaximized] = useState(false);
   const [showTools, setShowTools] = useState(true);
   const [prompt, setPrompt] = useState("");
+  const [escapeClearHint, setEscapeClearHint] = useState(false);
+  const threadRoot = useRef<HTMLElement>(null);
   const forkSession = useMutation(forkSessionMutation());
   const sessionDetail = useQuery(getSessionDetailOptions({ path: { sessionId: activeSessionId } }));
   const runtimeSettings = useQuery(getRuntimeSettingsOptions());
@@ -134,21 +135,40 @@ export function SideThreadPanel({
         providerId: candidate.providerId,
       })) ?? [];
   const busy = run.isRunning || forkSession.isPending;
-
-  function startResize(event: ReactPointerEvent<HTMLButtonElement>) {
-    event.currentTarget.focus();
-    event.preventDefault();
-    const startX = event.clientX;
-    const startWidth = width.value;
-    const resize = (moveEvent: PointerEvent) =>
-      width.setValue(startWidth - moveEvent.clientX + startX);
-    const finish = () => {
-      window.removeEventListener("pointermove", resize);
-      window.removeEventListener("pointerup", finish);
-    };
-    window.addEventListener("pointermove", resize);
-    window.addEventListener("pointerup", finish);
-  }
+  const escapeAsk =
+    run.approvals.find(
+      (approval) =>
+        approval.controlTarget?.sessionId === activeSessionId &&
+        approval.controlTarget.runId === run.runId,
+    ) ?? run.approvals.find((approval) => approval.controlTarget?.sessionId === activeSessionId);
+  useChatEscape({
+    active: true,
+    askAvailable: escapeAsk ? !run.approvalDisabled(escapeAsk) : false,
+    draft: Boolean(prompt),
+    onClearDraft: () => setPrompt(""),
+    onClosePanel: onClose,
+    onDenyAsk: () => {
+      if (escapeAsk) void run.respondToApproval(escapeAsk, "deny");
+    },
+    onHintChange: setEscapeClearHint,
+    onIteratePlan: () => {
+      if (escapeAsk) void run.respondToPlan(escapeAsk, "iterate");
+    },
+    onStopRun: () => void run.stopRun(),
+    onUnavailablePlan: () =>
+      run.setError(
+        escapeAsk
+          ? (run.planUnavailableReason(escapeAsk) ??
+              "Exact plan verdict is unavailable. Refresh activity.")
+          : "Exact plan verdict is unavailable.",
+      ),
+    navigationKey: activeSessionId,
+    ownsFocus: (target) => target instanceof Node && Boolean(threadRoot.current?.contains(target)),
+    panelOpen: false,
+    pendingAsk: escapeAsk?.tool === "PresentPlan" ? "plan" : escapeAsk ? "ordinary" : "none",
+    planAvailable: escapeAsk?.tool === "PresentPlan" && !run.planUnavailableReason(escapeAsk),
+    runActive: run.isRunning && Boolean(run.runId),
+  });
 
   async function forkToModel(
     nextModel: { id: string; providerId: string },
@@ -196,41 +216,9 @@ export function SideThreadPanel({
   }
 
   return (
-    <>
-      <button
-        aria-label="Close thread"
-        className="absolute inset-0 z-30 bg-black/35 min-[760px]:hidden"
-        onClick={onClose}
-        type="button"
-      />
-      <aside
-        aria-label="Thread"
-        className={
-          maximized
-            ? "fixed inset-0 z-50 flex flex-col bg-background"
-            : "absolute inset-x-0 bottom-0 z-40 flex h-[94dvh] flex-col rounded-t-2xl border bg-background shadow-2xl min-[760px]:relative min-[760px]:inset-auto min-[760px]:order-3 min-[760px]:h-full min-[760px]:w-[var(--content-panel-width)] min-[760px]:shrink-0 min-[760px]:rounded-none min-[760px]:border-y-0 min-[760px]:border-r-0"
-        }
-        style={
-          maximized ? undefined : ({ "--content-panel-width": `${width.value}px` } as CSSProperties)
-        }
-      >
-        {!maximized && (
-          <button
-            aria-label="Resize thread panel"
-            className="absolute inset-y-0 -left-1 z-10 hidden w-2 cursor-col-resize touch-none border-0 bg-transparent p-0 hover:bg-brand/20 min-[760px]:block"
-            onKeyDown={(event) => {
-              if (event.key === "ArrowLeft") width.setValue(width.value + 12);
-              else if (event.key === "ArrowRight") width.setValue(width.value - 12);
-              else return;
-              event.preventDefault();
-            }}
-            onPointerDown={startResize}
-            title={`Resize thread panel (${minPanelWidth}–${maxPanelWidth}px)`}
-            type="button"
-          />
-        )}
-        <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
-          <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">Thread</h2>
+    <EscapeHintContext.Provider value={escapeAsk}>
+      <SidePanelShell
+        actions={
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button aria-label="Thread options" size="icon" variant="ghost">
@@ -251,19 +239,16 @@ export function SideThreadPanel({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button
-            aria-label={maximized ? "Restore thread panel" : "Maximize thread panel"}
-            onClick={() => setMaximized((current) => !current)}
-            size="icon"
-            variant="ghost"
-          >
-            <Maximize2 aria-hidden="true" className={maximized ? "rotate-180" : undefined} />
-          </Button>
-          <Button aria-label="Close thread" onClick={onClose} size="icon" variant="ghost">
-            <PanelRightClose aria-hidden="true" />
-          </Button>
-        </header>
-
+        }
+        bodyClassName="flex flex-col overflow-hidden"
+        closeLabel="Close thread"
+        escapeHint={!escapeAsk}
+        maximizable
+        onClose={onClose}
+        rootRef={threadRoot}
+        surface="thread"
+        title="Thread"
+      >
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="flex min-h-full flex-col px-4 py-6">
             {run.messages.length === 0 ? (
@@ -274,8 +259,16 @@ export function SideThreadPanel({
                   <Message
                     agentAvatar={agentAvatar}
                     agentName={agentName}
+                    approvalDisabled={run.approvalDisabled}
+                    approvalUncertain={run.approvalUncertain}
+                    approvals={run.approvals.filter((approval) =>
+                      messageOwnsApproval(message, approval),
+                    )}
                     key={message.id}
                     message={message}
+                    onRespondToApproval={run.respondToApproval}
+                    onRespondToPlan={run.respondToPlan}
+                    planUnavailableReason={run.planUnavailableReason}
                     showToolCalls={showTools}
                     streaming={run.isRunning && index === run.messages.length - 1}
                     threadDisabled
@@ -284,6 +277,26 @@ export function SideThreadPanel({
                   />
                 ))}
               </div>
+            )}
+            {unmatchedApprovals(run.approvals, run.messages).map((approval) =>
+              approval.tool === "PresentPlan" ? (
+                <PlanReviewCard
+                  approval={approval}
+                  disabled={run.approvalDisabled(approval)}
+                  key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
+                  onRespond={(verdict) => void run.respondToPlan(approval, verdict)}
+                  uncertain={run.approvalUncertain(approval)}
+                  unavailableReason={run.planUnavailableReason(approval)}
+                />
+              ) : (
+                <ApprovalPanel
+                  approval={approval}
+                  disabled={run.approvalDisabled(approval)}
+                  key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
+                  onRespond={(verdict) => void run.respondToApproval(approval, verdict)}
+                  uncertain={run.approvalUncertain(approval)}
+                />
+              ),
             )}
           </div>
         </div>
@@ -301,16 +314,6 @@ export function SideThreadPanel({
           </div>
         )}
 
-        {run.approvals[0] && (
-          <ApprovalPanel
-            approval={run.approvals[0]}
-            disabled={run.controlPending}
-            onRespond={(verdict) => void run.respondToApproval(verdict)}
-            position={1}
-            total={run.approvals.length}
-          />
-        )}
-
         {run.isRunning && run.runId && (
           <div className="mx-4 mb-2 flex items-center justify-end">
             <Button
@@ -322,6 +325,9 @@ export function SideThreadPanel({
               <Square aria-hidden="true" className="fill-current" />
               Stop
             </Button>
+            {!escapeAsk && !run.controlPending && (
+              <span className="ml-2 text-xs text-muted-foreground">Esc to Stop</span>
+            )}
           </div>
         )}
 
@@ -381,6 +387,14 @@ export function SideThreadPanel({
             </div>
           </div>
         </form>
+        {!escapeAsk && !run.isRunning && prompt && !escapeClearHint && (
+          <p className="px-4 pb-2 text-xs text-muted-foreground">Esc twice to clear draft</p>
+        )}
+        {escapeClearHint && (
+          <p className="px-4 pb-2 text-xs text-muted-foreground" role="status">
+            Press Escape again to clear the unsent draft.
+          </p>
+        )}
         {/* Hidden without a deployment model inventory: see the note in
             chat-composer.tsx. */}
         {models.length > 0 ? (
@@ -397,8 +411,8 @@ export function SideThreadPanel({
             />
           </div>
         ) : null}
-      </aside>
-    </>
+      </SidePanelShell>
+    </EscapeHintContext.Provider>
   );
 }
 
@@ -411,6 +425,7 @@ export function SideThreadPanel({
  */
 function useSideThreadRun(sessionId: string) {
   const queryClient = useQueryClient();
+  const runtime = useQuery(getRuntimeOptions());
   const sessions = useQuery(listSessionsOptions());
   const transcript = useQuery({
     ...getSessionTranscriptOptions({ path: { sessionId } }),
@@ -424,6 +439,21 @@ function useSideThreadRun(sessionId: string) {
   const [notice, setNotice] = useState<string>();
   const [controlPending, setControlPending] = useState(false);
   const runAbort = useRef<AbortController | undefined>(undefined);
+  const planFollowAbort = useRef<AbortController | undefined>(undefined);
+  const planReattach = useRef<{ cursor?: string; runId: string; sessionId: string } | undefined>(
+    undefined,
+  );
+  const [reattachEpoch, setReattachEpoch] = useState(0);
+  const [planContinuationActive, setPlanContinuationActive] = useState(false);
+  const runIdRef = useRef<string | undefined>(undefined);
+  // A side thread can move to a successor session without remounting, so a
+  // verdict that lands late must not write into the session now on screen.
+  const viewedSessionId = useRef(sessionId);
+  viewedSessionId.current = sessionId;
+  const verdicts = useRef(new VerdictLedger());
+  const [verdictEpoch, setVerdictEpoch] = useState(0);
+
+  useEffect(() => () => planFollowAbort.current?.abort(), []);
 
   useEffect(() => {
     if (!isRunning && transcript.data)
@@ -433,6 +463,9 @@ function useSideThreadRun(sessionId: string) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally resets on session identity alone, not on any value read inside
   useEffect(() => {
     runAbort.current?.abort();
+    planFollowAbort.current?.abort();
+    planReattach.current = undefined;
+    setPlanContinuationActive(false);
     runAbort.current = undefined;
     setError(undefined);
     setNotice(undefined);
@@ -440,37 +473,62 @@ function useSideThreadRun(sessionId: string) {
     setMessages([]);
     setIsRunning(false);
     setRunId(undefined);
+    runIdRef.current = undefined;
+    verdicts.current.clear();
+    setControlPending(false);
   }, [sessionId]);
 
   const selected = sessions.data?.items.find((session) => session.id === sessionId);
   const watchable = isActiveSessionState(selected?.state);
+  const shouldWatch = watchable || planContinuationActive;
 
-  // Reattachment is keyed only to session identity and its watchable state,
-  // mirroring the parent chat's own reattach effect.
+  // A proven plan continuation can reattach before the inventory catches up.
   // biome-ignore lint/correctness/useExhaustiveDependencies: consume/refresh are stable for this lifetime
   useEffect(() => {
-    if (!sessionId || !watchable || runAbort.current || protectedRequestsPaused()) return;
+    const planRefresh = planReattach.current;
+    if (
+      !sessionId ||
+      (!shouldWatch && planRefresh?.sessionId !== sessionId) ||
+      runAbort.current ||
+      protectedRequestsPaused()
+    )
+      return;
+    planReattach.current = undefined;
     const controller = new AbortController();
     runAbort.current = controller;
     setIsRunning(true);
     setError(undefined);
     setNotice(undefined);
-    setApprovals([]);
-    setMessages([]);
+    setApprovals((current) => retainUncertainApprovals(current));
+    if (!planRefresh?.cursor) setMessages([]);
+    if (planRefresh?.sessionId === sessionId) {
+      runIdRef.current = planRefresh.runId;
+      setRunId(planRefresh.runId);
+    }
 
     void (async () => {
       const streamFailure: StreamFailure = {};
       try {
-        const stream = await watchActivity(controller, streamFailure);
-        await consume(stream, controller, streamFailure, crypto.randomUUID(), "", true);
+        const stream = await watchActivity(controller, streamFailure, planRefresh?.cursor);
+        await consume(
+          stream,
+          controller,
+          streamFailure,
+          crypto.randomUUID(),
+          "",
+          !planRefresh?.cursor,
+          planRefresh?.cursor ? messages : [],
+        );
         if (streamFailure.error && !controller.signal.aborted) throw streamFailure.error;
       } catch (caught) {
         if (!controller.signal.aborted) setError(errorMessage(caught));
       } finally {
         if (runAbort.current === controller) {
           runAbort.current = undefined;
+          if (planRefresh?.sessionId === sessionId) setPlanContinuationActive(false);
           setRunId(undefined);
-          setApprovals([]);
+          runIdRef.current = undefined;
+          setApprovals((current) => retainUncertainApprovals(current));
           setIsRunning(false);
           if (!controller.signal.aborted) await refresh();
         }
@@ -484,7 +542,7 @@ function useSideThreadRun(sessionId: string) {
         setIsRunning(false);
       }
     };
-  }, [sessionId, watchable]);
+  }, [reattachEpoch, sessionId, shouldWatch]);
 
   async function refresh() {
     await Promise.all([
@@ -551,10 +609,35 @@ function useSideThreadRun(sessionId: string) {
           newId: () => crypto.randomUUID(),
           now: Date.now(),
           replay,
+          sessionId,
         });
         setMessages(state.messages);
-        setApprovals(state.approvals);
-        if (state.runId) setRunId(state.runId);
+        setApprovals(
+          state.approvals.filter(
+            (approval) =>
+              !approval.controlTarget ||
+              verdicts.current.phase(approval.controlTarget) !== "acknowledged",
+          ),
+        );
+        if (
+          delivery.type === "run.event" &&
+          (delivery.event.kind === "approval" || delivery.event.kind === "permission.retract")
+        ) {
+          const askId =
+            typeof delivery.event.payload === "object" &&
+            delivery.event.payload !== null &&
+            "askId" in delivery.event.payload
+              ? delivery.event.payload.askId
+              : undefined;
+          if (typeof askId === "string") {
+            verdicts.current.reset({ askId, runId: delivery.event.runId, sessionId });
+            setVerdictEpoch((value) => value + 1);
+          }
+        }
+        if (state.runId) {
+          runIdRef.current = state.runId;
+          setRunId(state.runId);
+        }
       }
 
       stream = undefined;
@@ -623,7 +706,8 @@ function useSideThreadRun(sessionId: string) {
       if (runAbort.current === controller) {
         runAbort.current = undefined;
         setRunId(undefined);
-        setApprovals([]);
+        runIdRef.current = undefined;
+        setApprovals((current) => retainUncertainApprovals(current));
         setIsRunning(false);
         if (!controller.signal.aborted) await refresh();
       }
@@ -642,32 +726,152 @@ function useSideThreadRun(sessionId: string) {
     }
   }
 
-  async function respondToApproval(verdict: ApprovalVerdict) {
-    const approval = approvals[0];
-    if (!sessionId || !runId || !approval) return;
+  function retainUncertainApprovals(current: ApprovalRequest[]): ApprovalRequest[] {
+    return current.filter(
+      (approval) =>
+        approval.controlTarget && verdicts.current.phase(approval.controlTarget) === "uncertain",
+    );
+  }
+
+  function approvalUncertain(approval: ApprovalRequest): boolean {
+    void verdictEpoch;
+    return Boolean(
+      approval.controlTarget && verdicts.current.phase(approval.controlTarget) === "uncertain",
+    );
+  }
+
+  function approvalDisabled(approval: ApprovalRequest): boolean {
+    const target = approval.controlTarget;
+    return Boolean(
+      !target ||
+        target.askId !== approval.askId ||
+        target.sessionId !== sessionId ||
+        target.runId !== runIdRef.current ||
+        controlPending ||
+        verdicts.current.blocks(target),
+    );
+  }
+
+  function planUnavailableReason(approval: ApprovalRequest): string | undefined {
+    const featureReason = exactPlanControlAvailability(runtime.data?.features).reason;
+    if (featureReason) return featureReason;
+    const target = approval.controlTarget;
+    return !target ||
+      target.askId !== approval.askId ||
+      target.sessionId !== sessionId ||
+      target.runId !== runIdRef.current
+      ? "This plan ask is stale or its exact run is unavailable. Refresh activity."
+      : undefined;
+  }
+
+  async function respondToPlan(approval: ApprovalRequest, verdict: PlanVerdict) {
+    if (
+      approval.tool !== "PresentPlan" ||
+      planUnavailableReason(approval) ||
+      approvalDisabled(approval)
+    )
+      return;
+    const target = approval.controlTarget;
+    if (!target) return;
+    if (!verdicts.current.begin(target)) return;
+    setControlPending(true);
+    try {
+      await resolvePlanAsk({
+        body: { verdict },
+        path: { askId: target.askId, runId: target.runId, sessionId: target.sessionId },
+        throwOnError: true,
+      });
+      verdicts.current.acknowledge(target);
+      if (viewedSessionId.current !== target.sessionId) return;
+      setApprovals((current) => retractApproval(current, target.askId, target.runId));
+      if (verdict === "iterate") {
+        setNotice("Plan iteration requested.");
+      } else {
+        setNotice("Plan approval accepted; checking whether execution started.");
+        const controller = new AbortController();
+        planFollowAbort.current = controller;
+        const evidence = await followPlanContinuationFromBff(
+          { askId: target.askId, planRunId: target.runId, sessionId: target.sessionId },
+          controller.signal,
+        );
+        if (!controller.signal.aborted && viewedSessionId.current === target.sessionId) {
+          if (evidence.kind === "started") {
+            planReattach.current = {
+              cursor: evidence.resumeFrom,
+              runId: evidence.runId,
+              sessionId: target.sessionId,
+            };
+            setPlanContinuationActive(true);
+            runAbort.current?.abort();
+            runAbort.current = undefined;
+            runIdRef.current = evidence.runId;
+            setRunId(evidence.runId);
+            setReattachEpoch((current) => current + 1);
+          } else if (evidence.kind === "failed") {
+            setNotice(undefined);
+            setError("Plan approval was recorded, but execution could not start.");
+          } else {
+            setNotice(undefined);
+            setError(
+              "Plan approval was recorded, but could not confirm whether execution started. Refresh activity to check.",
+            );
+          }
+        }
+      }
+    } catch (caught) {
+      verdicts.current.markUncertain(target);
+      setVerdictEpoch((value) => value + 1);
+      if (viewedSessionId.current === target.sessionId)
+        setError(`Could not confirm this verdict: ${errorMessage(caught)}`);
+    } finally {
+      planFollowAbort.current = undefined;
+      if (viewedSessionId.current === target.sessionId) setControlPending(false);
+    }
+  }
+
+  async function respondToApproval(approval: ApprovalRequest, verdict: ApprovalVerdict) {
+    if (
+      approval.tool === "PresentPlan" ||
+      (verdict !== "deny" && !approval.args.trim()) ||
+      approvalDisabled(approval)
+    )
+      return;
+    const target = approval.controlTarget;
+    if (!target) return;
+    if (!verdicts.current.begin(target)) return;
     setControlPending(true);
     try {
       await resolveRunPermission({
         body: { verdict },
-        path: { askId: approval.askId, runId, sessionId },
+        path: { askId: target.askId, runId: target.runId, sessionId: target.sessionId },
         throwOnError: true,
       });
-      setApprovals((current) => retractApproval(current, approval.askId));
+      verdicts.current.acknowledge(target);
+      if (viewedSessionId.current !== target.sessionId) return;
+      setApprovals((current) => retractApproval(current, target.askId, target.runId));
+      setNotice(`Permission ${verdict.replaceAll("_", " ")} recorded.`);
     } catch (caught) {
-      setError(errorMessage(caught));
+      verdicts.current.markUncertain(target);
+      setVerdictEpoch((value) => value + 1);
+      if (viewedSessionId.current === target.sessionId)
+        setError(`Could not confirm this verdict: ${errorMessage(caught)}`);
     } finally {
-      setControlPending(false);
+      if (viewedSessionId.current === target.sessionId) setControlPending(false);
     }
   }
 
   return {
     approvals,
+    approvalDisabled,
+    approvalUncertain,
     controlPending,
     error,
     isRunning,
     messages,
     notice,
     respondToApproval,
+    respondToPlan,
+    planUnavailableReason,
     runId,
     sendPrompt,
     setError,

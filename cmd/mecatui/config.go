@@ -24,7 +24,7 @@ type config struct {
 	// transportMode is the resolved canonical transport mode (local/connect)
 	// threaded explicitly from resolveInvocation through parse and validate.
 	// It drives the transport path (no-probe/no-embed) and the
-	// trust/provider/posture validation gating (ADR 0087).
+	// trust/provider/posture validation gating.
 	transportMode transportMode
 	// connectAddress is the dial target for `mecatui connect ADDRESS` ("" for the
 	// bare/local mode). Set by resolveInvocation; consumed by resolveTransport.
@@ -114,8 +114,8 @@ type config struct {
 	defaultProvider        string
 	defaultModel           string
 	defaultProviderFlagSet bool
-	// modelAliases / modelSlots mirror the mecated flags for the embedded server
-	// (ADR 0030): modelAliases maps a short alias to a concrete id; modelSlots binds
+	// modelAliases / modelSlots mirror the mecated flags for the embedded server:
+	// modelAliases maps a short alias to a concrete id; modelSlots binds
 	// an internal lightweight call (compaction/guardrail; the ask-reviewer slot is
 	// inert here — mecatui runs interactive, so the headless child-ask reviewer never
 	// engages) or a tier (cheap/fast/reasoning) to a selector resolved THROUGH
@@ -124,7 +124,7 @@ type config struct {
 	// #93: the type lives in cliconfig so the two mains cannot drift).
 	modelAliases *cliconfig.KeyValueList
 	modelSlots   *cliconfig.KeyValueList
-	// Subagent model router (ADR 0031; enable model per ADR 0042, embedded server
+	// Subagent model router (embedded server
 	// only): the router is ENABLED by an operator-tier models.router: taxonomy in the
 	// user-global settings.yaml (the guardrails-parity enable model). The
 	// --subagent-model-router flag is a KILL-SWITCH: subagentModelRouter holds its value
@@ -199,12 +199,15 @@ type config struct {
 	// in main.go. llmPerAttemptTimeout bounds ESTABLISHMENT (connect + first chunk)
 	// only — it never cuts an actively-streaming turn; llmStreamIdleTimeout bounds
 	// the idle gap between chunks after the first.
+	llmMaxAttempts       int
+	llmMaxAttemptsSet    bool
+	llmRecoveryBudget    time.Duration
 	llmPerAttemptTimeout time.Duration
 	llmStreamIdleTimeout time.Duration
 	// contextWindowOverride mirrors mecated's embedded-server-only escape hatch.
 	contextWindowOverride int
 
-	// Provider-side prompt caching (ADR 0100), embedded server only. Mirrors
+	// Provider-side prompt caching, embedded server only. Mirrors
 	// mecated's --no-prompt-cache / --anthropic-cache-ttl, mapped onto
 	// app.Config.PromptCacheDisabled / app.Config.AnthropicCacheTTL in main.go.
 	noPromptCache     bool
@@ -223,7 +226,7 @@ type config struct {
 	// (ignored under `mecatui connect`). When set it injects a single
 	// ScopeCLI allow-all rule that suppresses the built-in mutate-ask floor; a Deny
 	// in any scope and any deliberately configured Ask still apply. Refused as root
-	// outside a declared sandbox (see validate). See docs/adr/0022-allow-all-posture.md.
+	// outside a declared sandbox (see validate).
 	allowAllTools bool
 
 	// posture is the graduated operator posture ladder for the EMBEDDED server only
@@ -234,7 +237,7 @@ type config struct {
 	// key. Mapped onto app.Config.Posture/PostureFlagSet in embeddedConfig.
 	posture        string
 	postureFlagSet bool
-	// reasoningEffort is the operator-tier reasoning-effort default (ADR 0055) for
+	// reasoningEffort is the operator-tier reasoning-effort default for
 	// the EMBEDDED server. reasoningEffortFlagSet records an explicit
 	// --reasoning-effort so CLI out-ranks the operator-global settings.yaml
 	// reasoning-effort: key. Mapped onto app.Config.ReasoningEffort/
@@ -286,7 +289,7 @@ type config struct {
 	retentionCLISet                                                  app.RetentionCLISet
 	acknowledgeMainRetention                                         bool
 
-	// Embedded-server soul config (issue #14, Phase 1; used only when hosting an
+	// Embedded-server soul config (issue #14; used only when hosting an
 	// in-process server). A user-scoped, agent-READ-ONLY persona fragment injected
 	// as turn-0 context. ON by default reading the conventional
 	// $XDG_CONFIG_HOME/mecatl/soul.md (fallback ~/.config/mecatl/soul.md) — a
@@ -294,7 +297,7 @@ type config struct {
 	// noSoul disables it entirely and wins (the resolved SoulPath/NoSoul map onto
 	// app.Config in embeddedConfig). No tool can write the soul.
 	//
-	// Drift baseline (issue #14, Phase 3, Item 1): the harness records the soul's
+	// Drift baseline (issue #14): the harness records the soul's
 	// content hash in a sidecar (<soulPath>.sha256) trust-on-first-use; a later run
 	// whose hash differs logs a drift WARN and still loads. approveSoul (re)writes the
 	// baseline to the current hash (accept the edit); soulStrict makes a DRIFTED soul
@@ -304,7 +307,7 @@ type config struct {
 	approveSoul bool
 	soulStrict  bool
 
-	// Embedded-server user-model config (issue #14, Phase 2; used only when hosting
+	// Embedded-server user-model config (issue #14; used only when hosting
 	// an in-process server). A user-scoped, CROSS-PROJECT memory of durable FACTS
 	// about the operator (explicit user-memory tools plus a live bounded operator
 	// profile in the volatile system suffix). ON by default at the conventional
@@ -337,9 +340,8 @@ type config struct {
 	skillsDir string
 	noSkills  bool
 
-	// Embedded-server perf observability (decision 7 in
-	// docs/adr/0018-perf-observability.md; used only when hosting an in-process
-	// server). OFF by default. perf arms the loopback runtime-introspection admin
+	// Embedded-server perf observability (used only when hosting an
+	// in-process server). OFF by default. perf arms the loopback runtime-introspection admin
 	// surface (pprof/expvar/RSS/goroutines/flightrecorder + /metrics) plus the
 	// domain-metrics EventSink. Empty perfAddr uses a private UNIX socket, except
 	// perfMCP uses ephemeral loopback TCP for its streaming-HTTP transport.
@@ -410,7 +412,7 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 
 	// Keymap overrides: action=chords (comma-separated), repeatable.
 	cfg.keymap = new(cliconfig.KeyValueList)
-	fs.Var(cfg.keymap, "keymap", "rebind a key: Action=chord[,chord2] (repeatable). Actions: Agents, ScrollU, ScrollD, ScrollTop, ScrollBottom, ModeSwitch, MCPPanel, Resources, Prompts, Up, Down, Choose, Close, Refresh, Tasks, Findings, JumpTop, JumpEnd, NextTab, CancelChild, ExpandTools, Help, Effort, Submit, Newline, Cancel, EditBack, Paste, Quit, Allow, AllowAlways, Deny, SetGlobalDefault, RawArgs")
+	fs.Var(cfg.keymap, "keymap", "rebind a key: Action=chord[,chord2] (repeatable). Actions: Agents, ScrollU, ScrollD, ScrollTop, ScrollBottom, ModeSwitch, MCPPanel, Resources, Prompts, Up, Down, Choose, Close, Refresh, Tasks, Findings, JumpTop, JumpEnd, NextTab, CancelChild, Toolcalls, ExpandConversation, Help, Effort, Submit, Newline, Cancel, EditBack, Paste, Quit, Allow, AllowAlways, Deny, SetGlobalDefault, RawArgs")
 
 	fs.StringVar(&cfg.model, "model", "", "use MODEL for sessions on the embedded server (default: provider default)")
 	fs.StringVar(&cfg.defaultProvider, "default-provider", "", "use PROVIDER when a session does not select one; unavailable providers prevent startup")
@@ -440,6 +442,8 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	fs.StringVar(&cfg.shell, "shell", "/bin/sh", "embedded server only: shell used to execute Shell-tool commands; empty disables Shell")
 	fs.BoolVar(&cfg.noShell, "no-shell", false, "embedded server only: disable the Shell tool (shell-less mode)")
 	fs.BoolVar(&cfg.noSteer, "no-steer", false, "queue mid-turn input as a follow-up instead of steering the active run")
+	fs.IntVar(&cfg.llmMaxAttempts, "llm-max-attempts", 60, "maximum attempts for one precommit model step (initial request included)")
+	fs.DurationVar(&cfg.llmRecoveryBudget, "llm-recovery-budget", 30*time.Minute, "maximum time spent recovering a model step before semantic output")
 	fs.DurationVar(&cfg.llmPerAttemptTimeout, "llm-per-attempt-timeout", 300*time.Second, "maximum time to connect and receive the first model response chunk; 0 disables the timeout")
 	fs.DurationVar(&cfg.llmStreamIdleTimeout, "llm-stream-idle-timeout", 180*time.Second, "maximum pause between model response chunks; 0 disables the timeout")
 	fs.IntVar(&cfg.contextWindowOverride, "context-window-override", 0, "override the model context window in tokens; 0 uses the detected or configured value")
@@ -505,7 +509,7 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 		return helpFS, config{}, err
 	}
 
-	// By-name applicability rejection (ADR 0087): connect rejects embedded-only
+	// By-name applicability rejection: connect rejects embedded-only
 	// flags; the bare/local mode rejects remote-only flags.
 	if err := rejectInapplicableFlags(fs, mode); err != nil {
 		return fs, config{}, err
@@ -685,7 +689,7 @@ func recordExplicitFlag(f *flag.Flag, cfg *config) {
 	case "shell":
 		cfg.shellFlagSet = true
 	case "subagent-model-router":
-		// Kill-switch (ADR 0042): record that the flag was given so embeddedConfig can
+		// Kill-switch: record that the flag was given so embeddedConfig can
 		// distinguish unset (router governed by the taxonomy) from =false (kill-switch)
 		// and =true/bare (a harmless no-op, the router stays governed by the taxonomy).
 		cfg.subagentModelRouterSet = true
@@ -703,6 +707,8 @@ func recordExplicitFlag(f *flag.Flag, cfg *config) {
 		cfg.reasoningEffortFlagSet = true
 	case "default-provider":
 		cfg.defaultProviderFlagSet = true
+	case "llm-max-attempts":
+		cfg.llmMaxAttemptsSet = true
 	case "terminal-title":
 		cfg.terminalTitleFlagSet = true
 	case "workspace":
@@ -928,9 +934,12 @@ func (c config) validate() error {
 	default:
 		return fmt.Errorf("invalid --mode %q (want default|plan|accept-edits)", c.mode)
 	}
-	// Provider/posture checks apply ONLY to paths that may embed (ADR 0087 Phase
-	// 1); the predicate + its rationale live once on config.mayEmbed.
+	// Provider/posture checks apply ONLY to paths that may embed; the
+	// predicate + its rationale live once on config.mayEmbed.
 	if c.mayEmbed() {
+		if err := validateEmbeddedRecovery(c); err != nil {
+			return err
+		}
 		if err := validateEmbeddedProvider(c); err != nil {
 			return err
 		}
@@ -942,6 +951,16 @@ func (c config) validate() error {
 		if err := app.PostureRefusalReason(embeddedAuthoritativePosture(c), embeddedPrivileged()); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func validateEmbeddedRecovery(c config) error {
+	if c.llmRecoveryBudget < 0 {
+		return errors.New("--llm-recovery-budget must be nonnegative")
+	}
+	if c.llmMaxAttemptsSet && c.llmMaxAttempts <= 0 {
+		return errors.New("--llm-max-attempts must be positive")
 	}
 	return nil
 }
@@ -978,7 +997,7 @@ See https://mecatl.dev/docs/features/choose-models`)
 // mayEmbed reports whether this run may host an embedded server, and so is
 // subject to the provider/posture checks in validate() and the pre-TUI posture
 // WARN in run(). The bare/local mode always embeds; `connect` never embeds, so
-// it skips those checks (ADR 0087). It is the single predicate both guards key
+// it skips those checks. It is the single predicate both guards key
 // on, so the gating rationale lives in one place.
 func (c config) mayEmbed() bool {
 	return c.transportMode == modeLocal

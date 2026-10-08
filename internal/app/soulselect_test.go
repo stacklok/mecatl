@@ -480,8 +480,7 @@ func TestSelectSoulProjectDriftBaselineUsesProjectPath(t *testing.T) {
 }
 
 // TestSelectSoulStrictDropsDriftedProjectSoul (FIX 3b) proves --soul-strict drops a
-// DRIFTED project soul too (the strict branch on the project path, previously
-// uncovered): the project soul wins, its hash differs from the recorded baseline, and
+// DRIFTED project soul too (the strict branch on the project path): the project soul wins, its hash differs from the recorded baseline, and
 // SoulStrict:true → no fragment.
 func TestSelectSoulStrictDropsDriftedProjectSoul(t *testing.T) {
 	xdg := t.TempDir()

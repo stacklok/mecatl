@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func TestADR_0259_AutomaticAdmissionReservationContract(t *testing.T) {
+func TestAutomaticAdmissionReservationContract(t *testing.T) {
 	t.Parallel()
 
 	attempt := AttemptID("attempt-0123456789abcdef")

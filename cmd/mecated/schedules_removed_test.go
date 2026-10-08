@@ -44,7 +44,7 @@ func TestScheduleTool_SchedulesCLIRemoved(t *testing.T) {
 // schedule-capable store (AC2.1), the opt-in is gone: passing it fails fast as
 // an unknown flag at flag-parse (the standard ContinueOnError error, before any
 // listener binds). The disable knob is `--no-scheduler` (AC2.2); the migration
-// note lives in ADR 0073 + the docs, not in kept code.
+// note lives in the docs, not in kept code.
 func TestScheduleTool_SchedulerFlagRemoved(t *testing.T) {
 	for _, argv := range [][]string{{"--scheduler"}, {"--scheduler=true"}} {
 		_, err := parseFlags(argv)

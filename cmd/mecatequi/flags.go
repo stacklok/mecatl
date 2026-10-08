@@ -101,6 +101,8 @@ type flags struct {
 	noShell           bool
 	maxRunTokens      int
 	maxTeamTokens     int
+	llmMaxAttempts    int
+	llmRecoveryBudget time.Duration
 	// maxTurns caps the session's model calls (the StopMaxTurns terminal). 0
 	// (default/unset) inherits the composition default (internal/app build.go), so
 	// it is NOT mapped onto app.Config — it is a per-SESSION limit threaded to
@@ -128,7 +130,7 @@ type flags struct {
 	subagentAskReviewerPolicyFile string
 	subagentAskReviewerPolicy     string
 
-	// Subagent model router (ADR 0031; enable model per ADR 0042): the router is ENABLED
+	// Subagent model router: the router is ENABLED
 	// by the operator-tier models.router: taxonomy (the guardrails-parity enable model).
 	// The --subagent-model-router flag is a KILL-SWITCH: subagentModelRouter holds its
 	// value, subagentModelRouterSet records whether it was given. =false sets
@@ -141,7 +143,7 @@ type flags struct {
 	// explicit --posture so composition lets CLI out-rank the settings.yaml key.
 	posture        string
 	postureFlagSet bool
-	// Reasoning-effort tier (ADR 0055). reasoningEffortFlagSet records an explicit
+	// Reasoning-effort tier. reasoningEffortFlagSet records an explicit
 	// --reasoning-effort so composition lets CLI out-rank the settings.yaml key.
 	reasoningEffort        string
 	reasoningEffortFlagSet bool
@@ -208,7 +210,7 @@ func parseFlags(argv []string) (flags, error) {
 		case "shell":
 			f.shellFlagSet = true
 		case "subagent-model-router":
-			// Tri-state kill-switch (ADR 0042): record that the flag was given so
+			// Tri-state kill-switch: record that the flag was given so
 			// appConfig can distinguish unset / =false (kill-switch) / =true (inert).
 			f.subagentModelRouterSet = true
 		case "out-summary":
@@ -238,6 +240,12 @@ func parseFlags(argv []string) (flags, error) {
 	// Validate the prompt inputs: at least one source is required.
 	if f.prompt == "" && f.promptFile == "" {
 		return flags{}, errors.New("a prompt is required: pass --prompt <text> and/or --prompt-file <path>")
+	}
+	if f.llmRecoveryBudget < 0 {
+		return flags{}, errors.New("--llm-recovery-budget must be nonnegative")
+	}
+	if f.llmMaxAttempts <= 0 {
+		return flags{}, errors.New("--llm-max-attempts must be positive")
 	}
 	// Read the prompt file body (cmd mains may use os). An unreadable file is a
 	// SETUP failure surfaced to the caller.
@@ -315,6 +323,8 @@ func configureFlags(fs *flag.FlagSet, f *flags) {
 	fs.IntVar(&f.maxRunTokens, "max-run-tokens", 0, "Maximum cumulative input and output tokens per run. Child agents inherit the limit. Crossing it ends with stop_reason=budget. Default: 0, unlimited.")
 	fs.IntVar(&f.maxTeamTokens, "max-team-tokens", 0, "Cumulative input and output token budget for a team, checked between rounds. Default: 0, unlimited.")
 	fs.IntVar(&f.maxTurns, "max-turns", 0, "Maximum model calls for the run. Crossing the limit ends with stop_reason=max_turns. Default: 0, use the deployment default.")
+	fs.IntVar(&f.llmMaxAttempts, "llm-max-attempts", 60, "maximum attempts for one precommit model step (initial request included)")
+	fs.DurationVar(&f.llmRecoveryBudget, "llm-recovery-budget", 30*time.Minute, "Maximum time spent recovering a model step before semantic output.")
 
 	fs.BoolVar(&f.headless, "headless", true, "Run without a human approver. Unresolved child subagent, team member, and branch permission requests are denied or sent to --subagent-ask-reviewer. Default: true. Set false to surface child permission requests. Because mecatequi has no approval interface, a surfaced request cancels the run.")
 
@@ -330,7 +340,7 @@ func configureFlags(fs *flag.FlagSet, f *flags) {
 	fs.StringVar(&f.reasoningEffort, "reasoning-effort", "", "Reasoning effort: auto, low, medium, high, xhigh, or max. Empty uses the provider or operator setting. OpenAI maps xhigh and max to high. Unknown values use the provider or operator setting.")
 	fs.BoolVar(&f.trustProject, "trust-project", false, "Allow workspace content to provide project instructions, rules, agents, skills, souls, commands, Git snapshots, and the read-only child worktree shell. Default: false. Enable only for a repository and Git metadata you trust.")
 
-	// Headless telemetry (issue #343, ADR 0098): OPT-IN OTLP trace + metrics push.
+	// Headless telemetry (issue #343): OPT-IN OTLP trace + metrics push.
 	// Both endpoints empty (the default) leaves the pipeline off — no metrics, no
 	// tracing, byte-identical to the pre-telemetry posture. A metrics endpoint
 	// installs a PeriodicReader (push) alongside the always-on prometheus reader.
@@ -433,6 +443,12 @@ func appConfig(f flags, diag port.Diagnostics, obs observability) app.Config {
 		NoShell:                f.noShell,
 		MaxRunTokens:           f.maxRunTokens,
 		MaxTeamTokens:          f.maxTeamTokens,
+		LLMMaxAttempts:         f.llmMaxAttempts,
+		LLMRecoveryBudget:      f.llmRecoveryBudget,
+		LLMPerAttemptTimeout:   300 * time.Second,
+		LLMStreamIdleTimeout:   180 * time.Second,
+		LLMBreakerThreshold:    5,
+		LLMBreakerCooldown:     30 * time.Second,
 		// Remote MCP servers (issue #341): the static name=URL entries (with any
 		// MCP_<NAME>_TOKEN bearer already resolved into Headers at parse time),
 		// consumed by app.Build's static MCP source. Nil-safe when the flag was
@@ -453,7 +469,7 @@ func appConfig(f flags, diag port.Diagnostics, obs observability) app.Config {
 		GuardrailsDisabled: f.guardrailsOff,
 
 		SubagentAskReviewerModel: f.subagentAskReviewer,
-		// Subagent model router (ADR 0042): kill-switch. =false forces the router OFF
+		// Subagent model router: kill-switch. =false forces the router OFF
 		// (RouterDisabled); a bare flag / =true is a harmless no-op (the router stays
 		// governed by the taxonomy); unset leaves routing governed by the taxonomy.
 		RouterDisabled:               f.subagentModelRouterSet && !f.subagentModelRouter,
@@ -466,7 +482,7 @@ func appConfig(f flags, diag port.Diagnostics, obs observability) app.Config {
 		// raises TrustProject, so --trust-project is the one-shot opt-in that admits
 		// both project steering and the read-only worktree shell.
 		TrustProject: f.trustProject,
-		// Reasoning-effort tier (ADR 0055): operator-tier only; reasoningEffortFlagSet
+		// Reasoning-effort tier: operator-tier only; reasoningEffortFlagSet
 		// lets CLI out-rank the operator-global settings.yaml reasoning-effort: key.
 		ReasoningEffort:        f.reasoningEffort,
 		ReasoningEffortFlagSet: f.reasoningEffortFlagSet,
@@ -482,7 +498,7 @@ func appConfig(f flags, diag port.Diagnostics, obs observability) app.Config {
 		Interactive: !f.headless,
 
 		Diagnostics: diag,
-		// Observability (issue #343, ADR 0098): OPT-IN OTLP push. With no --otlp-*
+		// Observability (issue #343): OPT-IN OTLP push. With no --otlp-*
 		// flags the handles are zero-valued (nil Sink/ToolCallRecorder/
 		// MetricsRoleScoper) — the byte-identical no-telemetry posture. The
 		// opt-out product-metrics Sink/ToolCallRecorder are folded in alongside

@@ -8,10 +8,10 @@ import (
 	"testing"
 )
 
-// WaiverHolder now backs ADR-0363 keyed exact-byte grants. These compatibility
+// WaiverHolder now backs contextual-guardrail keyed exact-byte grants. These compatibility
 // tests cover the legacy Checker-only helper without retaining normalization.
 
-func TestADR_0363_ContextualGuardrails_Scenario1_GrantDomainSeparation(t *testing.T) {
+func TestContextualGuardrails_GrantDomainSeparation(t *testing.T) {
 	h := &WaiverHolder{grants: make(map[string]map[string]struct{})}
 	copy(h.key[:], []byte("0123456789abcdef0123456789abcdef"))
 	parts := [][]byte{[]byte("session-a"), []byte("Write"), []byte(`{"path":"a"}`)}

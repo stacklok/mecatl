@@ -408,8 +408,7 @@ func TestEnvBlockGitStatusSubBlock(t *testing.T) {
 }
 
 // TestDefaultToneSafetyAndCorrectnessClauses pins the surviving default-tone
-// contract (ADR 0041 as rebalanced by ADR 0054, the prose-economy control surface
-// removed by the ADR superseding 0041) in the default StablePrefix. The
+// contract in the default StablePrefix. The
 // output-economy "terse" operator knob was REMOVED; these clauses — the
 // investigation-depth / minimum-change / safety / read-before-edit / trust-boundary
 // guidance baked into the always-on defaultTone — STAY. It asserts the load-bearing
@@ -455,7 +454,7 @@ func TestDiscoverInstructionsAgentsPresent(t *testing.T) {
 	ws := memfs.NewWorkspace("/proj")
 	mustWrite(t, ws, "AGENTS.md", "Use tabs, not spaces.")
 
-	msgs, err := prompt.DiscoverInstructions(context.Background(), ws)
+	msgs, _, err := prompt.DiscoverInstructions(context.Background(), ws, ".")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -476,7 +475,7 @@ func TestDiscoverInstructionsAgentsPresent(t *testing.T) {
 
 func TestDiscoverInstructionsNeitherPresent(t *testing.T) {
 	ws := memfs.NewWorkspace("/proj")
-	msgs, err := prompt.DiscoverInstructions(context.Background(), ws)
+	msgs, _, err := prompt.DiscoverInstructions(context.Background(), ws, ".")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -492,7 +491,7 @@ func TestDiscoverInstructionsAgentsWinsOverClaude(t *testing.T) {
 	mustWrite(t, ws, "AGENTS.md", "AGENTS content")
 	mustWrite(t, ws, "CLAUDE.md", "CLAUDE content")
 
-	msgs, err := prompt.DiscoverInstructions(context.Background(), ws)
+	msgs, _, err := prompt.DiscoverInstructions(context.Background(), ws, ".")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -514,7 +513,7 @@ func TestDiscoverInstructionsClaudeFallback(t *testing.T) {
 	mustWrite(t, ws, "AGENTS.md", "   \n\t  ") // whitespace-only -> treated as absent
 	mustWrite(t, ws, "CLAUDE.md", "CLAUDE fallback content")
 
-	msgs, err := prompt.DiscoverInstructions(context.Background(), ws)
+	msgs, _, err := prompt.DiscoverInstructions(context.Background(), ws, ".")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

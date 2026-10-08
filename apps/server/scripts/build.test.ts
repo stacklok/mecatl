@@ -45,7 +45,7 @@ async function bundledApp(releaseTag: string | undefined) {
     format: "esm",
     outfile,
     platform: "node",
-    target: "node24",
+    target: "node26",
   });
   return (await import(pathToFileURL(outfile).href)) as {
     createApp: (dependencies: { runtime: ReturnType<typeof fakeRuntime> }) => {

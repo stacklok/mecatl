@@ -183,8 +183,8 @@ func (m Model) disarmQuitGuards(pressedQuit, pressedQuitD bool) Model {
 
 // quitHintFor builds the footer quit hint LIVE from the model's current Quit
 // binding, so a rebound quit chord is advertised honestly. With the default
-// binding ("ctrl+c") it is byte-identical to the historical "press ctrl+c again
-// to quit". It doubles as the disarm/clear sentinel — the arm and the disarm
+// binding ("ctrl+c") it reads "press ctrl+c again to quit". It doubles as the
+// disarm/clear sentinel — the arm and the disarm
 // both re-derive it from the SAME binding, so a mid-arm remap (a live reload
 // path) cannot strand a stale hint.
 func quitHintFor(b key.Binding) string {
@@ -512,7 +512,7 @@ func (m Model) dispatchNonInputMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 // each per-overlay helper returns handled=false for a non-matching msg, so at
 // most one consumes. Most carry no follow-up command; /schedule's
 // ScheduleActionMsg re-lists on success so the cmd is propagated. Surfaces
-// migrated onto the modal no longer ride this chain — HandleMsg owns their
+// hosted on the modal do not ride this chain — HandleMsg owns their
 // routing.
 func (m Model) updateInventoryMsgs(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	if mm, handled := m.updateAgentsInvMsg(msg); handled {
@@ -591,11 +591,10 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 		m.sessionState = sessionStateIdle
 	}
 	m = m.syncDebugTarget()
-	m.failedStepRetryTried = false
 	m.browsingStartupSessions = false
 	m.closeModal()
 	m.statusContextRoot = ""
-	m.caps = msg.Capabilities // stored for Phase B; unrendered this phase
+	m.caps = msg.Capabilities
 	// The EFFECTIVE provider+model the server resolved this session to (echoed
 	// verbatim). The header shows it from turn zero. The model is FIXED per session,
 	// so this is set once here. An older server yields the zero value → no segment.
@@ -1387,7 +1386,7 @@ func (m Model) applyHookMsg(msg client.HookMsg) (tea.Model, tea.Cmd) {
 	r := m.conv.addGuardrailHook(msg, m.deps.Debug)
 	var detailCmd tea.Cmd
 	// Benign reviews are retained (hidden by default), so they fetch live detail
-	// too; ExpandTools or hook_notices.show_benign reveals it with the summary.
+	// too; ExpandConversation or hook_notices.show_benign reveals it with the summary.
 	if r != nil && msg.Guardrail.Disposition != "ask_action" && r.needsFinalDetail && m.deps.Guardrails != nil && msg.Guardrail.ReviewID != "" {
 		m.guardrailDetailRequest++
 		r.beginDetailRequest(m.guardrailDetailRequest)
@@ -1454,9 +1453,9 @@ func (m Model) updateStreamSecondary(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.afterEvent()
 	case client.SubagentMsg:
 		m.applySubagent(msg)
+		m.syncToolcalls()
 		if msg.Kind == client.SubagentEnd {
 			m.activeTool = m.conv.latestPendingToolName()
-			m.syncToolcalls()
 		}
 		return m.afterEvent()
 	case client.TeamMsg:
@@ -1758,10 +1757,8 @@ func (m Model) settleFailedClearSource() (Model, tea.Cmd, bool) {
 }
 
 // notifyHookStop mirrors a genuine run terminal to the host's agent lifecycle
-// hook. It is NOT called on the auto-retry (FailedStepRetryEligible) branch,
-// where the run continues — only on paths that end the run. The notifier fires
-// the terminal once per busy period and no-ops without a preceding Start, so the
-// clearPending settle path and the deferred-retry path calling it is harmless.
+// hook. The notifier fires the terminal once per busy period and no-ops without
+// a preceding Start, so the clearPending and deferred-retry paths are harmless.
 func (m Model) notifyHookStop(msg client.ResultMsg) {
 	if m.deps.AgentHook == nil {
 		return
@@ -1846,14 +1843,6 @@ func (m Model) applyResult(msg client.ResultMsg) (tea.Model, tea.Cmd) {
 		m.notifyHookStop(msg)
 		m.statusMsg = m.deps.Theme.Style("warning").Render("retry stopped before the model was called — adjust configuration and use /retry")
 		return m, tea.Batch(m.refreshCmd(), m.retryPendingModeCmd(), m.armLiveFeed())
-	}
-	if msg.FailedStepRetryEligible() && !m.failedStepRetryTried {
-		// NOT a genuine end: an automatic retry run starts now, so no Superset
-		// Stop. The retry's turn.start re-Starts (deduped, still busy), and the
-		// eventual real terminal fires Stop below.
-		m.failedStepRetryTried = true
-		rm, retryCmd := m.startFailedStepRetry()
-		return rm, tea.Batch(m.refreshCmd(), retryCmd, m.armLiveFeed())
 	}
 	// Every remaining path is a genuine run terminal that returns to idle.
 	m.notifyHookStop(msg)
@@ -2044,11 +2033,9 @@ func (m Model) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	m.rend.setWidth(m.width)
 	// relayout sizes the viewport height from the measured layout (header + transients
 	// + input + footer) and, when the height changed, re-renders + re-derives
-	// auto-follow — the tail onResize used to do inline. A width-only resize leaves
-	// that layout unchanged, so re-render below to replace any stale wrapped lines.
-	// The magic taH=4/footerH=2 and
-	// the header arithmetic are GONE; the heights are measured via lipgloss.Height of
-	// the rendered regions in chrome().
+	// auto-follow. A width-only resize leaves that layout unchanged, so re-render
+	// below to replace any stale wrapped lines. The heights are measured via
+	// lipgloss.Height of the rendered regions in chrome().
 	m.relayout()
 	m.configureAgentsInvViewport()
 	m.clampHelpScroll()
@@ -2072,7 +2059,7 @@ func (m Model) onColorProfile(msg tea.ColorProfileMsg) Model {
 	return m
 }
 
-// onBackgroundColor is the light/dark auto-detect reducer (ADR 0280): it
+// onBackgroundColor is the light/dark auto-detect reducer: it
 // consumes the tea.BackgroundColorMsg Init requested via
 // tea.RequestBackgroundColor when Deps.ThemeAutoDetect was set. It disarms
 // themeAutoDetectArmed FIRST, so a duplicate or late response — a misbehaving
@@ -2093,7 +2080,7 @@ func (m Model) onBackgroundColor(msg tea.BackgroundColorMsg) Model {
 }
 
 // switchTheme installs th as the active theme and resets every baked-in
-// consumer so nothing keeps rendering the old palette (ADR 0280): the input
+// consumer so nothing keeps rendering the old palette: the input
 // textarea and every overlay read m.deps.Theme fresh on each render, but the
 // renderer's glamour/block/join caches and the spinner's style are captured at
 // construction time and must be rebuilt explicitly.
@@ -2300,10 +2287,14 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return mm, cmd
 	}
 
-	// ctrl+t is a global render toggle (full vs capped tool output); it works in
-	// any phase and never feeds the textarea.
-	if key.Matches(msg, m.keys.ExpandTools) {
-		return m.onExpandToolsKey()
+	// Toolcalls opens the current session's inspector while idle or running. In
+	// other phases it is consumed without forwarding to the textarea.
+	if key.Matches(msg, m.keys.Toolcalls) {
+		return m.onToolcallsKey()
+	}
+
+	if mm, handled := m.onConversationDetailKey(msg); handled {
+		return mm, nil
 	}
 
 	// ctrl+v reads the OS clipboard into the prompt (image → staged attachment,
@@ -2324,6 +2315,17 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m.dispatchPhaseKey(msg)
+}
+
+func (m Model) onConversationDetailKey(msg tea.KeyPressMsg) (Model, bool) {
+	if !key.Matches(msg, m.keys.ExpandConversation) {
+		return m, false
+	}
+	if m.phase == phaseIdle || m.phase == phaseRunning || m.phase == phaseReplay {
+		m.expandConversation = !m.expandConversation
+		m.refreshView()
+	}
+	return m, true
 }
 
 func (m Model) onGlobalLifecycleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
@@ -2409,17 +2411,10 @@ func (m Model) clearAnySelection(msg tea.KeyPressMsg) (Model, bool) {
 	return m, true
 }
 
-// onExpandToolsKey is the ctrl+t handler, extracted from onKey so onKey stays
-// under the cyclomatic cap. ctrl+t is a global render toggle (full vs capped
-// tool output); inside the permission modal it ROUTES by ask type (issue #488):
-// a non-diff, non-plan ask opens/closes the full-screen ask-args view INSTEAD
-// of toggling expandTools; a plan ask or an Edit/Write (diff-capable) ask keeps
-// the in-modal expand behavior byte-for-byte. Approval emits a semantic toggle
-// intent for the latter; Model owns the global expandTools effect.
-func (m Model) onExpandToolsKey() (tea.Model, tea.Cmd) {
-	m.expandTools = !m.expandTools
-	m.refreshView()
-	return m, nil
+// onToolcallsKey opens the current session's inspector while the conversation owns
+// the keyboard. Other phases consume the binding without forwarding it to the prompt.
+func (m Model) onToolcallsKey() (tea.Model, tea.Cmd) {
+	return m.runToolcalls()
 }
 
 // dispatchPhaseKey is the per-phase key router, extracted from onKey so onKey
@@ -3660,9 +3655,6 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 		m.startupRetryPrompt = m.prompt.Value()
 		m.startupFirstPromptPending = true
 	}
-	// This is a genuine new user turn, so it starts a fresh one-retry budget.
-	// Automatic failed-step retry bypasses submitPrompt and therefore cannot re-arm itself.
-	m.failedStepRetryTried = false
 	m.promptRecovery = nil
 	// Only a plain text prompt is recoverable. Attachments, media, and staged file
 	// parts have one-shot lifecycle and must never be replayed implicitly.
@@ -3689,8 +3681,7 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 	// chance to drain at this run's clean completion, so it is no longer "paused".
 	m.queuePaused = ""
 	// The textarea stays FOCUSED while running so the user can type a follow-up and
-	// enqueue it (see enqueuePrompt / onRunningKey). It used to Blur here to signal
-	// "input disabled while running"; type-while-running supersedes that.
+	// enqueue it (see enqueuePrompt / onRunningKey).
 	m.phase = phaseRunning
 	m.statusMsg = "running…"
 	m.refreshView()
@@ -3748,8 +3739,8 @@ func (m Model) submitProceedPrompt() (Model, tea.Cmd) {
 }
 
 // startFailedStepRetry opens a new Converse stream whose first frame is RetryStart.
-// It adds no user turn and consumes no queued text. Automatic retry leaves arbitrary
-// compose text untouched; the ordinary built-in dispatcher consumes a typed /retry.
+// It adds no user turn and consumes no queued text. The /retry built-in dispatcher
+// consumes the command; this function leaves unrelated compose text untouched.
 func (m Model) startFailedStepRetry() (Model, tea.Cmd) {
 	m.phase = phaseRunning
 	m.failedStepRetryRun = true
@@ -4062,7 +4053,7 @@ func (m Model) updateReconnectMsg(rm reconnectMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	default:
 		// Catch-up is a FULL historical scan. Results never enter applyResult, so replay
-		// cannot trigger automatic retry, mutate usage, or append another error card.
+		// cannot settle the active run again, mutate usage, or append another error card.
 		if _, ok := msg.(client.ResultMsg); ok {
 			return m, m.waitReconnectCmd()
 		}
@@ -4698,9 +4689,9 @@ func (m Model) copySelection() (tea.Model, tea.Cmd) {
 
 // snapshotSelection records the selection's identity anchor and RE-SPLICES the
 // highlight over the unstyled base content in place — the per-gesture (press / drag /
-// edge-autoscroll) update. It REPLACES the old applySelectionHighlight: the highlight
-// is no longer the viewport's native SetHighlights (which mis-placed it on ANSI-styled
-// content — see styleSelection) but our own per-line splice. So there is no
+// edge-autoscroll) update. The highlight is not the viewport's native SetHighlights
+// (which mis-places it on ANSI-styled content — see styleSelection) but our own
+// per-line splice. So there is no
 // SetHighlights/ClearHighlights and no YOffset save/restore to neutralise an
 // EnsureVisible scroll-jump — re-splicing the SAME-length content never moves YOffset.
 //
@@ -4832,9 +4823,9 @@ func (m Model) onScrollKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // conversationContent produces the complete current projection, including the expanded
 // changed-files appendix which is outside the conversation renderer's block rows.
 func (m *Model) conversationContent() string {
-	frame := m.rend.renderConversationFrame(&m.conv.scrollback, m.expandTools)
+	frame := m.rend.renderConversationFrame(&m.conv.scrollback, m.expandConversation)
 	content := strings.Join(frame.lines, "\n")
-	if m.expandTools {
+	if m.expandConversation {
 		if appendix, ok := m.conv.scrollback.AppendixSnapshot(); ok {
 			if list := m.rend.renderChangedFiles(appendix.Files); list != "" {
 				content += "\n" + list
@@ -4863,9 +4854,9 @@ func (m *Model) refreshView() {
 	// invalidated — the caller may be a spinner-only frame that skips refreshView
 	// entirely, in which case the vpView cache correctly serves the prior content.
 	m.rend.invalidateVPView()
-	frame := m.rend.renderConversationFrame(&m.conv.scrollback, m.expandTools)
+	frame := m.rend.renderConversationFrame(&m.conv.scrollback, m.expandConversation)
 	// FAST PATH: the line-slice handoff. When no selection is active AND the
-	// changed-files footer is not in play (it renders only under the global expand
+	// changed-files footer is not in play (it renders only under the conversation detail
 	// toggle), feed vp.SetContentLines directly with the incrementally-joined line
 	// slice — reusing the cached prefix of settled blocks and only building the
 	// changed suffix. This skips the O(scrollback) Builder copy + strings.Split that
@@ -4873,12 +4864,12 @@ func (m *Model) refreshView() {
 	// re-renders every token, so the whole-join memo never helps streaming). The
 	// selection and footer paths both post-process the JOINED STRING, so they fall
 	// back to the byte-identical string path below.
-	if !m.sel.active && !m.expandTools {
+	if !m.sel.active && !m.expandConversation {
 		m.conversationView.replace(&m.vp, frame)
 		return
 	}
 	content := strings.Join(frame.lines, "\n")
-	if m.expandTools {
+	if m.expandConversation {
 		if appendix, ok := m.conv.scrollback.AppendixSnapshot(); ok {
 			if list := m.rend.renderChangedFiles(appendix.Files); list != "" {
 				content += "\n" + list
@@ -4914,10 +4905,9 @@ func (m *Model) refreshView() {
 // drainQueue MERGES staged follow-ups into ONE prompt only after a healthy
 // terminal. It is called after endRun has settled the model back to idle.
 //
-// Every error terminal pauses and preserves the queue. Automatic recovery from an
-// eligible failure is an exact RetryStart handled before this function; it never
-// consumes future prompts. Once that retry ends healthily, this function resumes
-// the existing FIFO drain behavior.
+// Every error terminal pauses and preserves the queue. Explicit /retry sends a
+// RetryStart without consuming future prompts. Once that retry ends healthily,
+// this function resumes the existing FIFO drain behavior.
 func (m Model) drainQueue(stop string) (tea.Model, tea.Cmd) {
 	if len(m.queued) == 0 {
 		m.queuePaused = ""

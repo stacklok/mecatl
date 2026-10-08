@@ -440,7 +440,7 @@ func TestHarnessReplaceStopsBeforeLowerSource(t *testing.T) {
 	}
 }
 
-func TestADR_0359_HarnessContext_Scenario5_PerKindOverrideResolution(t *testing.T) {
+func TestHarnessContext_PerKindOverrideResolution(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		missing string
@@ -633,7 +633,7 @@ func TestHarnessPreserveAllowedRetainsTrustedMixedOrigins(t *testing.T) {
 	}
 }
 
-func TestADR_0359_HarnessContext_Scenario3_ProvenanceAndSourceContracts(t *testing.T) {
+func TestHarnessContext_ProvenanceAndSourceContracts(t *testing.T) {
 	kinds := harnessEmptyKinds()
 	policy := permconfig.HarnessContextKind{Sources: []string{"fixture"}, Mode: "combine"}
 	kinds.Rules = policy
@@ -696,7 +696,7 @@ func TestADR_0359_HarnessContext_Scenario3_ProvenanceAndSourceContracts(t *testi
 			t.Fatal("snapshot drift")
 		}
 		a := prompt.RulesAssembler{Src: frozenHarnessRules{err: errors.New("backend failed")}}
-		messages, err := a.Assemble(t.Context())
+		messages, _, err := a.Assemble(t.Context(), []string{"."}, &session.InstructionSnapshot{}, 65536)
 		if err != nil || len(messages) != 0 {
 			t.Fatal("existing rule fail-soft semantics changed")
 		}

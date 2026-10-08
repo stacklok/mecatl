@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,6 +25,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
+	"github.com/stacklok/mecatl/internal/adapter/osfs"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/scheduler"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -65,6 +68,14 @@ func (p *harnessExecutionProvider) Reattach(_ context.Context, req server.Placem
 type invalidatingHarnessWorkspace struct {
 	tool.Workspace
 	closed atomic.Bool
+}
+
+func (w *invalidatingHarnessWorkspace) AuthorityResourcePath(path string) (string, string, error) {
+	resolver, ok := w.Workspace.(tool.AuthorityResourceResolver)
+	if !ok {
+		return "", "", errors.New("workspace cannot resolve authority resource")
+	}
+	return resolver.AuthorityResourcePath(path)
 }
 
 func (w *invalidatingHarnessWorkspace) Read(ctx context.Context, path string) ([]byte, error) {
@@ -122,7 +133,7 @@ func harnessExecutionConfig(t *testing.T, provider *harnessExecutionProvider, re
 			if err != nil {
 				return nil, nil, err
 			}
-			return prompt.RootAssembler{Source: workspace}, release, nil
+			return prompt.RootAssembler{Source: workspace, SourceID: "repository", SourcePrefix: "."}, release, nil
 		},
 	}}
 	cfg.HarnessCommandSources = []HarnessSourceRegistration[server.CommandSourceBinding]{{
@@ -136,6 +147,67 @@ func harnessExecutionConfig(t *testing.T, provider *harnessExecutionProvider, re
 		},
 	}}
 	return cfg
+}
+
+func TestRepositoryForkCarriesSnapshotsAcrossNewWorkspaceBindings(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "nested"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"AGENTS.md": "ROOT-OLD", "nested/AGENTS.md": "NESTED-OLD", "nested/file.txt": "file"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ws, err := osfs.NewWorkspace(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "repository-fork", Revision: "v1"}
+	binding := server.PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, ws, memledger.New(), nil)}
+	provider := &harnessExecutionProvider{bindings: map[session.EnvironmentRef]server.PlacementBinding{binding.Ref: binding}}
+	var requests []port.LLMRequest
+	cfg := harnessExecutionConfig(t, provider, &requests)
+	cfg.Workspace = root
+	cfg.AllowAllTools = true
+	cfg.HarnessInstructionSources = nil
+	cfg.HarnessCommandSources = nil
+	registerRepositorySources(&cfg)
+	cfg.MockProvider = mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { requests = append(requests, req) })},
+		mockllm.ToolCallTurn(session.NewToolCall("read", "Read", json.RawMessage(`{"path":"nested/file.txt"}`))), mockllm.TextTurn("parent done"), mockllm.TextTurn("successor done"))
+	built, err := buildIsolated(t, t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer built.Close()
+	parent, err := built.Service.CreateSessionWithProfile(t.Context(), session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithPlacementBinding(binding))
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := harnessRun(t, built, t.Context(), parent.ID, "read nested")
+	if len(requests) != 2 || !strings.Contains(harnessRequestText(requests[1]), "NESTED-OLD") {
+		for _, ev := range events {
+			if ev.ToolResult != nil {
+				t.Logf("read result: %+v", ev.ToolResult)
+			}
+		}
+		t.Fatalf("parent failed to discover nested scope: request count=%d second has nested=%v", len(requests), len(requests) > 1 && strings.Contains(harnessRequestText(requests[1]), "NESTED-OLD"))
+	}
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("ROOT-NEW"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "nested/AGENTS.md"), []byte("NESTED-NEW"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	successor, err := built.Service.ForkSessionSuccessor(t.Context(), server.ForkSuccessorRequest{Source: parent.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	harnessRun(t, built, t.Context(), successor, "continue")
+	text := harnessRequestText(requests[len(requests)-1])
+	if !strings.Contains(text, "ROOT-OLD") || !strings.Contains(text, "NESTED-OLD") || strings.Contains(text, "ROOT-NEW") || strings.Contains(text, "NESTED-NEW") {
+		t.Fatalf("same-placement successor reread changed repository: %s", text)
+	}
 }
 
 func TestHarnessPublishedCloseRequiresExplicitLoad(t *testing.T) {
@@ -187,7 +259,7 @@ func TestHarnessPublishedCloseRequiresExplicitLoad(t *testing.T) {
 	}
 }
 
-func TestADR_0359_HarnessContext_Scenario6_SameOwnerSessionsStayDistinct(t *testing.T) {
+func TestHarnessContext_SameOwnerSessionsStayDistinct(t *testing.T) {
 	first := harnessExecutionBinding(t, "first", "FIRST-INSTRUCTIONS", "FIRST-COMMAND")
 	second := harnessExecutionBinding(t, "second", "SECOND-INSTRUCTIONS", "SECOND-COMMAND")
 	provider := &harnessExecutionProvider{bindings: map[session.EnvironmentRef]server.PlacementBinding{first.Ref: first, second.Ref: second}}
@@ -227,7 +299,7 @@ func TestADR_0359_HarnessContext_Scenario6_SameOwnerSessionsStayDistinct(t *test
 	}
 }
 
-func TestADR_0359_HarnessContext_Scenario6_DynamicExactSourceAcquisition(t *testing.T) {
+func TestHarnessContext_DynamicExactSourceAcquisition(t *testing.T) {
 	t.Run("scheduled fire and restart", testExecutionSourceScheduledRestart)
 	binding := harnessExecutionBinding(t, "reserved", "RESERVED-INSTRUCTIONS", "RESERVED-COMMAND")
 	provider := &harnessExecutionProvider{bindings: map[session.EnvironmentRef]server.PlacementBinding{binding.Ref: binding}}
@@ -349,7 +421,7 @@ func testExecutionSourceScheduledRestart(t *testing.T) {
 	}
 }
 
-func TestADR_0359_HarnessContext_Scenario6_AcquisitionFailureIsolation(t *testing.T) {
+func TestHarnessContext_AcquisitionFailureIsolation(t *testing.T) {
 	t.Run("service attempt boundaries", testExecutionSourceFailureBoundaries)
 	binding := harnessExecutionBinding(t, "retry", "RETRY-INSTRUCTIONS", "RETRY-COMMAND")
 	provider := &harnessExecutionProvider{bindings: map[session.EnvironmentRef]server.PlacementBinding{binding.Ref: binding}}
@@ -429,7 +501,7 @@ func testExecutionSourceFailureBoundaries(t *testing.T) {
 			}
 			defer resolver.Close()
 			engine := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: tool.NewCatalog()})
-			factory := func(factoryCtx context.Context, id session.SessionID, owner *session.Principal, acquire server.ExecutionWorkspaceAcquirer, _ server.ProviderSelector, _ []mcp.ServerConfig, profile server.SessionProfile, _ string, _ session.PermissionMode, _ []tool.Tool) (server.SessionEngineResult, error) {
+			factory := func(factoryCtx context.Context, id session.SessionID, owner *session.Principal, acquire server.ExecutionWorkspaceAcquirer, _ server.ProviderSelector, _ []mcp.ServerConfig, profile server.SessionProfile, _ string, _ session.PermissionMode, _ []tool.Tool, _ session.SessionID) (server.SessionEngineResult, error) {
 				_, release, err := resolver.BorrowWithExecutionWorkspace(factoryCtx, id, owner, string(profile), acquire)
 				if err != nil {
 					return server.SessionEngineResult{}, err
@@ -559,7 +631,7 @@ func testExecutionSourceSelectionFactory(t *testing.T) {
 	}
 }
 
-func TestADR_0359_HarnessContext_Scenario6_NonselectedSourcesDoNotAttachExecution(t *testing.T) {
+func TestHarnessContext_NonselectedSourcesDoNotAttachExecution(t *testing.T) {
 	t.Run("real factory selection", testExecutionSourceSelectionFactory)
 	reg := HarnessSourceRegistration[prompt.InstructionAssembler]{ID: "bad", Scope: HarnessSourceScopeProcess, Provenance: HarnessProvenancePolicy{Fixed: "project"}, UsesExecutionWorkspace: true, Bind: func(context.Context, HarnessSourceScope) (prompt.InstructionAssembler, func() error, error) {
 		return hcAssembler("x"), nil, nil

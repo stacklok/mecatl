@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -132,8 +133,96 @@ func TestListerPreservesHTTPStatus(t *testing.T) {
 	}
 }
 
-// descriptor drives the mode authoritatively; an UNKNOWN model (known=false) falls
-// back to the embedded prefix matrix (the offline floor).
+func TestVisibleReasoning_Scenario1_ExplicitCapabilitiesWin(t *testing.T) {
+	for _, tc := range []struct {
+		name, capabilities      string
+		known, adaptive, manual bool
+	}{
+		{name: "unsupported", capabilities: `{"thinking":{"supported":false}}`, known: true},
+		{name: "unsupported overrides contradictory types", capabilities: `{"thinking":{"supported":false,"types":{"adaptive":{"supported":true},"enabled":{"supported":true}}}}`, known: true},
+		{name: "adaptive", capabilities: `{"thinking":{"supported":true,"types":{"adaptive":{"supported":true}}}}`, known: true, adaptive: true},
+		{name: "manual", capabilities: `{"thinking":{"supported":true,"types":{"enabled":{"supported":true}}}}`, known: true, manual: true},
+		{name: "unreported adaptive support", capabilities: `{"thinking":{"supported":true,"types":{"adaptive":{}}}}`},
+		{name: "unreported enabled support", capabilities: `{"thinking":{"supported":true,"types":{"enabled":{}}}}`},
+		{name: "only adaptive unsupported", capabilities: `{"thinking":{"supported":true,"types":{"adaptive":{"supported":false}}}}`},
+		{name: "both types unsupported without thinking negative", capabilities: `{"thinking":{"supported":true,"types":{"adaptive":{"supported":false},"enabled":{"supported":false}}}}`},
+	} {
+		t.Run("listing/"+tc.name, func(t *testing.T) {
+			var info sdk.ModelInfo
+			if err := json.Unmarshal([]byte(`{"id":"`+tc.name+`","capabilities":`+tc.capabilities+`}`), &info); err != nil {
+				t.Fatalf("unmarshal model info: %v", err)
+			}
+			got := mapModelInfo(info).Thinking
+			if got.Known != tc.known || got.Adaptive != tc.adaptive || got.Enabled != tc.manual {
+				t.Fatalf("thinking = %+v, want known=%v adaptive=%v manual=%v", got, tc.known, tc.adaptive, tc.manual)
+			}
+		})
+	}
+
+	resolve := func(model string) (adaptive, enabled, known bool) {
+		switch model {
+		case "unsupported":
+			return false, false, true
+		case "adaptive":
+			return true, false, true
+		case "manual":
+			return false, true, true
+		default:
+			return false, false, false
+		}
+	}
+	for _, tc := range []struct {
+		model    string
+		adaptive bool
+		manual   bool
+	}{
+		{model: "unsupported"},
+		{model: "adaptive", adaptive: true},
+		{model: "manual", manual: true},
+		{model: "claude-sonnet-4-5", manual: true},
+	} {
+		t.Run(tc.model, func(t *testing.T) {
+			cfg := thinkingConfigFor(tc.model, 64_000, 4096, resolve)
+			if (cfg.OfAdaptive != nil) != tc.adaptive || (cfg.OfEnabled != nil) != tc.manual {
+				t.Fatalf("thinking config = %+v, want adaptive=%v manual=%v", cfg, tc.adaptive, tc.manual)
+			}
+			if cfg.OfAdaptive != nil && cfg.OfAdaptive.Display != sdk.ThinkingConfigAdaptiveDisplaySummarized {
+				t.Errorf("adaptive display = %q, want summarized", cfg.OfAdaptive.Display)
+			}
+			if cfg.OfEnabled != nil && cfg.OfEnabled.Display != sdk.ThinkingConfigEnabledDisplaySummarized {
+				t.Errorf("manual display = %q, want summarized", cfg.OfEnabled.Display)
+			}
+		})
+	}
+}
+
+func TestVisibleReasoning_Scenario1_SparseListingPreservesOtherFields(t *testing.T) {
+	const key = "test-listing-key"
+	const body = `{"data":[{"id":"claude-opus-4-8","type":"model","display_name":"Claude Opus 4.8","created_at":"2026-01-01T00:00:00Z","max_input_tokens":1000000,"max_tokens":128000}],"has_more":false}`
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if got := r.Header.Get("X-Api-Key"); got != key {
+			t.Errorf("listing credential = %q, want resolved credential", got)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{"Content-Type": []string{"application/json"}}}, nil
+	})}
+	models, err := NewLister(key, "", client).ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	if len(models) != 1 {
+		t.Fatalf("models = %d, want 1", len(models))
+	}
+	got := models[0]
+	if got.ID != "claude-opus-4-8" || got.OutputLimit != 128000 || got.ContextLimit != 1_000_000 {
+		t.Errorf("sparse model = %+v, want preserved id and limits", got)
+	}
+	if got.Thinking.Known {
+		t.Errorf("sparse thinking metadata became known: %+v", got.Thinking)
+	}
+}
+
+// TestThinkingResolverLiveThenPrefixFloor proves a live descriptor drives the
+// mode authoritatively while an unknown model uses the embedded prefix floor.
 func TestThinkingResolverLiveThenPrefixFloor(t *testing.T) {
 	// A resolver that reports a live "manual enabled" for a model whose PREFIX would
 	// otherwise be adaptive — proving the live descriptor wins when known.

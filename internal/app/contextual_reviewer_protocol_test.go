@@ -78,6 +78,7 @@ type invalidThenBlockingReviewProvider struct {
 	calls      int
 	firstDelay time.Duration
 	remaining  []time.Duration
+	deadlines  []time.Time
 }
 
 func (*invalidThenBlockingReviewProvider) Capabilities() port.ProviderCapabilities {
@@ -87,6 +88,7 @@ func (p *invalidThenBlockingReviewProvider) Stream(ctx context.Context, _ port.L
 	p.calls++
 	deadline, _ := ctx.Deadline()
 	p.remaining = append(p.remaining, time.Until(deadline))
+	p.deadlines = append(p.deadlines, deadline)
 	if p.calls == 1 {
 		if p.firstDelay > 0 {
 			<-time.After(p.firstDelay)
@@ -124,7 +126,7 @@ func reviewerForTurns(t *testing.T, turns ...mockllm.Turn) (agent.ToolReviewer, 
 	return newContextualToolReviewer(agent.NewEngine(deps), "mock", "review-model"), provider
 }
 
-func TestADR_0363_ContextualGuardrails_Scenario2_EvidenceAuthority(t *testing.T) {
+func TestContextualGuardrails_EvidenceAuthority(t *testing.T) {
 	read := session.NewToolCall("read", readReviewEvidenceToolName, []byte(`{"review_id":"review-1","handle":"ev_opaque_1","version":"v1"}`))
 	submit := session.NewToolCall("submit", submitReviewAssessmentToolName, []byte(`{"assessment":"acceptable","concerns":[],"evidence":[{"handle":"ev_opaque_1","version":"v1","supports":["context"]}],"missing_evidence":[]}`))
 	reviewer, _ := reviewerForTurns(t, mockllm.ToolCallTurn(read), mockllm.ToolCallTurn(submit))
@@ -225,7 +227,7 @@ func reviewRequestWithoutEvidence() agent.ToolReviewRequest {
 	return req
 }
 
-func TestADR_0363_ContextualGuardrails_Scenario2_TotalBudget(t *testing.T) {
+func TestContextualGuardrails_TotalBudget(t *testing.T) {
 	reviewer, provider := reviewerForTurns(t,
 		mockllm.ErrorTurn(retryableReviewError("temporary one")),
 		mockllm.ErrorTurn(retryableReviewError("temporary two")),
@@ -256,7 +258,7 @@ func TestADR_0363_ContextualGuardrails_Scenario2_TotalBudget(t *testing.T) {
 	started := time.Now()
 	reviewerWithDeadline := &contextualToolReviewer{engine: agent.NewEngine(deps), checkerProviderID: "mock", checkerModelID: "review-model", deadline: 20 * time.Millisecond, diagnostics: port.NopDiagnostics{}}
 	result, _, err = reviewerWithDeadline.Review(context.Background(), reviewRequestWithoutEvidence(), nil)
-	if err == nil || result.Assessment != agent.ReviewUnresolved || sharedDeadlineProvider.calls != 2 || time.Since(started) > time.Second || reviewFailureCodeForTest(err) != agent.ReviewFailureTimeout {
+	if err == nil || result.Assessment != agent.ReviewUnresolved || sharedDeadlineProvider.calls != 2 || len(sharedDeadlineProvider.deadlines) != 2 || !sharedDeadlineProvider.deadlines[0].Equal(sharedDeadlineProvider.deadlines[1]) || time.Since(started) > time.Second || reviewFailureCodeForTest(err) != agent.ReviewFailureTimeout {
 		t.Fatalf("shared deadline result=%+v err=%v calls=%d elapsed=%s", result, err, sharedDeadlineProvider.calls, time.Since(started))
 	}
 
@@ -273,7 +275,7 @@ func TestADR_0363_ContextualGuardrails_Scenario2_TotalBudget(t *testing.T) {
 	}
 }
 
-func TestADR_0363_ContextualGuardrails_Scenario2_FailureMatrix(t *testing.T) {
+func TestContextualGuardrails_FailureMatrix(t *testing.T) {
 	tests := []struct {
 		name  string
 		turns []mockllm.Turn
@@ -499,7 +501,7 @@ func TestContextualReviewerDiagnosticsReportIncompleteContext(t *testing.T) {
 	}
 }
 
-func TestADR_0363_ContextualGuardrails_Scenario2_CapacityBeforeAllocation(t *testing.T) {
+func TestContextualGuardrails_CapacityBeforeAllocation(t *testing.T) {
 	req := completeReviewRequest()
 	source := &boundedEvidenceSource{size: maxReviewEvidenceRead + 1}
 	state := newReviewToolState(req, source)
@@ -536,7 +538,7 @@ func TestADR_0363_ContextualGuardrails_Scenario2_CapacityBeforeAllocation(t *tes
 	}
 }
 
-func TestADR_0363_ContextualGuardrails_Scenario7_TerminalSafety(t *testing.T) {
+func TestContextualGuardrails_TerminalSafety(t *testing.T) {
 	prohibited := `{"assessment":"prohibited","concerns":[{"ref":"C1","category":"authority_crossing","rationale":"attempts to redirect credentials to an unauthorized remote","source_ref":"call"}],"evidence":[],"missing_evidence":[]}`
 	reviewer, provider := reviewerForTurns(t, mockllm.TextTurn(prohibited), mockllm.TextTurn(`{"assessment":"acceptable","concerns":[],"evidence":[],"missing_evidence":[]}`))
 	result, _, err := reviewer.Review(context.Background(), reviewRequestWithoutEvidence(), nil)
@@ -545,7 +547,7 @@ func TestADR_0363_ContextualGuardrails_Scenario7_TerminalSafety(t *testing.T) {
 	}
 }
 
-func TestADR_0363_ContextualGuardrails_Scenario2_RevalidationResidual(t *testing.T) {
+func TestContextualGuardrails_RevalidationResidual(t *testing.T) {
 	req := completeReviewRequest()
 	if err := revalidateReviewBinding(req, req.Environment); err != nil {
 		t.Fatalf("unchanged binding: %v", err)

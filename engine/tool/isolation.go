@@ -3,7 +3,7 @@ package tool
 import "context"
 
 // EnvironmentForker is the environment-isolation seam for fork-join parallelism
-// (harness pattern 8, ADR 0211). It produces an isolated CHILD Environment (Workspace +
+// (harness pattern 8). It produces an isolated CHILD Environment (Workspace +
 // command runner bound to the child namespace + ref) derived from a base
 // Environment so a forked agent loop can read — and, when its catalog allows
 // it, WRITE — without racing on, or mutating, the shared base tree.
@@ -28,6 +28,10 @@ import "context"
 //     namespace (Workspace + bound runner) with a fresh child-session read
 //     ledger; it never inherits or writes the base Environment's selected
 //     ledger, including when the base selected durable storage;
+//   - the child workspace preserves the base workspace's relative execution
+//     paths (including when the base is a subfolder of a Git repository), so
+//     guidance selected for the base can be applied to child tool targets
+//     without discovering a new source or guessing from absolute roots;
 //   - writes through the child do NOT affect the base tree;
 //   - cleanup tears the child down (removes the worktree/copy) and is safe to
 //     call exactly once after the child is no longer in use.
@@ -59,7 +63,7 @@ type EnvironmentForker interface {
 // and join=first/judge applies the winner's diff to the parent), so a
 // delegated implementer's edits actually LAND without a manual copy/merge
 // step. (The writable Subagent does NOT use this seam — mode:"read-write"
-// edits the parent tree directly during the run; see ADR 0041.)
+// edits the parent tree directly during the run.)
 //
 // It replaces the former ForkMerger (issue #462). Merge now receives the CHILD
 // and PARENT Environments (not a forkRoot string + parent Workspace): the
@@ -82,12 +86,12 @@ type EnvironmentForker interface {
 //     not the fork's — the fork's content is untrusted child-authored data,
 //     but applying a diff is a parent-side operation (the same trust the
 //     parent's own Edit/Write carries). Composition decides whether to wire a
-//     merger at all — when wired, auto-merge is DEFAULT-ON (no flag; see ADR
-//     0039). The composition-injected merger is SERIALIZED process-wide (a
+//     merger at all — when wired, auto-merge is DEFAULT-ON (no flag).
+//     The composition-injected merger is SERIALIZED process-wide (a
 //     single mutex in a serializing decorator) so concurrent merges from
 //     Parallel never interleave their writes into a parent workspace.
-//   - nil merger (the default) means no auto-merge: the historical no-auto-merge
-//     boundary holds unchanged. ParallelTool.ReadOnly()/SubagentTool.ReadOnly()
+//   - nil merger (the default) means no auto-merge: the no-auto-merge
+//     boundary holds. ParallelTool.ReadOnly()/SubagentTool.ReadOnly()
 //     stay true so read-only fan-out keeps batching in parallel; but a CALL
 //     that will actually merge is excluded from the concurrent read batch via
 //     MutatesParent (dispatch-serial, flushed alone — see agent.parentMutatingCaller),

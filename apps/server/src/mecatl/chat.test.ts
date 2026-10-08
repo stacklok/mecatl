@@ -8,18 +8,20 @@ describe("Mecatl chat event serialization", () => {
   it("converts SDK bigint fields into JSON-safe strings", () => {
     const event = {
       kind: "turn.end",
-      payload: { durationMs: 250n, usage: undefined },
+      payload: {
+        durationMs: 250n,
+        usage: {
+          cacheReadTokens: 1n,
+          cacheWriteTokens: 2n,
+          inputTokens: 3n,
+          outputTokens: 4n,
+          reasoningTokens: 5n,
+        },
+      },
       runId: "run-1",
       seq: 7n,
       text: "",
       turn: 2,
-      usage: {
-        cacheReadTokens: 1n,
-        cacheWriteTokens: 2n,
-        inputTokens: 3n,
-        outputTokens: 4n,
-        reasoningTokens: 5n,
-      },
     } as Event;
 
     expect(serializeEvent(event)).toMatchObject({
@@ -31,6 +33,73 @@ describe("Mecatl chat event serialization", () => {
 });
 
 describe("Mecatl chat sessions", () => {
+  it("projects inspect only sessions without chat controls", async () => {
+    const row = (
+      id: string,
+      kind: string,
+      publicChat: boolean,
+      reason: string,
+      debugTargetSessionId = "",
+    ) => ({
+      capabilities: {
+        copyId: true,
+        delete: false,
+        fork: publicChat,
+        inspect: true,
+        publicChat,
+        reasons: {
+          copyId: "",
+          delete: "inspect_only_kind",
+          fork: reason,
+          inspect: "",
+          publicChat: reason,
+          rename: "inspect_only_kind",
+          viewTranscript: "",
+        },
+        rename: false,
+        viewTranscript: true,
+      },
+      createdAtUnix: 0n,
+      kind,
+      modifiedAtUnix: 0n,
+      relationship: { debugTargetSessionId },
+      sessionId: id,
+      state: "idle",
+      title: id,
+      turns: 0,
+    });
+    const list = vi.fn().mockResolvedValue({
+      nextCursor: "",
+      sessions: [
+        row("chat", "main", true, ""),
+        row("inspect", "child", false, "inspect_only_kind"),
+        row("pending", "main", false, "awaiting_approval"),
+        row("debug", "debug", false, "inspect_only_kind", "target"),
+      ],
+    });
+    const service = createMecatlChatService({ sessions: { list } } as unknown as Client);
+
+    const result = await service.listSessions();
+
+    expect(result.items.map(({ id }) => id)).toEqual(["chat", "inspect", "pending", "debug"]);
+    expect(result.items[1]).toMatchObject({
+      kind: "child",
+      capabilities: {
+        publicChat: false,
+        publicChatReason: "inspect_only_kind",
+        inspect: true,
+        copyId: true,
+        viewTranscript: true,
+        fork: false,
+      },
+    });
+    expect(result.items[2]).toMatchObject({
+      kind: "main",
+      capabilities: { publicChat: false, publicChatReason: "awaiting_approval" },
+    });
+    expect(result.items[3]).toMatchObject({ debugTargetSessionId: "target", kind: "debug" });
+  });
+
   it("maps product session controls to published SDK options", async () => {
     const create = vi.fn().mockResolvedValue({ id: "session-1" });
     const service = createMecatlChatService({ sessions: { create } } as unknown as Client);
@@ -109,7 +178,6 @@ describe("Mecatl chat sessions", () => {
           createdAtUnix: 0n,
           modifiedAtUnix: 0n,
           sessionId: "session-1",
-          title: "Legacy title",
           titleMetadata: { provenance: "generated", revision, title: "Generated title" },
           turns: 0,
         },
@@ -118,7 +186,6 @@ describe("Mecatl chat sessions", () => {
           createdAtUnix: 0n,
           modifiedAtUnix: 0n,
           sessionId: "session-2",
-          title: "Legacy title",
           turns: 0,
         },
       ],
@@ -137,7 +204,7 @@ describe("Mecatl chat sessions", () => {
         titleProvenance: "generated",
         titleRevision: "9007199254740993",
       },
-      { title: "Legacy title", titleProvenance: "", titleRevision: "0" },
+      { title: "Untitled chat", titleProvenance: "", titleRevision: "0" },
     ]);
     await expect(service.renameSession("session-1", "Operator title")).resolves.toEqual({
       title: "Operator title",
@@ -169,7 +236,6 @@ describe("Mecatl chat sessions", () => {
 
   it("maps snapshot configuration, capabilities, and cumulative token usage", async () => {
     const snapshot = vi.fn().mockResolvedValue({
-      capabilities: { manualCompaction: true, modelSelection: true },
       resolvedModel: {
         contextWindow: 200_000n,
         modelId: "claude-sonnet",
@@ -178,6 +244,19 @@ describe("Mecatl chat sessions", () => {
       },
       sessionCapabilities: { image: true },
       sessionId: "session-1",
+      kind: "main",
+      relationship: {
+        parentSessionId: "parent",
+        debugTargetSessionId: "target",
+        callId: "private",
+      },
+      placement: {
+        kind: "local",
+        label: "Feature",
+        branch: "feature",
+        revision: "abc",
+        environmentRef: "/private/root",
+      },
       state: "idle",
       mode: SessionMode.Plan,
       tokenUsage: {
@@ -205,13 +284,21 @@ describe("Mecatl chat sessions", () => {
       },
     });
     const service = createMecatlChatService({
+      server: {
+        compatibility: vi.fn().mockResolvedValue({
+          capabilities: { manualCompaction: true, modelSelection: true },
+        }),
+      },
       sessions: { get: vi.fn().mockResolvedValue({ snapshot }) },
     } as unknown as Client);
 
     await expect(service.detail("session-1")).resolves.toEqual({
       capabilities: { image: true, manualCompaction: true, modelSelection: true },
       id: "session-1",
+      kind: "main",
       mode: "plan",
+      placement: { kind: "local", label: "Feature", branch: "feature", revision: "abc" },
+      relationship: { parentSessionId: "parent", debugTargetSessionId: "target" },
       model: {
         contextWindow: "200000",
         id: "claude-sonnet",
@@ -259,7 +346,7 @@ describe("Mecatl chat sessions", () => {
           mimeType: "image/png",
         },
       ],
-      {},
+      { serverOwnedPlanContinuation: true },
       { signal: expect.any(AbortSignal) },
     );
     expect(deliveries).toEqual([{ runId: "run-1", sessionId: "session-1", type: "run.started" }]);
@@ -287,7 +374,7 @@ describe("Mecatl chat sessions", () => {
 
     expect(run).toHaveBeenCalledWith(
       [expect.objectContaining({ kind: "image", mimeType: "image/jpeg" })],
-      {},
+      { serverOwnedPlanContinuation: true },
       { signal: expect.any(AbortSignal) },
     );
   });
@@ -347,7 +434,6 @@ describe("Mecatl chat sessions", () => {
   it("round-trips the extra-high and max reasoning-effort tiers", async () => {
     for (const reasoningEffort of ["xhigh", "max"] as const) {
       const snapshot = vi.fn().mockResolvedValue({
-        capabilities: {},
         resolvedModel: {
           contextWindow: 200_000n,
           modelId: "claude-sonnet",
@@ -360,6 +446,11 @@ describe("Mecatl chat sessions", () => {
         tokenUsage: {},
       });
       const service = createMecatlChatService({
+        server: {
+          compatibility: vi.fn().mockResolvedValue({
+            capabilities: { manualCompaction: false, modelSelection: false },
+          }),
+        },
         sessions: { get: vi.fn().mockResolvedValue({ snapshot }) },
       } as unknown as Client);
 
@@ -403,6 +494,28 @@ describe("Mecatl chat sessions", () => {
     });
   });
 
+  it("passes an opaque worktree selector only to Fork or Clear successors", async () => {
+    const clear = vi.fn().mockResolvedValue({ id: "clear-successor" });
+    const fork = vi.fn().mockResolvedValue({ id: "fork-successor" });
+    const get = vi.fn().mockResolvedValue({ clear });
+    const service = createMecatlChatService({ sessions: { fork, get } } as unknown as Client);
+
+    await service.clearSession("source", { worktreeSelector: "opaque-choice" });
+    await service.forkSession("source", {
+      model: { id: "model", providerId: "provider" },
+      reasoningEffort: "default",
+      worktreeSelector: "opaque-choice",
+    });
+
+    expect(get).toHaveBeenCalledWith("source");
+    expect(clear).toHaveBeenCalledWith({ worktreeSelector: "opaque-choice" });
+    expect(fork).toHaveBeenCalledWith("source", {
+      modelId: "model",
+      providerId: "provider",
+      worktreeSelector: "opaque-choice",
+    });
+  });
+
   it("cancels a reattached run through its exact durable run handle", async () => {
     const cancel = vi.fn().mockResolvedValue(undefined);
     const controls = vi.fn().mockReturnValue({ cancel });
@@ -427,6 +540,53 @@ describe("Mecatl chat sessions", () => {
     );
     expect(controls).toHaveBeenCalledWith("run-1");
     expect(steer).toHaveBeenCalledWith("focus on the auth module");
+  });
+
+  it("gates plan control on the published SDK feature", async () => {
+    const resolvePlanAsk = vi.fn().mockResolvedValue(undefined);
+    const resolvePlan = vi.fn();
+    const run = vi.fn().mockResolvedValue({
+      id: "run-plan",
+      async *[Symbol.asyncIterator]() {},
+    });
+    const controls = vi.fn().mockReturnValue({ resolvePlanAsk });
+    const get = vi.fn().mockResolvedValue({ controls, resolvePlan, run });
+    const compatibility = vi.fn().mockResolvedValue({
+      features: new Set(["exact_plan_ask_control"]),
+    });
+    const service = createMecatlChatService({
+      server: { compatibility },
+      sessions: { get },
+    } as unknown as Client);
+
+    for await (const _delivery of service.run(
+      "session-1",
+      { images: [], prompt: "Write the plan" },
+      new AbortController().signal,
+    )) {
+      // Drain the normal prompt stream.
+    }
+    expect(run).toHaveBeenCalledWith(
+      "Write the plan",
+      { serverOwnedPlanContinuation: true },
+      { signal: expect.any(AbortSignal) },
+    );
+
+    for (const verdict of ["approve", "accept_edits", "iterate"] as const) {
+      await expect(
+        service.resolvePlanAsk("session-1", "run-plan", "ask-plan", verdict),
+      ).resolves.toBe("acknowledged");
+      expect(resolvePlanAsk).toHaveBeenLastCalledWith("ask-plan", verdict);
+    }
+    expect(controls).toHaveBeenCalledWith("run-plan");
+    expect(resolvePlan).not.toHaveBeenCalled();
+
+    compatibility.mockResolvedValue({ features: new Set() });
+    resolvePlanAsk.mockClear();
+    await expect(
+      service.resolvePlanAsk("session-1", "run-plan", "ask-plan", "approve"),
+    ).resolves.toBe("unavailable");
+    expect(resolvePlanAsk).not.toHaveBeenCalled();
   });
 
   it("resolves a permission on a reattached run through its exact durable run handle", async () => {
@@ -518,7 +678,7 @@ describe("Mecatl chat sessions", () => {
     ]);
     expect(close).toHaveBeenCalledOnce();
   });
-  it("filters inspect-only sessions and reports an incomplete inventory on a cursor loop", async () => {
+  it("includes inspect-only sessions and reports an incomplete inventory on a cursor loop", async () => {
     const row = (sessionId: string, publicChat = "") => ({
       capabilities: { delete: true, rename: true, reasons: { delete: "", publicChat, rename: "" } },
       createdAtUnix: 1_700_000_000n,
@@ -540,7 +700,7 @@ describe("Mecatl chat sessions", () => {
 
     const response = await service.listSessions();
 
-    expect(response.items.map((item) => item.id)).toEqual(["visible", "second"]);
+    expect(response.items.map((item) => item.id)).toEqual(["visible", "inspect", "second"]);
     expect(response.items[0]?.title).toBe("Untitled chat");
     expect(response.items[0]?.createdAt).toBe("2023-11-14T22:13:20.000Z");
     expect(response.complete).toBe(false);

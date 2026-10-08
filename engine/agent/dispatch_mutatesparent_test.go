@@ -12,7 +12,7 @@ import (
 )
 
 // TestMutatesParentCallIsDispatchSerial proves a writable-Subagent CALL (which writes
-// the parent workspace IN PLACE during its run, ADR 0041) does NOT overlap a sibling
+// the parent workspace IN PLACE during its run) does NOT overlap a sibling
 // parent Read in the same turn: the writable child's Write and the sibling Read share
 // an overlapTracker whose max concurrency must stay 1. SubagentTool.ReadOnly() is still
 // true, but readBatchable excludes the writable call via MutatesParent, so it flushes
@@ -122,7 +122,7 @@ func TestReadOnlySubagentStaysBatchedWithSiblingRead(t *testing.T) {
 }
 
 // TestSubagentMutatesParent unit-tests the MutatesParent predicate on SubagentTool and
-// proves it is DECOUPLED from any merger (ADR 0041 — direct-write has no merge): with
+// proves it is DECOUPLED from any merger (direct-write has no merge): with
 // only the writable engine wired, read-write → true; read-only / "" → false; an unwired
 // tool → false; malformed args → false.
 func TestSubagentMutatesParent(t *testing.T) {

@@ -23,10 +23,10 @@ brew install stacklok/tap/mecatl
 mecated --version
 ```
 
-For release archives and source builds, see [Install Mecatl](/install.md). The
-SDK uses the `binaryPath` option when set. Node.js and Bun then check
-`MECATED_BIN` and `PATH`; Deno checks `PATH`. The SDK does not download a
-binary.
+For release archives and source builds, see
+[Run mecated standalone](/operating/mecated.md#install-mecated). The SDK uses
+the `binaryPath` option when set. Node.js and Bun then check `MECATED_BIN` and
+`PATH`; Deno checks `PATH`. The SDK does not download a binary.
 
 ## Start a daemon from Node.js or Bun
 
@@ -51,9 +51,6 @@ environment value or `args` to add `mecated serve` flags.
 and shutdown arguments. Application-supplied `args` cannot replace those values.
 
 ## Start a daemon from Deno
-
-This example requires a build of the unreleased Deno integration. SDK v0.1.0
-does not include it.
 
 Import `spawn()` from `@stacklok-oss/mecatl-sdk/deno`. Deno starts the daemon
 with `Deno.Command` and connects through an ephemeral loopback gRPC listener
@@ -88,9 +85,10 @@ deno run \
 
 The Deno client owns the readiness file and runtime directory. It keeps the
 daemon's standard input open as a parent-liveness channel. Closing the client
-closes that channel and waits for the daemon to exit. `client.daemon.grpcAddress`
-reports the bound address, and `client.daemon.transport` is `"grpc"`. Deno clients
-do not expose the Node/Bun callback-tool or filesystem media helpers.
+closes that channel and waits for the daemon to exit.
+`client.daemon.grpcAddress` reports the bound address, and
+`client.daemon.transport` is `"grpc"`. Deno clients do not expose the Node/Bun
+callback-tool or filesystem media helpers.
 
 ## Run one prompt with `query()`
 
@@ -148,6 +146,8 @@ continues the remaining cleanup steps.
   application or one-shot query.
 
 ## Related information
+
+- [Private daemon hosting contract](/building/local-daemon.md) for custom wrappers.
 
 - [TypeScript SDK Node.js and Bun API](/reference/typescript-sdk-api/node.md)
   for all `spawn()` and `query()` options.

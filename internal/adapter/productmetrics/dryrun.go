@@ -27,7 +27,7 @@ import (
 // version is a once-ever, install-scoped, persisted-marker sample (armed via
 // EnableFirstValueTracking, composition-only). DryRunRecorder has — and must
 // have — NO persistent state (no XDG_STATE_HOME reads/writes; it stays a
-// stateless, one-shot audit tool per the ADR), so it cannot reproduce "at
+// stateless, one-shot audit tool), so it cannot reproduce "at
 // most once, ever" across process restarts. Instead it logs a would-be
 // time_to_first_value observation on EVERY run that qualifies (StopEndTurn +
 // at least one successful tool call), not just the first one this process

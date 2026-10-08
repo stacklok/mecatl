@@ -48,7 +48,7 @@ func (s *loadBarrierStore) Load(ctx context.Context, id session.SessionID) (*ses
 	return s.inner.Load(ctx, id)
 }
 
-func TestADR_0108_RunEntryLocksLoadAuthorizePurposeAndReopen(t *testing.T) {
+func TestRunEntryLocksLoadAuthorizePurposeAndReopen(t *testing.T) {
 	ctx := context.Background()
 	base := memstore.New()
 	sess := session.New("same-id", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))

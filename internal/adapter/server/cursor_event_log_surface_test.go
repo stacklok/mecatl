@@ -29,11 +29,11 @@ func mentionsGap(name string) bool {
 	return false
 }
 
-// TestADR_0250_GapAddsNoEventKind is AC6.8: session.Event and the proto Event
+// TestGapAddsNoEventKind is AC6.8: session.Event and the proto Event
 // message gain no gap-related field, and the event kind-parity surface is
 // unchanged.
 //
-// This is the structural half of ADR 0250 decision 5. A gap is a log-record
+// This is the structural half of the gap rule. A gap is a log-record
 // ENVELOPE variant, and the entire value of that choice is what it keeps out of:
 // the event taxonomy, the proto Event message, the kind-parity gate, the
 // TypeScript event union, and every consumer that folds events into a session.
@@ -41,7 +41,7 @@ func mentionsGap(name string) bool {
 // clients can render it" is a natural-sounding change that would silently
 // relocate a delivery concern into the domain — so the absence is asserted
 // rather than trusted.
-func TestADR_0250_GapAddsNoEventKind(t *testing.T) {
+func TestGapAddsNoEventKind(t *testing.T) {
 	t.Run("the proto Event message has no gap field", func(t *testing.T) {
 		// Walked transitively: a gap field smuggled into a nested payload
 		// (Result, Hook, Subagent, …) would reach the wire just as well as one
@@ -58,7 +58,7 @@ func TestADR_0250_GapAddsNoEventKind(t *testing.T) {
 				f := fields.Get(i)
 				where := path + "." + string(f.Name())
 				if mentionsGap(string(f.Name())) || mentionsGap(f.JSONName()) {
-					t.Errorf("proto field %s is gap-related; a gap is a log-record envelope variant and must not enter the Event message (ADR 0250 decision 5)", where)
+					t.Errorf("proto field %s is gap-related; a gap is a log-record envelope variant and must not enter the Event message", where)
 				}
 				if f.Kind() == protoreflect.MessageKind || f.Kind() == protoreflect.GroupKind {
 					walk(f.Message(), where)
@@ -83,7 +83,7 @@ func TestADR_0250_GapAddsNoEventKind(t *testing.T) {
 				f := t2.Field(i)
 				where := path + "." + f.Name
 				if mentionsGap(f.Name) {
-					t.Errorf("session.Event field %s is gap-related; the domain event taxonomy must not carry a delivery concern (ADR 0250 decision 5)", where)
+					t.Errorf("session.Event field %s is gap-related; the domain event taxonomy must not carry a delivery concern", where)
 				}
 				walk(f.Type, where)
 			}
@@ -94,7 +94,7 @@ func TestADR_0250_GapAddsNoEventKind(t *testing.T) {
 	t.Run("the gap vocabulary lives in port, not session", func(t *testing.T) {
 		// Where the type is declared IS the invariant: a gap is expressible only
 		// as a port-level log-record kind. If this ever became a
-		// session.EventType, decision 5 would be reversed no matter what the
+		// session.EventType, the gap rule would be reversed no matter what the
 		// field walks above report.
 		kind := reflect.TypeOf(port.LogRecordGap)
 		if got, want := kind.PkgPath(), "github.com/stacklok/mecatl/engine/port"; got != want {

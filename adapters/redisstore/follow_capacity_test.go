@@ -82,7 +82,7 @@ func TestRedisFollowCapacity_Scenario1_GenerationPublishesIsolatedClientPair(t *
 	})
 }
 
-func TestADR_0330_ProductionWiringIsolatesBoundedFollowPool(t *testing.T) {
+func TestRedisFollowCapacity_ProductionWiringIsolatesBoundedFollowPool(t *testing.T) {
 	server := miniredis.RunT(t)
 	store, err := NewWithConfig(Config{
 		Addr: server.Addr(), AllowPlaintext: true, FollowPoolSize: 2, MaxFollowers: 2,
@@ -240,7 +240,7 @@ func TestRedisFollowCapacity_Scenario1_ReadRoutingIsComplete(t *testing.T) {
 	}
 }
 
-func TestADR_0330_FollowersDoNotStarveDurability(t *testing.T) {
+func TestRedisFollowCapacity_FollowersDoNotStarveDurability(t *testing.T) {
 	server := miniredis.RunT(t)
 	durability := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	followBase := redis.NewClient(&redis.Options{Addr: server.Addr()})
@@ -312,7 +312,7 @@ func TestRedisFollowCapacity_Scenario2_AdmissionCoversIteratorLifetime(t *testin
 	})
 }
 
-func TestADR_0330_CapacityFailsFast(t *testing.T) {
+func TestRedisFollowCapacity_CapacityFailsFast(t *testing.T) {
 	server := miniredis.RunT(t)
 	durability := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	followBase := redis.NewClient(&redis.Options{Addr: server.Addr()})
@@ -477,7 +477,7 @@ func TestRedisFollowCapacity_Scenario3_CloseCancelsAndJoinsFollowers(t *testing.
 	}
 }
 
-func TestADR_0330_ForceCloseIsFollowOnly(t *testing.T) {
+func TestRedisFollowCapacity_ForceCloseIsFollowOnly(t *testing.T) {
 	server := miniredis.RunT(t)
 	durability := &closeTrackingClient{UniversalClient: redis.NewClient(&redis.Options{Addr: server.Addr()})}
 	follow := newControlledFollowClient(redis.NewClient(&redis.Options{Addr: server.Addr()}), followCloseUnblocks)

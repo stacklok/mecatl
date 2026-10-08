@@ -14,11 +14,16 @@ type commandResult struct {
 	truncated bool
 }
 
+// errCommandUnsupported is a variable, not an inline errors.New, so staticcheck
+// cannot prove the stubs' error is always non-nil and flag the shared callers'
+// err != nil checks (SA4023) on non-Linux builds.
+var errCommandUnsupported = errors.New("command execution requires Linux child-subreaper support")
+
 // EnableCommandExecution reports that the workload helper is Linux-only.
 func EnableCommandExecution() error {
-	return errors.New("command execution requires Linux child-subreaper support")
+	return errCommandUnsupported
 }
 
 func runIsolatedCommand(context.Context, string, string, int) (commandResult, bool, error) {
-	return commandResult{}, false, errors.New("command execution requires Linux child-subreaper support")
+	return commandResult{}, false, errCommandUnsupported
 }

@@ -9,13 +9,25 @@ import (
 const harnessContextNameKey = "name"
 
 func (s *HarnessContextSection) strictFields() map[string]any {
-	return map[string]any{"enabled_sources": &s.EnabledSources, "kinds": &s.Kinds}
+	return map[string]any{"enabled_sources": &s.EnabledSources, "kinds": &s.Kinds, "project_instruction_max_bytes": newPermconfigNodePointer(&s.ProjectInstructionMaxBytes)}
 }
 
 // UnmarshalYAML decodes a strict harness_context mapping.
 func (s *HarnessContextSection) UnmarshalYAML(node ast.Node) error {
+	if mapping, ok := permconfigMapping(node); ok {
+		for _, entry := range mapping.Values {
+			if key, _ := permconfigMappingKey(entry.Key); key == "project_instruction_max_bytes" {
+				if _, ok := entry.Value.(*ast.IntegerNode); !ok {
+					return fmt.Errorf("harness_context.project_instruction_max_bytes must be an integer")
+				}
+			}
+		}
+	}
 	if err := decodeStrictMapping(node, "harness_context", s.strictFields()); err != nil {
 		return err
+	}
+	if s.ProjectInstructionMaxBytes != nil && *s.ProjectInstructionMaxBytes <= 0 {
+		return fmt.Errorf("harness_context.project_instruction_max_bytes must be positive")
 	}
 	for _, entry := range []struct {
 		name string

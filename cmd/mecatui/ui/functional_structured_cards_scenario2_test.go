@@ -30,13 +30,13 @@ func TestMecatuiFunctionalConversationCards_Scenario2_PerFamilyPreparedBlocksPre
 		{"recovery notice", scrollback.NoticeCardSnapshot{Text: "recover this turn", Recover: true}, []string{"⚠ recover this turn"}, nil},
 		{"hook", scrollback.HookCardSnapshot{Text: "PreToolUse hook rewrote tool arguments", Phase: "PreToolUse", Tool: "Shell", Decision: string(client.HookModified)}, []string{"✎ hook PreToolUse · Shell: modified", "rewrote tool arguments"}, []string{"PreToolUse hook rewrote"}},
 		{"transient error", scrollback.ErrorCardSnapshot{Text: "upstream unavailable"}, []string{"✗ upstream unavailable"}, []string{"retrying won't help"}},
-		{"permanent error", scrollback.ErrorCardSnapshot{Text: `POST "https://provider.invalid": 400 Bad Request {"error":{"message":"bad model"}}`, Permanent: true}, []string{"✗ 400 Bad Request: bad model", "retrying", "won't help", r.marks.expandTools + " shows details"}, []string{"raw payload:"}},
+		{"permanent error", scrollback.ErrorCardSnapshot{Text: `POST "https://provider.invalid": 400 Bad Request {"error":{"message":"bad model"}}`, Permanent: true}, []string{"✗ 400 Bad Request: bad model", "retrying", "won't help", r.marks.expandConversation + " shows details"}, []string{"raw payload:"}},
 		{"delivery", scrollback.DeliveryCardSnapshot{ScheduleName: "nightly", FireID: "fire-7", Text: "<<<UNTRUSTED\n[scheduled task nightly completed with stop reason: end_turn]\nfinished cleanly\n<<<UNTRUSTED"}, []string{"⏰ scheduled task nightly — delivery", "fire fire-7", "│ finished cleanly"}, []string{"<<<UNTRUSTED", "completed with stop reason"}},
 		{"turn stat", scrollback.TurnStatCardSnapshot{Text: "↑1.2K ↓340 · 4.1s"}, []string{"↑1.2K ↓340 · 4.1s"}, nil},
 	}
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			out := stripANSIstr(r.renderSnapshot(i, testSnapshot(i, tc.payload), false))
+			out := stripANSIstr(r.renderSnapshot(i, testSnapshot(i, tc.payload), tc.name == "turn stat"))
 			for _, want := range tc.want {
 				if !strings.Contains(out, want) {
 					t.Errorf("render=%q want %q", out, want)
@@ -107,7 +107,7 @@ func TestMecatuiFunctionalConversationCards_Scenario2_MarkdownAndInputExceptions
 	if r.mdRenders != markdownBefore+1 || strings.Contains(collapsedPlain, "*formatted*") {
 		t.Fatal("assistant bypassed Markdown")
 	}
-	if !strings.Contains(collapsedPlain, "reasoning summary · 2 lines · ctrl+t expand") {
+	if !strings.Contains(collapsedPlain, "reasoning summary · 2 lines · f9 expand") {
 		t.Fatal("reasoning summary missing")
 	}
 	for _, line := range strings.Split(collapsed, "\n") {

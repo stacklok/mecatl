@@ -147,7 +147,7 @@ func TestUnknownApprovalVerdictLeavesRestoredOrdinaryAskPending(t *testing.T) {
 	}
 }
 
-func TestADR_0363_ContextualGuardrails_Scenario5_OldClientSafety(t *testing.T) {
+func TestContextualGuardrails_OldClientSafety(t *testing.T) {
 	policy := permpolicy.NewPolicy(nil, permstore.New())
 	sess := session.New("old-client", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	first := &fakeTool{name: "Write", exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {

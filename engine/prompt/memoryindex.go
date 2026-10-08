@@ -58,27 +58,33 @@ type MemoryIndexAssembler struct {
 // Compile-time assertion that MemoryIndexAssembler satisfies the interface.
 var _ InstructionAssembler = MemoryIndexAssembler{}
 
-// Assemble renders the capped tier-0 index into one user-role message. The
-// workspace is unused (memory is project-scoped at the adapter, not workspace
-// files). It fails soft on a nil source or a source error.
-func (a MemoryIndexAssembler) Assemble(ctx context.Context) ([]session.Message, error) {
+// TargetScoped reports that the memory index does not depend on a selected workspace target.
+func (MemoryIndexAssembler) TargetScoped() bool { return false }
+
+// Assemble renders the capped tier-0 index into one user-role message.
+func (a MemoryIndexAssembler) Assemble(ctx context.Context, _ []string, _ *session.InstructionSnapshot, _ int) ([]session.Message, []InstructionManifest, error) {
+	messages := a.assembleIndex(ctx)
+	return messages, manifestFor(messages, InstructionProvenanceMemory), nil
+}
+
+func (a MemoryIndexAssembler) assembleIndex(ctx context.Context) []session.Message {
 	if a.Src == nil {
-		return nil, nil
+		return nil
 	}
 	entries, err := a.Src.Index(ctx)
 	if err != nil {
 		// Best-effort context: never fail a run on a memory fault.
-		return nil, nil
+		return nil
 	}
 	if len(entries) == 0 {
-		return nil, nil
+		return nil
 	}
 
 	text := renderMemoryIndex(entries, a.maxEntries(), a.maxBytes())
 	if text == "" {
-		return nil, nil
+		return nil
 	}
-	return []session.Message{session.NewUserMessage(text)}, nil
+	return []session.Message{session.NewUserMessage(text)}
 }
 
 func (a MemoryIndexAssembler) maxEntries() int {
@@ -99,8 +105,8 @@ func (a MemoryIndexAssembler) maxBytes() int {
 // instruction, so it is wrapped in explicit <memory-index>...</memory-index>
 // delimiters (matching the house style of the <env> block in env.go) and the
 // header tells the model to treat anything inside as data, never as instructions.
-// This is a cheap prompt-injection fence; see the Trust model note in
-// docs/adr/0009-tiered-memory.md for the single-user / single-trust-zone assumption.
+// This is a cheap prompt-injection fence that assumes a single user / single
+// trust zone.
 const (
 	memoryIndexOpen  = `<memory-index encoding="jsonl">`
 	memoryIndexClose = "</memory-index>"

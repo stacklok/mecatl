@@ -50,9 +50,17 @@ if [ -n "${MECATL_EXECUTION_QUAL_OUTPUT:-}" ]; then
 fi
 printf '%s\n' "$state" >"$root/.scratch/k8s-execution/current"
 
+test_build_pid=
+cleanup_test_build() {
+  if [ -n "$test_build_pid" ]; then
+    kill "$test_build_pid" 2>/dev/null || :
+    wait "$test_build_pid" || :
+  fi
+}
 if [ "${MECATL_EXECUTION_QUAL_CI:-}" = 1 ]; then
   cleanup_cluster() {
     status=$?
+    cleanup_test_build
     artifact="$state/production-failure-artifact.txt"
     if [ "$status" -ne 0 ]; then
       timeout --kill-after=5s 60s sh "$root/deploy/mecatl-execution-kind/collect-failure.sh" \
@@ -62,6 +70,8 @@ if [ "${MECATL_EXECUTION_QUAL_CI:-}" = 1 ]; then
     return "$status"
   }
   trap cleanup_cluster EXIT
+else
+  trap cleanup_test_build EXIT
 fi
 export KUBECONFIG="$kubeconfig"
 printf '{}\n' >"$state/registry-auth.json"
@@ -84,6 +94,20 @@ networking:
   disableDefaultCNI: true
   podSubnet: 192.168.0.0/16
   serviceSubnet: 10.96.0.0/12
+nodes:
+- role: control-plane
+  kubeadmConfigPatches:
+  - |
+    apiVersion: kubelet.config.k8s.io/v1beta1
+    kind: KubeletConfiguration
+    syncFrequency: 5s
+  - |
+    # Kind's kubeadm patch matcher uses v1beta3 for the pinned node image.
+    apiVersion: kubeadm.k8s.io/v1beta3
+    kind: ClusterConfiguration
+    controllerManager:
+      extraArgs:
+        resource-quota-sync-period: "10s"
 EOF
 fi
 if [ -n "$kind_config" ]; then
@@ -196,6 +220,27 @@ printf 'provider=%s\nagent=%s\noidc=%s\nnetprobe=%s\nworkload=%s\ngo_base=%s\n' 
 image_step_done pin_loaded
 phase_done images
 
+# Compile the test binary while the already-built images are deployed. It is
+# run only after the owned cluster is ready; no test starts in the background.
+test_build_start=$(date +%s)
+(
+  compile_child=
+  trap 'kill "$compile_child" 2>/dev/null || :; wait "$compile_child" 2>/dev/null || :; exit 143' TERM
+  set -- env -i HOME="$HOME" PATH="$PATH" timeout --kill-after=5s 5m \
+    go test -c -tags kind_execution_e2e -o "$state/qualification.test" ./e2e/k8s_execution
+  if [ -n "$MECATL_EXECUTION_DEV_TOOLBOX" ]; then
+    (cd "$root" && exec toolbox run -c "$MECATL_EXECUTION_DEV_TOOLBOX" "$@") &
+  else
+    (cd "$root" && exec "$@") &
+  fi
+  compile_child=$!
+  wait "$compile_child"
+  compile_child=
+  trap - TERM
+  printf 'qualification test_build=compiled elapsed=%ss\n' "$(( $(date +%s) - test_build_start))"
+) &
+test_build_pid=$!
+
 kube create namespace execution-qualification --dry-run=client -o yaml | kube apply -f -
 kube label namespace execution-qualification pod-security.kubernetes.io/enforce=restricted pod-security.kubernetes.io/audit=restricted pod-security.kubernetes.io/warn=restricted --overwrite
 
@@ -245,31 +290,6 @@ spec:
 EOF
   kube apply -f "$state/network-fixtures.yaml"
   kube -n execution-qualification wait --for=condition=Ready pod/network-fixture pod/network-intruder --timeout=2m
-fi
-
-if [ "${MECATL_EXECUTION_QUAL_PROFILE:-development}" = production ]; then
-  legacy_profiles="$state/legacy-profiles.yaml"
-  cat >"$legacy_profiles" <<EOF
-profiles:
-  go:
-    image: $workload_image
-    storageClass: standard
-    storageSize: 1Gi
-    cpuRequest: 50m
-    memoryRequest: 64Mi
-    cpuLimit: "1"
-    memoryLimit: 512Mi
-    ephemeralStorageRequest: 64Mi
-    ephemeralStorageLimit: 1Gi
-    tmpSizeLimit: 256Mi
-    runtimeClassName: qualification-runc
-    maxFileBytes: 5242880
-    maxCommandBytes: 1048576
-    maxCommandDuration: 5m
-    maxEnvironments: 20
-EOF
-  kube apply -f "$root/e2e/k8s_execution/fixture/legacyfixture/crd.yaml"
-  kube wait --for=condition=Established crd/executionenvironments.execution.mecatl.dev --timeout=60s
 fi
 
 kube -n execution-qualification create secret generic execution-security \
@@ -327,11 +347,6 @@ set -- upgrade --install mecatl-execution "$root/deploy/helm/mecatl-execution" \
 if [ -n "$runtime_values" ]; then
   set -- "$@" -f "$runtime_values"
 fi
-if [ "${MECATL_EXECUTION_QUAL_PROFILE:-development}" = production ]; then
-  # The production fixture deliberately installs the legacy CRD above and
-  # upgrades it explicitly after seeding the retained legacy allocations.
-  set -- "$@" --skip-crds
-fi
 helm_kube "$@" \
   --set fullnameOverride=mecatl-execution \
   --set-string provider.image="$provider_image" \
@@ -343,22 +358,6 @@ helm_kube "$@" \
   --set-string profiles.quota-kube.image="$workload_image" \
   --wait --timeout=4m
 
-if [ "${MECATL_EXECUTION_QUAL_PROFILE:-development}" = production ]; then
-  # Establish the chart-owned authority before creating retained allocations.
-  # Seed the prototype under the old CRD only while every provider is quiesced.
-  kube -n execution-qualification scale deployment/mecatl-execution --replicas=0
-  kube -n execution-qualification wait --for=delete pod -l app.kubernetes.io/name=mecatl-execution --timeout=2m
-  dev env KUBECONFIG="$kubeconfig" go run -tags kind_execution_e2e ./e2e/k8s_execution/fixture/legacyfixture execution-qualification "$legacy_profiles" "$state/legacy-migration.json"
-  kube -n execution-qualification wait --for=condition=Ready pod/executor-legacy-migration pod/executor-legacy-migration-malformed pod/executor-legacy-migration-insecure --timeout=3m
-  kube -n execution-qualification exec pod/executor-legacy-migration -- /bin/sh -c 'printf "prototype-data\n" > /workspace/migration-sentinel'
-  # Helm does not upgrade existing CRDs. Preserve the stored legacy references
-  # until the explicit CRD upgrade; the first production test then migrates them.
-  kube apply -f "$root/deploy/helm/mecatl-execution/crds/executionenvironment.yaml"
-  kube wait --for=condition=Established crd/executionenvironments.execution.mecatl.dev --timeout=60s
-  kube -n execution-qualification scale deployment/mecatl-execution --replicas=2
-  kube -n execution-qualification rollout status deployment/mecatl-execution --timeout=4m
-fi
-
 kube -n execution-qualification create configmap execution-mock --from-file=mock-script.json="$root/deploy/mecatl-execution-kind/mock-script.json" --dry-run=client -o yaml | kube apply -f -
 helm_kube upgrade --install mecak8s "$root/deploy/helm/mecak8s" \
   --namespace execution-qualification -f "$root/deploy/mecatl-execution-kind/mecak8s-values.yaml" \
@@ -368,9 +367,13 @@ kube -n execution-qualification rollout restart deployment/mecak8s
 kube -n execution-qualification rollout status deployment/mecak8s --timeout=240s
 phase_done deployment
 printf 'qualification phase=tests starting\n'
+test_build_wait_start=$(date +%s)
+wait "$test_build_pid"
+test_build_pid=
+printf 'qualification test_build=wait elapsed=%ss\n' "$(( $(date +%s) - test_build_wait_start))"
 
 dev env -i HOME="$HOME" PATH="$PATH" KUBECONFIG="$kubeconfig" MECATL_KUBE_CONTEXT="$context" MECATL_EXECUTION_QUAL_STATE="$state" MECATL_EXECUTION_QUAL_PROFILE="${MECATL_EXECUTION_QUAL_PROFILE:-development}" \
-  go test -v -tags kind_execution_e2e -count=1 -timeout=45m ./e2e/k8s_execution
+  sh -c 'cd e2e/k8s_execution && exec "$@"' sh "$state/qualification.test" -test.v -test.count=1 -test.timeout=45m
 phase_done tests
 
 if [ "${MECATL_EXECUTION_QUAL_CI:-}" = 1 ]; then

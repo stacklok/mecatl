@@ -8,7 +8,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-func TestADR_0363_ContextualGuardrails_TaskWindowUsesGenuineRootPrompts(t *testing.T) {
+func TestContextualGuardrails_TaskWindowUsesGenuineRootPrompts(t *testing.T) {
 	messages := []session.Message{
 		{Role: session.RoleUser, Text: "first", UserPromptProvenance: session.UserPromptProvenancePrincipal},
 		{Role: session.RoleUser, Text: session.NoProgressNudgeText, UserPromptProvenance: session.UserPromptProvenanceHarness},
@@ -31,7 +31,7 @@ func TestADR_0363_ContextualGuardrails_TaskWindowUsesGenuineRootPrompts(t *testi
 	}
 }
 
-func TestADR_0363_ContextualGuardrails_TruncatedRootAuthorityIsIncomplete(t *testing.T) {
+func TestContextualGuardrails_TruncatedRootAuthorityIsIncomplete(t *testing.T) {
 	root := newReviewRoot(nil, nil, nil, 3)
 	root.refreshTasks([]session.Message{
 		{Role: session.RoleUser, Text: session.CompactionSummaryMarker + " prior context"},
@@ -86,7 +86,7 @@ func TestPlanApprovalReceiptValidationRejectsForgedScope(t *testing.T) {
 	}
 }
 
-func TestADR_0363_ContextualGuardrails_PlanReceiptIsSeparatePositiveFact(t *testing.T) {
+func TestContextualGuardrails_PlanReceiptIsSeparatePositiveFact(t *testing.T) {
 	root := newReviewRoot(nil, nil, nil, 1)
 	root.refreshTasks([]session.Message{{Role: session.RoleUser, Text: "execute", UserPromptProvenance: session.UserPromptProvenancePrincipal}})
 	root.setPlanApproval(PlanApprovalReceipt{Ref: "receipt", Call: "plan-call", TargetMode: session.ModeDefault})

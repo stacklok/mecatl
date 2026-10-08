@@ -239,8 +239,8 @@ func TestTeamOverlaySanitizesMemberContent(t *testing.T) {
 	if !strings.Contains(focus, "]0;pwnedscout") {
 		t.Errorf("sanitized member name not rendered as inert text in the focus pane:\n%q", focus)
 	}
-	if !strings.Contains(focus, "pattern: handleErr") {
-		t.Errorf("sanitized tool Detail not rendered as inert text in the focus pane:\n%q", focus)
+	if strings.Contains(focus, "pattern: handleErr") || !strings.Contains(focus, "Grep") {
+		t.Errorf("malformed call Detail must not render as intent in the focus pane:\n%q", focus)
 	}
 }
 
@@ -314,8 +314,8 @@ func TestAgentsSelectionAndFocus(t *testing.T) {
 	if !strings.Contains(out, "searching the codebase") || !strings.Contains(out, "Grep") {
 		t.Errorf("focus pane should show the member's trace, got %q", out)
 	}
-	if !strings.Contains(out, "3 matches") {
-		t.Errorf("focus pane should show the bounded Detail preview, got %q", out)
+	if strings.Contains(out, "3 matches") || !strings.Contains(out, "✓ Grep") {
+		t.Errorf("focus pane should show call status without result preview, got %q", out)
 	}
 
 	// esc → back to roster.
@@ -925,15 +925,15 @@ func TestInlineTeamRollupAdvertisesOverlay(t *testing.T) {
 	for i := 0; i < maxTeamLanes+2; i++ {
 		big = append(big, client.TeamMemberSpec{Name: "m" + string(rune('a'+i))})
 	}
-	out := teamCard(t, false, func(c *conversation) { c.startTeamCard("t1", "", big) })
+	out := teamCard(t, func(c *conversation) { c.startTeamCard("t1", "", big) })
 	if !strings.Contains(out, "more · f6") {
 		t.Errorf("inline roll-up should advertise the f6 overlay, got %q", out)
 	}
 
-	// A small team (no roll-up) must NOT carry the hint — it has nothing to overflow.
-	small := teamCard(t, false, func(c *conversation) { c.startTeamCard("t1", "", roster()) })
-	if strings.Contains(small, "f6") {
-		t.Errorf("a non-overflowing inline card should not advertise f6, got %q", small)
+	small := teamCard(t, func(c *conversation) { c.startTeamCard("t1", "", roster()) })
+	// The hint now points to Agents for detailed activity even for a small team.
+	if !strings.Contains(small, "f6 agents") {
+		t.Errorf("live team should advertise the Agents view, got %q", small)
 	}
 }
 
@@ -1567,11 +1567,12 @@ func TestAgentsFocusWindowed(t *testing.T) {
 	if !strings.Contains(out, "lines 1–") {
 		t.Errorf("a bounded focus pane should show an accurate visible range, got %q", out)
 	}
-	// On a TALL terminal the same trace fits with no tail (the bound is min(cap, fit)).
+	// On a tall terminal, the same trace remains scrollable rather than being
+	// silently truncated to the old twelve-entry budget.
 	tall := resize(m, 100, 80)
 	tallOut := stripANSIstr(tall.View().Content)
-	if strings.Contains(tallOut, " of 12") {
-		t.Errorf("a tall terminal should not truncate the trace, got %q", tallOut)
+	if !strings.Contains(tallOut, " of 129") {
+		t.Errorf("retained trace lost its scroll range: %q", tallOut)
 	}
 }
 
@@ -1595,7 +1596,7 @@ func TestAgentsFocusWindowedGolden(t *testing.T) {
 }
 
 // TestTeamRosterRoutedMetadata asserts the opt-in model router's bare metadata
-// (category + model, ADR 0034) surfaces on a member's roster row in the f6 Teams
+// (category + model) surfaces on a member's roster row in the f6 Teams
 // tab as a muted "routed: <category> → <model>" cue — and is absent for an unrouted
 // member (a DEFINED member that pinned its own model, or no router). It carries no
 // member content (gauntlet #7).
@@ -1614,7 +1615,7 @@ func TestTeamRosterRoutedMetadata(t *testing.T) {
 		t.Errorf("routed member roster row should carry the routed cue:\n%s", out)
 	}
 	// The plain (non-routed) lead member shows its inherited model as a "model:" cue
-	// (issue #112 / ADR 0035) — not a routed cue.
+	// (issue #112) — not a routed cue.
 	if !strings.Contains(out, "model: openai/gpt-4.5") {
 		t.Errorf("non-routed lead roster row should carry the plain model: cue:\n%s", out)
 	}

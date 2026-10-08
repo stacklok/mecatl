@@ -18,7 +18,7 @@ import (
 var ErrLedgerUnavailable = errors.New("tool: read ledger unavailable")
 
 // ReadLedger is the session-bound, storage-selectable read-before-write
-// evidence capability (ADR 0294). Environment composes exactly one ReadLedger
+// evidence capability. Environment composes exactly one ReadLedger
 // with one independently selected Workspace content backend. Two Environments
 // over the SAME Workspace may carry ISOLATED ReadLedgers (session scoping happens
 // at ledger construction/selection, not by inspecting the key), and a durable

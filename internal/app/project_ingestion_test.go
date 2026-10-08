@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/session"
 )
 
 // TestProjectIngestionAdmitted pins the named semantic seam every project-tier
@@ -54,7 +55,7 @@ func TestBuildInstructionAssemblerNoRootOmitsAGENTS(t *testing.T) {
 	}
 
 	def := buildInstructionAssembler(ws, nil, nil, nil, nil, false)
-	msgs, err := def.Assemble(ctx)
+	msgs, _, err := def.Assemble(ctx, []string{"."}, &session.InstructionSnapshot{}, 65536)
 	if err != nil {
 		t.Fatalf("default Assemble: %v", err)
 	}
@@ -66,7 +67,7 @@ func TestBuildInstructionAssemblerNoRootOmitsAGENTS(t *testing.T) {
 	if pinned == nil {
 		t.Fatal("noRoot with no other assembler must return an honest no-op assembler, not nil")
 	}
-	pmsgs, err := pinned.Assemble(ctx)
+	pmsgs, _, err := pinned.Assemble(ctx, []string{"."}, &session.InstructionSnapshot{}, 65536)
 	if err != nil {
 		t.Fatalf("pinned Assemble: %v", err)
 	}

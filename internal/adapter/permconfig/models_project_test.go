@@ -13,7 +13,7 @@ import (
 )
 
 // operatorAllowlistYAML is an operator-tier models: block carrying an allowlist (the
-// Phase-4 opt-in) plus the operator's own bindings.
+// project-models opt-in) plus the operator's own bindings.
 const operatorAllowlistYAML = `
 models:
   allowlist:
@@ -59,7 +59,7 @@ func newCapturedResolver(t *testing.T, operatorPath, operatorYAML string, trust 
 	return r, &buf
 }
 
-// TestProjectModelsHonouredWithinAllowlist pins the Phase-4 happy path (ADR 0030): a
+// TestProjectModelsHonouredWithinAllowlist pins the happy path: a
 // TRUSTED project's models: bindings are CAPTURED (slots/aliases/default) when an operator
 // allowlist exists. The allowlist-MEMBERSHIP cap is enforced in composition; permconfig
 // captures the raw bindings within the trust/opt-in gate.
@@ -89,9 +89,9 @@ func TestProjectModelsHonouredWithinAllowlist(t *testing.T) {
 	}
 }
 
-// TestProjectModelsByteIdenticalNoAllowlist pins the OPT-IN (ADR 0030 Phase 4): with NO
-// operator allowlist, a project models: block stays WARN-ignored (byte-identical to
-// pre-Phase-4) — ProjectModelBindings returns nil and the ignore-WARN fires.
+// TestProjectModelsByteIdenticalNoAllowlist pins the OPT-IN: with NO
+// operator allowlist, a project models: block stays WARN-ignored —
+// ProjectModelBindings returns nil and the ignore-WARN fires.
 func TestProjectModelsByteIdenticalNoAllowlist(t *testing.T) {
 	// Operator models: block WITHOUT an allowlist (just slots) — the opt-in is OFF.
 	r, buf := newCapturedResolver(t, "/etc/mecatl/op.yaml", operatorModelsYAML, true)
@@ -107,7 +107,7 @@ func TestProjectModelsByteIdenticalNoAllowlist(t *testing.T) {
 	}
 }
 
-// TestProjectModelsIgnoredUntrusted pins the trust gate (ADR 0030 Phase 4): an operator
+// TestProjectModelsIgnoredUntrusted pins the trust gate: an operator
 // allowlist EXISTS but the workspace is UNTRUSTED, so the project models: block is ignored
 // with the untrusted-workspace WARN (the SAME trust gate as project allow rules).
 func TestProjectModelsIgnoredUntrusted(t *testing.T) {
@@ -124,7 +124,7 @@ func TestProjectModelsIgnoredUntrusted(t *testing.T) {
 	}
 }
 
-// TestProjectAllowlistKeyStripped pins the non-wideable cap (ADR 0030 Phase 4): a project
+// TestProjectAllowlistKeyStripped pins the non-wideable cap: a project
 // models.allowlist: key is STRIPPED with a WARN — a project cannot widen its own cap. The
 // rest of the project block is still honoured (within the operator allowlist).
 func TestProjectAllowlistKeyStripped(t *testing.T) {
@@ -156,7 +156,7 @@ models:
 }
 
 // TestModelsStrictParseRejectsTypoWithNewKeys pins that the strict parser still rejects a
-// typo inside models: now that `default`/`allowlist` are recognised (ADR 0030 Phase 4) —
+// typo inside models: now that `default`/`allowlist` are recognised —
 // a bogus key must still error so a binding map can't be silently dropped.
 func TestModelsStrictParseRejectsTypoWithNewKeys(t *testing.T) {
 	const bad = `

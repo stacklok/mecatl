@@ -43,24 +43,29 @@ type SoulAssembler struct {
 // Compile-time assertion that SoulAssembler satisfies the interface.
 var _ InstructionAssembler = SoulAssembler{}
 
-// Assemble renders the soul body into one user-role message. The workspace is
-// unused: the soul is user-scoped (~/.config/mecatl/soul.md), resolved by the
-// adapter against the process environment, NOT against the session workspace
-// root. It fails soft on a nil source, a source error, or an empty body.
-func (a SoulAssembler) Assemble(ctx context.Context) ([]session.Message, error) {
+// TargetScoped reports that the soul does not depend on a selected workspace target.
+func (SoulAssembler) TargetScoped() bool { return false }
+
+// Assemble renders the soul body into one user-role message.
+func (a SoulAssembler) Assemble(ctx context.Context, _ []string, _ *session.InstructionSnapshot, _ int) ([]session.Message, []InstructionManifest, error) {
+	messages := a.assembleSoul(ctx)
+	return messages, manifestFor(messages, InstructionProvenanceSoul), nil
+}
+
+func (a SoulAssembler) assembleSoul(ctx context.Context) []session.Message {
 	if a.Src == nil {
-		return nil, nil
+		return nil
 	}
 	body, err := a.Src.Load(ctx)
 	if err != nil {
 		// Best-effort context: never fail a run on a soul fault.
-		return nil, nil
+		return nil
 	}
 	body = strings.TrimSpace(body)
 	if body == "" {
-		return nil, nil
+		return nil
 	}
-	return []session.Message{session.NewUserMessage(renderSoul(body))}, nil
+	return []session.Message{session.NewUserMessage(renderSoul(body))}
 }
 
 // Data fence for the soul body. The body is the OPERATOR'S persona — DATA that

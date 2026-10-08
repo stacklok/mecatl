@@ -16,6 +16,8 @@ const knowledge: KnowledgeService = {
   },
   async actOnLearnedSkill() {
     return {
+      publicationError: "",
+      publicationStatus: "",
       actions: { activate: false, archive: true, reject: false, rollback: false },
       body: "# Review pull requests",
       description: "Review pull requests consistently",

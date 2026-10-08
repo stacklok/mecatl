@@ -19,7 +19,7 @@ import (
 // summary) must live HERE, exported. The loop's own isGenuineUserTurn (engine/
 // agent/compaction.go) DELEGATES its synthesised-summary arm to
 // session.IsSynthesisedSummary and keeps its prompt.IsInjectedTurn0Fragment arm
-// (defense-in-depth for legacy/persisted turn-0 fragments; as of ADR 0043 those
+// (defense-in-depth for legacy/persisted turn-0 fragments; those
 // are ephemeral, never persisted, so that arm is not load-bearing for persisted
 // history — which is exactly why session.IsGenuineUserPrompt does NOT need it).
 
@@ -137,7 +137,7 @@ func IsSynthesisedSummary(text string) bool {
 // or background notice. Empty-text and multimodal user messages remain genuine.
 //
 // It deliberately does NOT check prompt.IsInjectedTurn0Fragment: the domain leaf
-// cannot import engine/prompt, and as of ADR 0043 the turn-0 fragments are
+// cannot import engine/prompt, and the turn-0 fragments are
 // EPHEMERAL (prepended to the request per-run, never persisted into
 // Conversation.Messages), so they do not appear in the persisted history the two
 // read-time consumers (the lazy fallback + Fold) walk. The loop's OWN

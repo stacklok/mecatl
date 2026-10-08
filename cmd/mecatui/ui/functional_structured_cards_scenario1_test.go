@@ -68,7 +68,7 @@ func TestMecatuiFunctionalConversationCards_Scenario1_PreparedRowsCarryStructura
 	r.setWidth(defaultBlockIndent + 34)
 	presentation := toolCardPresentation{name: "Read", arguments: `{"path":"ARGUMENT-PROVENANCE-MARKER-with-a-long-value.txt"}`, resolved: true, result: "RESULT-PROVENANCE-MARKER"}
 
-	prepared := r.prepareTypedToolCard(presentation, true)
+	prepared := r.prepareTypedToolCard(presentation, toolcallDone)
 	if len(prepared.Lines) != len(prepared.Rows) {
 		t.Fatalf("StyledTool lines/rows = %d/%d, want lockstep", len(prepared.Lines), len(prepared.Rows))
 	}

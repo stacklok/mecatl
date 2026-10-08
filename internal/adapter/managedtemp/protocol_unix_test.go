@@ -35,7 +35,7 @@ func TestWorkspaceKeyUsesFirst96BitsOfRawURLBase64SHA256(t *testing.T) {
 	}
 }
 
-func TestADR_0281_ManagedRootAndWorkspaceFailClosed(t *testing.T) {
+func TestManagedRootAndWorkspaceFailClosed(t *testing.T) {
 	base := t.TempDir()
 	outsideRoot := filepath.Join(base, "outside-root")
 	if err := os.Mkdir(outsideRoot, 0o700); err != nil {
@@ -140,9 +140,9 @@ func TestADR_0281_ManagedRootAndWorkspaceFailClosed(t *testing.T) {
 
 }
 
-// TestADR_0281_LeaseRemovalRetainsReplacedParentEntry pins retention when the
+// TestLeaseRemovalRetainsReplacedParentEntry pins retention when the
 // parent entry no longer names the lease handle at cleanup validation.
-func TestADR_0281_LeaseRemovalRetainsReplacedParentEntry(t *testing.T) {
+func TestLeaseRemovalRetainsReplacedParentEntry(t *testing.T) {
 	ns, err := Open(filepath.Join(t.TempDir(), "managed"))
 	if err != nil {
 		t.Fatal(err)
@@ -174,7 +174,7 @@ func TestADR_0281_LeaseRemovalRetainsReplacedParentEntry(t *testing.T) {
 	_ = lease.Close()
 }
 
-func TestADR_0281_UnknownManifestVersionRetained(t *testing.T) {
+func TestUnknownManifestVersionRetained(t *testing.T) {
 	base := t.TempDir()
 	ns, err := Open(filepath.Join(base, "mecatl"))
 	if err != nil {

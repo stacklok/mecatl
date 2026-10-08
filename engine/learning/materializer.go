@@ -19,7 +19,7 @@ import (
 type EvidenceProtocol string
 
 const (
-	// ReflectionEvidenceLegacyV0 preserves ADR-0109 input-local ordinal semantics.
+	// ReflectionEvidenceLegacyV0 preserves the original input-local ordinal semantics.
 	ReflectionEvidenceLegacyV0 EvidenceProtocol = "reflection-evidence/legacy-v0"
 	// ReflectionEvidenceV1 identifies manifest-backed durable source coordinates.
 	ReflectionEvidenceV1 EvidenceProtocol = "reflection-evidence/v1"

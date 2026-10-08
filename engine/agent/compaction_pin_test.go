@@ -30,7 +30,7 @@ func renderTurn0Fragments(t *testing.T) []session.Message {
 			Key: "pref/runner", Value: "gotestsum", Description: "preferred test runner",
 		}}}},
 	)
-	msgs, err := asm.Assemble(context.Background())
+	msgs, _, err := asm.Assemble(context.Background(), nil, nil, 65536)
 	if err != nil {
 		t.Fatalf("assemble turn-0 fragments: %v", err)
 	}
@@ -134,8 +134,8 @@ func TestCascadeCompactorPinsGenuineGoalPastInjectedFragments(t *testing.T) {
 	assertGenuineGoalPinnedNotFragment(t, compacted)
 }
 
-// TestTurn0FragmentsEphemeralAcrossReopen is the ephemeral-fragment invariant (ADR
-// 0043, superseding the resume-gate of f31bde54). The turn-0 instruction fragments
+// TestTurn0FragmentsEphemeralAcrossReopen is the ephemeral-fragment invariant
+// (superseding the resume-gate of f31bde54). The turn-0 instruction fragments
 // are NO LONGER persisted into the conversation; they are prepended to every
 // LLMRequest ephemerally. The contract this pins is twofold:
 //
@@ -225,9 +225,11 @@ type countingAssembler struct {
 	msg    string
 }
 
-func (a *countingAssembler) Assemble(context.Context) ([]session.Message, error) {
+func (*countingAssembler) TargetScoped() bool { return false }
+
+func (a *countingAssembler) Assemble(context.Context, []string, *session.InstructionSnapshot, int) ([]session.Message, []prompt.InstructionManifest, error) {
 	a.called++
-	return []session.Message{session.NewUserMessage(a.msg)}, nil
+	return []session.Message{session.NewUserMessage(a.msg)}, []prompt.InstructionManifest{{Kind: prompt.InstructionKindTurn0, Provenance: prompt.InstructionProvenanceCustom}}, nil
 }
 
 func countInjected(sess *session.Session) int {
@@ -244,12 +246,14 @@ func countInjected(sess *session.Session) int {
 // buildRequest's once-per-run fragment assembly.
 type erroringAssembler struct{ err error }
 
-func (a erroringAssembler) Assemble(context.Context) ([]session.Message, error) {
-	return nil, a.err
+func (erroringAssembler) TargetScoped() bool { return false }
+
+func (a erroringAssembler) Assemble(context.Context, []string, *session.InstructionSnapshot, int) ([]session.Message, []prompt.InstructionManifest, error) {
+	return nil, nil, a.err
 }
 
 // TestTurn0FragmentAssembleErrorIsFailSoft proves the ephemeral fragment assembly
-// (ADR 0043) is fail-soft: an Instructions.Assemble error does NOT abort the run, no
+// is fail-soft: an Instructions.Assemble error does NOT abort the run, no
 // fragment is prepended to the request, and a single WARN fires on the run-scoped
 // diagnostics. This is the branch TestDefaultAssemblerWhenNil does NOT cover (that
 // one is nil-assembler → RootAssembler; this is assemble-ERROR).

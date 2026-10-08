@@ -36,8 +36,7 @@ func exec(t *testing.T, tl tool.Tool, in session.ToolCall, ws tool.Workspace) se
 		env = tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: ws.Root()}, ws, memledger.New(), nil)
 	} else {
 		// WebSearch never touches the workspace; a shell-less mem Environment over a
-		// stub root is an honest stand-in for the call sites that historically passed
-		// nil (issue #462).
+		// stub root is an honest stand-in for a nil environment (issue #462).
 		env = tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "test"}, memfs.NewWorkspace("/"), memledger.New(), nil)
 	}
 	res, err := tl.Execute(context.Background(), in, env)
@@ -237,7 +236,7 @@ func TestWebSearchBackendDown(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("backend-down should not be an error result: %q", res.Content)
 	}
-	for _, want := range []string{"temporarily unavailable", "Exa", "BRAVE_API_KEY", "SEARXNG_URL", "mecatl.dev/docs/building/what-you-get/core-tools#configure-web-search"} {
+	for _, want := range []string{"temporarily unavailable", "Exa", "BRAVE_API_KEY", "SEARXNG_URL", "mecatl.dev/docs/features/tools#configure-web-search"} {
 		if !strings.Contains(res.Content, want) {
 			t.Fatalf("backend-down message missing %q; got %q", want, res.Content)
 		}

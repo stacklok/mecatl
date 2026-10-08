@@ -1,73 +1,32 @@
 ---
 sidebar_position: 3
-title: Connect to a server
-description:
-  Run mecated separately and connect mecatui to local or remote Mecatl servers.
+title: Connect to a remote deployment
+description: Connect mecatui to a Mecatl service using details from your operator.
 ---
 
-# Connect to a server
+# Connect to a remote deployment
 
-`mecatui` can connect to a separately running `mecated` or `mecak8s` server.
-This separates the terminal client from the process that owns the workspace,
-model access, session storage, and permissions.
+Use `mecatui` to work with an agent on a service your operator runs. The server
+owns the workspace, model access, session storage, and permissions. Your client
+provides the terminal interface. This separation is part of Mecatl's
+[cloud-native architecture](/cloud-native-harness.md).
 
-Start with both processes on one machine. The same connection model applies when
-an operator gives you a remote address and credentials.
+## Before you connect
 
-## Prerequisites
+[Install `mecatui`](./installation.md), then ask your operator for the server
+address, authentication method, and a CA bundle if the service uses a private
+certificate authority. For OIDC sign-in without server discovery, also obtain
+the issuer, client ID, and audience.
 
-You need:
+In connect mode, the server uses its own workspace and provider credentials.
+Your client's current directory and local API keys do not configure the server;
+`mecatui connect` rejects `--workspace`. The operator must grant the access your
+work needs on the server.
 
-- `mecatui` and `mecated` installed;
-- an API key for Anthropic, OpenAI, or OpenRouter; and
-- a local project directory that you trust.
+## Connect with a bearer token
 
-## Start the server
-
-Open a terminal for the server. Change to the project that it will use as its
-workspace. Set `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `OPENROUTER_API_KEY`
-for your provider, then start `mecated`:
-
-```sh title="Terminal 1: server"
-cd <PROJECT_DIRECTORY>
-export <PROVIDER_API_KEY>="<API_KEY>"
-mecated serve --workspace "$PWD"
-```
-
-Replace `<PROVIDER_API_KEY>` with the variable for your provider.
-
-Keep this terminal open. It displays server logs and continues running until you
-stop it with `ctrl+c`.
-
-The server listens for gRPC connections on `127.0.0.1:8080`. Its loopback-only,
-single-user defaults do not require TLS or authentication.
-
-## Connect the client
-
-Open a second terminal and connect `mecatui`:
-
-```sh title="Terminal 2: client"
-mecatui connect 127.0.0.1:8080
-```
-
-The TUI header should show `127.0.0.1:8080`. Enter the project-inspection
-request from the [local tutorial](./getting-started.md#inspect-the-project) to
-confirm that the server can use its workspace.
-
-In connect mode, the server owns the workspace. `mecatui connect` does not use
-your client's current directory or local provider keys, and it rejects
-`--workspace`.
-
-## Connect to a remote deployment
-
-Ask the server operator for:
-
-- the server address;
-- the required authentication method; and
-- a CA bundle if the server uses a private certificate authority.
-
-Verified TLS is automatic for non-loopback addresses. To use a static bearer
-token and private CA:
+Verified TLS is automatic for non-loopback addresses. For a service with a
+static bearer token and private CA, run:
 
 ```sh
 export MECATL_AUTH_TOKEN="<MECATL_AUTH_TOKEN>"
@@ -76,9 +35,14 @@ mecatui connect mecated.example.com:443 \
   --auth-token "$MECATL_AUTH_TOKEN"
 ```
 
-Authentication identifies the caller. TLS protects the connection and verifies
-the server. A shared authenticated server is not a tenant-isolation boundary;
-callers can still access sessions that its authorization policy permits.
+Omit `--tls-ca` when the certificate uses a CA already trusted by your system.
+The TUI header shows the connected address. Send a short request to confirm the
+service is available, then select or resume a session for your work.
+
+Authentication identifies the caller and TLS verifies the service and protects
+the connection. Shared deployments are intended for trusted teams; the server's
+[ownership and authorization policy](/features/security-and-execution/caller-identity.md)
+determines which sessions you can access.
 
 ## Sign in with OIDC
 
@@ -118,29 +82,21 @@ mecatui login mecated.example.com:443 \
 Run `mecatui logout mecated.example.com:443` to remove the saved enrollment. Use
 `/connect` inside the TUI to choose another saved server.
 
-## Manage local provider credentials
+## Work with the connected server
 
-Remote enrollment and embedded provider credentials are separate. `mecatui login
-ADDRESS` authenticates this client to a remote server; it cannot configure that
-server's providers. For an embedded server, use `mecatui providers setup` or the
-named provider commands. Custom OIDC login supports `--no-browser` when no
-browser is available.
+Use `/connect` to choose a saved server, `/models` to inspect its available
+models, and the [session controls](./sessions.md) to return to earlier work.
+The server advertises which capabilities are available. Ask your operator about
+missing tools, workspace access, or deployment policy.
 
-Provider definitions and credential custody are operator configuration. API keys
-come from the environment or an operator-managed file; keep secrets out of
-command arguments, settings, prompts, and logs. See [Choose models and
-providers](/features/choose-models.md#set-up-a-local-provider) and [Run mecated
-standalone](/building/deployment/mecated.md#configure-providers).
-
-ToolHive has a separate external lifecycle and owns its LLM credentials. Use
-`thv llm` tooling for ToolHive setup; ToolHive MCP discovery and manual OpenAI
-Codex authentication are separate workflows.
+Local provider setup belongs to the [embedded-server workflow](/features/sessions/choose-models.md#set-up-a-local-provider).
+Signing in to a remote deployment authenticates your client to that service.
 
 ## Next steps
 
-- [Try Mecatl on Kubernetes](/building/getting-started/kubernetes.md) to connect
-  the same client to a local `mecak8s` deployment.
-- [Run mecated standalone](/building/deployment/mecated.md) to configure
-  persistence, providers, TLS, authentication, and observability.
-- [Troubleshoot mecatui](./troubleshooting.md) if startup, login, or connection
-  fails.
+- [Work in the TUI](./using-the-tui.md).
+- [Manage sessions](./sessions.md).
+- [Troubleshoot connections](./troubleshooting.md).
+
+To run your own service, follow [Run mecated](/operating/mecated.md), or
+[try Mecatl on Kubernetes](/operating/kubernetes.md).

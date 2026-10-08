@@ -16,7 +16,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-func TestADR_0363_ContextualGuardrails_Scenario5_TransientDetail(t *testing.T) {
+func TestContextualGuardrails_Scenario5_TransientDetail(t *testing.T) {
 	owner := &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser}
 	store := memstore.New()
 	root := session.New("root", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/root", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
@@ -94,7 +94,7 @@ func TestReviewDetailRegistryCapacityAndCleanup(t *testing.T) {
 	}
 }
 
-func TestADR_0363_ContextualGuardrails_Scenario5_CoverageTruth(t *testing.T) {
+func TestContextualGuardrails_Scenario5_CoverageTruth(t *testing.T) {
 	owner := &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser}
 	store := memstore.New()
 	sess := session.New("s", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/s", Revision: "in-tree-v1"}, session.Limits{}, time.Now())

@@ -428,7 +428,7 @@ func TestIdleSessionBrokerRefresh_Scenario1_DestructiveCatalogueReplacement(t *t
 		if err != nil || started.Status != brokercontract.WorkspaceEnrollmentPending {
 			t.Fatalf("start replacement = (%+v, %v)", started, err)
 		}
-		// Persisted names are inert metadata (ADR 0335): they still name the
+		// Persisted names are inert metadata: they still name the
 		// withdrawn T0 bundle until a completion overwrites them, even though the
 		// live engine underneath has already been withdrawn by the reset above.
 		if got := f.authorityTools(t); !slices.Equal(got, before) {
@@ -758,8 +758,8 @@ func TestIdleSessionBrokerRefresh_Scenario2_RestartAndExplicitRecovery(t *testin
 // reference no longer resolves, and the owner's fresh explicit refresh mints
 // an entirely new correlation and durably rebinds rather than reusing
 // anything from before the crash. (Upstream OAuth material redaction itself
-// is proven exhaustively by TestADR_0298_ToolHiveEnrollmentControlsRedactUpstreamStateE2E
-// and TestADR_0298_OpaqueBrokerCredentialIsNotDecodedOrCopied; this test is
+// is proven exhaustively by TestToolHiveEnrollmentControlsRedactUpstreamStateE2E
+// and TestOpaqueBrokerCredentialIsNotDecodedOrCopied; this test is
 // the restart-specific half of AC2.4.)
 func TestInvariant_idle_session_broker_refresh_preserves_toolhive_custody(t *testing.T) {
 	store := memstore.New()
@@ -841,7 +841,7 @@ func TestInvariant_idle_session_broker_refresh_preserves_toolhive_custody(t *tes
 	}
 }
 
-func TestADR_0298_ToolHiveEnrollmentControlsRedactUpstreamStateE2E(t *testing.T) {
+func TestToolHiveEnrollmentControlsRedactUpstreamStateE2E(t *testing.T) {
 	type enrollmentResponse struct {
 		EnrollmentID     string `json:"enrollment_id"`
 		Status           string `json:"status"`

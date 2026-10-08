@@ -1,11 +1,16 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -399,7 +404,7 @@ func TestDeferredRuntimeDrainAutomaticallyReconcilesAndPublishes(t *testing.T) {
 	}
 }
 
-func TestADR_0355_ReconciliationBoundsConsentAndShutdown(t *testing.T) {
+func TestReconciliationBoundsConsentAndShutdown(t *testing.T) {
 	if maxMCPReconcileSources <= 0 || maxMCPReconcileServers <= 0 || maxMCPActiveListEntries <= 0 || maxMCPCandidatePages <= 0 || maxMCPCandidateBytes <= 0 || maxMCPRetainedRuntimes <= 0 || maxMCPReconcileCycleDuration <= 0 {
 		t.Fatal("every reconciliation dimension must have an independent finite bound")
 	}
@@ -567,9 +572,27 @@ func sourceStatusServerNames(status serveradapter.MCPSourceStatus) string {
 	return strings.Join(names, ",")
 }
 
-func TestMCPSourceReconciliation_Scenario2_FailedCompleteCandidateKeepsPreviousRuntime(t *testing.T) {
+func TestMCPSourceReconciliation_PartialStartupAndRetry(t *testing.T) {
 	healthyURL, deletes := newMCPTestServerCounting(t)
-	source := &reconciliationSource{name: "static", cfgs: []mcp.ServerConfig{{Name: "healthy", URL: healthyURL}}}
+	recovered := newMCPTestServerWithResource(t)
+	backend, err := url.Parse(recovered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(backend)
+	var available atomic.Bool
+	var failureCode atomic.Int32
+	failureCode.Store(http.StatusGatewayTimeout)
+	broken := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !available.Load() {
+			http.Error(w, "not an MCP response", int(failureCode.Load()))
+			return
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	t.Cleanup(broken.Close)
+	badURL := broken.URL + "/mcp?access_token=do-not-log"
+	source := &reconciliationSource{name: "static", cfgs: []mcp.ServerConfig{{Name: "healthy", URL: healthyURL}, {Name: "broken", URL: badURL}}}
 	runtimes := newMCPRuntimeSet(nil)
 	reconciler := newMCPSourceReconciler(mcpReconcilerOptions{
 		sources: []mcpsource.Source{source},
@@ -577,41 +600,260 @@ func TestMCPSourceReconciliation_Scenario2_FailedCompleteCandidateKeepsPreviousR
 		publish: runtimes.publish,
 	})
 	runtimes.setRetry(reconciler.invalidate)
-	t.Cleanup(func() {
-		reconciler.Close()
-		runtimes.close()
-	})
+	defer runtimes.close()
+	defer reconciler.Close()
 
 	first, err := reconciler.Reconcile(context.Background())
-	if err != nil {
-		t.Fatalf("healthy candidate: %v", err)
-	}
-	if first.candidate == nil || runtimes.currentRevision() != first.candidate.generation {
-		t.Fatalf("healthy candidate not published: result=%+v revision=%d", first, runtimes.currentRevision())
+	if err != nil || !first.changed || len(first.candidate.manager.Servers()) != 1 {
+		t.Fatalf("partial startup = (%+v, %v)", first, err)
 	}
 	previous := first.candidate
+	previousRevision := runtimes.currentRevision()
+	status := reconciler.statusSnapshot()
+	if len(status.Sources) != 1 || len(status.Sources[0].Diagnostics) != 1 || !strings.Contains(status.Sources[0].Diagnostics[0], `"broken"`) || strings.Contains(fmt.Sprint(status), "do-not-log") {
+		t.Fatalf("missing or unredacted server diagnostic: %+v", status)
+	}
+	result, err := runtimes.CallTool(context.Background(), "healthy", "echo", []byte(`{"text":"startup"}`))
+	if err != nil || len(result.Content) != 1 || !strings.Contains(result.Content[0].Text, "startup") {
+		t.Fatalf("healthy startup tool unavailable: %+v %v", result, err)
+	}
+	failureCode.Store(http.StatusBadGateway)
+	again, err := reconciler.Reconcile(context.Background())
+	if err != nil || again.changed || again.candidate != previous || previous.isClosed() || runtimes.currentRevision() != previousRevision {
+		t.Fatalf("failed peer retry disrupted healthy runtime: %+v %v", again, err)
+	}
+	status = reconciler.statusSnapshot()
+	if status.Revision != previousRevision || len(status.Sources[0].Diagnostics) != 1 || status.Sources[0].Diagnostics[0] == first.inventory[0].Diagnostics[0] || !strings.Contains(status.Sources[0].Diagnostics[0], "Bad Gateway") {
+		t.Fatalf("retry did not update diagnostic without replacing runtime: %+v", status)
+	}
+	if atomic.LoadInt32(deletes) == 0 {
+		t.Fatal("equal retry did not close temporary healthy connection")
+	}
 
+	available.Store(true)
+	third, err := reconciler.Reconcile(context.Background())
+	if err != nil || !third.changed || len(third.candidate.manager.Servers()) != 2 || len(third.candidate.resources) != 1 {
+		t.Fatalf("recovery failed: %+v %v", third, err)
+	}
+	if len(reconciler.statusSnapshot().Sources[0].Diagnostics) != 0 {
+		t.Fatal("recovered server still shows failure")
+	}
+	for _, name := range []string{"healthy", "broken"} {
+		if _, err := runtimes.CallTool(context.Background(), name, "echo", []byte(`{"text":"ready"}`)); err != nil {
+			t.Fatalf("%s unavailable after recovery: %v", name, err)
+		}
+	}
+}
+
+func TestMCPSourceReconciliation_AllFailedRetriesAndRetainsRuntime(t *testing.T) {
 	broken := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "not an MCP response", http.StatusBadGateway)
 	}))
 	t.Cleanup(broken.Close)
-	source.set([]mcp.ServerConfig{{Name: "healthy", URL: healthyURL}, {Name: "broken", URL: broken.URL}}, nil)
-	failed, err := reconciler.Reconcile(context.Background())
-	if err == nil || !failed.stale {
-		t.Fatalf("failed complete candidate = (%+v, %v), want stale error", failed, err)
+	source := &reconciliationSource{name: "static", cfgs: []mcp.ServerConfig{{Name: "broken", URL: broken.URL}}}
+	r := newMCPSourceReconciler(mcpReconcilerOptions{sources: []mcpsource.Source{source}, build: buildMCPReconcileCandidate(Config{})})
+	defer r.Close()
+	first, err := r.Reconcile(context.Background())
+	if err != nil || first.candidate == nil || len(first.candidate.manager.Servers()) != 0 || len(r.statusSnapshot().Sources[0].Diagnostics) != 1 {
+		t.Fatalf("all failed startup: %+v %v", first, err)
 	}
-	if reconciler.current != previous || runtimes.currentRevision() != previous.generation {
-		t.Fatalf("failed candidate replaced previous runtime: current=%p previous=%p revision=%d", reconciler.current, previous, runtimes.currentRevision())
+	healthy := newMCPTestServer(t)
+	source.set([]mcp.ServerConfig{{Name: "healthy", URL: healthy}}, nil)
+	second, err := r.Reconcile(context.Background())
+	if err != nil || len(second.candidate.manager.Servers()) != 1 {
+		t.Fatalf("recovery: %+v %v", second, err)
 	}
-	if previous.isClosed() {
-		t.Fatal("failed candidate closed the previous usable runtime")
+	source.set([]mcp.ServerConfig{{Name: "broken", URL: broken.URL}}, nil)
+	third, err := r.Reconcile(context.Background())
+	if err != nil || !third.stale || third.candidate != second.candidate || second.candidate.isClosed() {
+		t.Fatalf("all failed refresh lost last good runtime: %+v %v", third, err)
+	}
+	if len(r.statusSnapshot().Sources[0].Diagnostics) != 1 {
+		t.Fatalf("failure not reported against observed source: %+v", r.statusSnapshot())
+	}
+}
+
+func TestMCPSourceReconciliation_BadToolCatalogIsolated(t *testing.T) {
+	healthy := newMCPTestServer(t)
+	remote := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "fixture", Version: "v1"}, nil)
+	mcpsdk.AddTool(remote, &mcpsdk.Tool{Name: "invalid\nname"},
+		func(context.Context, *mcpsdk.CallToolRequest, mcpEchoArgs) (*mcpsdk.CallToolResult, any, error) {
+			return &mcpsdk.CallToolResult{}, nil, nil
+		})
+	bad := httptest.NewServer(mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return remote }, nil))
+	defer bad.Close()
+	src := &reconciliationSource{name: "static", cfgs: []mcp.ServerConfig{{Name: "healthy", URL: healthy}, {Name: "bad", URL: bad.URL}}}
+	r := newMCPSourceReconciler(mcpReconcilerOptions{sources: []mcpsource.Source{src}, build: buildMCPReconcileCandidate(Config{})})
+	defer r.Close()
+	result, err := r.Reconcile(context.Background())
+	if err != nil || len(result.candidate.tools) != 1 || len(result.candidate.manager.Servers()) != 1 {
+		t.Fatalf("malformed tool catalog blocked healthy peer: %+v %v", result, err)
+	}
+	if diagnostics := r.statusSnapshot().Sources[0].Diagnostics; len(diagnostics) != 1 || !strings.Contains(diagnostics[0], `"bad"`) {
+		t.Fatalf("malformed catalog diagnostic = %v", diagnostics)
+	}
+}
+
+func TestMCPReconcileCandidateAggregatePagesFailClosed(t *testing.T) {
+	paged := func() string {
+		t.Helper()
+		remote := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "paged", Version: "v1"}, nil)
+		handler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return remote }, nil)
+		var pages atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				http.Error(w, "cannot read request", http.StatusBadRequest)
+				return
+			}
+			var request struct {
+				ID     json.RawMessage `json:"id"`
+				Method string          `json:"method"`
+			}
+			if err := json.Unmarshal(body, &request); err == nil && request.Method == "tools/list" {
+				result := map[string]any{"tools": []any{}}
+				if pages.Add(1) < 129 {
+					result["nextCursor"] = fmt.Sprint(pages.Load())
+				}
+				response, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": result})
+				if err != nil {
+					t.Errorf("marshal response: %v", err)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write(response)
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			handler.ServeHTTP(w, r)
+		}))
+		t.Cleanup(srv.Close)
+		return srv.URL
+	}
+	healthy, deletes := newMCPTestServerCounting(t)
+	candidate, err := buildMCPReconcileCandidate(Config{})(context.Background(), []mcp.ServerConfig{
+		{Name: "healthy", URL: healthy}, {Name: "page-a", URL: paged()}, {Name: "page-b", URL: paged()},
+	}, func() {})
+	if candidate != nil || err == nil || !strings.Contains(err.Error(), "budget exceeded") {
+		if candidate != nil {
+			defer candidate.close()
+			t.Logf("peer failures: %v", candidate.failures)
+		}
+		t.Fatalf("aggregate page overrun = (%v, %v), want rejected candidate", candidate, err)
 	}
 	if atomic.LoadInt32(deletes) == 0 {
-		t.Fatal("partial healthy connection from failed candidate was not closed")
+		t.Fatal("rejected candidate did not close healthy peer")
 	}
-	result, err := runtimes.CallTool(context.Background(), "healthy", "echo", []byte(`{"text":"still-live"}`))
-	if err != nil || len(result.Content) != 1 || !strings.Contains(result.Content[0].Text, "still-live") {
-		t.Fatalf("previous runtime unusable after candidate failure: result=%+v err=%v", result, err)
+}
+
+func TestMCPSourceReconciliation_ResourcePromptListFailureIsolated(t *testing.T) {
+	for _, method := range []string{"resources/list", "prompts/list"} {
+		t.Run(method, func(t *testing.T) {
+			remote := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "fixture", Version: "v1"}, nil)
+			remote.AddResource(&mcpsdk.Resource{URI: "test://doc", Name: "doc"}, func(context.Context, *mcpsdk.ReadResourceRequest) (*mcpsdk.ReadResourceResult, error) {
+				return &mcpsdk.ReadResourceResult{}, nil
+			})
+			remote.AddPrompt(&mcpsdk.Prompt{Name: "example"}, func(context.Context, *mcpsdk.GetPromptRequest) (*mcpsdk.GetPromptResult, error) {
+				return &mcpsdk.GetPromptResult{}, nil
+			})
+			handler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return remote }, nil)
+			bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					http.Error(w, "cannot read request", http.StatusBadRequest)
+					return
+				}
+				var request struct {
+					Method string `json:"method"`
+				}
+				if err := json.Unmarshal(body, &request); err == nil && request.Method == method {
+					http.Error(w, "list unavailable", http.StatusBadGateway)
+					return
+				}
+				r.Body = io.NopCloser(bytes.NewReader(body))
+				handler.ServeHTTP(w, r)
+			}))
+			defer bad.Close()
+			src := &reconciliationSource{name: "static", cfgs: []mcp.ServerConfig{{Name: "healthy", URL: newMCPTestServer(t)}, {Name: "bad", URL: bad.URL}}}
+			r := newMCPSourceReconciler(mcpReconcilerOptions{sources: []mcpsource.Source{src}, build: buildMCPReconcileCandidate(Config{})})
+			defer r.Close()
+			result, err := r.Reconcile(context.Background())
+			if err != nil || len(result.candidate.manager.Servers()) != 1 {
+				t.Fatalf("partial candidate = (%+v, %v)", result, err)
+			}
+			if diagnostics := r.statusSnapshot().Sources[0].Diagnostics; len(diagnostics) != 1 || !strings.Contains(diagnostics[0], "list "+strings.Split(method, "/")[0]) {
+				t.Fatalf("failure diagnostic = %v", diagnostics)
+			}
+		})
+	}
+}
+
+func TestMCPReconcileCandidateCancellation(t *testing.T) {
+	healthy, deletes := newMCPTestServerCounting(t)
+	backend, err := url.Parse(healthy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(backend)
+	listing := make(chan struct{})
+	var listingOnce sync.Once
+	observed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "cannot read request", http.StatusBadRequest)
+			return
+		}
+		var request struct {
+			Method string `json:"method"`
+		}
+		_ = json.Unmarshal(body, &request)
+		// Initialization precedes tools/list; an SSE response need not reach EOF.
+		if request.Method == "tools/list" {
+			listingOnce.Do(func() { close(listing) })
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		proxy.ServeHTTP(w, r)
+	}))
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	blocked := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-listing:
+		case <-release:
+			return
+		case <-r.Context().Done():
+			return
+		}
+		once.Do(func() { close(entered) })
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() {
+		cancel()
+		close(release)
+		blocked.Close()
+		observed.CloseClientConnections()
+		observed.Close()
+	}()
+	go func() {
+		select {
+		case <-entered:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	candidate, err := buildMCPReconcileCandidate(Config{})(ctx, []mcp.ServerConfig{
+		{Name: "healthy", URL: observed.URL}, {Name: "blocked", URL: blocked.URL},
+	}, func() {})
+	if candidate != nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled candidate = (%v, %v)", candidate, err)
+	}
+	if atomic.LoadInt32(deletes) == 0 {
+		t.Fatal("canceled candidate did not close initialized peer")
 	}
 }
 

@@ -40,7 +40,7 @@ import (
 // requires a tool.CommandRunner and is optional — add it separately via
 // fstools.NewShellTool when a runner is configured.
 //
-// FetchMcpResource (issue #223 Phase 2) is an outbound read like WebFetch, so
+// FetchMcpResource (issue #223) is an outbound read like WebFetch, so
 // it rides in BOTH profiles via All() and NoFS().
 func All() []tool.Tool {
 	return append(fstools.All(),
@@ -57,7 +57,7 @@ func All() []tool.Tool {
 // would only generate honest-but-useless not-exist errors and burn turns. The
 // composition root (internal/app registerCoreTools) selects NoFS() vs All() per
 // the session's catalog profile; this is the single definition of the no-FS
-// core surface. FetchMcpResource (issue #223 Phase 2) is an outbound read that
+// core surface. FetchMcpResource (issue #223) is an outbound read that
 // needs no filesystem, so it stays in the no-FS profile alongside WebFetch.
 func NoFS() []tool.Tool {
 	return []tool.Tool{

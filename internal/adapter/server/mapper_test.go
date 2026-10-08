@@ -24,6 +24,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/team"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -31,6 +32,116 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcp/source"
 	"github.com/stacklok/mecatl/internal/adapter/sessiondebug"
 )
+
+func TestDelegationChildToolCallIDBackstop(t *testing.T) {
+	for _, id := range []session.ToolCallID{"bad\xff", session.ToolCallID(strings.Repeat("x", 257))} {
+		for _, kind := range []session.EventType{session.EvToolCall, session.EvToolResultAvailable, session.EvToolResult, ""} {
+			for _, tc := range []struct {
+				name string
+				ev   session.Event
+				get  func(*mecatlv1.Event) (string, string, string)
+			}{
+				{"subagent", session.Event{Type: session.EvSubagentTool, Subagent: &session.SubagentPayload{InnerKind: kind, ChildToolCallID: id, ToolName: "Read", Detail: "secret"}}, func(e *mecatlv1.Event) (string, string, string) {
+					p := e.GetSubagent()
+					return p.GetChildToolCallId(), p.GetInnerKind(), p.GetToolName()
+				}},
+				{"parallel", session.Event{Type: session.EvParallelBranch, Parallel: &session.ParallelPayload{Kind: session.ParallelBranchTool, InnerKind: kind, ChildToolCallID: id, ToolName: "Read", Detail: "secret"}}, func(e *mecatlv1.Event) (string, string, string) {
+					p := e.GetParallel()
+					return p.GetChildToolCallId(), p.GetInnerKind(), p.GetToolName()
+				}},
+				{"team", session.Event{Type: session.EvTeamMember, Team: &session.TeamPayload{InnerKind: kind, ChildToolCallID: id, ToolName: "Read", Detail: "secret"}}, func(e *mecatlv1.Event) (string, string, string) {
+					p := e.GetTeam()
+					return p.GetChildToolCallId(), p.GetInnerKind(), p.GetToolName()
+				}},
+			} {
+				t.Run(tc.name+"/"+string(kind)+"/"+string(id[:3]), func(t *testing.T) {
+					wire, err := proto.Marshal(toProto(tc.ev))
+					if err != nil {
+						t.Fatal(err)
+					}
+					var decoded mecatlv1.Event
+					if err := proto.Unmarshal(wire, &decoded); err != nil {
+						t.Fatal(err)
+					}
+					gotID, gotKind, gotName := tc.get(&decoded)
+					if gotID != "" || gotKind != "" || gotName != "" {
+						t.Fatalf("unsafe preview correlated: id=%q kind=%q name=%q", gotID, gotKind, gotName)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestDelegationChildToolCallIDMapping(t *testing.T) {
+	for _, inner := range []session.EventType{session.EvToolCall, session.EvToolResultAvailable, session.EvToolResult, session.EvMessageDelta, session.EvResult} {
+		id := session.ToolCallID("")
+		if inner == session.EvToolCall || inner == session.EvToolResultAvailable || inner == session.EvToolResult {
+			id = "exact-child-id"
+		}
+		for _, tc := range []struct {
+			name string
+			ev   session.Event
+			get  func(*mecatlv1.Event) string
+		}{
+			{"subagent", session.Event{Type: session.EvSubagentTool, Subagent: &session.SubagentPayload{InnerKind: inner, ChildToolCallID: id}}, func(p *mecatlv1.Event) string { return p.GetSubagent().GetChildToolCallId() }},
+			{"parallel", session.Event{Type: session.EvParallelBranch, Parallel: &session.ParallelPayload{Kind: session.ParallelBranchTool, InnerKind: inner, ChildToolCallID: id}}, func(p *mecatlv1.Event) string { return p.GetParallel().GetChildToolCallId() }},
+			{"team", session.Event{Type: session.EvTeamMember, Team: &session.TeamPayload{InnerKind: inner, ChildToolCallID: id}}, func(p *mecatlv1.Event) string { return p.GetTeam().GetChildToolCallId() }},
+		} {
+			t.Run(tc.name+"/"+string(inner), func(t *testing.T) {
+				pb := toProto(tc.ev)
+				wire, err := proto.Marshal(pb)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var decoded mecatlv1.Event
+				if err := proto.Unmarshal(wire, &decoded); err != nil {
+					t.Fatal(err)
+				}
+				if got := tc.get(&decoded); got != string(id) {
+					t.Fatalf("wire ID = %q, want %q", got, id)
+				}
+			})
+		}
+	}
+}
+
+func TestDelegationAvailableResultWirePayload(t *testing.T) {
+	const detail = "bounded early preview"
+	for _, tc := range []struct {
+		name string
+		ev   session.Event
+		get  func(*mecatlv1.Event) (string, string, string, bool)
+	}{
+		{"subagent", session.Event{Type: session.EvSubagentTool, Subagent: &session.SubagentPayload{InnerKind: session.EvToolResultAvailable, ChildToolCallID: "call", ToolName: "Read", Detail: detail, IsError: true}}, func(p *mecatlv1.Event) (string, string, string, bool) {
+			s := p.GetSubagent()
+			return s.GetChildToolCallId(), s.GetInnerKind(), s.GetDetail(), s.GetIsError()
+		}},
+		{"parallel", session.Event{Type: session.EvParallelBranch, Parallel: &session.ParallelPayload{Kind: session.ParallelBranchTool, InnerKind: session.EvToolResultAvailable, ChildToolCallID: "call", ToolName: "Read", Detail: detail, IsError: true}}, func(p *mecatlv1.Event) (string, string, string, bool) {
+			s := p.GetParallel()
+			return s.GetChildToolCallId(), s.GetInnerKind(), s.GetDetail(), s.GetIsError()
+		}},
+		{"team", session.Event{Type: session.EvTeamMember, Team: &session.TeamPayload{InnerKind: session.EvToolResultAvailable, ChildToolCallID: "call", ToolName: "Read", Detail: detail, IsError: true}}, func(p *mecatlv1.Event) (string, string, string, bool) {
+			s := p.GetTeam()
+			return s.GetChildToolCallId(), s.GetInnerKind(), s.GetDetail(), s.GetIsError()
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wire, err := proto.Marshal(toProto(tc.ev))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var decoded mecatlv1.Event
+			if err := proto.Unmarshal(wire, &decoded); err != nil {
+				t.Fatal(err)
+			}
+			id, inner, gotDetail, failed := tc.get(&decoded)
+			if id != "call" || inner != string(session.EvToolResultAvailable) || gotDetail != detail || !failed {
+				t.Fatalf("wire availability = %q %q %q %t", id, inner, gotDetail, failed)
+			}
+		})
+	}
+}
 
 func TestResumableSessionStatusMetrics_Scenario2_GetSessionProjection(t *testing.T) {
 	for _, kind := range []session.SessionKind{
@@ -120,7 +231,7 @@ func TestResumableSessionStatusMetrics_Scenario2_LegacySnapshotCompatibility(t *
 	}
 }
 
-func TestADR_0352_Scenario6_WireAndDebugger(t *testing.T) {
+func TestRoutingDecisionWireAndDebugger(t *testing.T) {
 	zero := 0.0
 	decision := &session.RoutingDecision{
 		Backend: "jev", ClassifierModel: "jev-1.13.0", CandidateCategory: "deep", CandidateModel: "capable",
@@ -201,7 +312,7 @@ func TestADR_0352_Scenario6_WireAndDebugger(t *testing.T) {
 	}
 }
 
-func TestADR_0352_Scenario6_RealProducerRelayReloadDebugger(t *testing.T) {
+func TestRoutingDecisionRealProducerRelayReloadDebugger(t *testing.T) {
 	store := memstore.New()
 	log := memstore.NewEventLog()
 	child := agent.NewEngine(agent.Deps{
@@ -293,6 +404,31 @@ func TestIncarnationsAreNotProjectedToNormalClients(t *testing.T) {
 
 // TestToProtoTable round-trips every EventType and each structured submessage
 // through toProto, asserting the proto shape matches the domain Event.
+func TestProjectInstructionWarningRealRunToProto(t *testing.T) {
+	ws := memfs.NewWorkspace("/ws")
+	if err := ws.Write(t.Context(), "AGENTS.md", []byte(strings.Repeat("secret", 20))); err != nil {
+		t.Fatal(err)
+	}
+	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}
+	env := tool.MustEnvironment(ref, ws, memledger.New(), nil)
+	sess := session.New("instruction-warning", session.ModeDefault, ref, session.Limits{}, time.Unix(1, 0))
+	engine := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: tool.NewCatalog(), Instructions: prompt.RootAssembler{Source: ws, SourceID: "test", SourcePrefix: "."}, ProjectInstructionMaxBytes: 32})
+	warnings := 0
+	for ev := range engine.Run(t.Context(), sess, env, agent.RunRequest{Text: "go"}).Events() {
+		if ev.Type != session.EvHook {
+			continue
+		}
+		got := toProto(ev)
+		if got.GetType() != "hook" || got.GetHook().GetPhase() != "ProjectInstructions" || got.GetHook().GetDecision() != mecatlv1.HookDecision_HOOK_DECISION_ADVISORY || got.GetHook().GetCallId() != "" || strings.Contains(got.GetText(), "secret") || got.GetText() != "Project instructions: scope guidance truncated or omitted (content limit reached)." {
+			t.Fatalf("unsafe client projection: %+v", got)
+		}
+		warnings++
+	}
+	if warnings != 1 {
+		t.Fatalf("projected warnings=%d", warnings)
+	}
+}
+
 func TestToProtoTable(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -451,10 +587,10 @@ func TestToProtoTable(t *testing.T) {
 		},
 		{
 			// Routed-category metadata is BARE metadata (a label + a model id), set on
-			// subagent.start only when the opt-in model router classified the delegation
-			// (ADR 0031). It must round-trip to the proto fields verbatim — gauntlet #7
-			// holds (no child content crosses). The generic Model field (issue #112 / ADR
-			// 0035) equals RoutedModel when routed.
+			// subagent.start only when the opt-in model router classified the delegation.
+			// It must round-trip to the proto fields verbatim — gauntlet #7
+			// holds (no child content crosses). The generic Model field (issue #112)
+			// equals RoutedModel when routed.
 			name: "subagent.start routed",
 			in: session.Event{Type: session.EvSubagentStart, Seq: 200, Turn: 1,
 				Subagent: &session.SubagentPayload{ParentCallID: "p1", ChildID: "subagent-p1", Goal: "investigate main.go",
@@ -470,7 +606,7 @@ func TestToProtoTable(t *testing.T) {
 			},
 		},
 		{
-			// The generic Model field (issue #112 / ADR 0035) is set UNCONDITIONALLY —
+			// The generic Model field (issue #112) is set UNCONDITIONALLY —
 			// here for the inherited/default case (no router fired, routed fields empty).
 			// It must round-trip verbatim; bare metadata, gauntlet #7.
 			name: "subagent.start inherited model",
@@ -502,7 +638,7 @@ func TestToProtoTable(t *testing.T) {
 			},
 		},
 		{
-			// ADR 0079 bounded previews: the tool/message preview fields (Text / Detail /
+			// Bounded previews: the tool/message preview fields (Text / Detail /
 			// InnerKind) the delegation chokepoint now populates on subagent.tool events
 			// round-trip verbatim over the wire. Already redacted upstream (clamped in
 			// engine/agent), so the mapper copies them unchanged; inner_kind is a STRING
@@ -609,7 +745,7 @@ func TestToProtoTable(t *testing.T) {
 				}
 				// Routed-category metadata is BARE metadata (a label + a model id), set on the
 				// team.start roster entry only when the opt-in model router classified the
-				// member (ADR 0031 / ADR 0034). It must round-trip verbatim — gauntlet #7 holds
+				// member. It must round-trip verbatim — gauntlet #7 holds
 				// (no member content crosses). The lead was unrouted (both empty).
 				if r[0].GetRoutedCategory() != "" || r[0].GetRoutedModel() != "" {
 					t.Fatalf("team.start unrouted lead carries routed metadata: %+v", r[0])
@@ -620,7 +756,7 @@ func TestToProtoTable(t *testing.T) {
 				if r[1].GetRoutedCategory() != "large" || r[1].GetRoutedModel() != "anthropic/claude-opus-4" {
 					t.Fatalf("team.start routed member metadata mismatch: %+v", r[1])
 				}
-				// The generic Model field (issue #112 / ADR 0035) round-trips for BOTH
+				// The generic Model field (issue #112) round-trips for BOTH
 				// members: the routed worker's Model == RoutedModel, and the unrouted lead
 				// carries its inherited model with empty routed fields.
 				if r[0].GetModel() != "openai/gpt-4.5" {
@@ -852,20 +988,20 @@ func TestToProtoTable(t *testing.T) {
 					t.Fatalf("parallel branch_start child_id = %q, want parallel-p1-1", p.GetChildId())
 				}
 				// Routed-category metadata is BARE metadata (a label + a model id), set on
-				// branch_start only when the opt-in model router classified the branch (ADR
-				// 0031 / ADR 0034). It round-trips verbatim — gauntlet #7 holds (no branch
+				// branch_start only when the opt-in model router classified the branch.
+				// It round-trips verbatim — gauntlet #7 holds (no branch
 				// content crosses).
 				if p.GetRoutedCategory() != "small" || p.GetRoutedModel() != "openai/gpt-4.1-mini" {
 					t.Fatalf("parallel branch_start routed metadata mismatch: %+v", p)
 				}
-				// The generic Model field (issue #112 / ADR 0035) equals RoutedModel when routed.
+				// The generic Model field (issue #112) equals RoutedModel when routed.
 				if p.GetModel() != "openai/gpt-4.1-mini" || p.GetModel() != p.GetRoutedModel() {
 					t.Fatalf("parallel branch_start Model should equal RoutedModel when routed: %+v", p)
 				}
 			},
 		},
 		{
-			// The generic Model field (issue #112 / ADR 0035) for the inherited/default
+			// The generic Model field (issue #112) for the inherited/default
 			// branch case (no router fired, routed fields empty). Round-trips verbatim.
 			name: "parallel.branch branch_start inherited model",
 			in: session.Event{Type: session.EvParallelBranch, Seq: 41, Turn: 1,
@@ -899,7 +1035,7 @@ func TestToProtoTable(t *testing.T) {
 			},
 		},
 		{
-			// ADR 0079 bounded previews: the branchTool re-tag now projects Text / Detail /
+			// Bounded previews: the branchTool re-tag now projects Text / Detail /
 			// InnerKind on branch_tool events; they round-trip verbatim (already clamped
 			// upstream in engine/agent). inner_kind is a STRING passthrough.
 			name: "parallel.branch branch_tool with bounded previews",

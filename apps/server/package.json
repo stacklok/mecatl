@@ -16,14 +16,14 @@
   "dependencies": {
     "@hono/node-server": "2.1.1",
     "@hono/zod-openapi": "1.6.3",
-    "@stacklok-oss/mecatl-sdk": "^0.3.0",
+    "@stacklok-oss/mecatl-sdk": "0.4.0",
     "hono": "4.13.9",
     "openid-client": "6.8.8",
     "zod": "4.6.5"
   },
   "devDependencies": {
     "@mecatl-studio/contracts": "workspace:*",
-    "@types/node": "24.19.0",
+    "@types/node": "26.6.4",
     "esbuild": "0.28.2",
     "tsx": "4.23.15",
     "typescript": "6.0.3",

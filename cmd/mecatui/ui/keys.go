@@ -143,10 +143,11 @@ type keyMap struct {
 	// recoverable: the child is persisted and resumable.
 	CancelChild key.Binding
 
-	// ExpandTools is the general "show details" toggle: full vs line-capped
-	// tool-result bodies + Edit/Write diffs, and collapsed vs expanded reasoning
-	// summaries. Control-modified so it never collides with textarea input.
-	ExpandTools key.Binding
+	// Toolcalls (ctrl+t) retains the existing details-toggle behavior.
+	Toolcalls key.Binding
+	// ExpandConversation (f9) reserves a separate global conversation-details action.
+	// It is wired by the conversation behavior task.
+	ExpandConversation key.Binding
 
 	// Help opens the "?" keys-&-features overlay. Unlike the control-modified
 	// open keys, "?" is a PRINTABLE rune, so onIdleKey opens help only when the
@@ -156,7 +157,7 @@ type keyMap struct {
 	// overlay.
 	Help key.Binding
 
-	// Effort (f7) opens the /effort reasoning-effort picker (ADR 0055) — the
+	// Effort (f7) opens the /effort reasoning-effort picker — the
 	// same surface the /effort command opens. Control-modified so it never collides
 	// with textarea input. Like the /effort command it is idle-only and gated on
 	// caps.ModelSelection: openEffort returns the model unchanged (the key falls
@@ -298,7 +299,7 @@ func defaultKeys() keyMap {
 			key.WithKeys("f6"),
 			key.WithHelp("f6", "agents (subagents / parallel / teams)"),
 		),
-		// f7: open the /effort reasoning-effort picker (ADR 0055). A function key
+		// f7: open the /effort reasoning-effort picker. A function key
 		// keeps ctrl+e available for the textarea's line-end action; the picker stays
 		// idle-only and caps-gated inside openEffort, mirroring the /effort command.
 		Effort: key.NewBinding(
@@ -358,9 +359,13 @@ func defaultKeys() keyMap {
 			key.WithKeys("end", "G"),
 			key.WithHelp("end/G", "last"),
 		),
-		ExpandTools: key.NewBinding(
+		Toolcalls: key.NewBinding(
 			key.WithKeys("ctrl+t"),
-			key.WithHelp("ctrl+t", "expand/collapse details"),
+			key.WithHelp("ctrl+t", "open tool calls"),
+		),
+		ExpandConversation: key.NewBinding(
+			key.WithKeys("f9"),
+			key.WithHelp("f9", "expand/collapse conversation details"),
 		),
 		Help: key.NewBinding(
 			key.WithKeys("?"),
@@ -462,8 +467,11 @@ func applyKeyOverrides(km keyMap, ov map[string][]string) keyMap {
 		"CancelChild": func(chords []string) {
 			km.CancelChild = key.NewBinding(key.WithKeys(chords...), key.WithHelp(join(chords), km.CancelChild.Help().Desc))
 		},
-		"ExpandTools": func(chords []string) {
-			km.ExpandTools = key.NewBinding(key.WithKeys(chords...), key.WithHelp(join(chords), km.ExpandTools.Help().Desc))
+		"Toolcalls": func(chords []string) {
+			km.Toolcalls = key.NewBinding(key.WithKeys(chords...), key.WithHelp(join(chords), km.Toolcalls.Help().Desc))
+		},
+		"ExpandConversation": func(chords []string) {
+			km.ExpandConversation = key.NewBinding(key.WithKeys(chords...), key.WithHelp(join(chords), km.ExpandConversation.Help().Desc))
 		},
 		"Help": func(chords []string) {
 			km.Help = key.NewBinding(key.WithKeys(chords...), key.WithHelp(join(chords), km.Help.Help().Desc))

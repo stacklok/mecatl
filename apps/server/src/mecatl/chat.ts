@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type {
+  ClearSessionRequest,
   CreateSessionRequest,
   ForkSessionRequest,
   ListSessionsResponse,
@@ -19,7 +20,9 @@ import {
   type McpAuthorizationOperation,
   MecatlError,
   type PermissionVerdict,
+  type PlanApprovalVerdict,
   type Run,
+  ServerFeature,
   SessionMode,
   textPart,
 } from "@stacklok-oss/mecatl-sdk";
@@ -71,7 +74,7 @@ export interface ChatService {
    * distinct from `fork()` (which copies history). This handle keeps
    * existing (it is not mutated); the caller navigates to the new id.
    */
-  clearSession(sessionId: string): Promise<{ id: string }>;
+  clearSession(sessionId: string, request?: ClearSessionRequest): Promise<{ id: string }>;
   compactSession(sessionId: string): Promise<{ compacted: boolean }>;
   createSession(request: CreateSessionRequest): Promise<{ id: string }>;
   deleteSession(sessionId: string): Promise<void>;
@@ -83,6 +86,12 @@ export interface ChatService {
     title: string,
   ): Promise<{ title: string; titleProvenance: string; titleRevision: string }>;
   retry(sessionId: string, signal: AbortSignal): AsyncIterable<RunStreamEvent>;
+  resolvePlanAsk(
+    sessionId: string,
+    runId: string,
+    askId: string,
+    verdict: PlanApprovalVerdict,
+  ): Promise<"acknowledged" | "stale" | "unavailable">;
   resolvePermission(
     sessionId: string,
     runId: string,
@@ -235,9 +244,13 @@ export function createMecatlChatService(client: Client): ChatService {
       }
     },
 
-    async clearSession(sessionId) {
+    async clearSession(sessionId, request) {
       const session = await client.sessions.get(sessionId);
-      const cleared = await session.clear();
+      const cleared = await session.clear(
+        request?.worktreeSelector === undefined
+          ? undefined
+          : { worktreeSelector: request.worktreeSelector },
+      );
       return { id: cleared.id };
     },
 
@@ -275,16 +288,42 @@ export function createMecatlChatService(client: Client): ChatService {
 
     async detail(sessionId, signal) {
       const session = await client.sessions.get(sessionId, { signal });
-      const snapshot = await session.snapshot({ signal });
+      const [snapshot, compatibility] = await Promise.all([
+        session.snapshot({ signal }),
+        client.server.compatibility(),
+      ]);
       const resolvedModel = snapshot.resolvedModel;
       return {
         capabilities: {
           image: snapshot.sessionCapabilities?.image === true,
-          manualCompaction: snapshot.capabilities?.manualCompaction === true,
-          modelSelection: snapshot.capabilities?.modelSelection === true,
+          manualCompaction: compatibility.capabilities.manualCompaction,
+          modelSelection: compatibility.capabilities.modelSelection,
         },
         id: snapshot.sessionId,
+        kind: snapshot.kind,
         mode: fromSessionMode(snapshot.mode),
+        ...(snapshot.relationship === undefined
+          ? {}
+          : {
+              relationship: {
+                ...(snapshot.relationship.debugTargetSessionId === undefined
+                  ? {}
+                  : { debugTargetSessionId: snapshot.relationship.debugTargetSessionId }),
+                ...(snapshot.relationship.parentSessionId === undefined
+                  ? {}
+                  : { parentSessionId: snapshot.relationship.parentSessionId }),
+              },
+            }),
+        ...(snapshot.placement === undefined
+          ? {}
+          : {
+              placement: {
+                branch: snapshot.placement.branch,
+                kind: snapshot.placement.kind,
+                label: snapshot.placement.label,
+                revision: snapshot.placement.revision,
+              },
+            }),
         ...(resolvedModel === undefined
           ? {}
           : {
@@ -307,6 +346,9 @@ export function createMecatlChatService(client: Client): ChatService {
         ...(request.reasoningEffort === "default"
           ? {}
           : { reasoningEffort: request.reasoningEffort }),
+        ...(request.worktreeSelector === undefined
+          ? {}
+          : { worktreeSelector: request.worktreeSelector }),
       });
       return { id: session.id };
     },
@@ -324,25 +366,34 @@ export function createMecatlChatService(client: Client): ChatService {
         });
 
         for (const session of response.sessions) {
-          const publicChatReason = session.capabilities?.reasons?.publicChat ?? "";
-          const debugSession = Boolean(session.relationship?.debugTargetSessionId);
-          if (!session.sessionId || (publicChatReason === "inspect_only_kind" && !debugSession)) {
+          if (!session.sessionId) {
             continue;
           }
 
           items.push({
             capabilities: {
+              copyId: session.capabilities?.copyId === true,
+              copyIdReason: session.capabilities?.reasons?.copyId ?? "",
               delete: session.capabilities?.delete === true,
               deleteReason: session.capabilities?.reasons?.delete ?? "",
+              fork: session.capabilities?.fork === true,
+              forkReason: session.capabilities?.reasons?.fork ?? "",
+              inspect: session.capabilities?.inspect === true,
+              inspectReason: session.capabilities?.reasons?.inspect ?? "",
+              publicChat: session.capabilities?.publicChat === true,
+              publicChatReason: session.capabilities?.reasons?.publicChat ?? "",
               rename: session.capabilities?.rename === true,
               renameReason: session.capabilities?.reasons?.rename ?? "",
+              viewTranscript: session.capabilities?.viewTranscript === true,
+              viewTranscriptReason: session.capabilities?.reasons?.viewTranscript ?? "",
             },
             createdAt: unixSecondsToIso(session.createdAtUnix),
             debugTargetSessionId: session.relationship?.debugTargetSessionId ?? "",
             id: session.sessionId,
+            kind: session.kind,
             modelId: session.modelId,
             state: session.state,
-            title: session.titleMetadata?.title || session.title || "Untitled chat",
+            title: session.titleMetadata?.title || "Untitled chat",
             titleProvenance: session.titleMetadata?.provenance ?? "",
             titleRevision: session.titleMetadata?.revision?.toString() ?? "0",
             turns: session.turns,
@@ -380,6 +431,34 @@ export function createMecatlChatService(client: Client): ChatService {
       yield* streamRun(sessionId, run);
     },
 
+    async resolvePlanAsk(sessionId, runId, askId, verdict) {
+      const compatibility = await client.server.compatibility();
+      if (!compatibility.features.has(ServerFeature.ExactPlanAskControl)) return "unavailable";
+      try {
+        const session = await client.sessions.get(sessionId);
+        await session.controls(runId).resolvePlanAsk(askId, verdict);
+        return "acknowledged";
+      } catch (error) {
+        if (error instanceof MecatlError) {
+          if (error.code === "unsupported_feature") return "unavailable";
+          if (
+            // DECISION: "failed_precondition" (HTTP 412) stays stale: the server
+            // returns it when a live run owns its plan continuation, so the ask
+            // can no longer be answered here. Rejected: dropping it, which would
+            // surface a legitimate stale case as an uncertain verdict.
+            [
+              "stale_run_control",
+              "ask_not_pending",
+              "failed_precondition",
+              "not_awaiting_plan",
+            ].includes(error.code)
+          )
+            return "stale";
+        }
+        throw error;
+      }
+    },
+
     async resolvePermission(sessionId, runId, askId, verdict) {
       try {
         const session = await client.sessions.get(sessionId);
@@ -404,7 +483,7 @@ export function createMecatlChatService(client: Client): ChatService {
             ),
           ]
         : request.prompt;
-      const run = await session.run(prompt, {}, { signal });
+      const run = await session.run(prompt, { serverOwnedPlanContinuation: true }, { signal });
       yield* streamRun(sessionId, run);
     },
 
@@ -571,15 +650,20 @@ export function serializeEvent(
   event: Event,
 ): Extract<RunStreamEvent, { type: "run.event" }>["event"] {
   const note = event.kind === "user_prompt" ? projectDeliveryNote(event.text) : undefined;
+  const eventPayload = event.kind === "unknown" ? undefined : event.payload;
+  const eventUsage =
+    typeof eventPayload === "object" && eventPayload !== null && "usage" in eventPayload
+      ? eventPayload.usage
+      : undefined;
   const usage =
-    event.usage === undefined
+    eventUsage === undefined
       ? undefined
       : {
-          cacheReadTokens: event.usage.cacheReadTokens.toString(),
-          cacheWriteTokens: event.usage.cacheWriteTokens.toString(),
-          inputTokens: event.usage.inputTokens.toString(),
-          outputTokens: event.usage.outputTokens.toString(),
-          reasoningTokens: event.usage.reasoningTokens.toString(),
+          cacheReadTokens: eventUsage.cacheReadTokens.toString(),
+          cacheWriteTokens: eventUsage.cacheWriteTokens.toString(),
+          inputTokens: eventUsage.inputTokens.toString(),
+          outputTokens: eventUsage.outputTokens.toString(),
+          reasoningTokens: eventUsage.reasoningTokens.toString(),
         };
 
   if (event.kind === "unknown") {

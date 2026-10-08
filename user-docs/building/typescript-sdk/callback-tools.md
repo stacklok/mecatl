@@ -11,6 +11,14 @@ A client returned by `spawn()` can expose Node.js or Bun functions as MCP tools.
 Register the complete callback-tool set before the client creates its first
 session.
 
+## Prerequisites
+
+Install the SDK and `mecated` as described in
+[Run a private local daemon](local-daemon.md#prerequisites). Use Node.js or Bun
+in a controlled local environment: this example disables authority evaluation
+with `--authority-evaluator noop`. Review the limitation below before adapting
+it for your application.
+
 ## Register a tool
 
 This local example uses a scripted offline provider so it produces the same tool
@@ -73,6 +81,9 @@ default local evaluator and the Cedar evaluator deny them. Because `noop`
 disables authority evaluation, use callback tools only in a controlled local
 environment until this limitation is removed.
 
+The example prints `The callback tool returned the issue status.` after the
+daemon calls your registered handler.
+
 The schema is JSON Schema 2020-12. Invalid schemas, duplicate names, reserved
 namespaces, and invalid options fail locally with `ToolRegistrationError`.
 
@@ -113,12 +124,12 @@ session creation.
 
 - [Work with sessions and runs](./sessions-and-runs.md) to consume callback-tool
   events and terminal results.
-- [Permissions and posture](/features/permissions-and-posture.md) to configure
-  server-side tool decisions.
+- [Permissions and posture](/features/security-and-execution/permissions-and-posture.md)
+  to configure server-side tool decisions.
 
 ## Related information
 
 - [TypeScript SDK Node.js and Bun API](/reference/typescript-sdk-api/node.md)
   for callback schemas, handlers, results, and error types.
-- [MCP client](/building/what-you-get/mcp-client.md)
-- [Tool catalog extension point](/building/extension-points/tool-catalog.md)
+- [MCP client](/features/security-and-execution/mcp-client.md)
+- [Tool catalog extension point](/building/go/extension-points/tool-catalog.md)

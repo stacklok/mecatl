@@ -16,9 +16,9 @@ import (
 )
 
 // fetchMcpResourceDescription is the model-facing documentation for the
-// FetchMcpResource tool (issue #223, Phase 2): it is the resource-fetching
-// affordance that lets the model ACT on an MCP tool's resource_link (Phase 1
-// surfaced the link as a typed block the model can see; this tool fetches it).
+// FetchMcpResource tool (issue #223): it is the resource-fetching
+// affordance that lets the model ACT on an MCP tool's resource_link (the link
+// is surfaced as a typed block the model can see; this tool fetches it).
 const fetchMcpResourceDescription = `Fetch the contents of an https:// resource URI returned by an MCP tool's resource_link.
 
 When to use:
@@ -54,9 +54,9 @@ const fetchMcpResourceTimeout = 30 * time.Second
 const fetchMcpResourceMaxBody = toolkit.MaxOutputBytes + 1
 
 // FetchMcpResourceTool fetches the contents of an https:// resource URI
-// returned by an MCP tool's resource_link (issue #223 Phase 2). It is the
-// client-side affordance that lets the model ACT on a resource_link Phase 1
-// surfaced as a typed block.
+// returned by an MCP tool's resource_link (issue #223). It is the
+// client-side affordance that lets the model ACT on a resource_link surfaced
+// as a typed block.
 //
 // SECURITY (Decision #5 of issue #223): server-returned resource_link URIs are
 // NEVER auto-dereferenced blindly. Only https:// URIs are client-fetched, and
@@ -87,8 +87,7 @@ const fetchMcpResourceMaxBody = toolkit.MaxOutputBytes + 1
 //
 // It is read-only (an outward read, no mutation), so it slots into the loop's
 // read-parallel dispatch path. Its http.Client is constructed PER CALL (a
-// bounded one-shot fetch), so it owns no outlives-a-call resource and needs
-// no CLOUD-NATIVE.md List 1 inventory row (ADR 0059 caveat).
+// bounded one-shot fetch), so it owns no outlives-a-call resource.
 //
 // The zero value is the production tool (per-call client). Tests inject a
 // custom http.Client via withHTTPClient to drive the fetch path offline.

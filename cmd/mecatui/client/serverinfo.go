@@ -14,7 +14,8 @@ const sessionActivityInventoryFeature = "session_activity_inventory"
 
 // SupportsSessionActivityInventory reports whether this server's ListSessions
 // pager safely projects persisted activity. Compatibility failures fail closed
-// so mixed-version servers retain the historical Chats view.
+// so mixed-version servers get the Chats view without the activity-based
+// Drafts split.
 func (c *Client) SupportsSessionActivityInventory(ctx context.Context) bool {
 	resp, err := c.svc.GetCompatibilityInfo(ctx, &mecatlv1.GetCompatibilityInfoRequest{})
 	if err != nil {

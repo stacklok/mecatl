@@ -57,7 +57,7 @@
               ┃    ?                     keys & features                            ┃
               ┃    /                     slash commands                             ┃
               ┃    f6                    agents (when running)                      ┃
-              ┃    ctrl+t                details                                    ┃
+              ┃    ctrl+t                tool calls                                 ┃
               ┃                                                                     ┃
               ┃    Cross-session memory is on — I'll remember context across runs.  ┃
               ┃                                                                     ┃
@@ -77,4 +77,4 @@
 │
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  connected                                                ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
-? help · / commands · ctrl+g select all · ctrl+y copy · ctrl+u clear · ctrl+c quit
+? help · / commands · ctrl+t tool calls · f9 session details · ctrl+c quit

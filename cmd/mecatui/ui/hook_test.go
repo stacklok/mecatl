@@ -105,6 +105,25 @@ func TestRenderHookModified(t *testing.T) {
 	}
 }
 
+func TestRenderProjectInstructionWarning(t *testing.T) {
+	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
+	m.phase = phaseRunning
+	m = applyAll(m, client.HookMsg{Text: "Project instructions: scope guidance truncated or omitted (content limit reached).", Phase: "ProjectInstructions", Decision: client.HookAdvisory})
+	var found bool
+	for _, card := range m.conv.testBlocks() {
+		if hook, ok := card.Payload.(scrollback.HookCardSnapshot); ok {
+			out := stripANSIstr(renderHookBlock(newTestRenderer(), hook.Text, hook.Phase, hook.Tool, hook.Decision))
+			if !strings.Contains(out, "⚠") || !strings.Contains(out, "ProjectInstructions") || !strings.Contains(out, "scope guidance truncated") {
+				t.Fatalf("instruction warning not rendered for the operator: %q", out)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("client warning did not produce a hook card")
+	}
+}
+
 // TestRenderHookAdvisory asserts an advisory hook uses the "⚠" glyph and the
 // warning style — distinct from blocked (error "✗") and modified (info "✎").
 // An advisory guardrail finding flagged content but altered nothing; it is a

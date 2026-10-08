@@ -153,7 +153,7 @@ func TestBuildInstructionAssemblerRulesOrdering(t *testing.T) {
 	rulesSrc := staticRulesSource{rules: []prompt.Rule{{Name: "testing", Body: "RULES-MARKER"}}}
 
 	asm := buildInstructionAssembler(memfs.NewWorkspace("/ws"), rulesSrc, soulSrc, nil, nil, false)
-	msgs, err := asm.Assemble(ctx)
+	msgs, _, err := asm.Assemble(ctx, []string{"."}, &session.InstructionSnapshot{}, 65536)
 	if err != nil {
 		t.Fatalf("Assemble: %v", err)
 	}
@@ -171,7 +171,10 @@ func TestBuildInstructionAssemblerRulesOrdering(t *testing.T) {
 	}
 	// A nil rulesSrc must NOT include the rules header.
 	noRules := buildInstructionAssembler(memfs.NewWorkspace("/ws"), nil, soulSrc, nil, nil, false)
-	msgs2, _ := noRules.Assemble(ctx)
+	msgs2, _, err := noRules.Assemble(ctx, []string{"."}, &session.InstructionSnapshot{}, 65536)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(msgs2) != 1 {
 		t.Fatalf("want one soul-only message, got %d", len(msgs2))
 	}
@@ -231,7 +234,7 @@ func TestPerSessionAssemblerMatchesShared(t *testing.T) {
 	if rulesCount != 1 {
 		t.Fatalf("turn-0 request must carry the rules fragment exactly once; got %d (userMsgs=%v)", rulesCount, obs.userMsgs)
 	}
-	// Ephemeral (ADR 0043): the rules fragment must NOT be persisted into the
+	// Ephemeral: the rules fragment must NOT be persisted into the
 	// conversation — it is prepended per-run, never recorded.
 	for _, m := range sess.Conversation.Messages {
 		if m.Role == session.RoleUser && strings.Contains(m.Text, "RULES-ONCE-MARKER") {

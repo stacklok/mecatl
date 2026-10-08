@@ -54,8 +54,8 @@ hand-rolled message editing — is the core design choice.
   hand-built. Drop this without ceremony if it doesn't fit naturally; it was
   never required to ship v1.
 - **Development sequencing: `mecated --mock` first, real `mecated` once the
-  SDK path is proven.** Same offline-first discipline as ADR 0253's mocking
-  testkit and `mecademo`.
+  SDK path is proven.** Same offline-first discipline as the SDK's own tests
+  and `mecademo`.
 - **Event delivery: Socket Mode.** A persistent WebSocket from the bot
   process — no public URL, no ngrok. Fits a self-hosted dev app (create your
   own Slack app in dev mode, install to one workspace — no App Store
@@ -300,13 +300,9 @@ separate `onPlanApproval` hook, which this bot has never configured).
 ## See also
 
 - stacklok/mecatl#881 (umbrella), #883 (implementation), #821 (the SDK itself)
-- [ADR 0253](../../../../docs/adr/0253-sdk-mocking-testkit.md) — the mocking
-  testkit; shares the `mecated --mock` sequencing discipline
-- [ADR 0232](../../../../docs/adr/0232-steer-while-running.md) —
-  steer-while-running, relevant if the approval/steer experiment extends to
-  mid-run Slack replies
-- [ADR 0204](../../../../docs/adr/0204-caller-identity-threading.md),
-  [ADR 0206](../../../../docs/adr/0206-oidc-authn-module.md),
-  [ADR 0212](../../../../docs/adr/0212-caller-ownership-enforcement.md) — the
-  caller-identity infrastructure a future, separate identity-impersonation
-  effort would build on (explicitly out of scope here)
+- [Send controls to a live run](../../../../user-docs/building/typescript-sdk/sessions-and-runs.md#send-controls-to-a-live-run)
+  — steering a running turn, relevant if the approval/steer experiment
+  extends to mid-run Slack replies
+- [Caller identity](../../../../user-docs/features/security-and-execution/caller-identity.md) — the
+  infrastructure a future, separate identity-impersonation effort would build
+  on (explicitly out of scope here)

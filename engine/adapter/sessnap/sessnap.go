@@ -19,7 +19,7 @@
 //     faithfully via Session.RecordedStopReason() (which performs no limit
 //     derivation) and restored via the matching terminal transition
 //     Complete/Stop/Cancel/Fail. Capturing the recorded value directly means the
-//     snapshot no longer has to infer the reason from the conflated
+//     snapshot does not have to infer the reason from the conflated
 //     Session.StopReason(), so terminal round-trips are exact.
 package sessnap
 
@@ -54,7 +54,7 @@ type Snapshot struct {
 	// endpoint, credential, callback, or discovered-service state is persisted.
 	PendingWorkspaceEnrollment *session.PendingWorkspaceEnrollment `json:"pending_workspace_enrollment,omitempty"`
 	StopReason                 session.StopReason                  `json:"stop_reason,omitempty"`
-	// Kind and Relationship are the validated producer taxonomy from ADR 0217.
+	// Kind and Relationship are the validated session producer taxonomy.
 	// A missing kind is legacy data and restores as unknown (fail-closed).
 	Kind         session.SessionKind         `json:"kind,omitempty"`
 	Relationship session.SessionRelationship `json:"relationship,omitzero"`
@@ -69,8 +69,8 @@ type Snapshot struct {
 	// restarted process re-derive the SAME per-session engine via the factory.
 	ProviderID string `json:"provider_id,omitempty"`
 	ModelID    string `json:"model_id,omitempty"`
-	// ReasoningEffort is the session's opaque neutral reasoning-effort token (ADR
-	// 0055). omitempty keeps a pre-0055 snapshot with no key decoding to "" (unset)
+	// ReasoningEffort is the session's opaque neutral reasoning-effort token.
+	// omitempty keeps an older snapshot with no key decoding to "" (unset)
 	// — additive, no version bump. Persisting it lets a restarted process re-mint the
 	// SAME per-session engine (the same-effort adapter) via the factory.
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
@@ -121,17 +121,17 @@ type Snapshot struct {
 	// carry the same persisted cause.
 	LastError string `json:"last_error,omitempty"`
 	// RunID is the opaque, host-minted identity of the run this session is
-	// currently driving or most recently drove (ADR 0249). Persisting it is what
+	// currently driving or most recently drove. Persisting it is what
 	// makes an awaiting-approval resume continue THE SAME run across a process
 	// restart: the resume path reads it back and reuses it instead of minting a
 	// new one.
 	//
-	// omitempty keeps a pre-0245 snapshot with no "run_id" key decoding to "" —
+	// omitempty keeps an older snapshot with no "run_id" key decoding to "" —
 	// purely additive, no format-tag bump (the Profile/ProviderID/Usage
 	// precedent). A legacy session restores with no run id and is stamped on its
 	// next run; there is no migration sweep.
 	RunID string `json:"run_id,omitempty"`
-	// Owner is the verified caller the session is attributed to (ADR 0204). A
+	// Owner is the verified caller the session is attributed to. A
 	// POINTER for true omitempty: an ownerless session emits no "owner" key, so a
 	// pre-ship snapshot decodes to a nil owner and an ownerless snapshot stays
 	// byte-identical to a pre-ship one — purely additive, no format-tag bump.
@@ -141,7 +141,7 @@ type Snapshot struct {
 	// Added/minor).
 	Owner *session.Principal `json:"owner,omitempty"`
 	// Authority is the plain, derived capability payload. A nil pointer is a
-	// genuinely pre-feature legacy record; a present payload must decode to the
+	// genuine legacy record written without authority; a present payload must decode to the
 	// one governance.CapabilitySet representation or restore fails closed.
 	Authority *session.Authority `json:"authority,omitempty"`
 	// EnvironmentRef is the sole durable execution-environment identity. It is
@@ -602,7 +602,7 @@ func Unmarshal(line []byte) (*session.Session, error) {
 
 func validateAuthorityWireClaim(raw json.RawMessage) error {
 	if len(raw) == 0 {
-		return nil // Genuinely pre-feature record: no authority field.
+		return nil // Genuine legacy record: no authority field.
 	}
 	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		return errors.New("null authority claim")

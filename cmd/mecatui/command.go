@@ -4,7 +4,7 @@
 // any package-level state. main() calls it once, threads the result into the
 // existing parse/run path explicitly, and owns the side-effecting run preparation.
 //
-// Final grammar (ADR 0089): bare `mecatui [flags]` is the canonical default — it
+// Final grammar: bare `mecatui [flags]` is the canonical default — it
 // ALWAYS hosts an embedded server and NEVER probes loopback. `mecatui connect
 // ADDRESS` ALWAYS dials ADDRESS and NEVER probes/embeds. `sessions` opens the
 // embedded session browser. Local provider enrollment is under `mecatui providers`;

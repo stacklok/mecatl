@@ -6,7 +6,8 @@ import { useQuery } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
-import { StateCard } from "../knowledge/knowledge-workspace";
+import { StateCard } from "../knowledge/state-card";
+import { Note, SettingsCard } from "./settings-card";
 
 /**
  * Settings → Storage: a plain-words summary of what the agent has saved —
@@ -23,9 +24,9 @@ export function StorageSettings() {
   }
 
   return (
-    <section className="rounded-2xl border bg-card p-5 sm:p-6">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold">Storage</h2>
+    <SettingsCard title="Storage">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Note>Storage cleanup is managed by this deployment.</Note>
         <Button
           className="min-h-11"
           onClick={() => void query.refetch()}
@@ -36,13 +37,10 @@ export function StorageSettings() {
           Refresh
         </Button>
       </div>
-      <p className="mt-2 text-xs text-muted-foreground">
-        Storage cleanup is managed by this deployment.
-      </p>
       <div className="mt-4">
         <StorageHealthSummary health={query.data} />
       </div>
-    </section>
+    </SettingsCard>
   );
 }
 

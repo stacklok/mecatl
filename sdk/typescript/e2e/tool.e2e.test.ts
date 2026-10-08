@@ -290,7 +290,7 @@ it("the real go mcp client completes the handshake against the sdk host", async 
   }
 });
 
-// Previously pinned a known limitation (recorded in the acceptance plan): the
+// Previously pinned a known limitation: the
 // root capability set was minted once from the process-wide catalog, with no
 // visibility into a session's own client-mounted MCP tools, so the default
 // evaluator denied the call even after the permission ask had already been

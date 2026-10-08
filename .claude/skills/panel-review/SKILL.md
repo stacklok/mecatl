@@ -47,18 +47,6 @@ axis masks another. Inspired by Matt Pocock's two-axis `/review`
 skill (Standards + Spec), generalised with a Domain axis powered by
 the project's installed specialist reviewer agents.
 
-## Operating modes
-
-**Interactive mode (default):** keep the confirmation behavior below: ask when
-no fixed point/spec is available, the diff is large, or the Domain panel has 5+
-agents.
-
-**Orchestrator mode:** `/plan-orchestrate` supplies the fixed point and spec. Do
-not pause for confirmation because the diff or panel is large; announce the
-scope and proceed. Keep the same bounded briefs and selected panel, record any
-missing source or reviewer failure, and always finish with the stable `PANEL:`
-line. All other interactive behavior is unchanged outside this mode.
-
 ## Prerequisites
 
 - Working directory is a git repository (or files were explicitly
@@ -103,15 +91,14 @@ Print to the user:
 If the diff is **empty**, ask for explicit file paths or a PR
 number.
 
-If the diff is **> 50 files or > 3000 lines**, interactive mode asks whether
-to split into smaller reviews or proceed. Orchestrator mode proceeds without
-confirmation and keeps every reviewer brief bounded.
+If the diff is **> 50 files or > 3000 lines**, ask whether to split into
+smaller reviews or proceed.
 
 ## Step 2 — Read project context
 
 In one parallel batch, read the repository's instruction and standards sources:
 `CLAUDE.md`/`AGENTS.md` (including parents), `.claude/rules/*.md`, relevant
-architecture/design/ADR indexes, `SECURITY.md`, `CONTRIBUTING.md`, and any
+architecture and design indexes, `SECURITY.md`, `CONTRIBUTING.md`, and any
 `CONTEXT.md`/`CONTEXT-MAP.md` files that exist.
 
 ## Step 3 — Detect the spec source
@@ -128,8 +115,7 @@ order:
    spec at docs/specs/foo.md".
 3. **PRD / spec files** under conventional locations matching the
    branch name or feature: `docs/specs/<name>.md`,
-   `docs/prd/<name>.md`, `specs/<name>.md`, `.scratch/<name>.md`,
-   `docs/acceptance/<name>.md`.
+   `docs/prd/<name>.md`, `specs/<name>.md`, `.scratch/<name>.md`.
 4. **If nothing is found**, ask the user:
 
    > I don't see a spec or issue reference for this branch. Path
@@ -147,11 +133,11 @@ them):
 
 - `CLAUDE.md`, `AGENTS.md`, `CONTRIBUTING.md`
 - `CONTEXT.md`, `CONTEXT-MAP.md`, per-directory `CONTEXT.md` files
-- `docs/adr/*.md` (architectural decisions ARE standards)
+- `docs/architecture/*.md` chapters for the touched area (documented invariants ARE standards)
 - `STYLE.md`, `STANDARDS.md`, `STYLEGUIDE.md` at repo root or under
   `docs/`
 - `.claude/rules/*.md`
-- `docs/design/principles.md` if present
+- the "Platform principles" section of `docs/architecture.md` if present
 
 **Explicit skip rule** (inherited from Matt's design): tell the Standards
 subagent not to re-check anything enforced by detected formatter, linter,
@@ -212,7 +198,7 @@ Classification rules:
 - **Project-specific architects** in the repo's `.claude/agents/`
   compose with `software-architect` rather than replacing it. Both
   can run on the same diff: the project-specific one carries
-  domain-loaded invariants and ADR knowledge, `software-architect`
+  domain-loaded invariants and design knowledge, `software-architect`
   carries the cross-cutting design lens.
 - **`code-duplication-reviewer`** and **`library-reuse-reviewer`
   are DEFAULT-ON for any non-trivial code diff** (any diff touching
@@ -239,7 +225,7 @@ Classification rules:
 Reviewing against <fp>: N files, M insertions, L deletions, K commits.
 
 Spec axis:       checking against #123 ("Add /preview endpoint")
-Standards axis:  reading CLAUDE.md, .claude/rules/, docs/adr/
+Standards axis:  reading CLAUDE.md, .claude/rules/, docs/architecture/
                  skipping tooling: golangci-lint, biome, prettier
 Test adequacy:   independently tracing requirements to assertions and seams
 Domain axis (running in parallel):
@@ -256,9 +242,8 @@ Gaps (dimension detected, no matching agent installed):
   - (none)
 ```
 
-Wait for user pushback only in interactive mode when the panel is large (5+
-agents across the Domain axis) or they asked for a dry-run. Orchestrator mode
-proceeds immediately.
+Wait for user pushback only when the panel is large (5+ agents across the
+Domain axis) or they asked for a dry-run.
 
 ## Step 8 — Fan out (PARALLEL)
 

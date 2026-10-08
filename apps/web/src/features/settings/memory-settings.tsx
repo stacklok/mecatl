@@ -4,9 +4,10 @@ import type { GetUserMemoryResponse } from "@mecatl-studio/contracts/generated";
 import { getUserMemoryOptions, listUserMemoryOptions } from "@mecatl-studio/contracts/query";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import { PageShell } from "../../components/shell/page-shell";
 import { Badge } from "../../components/ui/badge";
-import { StateCard } from "../knowledge/knowledge-workspace";
 import { MemoryConsolidation } from "../knowledge/memory-consolidation";
+import { StateCard } from "../knowledge/state-card";
 
 /** Settings → Memory: the facts the agent has remembered about this user. */
 export function MemorySettings() {
@@ -55,28 +56,26 @@ export function MemorySettings() {
 export function MemoryFactDetail({ memoryKey }: { memoryKey: string }) {
   const query = useQuery(getUserMemoryOptions({ path: { memoryKey } }));
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="mx-auto w-full max-w-3xl px-4 py-7 sm:px-8 sm:py-10">
-        <Link
-          className="inline-flex min-h-11 items-center rounded-lg text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-brand"
-          params={{ section: "memory" }}
-          search={{ item: undefined }}
-          to="/workspace/settings/$section"
-        >
-          ← Memory
-        </Link>
-        <h1 className="mt-5 text-3xl font-semibold tracking-tight">Memory fact</h1>
-        <div className="mt-7 rounded-2xl border bg-card p-5 sm:p-6">
-          {query.isPending ? (
-            <p className="text-sm text-muted-foreground">Loading memory…</p>
-          ) : query.isError ? (
-            <p className="text-sm text-destructive">{errorMessage(query.error)}</p>
-          ) : (
-            <MemoryDetail detail={query.data} />
-          )}
-        </div>
+    <PageShell className="max-w-3xl">
+      <Link
+        className="inline-flex min-h-11 items-center rounded-lg text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-brand"
+        params={{ section: "memory" }}
+        search={{ item: undefined }}
+        to="/workspace/settings/$section"
+      >
+        ← Memory
+      </Link>
+      <h1 className="mt-5 text-3xl font-semibold tracking-tight">Memory fact</h1>
+      <div className="mt-7 rounded-2xl border bg-card p-5 sm:p-6">
+        {query.isPending ? (
+          <p className="text-sm text-muted-foreground">Loading memory…</p>
+        ) : query.isError ? (
+          <p className="text-sm text-destructive">{errorMessage(query.error)}</p>
+        ) : (
+          <MemoryDetail detail={query.data} />
+        )}
       </div>
-    </div>
+    </PageShell>
   );
 }
 

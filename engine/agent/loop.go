@@ -16,11 +16,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/learning"
@@ -76,7 +78,7 @@ const noProgressExtractiveNudgeText = session.NoProgressExtractiveNudgeText
 // to the per-request system prompt's VOLATILE suffix by buildRequest when the LIVE
 // tool.Environment handed to Run has no CommandRunner (env.CommandRunner() == nil) and
 // is not the no-FS profile (whose noFSPostureNote already states "no shell"). It is the
-// ADR-0070 affordance for the shell-less default-FS posture: the model must learn from
+// model-visible affordance for the shell-less default-FS posture: the model must learn from
 // the PROMPT that the Shell tool is absent (the spec is also dropped from the advertised
 // tools), not from a trail of unknown-tool errors, so it plans around the file tools and
 // its own reasoning instead of burning turns attempting a shell it cannot call. It is
@@ -95,10 +97,10 @@ const shellLessPostureNote = "This session has NO shell: the Shell tool is not a
 // + their session.StopReason labels, NOTHING child-authored (no goal labels, no
 // result text — the delegation bodies' sole channel is SubagentStatus, the Shell
 // jobs' ShellStatus). The rendering is FAMILY-AWARE: the delegation clause keeps
-// its exact historical wording (the substring "background subagent(s) finished"
+// its exact wording (the substring "background subagent(s) finished"
 // is a stable test key — do not change it) and a background-Shell clause is
 // APPENDED only when Shell jobs are among the finished, so a subagent-only run
-// renders byte-identically to before.
+// renders only the delegation clause.
 func backgroundNoticeText(finished []childStatus) string {
 	var delegationIDs, shellItems []string
 	for _, st := range finished {
@@ -126,7 +128,7 @@ func backgroundNoticeText(finished []childStatus) string {
 // (D10 as amended) injected as a harness-framed user message when the run would
 // otherwise end CLEANLY while background children are still live. It lists ids
 // ONLY (A9 — no goal labels, nothing model/child-authored). Like the notice it
-// is FAMILY-AWARE: the delegation clause keeps its exact historical wording
+// is FAMILY-AWARE: the delegation clause keeps its exact wording
 // (the substring "background subagent(s) still running" is a stable test key —
 // do not change it) and a background-Shell clause is APPENDED only for live Shell
 // jobs, each clause naming its own collection channel.
@@ -224,7 +226,8 @@ type Deps struct {
 	// Instructions assembles the project-instruction messages recorded once at
 	// the start of a run; nil → prompt.RootAssembler (root-only AGENTS.md /
 	// CLAUDE.md, the v1 default).
-	Instructions prompt.InstructionAssembler
+	Instructions               prompt.InstructionAssembler
+	ProjectInstructionMaxBytes int
 	// CommandExpander rewrites a raw user prompt into the text the model sees,
 	// expanding slash-command invocations (e.g. "/review foo.go") against the
 	// workspace before the prompt is recorded; nil → prompt.NoopExpander (no
@@ -379,8 +382,8 @@ type Deps struct {
 	ProgressiveTools bool
 
 	// DeliveryQueue, when non-nil, is the DURABLE per-session pending-delivery queue
-	// the loop's turn-boundary drain reads (ADR 0075 decision #3, fire-result-delivery
-	// Scenario 4). The fire path (composition) enqueues a rendered fire-result note
+	// the loop's turn-boundary drain reads (fire-result delivery). The fire path
+	// (composition) enqueues a rendered fire-result note
 	// for an origin session that is BUSY or AWAITING (it cannot drive a delivery run
 	// without colliding); the loop drains the pending notes at Step 2a, BEFORE
 	// BeginTurn — the SAME turn-boundary seam injectBackgroundNotice uses — recording
@@ -400,7 +403,7 @@ type Deps struct {
 	// boundary (Step 2a, the same seam injectBackgroundNotice /
 	// drainPendingDelivery use) and records as an ordinary user continuation
 	// via recordContinuation, so it replays to the model and flows through
-	// compaction / session.ValidateToolPairing / ADR-0038 rehydration
+	// compaction / session.ValidateToolPairing / event-log rehydration
 	// unchanged. It is a plain loop-concern bool — NOT a port.LLMRequest field
 	// and never reaches the model as anything but an ordinary recorded user
 	// message. DEFAULT false (the zero value): no inbox is armed and the drain
@@ -440,6 +443,9 @@ func (e *Engine) now() time.Time {
 // NewEngine constructs an Engine from deps, applying defaults for the optional
 // Compactor and CompactionRatio.
 func NewEngine(deps Deps) *Engine {
+	if deps.ProjectInstructionMaxBytes <= 0 {
+		deps.ProjectInstructionMaxBytes = 65536
+	}
 	if deps.TokenCounter == nil {
 		deps.TokenCounter = HeuristicTokenCounter{}
 	}
@@ -461,8 +467,15 @@ func NewEngine(deps Deps) *Engine {
 	if deps.ChildAskReviewMaxDenies <= 0 {
 		deps.ChildAskReviewMaxDenies = DefaultAskReviewMaxDenies
 	}
-	if deps.Instructions == nil {
-		deps.Instructions = prompt.RootAssembler{}
+	switch a := deps.Instructions.(type) {
+	case prompt.RootAssembler:
+		if a.Source == nil {
+			deps.Instructions = nil
+		}
+	case *prompt.RootAssembler:
+		if a == nil || a.Source == nil {
+			deps.Instructions = nil
+		}
 	}
 	if deps.CommandExpander == nil {
 		deps.CommandExpander = prompt.NoopExpander{}
@@ -506,7 +519,7 @@ func (e *Engine) ContextWindow() int {
 // (inherited default, agent-def pin, per-call override, or the opt-in router). The
 // string is bare metadata (a model id); the engine stays model-string-only — no
 // adapter/proto type crosses here. Used by the Subagent / Parallel / Team delegation
-// emit sites to populate the generic Model field (issue #112, ADR 0035).
+// emit sites to populate the generic Model field (issue #112).
 func (e *Engine) Model() string { return e.deps.Model }
 
 // HasTool reports whether a tool with the given registered name is present in
@@ -593,6 +606,60 @@ const (
 // out-of-band controls the bidi API needs (Approve resolves a permission.ask;
 // Cancel aborts the run). The Events channel is closed exactly once, when the run
 // terminates.
+type instructionScopes struct {
+	mu        sync.Mutex
+	dirs      []string // pending targets only; examined targets live in snapshot
+	snapshot  session.InstructionSnapshot
+	reserved  int
+	limit     int
+	exhausted bool
+	dirty     bool
+}
+
+// cacheGlobalInstructions keeps target-independent contributions stable for a run
+// while allowing selected project sources to discover later scopes.
+func cacheGlobalInstructions(a prompt.InstructionAssembler) prompt.InstructionAssembler {
+	switch v := a.(type) {
+	case prompt.MultiAssembler:
+		children := make([]prompt.InstructionAssembler, len(v.Assemblers))
+		for i, child := range v.Assemblers {
+			children[i] = cacheGlobalInstructions(child)
+		}
+		return prompt.MultiAssembler{Assemblers: children}
+	case *prompt.MultiAssembler:
+		if v != nil {
+			return cacheGlobalInstructions(*v)
+		}
+	}
+	if a == nil || a.TargetScoped() {
+		return a
+	}
+	return &runInstructionContributor{source: a}
+}
+
+type runInstructionContributor struct {
+	source   prompt.InstructionAssembler
+	messages []session.Message
+	rows     []prompt.InstructionManifest
+	cached   bool
+}
+
+func (*runInstructionContributor) TargetScoped() bool { return false }
+
+func (c *runInstructionContributor) Assemble(ctx context.Context, dirs []string, state *session.InstructionSnapshot, limit int) ([]session.Message, []prompt.InstructionManifest, error) {
+	if c.cached {
+		return append([]session.Message(nil), c.messages...), append([]prompt.InstructionManifest(nil), c.rows...), nil
+	}
+	messages, rows, err := prompt.AssembleWithManifest(ctx, c.source, dirs, state, limit)
+	if err == nil {
+		c.cached = true
+		c.messages = append([]session.Message(nil), messages...)
+		c.rows = append([]prompt.InstructionManifest(nil), rows...)
+	}
+	return messages, rows, err
+}
+
+// Run is an asynchronous agent execution.
 type Run struct {
 	events  chan session.Event
 	asks    *askRegistry
@@ -640,7 +707,7 @@ type Run struct {
 	// atomic because child/worker event paths may mint asks concurrently.
 	askSequence atomic.Uint64
 	// runID is the host-minted identity stamped onto every event this run emits
-	// (ADR 0249). Read ONLY by emit/emitOrAbort; the loop never branches on it.
+	// Read ONLY by emit/emitOrAbort; the loop never branches on it.
 	runID string
 	// extraToolNames is the snapshot of overlay registration keys captured at the
 	// same advertisement boundary that builds the provider request.
@@ -701,7 +768,7 @@ type Run struct {
 	// reviewer spend). nil on the default (no-reviewer) engine and on child runs.
 	// Set before the run goroutine starts and only read after.
 	askReview *askReviewBreaker
-	// router is this run's model-router circuit breaker (ADR 0031), created in
+	// router is this run's model-router circuit breaker, created in
 	// Engine.Run only when the engine carries a SubagentModelRouter — the
 	// router-non-nil ⇔ router-wired pairing the parentCaps closure keys on. Its mutex
 	// SERIALIZES classifications within the run (deterministic consecutive-miss
@@ -760,19 +827,26 @@ type Run struct {
 	// fragments are the EPHEMERAL turn-0 instruction fragments (project instructions /
 	// soul / memory index / user model, produced by Deps.Instructions) prepended to the
 	// LLMRequest.Messages on EVERY turn of this run (incl. resume) but NEVER persisted into
-	// Conversation.Messages, event-carried, or snapshotted (ADR 0043). They are assembled
+	// Conversation.Messages, event-carried, or snapshotted. They are assembled
 	// ONCE PER RUN (fragmentsOnce, in buildRequest's first turn) and reused on every
 	// subsequent turn, so the message prefix stays byte-stable within the run (preserving
 	// the prompt cache) without re-assembling per turn. Assembly is fail-soft: an
 	// Instructions.Assemble error leaves fragments nil and the run continues. They are
 	// written once (under fragmentsOnce) and read on every turn of the SAME goroutine
 	// (the run loop is single-goroutine for buildRequest), so the Once is belt-and-braces.
-	fragments             []session.Message
-	fragmentManifest      []prompt.InstructionManifest
-	fragmentsOnce         sync.Once
-	operatorProfile       []tool.MemoryEntry
-	operatorProfileLoaded bool
-	operatorProfileWarned bool
+	fragments                 []session.Message
+	fragmentManifest          []prompt.InstructionManifest
+	fragmentsOnce             sync.Once
+	instructionScopes         *instructionScopes
+	instructionAssembly       prompt.InstructionAssembler
+	warnedInstructionOmission bool
+	warnedInstructionMetadata bool
+	warnedInstructionError    bool
+	warnedInstructionUnmapped bool
+	warnedInstructionReplace  bool
+	operatorProfile           []tool.MemoryEntry
+	operatorProfileLoaded     bool
+	operatorProfileWarned     bool
 	// reviewRoot is the delegation-root contextual trajectory and reviewer binding.
 	// Child runs inherit the same pointer through private RunRequest fields; no
 	// conversation content crosses that seam.
@@ -797,8 +871,8 @@ var runSerial atomic.Int64
 
 // childSerial mints a process-unique, monotonic discriminator for the ephemeral
 // in-memory child sessions (guardrail checker, fork judge, ask reviewer, model
-// router) whose ids were previously derived from time.Now().UnixNano(). A counter
-// is collision-free even under a fake (fixed) clock — where UnixNano would repeat
+// router). A counter (rather than time.Now().UnixNano()) is collision-free even
+// under a fake (fixed) clock — where UnixNano would repeat
 // and alias two children onto one id — so it keeps those ids unique without a
 // direct wall-clock read, part of the engine's full clock-injectability (issue
 // #116). Mirrors runSerial.
@@ -851,13 +925,13 @@ type RunRequest struct {
 	// authority unless the runtime explicitly records an exemption. It stays private so
 	// callers cannot use RunRequest to create an authority-bypassing tool.
 	extraToolOptions map[string]extraToolOptions
-	// RunID is the opaque, host-minted identity of THIS run (ADR 0249).
+	// RunID is the opaque, host-minted identity of THIS run.
 	//
 	// It does two things and nothing else. Every event this run emits is stamped
 	// with it at Run.emit/emitOrAbort, beside the existing Seq stamp, so no relay,
 	// transport, or persistence path downstream can omit it. And when
 	// AskIDDiscriminator is empty it also SUPPLIES the ask discriminator, which
-	// is what ADR 0044 always meant by "a durable host passes its own RunID" —
+	// is what "a durable host passes its own RunID" means —
 	// so a durable host sets ONE field, not two carrying the same value.
 	//
 	// HOST CONTRACT (inherited from AskIDDiscriminator, because it feeds it): the
@@ -873,7 +947,7 @@ type RunRequest struct {
 	//
 	// The loop's licence over this value is deliberately narrow: STAMP it, and
 	// DERIVE the ask discriminator from it. It must never be branched on, logged,
-	// sent to a provider, or used to reach storage — see ADR 0249's consequences.
+	// sent to a provider, or used to reach storage.
 	RunID string
 	// AskIDDiscriminator, when non-empty, supplies the colon-free HOST namespace
 	// of every askID minted this run. Live issuance appends a per-run `.aN`
@@ -891,7 +965,7 @@ type RunRequest struct {
 	// the legacy "r<serial>" behavior with no change — mecatui, tests, and
 	// in-memory hosts pass nothing and are unaffected. A durable host (e.g. a downstream consumer)
 	// passes its own RunID. Same opt-in RunRequest seam pattern as
-	// MaxRunTokensOverride/ExtraTools. See ADR-0044.
+	// MaxRunTokensOverride/ExtraTools.
 	//
 	// FOOTGUN GUARD: after startRun the RESOLVED value (this when valid, else the
 	// "r<serial>" fallback) lives on Run.askDiscriminator. askID minting (newAskID,
@@ -922,7 +996,7 @@ func (r RunRequest) extraToolAuthorityExempt(name string) bool {
 	return false
 }
 
-// RunID reports the opaque, host-minted identity of this run (ADR 0249), or ""
+// RunID reports the opaque, host-minted identity of this run, or ""
 // when the host supplied none.
 //
 // It exists so a caller holding a *Run can ASK which run it holds, rather than
@@ -1179,7 +1253,7 @@ func (r *Run) Cancel() {
 // own registry and dies as an unknown-ask no-op (fail-safe ordering), while
 // the client dismisses its modal promptly, ahead of the child's unwind. The
 // unregister's answered-vs-pending gate also means an ask whose verdict was
-// JUST routed (route deleted the router entry first) no longer draws a
+// JUST routed (route deleted the router entry first) does not draw a
 // spurious retract.
 //
 // The eager retract is BEST-EFFORT only — it runs on the caller's goroutine,
@@ -1286,8 +1360,8 @@ func (e *Engine) RetryFailedStep(ctx context.Context, sess *session.Session, env
 	})
 }
 
-// ResumeApprovalOptions configures ResumeApproval, the FOURTH, awaiting-ONLY run-entry seam (cloud-native Phase
-// 2): it re-enters the loop AT a parked permission ask on a session that is in
+// ResumeApprovalOptions configures ResumeApproval, the FOURTH, awaiting-ONLY run-entry seam:
+// it re-enters the loop AT a parked permission ask on a session that is in
 // StateAwaiting (typically loaded fresh from a snapshot after the process that
 // parked the ask died), applies verdict to the pending tool call, closes out any
 // unanswered sibling calls on the same trailing assistant message, then continues
@@ -1327,7 +1401,7 @@ func (e *Engine) ResumeApproval(ctx context.Context, sess *session.Session, env 
 func (e *Engine) ResumeApprovalWith(ctx context.Context, sess *session.Session, env tool.Environment, askID string, verdict session.ApprovalVerdict, opts ResumeApprovalOptions) *Run {
 	// The resumed run CONTINUES the run that parked awaiting this ask — it is not
 	// a new one — so it carries that run's identity forward, read from the session
-	// the host restored it onto (ADR 0249). This is what makes a cross-process
+	// the host restored it onto. This is what makes a cross-process
 	// Approve after a restart the SAME run to every observer.
 	//
 	// The fallback is deliberately confined to THIS seam. A prompt entry must
@@ -1355,10 +1429,9 @@ func (e *Engine) ResumeApprovalWith(ctx context.Context, sess *session.Session, 
 // askDiscriminatorFor resolves the trailing askID component for a run, and
 // reports whether a supplied value was REJECTED for containing a colon.
 //
-// Precedence: an explicit AskIDDiscriminator wins; otherwise RunID supplies it
-// (ADR 0249 decision 2), which is what lets a durable host set ONE field and get
-// both a stamped run identity and reconstructable askIDs — the arrangement ADR
-// 0044 described as "a durable host passes its own RunID". The derivation is a
+// Precedence: an explicit AskIDDiscriminator wins; otherwise RunID supplies it,
+// which is what lets a durable host set ONE field and get both a stamped run
+// identity and reconstructable askIDs ("a durable host passes its own RunID"). The derivation is a
 // DEFAULT, not a constraint: a caller needing a discriminator that is NOT the run
 // id still sets the field directly.
 //
@@ -1639,7 +1712,7 @@ func (e *Engine) prepareRun(ctx context.Context, sess *session.Session, req RunR
 		r.reviewRoot.rootSessionID = sess.ID
 		r.ownsReviewRoot = true
 	}
-	// Resolve the trailing askID discriminator once (ADR-0044 / ADR-0249); see
+	// Resolve the trailing askID discriminator once; see
 	// askDiscriminatorFor for the precedence and the colon rule.
 	r.runID = req.RunID
 	resolved, colonRejected := askDiscriminatorFor(req, r.serial)
@@ -1662,7 +1735,7 @@ func (e *Engine) prepareRun(ctx context.Context, sess *session.Session, req RunR
 	if e.deps.ChildAskReviewer != nil {
 		r.askReview = &askReviewBreaker{max: e.deps.ChildAskReviewMaxDenies}
 	}
-	// An engine carrying the OPT-IN model router (ADR 0031) arms this run's router
+	// An engine carrying the OPT-IN model router arms this run's router
 	// breaker, mirroring the ask-review breaker: the parentCaps.routeTask closure
 	// consults it before every classification, so a run whose Subagent tasks keep
 	// failing to classify stops spending classifier turns after the threshold of
@@ -2137,7 +2210,7 @@ func shouldRunBoundaryInjections(firstIteration, skipFirst bool) bool {
 
 // runBoundaryInjections runs the Step 2a turn-boundary injection drains, in
 // order, BEFORE BeginTurn and the preTurnTerminal stop checks: the
-// background-completion notice, the fire-result delivery drain (ADR 0075), and
+// background-completion notice, the fire-result delivery drain, and
 // the operator steer drain (steer-while-running, issue #512). Extracting them
 // keeps runLoop's complexity flat; the ordering and the record-before-stop-checks
 // discipline are unchanged from when they were inline. Each is provider-legal at
@@ -2151,7 +2224,7 @@ func (e *Engine) runBoundaryInjections(ctx context.Context, r *Run, sess *sessio
 	if err := e.injectBackgroundNotice(ctx, r, sess); err != nil {
 		return err
 	}
-	// Fire-result delivery drain (ADR 0075 decision #3): pending notes queued for
+	// Fire-result delivery drain: pending notes queued for
 	// THIS session are recorded as ordinary harness-framed user continuations and
 	// marked delivered. nil DeliveryQueue is a no-op.
 	if err := e.drainPendingDelivery(ctx, r, sess); err != nil {
@@ -2341,8 +2414,8 @@ func (e *Engine) injectBackgroundNotice(ctx context.Context, r *Run, sess *sessi
 	return nil
 }
 
-// drainPendingDelivery is drive's Step 2a delivery-drain sibling (ADR 0075
-// decision #3): it reads the origin session's pending fire-result delivery
+// drainPendingDelivery is drive's Step 2a delivery-drain sibling:
+// it reads the origin session's pending fire-result delivery
 // notes off the DURABLE per-session DeliveryQueue, records each as an ordinary
 // harness-framed user continuation (recordContinuation — provider-legal at a
 // turn boundary, never inside a tool_use pair), and marks it delivered via
@@ -2442,6 +2515,62 @@ func (e *Engine) budgetExhausted(r *Run, cumulative session.Usage) bool {
 	return ceiling > 0 && cumulative.TotalTokens()-r.budgetBaseline.TotalTokens() >= ceiling
 }
 
+func (r *Run) noteInstructionTargets(root string, call session.ToolCall) {
+	scopes := r.instructionScopes
+	if scopes == nil {
+		return
+	}
+	switch call.Name {
+	case readToolName, "Edit", "Write", "Remove", "Copy", "Move":
+	default:
+		return
+	}
+	for _, name := range r.extraToolNames {
+		if name == call.Name {
+			return // a run overlay is opaque, even when named like a built-in
+		}
+	}
+	for _, operand := range tool.LocalFileOperands(call.Name, call.Args) {
+		if strings.Contains(operand, "\\") { // never treat backslash as a lexical separator on Unix
+			continue
+		}
+		rel := tool.LedgerKey(root, operand)
+		if rel == ".." || strings.HasPrefix(rel, "../") || filepath.IsAbs(rel) {
+			continue
+		}
+		dir := filepath.ToSlash(filepath.Dir(rel))
+		if dir == "." {
+			continue // the starting scope was already assembled on the first request
+		}
+		scopes.mu.Lock()
+		if !scopes.exhausted && !scopes.snapshot.DiscoveryExhausted {
+			found := false
+			for _, old := range scopes.snapshot.Directories {
+				if old == dir {
+					found = true
+					break
+				}
+			}
+			for _, old := range scopes.dirs {
+				if old == dir {
+					found = true
+					break
+				}
+			}
+			if !found {
+				if len(dir)+1 > scopes.limit-scopes.snapshot.MetadataBytes()-scopes.reserved {
+					scopes.exhausted = true
+				} else {
+					scopes.dirs = append(scopes.dirs, dir)
+					scopes.reserved += len(dir) + 1
+				}
+				scopes.dirty = true
+			}
+		}
+		scopes.mu.Unlock()
+	}
+}
+
 // lookupTool resolves a tool by name for THIS run: the run-scoped ExtraTools overlay
 // is consulted FIRST (so a structured-output SubmitResult, or any per-run tool, wins
 // over a same-named catalog tool for this run only), then the shared catalog. It is
@@ -2528,7 +2657,7 @@ func (e *Engine) recordPrompt(ctx context.Context, r *Run, sess *session.Session
 		return false, reason, nil
 	}
 	// The turn-0 context fragments (project instructions / soul / memory index /
-	// user model) are NO LONGER persisted into the conversation (ADR 0043). They are
+	// user model) are NO LONGER persisted into the conversation. They are
 	// assembled once per run and prepended to LLMRequest.Messages EPHEMERALLY in
 	// buildRequest, so they are present on every run (incl. resume) without bloating
 	// the persisted history or recreating the compaction-pin ambiguity. Only the
@@ -2621,9 +2750,9 @@ type turnTiming struct {
 }
 
 // turnLatency accumulates the TTFT anchor and the inter-token gap series for a
-// single streamed turn off an injected port.Clock. It SPLITS the two concerns the
-// stream switch used to conflate (issue #155): TTFT anchors on the FIRST
-// OBSERVABLE OUTPUT — text, reasoning, a reasoning replay item, or a tool call
+// single streamed turn off an injected port.Clock. It SPLITS two concerns
+// (issue #155): TTFT anchors on the FIRST OBSERVABLE OUTPUT — text, reasoning, a
+// reasoning replay item, or a tool call
 // (noteFirstOutput) — while the inter-token gap series counts ONLY STREAMING
 // content deltas (text or reasoning, noteStreamDelta), so a tool call or reasoning
 // replay blob anchors TTFT without polluting the gap series. With no Clock injected
@@ -2770,6 +2899,12 @@ func (e *Engine) runTurn(ctx context.Context, r *Run, req port.LLMRequest, turnI
 	stop := session.StopNone
 
 	for chunk, cerr := range seq {
+		// Usage is accounting, even when a buffered stream arrives after cancel.
+		// Fold it before either terminal check; never interpret semantic chunks on
+		// a cancelled context.
+		if chunk.Kind == port.ChunkUsage && chunk.Usage != nil {
+			usage = usage.Add(*chunk.Usage)
+		}
 		if cerr != nil {
 			return session.Message{}, usage, stop, turnTiming{}, fmt.Errorf("agent: stream: %w", cerr)
 		}
@@ -2822,10 +2957,6 @@ func (e *Engine) runTurn(ctx context.Context, r *Run, req port.LLMRequest, turnI
 			if chunk.ToolCall != nil {
 				calls = append(calls, *chunk.ToolCall)
 			}
-		case port.ChunkUsage:
-			if chunk.Usage != nil {
-				usage = usage.Add(*chunk.Usage)
-			}
 		case port.ChunkProviderRoute:
 			// The downstream provider slug that routed this turn (issue #480).
 			// Relayed verbatim onto a client-visible event; never stored on the
@@ -2856,13 +2987,13 @@ func (e *Engine) runTurn(ctx context.Context, r *Run, req port.LLMRequest, turnI
 // EPHEMERAL turn-0 instruction fragments prepended ahead of the persisted
 // conversation history, and the mode-filtered tool specs.
 //
-// The instruction fragments (project instructions / soul / memory index / user
-// model) are assembled ONCE per run (r.fragmentsOnce, fail-soft) and prepended to
-// Messages on EVERY turn — they are never written into Conversation.Messages, so
+// The global instruction fragments are assembled once per run; project fragments
+// can be refreshed from the live session snapshot when structured tools reveal
+// new directories. They are never written into Conversation.Messages, so
 // they cost no persisted-history bloat and converge the snapshot + event-sourced
-// rehydration paths (ADR 0043). Messages is a FRESH slice each call
-// (fragments ++ conversation); Conversation.Messages is never mutated. Assembling
-// once per run keeps the message prefix byte-stable within the run (prompt cache).
+// rehydration paths. Messages is a FRESH slice each call
+// (fragments ++ conversation); Conversation.Messages is never mutated. The
+// prefix remains stable until a new structured directory is encountered.
 func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session, env tool.Environment) port.LLMRequest {
 	cfg := e.deps.PromptConfig
 	// Progressive disclosure (pattern 9): when enabled, advertise lightweight
@@ -2894,7 +3025,7 @@ func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session
 	// makes anyway still resolves from the catalog and surfaces the honest
 	// bashNoShellResult "no shell available" tool error — it is never a silent pass),
 	// and (b) append ONE shell-less posture clause to the per-request system prompt
-	// (the ADR-0070 model-visible affordance) so the model learns from the PROMPT
+	// (the model-visible affordance) so the model learns from the PROMPT
 	// that Shell is absent, not from a trail of errors. The clause rides the VOLATILE
 	// suffix — environment capability is per-run/per-turn, so it must NOT be baked
 	// into the cache-stable prefix (that would be dishonest to the cache when an
@@ -2921,40 +3052,23 @@ func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session
 		cfg.Env.Cwd = env.Workspace().Root()
 	}
 	e.refreshOperatorProfile(ctx, r, &cfg)
-	// PromptBuilder (issue #127): a host-supplied builder replaces prompt.Build
-	// when non-nil, so a host embedding the engine for a non-coding agent can
-	// fully own the system prompt. nil → prompt.Build (byte-identical to v0.0.1).
-	build := e.deps.PromptBuilder
-	if build == nil {
-		build = prompt.Build
+	targetedInstructions := env.Ref().Kind != session.EnvKindNoFS && e.deps.Instructions != nil && e.deps.Instructions.TargetScoped()
+	if targetedInstructions {
+		cfg.ProjectInstructionHierarchy = true
 	}
-	// Assemble the ephemeral turn-0 instruction fragments ONCE per run, then prepend
-	// them ahead of the persisted conversation on EVERY turn (incl. resume). Assembly
-	// is fail-soft: an Instructions.Assemble error (or a nil assembler) leaves
-	// r.fragments nil and the run proceeds without fragments rather than aborting.
-	r.fragmentsOnce.Do(func() {
-		if e.deps.Instructions == nil {
-			return
-		}
-		var (
-			discovered []session.Message
-			aerr       error
-		)
-		if e.deps.EnableDurableEvidence {
-			discovered, r.fragmentManifest, aerr = prompt.AssembleWithManifest(ctx, e.deps.Instructions)
-		} else {
-			discovered, aerr = e.deps.Instructions.Assemble(ctx)
-		}
-		if aerr != nil {
-			r.diag.Log(ctx, port.LevelWarn, "instruction-fragment assembly failed; continuing without turn-0 fragments", "error", aerr)
-			return
-		}
-		r.fragments = discovered
-	})
+	e.assembleRequestInstructions(ctx, r, sess, targetedInstructions)
+	if targetedInstructions && r.instructionScopes == nil {
+		cfg.ProjectInstructionHierarchy = false
+	}
 	// Build a NEW slice — fragments first, then the persisted conversation — so
 	// Conversation.Messages is never mutated and the prefix is byte-stable per run.
 	msgs := requestMessages(r.fragments, sess.Conversation.Messages)
-	system := build(cfg)
+	var system prompt.Layered
+	if e.deps.PromptBuilder == nil {
+		system = prompt.Build(cfg)
+	} else {
+		system = e.deps.PromptBuilder(cfg)
+	}
 	// Append the shell-less posture clause to the VOLATILE suffix (issue #462
 	// review) ONLY when the loop owns the system prompt — i.e. the DEFAULT builder
 	// (prompt.Build) is in use. A host-supplied PromptBuilder fully owns the system
@@ -2976,6 +3090,213 @@ func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session
 		Messages: msgs,
 		Tools:    cfg.Tools,
 		Model:    e.deps.Model,
+	}
+}
+
+func (e *Engine) assembleRequestInstructions(ctx context.Context, r *Run, sess *session.Session, targeted bool) {
+	if e.deps.Instructions == nil {
+		return
+	}
+	r.fragmentsOnce.Do(func() {
+		r.instructionAssembly = cacheGlobalInstructions(e.deps.Instructions)
+		if targeted {
+			r.instructionScopes = &instructionScopes{limit: e.deps.ProjectInstructionMaxBytes}
+		}
+		var (
+			discovered []session.Message
+			aerr       error
+		)
+		snapshot := sess.InstructionSnapshot()
+		discovered, r.fragmentManifest, aerr = prompt.AssembleWithManifest(ctx, r.instructionAssembly, []string{"."}, &snapshot, e.deps.ProjectInstructionMaxBytes)
+		sess.ReplaceInstructionSnapshot(snapshot)
+		if scopes := r.instructionScopes; scopes != nil {
+			scopes.snapshot = snapshot
+		}
+		if aerr != nil {
+			r.diag.Log(ctx, port.LevelWarn, "instruction-fragment assembly failed; continuing with available turn-0 fragments")
+			r.fragments = append(discovered, session.NewUserMessage(instructionErrorWarning))
+			r.fragmentManifest = append(r.fragmentManifest, prompt.InstructionManifest{Kind: prompt.InstructionKindTurn0, Provenance: prompt.InstructionProvenanceProject})
+			limited := boundProjectFragments(ctx, r, e.deps.ProjectInstructionMaxBytes)
+			e.warnInstructionAssembly(r, session.InstructionSnapshot{}, snapshot, true, limited)
+			return
+		}
+		r.fragments = discovered
+		limited := boundProjectFragments(ctx, r, e.deps.ProjectInstructionMaxBytes)
+		e.warnInstructionAssembly(r, session.InstructionSnapshot{}, snapshot, false, limited)
+	})
+	if scopes := r.instructionScopes; scopes != nil {
+		e.refreshTargetedInstructions(ctx, r, sess, scopes)
+	}
+}
+
+func (e *Engine) refreshTargetedInstructions(ctx context.Context, r *Run, sess *session.Session, scopes *instructionScopes) {
+	scopes.mu.Lock()
+	if !scopes.dirty {
+		scopes.mu.Unlock()
+		return
+	}
+	directories := append([]string{"."}, scopes.dirs...)
+	prior := sess.InstructionSnapshot()
+	snapshot := sess.InstructionSnapshot()
+	scopes.dirty = false
+	discovered, manifest, err := prompt.AssembleWithManifest(ctx, r.instructionAssembly, directories, &snapshot, e.deps.ProjectInstructionMaxBytes)
+	if scopes.exhausted && !snapshot.DiscoveryExhausted {
+		snapshot.DiscoveryExhausted = true
+		discovered = append(discovered, session.NewUserMessage(instructionMetadataWarning))
+		manifest = append(manifest, prompt.InstructionManifest{Kind: prompt.InstructionKindTurn0, Provenance: prompt.InstructionProvenanceProject})
+	}
+	scopes.snapshot = snapshot
+	scopes.dirs = nil
+	scopes.reserved = 0
+	scopes.mu.Unlock()
+	sess.ReplaceInstructionSnapshot(snapshot)
+	r.fragments, r.fragmentManifest = discovered, manifest
+	limited := boundProjectFragments(ctx, r, e.deps.ProjectInstructionMaxBytes)
+	if err != nil {
+		e.replaceInstructionRefreshWarning(ctx, r, prior, snapshot, limited)
+		return
+	}
+	e.warnInstructionAssembly(r, prior, snapshot, false, limited)
+}
+
+func (e *Engine) replaceInstructionRefreshWarning(ctx context.Context, r *Run, prior, snapshot session.InstructionSnapshot, limited bool) {
+	r.diag.Log(ctx, port.LevelWarn, "scoped instruction assembly failed; continuing with available guidance")
+	const warning = "Project instructions: additional guidance unavailable; continuing with previously loaded context."
+	r.fragments = append(r.fragments, session.NewUserMessage(warning))
+	r.fragmentManifest = append(r.fragmentManifest, prompt.InstructionManifest{Kind: prompt.InstructionKindTurn0, Provenance: prompt.InstructionProvenanceProject})
+	e.warnInstructionAssembly(r, prior, snapshot, true, limited)
+}
+
+func boundProjectFragments(ctx context.Context, r *Run, limit int) bool {
+	used, limited, capped := 0, false, false
+	for i, row := range r.fragmentManifest {
+		if i >= len(r.fragments) || row.Provenance != prompt.InstructionProvenanceProject {
+			continue
+		}
+		if !row.HasGuidance && strings.HasPrefix(r.fragments[i].Text, "Project instructions: further scopes omitted") {
+			limited = true
+		}
+		if !row.HasGuidance {
+			continue
+		}
+		marker, body, framed := strings.Cut(r.fragments[i].Text, "\n\n")
+		framed = framed && row.SourceID != "" && row.File != "" && strings.HasPrefix(marker, "Project instructions (")
+		if !framed {
+			body = r.fragments[i].Text
+		}
+		body = strings.ToValidUTF8(body, "")
+		if len(body) > limit-used {
+			capped = true
+			body = body[:limit-used]
+			for !utf8.ValidString(body) {
+				body = body[:len(body)-1]
+			}
+			limited = true
+			used = limit
+			if framed {
+				marker += " [TRUNCATED: remaining guidance omitted]"
+			} else {
+				body += "\n[TRUNCATED: remaining guidance omitted]"
+			}
+		} else {
+			used += len(body)
+		}
+		if row.Partial || row.Omitted {
+			limited = true
+		}
+		if framed {
+			r.fragments[i].Text = marker + "\n\n" + body
+		} else {
+			r.fragments[i].Text = body
+		}
+	}
+	if limited {
+		r.diag.Log(ctx, port.LevelWarn, "automatic project instruction guidance truncated or omitted")
+	}
+	return capped
+}
+
+const (
+	instructionContentWarning  = "Project instructions: guidance truncated or omitted (content limit reached)."
+	instructionScopeWarning    = "Project instructions: scope guidance truncated or omitted (content limit reached)."
+	instructionMetadataWarning = "Project instructions: further scopes omitted (metadata budget exhausted)."
+	instructionErrorWarning    = "Project instructions: selected guidance unavailable; ordinary tools remain available."
+	instructionUnmappedWarning = "Project instructions: child workspace scope mapping unavailable; nested guidance is not automatically loaded. Selected root guidance remains available; ordinary tools remain available."
+	instructionReplaceWarning  = "Project instructions: replacement guidance incomplete; lower-priority sources were not loaded."
+)
+
+// Only harness-authored, fixed text crosses the event boundary. Scope names and
+// backend errors are never interpolated into an operator-facing warning.
+func (e *Engine) warnInstructionAssembly(r *Run, prior, snapshot session.InstructionSnapshot, failed, limited bool) {
+	warn := func(text string) {
+		e.emit(r, session.Event{Type: session.EvHook, Text: text, Hook: &session.HookPayload{Phase: "ProjectInstructions", Decision: session.HookAdvisory}})
+	}
+	newLimited, newUnavailable := instructionScopeWarnings(prior, snapshot)
+	if newLimited && !r.warnedInstructionOmission {
+		warn(instructionScopeWarning)
+		r.warnedInstructionOmission = true
+	}
+	if (instructionOmissionWarning(r) || limited) && !r.warnedInstructionOmission {
+		warn(instructionContentWarning)
+		r.warnedInstructionOmission = true
+	}
+	if (newUnavailable || failed) && !r.warnedInstructionError {
+		warn(instructionErrorWarning)
+		r.warnedInstructionError = true
+	}
+	warnInstructionReplacement(r, warn)
+	if snapshot.DiscoveryExhausted && !r.warnedInstructionMetadata {
+		warn(instructionMetadataWarning)
+		r.warnedInstructionMetadata = true
+	}
+}
+
+func instructionScopeWarnings(prior, snapshot session.InstructionSnapshot) (limited, unavailable bool) {
+	for _, scope := range snapshot.Scopes {
+		if instructionScopeSeen(prior.Scopes, scope) {
+			continue
+		}
+		limited = limited || scope.Partial || scope.Omitted
+		unavailable = unavailable || scope.Unavailable
+	}
+	return limited, unavailable
+}
+
+func instructionScopeSeen(scopes []session.InstructionScope, scope session.InstructionScope) bool {
+	for _, previous := range scopes {
+		if previous.SourceID == scope.SourceID && previous.Directory == scope.Directory && previous.Partial == scope.Partial && previous.Omitted == scope.Omitted && previous.Unavailable == scope.Unavailable {
+			return true
+		}
+	}
+	return false
+}
+
+func instructionOmissionWarning(r *Run) bool {
+	for i, row := range r.fragmentManifest {
+		if i < len(r.fragments) && row.Provenance == prompt.InstructionProvenanceProject && !row.HasGuidance && strings.HasPrefix(r.fragments[i].Text, "Project instructions: further scopes omitted") && !strings.Contains(r.fragments[i].Text, "metadata budget exhausted") {
+			return true
+		}
+	}
+	return false
+}
+
+func warnInstructionReplacement(r *Run, warn func(string)) {
+	for i, row := range r.fragmentManifest {
+		if i >= len(r.fragments) || row.Provenance != prompt.InstructionProvenanceProject || row.HasGuidance {
+			continue
+		}
+		switch r.fragments[i].Text {
+		case instructionUnmappedWarning:
+			if !r.warnedInstructionUnmapped {
+				warn(instructionUnmappedWarning)
+				r.warnedInstructionUnmapped = true
+			}
+		case instructionReplaceWarning:
+			if !r.warnedInstructionReplace {
+				warn(instructionReplaceWarning)
+				r.warnedInstructionReplace = true
+			}
+		}
 	}
 }
 
@@ -3146,9 +3467,9 @@ func (e *Engine) maybeCompact(ctx context.Context, r *Run, sess *session.Session
 	sess.RecordAuxiliaryUsage(usage)
 	if err != nil {
 		// Compaction is best-effort: a failure must not abort the run. Keep the
-		// existing history and continue — but no longer SILENTLY: surface the
+		// existing history and continue — but not SILENTLY: surface the
 		// degraded mode on the operator channel so a run that keeps growing
-		// uncompacted is diagnosable. Behaviour is unchanged (still continue).
+		// uncompacted is diagnosable.
 		// ErrCompactionWouldOrphan (a compactor refusing to emit a tool-pairing-
 		// invalid history) lands here too, reusing this WARN — no new diagnostics
 		// line, preserving the "loop emits exactly THREE lines" invariant (the third
@@ -3159,8 +3480,8 @@ func (e *Engine) maybeCompact(ctx context.Context, r *Run, sess *session.Session
 	if !result.Changed {
 		return false
 	}
-	// Capture the pre-compaction history BEFORE ReplaceHistory mutates it (cloud-native
-	// Phase 3b non-destructive archive). Messages are immutable per-element, so a slice
+	// Capture the pre-compaction history BEFORE ReplaceHistory mutates it (the
+	// non-destructive compaction archive). Messages are immutable per-element, so a slice
 	// reference is safe to hold across the replace — it stays the genuine pre-compaction
 	// history, never the rewritten tail. The archive is emitted only AFTER a successful
 	// replace below; the degrade-and-continue branches above emit nothing (no compaction
@@ -3240,7 +3561,7 @@ func (r *Run) emitChecked(ev session.Event) (session.Event, bool) {
 	// The run labels its own events with run-scoped identity. Seq answers "where
 	// in this run", RunID answers "which run" — Seq restarts every run, so it
 	// cannot distinguish two runs of one session. Stamping here rather than at a
-	// relay is ADR 0249 decision 4: there is no single downstream chokepoint that
+	// relay is deliberate: there is no single downstream chokepoint that
 	// feeds BOTH the durable log and the client wire, so any other placement means
 	// stamping at ~9 sites by hand. Empty when the host minted no id.
 	ev.RunID = r.runID
@@ -3339,7 +3660,7 @@ var childDrainGrace = 1 * time.Second
 // The join is TWO-PHASE because phase 1's cap can be burned by the run's OWN
 // emit backpressure, not a wedged child: a child whose subagent.end send is
 // parked on a full events channel (the consumer stopped draining) cannot reach
-// markDone until that send aborts — and the abort signal (emitAbort) used to
+// markDone until that send aborts — and the abort signal (emitAbort) would otherwise
 // close only in seal, AFTER the join had already given up. So: phase 1 joins
 // under childDrainCap; on expiry, abortEmits() unblocks every emit-parked child
 // NOW and phase 2 re-joins the remainder under childDrainGrace; only children
@@ -3365,7 +3686,7 @@ func (e *Engine) drainChildren(ctx context.Context, r *Run) {
 	joins := r.children.cancelLiveBackground()
 	if len(joins) > 0 {
 		if pending := joinChildren(joins, childDrainCap); len(pending) > 0 {
-			// Phase 2: unblock emit-parked children, then grant the short grace.
+			// Second pass: unblock emit-parked children, then grant the short grace.
 			r.children.abortEmits()
 			if pending = joinChildren(pending, childDrainGrace); len(pending) > 0 {
 				abandoned := make([]string, 0, len(pending))

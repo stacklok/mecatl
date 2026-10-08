@@ -5,3 +5,13 @@ allowBuilds:
 # this setting with allowBuilds, so both must remain aligned.
 onlyBuiltDependencies:
   - esbuild
+# Transitive dev-tooling advisories. source-map-js (via vitest > vite > postcss)
+# has a patched release; force it until vite's range picks it up.
+overrides:
+  source-map-js@<1.2.2: ^1.2.2
+auditConfig:
+  ignoreGhsas:
+    # sprintf-js DoS via unbounded precision specifiers; no patched release
+    # exists. Reached only through @microsoft/api-extractor > argparse at build
+    # time, never shipped in the SDK. Remove when a fixed version is published.
+    - GHSA-hp3w-g68c-fv3c

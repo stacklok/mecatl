@@ -159,7 +159,7 @@ func (r *partitionFailureSkillRepository) List(ctx context.Context, partition le
 	}
 }
 
-func TestADR_0259_LearnedSkillPartitionPublicationIsolation(t *testing.T) {
+func TestLearnedSkillPartitionPublicationIsolation(t *testing.T) {
 	ctx := context.Background()
 	alice := learning.SkillPartition{Principal: "alice"}
 	bob := learning.SkillPartition{Principal: "bob"}
@@ -250,7 +250,7 @@ func hasSkillMeta(metas []tool.SkillMeta, name string) bool {
 	return false
 }
 
-func TestADR_0259_DelayedPublicationCannotRevokeNewerGeneration(t *testing.T) {
+func TestDelayedPublicationCannotRevokeNewerGeneration(t *testing.T) {
 	ctx := context.Background()
 	partition := learning.SkillPartition{Principal: "alice"}
 	repository := memskill.New()

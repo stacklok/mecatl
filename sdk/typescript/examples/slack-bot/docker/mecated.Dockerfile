@@ -1,7 +1,7 @@
 # Local dev/demo image for mecated, built for `docker compose up` in this
 # example only. NOT the project's official release artifact — that's built
-# via `ko` from ../../../../.ko.yaml (see docs/adr/ for the release
-# pipeline). This Dockerfile exists purely so the Slack bot example is
+# via `ko` from ../../../../.ko.yaml (see .github/workflows/release.yml for
+# the release pipeline). This Dockerfile exists purely so the Slack bot example is
 # runnable end to end without a separately-installed Go toolchain.
 #
 # Build context is the repository root (see docker-compose.yml) since

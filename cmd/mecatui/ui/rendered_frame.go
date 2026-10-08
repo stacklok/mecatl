@@ -23,7 +23,7 @@ const (
 	conversationRegionAppendix
 )
 
-// readingAnchor is the renderer-facing subset of ADR 0301's logical coordinate.
+// readingAnchor is the renderer-facing subset of the logical conversation coordinate.
 // Text rows use sourceOffset (a grapheme offset in ANSI-free visible text); chrome
 // and other derived rows retain their local row fallback.
 type readingAnchor struct {
@@ -93,7 +93,7 @@ func (f renderedFrame) firstRegionRow(blockID uint64, region regionKind) int {
 	return -1
 }
 
-// Phase 3 — anchor lookup/fallback: lookup starts from frame provenance;
+// Anchor lookup/fallback: lookup starts from frame provenance;
 // conversationView.restore owns the deterministic fallback policy.
 func (f renderedFrame) anchorForRow(row int) (readingAnchor, bool) {
 	if row < 0 || row >= len(f.provenance) {
@@ -152,7 +152,7 @@ func (f renderedFrame) rowForAnchor(anchor readingAnchor) (int, bool) {
 	return best, best >= 0
 }
 
-// Phase 1 — cache/render inputs: walk blocks once and pass its render-pass output
+// Cache/render inputs: walk blocks once and pass its render-pass output
 // explicitly to frame assembly. renderConversationLines remains the byte-identical
 // viewport wrapper.
 func (r *renderer) renderConversationFrame(c *scrollback.Conversation, expand bool) renderedFrame {
@@ -202,23 +202,30 @@ func (*renderer) appendFrameSegment(frame *renderedFrame, passes []renderPass, i
 	if pass.text == "" {
 		return
 	}
-	previous := -1
-	for i := index - 1; i >= 0; i-- {
-		if passes[i].text != "" {
-			previous = i
-			break
+	for previous := index - 1; previous >= 0; previous-- {
+		if passes[previous].text == "" {
+			continue
 		}
-	}
-	if previous >= 0 {
-		for n := 0; n < blockBlankLinesBetween(passes[previous].kind, pass.kind); n++ {
+		for n := 0; n < blockBlankLinesAfterPasses(passes, previous, index); n++ {
 			frame.lines = append(frame.lines, "")
 			frame.provenance = append(frame.provenance, renderedRow{region: conversationRegionChrome, separator: true})
 		}
+		break
 	}
 	for row, line := range strings.Split(pass.text, "\n") {
 		frame.lines = append(frame.lines, line)
 		frame.provenance = append(frame.provenance, pass.rows[row])
 	}
+}
+
+func blockBlankLinesAfterPasses(passes []renderPass, previous, current int) int {
+	if passes[current].kind == scrollback.KindAssistant && len(passes[previous].rows) == 1 {
+		switch passes[previous].kind {
+		case scrollback.KindTool, scrollback.KindSubagent, scrollback.KindTeam:
+			return interBlockBlankLinesCompact
+		}
+	}
+	return blockBlankLinesBetween(passes[previous].kind, passes[current].kind)
 }
 
 func (r *renderer) assistantProvenanceRows(blockID uint64, p scrollback.AssistantCardSnapshot, rendered string, expand bool) []renderedRow {
@@ -234,8 +241,10 @@ func (r *renderer) snapshotProvenanceRows(blockID uint64, kind scrollback.Kind, 
 	case scrollback.KindUser:
 		textStart, region = 1, conversationRegionBody
 	case scrollback.KindAssistant:
-		textStart = 2 // label plus its intentional blank row
-		if assistant.Reasoning != "" {
+		if expand {
+			textStart = 2 // expanded speaker label plus its blank row
+		}
+		if strings.TrimSpace(assistant.Reasoning) != "" {
 			reasoning := r.renderReasoningSnapshot(assistant, expand)
 			reasoningRows := len(strings.Split(reasoning, "\n"))
 			for i := textStart; i < min(textStart+reasoningRows, len(rows)); i++ {

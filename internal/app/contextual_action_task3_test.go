@@ -9,7 +9,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/modelhook"
 )
 
-func TestADR_0363_ContextualGuardrails_Scenario1_ExactRepeatGrant(t *testing.T) {
+func TestContextualGuardrails_ExactRepeatGrant(t *testing.T) {
 	grants := modelhook.NewWaiverHolder()
 	r := &guardrailActionReviewer{grants: grants}
 	request := agent.ToolReviewRequest{

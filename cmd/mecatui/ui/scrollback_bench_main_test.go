@@ -1,9 +1,9 @@
 package ui
 
 // TestMain + result accumulator for the scrollback render benchmark. It is the
-// ui package's home for the Phase 2 JSON flush (perf-tracking.md): the TUI render
-// bench is the SECOND metric family (alongside perf/scenarios), and the
-// "Open decisions" lean is "same store, two metric families". So this TestMain
+// ui package's home for the scenario JSON flush (perf-tracking.md): the TUI render
+// bench is the SECOND metric family (alongside perf/scenarios), kept in the
+// same store as the first. So this TestMain
 // MERGES its rows into an existing $MECATL_PERF_JSON (written first by the
 // perf/scenarios run in the same `task perf:scenarios` invocation) rather than
 // clobbering it — both families end up in one file.

@@ -87,37 +87,59 @@ type ToolCallMetadata struct {
 	ID                      BlockID
 	Revision                uint64
 	CallID, Name, Arguments string
-	Resolved, Failed        bool
-	Stop                    string
+	// ResultReceived reports payload.Resolved; Provisional reports an available
+	// result awaiting canonical confirmation. Terminal is lifecycle completion
+	// without implying a canonical result.
+	ResultReceived, Provisional, Terminal bool
+	ResultError, LifecycleFailed          bool
+	Stop                                  string
 }
 
 // ToolCallMetadataAt returns the compact top-level tool projection at index i
 // without detaching its payload. It returns false for non-tool cards.
 func (c *Conversation) ToolCallMetadataAt(i int) (ToolCallMetadata, bool) {
 	card := c.cards[i]
+	return toolCallMetadata(card.id, card.revision, card.payload)
+}
+
+// ToolCallMetadataOf returns the same compact projection as ToolCallMetadataAt
+// for an already detached snapshot, so a renderer that loaded a snapshot after a
+// cache miss does not reinterpret tool lifecycle fields itself.
+func ToolCallMetadataOf(s BlockSnapshot) (ToolCallMetadata, bool) {
+	return toolCallMetadata(s.ID, s.Revision, s.Payload)
+}
+
+func toolCallMetadata(id BlockID, revision uint64, payload PayloadSnapshot) (ToolCallMetadata, bool) {
 	var call ToolCall
-	var resolved, failed bool
+	var resultReceived, provisional, terminal, resultError, lifecycleFailed bool
 	var stop string
-	switch payload := card.payload.(type) {
+	switch payload := payload.(type) {
 	case ToolCardSnapshot:
-		call, resolved = payload.Call, payload.Resolved || payload.Finished
-		failed = payload.Result.IsError || payload.Failed
+		call = payload.Call
+		resultReceived, provisional, terminal = payload.Resolved, payload.available, payload.Finished
+		resultError, lifecycleFailed = payload.Result.IsError, payload.Failed
 	case SubagentCardSnapshot:
-		call, resolved = payload.Call, payload.Resolved || payload.Update.Done
-		if payload.Update.Done {
+		call = payload.Call
+		resultReceived, provisional, terminal = payload.Resolved, payload.available, payload.Update.Done
+		resultError = payload.Result.IsError
+		if terminal {
 			stop = payload.Update.Stop
 		}
-		failed = payload.Result.IsError
 	case TeamCardSnapshot:
-		call, resolved = payload.Call, payload.Resolved || payload.Update.Done
-		if payload.Update.Done {
+		call = payload.Call
+		resultReceived, provisional, terminal = payload.Resolved, payload.available, payload.Update.Done
+		resultError = payload.Result.IsError
+		if terminal {
 			stop = payload.Update.Stop
 		}
-		failed = payload.Result.IsError
 	default:
 		return ToolCallMetadata{}, false
 	}
-	return ToolCallMetadata{ID: card.id, Revision: card.revision, CallID: call.ID, Name: call.Name, Arguments: call.Arguments, Resolved: resolved, Failed: failed, Stop: stop}, true
+	return ToolCallMetadata{
+		ID: id, Revision: revision, CallID: call.ID, Name: call.Name, Arguments: call.Arguments,
+		ResultReceived: resultReceived, Provisional: provisional, Terminal: terminal,
+		ResultError: resultError, LifecycleFailed: lifecycleFailed, Stop: stop,
+	}, true
 }
 
 // Len returns the number of ordinary cards in the conversation. It excludes the

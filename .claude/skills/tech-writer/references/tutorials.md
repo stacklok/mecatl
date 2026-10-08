@@ -12,7 +12,7 @@ Tutorials are typically the quickstarts inside each product section and any end-
 
 **Get the learner started, not educated.** The goal is a completed experience and earned confidence, not comprehensive knowledge. Resist covering options, alternatives, and edge cases. There is one path through a tutorial, and you choose it.
 
-**Minimize explanation.** A learner mid-task cannot absorb theory; explanation interrupts the doing. Offer only the minimum context a step needs ("You need Docker because ToolHive runs MCP servers in containers"), and link to concept pages for anything deeper. If you find yourself writing paragraphs of background, that content belongs in an explanation page.
+**Minimize explanation.** A learner mid-task cannot absorb theory; explanation interrupts the doing. Offer only the minimum context a step needs ("Keep `mecated` running while you connect your terminal client"), and link to concept pages for anything deeper. If you find yourself writing paragraphs of background, that content belongs in an explanation page.
 
 **Give no choices.** "You can use X or Y" is poison in a tutorial. The learner has no basis for choosing and every fork doubles the ways the lesson can go wrong. Pick one client, one server, one installation method. Alternatives belong in how-to guides.
 
@@ -20,7 +20,7 @@ Tutorials are typically the quickstarts inside each product section and any end-
 
 **Guarantee repeatability.** The tutorial must work, exactly as written, for every learner in a reasonable environment, every time. This is the hardest and most important obligation. State prerequisites completely, pin anything that drifts, and test the steps end to end before publishing.
 
-**Signpost the journey.** Tell the learner what they'll accomplish at the start ("In this tutorial, you'll run your first MCP server and connect it to VS Code"), mark progress along the way, and close by naming what they achieved.
+**Signpost the journey.** Tell the learner what they'll accomplish at the start ("In this tutorial, you'll run your first Mecatl agent"), mark progress along the way, and close by naming what they achieved.
 
 ## Keep out of tutorials
 
@@ -32,13 +32,15 @@ Tutorials are typically the quickstarts inside each product section and any end-
 
 ## Structure
 
-1. Front matter: `title` and `description` (see the style guide)
+Follow the [authoring contract](../../../../user-docs/_README.md) for Mecatl-specific page and closing-section requirements. A typical tutorial has:
+
+1. Front matter: `title` and `description`, then a matching H1
 2. What you'll do and what you'll have at the end, in a sentence or two
 3. Prerequisites, complete and verifiable
 4. Numbered steps, each with a visible result
 5. A closing recap of what the learner accomplished
-6. Next steps (1-3 links: the natural follow-on guides)
-7. Related information, then Troubleshooting, if applicable
+6. Next steps when readers have a clear next action, with links to the natural follow-on guides
+7. Related information and Troubleshooting when useful for this lesson
 
 ## Voice notes
 

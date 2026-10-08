@@ -6,6 +6,7 @@ import {
   decideLearningProposalRequestSchema,
   decideMemoryConsolidationPlanRequestSchema,
   learnedSkillActionRequestSchema,
+  learnedSkillActionResponseSchema,
   learnedSkillChangesResponseSchema,
   learnedSkillDiffResponseSchema,
   learnedSkillSchema,
@@ -110,8 +111,9 @@ const learnedSkillActionRoute = createRoute({
   },
   responses: {
     200: {
-      content: { "application/json": { schema: learnedSkillSchema } },
-      description: "The updated learned skill.",
+      content: { "application/json": { schema: learnedSkillActionResponseSchema } },
+      description:
+        "The updated learned skill and whether publishing it into the live catalog succeeded.",
     },
     500: errorResponse,
     501: errorResponse,

@@ -1267,8 +1267,8 @@ func TestRecordUsageRunningOnly(t *testing.T) {
 	}
 }
 
-// TestResetToIdlePreservesUsage is the CRITICAL divergence guard (cloud-native
-// Phase 1): the three terminal-recovery seams (Reopen / Interrupt / Recover) all
+// TestResetToIdlePreservesUsage is the CRITICAL divergence guard: the
+// three terminal-recovery seams (Reopen / Interrupt / Recover) all
 // route through resetToIdle, which clears the Counters but DELIBERATELY preserves
 // the cumulative Usage so the MaxRunTokens budget brake survives reopen/restart.
 // Mutation: adding `s.UsageFor(UsageKindMain) = Usage{}` to resetToIdle must fail this test.

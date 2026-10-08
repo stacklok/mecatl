@@ -15,6 +15,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { CalendarClock, ChevronDown, History, Pause, Play, Plus, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { PageShell } from "../../components/shell/page-shell";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -111,77 +112,75 @@ export function SchedulesWorkspace({ scheduleName }: { scheduleName?: string }) 
   }
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="mx-auto w-full max-w-6xl px-4 py-7 sm:px-8 sm:py-10">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <h1 className={pageTitleClass()}>Scheduled</h1>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Recurring and one-off work run by the connected Mecatl instance.
-            </p>
-          </div>
-          {schedules.data?.supported && (
-            <Button onClick={() => setEditor("new")} variant="action">
-              <Plus />
-              Schedule task
-            </Button>
-          )}
+    <PageShell>
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <h1 className={pageTitleClass()}>Scheduled</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Recurring and one-off work run by the connected Mecatl instance.
+          </p>
         </div>
-
-        {error && (
-          <p className="mt-5 rounded-lg bg-destructive/10 p-3 text-sm text-foreground">{error}</p>
-        )}
-
-        {schedules.isPending ? (
-          <EmptyState text="Loading schedules…" />
-        ) : schedules.isError ? (
-          <EmptyState text={errorMessage(schedules.error)} />
-        ) : !schedules.data.supported ? (
-          <EmptyState
-            text={schedules.data.reason}
-            title="Scheduling is not wired on this deployment"
-          />
-        ) : schedules.data.items.length === 0 ? (
-          <EmptyState
-            action={() => setEditor("new")}
-            text="Set up recurring or one-off work and Mecatl will run it unattended."
-            title="Nothing scheduled yet"
-          />
-        ) : (
-          <>
-            <div className="mt-7 inline-flex rounded-full bg-muted p-1">
-              {(["all", "scheduled", "paused"] as const).map((value) => (
-                <button
-                  className={`h-8 rounded-full px-4 text-sm capitalize ${filter === value ? "bg-background font-medium shadow-sm" : "text-muted-foreground"}`}
-                  key={value}
-                  onClick={() => setFilter(value)}
-                  type="button"
-                >
-                  {value}
-                </button>
-              ))}
-            </div>
-
-            {items.length === 0 ? (
-              <EmptyState text="No scheduled tasks match this filter." />
-            ) : (
-              <div className="mt-4 divide-y overflow-hidden rounded-xl border bg-card">
-                {items.map((schedule) => (
-                  <ScheduleItem
-                    busy={action.isPending || remove.isPending}
-                    key={schedule.name}
-                    onAction={(name) => void runAction(schedule, name)}
-                    onDelete={() => setConfirmDelete(schedule)}
-                    onEdit={() => setEditor(schedule)}
-                    schedule={schedule}
-                    selected={schedule.name === scheduleName}
-                  />
-                ))}
-              </div>
-            )}
-          </>
+        {schedules.data?.supported && (
+          <Button onClick={() => setEditor("new")} variant="action">
+            <Plus />
+            Schedule task
+          </Button>
         )}
       </div>
+
+      {error && (
+        <p className="mt-5 rounded-lg bg-destructive/10 p-3 text-sm text-foreground">{error}</p>
+      )}
+
+      {schedules.isPending ? (
+        <EmptyState text="Loading schedules…" />
+      ) : schedules.isError ? (
+        <EmptyState text={errorMessage(schedules.error)} />
+      ) : !schedules.data.supported ? (
+        <EmptyState
+          text={schedules.data.reason}
+          title="Scheduling is not wired on this deployment"
+        />
+      ) : schedules.data.items.length === 0 ? (
+        <EmptyState
+          action={() => setEditor("new")}
+          text="Set up recurring or one-off work and Mecatl will run it unattended."
+          title="Nothing scheduled yet"
+        />
+      ) : (
+        <>
+          <div className="mt-7 inline-flex rounded-full bg-muted p-1">
+            {(["all", "scheduled", "paused"] as const).map((value) => (
+              <button
+                className={`h-8 rounded-full px-4 text-sm capitalize ${filter === value ? "bg-background font-medium shadow-sm" : "text-muted-foreground"}`}
+                key={value}
+                onClick={() => setFilter(value)}
+                type="button"
+              >
+                {value}
+              </button>
+            ))}
+          </div>
+
+          {items.length === 0 ? (
+            <EmptyState text="No scheduled tasks match this filter." />
+          ) : (
+            <div className="mt-4 divide-y overflow-hidden rounded-xl border bg-card">
+              {items.map((schedule) => (
+                <ScheduleItem
+                  busy={action.isPending || remove.isPending}
+                  key={schedule.name}
+                  onAction={(name) => void runAction(schedule, name)}
+                  onDelete={() => setConfirmDelete(schedule)}
+                  onEdit={() => setEditor(schedule)}
+                  schedule={schedule}
+                  selected={schedule.name === scheduleName}
+                />
+              ))}
+            </div>
+          )}
+        </>
+      )}
 
       {editor && (
         <ScheduleForm
@@ -221,7 +220,7 @@ export function SchedulesWorkspace({ scheduleName }: { scheduleName?: string }) 
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </PageShell>
   );
 }
 

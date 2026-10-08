@@ -37,7 +37,7 @@ func (w *harnessInstructionReads) Read(ctx context.Context, path string) ([]byte
 	return w.Workspace.Read(ctx, path)
 }
 
-func TestADR_0359_HarnessContext_Scenario3_ProjectInstructionsPerRun(t *testing.T) {
+func TestHarnessContext_ProjectInstructionsSessionRetention(t *testing.T) {
 	ws := memfs.NewWorkspace("/source")
 	harnessSeed(t, ws, "AGENTS.md", "FIRST-CONTEXT")
 	source := &harnessInstructionReads{Workspace: ws}
@@ -61,19 +61,15 @@ func TestADR_0359_HarnessContext_Scenario3_ProjectInstructionsPerRun(t *testing.
 	}
 	harnessSeed(t, ws, "AGENTS.md", "SECOND-CONTEXT")
 	harnessRun(t, b, t.Context(), id, "second task")
-	if source.reads.Load() != 2 {
-		t.Fatalf("source reads across two runs=%d", source.reads.Load())
+	if source.reads.Load() != 1 {
+		t.Fatalf("retained source reread across runs=%d", source.reads.Load())
 	}
 	if len(requests) != 3 {
 		t.Fatalf("requests=%d", len(requests))
 	}
 	for i, request := range requests {
-		want := "FIRST-CONTEXT"
-		if i == 2 {
-			want = "SECOND-CONTEXT"
-		}
-		if len(request.Messages) == 0 || !strings.Contains(request.Messages[0].Text, want) {
-			t.Fatalf("run context did not refresh: request %d", i)
+		if len(request.Messages) == 0 || !strings.Contains(request.Messages[0].Text, "FIRST-CONTEXT") || strings.Contains(request.Messages[0].Text, "SECOND-CONTEXT") {
+			t.Fatalf("run context did not retain examined instructions: request %d", i)
 		}
 	}
 	stored, err := b.Service.GetSession(t.Context(), id)
@@ -85,12 +81,12 @@ func TestADR_0359_HarnessContext_Scenario3_ProjectInstructionsPerRun(t *testing.
 			t.Fatal("source instruction persisted into conversation")
 		}
 	}
-	a := policyInstructionAssembler{mode: harnessModeCombine, sources: []prompt.InstructionAssembler{fixedInstructionAssembler{inner: prompt.RootAssembler{Source: source}, provenance: HarnessProvenancePolicy{Fixed: "project"}, projectAdmitted: true}}}
-	plain, err := a.Assemble(t.Context())
+	a := policyInstructionAssembler{mode: harnessModeCombine, sources: []prompt.InstructionAssembler{fixedInstructionAssembler{inner: prompt.RootAssembler{Source: source, SourceID: "source", SourcePrefix: "."}, provenance: HarnessProvenancePolicy{Fixed: "project"}, projectAdmitted: true}}}
+	plain, _, err := a.Assemble(t.Context(), []string{"."}, &session.InstructionSnapshot{}, 65536)
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifested, rows, err := prompt.AssembleWithManifest(t.Context(), a)
+	manifested, rows, err := prompt.AssembleWithManifest(t.Context(), a, []string{"."}, &session.InstructionSnapshot{}, 65536)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +95,7 @@ func TestADR_0359_HarnessContext_Scenario3_ProjectInstructionsPerRun(t *testing.
 	}
 }
 
-func TestADR_0359_HarnessContext_Scenario3_RootDiscoveryCompatibility(t *testing.T) {
+func TestHarnessContext_RootDiscoveryCompatibility(t *testing.T) {
 	for _, tc := range []struct{ name, agents, claude, want string }{
 		{"agents wins", " agents ", "claude", "agents"},
 		{"whitespace fallback", " \t\n", " claude ", "claude"},
@@ -116,11 +112,11 @@ func TestADR_0359_HarnessContext_Scenario3_RootDiscoveryCompatibility(t *testing
 				harnessSeed(t, ws, "CLAUDE.md", tc.claude)
 			}
 			harnessSeed(t, ws, "nested/AGENTS.md", "NOT-ROOT")
-			assembled, err := (prompt.RootAssembler{Source: ws}).Assemble(t.Context())
+			assembled, _, err := (prompt.RootAssembler{Source: ws, SourceID: "ws", SourcePrefix: "."}).Assemble(t.Context(), []string{"."}, &session.InstructionSnapshot{}, 65536)
 			if err != nil {
 				t.Fatal(err)
 			}
-			discovered, err := prompt.DiscoverInstructions(t.Context(), ws)
+			discovered, _, err := prompt.DiscoverInstructions(t.Context(), ws, ".")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -141,15 +137,15 @@ func TestADR_0359_HarnessContext_Scenario3_RootDiscoveryCompatibility(t *testing
 	ws := memfs.NewWorkspace("/fault")
 	harnessSeed(t, ws, "CLAUDE.md", "must not hide fault")
 	source := &harnessInstructionReads{Workspace: ws, fault: fs.ErrPermission}
-	if _, err := (prompt.RootAssembler{Source: source}).Assemble(t.Context()); !errors.Is(err, fs.ErrPermission) {
+	if _, _, err := (prompt.RootAssembler{Source: source, SourceID: "source", SourcePrefix: "."}).Assemble(t.Context(), nil, nil, 65536); !errors.Is(err, fs.ErrPermission) {
 		t.Fatalf("real read fault became fallback: %v", err)
 	}
-	if messages, err := (prompt.RootAssembler{}).Assemble(t.Context()); err != nil || len(messages) != 0 {
+	if messages, _, err := (prompt.RootAssembler{}).Assemble(t.Context(), nil, nil, 65536); err != nil || len(messages) != 0 {
 		t.Fatal("optional nil source changed")
 	}
 }
 
-func TestADR_0359_HarnessContext_Scenario2_SelectedCommandsRemainLive(t *testing.T) {
+func TestHarnessContext_SelectedCommandsRemainLive(t *testing.T) {
 	for _, kind := range []string{"logical-api", "execution-files"} {
 		t.Run(kind, func(t *testing.T) {
 			source := memfs.NewWorkspace("/selected-live")

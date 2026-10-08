@@ -5,6 +5,7 @@ import (
 	"math"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -267,6 +268,21 @@ func routingEvidenceString(in string) string {
 	return string(runes)
 }
 
+// childPreviewID is a final backstop for externally constructed delegation payloads.
+// Repairing an invalid ID could collide with a different call; suppress the tool
+// preview instead of manufacturing a match. Engine-originated previews are checked
+// before emission, so this path also covers replay from older producers.
+func childPreviewID(id session.ToolCallID) string {
+	if len(id) > 256 || !utf8.ValidString(string(id)) {
+		return ""
+	}
+	return string(id)
+}
+
+func invalidChildPreview(id session.ToolCallID) bool {
+	return id != "" && childPreviewID(id) == ""
+}
+
 // toProtoParallel maps a session.ParallelPayload to its proto Parallel form: the
 // bounded-preview projection of a Parallel fork-join run. Usage is always emitted
 // (zero on the start/branch_start/branch_tool kinds); the per-kind field population
@@ -275,6 +291,9 @@ func routingEvidenceString(in string) string {
 // inner_kind a STRING passthrough, mirroring toProtoTeam) — never unbounded branch
 // content — preserving gauntlet #7.
 func toProtoParallel(p session.ParallelPayload) *mecatlv1.Parallel {
+	if invalidChildPreview(p.ChildToolCallID) {
+		p.InnerKind, p.ToolName, p.Detail = "", "", ""
+	}
 	return &mecatlv1.Parallel{
 		ParentCallId:    p.ParentCallID,
 		Kind:            string(p.Kind),
@@ -290,6 +309,7 @@ func toProtoParallel(p session.ParallelPayload) *mecatlv1.Parallel {
 		RoutingDecision: toProtoRoutingDecision(p.RoutingDecision),
 		Model:           routingEvidenceString(p.Model),
 		ToolName:        valid(p.ToolName),
+		ChildToolCallId: childPreviewID(p.ChildToolCallID),
 		IsError:         p.IsError,
 		ToolCount:       ClampInt32(p.ToolCount),
 		InnerKind:       string(p.InnerKind),
@@ -460,6 +480,9 @@ func toProtoConversationMessage(m session.Message) *mecatlv1.ConversationMessage
 // contract. The previews are already capped in the domain (projectTeamEvent /
 // clampPreview); this mapper copies them verbatim — it adds no further redaction.
 func toProtoTeam(p session.TeamPayload) *mecatlv1.Team {
+	if invalidChildPreview(p.ChildToolCallID) {
+		p.InnerKind, p.ToolName, p.Detail = "", "", ""
+	}
 	roster := make([]*mecatlv1.TeamMemberSpec, 0, len(p.Roster))
 	for _, m := range p.Roster {
 		roster = append(roster, &mecatlv1.TeamMemberSpec{
@@ -500,6 +523,7 @@ func toProtoTeam(p session.TeamPayload) *mecatlv1.Team {
 		InnerKind:       string(p.InnerKind),
 		Text:            valid(p.Text),
 		ToolName:        valid(p.ToolName),
+		ChildToolCallId: childPreviewID(p.ChildToolCallID),
 		Detail:          valid(p.Detail),
 		IsError:         p.IsError,
 		Rounds:          ClampInt32(p.Rounds),
@@ -588,6 +612,9 @@ func toProtoTeamTaskSnapshot(t session.TeamTaskSnapshot) *mecatlv1.TeamTask {
 // inner_kind a STRING passthrough, mirroring toProtoTeam) are copied verbatim:
 // already clamped by the single redaction chokepoint upstream in engine/agent.
 func toProtoSubagent(p session.SubagentPayload) *mecatlv1.Subagent {
+	if invalidChildPreview(p.ChildToolCallID) {
+		p.InnerKind, p.ToolName, p.Detail = "", "", ""
+	}
 	return &mecatlv1.Subagent{
 		ParentCallId:    p.ParentCallID,
 		ChildId:         p.ChildID,
@@ -599,6 +626,7 @@ func toProtoSubagent(p session.SubagentPayload) *mecatlv1.Subagent {
 		RoutingDecision: toProtoRoutingDecision(p.RoutingDecision),
 		Model:           routingEvidenceString(p.Model),
 		ToolName:        valid(p.ToolName),
+		ChildToolCallId: childPreviewID(p.ChildToolCallID),
 		IsError:         p.IsError,
 		ToolCount:       ClampInt32(p.ToolCount),
 		InnerKind:       string(p.InnerKind),
@@ -1229,7 +1257,7 @@ func toProtoScopedWorktrees(wts []ScopedWorktree) []*mecatlv1.Worktree {
 }
 
 // toProtoSessionSummary maps a Service SessionSummary (the surface-agnostic
-// picker row, issue #245 Phase 1) to its proto form. It projects ONLY the
+// picker row, issue #245) to its proto form. It projects ONLY the
 // picker metadata — no conversation content.
 func toProtoSessionSummary(s SessionSummary) *mecatlv1.SessionSummary {
 	metadata := s.TitleMetadata
@@ -1284,7 +1312,7 @@ func toProtoSessionRelationship(r session.SessionRelationship) *mecatlv1.Session
 	return out
 }
 
-// toProtoPrincipal maps the verified owner (ADR 0204) to its proto form. A nil
+// toProtoPrincipal maps the verified owner to its proto form. A nil
 // principal maps to a nil message — an ABSENT owner must stay absent on the wire,
 // never a present-but-empty "anonymous" one. Every string goes through valid()
 // (the UTF-8 scrubber every other wire string uses): the issuer/subject come from
