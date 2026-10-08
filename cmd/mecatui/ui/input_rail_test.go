@@ -113,8 +113,7 @@ func TestInputRailFillsUniformly(t *testing.T) {
 // vertical accent cue. The rail border is built by inputRailStyle(theme, mode), which
 // reads no focus state, so the SGR that colours the left-border glyph "│" must appear
 // identically in the focused and blurred renders. This is the guard that keeps the doc
-// and code from silently diverging (the doc previously claimed the rail itself dims on
-// blur — it does not).
+// and code from silently diverging (the rail itself does not dim on blur).
 func TestInputRailBorderColourIgnoresFocus(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
 	m, _, _ := newTestModel(t, th)

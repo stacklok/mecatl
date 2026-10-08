@@ -37,8 +37,8 @@ type ResolveOptions struct {
 	Workspace string
 	// IncludeProjectTier, when true, admits the PROJECT-tier conventional locations
 	// (<workspace>/.mecatl/agents, <workspace>/.claude/agents). The composition layer
-	// sets it false when the workspace is UNTRUSTED (Workspace-Trust feature, Phase
-	// 2a) so a cloned repo's project agent defs cannot steer the model before the
+	// sets it false when the workspace is UNTRUSTED (Workspace-Trust feature)
+	// so a cloned repo's project agent defs cannot steer the model before the
 	// operator trusts it; the user-tier and explicit sources stay active regardless.
 	// It gates ONLY the project tier. Mirrors skills.ResolveOptions.IncludeProjectTier.
 	//
@@ -80,8 +80,8 @@ func resolveSourcesEnv(opts ResolveOptions, env ResolveEnv) []AgentSource {
 		return sources
 	}
 
-	// Project tier — withheld when the workspace is untrusted (IncludeProjectTier=false,
-	// Phase 2a). The user-tier sources below are NEVER gated.
+	// Project tier — withheld when the workspace is untrusted
+	// (IncludeProjectTier=false). The user-tier sources below are NEVER gated.
 	if opts.Workspace != "" && opts.IncludeProjectTier {
 		sources = append(sources,
 			DirSource{Dir: filepath.Join(opts.Workspace, ProjectDirMecatl), Label: "project(.mecatl)", Tier: tool.AgentOriginProject},

@@ -28,9 +28,8 @@
 // assertion and never constructs the root. The hybrid's residual is that grep
 // sees disk.
 //
-// SCOPE — the following are DEFERRED to later phases (Phase 2/3 landed diff
-// blocks, allow_always rule learning, session/load + replay, modes, and slash
-// commands):
+// SCOPE — diff blocks, allow_always rule learning, session/load + replay,
+// modes, and slash commands are implemented; the following are NOT:
 //   - grep/glob over editor BUFFERS (the fs/* hybrid searches disk).
 //   - DURABLE / broader-granularity learned permissions (today: in-memory,
 //     per-session, tool + exact-pattern only).
@@ -47,7 +46,7 @@
 // advertised false). A resource_link, an unsupported block type, or a media part
 // the provider cannot consume is REJECTED loudly — never silently dropped.
 //
-// PLAN APPROVAL (issue #206, Wave 4) — the ACP adapter has NO bespoke
+// PLAN APPROVAL (issue #206) — the ACP adapter has NO bespoke
 // ApprovePlan method. ACP already composes the plan-approval flow from the two
 // EXISTING primitives the editor speaks natively: session/set_mode (the operator
 // picks default / accept-edits / plan) + session/prompt (the proceed message).

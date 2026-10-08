@@ -96,7 +96,7 @@ type catalogAssets struct {
 	skillOwner           string
 	forkReaper           *agent.LRUForkReaper
 	// autoMerger is the ONE process-wide serializing tool.EnvironmentMerger used by the
-	// Parallel single-branch auto-merge (the writable Subagent no longer merges —
+	// Parallel single-branch auto-merge (the writable Subagent does not merge —
 	// it writes the parent tree directly). It wraps a forker.Merger in a
 	// forker.SerializingMerger so concurrent merges across sessions are serialized
 	// by a single mutex (a per-session instance would not serialize cross-session).
@@ -504,7 +504,7 @@ func registerParallelTool(ctx context.Context, cfg Config, cat *tool.Catalog, re
 	// Use the SHARED process-wide serializing merger from the assets (built once in
 	// Phase A), NOT a fresh forker.NewMerger() — so the SAME mutex serializes every
 	// Parallel merge process-wide. A nil merger (hand-rolled assets) skips auto-merge
-	// entirely (the historical boundary).
+	// entirely.
 	if a.autoMerger != nil {
 		opts = append(opts, agent.WithAutoMerge(a.autoMerger))
 	}

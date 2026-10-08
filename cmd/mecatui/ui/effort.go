@@ -243,7 +243,7 @@ func renderEffortPanel(th theme.Theme, st effortState, current string, noReasoni
 		b.WriteString("\n" + th.Style("warning").Render("this model has no reasoning support — a tier will be ignored"))
 	}
 	// The nav/select/close chords read the LIVE Up/Down/Choose/Close markings
-	// (issue #457); with defaults the hint is byte-identical to the historical literal.
+	// (issue #457).
 	b.WriteString("\n" + th.Style("muted").Render(hk.navUp+"/"+hk.navDown+" move · "+hk.choose+" apply · "+hk.closeOnly+" close"))
 	b.WriteString("\n" + th.Style("muted").Render("● current  ·  auto = provider default"))
 	return b.String()

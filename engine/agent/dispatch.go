@@ -598,11 +598,10 @@ const resumeAbortedSiblingMessage = "tool call aborted: the run was resumed at a
 // loop calls PauseForApproval, while the parent stays StateRunning inside the
 // delegation tool call. The server persists (and resumes via Approve) only top-level
 // registered runs, so a restored StateAwaiting session ALWAYS holds a parent-OWN ask.
-// The honest close-out the plan describes for a surfaced-child resume is therefore
+// The honest close-out for a surfaced-child resume is therefore
 // structurally unreachable through this seam; if a future change ever persisted a
 // surfaced-child ask onto a parent, it would close out here as an ordinary unanswered
-// sibling (resumeAbortedSiblingMessage). No surfaced-marker field was added (see the
-// Phase 2 report + CLOUD-NATIVE.md ledger row 6).
+// sibling (resumeAbortedSiblingMessage). There is no surfaced-marker field.
 
 // driveFromAwaiting is the body of the awaiting-only run-entry seam (ResumeApproval).
 // It re-enters the loop AT the parked ask: it applies verdict to the pending tool
@@ -847,10 +846,10 @@ func (e *Engine) rejectUnresumableApproval(r *Run, turnIdx int, call session.Too
 // synthesizes a deny result (the tool is NOT run); AllowOnce/AllowAlways run the call
 // through the SAME post-authorize tail runOne uses (preHook + execute, so PostToolUse
 // hooks + the audit recorder + EvToolResult fire identically); AllowAlways also
-// Learns a per-session rule for FUTURE calls (the rehydrated permstore is in-memory —
-// the accepted Phase 2 wart; the rule covers later calls in THIS resumed run, Phase
-// 3b makes it durable). The card is opened before the gate/result (the "ToolCall card
-// before the gate" invariant) on every branch.
+// Learns a per-session rule for FUTURE calls (the permstore is in-memory; the rule
+// covers later calls in THIS resumed run, and the logged allow-always verdict is
+// replayed into a fresh permstore on a later resume). The card is opened before
+// the gate/result (the "ToolCall card before the gate" invariant) on every branch.
 //
 //nolint:gocyclo // Resume keeps origin validation, reauthorization, review, and exact-once execution in one auditable path.
 func (e *Engine) resolvePendingCall(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, pendingCall session.ToolCall, ask session.PendingAsk, verdict session.ApprovalVerdict) (session.ToolResult, *dispatchPark, bool) {
@@ -1017,7 +1016,7 @@ func (e *Engine) runOne(ctx context.Context, r *Run, sess *session.Session, env 
 	// seen.
 	e.openCard(r, turnIdx, c)
 
-	// Plan-approval gate (issue #206, Wave 2): in plan mode a PresentPlan call is
+	// Plan-approval gate (issue #206): in plan mode a PresentPlan call is
 	// intercepted by name BEFORE the permission/hook gate and surfaced as a
 	// plan-approval ask. PresentPlan is read-only so it normally batches in
 	// runReadBatch Phase 1; this runOne branch is the defensive mirror so a

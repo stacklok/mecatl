@@ -1027,8 +1027,8 @@ func TestTeamRunStateMachineDeterministic(t *testing.T) {
 	wantFailedPrecondition(t, err, "SpawnTeammate after completion")
 }
 
-// TestSpawnTeammateErrorClassification asserts finding J: SpawnTeammate no longer
-// collapses every AddMember failure to InvalidArgument. A Mutating member spawned
+// TestSpawnTeammateErrorClassification asserts SpawnTeammate does not
+// collapse every AddMember failure to InvalidArgument. A Mutating member spawned
 // into a Service with no EnvironmentForker is a server misconfiguration the client
 // cannot fix by changing its args, so it must surface as FailedPrecondition (not
 // InvalidArgument). A duplicate-name spawn stays InvalidArgument (a real bad

@@ -14,7 +14,7 @@ import (
 )
 
 // fakeListSessionsClient is a scripted HarnessServiceClient for the ListSessions
-// wrapper tests (issue #245 Phase 2). Like fakeWorktreesClient it embeds the
+// wrapper tests (issue #245). Like fakeWorktreesClient it embeds the
 // interface and overrides only the one RPC under test, so the proto→plain
 // mapping runs offline.
 type fakeListSessionsClient struct {

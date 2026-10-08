@@ -11,17 +11,16 @@ import (
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
 
-// The scheduled-tasks discovery + management surface (issue #234, Phase 3a): a
+// The scheduled-tasks discovery + management surface (issue #234): a
 // plain client-owned mirror of the schedule.proto value objects, the unary RPC
 // wrappers that map proto → the structs, and the tea.Cmd constructors the ui's
 // /schedule overlay calls. As with the rest of this package, NO proto type leaks
 // past this file — the ui renders purely from the structs and msgs below, and
 // the mapping is exercised offline against a fake client.
 //
-// Phase 3a scope: the overlay lists/inspects/pauses/resumes/fires-now/deletes
-// schedules. UpdateSchedule is intentionally omitted (no in-overlay edit-in-place
-// form in v1); create-from-the-overlay is likewise deferred. A caller that needs
-// to author a schedule uses the CLI (mecated schedule create) or settings.yaml.
+// Scope: the overlay lists/inspects/pauses/resumes/fires-now/deletes schedules
+// and creates new ones through its Create form (issue #236). UpdateSchedule is
+// intentionally omitted (there is no in-overlay edit-in-place form).
 
 // ScheduleTrigger is the sum type for a schedule's firing trigger: a cron
 // expression OR a one-shot wall-clock instant. Exactly one is set (a zero OneShot
@@ -158,8 +157,7 @@ func (c *Client) GetSchedule(ctx context.Context, name string) (Schedule, error)
 
 // CreateSchedule saves a new schedule (an upsert by name) and returns the created
 // aggregate. It is the SINGLE proto-build point for Create (scheduleSpecToProto).
-// Exported for the planned in-overlay Create form (Phase 3b); the v1 overlay does
-// not call it.
+// CreateScheduleCmd wraps it for the /schedule overlay's Create form.
 func (c *Client) CreateSchedule(ctx context.Context, spec ScheduleSpec) (Schedule, error) {
 	resp, err := c.scheduleSvc.CreateSchedule(ctx, &mecatlv1.CreateScheduleRequest{Spec: scheduleSpecToProto(spec)})
 	if err != nil {
@@ -257,8 +255,8 @@ func GetScheduleCmd(ctx context.Context, c ScheduleLister, name string) tea.Cmd 
 }
 
 // CreateScheduleCmd creates a schedule off the update goroutine; the result
-// arrives as a ScheduleMsg. Exported for the planned in-overlay Create form
-// (Phase 3b); the v1 overlay does not call it.
+// arrives as a ScheduleMsg. The /schedule overlay's Create form (issue #236)
+// calls it.
 func CreateScheduleCmd(ctx context.Context, c ScheduleLister, spec ScheduleSpec) tea.Cmd {
 	return func() tea.Msg {
 		sched, err := c.CreateSchedule(ctx, spec)

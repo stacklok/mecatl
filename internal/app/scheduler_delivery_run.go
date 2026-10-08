@@ -12,7 +12,7 @@ import (
 )
 
 // deliverFireStarted is the composition-injected "started" notice driver (issue
-// #386, Phase 4a): right after RecordFireStart, route a fenced-untrusted harness
+// #386): right after RecordFireStart, route a fenced-untrusted harness
 // note carrying ONLY the schedule name + fire/session id back into the fire's
 // origin conversation. It mirrors deliverFireResult: it renders the start note
 // (renderFireStarted — NO model-authored content, none exists at start) and

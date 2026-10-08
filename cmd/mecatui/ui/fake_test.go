@@ -390,7 +390,7 @@ func (c *fakeConv) CreateSession(_ context.Context, sel client.ModelSelection, m
 	if n >= 2 && c.secondCreateErr != nil {
 		return "", client.Capabilities{}, client.ResolvedModel{}, c.secondCreateErr
 	}
-	// The first session keeps the historical id; a re-create (restart-now) gets a
+	// The first session gets the fixed id; a re-create (restart-now) gets a
 	// distinct id so the handoff e2e can prove the session was rebound.
 	id := "sess-test-0001"
 	if n > 1 {

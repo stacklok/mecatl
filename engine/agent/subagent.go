@@ -184,8 +184,8 @@ type parentCaps struct {
 	authorityBound bool
 	// parentSessionID is the PARENT session's own SessionID (review finding 2,
 	// issue #368), handed down so every derived child/branch/member session id
-	// is namespaced under it. A durable delegation id previously derived ONLY
-	// from the provider tool-call id (session.ToolCallID) — a value the LLM API
+	// is namespaced under it. A durable delegation id derived ONLY from the
+	// provider tool-call id (session.ToolCallID) is unsafe — a value the LLM API
 	// supplies and does not guarantee unique across independent conversations,
 	// let alone across owners. Two different top-level sessions (necessarily
 	// distinct SessionIDs — session creation is already atomically
@@ -438,7 +438,7 @@ type subagentArgs struct {
 	Background bool `json:"background,omitempty"`
 
 	// Mode selects the child's workspace posture. The default ("" or "read-only")
-	// runs the historical read-only explorer (no Edit/Write; a shell-bearing child's
+	// runs the read-only explorer (no Edit/Write; a shell-bearing child's
 	// worktree is discarded after the run). "read-write" runs a WRITABLE explorer
 	// with Edit/Write in its catalog that runs DIRECTLY against the PARENT workspace
 	// (no fork, no copy, no merge-back) — its Edit/Write/Shell mutate the real tree in
@@ -826,7 +826,7 @@ type SubagentTool struct {
 	// clause with an honest read-only-only description carrying this reason (set by
 	// the composition root via WithSubagentShellDisabledNote when the workspace-trust
 	// gate — not a shell-less deployment — withheld the subagent shell, issue #40).
-	// Empty (the default) keeps the description byte-identical to the historical
+	// Empty (the default) keeps the description byte-identical to the default
 	// shell-bearing one.
 	shellDisabledNote string
 
@@ -838,7 +838,7 @@ type SubagentTool struct {
 	// the shell clause while still claiming the read-only file tools; under no-FS
 	// those claims would be lies too, so the WHOLE tool-surface description is
 	// replaced. False (the default) keeps the description byte-identical to the
-	// historical one (TestSubagentSpecNoFSNoteOption pins both sides).
+	// default one (TestSubagentSpecNoFSNoteOption pins both sides).
 	noFSSpec bool
 
 	// idPrefix seeds the generated child SessionID so child sessions are
@@ -964,8 +964,8 @@ const resumeWritableNote = "[harness note: your conversation has been resumed an
 // It exists because the matrix has two INDEPENDENT axes and only two notes covered them:
 // WHERE the child runs follows THIS call's mode, WHAT survived follows the EARLIER run's.
 // A previously read-only child resumed with mode:"read-write" — the exact call
-// writableSubagentFailedNote and writableSubagentTimeoutNote now tell the parent to make —
-// used to fall to resumeStalenessNote and be told it "is running in a FRESH workspace
+// writableSubagentFailedNote and writableSubagentTimeoutNote tell the parent to make —
+// would otherwise fall to resumeStalenessNote and be told it "is running in a FRESH workspace
 // checkout" while holding Edit/Write on the real repository. That is the more dangerous
 // half of the falsehood, not the safer one: a child that believes it is in a scratch
 // checkout may rewrite or delete files to "start clean", and here those deletions land in
@@ -1124,8 +1124,8 @@ func WithMaxConcurrentChildren(n int) SubagentOption {
 // description carrying the reason, so the model never plans build/test/git delegation
 // the child cannot perform. The composition root sets it ONLY when the workspace-trust
 // gate withheld the shell (issue #40) — a shell-less deployment (--no-bash / empty
-// shell) keeps the historical description unchanged, exactly like before this option
-// existed. An empty reason is a no-op (the default, byte-identical description).
+// shell) keeps the default description unchanged. An empty reason is a no-op (the
+// default, byte-identical description).
 func WithSubagentShellDisabledNote(reason string) SubagentOption {
 	return func(t *SubagentTool) { t.shellDisabledNote = reason }
 }
@@ -1138,7 +1138,7 @@ func WithSubagentShellDisabledNote(reason string) SubagentOption {
 // tools, memory, web fetch; no file access, no shell). DISTINCT from
 // WithSubagentShellDisabledNote (issue #40), which swaps only the shell clause
 // and keeps the read-only file-tool claims that are still true on that path.
-// Without this option the description stays byte-identical to the historical one.
+// Without this option the description stays byte-identical to the default one.
 func WithSubagentNoFSNote() SubagentOption {
 	return func(t *SubagentTool) { t.noFSSpec = true }
 }
@@ -1416,12 +1416,12 @@ func NewSubagentTool(childEngine *Engine, opts ...SubagentOption) tool.Tool {
 // description (progressive disclosure, like the Skill tool enumerates skills) so
 // the model can choose a specialist via the optional `agent` arg.
 func (t *SubagentTool) Spec() tool.ToolSpec {
-	// NO-FILESYSTEM profile (WithSubagentNoFSNote): the historical description's
+	// NO-FILESYSTEM profile (WithSubagentNoFSNote): the default description's
 	// tool-surface claims (Read/Grep/Glob, the worktree shell, "use Parallel",
 	// "a quick read you can do with Read/Grep") are ALL false in a no-fs session,
 	// so the whole description is replaced by the honest file-less one — not just
 	// the shell clause (that is the narrower issue-#40 note below). Without the
-	// option the assembled description stays byte-identical to the historical one
+	// option the assembled description stays byte-identical to the default one
 	// (TestSubagentSpecNoFSNoteOption pins both sides).
 	if t.noFSSpec {
 		return tool.ToolSpec{
@@ -1435,7 +1435,7 @@ func (t *SubagentTool) Spec() tool.ToolSpec {
 	// and write scratch files, but it has no Edit/Write and its file changes are
 	// discarded after the run. The two modes (read-only default vs read-write) are
 	// described as SEPARATE, legible sentences below — this clause covers the shell
-	// only, so it no longer buries the read-write clause in a parenthetical (nor
+	// only, so it does not bury the read-write clause in a parenthetical (nor
 	// contradicts itself about whether edits land). With WithSubagentShellDisabledNote
 	// set the clause is REPLACED by a read-only-only description carrying the reason,
 	// so the model never delegates build/test/git work the child cannot perform.
@@ -1574,7 +1574,7 @@ func (*SubagentTool) ReadOnly() bool { return true }
 // tree never overlaps a sibling parent Read/Grep/Glob — a torn read. This is the
 // LOAD-BEARING correctness fix for direct-write: a mode:"read-write" child
 // mutates the real workspace DURING its run (no fork, no merge), so the dispatcher
-// MUST keep it mutate-serial — independent of any merger (there no longer is one). It
+// MUST keep it mutate-serial — independent of any merger (there is none). It
 // returns true ONLY for a call that will ACTUALLY run writable: mode:"read-write"
 // with the writable child engine wired (the writable explorer) OR the agent writable
 // factory wired (a writable named specialist mutates the real tree too);
@@ -3710,7 +3710,7 @@ func driveChild(ctx context.Context, engine *Engine, child *session.Session, run
 			return finalText, stop, cause, usage, toolCount
 		}
 		// A budget stop is terminal too: the token ceiling is now CUMULATIVE across the
-		// retry Reopens (cloud-native Phase 1 — session.Usage survives Reopen), so a child
+		// retry Reopens (session.Usage survives Reopen), so a child
 		// that crossed the ceiling mid-retry would only re-trip on the next attempt's first
 		// boundary. Surface StopBudget verbatim (the Subagent result renders it as a clean
 		// success-with-note) rather than burning the remaining Reopens and mislabelling the
@@ -3975,21 +3975,19 @@ func (t *SubagentTool) loadOwnedResumeSession(ctx context.Context, callID sessio
 //
 // The per-state switch stays SEPARATE from the service layer's loadAndReopen (a child
 // resume has its own preconditions — the in-flight guard, the tighten-only limits, the
-// fresh fork) but now matches its DISCIPLINE exactly: all THREE terminals recover.
+// fresh fork) but matches its DISCIPLINE exactly: all THREE terminals recover.
 // StateCompleted → Reopen, StateCancelled → Interrupt, StateFailed → Recover (all three
 // history-repairing where needed), StateIdle → run as-is, any other state → not in a
 // resumable state.
 //
-// StateFailed used to be refused here, justified by "a failed child carries no
-// accumulated-user-context cost, so the parent re-delegates instead of retrying a broken
-// transcript". Issue #318 falsified that premise: a long-running mode:"read-write" child
+// StateFailed is resumable (issue #318): a long-running mode:"read-write" child
 // accumulates 50+ turns of exploration AND mutations already applied to the
 // REAL tree, so discarding it is strictly more expensive than retrying a main session's
 // transcript — and the failure that gets it here is typically TRANSIENT (the terminal
 // 180s stream-idle stall, which becomes StopError rather than StopCancelled because the
-// run ctx is never cancelled). The inversion was stark: an operator-configured
-// timeout_ms lands in StateCancelled and was already resumable, while a network hiccup
-// was permanent. session.Session.Recover runs closeOutInterruptedTurn with the
+// run ctx is never cancelled). An operator-configured timeout_ms lands in
+// StateCancelled, which is resumable too. session.Session.Recover runs
+// closeOutInterruptedTurn with the
 // FAILURE-accurate wording, so a tool call orphaned by the failed turn gets a synthetic
 // error result and the replayed history stays provider-valid. Per Recover's own
 // contract, recovery makes retry POSSIBLE, not guaranteed: a permanent-cause child

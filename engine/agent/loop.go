@@ -97,10 +97,10 @@ const shellLessPostureNote = "This session has NO shell: the Shell tool is not a
 // + their session.StopReason labels, NOTHING child-authored (no goal labels, no
 // result text — the delegation bodies' sole channel is SubagentStatus, the Shell
 // jobs' ShellStatus). The rendering is FAMILY-AWARE: the delegation clause keeps
-// its exact historical wording (the substring "background subagent(s) finished"
+// its exact wording (the substring "background subagent(s) finished"
 // is a stable test key — do not change it) and a background-Shell clause is
 // APPENDED only when Shell jobs are among the finished, so a subagent-only run
-// renders byte-identically to before.
+// renders only the delegation clause.
 func backgroundNoticeText(finished []childStatus) string {
 	var delegationIDs, shellItems []string
 	for _, st := range finished {
@@ -128,7 +128,7 @@ func backgroundNoticeText(finished []childStatus) string {
 // (D10 as amended) injected as a harness-framed user message when the run would
 // otherwise end CLEANLY while background children are still live. It lists ids
 // ONLY (A9 — no goal labels, nothing model/child-authored). Like the notice it
-// is FAMILY-AWARE: the delegation clause keeps its exact historical wording
+// is FAMILY-AWARE: the delegation clause keeps its exact wording
 // (the substring "background subagent(s) still running" is a stable test key —
 // do not change it) and a background-Shell clause is APPENDED only for live Shell
 // jobs, each clause naming its own collection channel.
@@ -871,8 +871,8 @@ var runSerial atomic.Int64
 
 // childSerial mints a process-unique, monotonic discriminator for the ephemeral
 // in-memory child sessions (guardrail checker, fork judge, ask reviewer, model
-// router) whose ids were previously derived from time.Now().UnixNano(). A counter
-// is collision-free even under a fake (fixed) clock — where UnixNano would repeat
+// router). A counter (rather than time.Now().UnixNano()) is collision-free even
+// under a fake (fixed) clock — where UnixNano would repeat
 // and alias two children onto one id — so it keeps those ids unique without a
 // direct wall-clock read, part of the engine's full clock-injectability (issue
 // #116). Mirrors runSerial.
@@ -1253,7 +1253,7 @@ func (r *Run) Cancel() {
 // own registry and dies as an unknown-ask no-op (fail-safe ordering), while
 // the client dismisses its modal promptly, ahead of the child's unwind. The
 // unregister's answered-vs-pending gate also means an ask whose verdict was
-// JUST routed (route deleted the router entry first) no longer draws a
+// JUST routed (route deleted the router entry first) does not draw a
 // spurious retract.
 //
 // The eager retract is BEST-EFFORT only — it runs on the caller's goroutine,
@@ -1360,8 +1360,8 @@ func (e *Engine) RetryFailedStep(ctx context.Context, sess *session.Session, env
 	})
 }
 
-// ResumeApprovalOptions configures ResumeApproval, the FOURTH, awaiting-ONLY run-entry seam (cloud-native Phase
-// 2): it re-enters the loop AT a parked permission ask on a session that is in
+// ResumeApprovalOptions configures ResumeApproval, the FOURTH, awaiting-ONLY run-entry seam:
+// it re-enters the loop AT a parked permission ask on a session that is in
 // StateAwaiting (typically loaded fresh from a snapshot after the process that
 // parked the ask died), applies verdict to the pending tool call, closes out any
 // unanswered sibling calls on the same trailing assistant message, then continues
@@ -2750,9 +2750,9 @@ type turnTiming struct {
 }
 
 // turnLatency accumulates the TTFT anchor and the inter-token gap series for a
-// single streamed turn off an injected port.Clock. It SPLITS the two concerns the
-// stream switch used to conflate (issue #155): TTFT anchors on the FIRST
-// OBSERVABLE OUTPUT — text, reasoning, a reasoning replay item, or a tool call
+// single streamed turn off an injected port.Clock. It SPLITS two concerns
+// (issue #155): TTFT anchors on the FIRST OBSERVABLE OUTPUT — text, reasoning, a
+// reasoning replay item, or a tool call
 // (noteFirstOutput) — while the inter-token gap series counts ONLY STREAMING
 // content deltas (text or reasoning, noteStreamDelta), so a tool call or reasoning
 // replay blob anchors TTFT without polluting the gap series. With no Clock injected
@@ -3467,9 +3467,9 @@ func (e *Engine) maybeCompact(ctx context.Context, r *Run, sess *session.Session
 	sess.RecordAuxiliaryUsage(usage)
 	if err != nil {
 		// Compaction is best-effort: a failure must not abort the run. Keep the
-		// existing history and continue — but no longer SILENTLY: surface the
+		// existing history and continue — but not SILENTLY: surface the
 		// degraded mode on the operator channel so a run that keeps growing
-		// uncompacted is diagnosable. Behaviour is unchanged (still continue).
+		// uncompacted is diagnosable.
 		// ErrCompactionWouldOrphan (a compactor refusing to emit a tool-pairing-
 		// invalid history) lands here too, reusing this WARN — no new diagnostics
 		// line, preserving the "loop emits exactly THREE lines" invariant (the third
@@ -3480,8 +3480,8 @@ func (e *Engine) maybeCompact(ctx context.Context, r *Run, sess *session.Session
 	if !result.Changed {
 		return false
 	}
-	// Capture the pre-compaction history BEFORE ReplaceHistory mutates it (cloud-native
-	// Phase 3b non-destructive archive). Messages are immutable per-element, so a slice
+	// Capture the pre-compaction history BEFORE ReplaceHistory mutates it (the
+	// non-destructive compaction archive). Messages are immutable per-element, so a slice
 	// reference is safe to hold across the replace — it stays the genuine pre-compaction
 	// history, never the rewritten tail. The archive is emitted only AFTER a successful
 	// replace below; the degrade-and-continue branches above emit nothing (no compaction
@@ -3660,7 +3660,7 @@ var childDrainGrace = 1 * time.Second
 // The join is TWO-PHASE because phase 1's cap can be burned by the run's OWN
 // emit backpressure, not a wedged child: a child whose subagent.end send is
 // parked on a full events channel (the consumer stopped draining) cannot reach
-// markDone until that send aborts — and the abort signal (emitAbort) used to
+// markDone until that send aborts — and the abort signal (emitAbort) would otherwise
 // close only in seal, AFTER the join had already given up. So: phase 1 joins
 // under childDrainCap; on expiry, abortEmits() unblocks every emit-parked child
 // NOW and phase 2 re-joins the remainder under childDrainGrace; only children
@@ -3686,7 +3686,7 @@ func (e *Engine) drainChildren(ctx context.Context, r *Run) {
 	joins := r.children.cancelLiveBackground()
 	if len(joins) > 0 {
 		if pending := joinChildren(joins, childDrainCap); len(pending) > 0 {
-			// Phase 2: unblock emit-parked children, then grant the short grace.
+			// Second pass: unblock emit-parked children, then grant the short grace.
 			r.children.abortEmits()
 			if pending = joinChildren(pending, childDrainGrace); len(pending) > 0 {
 				abandoned := make([]string, 0, len(pending))

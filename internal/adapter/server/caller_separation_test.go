@@ -333,7 +333,7 @@ func TestCallerSeparation_Scenario6_SameNameDifferentOwnersDoNotCollide(t *testi
 
 // TestCallerSeparation_Scenario6_SameOwnerCollisionStillRejected pins AC6.2: a
 // create using a name already used by the SAME owner is still rejected,
-// unchanged from today's behavior — only the CROSS-owner case changed.
+// — only the CROSS-owner case is admitted.
 func TestCallerSeparation_Scenario6_SameOwnerCollisionStillRejected(t *testing.T) {
 	svc, _, _, alice, _ := callerSeparationFixture(t)
 

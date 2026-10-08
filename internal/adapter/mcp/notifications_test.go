@@ -90,7 +90,7 @@ func TestReconciliationCandidateListProjectionStaysFrozenAfterNotification(t *te
 	}
 }
 
-// TestToolListChangedNotificationRefreshesSnapshot is the Phase-1 acceptance
+// TestToolListChangedNotificationRefreshesSnapshot is the acceptance
 // test: with the standalone SSE stream enabled, adding a tool
 // server-side fires notifications/tools/list_changed, the handler sets the
 // toolsDirty flag, and the next Tools() lazily re-lists and picks up the new

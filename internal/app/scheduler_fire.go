@@ -62,8 +62,8 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 		// mutating (Mutating=false) runs in plan mode (read-only toolset) — the
 		// conservative posture for unattended runs. A schedule that opts into
 		// mutating (Mutating=true) honors its explicit Mode (or default if unset).
-		// This is the fire-time enforcement; the create-seam (Phase 2) will
-		// additionally reject Mutating=false with a write-capable Mode at save time.
+		// This is the fire-time enforcement; the create seam (the schedule
+		// manager) additionally rejects Mutating=false with a non-plan Mode at save time.
 		mode := sched.Spec.Mode
 		if mode == "" {
 			mode = session.ModeDefault
@@ -147,7 +147,7 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 			StartedAt:    startedAt,
 			Deadline:     deadline,
 		})
-		// "Started" notice (issue #386, Phase 4a): route a fenced-untrusted
+		// "Started" notice (issue #386): route a fenced-untrusted
 		// harness note carrying ONLY the schedule name + fire/session id back
 		// into the fire's origin conversation, right AFTER RecordFireStart.
 		// A nil deliverStarted is the byte-identical no-start-notice path.

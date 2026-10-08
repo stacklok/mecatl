@@ -1115,8 +1115,8 @@ func (s *Supervisor) selectMemberWorkspace(ctx context.Context, spec MemberSpec,
 // DOES carry the dirty-overlay, so a degraded read-only-member fork could surface this
 // advisory symmetrically to a member's prompt — a deliberate scope boundary: the
 // surfacing was implemented for the read-only SUBAGENT (the user's case), and threading
-// it through the member-engine prompt assembly is a separate, intentional follow-up,
-// not a silent omission. The mutating-member forker (s.forker) is force-copy and never
+// it through the member-engine prompt assembly is not implemented (an intentional
+// boundary, not a silent omission). The mutating-member forker (s.forker) is force-copy and never
 // degrades, so for it the discard is correct unconditionally.
 func forkOrWrap(ctx context.Context, f tool.EnvironmentForker, base tool.Environment, name string, ledgerFactory func() tool.ReadLedger) (tool.Environment, func() error, error) {
 	child, cl, _, err := f.Fork(ctx, base, name)
@@ -1188,7 +1188,7 @@ type MemberStopReason string
 const (
 	// StopReasonError is a run that failed (StopError) or a session that could not be
 	// returned to idle — both the internal-fault class. A failed run is RECOVERED
-	// (issue #318), so this reason no longer implies the session is undrivable; only
+	// (issue #318), so this reason does not imply the session is undrivable; only
 	// memberRT.nonResumable says that.
 	StopReasonError MemberStopReason = "error"
 	// StopReasonCancelled is a member ended by ctx cancellation.
@@ -1578,8 +1578,8 @@ func (s *Supervisor) runTurn(ctx context.Context, ti turnInput, evCh chan<- Team
 	// idle — and is set ONLY when that transition itself failed. `stopped` keeps its
 	// MEANING: a member BENCHED by its errors is descheduled and reports StopReasonError,
 	// because the honest signal to the lead ("this member stopped before finishing") and
-	// the task release that lets a peer pick the work up both hang off it. It is no longer
-	// where an errored round LANDS, though: the bounded-retry block ~20 lines below leaves
+	// the task release that lets a peer pick the work up both hang off it. It is not
+	// where every errored round LANDS, though: the bounded-retry block ~20 lines below leaves
 	// a member that is still under the cap schedulable and stop-reason-free. Read the two
 	// together — this comment describes the benched end state, not every errored round.
 	var reopenErr error
@@ -2188,7 +2188,7 @@ func MemberSessionID(teamID, member string) session.SessionID {
 // (team-namespaced) prefix. The prefix is "<memberSessionIDPrefix><teamID>" so the
 // full id is "team-<teamID>-<member>" — identical to MemberSessionID(teamID, name)
 // — keeping the supervisor's saved id in lock-step with the inspect tool's derived
-// id. A supervisor constructed without WithMemberSessionPrefix keeps the historical
+// id. A supervisor constructed without WithMemberSessionPrefix keeps the
 // "team-<member>" shape (no team id), used only by tests that do not persist.
 func (s *Supervisor) sessionID(name string) session.SessionID {
 	return session.SessionID(fmt.Sprintf("%s-%s", s.idPrefix, name))

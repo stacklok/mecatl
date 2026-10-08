@@ -467,8 +467,8 @@ func VerdictString(v ApprovalVerdict) string {
 // CompactionArchivePayload is the structured detail carried by an
 // EvCompactionArchive Event: the pre-compaction conversation that ReplaceHistory
 // replaced. It is the durable, non-destructive archive of the history a
-// compaction would otherwise drop — a later consumer (the Phase 3 reconstruct
-// gate, issue #28 session-scoped detach) replays the EventLog and recovers the
+// compaction would otherwise drop — a consumer (e.g. the eventsource
+// reconstruction adapter) replays the EventLog and recovers the
 // pre-compaction turns that the session snapshot no longer holds.
 //
 // CAPTURE ORDERING (load-bearing): the loop captures the original Messages slice

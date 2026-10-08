@@ -49,9 +49,9 @@ func TestGuardrailCompositionReturnsExactProviderModelIdentity(t *testing.T) {
 }
 
 // TestSlotsByteIdenticalDefault is the G1 pin: with NO slot configured
-// (cfg.ModelSlots == nil), every routed call site keeps its EXACT pre-feature
+// (cfg.ModelSlots == nil), every routed call site keeps its EXACT unrouted
 // behaviour — the session model — and resolveSlotModel returns ("", false) for every
-// slot. This is the byte-identical guarantee the feature commits to.
+// slot.
 func TestSlotsByteIdenticalDefault(t *testing.T) {
 	const sessionModel = "gpt-4o"
 
@@ -79,7 +79,7 @@ func TestSlotsByteIdenticalDefault(t *testing.T) {
 		t.Fatalf("CascadeCompactor.Model = %q, want the session model %q (no slot ⇒ byte-identical)", cc.Model, sessionModel)
 	}
 
-	// E2 Ask-reviewer: with no slot, the reviewer model is exactly today's
+	// E2 Ask-reviewer: with no slot, the reviewer model is exactly
 	// lookupModelAlias(cfg, SubagentAskReviewerModel).
 	revCfg := Config{
 		Model:                    sessionModel,
@@ -95,7 +95,7 @@ func TestSlotsByteIdenticalDefault(t *testing.T) {
 		t.Fatalf("reviewer Model = %q, want today's resolved %q (no slot ⇒ byte-identical)", revDeps.Model, wantReviewer)
 	}
 
-	// E3 Guardrail: with no slot, the checker model is today's resolved value
+	// E3 Guardrail: with no slot, the checker model is the gate's resolved value
 	// (UseMock passes the literal through). Driving the checker over a mock observer
 	// shows the model that actually reached the provider.
 	gCfg := Config{Model: sessionModel, UseMock: true, GuardrailsModel: "guard-id"}

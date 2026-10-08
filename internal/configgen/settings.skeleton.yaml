@@ -460,9 +460,8 @@
 #   # Allowlist is the OPERATOR-TIER, non-wideable cap: the set of model selectors (alias
 #   # names and/or concrete ids) a PROJECT-tier models: block may bind to. An empty/absent
 #   # allowlist means project models stay WARN-ignored (the opt-in: no cap ⇒ no project
-#   # override, byte-identical to pre-Phase-4). It is honoured ONLY from the operator
-#   # tiers; a project-tier allowlist: key is ignored with a WARN (a project cannot widen
-#   # its own cap).
+#   # override). It is honoured ONLY from the operator tiers; a project-tier allowlist:
+#   # key is ignored with a WARN (a project cannot widen its own cap).
 #   allowlist: []
 #   # Router is the OPERATOR-TIER semantic Subagent model-router taxonomy: a classifier
 #   # slot, the routing categories, the default category, and the YAML kill-switch. It is

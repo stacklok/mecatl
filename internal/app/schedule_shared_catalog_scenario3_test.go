@@ -340,7 +340,7 @@ func TestScheduleSharedCatalog_Scenario3_OriginAndDeliveryWired(t *testing.T) {
 // TestScheduleSharedCatalog_Scenario3_RehydratedSessionKeepsTool pins AC3.4: a
 // default-profile session persisted, then reloaded via needsRehydration (the
 // restart path — a second Build over the SAME store), still resolves the
-// Schedule tool. The rehydration no longer lands the session on a schedule-less
+// Schedule tool. The rehydration does not land the session on a schedule-less
 // shared engine: the second Build's eager scheduleManagerFactory bind carries
 // the tool, so the restored session (restored onto the shared engine) dispatches
 // it — proven by the tool EXECUTING (no `unknown tool` error) through the

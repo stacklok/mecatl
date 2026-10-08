@@ -10,9 +10,8 @@ import (
 	"github.com/stacklok/mecatl/internal/app"
 )
 
-// trust.go is the mecatui PRE-TUI first-encounter trust prompt (Workspace-Trust
-// feature, Phase 2c — the FINAL phase, and the only PRODUCTION caller of
-// app.RememberTrust → workspacetrust.Remember).
+// trust.go is the mecatui PRE-TUI first-encounter trust prompt (the only
+// PRODUCTION caller of app.RememberTrust → workspacetrust.Remember).
 //
 // # Why here (the render-layer rule)
 //
@@ -22,7 +21,7 @@ import (
 // render purely from proto Events and import no engine/... or internal/... package. The prompt
 // imports internal/app (the trust fold + the Remember write seam), which is allowed
 // HERE: cmd/mecatui's main is a composition root, exactly like cmd/mecated. No proto
-// event is added (the in-TUI trust modal is the cut Phase 3).
+// event is involved (there is no in-TUI trust modal).
 //
 // # The flow
 //

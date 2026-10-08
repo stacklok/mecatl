@@ -245,8 +245,7 @@ const assistantBodyHang = 2
 // newRenderer builds a renderer for a theme, seeded with the LIVE chord
 // markings (hk) so inline-card affordances that reference rebindable actions
 // (Toolcalls/Agents) reflect any override (issue #457). With default keys hk
-// resolves to exactly the literals the affordances used to hardcode, so the
-// goldens stay byte-identical.
+// resolves to the default chord literals the goldens pin.
 func newRenderer(th theme.Theme, hk helpKeys) *renderer {
 	return &renderer{
 		th:     th,
@@ -1163,7 +1162,7 @@ func subagentModelLabel(category, routedModel, routingReason, model string) stri
 	return ""
 }
 
-// delegationModelLabel preserves the historical model line when decision is nil.
+// delegationModelLabel renders the plain model line when decision is nil.
 // A fallback may add one candidate line, but the actual model always comes from
 // the existing authoritative model field rather than the rejected candidate.
 func delegationModelLabel(category, routedModel, routingReason, model string, decision *client.RoutingDecision) string {
@@ -1338,7 +1337,7 @@ const maxTeamNameWidth = 16
 // a "✓" for a clean TERMINAL member (the team has ended — b.teamDone), a hollow "○" for
 // an IDLE member (finished its current round, awaiting the next round or synthesis),
 // and a filled "◆" for one actively working. The stopped state is checked first so the
-// overlay no longer flips a stopped member to "✓ done" and contradicts the supervisor.
+// overlay never flips a stopped member to "✓ done" and contradicts the supervisor.
 func teamGlyph(ln *teamLane, teamDone bool) string {
 	switch {
 	case teamDone && ln.stopped:
@@ -1940,7 +1939,7 @@ func (r *renderer) summarizeArgs(rawArgs string) (string, bool) {
 }
 
 // argRollupMarker formats the collapsed-args footer. Full arguments are available
-// from the Toolcalls inspector; tool cards no longer expand in place.
+// from the Toolcalls inspector; tool cards do not expand in place.
 func (r *renderer) argRollupMarker(n int) string {
 	if n <= 0 {
 		return "  … " + r.marks.toolcalls + " inspect"
@@ -2268,7 +2267,7 @@ func (*renderer) summarizeResult(body string) (string, bool) {
 // line-capped/full body path (Read and prose results unchanged).
 
 // collapseMarker formats the line-cap footer for a tool card. Complete details
-// remain in the Toolcalls inspector; tool cards no longer expand in place.
+// remain in the Toolcalls inspector; tool cards do not expand in place.
 func (r *renderer) collapseMarker(n int) string {
 	return collapseMarkerMark(n, r.marks.toolcalls)
 }

@@ -241,7 +241,7 @@ func TestEmbeddedConfigEnablesAgentDefs(t *testing.T) {
 
 // TestEmbeddedConfigPermissionPosture asserts the TUI discovers the conventional
 // per-project permission config and imports Claude-Code settings (issue #13), but
-// that project TRUST is DEFAULT FALSE (WORKSPACE-TRUST Phase 0): unified with
+// that project TRUST is DEFAULT FALSE: unified with
 // mecated, a project's ALLOW rules + project soul are gated behind --trust-project.
 func TestEmbeddedConfigPermissionPosture(t *testing.T) {
 	ac := embeddedConfig(config{workspace: "/ws", model: "m", mock: true}, port.NopDiagnostics{})
@@ -1465,7 +1465,7 @@ func TestParseFlagsSubagentModelRouter(t *testing.T) {
 // TestPostureRefusalReason proves the generalised root-refusal (the exported
 // app.PostureRefusalReason) gates auto AND yolo (both waive the mutate-ask floor) while
 // strict/trusted are NEVER refused (they suppress no prompt), and only when PRIVILEGED.
-// It would fail if the gate regressed to the historical yolo-only check.
+// It would fail if the gate regressed to a yolo-only check.
 func TestPostureRefusalReason(t *testing.T) {
 	tests := []struct {
 		name       string

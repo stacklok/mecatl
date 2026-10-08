@@ -21,7 +21,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-// TestApproveAfterRestartE2E is the cloud-native Phase 2 falsifiable gate through
+// TestApproveAfterRestartE2E is the falsifiable approve-after-restart gate through
 // the FULL composition (app.Build → server.Service), offline. It mirrors
 // TestSelectorSessionSurvivesRestartE2E's two-Build shape:
 //

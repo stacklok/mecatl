@@ -494,7 +494,7 @@ func (f *FileSystem) Glob(ctx context.Context, pattern string) ([]string, error)
 
 // globWalkFS makes cancellation visible to doublestar as an I/O error at every
 // traversal boundary while masking ordinary filesystem errors to preserve
-// GlobWalk's historical ignore-and-continue semantics. It exposes only the
+// GlobWalk's ignore-and-continue semantics. It exposes only the
 // interfaces doublestar currently consults: fs.FS, fs.ReadDirFS, and fs.StatFS.
 // Deliberately do not forward optional interfaces from base; doing so would
 // couple cancellation behavior to speculative traversal paths instead of
@@ -537,7 +537,7 @@ func (g globWalkFS) Stat(name string) (fs.FileInfo, error) {
 	return info, nil
 }
 
-// globNotExist preserves GlobWalk's historical ignore-and-continue behavior for
+// globNotExist preserves GlobWalk's ignore-and-continue behavior for
 // ordinary Stat errors while WithFailOnIOErrors propagates context cancellation.
 // This masking depends on not enabling doublestar.WithFailOnPatternNotExist.
 func globNotExist(op, name string) error {
@@ -1512,7 +1512,7 @@ func (w *Workspace) grepAll(search *grepSearch) error {
 
 // CommandRunner runs shell commands via /bin/sh -c with a fixed working
 // directory (the session root). It is the local implementation of
-// tool.CommandRunner; a Workspace no longer runs commands itself, so a
+// tool.CommandRunner; a Workspace does not run commands itself, so a
 // shell-less deployment simply omits this runner.
 type CommandRunner struct {
 	root  string

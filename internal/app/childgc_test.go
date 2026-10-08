@@ -305,7 +305,7 @@ func TestSessionStorageContinuity_Scenario5_AutomaticManualPlannerParity(t *test
 }
 
 // TestChildGCMainPassDisabledByDefault pins that with the main knobs at 0,
-// UNPREFIXED sessions are NEVER touched even when ancient — the historical
+// UNPREFIXED sessions are NEVER touched even when ancient — the
 // "main sessions are never deleted" guarantee holds for the zero-config default
 // (the mecated posture). It is the safety twin of TestChildGCMainSessionsNeverDeleted
 // but with the CHILD passes also off, so ONLY the main knobs could touch them.

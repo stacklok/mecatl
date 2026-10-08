@@ -957,7 +957,7 @@ func TestHTTPRunTeamEmptyTeamOutcomeOnly(t *testing.T) {
 	}
 }
 
-// TestHTTPScheduleLifecycle (S7): the schedule REST surface over
+// TestHTTPScheduleLifecycle: the schedule REST surface over
 // httptest.NewServer(NewHTTPHandler(svc)) — create+get+fire+pause over a
 // jsonlstore-backed Service, plus the no-store→501 path on a memstore-backed
 // Service. Mirrors the repo's http_test.go convention.
@@ -988,7 +988,7 @@ func TestHTTPScheduleLifecycle(t *testing.T) {
 	if !created.GetSchedule().GetState().GetEnabled() {
 		t.Error("Enabled = false, want true")
 	}
-	// Singleton defaulted to true (S3: the create-seam applies the default).
+	// Singleton defaulted to true (the create-seam applies the default).
 	if !created.GetSchedule().GetSpec().GetSingleton() {
 		t.Error("Singleton = false, want true (the create-seam default)")
 	}
@@ -1135,7 +1135,7 @@ func TestHTTPCreateSessionRejectsLegacyCarryoverField(t *testing.T) {
 	}
 }
 
-// TestHTTPScheduleNoStore501 (S7): a Service with no ScheduleStore (memstore)
+// TestHTTPScheduleNoStore501: a Service with no ScheduleStore (memstore)
 // reports schedule RPCs as 501.
 func TestHTTPScheduleNoStore501(t *testing.T) {
 	svc := newService(t, mockllm.New(), allowRules())

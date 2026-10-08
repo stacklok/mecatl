@@ -28,10 +28,10 @@ import (
 	"github.com/stacklok/mecatl/internal/syscaller"
 )
 
-// TestSchedulerFire is the Phase 1f user-reachable gate (issue #189): a full
-// app.Build with --scheduler over a real on-disk jsonlstore (which exposes a
+// TestSchedulerFire is the user-reachable scheduler gate (issue #189): a full
+// app.Build with the scheduler enabled over a real on-disk jsonlstore (which exposes a
 // ScheduleStore), a one-shot schedule saved to the store, and the scheduler's
-// tick loop firing it. It proves the whole Phase 1 arc end-to-end:
+// tick loop firing it. It proves the whole fire path end-to-end:
 //
 //  1. the scheduler started (non-nil on the Service);
 //  2. within a bounded timeout a "sched--" session was created + persisted
@@ -536,8 +536,8 @@ func TestRenderCarriedContextNeutralisesForgedFence(t *testing.T) {
 	}
 }
 
-// TestRenderCarriedContextDisabledByDefault pins the pre-feature path is
-// byte-identical: CarryContext=false (the default) produces NO preamble. The
+// TestRenderCarriedContextDisabledByDefault pins the default path:
+// CarryContext=false (the default) produces NO preamble. The
 // makeFireFunc gate is `if sched.Spec.CarryContext && ...`, so a non-opted-in
 // schedule's prompt is the spec's prompt verbatim. This test asserts the helper
 // returns "" for an empty/nil prior session (the degrade path) and that the

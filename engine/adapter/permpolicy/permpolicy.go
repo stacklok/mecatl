@@ -77,8 +77,8 @@ type Policy struct {
 // SINGLE source both the composition layer (internal/app childRules) and every
 // fixture that means "default child posture" build from, so the two cannot
 // drift. A fresh slice is returned per call (callers may append configured
-// rules). Behaviour-neutral vs the historical zero-Scope allow-all when no
-// configured rules are present (the floor exception keys on the ASK side's
+// rules). Equivalent to a zero-Scope allow-all when no configured rules are
+// present (the floor exception keys on the ASK side's
 // scope, never the allow's).
 func AllowAllFloorRules() []governance.Rule {
 	return []governance.Rule{{Scope: governance.ScopeBuiltinDefault, Effect: governance.Allow}}

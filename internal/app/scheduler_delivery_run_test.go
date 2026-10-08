@@ -1083,7 +1083,7 @@ func (*errQueue) MarkDelivered(_ context.Context, _ session.SessionID, _ uint64)
 
 var _ port.DeliveryQueue = (*errQueue)(nil)
 
-// --- Phase 4a: started-notice delivery tests (deliverFireStarted) ---
+// --- started-notice delivery tests (deliverFireStarted) ---
 
 // TestFireStarted_StartedNoticeEnqueuedWithIDs verifies the started notice is
 // enqueued via deliverFireStarted carrying the schedule name + fire id.

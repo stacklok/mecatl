@@ -90,8 +90,8 @@ type EnvironmentForker interface {
 //     The composition-injected merger is SERIALIZED process-wide (a
 //     single mutex in a serializing decorator) so concurrent merges from
 //     Parallel never interleave their writes into a parent workspace.
-//   - nil merger (the default) means no auto-merge: the historical no-auto-merge
-//     boundary holds unchanged. ParallelTool.ReadOnly()/SubagentTool.ReadOnly()
+//   - nil merger (the default) means no auto-merge: the no-auto-merge
+//     boundary holds. ParallelTool.ReadOnly()/SubagentTool.ReadOnly()
 //     stay true so read-only fan-out keeps batching in parallel; but a CALL
 //     that will actually merge is excluded from the concurrent read batch via
 //     MutatesParent (dispatch-serial, flushed alone — see agent.parentMutatingCaller),

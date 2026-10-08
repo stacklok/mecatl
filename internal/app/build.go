@@ -204,7 +204,7 @@ type Config struct {
 	// RedisURL (mecak8s) points the session store + durable event log
 	// at a Redis managed service (internal/adapter/redisstore). It is mutually
 	// exclusive with StoreDir and SessionStoreURL (validateDriverConfig: one
-	// store per seam). Empty keeps today's behaviour byte-identical. The Redis
+	// store per seam). Empty leaves the Redis store unused. The Redis
 	// adapter reuses sessnap-json/1 snapshots + the event-log envelope shape, so
 	// it is a TRANSPORT alternative to jsonlstore — validated by the same
 	// conformance suites. The Store doubles as its own EventLog (like jsonlstore).
@@ -278,7 +278,7 @@ type Config struct {
 	// declare "toolhive is my default despite my API key" persistently in settings.yaml.
 	DefaultProviderFlagSet bool
 
-	// OpenRouter (multi-provider Phase 0, S1): the OpenRouter provider rides the
+	// OpenRouter: the OpenRouter provider rides the
 	// SAME stateless openai adapter (it speaks the Responses API) with the
 	// OpenRouter base URL substituted. OpenRouterKey is the credential (the cmd
 	// layer reads it from OPENROUTER_API_KEY); when empty the registry falls back
@@ -334,8 +334,8 @@ type Config struct {
 	// ToolHive LLM gateway proxy: reading ToolHive's own config file (via the
 	// toolhivellm adapter) and, if an `llm:` block is found, registering an
 	// intent-driven "toolhive" provider entry — no API key needed. The ZERO
-	// VALUE is false so every existing hand-built Config / test is
-	// byte-identical with no edits; the `--toolhive-llm` FLAG DEFAULTS TRUE
+	// VALUE is false so a hand-built Config / test does not register
+	// the entry; the `--toolhive-llm` FLAG DEFAULTS TRUE
 	// (the cmd layer supplies the default-ON posture, mirroring `--toolhive`
 	// for MCP workload discovery — an unrelated feature despite the similar
 	// name). Registration is probe-independent (R1.1): the proxy need not be
@@ -352,12 +352,12 @@ type Config struct {
 	// ToolhiveLLMMode (issue #265) selects the toolhive provider's routing:
 	// "auto" (the default) picks direct when the ToolHive config's OIDC trio
 	// (gateway_url + issuer + client_id) is configured, else falls back to the
-	// loopback proxy (today's byte-identical behaviour when OIDC is absent);
+	// loopback proxy when OIDC is absent;
 	// "proxy" forces the loopback reverse proxy regardless of OIDC; "direct"
 	// forces the real gateway_url with an in-process OIDC token, and fails
 	// Build (validateToolhiveLLMMode) when OIDC is not configured. The empty
-	// value is "auto" so a hand-built Config / test that never set the flag
-	// stays byte-identical to the pre-#265 default. An explicit
+	// value is "auto", so a hand-built Config / test that never set the flag
+	// uses the proxy unless OIDC is configured. An explicit
 	// --toolhive-llm-base-url override is ALWAYS proxy mode (it is a loopback
 	// address; direct derives its base URL from the config's gateway_url), so
 	// this flag is ignored on the override path.
@@ -476,7 +476,7 @@ type Config struct {
 	// mid-run). 0 disables the pass (fire sessions are never swept). Default
 	// applied at the cmd layer: 7*24h (7 days) when scheduling is on, so a
 	// durable store does not grow without bound; 0 (the zero-config default)
-	// leaves fire sessions untouched (byte-identical to pre-Phase-2). A
+	// leaves fire sessions untouched. A
 	// non-prunable store is never swept.
 	ScheduleFireRetention time.Duration
 
@@ -498,11 +498,11 @@ type Config struct {
 	sessionLiveness              port.SessionLiveness
 	maintenanceMutationAvailable func() bool
 
-	// Remote store drivers (Phase B): gRPC driver endpoints that replace the
+	// Remote store drivers: gRPC driver endpoints that replace the
 	// LOCAL session/memory stores with internal/adapter/grpcdriver clients.
 	// SessionStoreURL is mutually exclusive with StoreDir, MemoryStoreURL with
 	// MemoryDir (validateDriverConfig, fatal at the top of Build). All-empty
-	// keeps today's behaviour byte-identical. The Driver* auth/TLS fields apply
+	// uses the local stores. The Driver* auth/TLS fields apply
 	// to EVERY driver connection (equal URLs share one ClientConn via the
 	// build-scoped driverConns cache): DriverAuthToken is a bearer token
 	// (loopback may ride plaintext; a non-loopback target demands DriverTLS or
@@ -511,7 +511,7 @@ type Config struct {
 	// user-model store has no remote driver: buildUserModelStore always opens
 	// it from a local directory.
 	//
-	// Phase C1 adds the content-source drivers: SkillSourceURL replaces the
+	// Content-source drivers: SkillSourceURL replaces the
 	// LOCAL skills discovery (mutually exclusive with SkillsDirs/
 	// SkillsConventional — one source per seam) with a
 	// mecatl.driver.v1.SkillSourceService client; the driver's skill bundles
@@ -522,7 +522,7 @@ type Config struct {
 	// client occupying the USER slot of the soul selection precedence. Both are
 	// probed at build (fatal on an unreachable driver — loud-misconfig); both
 	// share the same Driver* auth/TLS posture and per-target connection cache.
-	// Phase C2 adds the remaining content-source drivers: AgentSourceURL
+	// AgentSourceURL
 	// replaces the LOCAL agent-definition discovery (mutually exclusive with
 	// AgentsDirs; the default-true AgentsConventional is simply SUPERSEDED —
 	// the driver branch constructs no conventional sources and narrates the
@@ -539,25 +539,25 @@ type Config struct {
 	SoulSourceURL    string
 	AgentSourceURL   string
 	CommandSourceURL string
-	// EventLogURL (cloud-native Phase 3c) points the DURABLE event log at a
+	// EventLogURL points the DURABLE event log at a
 	// mecatl.driver.v1.EventLogService driver, INDEPENDENT of the session store
 	// (the event log is a separate seam — Append-beside-the-relay, server-
-	// streaming Read). Empty keeps today's behaviour byte-identical: the local
+	// streaming Read). Empty uses the store-derived default: the local
 	// jsonlstore Store doubles as its own EventLog, the memstore path uses its
 	// in-memory sibling, and a session-store DRIVER without this flag records
 	// nothing (the relay no-ops). It shares the same Driver* auth/TLS posture
 	// and per-target connection cache as the store drivers.
 	EventLogURL string
-	// ScheduleStoreURL (cloud-native Phase 5, issue #257) points the durable
+	// ScheduleStoreURL (issue #257) points the durable
 	// schedule registry at a mecatl.driver.v1.ScheduleStoreService +
 	// ScheduleOneShotReArmerService driver, INDEPENDENT of the session store
 	// (the schedule store is a separate seam: an
 	// independent override wins, else the configured store is type-asserted,
-	// else no scheduling). Empty keeps today's behaviour byte-identical: the
+	// else no scheduling). Empty uses accessor discovery: the
 	// scheduler + the fire-path's RecordFireStart/RecordFireProgress/RecordFire
 	// discover the store by type-asserting the configured store for a
 	// ScheduleStore() ACCESSOR (the jsonlstore + redisstore expose one); a store
-	// that does not (the in-memory default) is the byte-identical no-scheduling
+	// that does not (the in-memory default) takes the no-scheduling
 	// path. When set, the override REPLACES that discovery: the SAME grpcdriver
 	// client backs the tick loop's Store, the fire-path's fireStore, the
 	// delivery-queue gate, AND the in-chat Schedule TOOL's manager
@@ -582,12 +582,13 @@ type Config struct {
 	DriverTLSCert    string
 	DriverTLSKey     string
 
-	// Session leasing (cloud-native Phase 4): OPTIONAL cross-process
+	// Session leasing: OPTIONAL cross-process
 	// single-writer enforcement for multi-replica deployments over a shared store.
 	// Exactly ONE backend is selected, in this precedence — an INDEPENDENT override
-	// first (mirroring --event-log-url being independent of the store), else the
-	// configured store is type-asserted for port.SessionLease, else NO lease is
-	// wired (the byte-identical, single-writer-by-affinity v1 default):
+	// first (mirroring --event-log-url being independent of the store), else a
+	// local StoreDir gets an automatic flock lease, else the configured store is
+	// type-asserted for port.SessionLease, else NO lease is wired (the
+	// single-writer-by-affinity default):
 	//   - SessionLeaseURL: a mecatl.driver.v1.SessionLeaseService driver (the
 	//     multi-host / multi-replica path; shares the Driver* auth/TLS + connection
 	//     cache).
@@ -605,7 +606,7 @@ type Config struct {
 	SessionLeaseTTL           time.Duration
 	SessionLeaseRenewInterval time.Duration
 
-	// Soul (issue #14, Phase 1): a user-scoped, agent-READ-ONLY persona fragment
+	// Soul (issue #14): a user-scoped, agent-READ-ONLY persona fragment
 	// injected as a turn-0 user message. ON by default reading the conventional
 	// $XDG_CONFIG_HOME/mecatl/soul.md (fallback ~/.config/mecatl/soul.md) — a
 	// missing file is fail-soft, so it costs nothing. SoulPath overrides the path
@@ -613,7 +614,7 @@ type Config struct {
 	// SoulAssembler is not wired (nil source → no-op). The adapter is read-only by
 	// construction: no tool can write the soul.
 	//
-	// Soul DRIFT BASELINE (issue #14, Phase 3, Item 1): on load the harness records
+	// Soul DRIFT BASELINE (issue #14): on load the harness records
 	// the soul's content hash in a sidecar (<soulPath>.sha256) trust-on-first-use; a
 	// later run whose hash differs logs a drift WARN and still loads (the persona is
 	// the operator's own). ApproveSoul (--approve-soul) (re)writes the baseline to the
@@ -626,7 +627,7 @@ type Config struct {
 	ApproveSoul bool
 	SoulStrict  bool
 
-	// User model (issue #14, Phase 2): a user-scoped, cross-PROJECT memory of
+	// User model (issue #14): a user-scoped, cross-PROJECT memory of
 	// durable FACTS about the operator, exposed through explicit user-memory tools
 	// and reloaded per provider request into the bounded volatile system suffix.
 	// It is a
@@ -743,12 +744,11 @@ type Config struct {
 	// rubric (agent.WithAskReviewPolicy is applied only when non-empty).
 	SubagentAskReviewerPolicy string
 
-	// --- Subagent model router (Phase 5): the OPT-IN semantic model router.
+	// --- Subagent model router: the OPT-IN semantic model router.
 	// A tiny one-turn classifier (on the `router` slot) reads a plain Subagent
 	// delegation's task prompt + an operator-defined category taxonomy and picks which
 	// CATEGORY of model should run it; composition maps the category to a concrete model
-	// and mints the child on it. OFF by default (no categories ⇒ byte-identical to no
-	// router). It is OPERATOR-TIER ONLY: the taxonomy is read from the
+	// and mints the child on it. OFF by default (no categories ⇒ no routing). It is OPERATOR-TIER ONLY: the taxonomy is read from the
 	// user-global settings.yaml `models.router:` subtree (a project-tier router: is
 	// stripped with a WARN). The TAXONOMY
 	// is the enable — a non-empty RouterCategories turns the router ON unless explicitly
@@ -828,7 +828,7 @@ type Config struct {
 	// FS escape at posture AUTO is routed through the guardrail checker as a
 	// composition-level pre-check (an unsafe verdict denies; a checker error
 	// fails closed to the write-escape Ask). Default false = the un-routed
-	// posture table (auto read-allow / write-ask), byte-identical to before.
+	// posture table (auto read-allow / write-ask).
 	GuardrailsEscape bool
 
 	// ModelAliases maps a short alias (e.g. "sonnet"/"opus"/"haiku"/"fast") to a
@@ -837,18 +837,19 @@ type Config struct {
 	ModelAliases map[string]string
 
 	// ModelSlots binds a named internal lightweight LLM call (a "slot") to a model
-	// selector — an alias or a concrete id (Phase 1+2). The wired slots
-	// this slice routes are "compaction", "ask-reviewer", and "guardrail"; semantic
-	// TIER keys ("cheap"/"fast"/"reasoning") give a default a slot falls through to
-	// (each routed slot defaults to "cheap"). It is COMPOSITION-ONLY: every value is
+	// selector — an alias or a concrete id. The recognised call slots are listed in
+	// knownSlotNames (compaction, ask-reviewer, guardrail, reflection, synthesis,
+	// title, plan, router); semantic TIER keys ("cheap"/"fast"/"reasoning") give a
+	// default a slot falls through to (slotDefaultTier: most default to "cheap",
+	// plan to "reasoning"). It is COMPOSITION-ONLY: every value is
 	// resolved THROUGH lookupModelAlias (the same alias machinery the agent-def
 	// `model:` path uses), so the domain/agent never sees a slot. EMPTY/ABSENT ⇒
-	// byte-identical default (the call keeps the session model — resolveSlotModel
-	// returns ("", false) and every routed site keeps its pre-feature behaviour). It
-	// is OPERATOR-TIER ONLY this slice: read from --model-slot + the user-global
-	// settings.yaml `models.slots:` subtree (folded by foldOperatorModelSlots), never
-	// a project-tier file (a project re-pointing a slot is deferred to the
-	// allowlist-capped Layer-3 work). Resolution is FAIL-SOFT: a typo'd slot key or an
+	// the call keeps the session model (resolveSlotModel returns ("", false) and
+	// every routed site uses its unconfigured behaviour). Sources: --model-slot,
+	// the user-global settings.yaml `models.slots:` subtree (folded by
+	// foldOperatorModelSlots), and a TRUSTED project's `.mecatl/settings.yaml`
+	// models.slots block, capped by the operator allowlist
+	// (foldProjectModelBindings). Resolution is FAIL-SOFT: a typo'd slot key or an
 	// alias meaning inherit WARNs and degrades to the session model — a broken
 	// housekeeping slot never wedges a compaction / ask-review / guardrail call.
 	ModelSlots map[string]string
@@ -1122,21 +1123,20 @@ type Config struct {
 	// family value from roleFamily (never the raw engine role), so every child
 	// series carries a closed-set role label and no def/member name or session id
 	// can leak into metric cardinality. Nil (the default, and the no-perf path)
-	// keeps children unmetered: Sink/ToolCallRecorder stay nil, byte-identical to
-	// the pre-feature child shape. The role-tagging is METRICS-ONLY — child
+	// keeps children unmetered: Sink/ToolCallRecorder stay nil. The role-tagging is METRICS-ONLY — child
 	// Diagnostics and the conversation event stream are unchanged.
 	MetricsRoleScoper func(familyRole string) (port.EventSink, port.ToolCallRecorder)
 
 	// ScheduleMetricsEmitter, when non-nil, is the composition-injected metrics
 	// callback the scheduler invokes (via Config.ScheduleMetrics) for every
-	// fired/skipped/failed schedule fire (issue #233, Phase 2b). The caller
+	// fired/skipped/failed schedule fire (issue #233). The caller
 	// (cmd/mecated, the embedded TUI server) builds the closure over the
 	// telemetry adapter's Metrics.EmitSchedule — keeping internal/app free of the
 	// telemetry import — exactly as MetricsRoleScoper closes over Metrics.WithRole.
 	// Schedule metrics are NOT a role-family (a fire mints a fresh session whose
 	// OWN run already carries role="main"); this callback is a separate
 	// schedule-lifecycle dimension. Nil (the default, and the no-perf path) keeps
-	// the scheduler metrics-silent: byte-identical to the pre-feature shape.
+	// the scheduler metrics-silent.
 	ScheduleMetricsEmitter func(payload session.SchedulePayload, duration time.Duration)
 
 	// SessionLoadFailureMetricsEmitter records one ownership-concealed load
@@ -1179,13 +1179,13 @@ type Config struct {
 	permConfigEnv *xdgconfig.ResolveEnv
 
 	// envDetector is the injectable environment-lookup seam the provider registry
-	// uses for credential-availability detection (multi-provider S1). It defaults
+	// uses for credential-availability detection. It defaults
 	// to os.Getenv (set in Build); tests inject a fake map-backed lookup so registry
 	// construction runs OFFLINE. Unexported: an internal composition detail mirroring
 	// xdgconfig.OSEnv's env-injection idiom, not an operator knob.
 	envDetector envDetector
 
-	// providerConstructor is the injectable seam (multi-provider Phase 0, S3 e2e)
+	// providerConstructor is the injectable seam
 	// for the concrete port.LLMProvider built per AVAILABLE provider id. It defaults
 	// to the real (resilience-wrapped) openai-adapter constructor (set in
 	// buildProviderRegistry); tests inject a fake that returns a distinct mockllm per
@@ -1203,8 +1203,8 @@ type Config struct {
 	// object. It is populated by foldOperatorOpenRouter from the permconfig
 	// resolver's operator-tier openrouter: block (user-global + CLI ONLY — a
 	// project-tier block is WARN-ignored). nil when nothing is configured, so the
-	// openrouter registry entry builds byte-identical to before. Unexported: a
-	// composition detail, not an operator knob (the YAML is the sole source in v1 —
+	// openrouter registry entry carries no provider-routing object. Unexported: a
+	// composition detail, not an operator knob (the YAML is the sole source —
 	// no CLI flag).
 	openRouterRoutes map[string]openai.OpenRouterProviderPreferences
 	// promptCacheKeySalt is the per-process random value folded into every
@@ -1282,7 +1282,7 @@ type Config struct {
 	// liveModelRefreshDelay artificially delays the ASYNC live-model refresh: when
 	// > 0, the background goroutine sleeps this long BEFORE fetching/swapping, so the
 	// live-catalog swap lands `delay` after startup. It is a DIAGNOSTIC/TEST seam ONLY
-	// (default 0 = today's behaviour, swap lands sub-second): it forces the
+	// (default 0 = no delay, swap lands sub-second): it forces the
 	// create-races-the-swap window open WIDE so the footer-heal race (issue #66) is
 	// deterministically reproducible — a session created inside the window sees the
 	// pre-swap floor, and a GetSession after the delay sees the healed live window.
@@ -1355,7 +1355,7 @@ type Config struct {
 	// resolution are both composition details.
 	contextWindows map[string]map[string]int
 
-	// --- Scheduled tasks (issue #189, Phase 1f): the in-process scheduler
+	// --- Scheduled tasks (issue #189): the in-process scheduler
 	// (internal/adapter/scheduler) owns the tick loop that polls the durable
 	// ScheduleStore, applies the misfire policy, claim-before-fire advances
 	// NextFireAt (the at-most-once atomic), fires each claimed schedule via a
@@ -1365,7 +1365,7 @@ type Config struct {
 	// storage-agnostic; engine/agent never imports it. ON by default on any
 	// schedule-capable store: the cmd layer feeds
 	// SchedulerEnabled = !--no-scheduler, and a store with no ScheduleStore (the
-	// in-memory default) takes the byte-identical no-scheduler path whether
+	// in-memory default) takes the no-scheduler path whether
 	// enabled or not. The ScheduleStore is discovered by type-asserting the
 	// configured store for the ScheduleStore() ACCESSOR (the jsonlstore +
 	// redisstore expose one). The leader-lease reuses the SAME backend as the
@@ -1419,7 +1419,7 @@ type GuardrailRule struct {
 // providerConstructor builds the port.LLMProvider for an available provider id,
 // given its resolved key and base URL. The production implementation
 // (newOpenAICompatEntry's body) constructs the resilience-wrapped openai adapter; the
-// S3 e2e injects a mock-returning fake. It NEVER receives the key on any wire — it
+// multi-provider e2e injects a mock-returning fake. It NEVER receives the key on any wire — it
 // is a pure in-process construction seam.
 type providerConstructor func(cfg Config, id, key, baseURL string) port.LLMProvider
 
@@ -1836,13 +1836,13 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	cfg = foldOperatorGuardrails(cfg)
 	cfg.GuardrailsTaskWindow = clampReviewTaskWindow(cfg.GuardrailsTaskWindow)
 
-	// Per-slot models (Phase 1+2): fold the operator-tier `models:` YAML
+	// Per-slot models: fold the operator-tier `models:` YAML
 	// subtree (user-global + CLI only — a project file's models: block is handled by
-	// the Phase-4 fold below) onto cfg.ModelSlots/cfg.ModelAliases, CLI flags
+	// foldProjectModelBindings below) onto cfg.ModelSlots/cfg.ModelAliases, CLI flags
 	// (--model-slot/--model-alias) winning per key. Runs after the resolver is built;
-	// the three routed call sites read the resolved slot models lazily.
+	// the routed call sites read the resolved slot models lazily.
 	//
-	// Phase 4 precedence (CLI > project-YAML > operator-YAML > built-in): snapshot the
+	// Precedence (CLI > project-YAML > operator-YAML > built-in): snapshot the
 	// CLI-set model-binding keys BEFORE this operator-YAML fold runs, so the later
 	// foldOperatorModelDefault / foldProjectModelBindings can layer the YAML rungs UNDER
 	// the CLI ones (a CLI-set key/--model is SKIPPED by both YAML folds).
@@ -1899,7 +1899,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			"mode", cfg.ToolhiveLLMMode)
 	}
 
-	// Operator-YAML models.default_provider (Wave 2b): an operator's settings.yaml
+	// Operator-YAML models.default_provider: an operator's settings.yaml
 	// `models.default_provider:` folds onto cfg.DefaultProvider BEFORE the registry is
 	// built so resolveDefaultModel (inside buildProvider) sees it, and BEFORE
 	// validateDefaultModel so the fail-fast gate catches an unknown provider. CLI
@@ -1936,7 +1936,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if cfg.Model == "" {
 		cfg.Model = reg.ResolvedDefaultModel()
 	}
-	// Operator-YAML models.default (Phase 4): an operator's settings.yaml
+	// Operator-YAML models.default: an operator's settings.yaml
 	// `models.default:` re-binds the session default OVER the registry default, but UNDER
 	// a CLI --model. The operator's OWN default is UNCAPPED (the allowlist caps PROJECT
 	// bindings only — the operator is authoritative). It is the operator-YAML rung of the
@@ -1945,8 +1945,8 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// before foldProjectModelBindings so a capped project default can override it in turn.
 	// No-op (byte-identical) when no operator models.default is configured.
 	cfg = foldOperatorModelDefault(cfg, cliModelKeys)
-	// Project-overridable model bindings within the operator allowlist
-	// (Phase 4): a TRUSTED project's .mecatl/settings.yaml models: block may re-bind
+	// Project-overridable model bindings within the operator allowlist:
+	// a TRUSTED project's .mecatl/settings.yaml models: block may re-bind
 	// default/slots/aliases, but ONLY to allowlisted entries (resolve-then-check). Runs
 	// AFTER foldOperatorModelSlots (so it overrides the operator-YAML layer) and AFTER
 	// cfg.Model was resolved to the registry default (so a project `default` can re-bind
@@ -1967,7 +1967,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if e, ok := reg.Lookup(reg.Default()); !ok || !e.intentDriven {
 		cfg.defaultModelPending = false
 	}
-	// Subagent model router taxonomy (Phase 5): fold
+	// Subagent model router taxonomy: fold
 	// the OPERATOR-TIER `models.router:` categories/default/classifier-slot onto cfg, plus
 	// the YAML `disabled:` kill-switch (OR'd into cfg.RouterDisabled). OPERATOR-TIER ONLY
 	// (a project router: was stripped at capture) and FAIL-SOFT (a malformed category is
@@ -2025,10 +2025,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	cfg.guardrailConfigured = guardrailConfigured
 	// Emit the build-once composition facts (token counter / compaction strategy /
 	// slash commands) EXACTLY ONCE here, through the injected Diagnostics — keyed to
-	// the resolved MAIN model. The per-derivation builders no longer log these (they
-	// run per session AND per child engine); relocating the emit here makes operators
-	// see each fact once instead of N times. Other slog sites in this file are not
-	// yet relocated (iteration 2).
+	// the resolved MAIN model. The per-derivation builders do not log these (they
+	// run per session AND per child engine); emitting here makes operators
+	// see each fact once instead of N times.
 	logBuildConfigFacts(cfg)
 	// Per-slot model facts: narrate each ROUTED slot's resolved model
 	// ONCE here (never per-engine — the no-per-derivation-duplication rule). Slots are
@@ -2049,7 +2048,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// not inferred from silence); build-once only, not a loop line.
 	logGuardrailsPosture(cfg)
 
-	// Slash-command driver source (Phase C2): ONE dial + Probe at build time
+	// Slash-command driver source: ONE dial + Probe at build time
 	// (fatal on a fault — loud-misconfig posture), then the probed client is
 	// STASHED on the unexported cfg.commandSource so buildCommandExpander —
 	// which runs per session — composes it without re-dialling or re-probing
@@ -2088,11 +2087,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		commandConnClose = func() { learningClose(); previousClose() }
 	}
 
-	// buildStore + the OPTIONAL session lease (cloud-native Phase 4) are built
+	// buildStore + the OPTIONAL session lease are built
 	// together: the lease resolves AFTER the store (so its type-assert fallback can
 	// see it) and its close chains onto the store's, so Build holds one teardown
 	// (storeClose) for the pair. sessionLease is nil when no backend is selected
-	// (the byte-identical default).
+	// (the default).
 	store, eventLog, sessionLease, leaseOwner, storeClose, err := buildStoreAndLease(cfg)
 	if err != nil {
 		commandConnClose()
@@ -2107,12 +2106,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// engine gate from the EventLog selected by composition, never from the live
 	// EventSink, and do it before building main, per-session, and child engines.
 	cfg.enableDurableEvidence = eventLog != nil
-	// Agent seam (Phase C2): resolve the agent-definition registry EXACTLY
+	// Agent seam: resolve the agent-definition registry EXACTLY
 	// ONCE for the whole composition — the build-time catalog's Subagent/Team
 	// tools, the per-session engine factory, the ListAgents snapshot, and the
-	// gRPC team wiring all consume THIS one registry (the C1 skillIdx hoist
-	// pattern; previously three independent resolutions, the per-session-drift
-	// class). The driver branch's once-guarded conn close folds into closeAll.
+	// gRPC team wiring all consume THIS one registry (the skillIdx hoist
+	// pattern), so no consumer can drift from another. The driver branch's once-guarded conn close folds into closeAll.
 	agentReg, agentClose, err := resolveAgentSeam(ctx, cfg)
 	if err != nil {
 		storeClose()
@@ -2479,11 +2477,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		// uses no per-session engine) AND Service.ProviderCapabilities() (the ACP gate),
 		// so the wire echo, the server-wide caps, and the ACP gate cannot disagree. A
 		// neutral port.ProviderCapabilities — the registry/catalog never reach the
-		// server adapter. (multi-provider Phase 0, S5.)
+		// server adapter.
 		//
 		// NOTE: this runs in Build, BEFORE the background live Swap, so its modality
 		// input is the CATALOG SEED, not the live feed — fine for the default/ACP path,
-		// which has no per-session selector in P0. A per-session SELECTOR session (see
+		// which has no per-session selector. A per-session SELECTOR session (see
 		// the modelCapability call below, evaluated post-Swap) DOES get the live value.
 		DefaultCapabilities: modelCapability(reg, reg.Default(), cfg.Model),
 		ResolveCapabilities: func(providerID, modelID string, mode session.PermissionMode) port.ProviderCapabilities {
@@ -2523,7 +2521,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		// single-source consistency with the selector path + baseEngineDeps. The injected
 		// ResolveContextWindow below keeps the echo HONEST post-swap (it re-resolves the
 		// scalar live-first at call time, so a live-only model whose curated-catalog floor is
-		// 0 — issue #66 — no longer echoes 0). (multi-provider Phase 0.)
+		// 0 — issue #66 — does not echo 0).
 		DefaultResolvedModel: server.ResolvedModel{
 			ProviderID: reg.Default(),
 			ModelID:    cfg.Model,
@@ -2809,20 +2807,19 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 				commandLister.Retire(id)
 			}
 		},
-		// Durable event log (cloud-native Phase 3a): the relay Appends every
+		// Durable event log: the relay Appends every
 		// healthy-path event here. The jsonlstore Store doubles as the EventLog;
 		// the memstore path supplies an in-memory sibling; the gRPC-driver path
-		// leaves it nil (3c). Diagnostics is the same sink the rest of the build
+		// leaves it nil unless --event-log-url is set. Diagnostics is the same sink the rest of the build
 		// uses, for the best-effort Append-failure WARN.
 		EventLog:    eventLog,
 		Diagnostics: cfg.diag(),
-		// Verdict replay (cloud-native Phase 3b): repopulate the in-memory learned-rule
+		// Verdict replay: repopulate the in-memory learned-rule
 		// store from the durable EventLog's allow-always verdicts when a session is
 		// loaded after a restart, so a previously allow-always'd tool is not re-asked.
 		// The closure owns the EventLog read + the askID→ToolCall correlation + the
-		// Policy.Learn re-derivation; it is nil (a no-op) when there is no durable log
-		// (memstore/driver paths), keeping the in-memory-store behaviour byte-identical
-		// there.
+		// Policy.Learn re-derivation; it is nil (a no-op) when there is no EventLog
+		// (a session-store driver without --event-log-url).
 		ReplayApprovals: replayApprovals(eventLog, policy, cfg.diag()),
 		// Live-first context-window resolver for the resolved_model echo (issue #66,
 		// PROMOTED to all branches by the resolve-at-use unification). It is the ECHO
@@ -2846,15 +2843,15 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			}
 			return awaitContextWindow(awaitCtx, reg, p, m)
 		},
-		// Session lease (cloud-native Phase 4): nil unless a backend was selected,
-		// so the default path takes no lease, starts no renewer, and releases
-		// nothing — byte-identical. The owner identity is built once per Build.
+		// Session lease: nil unless a backend was selected;
+		// when nil, the session takes no lease, starts no renewer, and releases
+		// nothing. The owner identity is built once per Build.
 		SessionLease:       sessionLease,
 		MutationCapability: mutationCapability,
 		LeaseOwner:         leaseOwner,
 		LeaseTTL:           cfg.SessionLeaseTTL,
 		LeaseRenewInterval: cfg.SessionLeaseRenewInterval,
-		// Plan-mode auto-approve (issue #206 Wave 6a): plumb the operator flag and
+		// Plan-mode auto-approve (issue #206): plumb the operator flag and
 		// the interactivity bit so the Service observer can gate the auto-approve.
 		PlanModeAutoApprove: cfg.PlanModeAutoApprove,
 		Interactive:         cfg.Interactive,
@@ -2900,10 +2897,10 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	reg.discovery.start(cfg.liveModelRefreshSync, liveRefreshDelay(cfg))
 	refreshClose := reg.discovery.Close
 
-	// Scheduled tasks (issue #189, Phase 1f): build + wire + start the in-process
+	// Scheduled tasks (issue #189): build + wire + start the in-process
 	// scheduler over the SAME store + session-lease backend. The FireFunc is
 	// LATE-BOUND (closes over svc). nil when SchedulerEnabled is false (the
-	// byte-identical default). Extracted to startScheduler so Build's cyclomatic
+	// --no-scheduler opt-out). Extracted to startScheduler so Build's cyclomatic
 	// complexity stays under the lint cap.
 	schedClose, err := startScheduler(ctx, cfg, store, sessionLease, leaseOwner, svc, assets.deliveryQueue)
 	if err != nil {
@@ -3043,7 +3040,7 @@ func resolveAgentSeam(ctx context.Context, cfg Config) (*agents.Registry, func()
 
 // sessionEngineFactory returns the server.SessionEngineFactory that builds a
 // PER-SESSION engine over an optional non-default provider/model SELECTOR
-// (multi-provider Phase 0, S3) AND/OR the client-provided streaming-HTTP MCP
+// AND/OR the client-provided streaming-HTTP MCP
 // servers (the ACP session/new mcpServers). The two inputs are orthogonal: a
 // session with BOTH a non-default model and client MCP gets ONE engine over ONE
 // catalog from a single call. Each call connects a SCOPED mcp.NewManager for that
@@ -3066,7 +3063,7 @@ func resolveAgentSeam(ctx context.Context, cfg Config) (*agents.Registry, func()
 // the build-time path.
 //
 // PROVIDER/MODEL RESOLUTION (the §0.2 resolution table): the zero selector keeps
-// the DEFAULT provider + cfg.Model (the pre-S3 MCP path, byte-identical). A
+// the DEFAULT provider + cfg.Model. A
 // non-empty sel.ProviderID is looked up in the registry — a miss (unknown id, or
 // an available-only registry that omits an unkeyed provider) is a loud error
 // wrapping server.ErrInvalidArgument, NEVER a silent fallback. sel.ModelID is
@@ -3075,8 +3072,8 @@ func resolveAgentSeam(ctx context.Context, cfg Config) (*agents.Registry, func()
 // catalog never gates the model string). engineDepsForProvider re-derives EVERY
 // provider-closing Deps field (LLM/Compactor/Model/TokenCounter/PromptConfig.Env)
 // against the resolved (provider, model), so a per-session engine bound to a
-// non-default provider compacts and counts through THAT provider — the
-// contamination fix the S1 seam was designed for.
+// non-default provider compacts and counts through THAT provider, never the
+// default one.
 //
 // It captures the SAME store/policy/hooks the main engine was built with (threaded
 // from Build), plus the registry (so it can resolve the selector), the DEFAULT
@@ -3095,8 +3092,8 @@ func resolveAgentSeam(ctx context.Context, cfg Config) (*agents.Registry, func()
 // zero-selector session is routed through the per-session factory at all
 // (Config.defaultModelPending). It resolves the registry's CURRENT default —
 // a no-op (fallbackProvider, "") when the proxy is still down, so the
-// session fails at request time exactly as before (the ADR-documented
-// residual for a session built before the heal lands). Extracted out of
+// session fails at request time (the documented residual for a session
+// built before the heal lands). Extracted out of
 // sessionEngineFactory to keep its cyclomatic complexity under the lint cap;
 // it has no other caller.
 func adoptHealedDefault(reg *providerRegistry, providerID string, fallbackProvider port.LLMProvider) (port.LLMProvider, string) {
@@ -3345,7 +3342,7 @@ func sessionEngineFactoryWithTools(
 		noFS := profile == server.ProfileNoFS
 		// Resolve the provider/model selector FIRST (before any MCP connect), so an
 		// unknown provider fails fast without a wasted connection. The zero selector
-		// keeps the default provider + cfg.Model (pre-S3 behaviour). resolvedProviderID
+		// keeps the default provider + cfg.Model. resolvedProviderID
 		// is threaded so the per-session capability intersection (modelCapability) keys
 		// on the right provider — the zero selector uses the registry default.
 		resolvedProviderID, resolvedModel := resolvedSessionIdentity(cfg, reg, sel, mode)
@@ -3598,7 +3595,7 @@ func sessionEngineFactoryWithTools(
 			// resolvedModel) — NOT recomputed. The server echoes these verbatim on
 			// resolved_model, the SAME composition single-source rule as the capability
 			// intersection (see internal/app/capability.go modelCapability). The context
-			// WINDOW is no longer a frozen result field — Service.ResolvedModel resolves it
+			// WINDOW is not a frozen result field — Service.ResolvedModel resolves it
 			// live-first at echo time via the SAME contextWindowFor source the engine reads
 			// (resolve-at-use), so the echo and the running engine never diverge.
 			ProviderID: resolvedProviderID,
@@ -3649,25 +3646,20 @@ func catalogContextWindow(providerID, modelID string) int {
 	return m.ContextLimit()
 }
 
-// buildProvider builds the N-provider registry (multi-provider S1) and returns the
-// DEFAULT provider so the Build call site is unchanged: every downstream consumer
-// (buildEngine, buildCompactor, child/fork/team/dream/reviewer engines) keeps
-// receiving the single default provider exactly as before. The registry itself —
-// env-based availability detection across the configured providers (openai,
-// openrouter), the resilience wrapping, and the per-provider startup logging — lives
-// in registry.go. Per-session multi-provider ROUTING is S3, not S1; S1 only settles
-// the registry shape and the default-provider seam.
+// buildProvider builds the N-provider registry and returns it together with the
+// DEFAULT provider. The registry itself — env-based availability detection across
+// the configured providers, the resilience wrapping, and the per-provider startup
+// logging — lives in registry.go.
 //
 // A canned mock (UseMock) short-circuits to a single offline entry; the zero-keys
 // case returns the named, actionable errNoProvider.
 //
-// S3 returns the registry ALONGSIDE the default provider (it was discarded in S1)
-// so the composition can thread it into the per-session engine factory (for
-// per-session provider/model routing) and into the provider discovery projection (for the ListModels
-// projection). The default provider is still returned so every other downstream
-// consumer (buildEngine's shared engine, child/fork/team/dream/reviewer engines)
-// keeps receiving the single default provider exactly as before — one construction,
-// no second env probe.
+// The registry is returned ALONGSIDE the default provider so the composition can
+// thread it into the per-session engine factory (for per-session provider/model
+// routing) and into the provider discovery projection (for the ListModels
+// projection). Every other downstream consumer (buildEngine's shared engine,
+// child/fork/team/dream/reviewer engines) receives the single default provider —
+// one construction, no second env probe.
 func buildProvider(ctx context.Context, cfg Config) (*providerRegistry, port.LLMProvider, error) {
 	reg, err := buildProviderRegistryContext(ctx, cfg, cfg.envDetector)
 	if err != nil {
@@ -3703,20 +3695,19 @@ func requireAtomicScheduleCreate(cfg Config, store port.ScheduleStore) error {
 	return nil
 }
 
-// buildStore constructs the SessionStore plus its durable EventLog (cloud-native
-// Phase 3a): a gRPC driver client when SessionStoreURL is set
+// buildStore constructs the SessionStore plus its durable EventLog: a gRPC driver client when SessionStoreURL is set
 // (validateDriverConfig has already rejected the URL+dir combination), a JSONL
 // replay store under StoreDir, or the in-memory store when both are empty. The
 // returned close func releases the driver connection (a no-op for the local
 // stores) and chains into Build's closeAll; it is always non-nil on success.
 //
-// The EventLog seam is INDEPENDENT of the session store (cloud-native 3c). When
+// The EventLog seam is INDEPENDENT of the session store. When
 // EventLogURL is set, the durable log is a grpcdriver EventLogService client
 // (server-streaming Read), regardless of where the session store lives — its
 // own dialled connection (shared via the driverConns cache when the URL equals
 // another driver's) and its own close func, chained into the returned teardown.
 //
-// When EventLogURL is EMPTY the behaviour is byte-identical to pre-3c: the local
+// When EventLogURL is EMPTY the EventLog is store-derived: the local
 // jsonlstore Store doubles as its own EventLog (one Store serves SessionStore +
 // ToolCallRecorder + EventLog over a shared mu/dir), the memstore path uses its
 // in-memory sibling so the seam is never nil offline, and a session-store DRIVER
@@ -3743,7 +3734,7 @@ func buildStore(cfg Config) (port.SessionStore, port.EventLog, func(), error) {
 }
 
 // buildStoreAndLease builds the session store (+ its durable EventLog) and, on
-// top, the OPTIONAL cross-process session lease (cloud-native Phase 4). The lease
+// top, the OPTIONAL cross-process session lease. The lease
 // resolves AFTER the store so its type-assert fallback can discover a
 // store-provided lease; its close chains onto the store's, so the caller holds a
 // single teardown for the pair. A local StoreDir always resolves the existing
@@ -3772,9 +3763,9 @@ func localStorageMaintenanceSingleWriter(store port.SessionStore) bool {
 	return ok
 }
 
-// buildSessionLease resolves the OPTIONAL cross-process session lease (cloud-native
-// Phase 4). It returns (lease, owner, close, err): lease is nil (and
-// close a no-op) when no backend is selected — the byte-identical default that
+// buildSessionLease resolves the OPTIONAL cross-process session lease. It
+// returns (lease, owner, close, err): lease is nil (and
+// close a no-op) when no backend is selected — the default that
 // takes no lease, starts no renewer, and releases nothing. The owner identity is
 // built ONCE here (hostname-pid-nonce) so two Builds in one process get DISTINCT
 // owners (the cross-process gate's twin-Build test relies on it).
@@ -3787,7 +3778,7 @@ func localStorageMaintenanceSingleWriter(store port.SessionStore) bool {
 //     actual shared lease makes local multi-process use safe by default);
 //  3. else the configured SessionStore is type-asserted for port.SessionLease
 //     (a store that also leases opts in);
-//  4. else no lease (the single-writer-by-affinity v1 default).
+//  4. else no lease (the single-writer-by-affinity default).
 //
 // The lease close is meaningful only for the driver backend (its dialled conn);
 // flock/k8s/type-assert hold no Build-scoped resource of their own, so their close
@@ -3889,18 +3880,16 @@ func resolveScheduleStore(cfg Config, store port.SessionStore) (port.ScheduleSto
 }
 
 // buildScheduler resolves the OPTIONAL in-process scheduled-tasks tick loop
-// (issue #189, Phase 1f; ON BY DEFAULT). It mirrors
+// (issue #189; ON BY DEFAULT). It mirrors
 // buildSessionLease: when SchedulerEnabled is false (the operator's explicit
 // --no-scheduler opt-out) it returns (nil, noop, nil). When enabled it resolves
 // the port.ScheduleStore via resolveScheduleStore — an explicit
 // --schedule-store-url driver wins, else the configured store is type-asserted
 // for the ScheduleStore() ACCESSOR (the jsonlstore + redisstore expose one);
 // a store that does not expose one (the in-memory default: mecademo,
-// mecatequi, offline tests) is SILENTLY INERT — the byte-identical no-scheduling
-// path ((nil, noop, nil)), never a startup failure. (The earlier opt-in
-// enabled-but-no-store case FAILED LOUD because enabling was an explicit
-// operator ask; with the default ON, no-store is the common case, so inert is
-// the honest posture.) The ONE exception to "no startup error": an explicitly
+// mecatequi, offline tests) is SILENTLY INERT — the no-scheduling
+// path ((nil, noop, nil)), never a startup failure: with the default ON,
+// no-store is the common case. The ONE exception to "no startup error": an explicitly
 // configured --schedule-store-url driver that fails to dial is a fatal
 // operator misconfiguration (returned as err) — a silent fall-back to
 // no-scheduling would hide it. The leader-lease reuses the SAME backend as the
@@ -3997,7 +3986,7 @@ func startScheduler(ctx context.Context, cfg Config, store port.SessionStore, se
 	// the authoritative stored schedule so ownerless names remain literal and
 	// owned keys are stripped only against their stored owner provenance.
 	sched.SetPresentScheduleName(server.PresentScheduleName)
-	// Stale-fire reconciler (issue #386 Phase 4b, acceptance criterion #7): wire
+	// Stale-fire reconciler (issue #386): wire
 	// the composition-injected ReconcileStaleFire callback the scheduler invokes
 	// from the tick loop's reconcile scan when it DETECTS a stale in-flight fire
 	// a crashed process left behind. The callback is the SETTLE half — it closes
@@ -4006,7 +3995,7 @@ func startScheduler(ctx context.Context, cfg Config, store port.SessionStore, se
 	// scheduler-internal (store + the isPriorFireLive seam); the settle needs
 	// Service/session-load methods the scheduler package must not import (the
 	// layering rule), so it is composition-injected, mirroring Fire/
-	// DeliverFireResult. nil store = the byte-identical no-reconcile path.
+	// DeliverFireResult. nil store = the no-reconcile path.
 	sched.SetReconcileStaleFire(makeReconcileStaleFire(svc, fireStore, store))
 	// Fire-result delivery: wire the composition-injected
 	// DeliverFireResult callback the scheduler invokes from fireClaimed AFTER
@@ -4024,12 +4013,12 @@ func startScheduler(ctx context.Context, cfg Config, store port.SessionStore, se
 	// Service — the scheduler pkg stays EventSink-free. A nil EventLog makes the
 	// callback a no-op (byte-identical no-emit path).
 	sched.SetEmitScheduleEvent(svc.EmitScheduleEvent)
-	// Wire the OPTIONAL metrics callback (issue #233, Phase 2b): the scheduler
+	// Wire the OPTIONAL metrics callback (issue #233): the scheduler
 	// invokes it from fireClaimed (fired/failed, with the Claim→terminal
 	// duration) and fireOne/FireNow (skipped, duration 0) with a
 	// session.SchedulePayload; composition closes over the telemetry adapter's
 	// Metrics.EmitSchedule — the scheduler pkg stays telemetry-import-free. Nil
-	// (the no-perf path) is the byte-identical metrics-silent path.
+	// (the no-perf path) is the metrics-silent path.
 	if cfg.ScheduleMetricsEmitter != nil {
 		sched.SetScheduleMetrics(cfg.ScheduleMetricsEmitter)
 	}
@@ -4107,7 +4096,7 @@ func buildDeliveryQueue(cfg Config, store port.SessionStore) port.DeliveryQueue 
 	}
 	// A durable store dir (jsonlstore) → a durable file-backed queue under it.
 	// The redisstore path is durable at the store, but the delivery queue is a
-	// process-local file (a future redis-backed queue is a sibling); for now a
+	// process-local file (there is no redis-backed queue), so a
 	// redisstore-backed deployment uses an in-memory queue (honest degradation
 	// across restart — the redisstore is multi-replica, and a process-local file
 	// queue is single-replica by affinity, matching jsonlstore's posture).
@@ -4126,7 +4115,7 @@ func buildDeliveryQueue(cfg Config, store port.SessionStore) port.DeliveryQueue 
 }
 
 // buildSessionStore constructs the SessionStore plus the STORE-DERIVED default
-// EventLog (the byte-identical-to-pre-3c default): the jsonlstore Store doubles
+// EventLog: the jsonlstore Store doubles
 // as both, the memstore path supplies an in-memory sibling, and a session-store
 // driver leaves the EventLog nil. The --event-log-url override is layered on top
 // in buildStore.
@@ -4270,15 +4259,14 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// BEFORE any catalog assembly. The captured factory is bound onto the
 	// assets inside buildCatalog (below), so registerScheduleTool fires on the
 	// BUILD-TIME pass and the SHARED catalog gains Schedule + ScheduleQuery
-	// (AC2.1), exactly like the six memory tools — the historical late bind
-	// (after server.NewService) left the shared-engine fast path
-	// schedule-less. A store that backs no ScheduleStore (the in-memory
+	// (AC2.1), exactly like the six memory tools, so the shared-engine fast
+	// path carries the Schedule tool too. A store that backs no ScheduleStore (the in-memory
 	// default) yields a nil manager — the honest no-scheduling path, and the
 	// tool stays absent from BOTH catalogs (never a stub). Build hands the
 	// SAME manager to server.NewService via server.Config.ScheduleManager (one
 	// manager, one truth — no second construction). The now-func is left nil
 	// so NewScheduleManager defaults it to time.Now, mirroring the server
-	// Config's own Now default (composition does not thread a clock today).
+	// Config's own Now default (composition does not thread a clock).
 	// Typed-nil discipline: scheduleMgr is the CONCRETE *scheduleManager
 	// (nil when the store backs no ScheduleStore), so the factory's explicit
 	// nil check returns an UNTYPED nil port.ScheduleManager — never a
@@ -4286,7 +4274,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// mgr == nil gate must hold).
 	//
 	// Schedule tool + tick loop + fire path share the ONE resolveScheduleStore
-	// resolution (issue #257 Wave 3): the manager resolves its ScheduleStore
+	// resolution (issue #257): the manager resolves its ScheduleStore
 	// via the SAME resolveScheduleStore buildScheduler/startScheduler use, so
 	// a --schedule-store-url override backs the in-chat Schedule TOOL too (no
 	// absent-tool gap with an accessor-less session store) and there is no
@@ -4297,7 +4285,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// override close into mcpClose here AND into schedClose in buildScheduler
 	// closes the conn exactly once (the dedup the --event-log-url path relies
 	// on). The accessor path returns a no-op close, so the fold is a no-op
-	// there (byte-identical to the pre-override posture). The resolution runs
+	// there. The resolution runs
 	// AFTER buildCatalog (mcpClose is the close fold target, declared by
 	// buildCatalog); the factory below captures the resolved store so the
 	// eager bind still precedes catalog assembly's registerScheduleTool.
@@ -4362,7 +4350,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	}
 	memStore, userModelStore := assets.memStore, assets.userModelStore
 
-	// Soul driver probe (Phase C1): when --soul-source-url is set (and --no-soul
+	// Soul driver probe: when --soul-source-url is set (and --no-soul
 	// does not win), one LoadSoul round trip at BUILD time — fatal on a fault
 	// (loud-misconfig posture: an explicitly configured driver that cannot
 	// answer is a misconfiguration; RUNTIME faults stay fail-soft inside the
@@ -4387,10 +4375,10 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 		}
 	}
 
-	// Soul (issue #14, Phase 1): a user-scoped, agent-READ-ONLY persona source. ON
+	// Soul (issue #14): a user-scoped, agent-READ-ONLY persona source. ON
 	// by default reading the conventional ~/.config/mecatl/soul.md; --no-soul leaves
 	// it nil (no fragment), --soul-file overrides the path; --soul-source-url
-	// (Phase C1) swaps the USER slot for the remote driver. The adapter
+	// swaps the USER slot for the remote driver. The adapter
 	// (*soul.Store or the grpcdriver client) meets the prompt-defined SoulSource
 	// port HERE, in the composition layer — the one place the adapter binds the
 	// port. A missing file is fail-soft (no-op).
@@ -4407,7 +4395,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 
 	// Instructions seam: RootAssembler (AGENTS.md/CLAUDE.md) always; then rules
 	// (project/user rules, when wired), then the soul (identity, when wired), then
-	// the tier-0 project MemoryIndexAssembler. Operator facts no longer ride a
+	// the tier-0 project MemoryIndexAssembler. Operator facts do not ride a
 	// turn-0 user fragment; the same user store is loaded per request into the
 	// volatile system-prompt suffix below.
 	instructions := cfg.harnessInstructions
@@ -4629,7 +4617,7 @@ func buildInstructionAssembler(source tool.Workspace, rulesSrc prompt.RulesSourc
 }
 
 // buildSoulSource constructs the user-scoped, agent-read-only soul source (issue
-// #14, Phase 1). It returns an untyped nil prompt.SoulSource when soul is disabled
+// #14). It returns an untyped nil prompt.SoulSource when soul is disabled
 // (--no-soul) so buildInstructionAssembler's nil check holds (no typed-nil
 // gotcha). Otherwise it builds a *soul.Store reading SoulPath (when set) or the
 // conventional ~/.config/mecatl/soul.md. A missing file is fail-soft, so leaving
@@ -4743,8 +4731,8 @@ func resolveUserModelDir(configured string) string {
 	return filepath.Join(base, userModelSubdir)
 }
 
-// buildUserModelStore constructs the SECOND, USER-scoped memory store (issue #14,
-// Phase 2) — a cross-project store of durable FACTS about the operator. It returns
+// buildUserModelStore constructs the SECOND, USER-scoped memory store (issue #14)
+// — a cross-project store of durable FACTS about the operator. It returns
 // an untyped nil tool.MemoryStore when user-model is disabled (--no-user-model),
 // when no directory can be resolved, or when the store cannot be opened (all
 // fail-soft: the user-model tools/block simply don't appear) — buildSoulSource
@@ -4807,18 +4795,16 @@ func baseEngineDeps(
 	//
 	// The compaction window is resolved through the SAME live-first resolver as the
 	// selector and child paths (reg.windowResolver → override→live→catalog→128k-floor),
-	// passed as Deps.ContextWindow and evaluated at the point of use. This fixes issue
-	// #63 — before, the default model was hardcoded to the 128k floor, so a 1M-context
-	// default (e.g. gpt-5.5) compacted at ~102k.
+	// passed as Deps.ContextWindow and evaluated at the point of use, so a 1M-context
+	// default (e.g. gpt-5.5) compacts on its real window, not the 128k floor (issue #63).
 	//
 	// RESOLVE-AT-USE (the unification): the shared main engine is built ONCE and never
-	// rebuilt, but it no longer freezes a window. baseEngineDeps runs inside Build,
+	// rebuilt, and it does not freeze a window. baseEngineDeps runs inside Build,
 	// BEFORE the live model refresh populates the live store — yet because the resolver
 	// is read LIVE on every maybeCompact / Engine.ContextWindow, a DEFAULT session whose
 	// model is live-only (in the live listing, absent from the curated catalog — e.g.
 	// OpenRouter openai/gpt-5.4) self-corrects to its true window on the next turn after
-	// the live Swap, with NO rehydration and NO defaultSessionNeedsLiveWindow trigger
-	// (both removed). An operator --context-window-override still WINS (inside the
+	// the live Swap, with NO rehydration. An operator --context-window-override still WINS (inside the
 	// resolver).
 	return engineDepsForProvider(cfg, provider, session.ProviderModelID{ProviderID: reg.Default(), ModelID: cfg.Model}, reg.windowResolver(cfg, reg.Default(), cfg.Model), store, policy, hooks, mcpProvider, instructions)
 }
@@ -4835,9 +4821,8 @@ func baseEngineDeps(
 //   - Deps.TokenCounter           (tiktoken is model-keyed)
 //   - Deps.PromptConfig.Env.Model (the agency-delta + env model are model-keyed)
 //   - Deps.ContextWindow          (the compaction trigger window resolver — model-keyed;
-//     see windowFn below. This is the S1-deferred "6th field": ListModels now
-//     advertises the real per-model window, so the trigger MUST agree with it or a
-//     1M-context model would still compact at 128k.)
+//     see windowFn below. ListModels advertises the real per-model window, so the
+//     trigger MUST agree with it or a 1M-context model would compact at 128k.)
 //
 // Every NON-provider field (Policy/Hooks/Store/Sink/ToolCallRecorder/Instructions/
 // CompactionRatio/CommandExpander) is shared and threaded in. Catalog is
@@ -4849,24 +4834,21 @@ func baseEngineDeps(
 // live→catalog→128k-floor precedence lives. It is set directly as Deps.ContextWindow
 // so the engine resolves the window at the point of use (every maybeCompact /
 // Engine.ContextWindow): a post-construction live-catalog Swap self-corrects WITHOUT
-// rebuilding this engine. The default model is no longer pinned to the 128k floor
+// rebuilding this engine. The default model is not pinned to the 128k floor
 // (issue #63): a catalogued default (e.g. a 1M-context model) gets its real window.
 //
 // CRITICAL (design): a shallow clone of baseEngineDeps with only LLM swapped would
 // compact and COUNT through the wrong provider/model, because buildCompactor and
 // buildTokenCounter BOTH bind model by value — cross-provider reasoning
-// contamination. This explicit re-derivation is the fix. DESIGNED in S1, CONSUMED in
-// S3 (per-session routing); S1 exercised only the default-provider path via
-// baseEngineDeps. (Originally the default path stayed byte-identical to pre-S1 at a
-// 128k window; issue #63 changed ONLY ContextWindowTokens — the default model now
-// resolves its real per-model window like the selector path. Every other field is
-// unchanged.)
+// contamination. This explicit re-derivation prevents it. Both the default-provider
+// path (baseEngineDeps) and per-session routing use it; the default model resolves
+// its real per-model window like the selector path (issue #63).
 //
 // The model-keyed TokenCounter is DERIVED INTERNALLY (buildTokenCounter against the
 // model-overridden cfg), NOT taken as a parameter: this makes counter/model
-// contamination impossible BY CONSTRUCTION — an S3 caller cannot thread in a counter
+// contamination impossible BY CONSTRUCTION — a per-session caller cannot thread in a counter
 // built for a different model — and guarantees the Compactor and the compaction
-// trigger share ONE counter keyed to THIS model. (Panel finding #1.)
+// trigger share ONE counter keyed to THIS model.
 func engineDepsForProvider(
 	cfg Config,
 	provider port.LLMProvider,
@@ -4886,11 +4868,11 @@ func engineDepsForProvider(
 	modelCfg := cfg
 	modelCfg.Model = model
 	counter := buildTokenCounter(modelCfg)
-	// COMPACTION SLOT (Phase 2): route ONLY the compactor's tier-4 summary
+	// COMPACTION SLOT: route ONLY the compactor's tier-4 summary
 	// LLM call to the `compaction` slot model when one is configured — the engine's
 	// own Model/TokenCounter/PromptConfig/ContextWindow stay on the session model.
-	// When no slot resolves (the byte-identical default) the compactor is built on the
-	// session model+counter exactly as before. O5: keying the compactor's Counter to
+	// When no slot resolves (the default) the compactor is built on the
+	// session model+counter. O5: keying the compactor's Counter to
 	// the compaction model is sound — the configured CascadeCompactor BudgetTokens
 	// is window-derived and retained for manual compaction, while the automatic loop
 	// supplies a request-local budget derived from the live session window and complete
@@ -4939,13 +4921,13 @@ func engineDepsForProvider(
 		MaxNoProgressNudges: cfg.MaxNoProgressNudges,
 		// Token budget: the shared loop-level runaway brake, operator-tunable (cfg) and
 		// INHERITED by children (childEngineDepsForProvider, which delegates here, keeps
-		// it). 0 disables (behaviour byte-identical to pre-budget).
+		// it). 0 disables the budget.
 		MaxRunTokens: cfg.MaxRunTokens,
 		// Interactivity: the MAIN engine surfaces a subagent's unresolved permission ask
 		// to the human when a client is attached. childEngineDepsForProvider forces this
 		// back to false (a child never surfaces further).
 		Interactive: cfg.Interactive,
-		// PlanModeAutoApprove (issue #206 Wave 6a): when true, the engine surfaces a
+		// PlanModeAutoApprove (issue #206): when true, the engine surfaces a
 		// plan-approval ask (PresentPlan) even when headless so the Service can
 		// auto-resolve it. Operator-tier only, DEFAULT off.
 		PlanModeAutoApprove: cfg.PlanModeAutoApprove,
@@ -5155,7 +5137,7 @@ func logBuildConfigFacts(cfg Config) {
 			args: []any{"workspace", cfg.Workspace},
 		})
 	}
-	// Plan-mode auto-approve (issue #206 Wave 6a): narrate the OPT-IN flag when ON
+	// Plan-mode auto-approve (issue #206): narrate the OPT-IN flag when ON
 	// so the operator sees at startup that plans will be approved WITHOUT a human.
 	// An INTERACTIVE deployment surfaces the plan ask to the client for a human to
 	// approve, so the flag never fires — WARN that it is INERT rather than narrate a
@@ -5280,7 +5262,7 @@ func normalizeAskReviewerModel(cfg Config) (string, error) {
 // configured model with NO explicit rules is still ACTIVE — it takes the built-in
 // DEFAULT block rule set (WebSearch/WebFetch/mcp__*/Shell, enforcing),
 // the headline default. The master kill-switch (GuardrailsDisabled) turns it off. No-op under
-// UseMock. It is now VALIDATE-ONLY: it no longer emits the build-once ACTIVE fact.
+// UseMock. It is VALIDATE-ONLY: it does not emit the build-once ACTIVE fact.
 // The always-one-line posture — ON|OFF carrying the RESOLVED checker model + its
 // provenance, which this function never computed (it only validated the GATE value)
 // — is emitted by logGuardrailsPosture (Build-once, alongside logModelRouterFacts).
@@ -5756,7 +5738,7 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 	mainMgr, mcpProvider, mcpInventory, mcpRuntimes, mcpReconciler, sharedEngineRevision, buildRuntimeRelease, mcpClose := connectMCP(ctx, cfg)
 
 	// Per-project memory store: opt-in via MemoryStoreURL (a remote gRPC driver;
-	// Phase B) or MemoryDir (the flocked reference adapter, opened ONCE here —
+	// see driverstore.go) or MemoryDir (the flocked reference adapter, opened ONCE here —
 	// one Store per dir) and shared by the build-time catalog, every per-session
 	// catalog, the prompt tier-0 index source, and the consolidation goroutine.
 	// Typed-nil discipline: memStore is assigned only on a successful
@@ -5806,12 +5788,12 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 		}
 	}
 
-	// User-model store (issue #14, Phase 2a): a SECOND, USER-scoped memory store
+	// User-model store (issue #14): a SECOND, USER-scoped memory store
 	// (cross-project), exposed as RememberUser/RecallUser/SearchUserModel. ON by
 	// default reading the conventional <xdg>/mecatl/usermodel; --no-user-model
-	// disables it. Carried on the assets so the caller can bind it to the prompt
-	// <user-model> source AND (for Phase 2b) to the background reviewer's write
-	// tool. It stays nil when disabled or unopenable (fail-soft).
+	// disables it. Carried on the assets so the caller can bind it as the
+	// per-request operator-profile source (Deps.OperatorProfileSource) AND to the
+	// background reviewer's write tool. It stays nil when disabled or unopenable (fail-soft).
 	userModelStore := buildUserModelStore(cfg)
 	if userModelStore != nil {
 		cfg.diag().Log(ctx, port.LevelInfo, "user-model tools ENABLED (RememberUser/RecallUser/SearchUserModel; cross-project); permission: allow (built-in default, overridable to ask/deny via settings)")
@@ -5914,7 +5896,7 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 		}
 	}
 
-	// The skills seam (Phase C1): FS snapshot or remote driver, resolved once.
+	// The skills seam: FS snapshot or remote driver, resolved once.
 	// A driver fault is FATAL (explicit operator config, the memory-driver
 	// posture above); the FS branch stays fail-soft.
 	seam, err := resolveSkillSeam(ctx, cfg, agentReg)
@@ -5966,8 +5948,8 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 	// It wraps a stateless forker.Merger in a forker.SerializingMerger so concurrent
 	// merges across ALL sessions are serialized by a single mutex (correctness over
 	// throughput on this off-hot-path post-run write). Built ONLY when Parallel is
-	// enabled, mirroring forkReaper just above — the writable Subagent no longer
-	// merges (it writes the parent tree directly), so Parallel is the sole
+	// enabled, mirroring forkReaper just above — the writable Subagent does not
+	// merge (it writes the parent tree directly), so Parallel is the sole
 	// consumer.
 	var autoMerger tool.EnvironmentMerger
 	if cfg.EnableParallel {
@@ -6060,10 +6042,9 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 		}
 	}
 
-	// Restore the pre-#42 advertises-implies-registered coupling: the old code set
-	// memStore only AFTER a successful memory.Register, so the turn-0 prompt index
-	// could never advertise a memory family the catalog lacked. Registration now
-	// happens inside assembleCatalog (which WARNs on the failure), so on that
+	// Keep the advertises-implies-registered coupling (issue #42): the turn-0
+	// prompt index must never advertise a memory family the catalog lacks.
+	// Registration happens inside assembleCatalog (which WARNs on the failure), so on that
 	// (name-collision, near-impossible) edge we DROP the store from the assets
 	// before it reaches buildInstructionAssembler — and before the per-session
 	// assemblies inherit it.
@@ -6234,14 +6215,14 @@ func skillResolveOptions(cfg Config) skills.ResolveOptions {
 		Explicit:     cfg.SkillsDirs,
 		Conventional: cfg.SkillsConventional,
 		Workspace:    cfg.Workspace,
-		// Project-tier skills are withheld when the project tier is not admitted
-		// (Phase 2a / R2.5): untrusted, or the ingestion grant withheld
+		// Project-tier skills are withheld when the project tier is not admitted:
+		// untrusted, or the ingestion grant withheld
 		// (projectIngestionAdmitted).
 		IncludeProjectTier: projectIngestionAdmitted(cfg),
 	}
 }
 
-// skillSeam is the resolved skills wiring (Phase C1): the build-once products
+// skillSeam is the resolved skills wiring: the build-once products
 // every catalog assembly shares, produced by resolveSkillSeam from EITHER the
 // filesystem branch (NewFSSource over the trust-gated resolved sources) or the
 // remote-driver branch (a grpcdriver SkillSource). The PORT
@@ -6907,8 +6888,8 @@ func roleFamily(role string) string {
 
 // childTelemetryFor resolves the (Sink, ToolCallRecorder) pair for a child
 // engine: the role-scoped pair from cfg.MetricsRoleScoper keyed on the BOUNDED
-// roleFamily(role) when a scoper is wired, or (nil, nil) — the byte-identical
-// pre-feature unmetered child shape — when it is not.
+// roleFamily(role) when a scoper is wired, or (nil, nil) — the unmetered
+// child shape — when it is not.
 func childTelemetryFor(cfg Config, role string) (port.EventSink, port.ToolCallRecorder) {
 	if cfg.MetricsRoleScoper == nil {
 		return nil, nil
@@ -6957,7 +6938,7 @@ func childEngineDeps(cfg Config, role string, provider port.LLMProvider, provide
 	// Role-scoped telemetry (issue #47): when the composition wires a
 	// MetricsRoleScoper, this child's metrics flow into the shared instruments
 	// under the BOUNDED roleFamily(role) label; with no scoper both stay nil
-	// (the byte-identical unmetered child shape). Same posture as
+	// (the unmetered child shape). Same posture as
 	// childEngineDepsForProvider — the two child deps builders must not drift.
 	sink, recorder := childTelemetryFor(cfg, role)
 	return agent.Deps{
@@ -6968,7 +6949,7 @@ func childEngineDeps(cfg Config, role string, provider port.LLMProvider, provide
 		// learn (nil store disables Learn entirely). childPermPolicy adds the
 		// AudienceSubagent pin + the workspace-pinned config resolver (issue #32)
 		// so `subagent:`-block rules bind children; with no config it is the
-		// historical allow-all shape.
+		// bare allow-all shape.
 		Policy:             childPermPolicy(cfg),
 		AuthorityEvaluator: cfg.authorityEvaluator,
 		Hooks:              hooks,
@@ -7069,10 +7050,9 @@ func childEngineDepsForProvider(cfg Config, role string, provider port.LLMProvid
 		}
 	}
 	deps.OperatorProfileSource = childOperatorProfileSource(cfg, role)
-	// Child engines do NOT expand slash commands (the old newChildEngineWithHooks
-	// path left CommandExpander nil — a sub-agent receives literal instructions, not
-	// user "/cmd" text). engineDepsForProvider built one from cfg; clear it so the
-	// child's non-provider shape is unchanged from the pre-feature constructor.
+	// Child engines do NOT expand slash commands (a sub-agent receives literal
+	// instructions, not user "/cmd" text). engineDepsForProvider built one from
+	// cfg; clear it.
 	deps.CommandExpander = nil
 	// Child telemetry is ROLE-SCOPED, never the main pair (issue #47).
 	// engineDepsForProvider set Sink/ToolCallRecorder from cfg (the main engine's
@@ -7084,8 +7064,8 @@ func childEngineDepsForProvider(cfg Config, role string, provider port.LLMProvid
 	// lands on role-distinct series of the SAME instruments: visible on the perf
 	// plane, never folded into role="main". The mapping is the cardinality
 	// guarantee — the raw role (which can embed a def name or model id) never
-	// reaches a label. Without a scoper (no-perf composition) both stay nil,
-	// byte-identical to the pre-feature child shape. Diagnostics is a SEPARATE
+	// reaches a label. Without a scoper (no-perf composition) both stay nil
+	// (unmetered). Diagnostics is a SEPARATE
 	// seam: it is intentionally LIVE for children, bound to cfg.diag() and tagged
 	// with the child's agent role (Deps.Role), so interleaved child diagnostics
 	// (compaction degradation, policy denies) stay readable and correlated on the
@@ -7456,9 +7436,9 @@ func askAdjudicatorDeps(cfg Config, provReg *providerRegistry, provider port.LLM
 		// operator already enabled). Empty flag ⇒ reviewer off, byte-identical.
 		return agent.Deps{}, false
 	}
-	// ASK-REVIEWER SLOT (Phase 2): a configured `ask-reviewer` slot
+	// ASK-REVIEWER SLOT: a configured `ask-reviewer` slot
 	// SUPERSEDES the flag's model (the flag still gates ON/OFF). Otherwise resolve the
-	// flag's value through the alias machinery exactly as before.
+	// flag's value through the alias machinery.
 	var model string
 	if sm, ok := resolveSlotModel(cfg, slotAskReviewer, parentModel); ok {
 		model = sm
@@ -7501,7 +7481,7 @@ func attachAskAdjudicator(deps agent.Deps, cfg Config, provReg *providerRegistry
 }
 
 // buildModelRouterTask constructs the OPT-IN semantic Subagent model-router closure
-// (Phase 5) — the sibling of buildAskAdjudicator. It returns the
+// — the sibling of buildAskAdjudicator. It returns the
 // agent.Deps.SubagentModelRouter closure: given a (model-authored, untrusted) Subagent
 // task prompt it (1) builds a tool-less one-turn CLASSIFIER engine on the `router` slot
 // (or the operator's classifier-slot) over the SESSION's provider — byte-for-byte the
@@ -7660,7 +7640,7 @@ func jevRouterMissReason(kind jevrouter.MissKind) string {
 // these are process-lifetime engines). The close is nil when no def opens an inline
 // server.
 //
-// Workspace isolation (Phase 2): when Shell is configured, the Subagent tool is wired with
+// Workspace isolation: when Shell is configured, the Subagent tool is wired with
 // a SANDBOXED command runner AND a worktree forker (the forker DEFAULT mode — no
 // WithForceCopy — so the child shares the parent repo's `.git` for full history). The
 // Subagent tool then forks each child run into a throwaway git worktree before running it,
@@ -7710,7 +7690,7 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 	// Issue #40: when the WORKSPACE-TRUST gate (not --no-shell / an empty shell) is what
 	// nil'd the runner, tell the model honestly via the Spec — otherwise the description
 	// keeps promising the isolated-worktree shell and the model delegates build/test/git
-	// work the child cannot perform. The other disable causes keep the historical
+	// work the child cannot perform. The other disable causes keep the default
 	// description (subagentShellUntrustedReason returns "" for them).
 	if reason := subagentShellUntrustedReason(cfg); reason != "" {
 		opts = append(opts, agent.WithSubagentShellDisabledNote(reason))
@@ -8150,7 +8130,7 @@ func buildTeamWiring(_ context.Context, cfg Config, provReg *providerRegistry, p
 	// buildSandboxedCommandRunner/buildForceCopyRunner carry. A builder returns nil
 	// when the gate withholds the shell (Shell disabled / untrusted workspace for
 	// roFk), so the child Environment is shell-less and its Shell surfaces ErrNoShell
-	// honestly — matching the historical shell-less degrade.
+	// honestly — the standard shell-less degrade.
 	roRunnerBuilder := func(childRoot string) tool.CommandRunner {
 		if !sandboxedShellAvailable(cfg) {
 			return nil
@@ -8233,7 +8213,7 @@ func modelCfgFor(cfg Config, model string) Config {
 //
 // Catalog shaping:
 //
-//   - DEFAULT (no/unknown AgentType): the historical member catalog — Read, Grep,
+//   - DEFAULT (no/unknown AgentType): the default member catalog — Read, Grep,
 //     Glob always; plus Edit, Write, and the Shell tool (when a runner is available)
 //     for a Mutating member only. Shell is workspace-aware (it runs in the member's
 //     forked Workspace.Root()), so a Mutating member's Shell is fork-confined.
@@ -8315,7 +8295,7 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 			// runs on the ALREADY-RESOLVED routed model with its re-derived window, through
 			// the SAME contamination-safe newChildEngineForProvider path the default uses.
 			// (The no-FS member is always undefined here — agent-def adoption is skipped on
-			// this branch — so any routedModel applies.) Empty routedModel = today's default.
+			// this branch — so any routedModel applies.) Empty routedModel = the default model.
 			if rm := strings.TrimSpace(routedModel); rm != "" {
 				model = rm
 				windowFn = childWindowFor(cfg, provReg, parentProviderID, rm)
@@ -8367,10 +8347,10 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 			mcpClose func() error
 			mcpNames []string
 			// memberHooks is the per-member engine HookRunner. It stays inert (the
-			// historical default-member shape) UNLESS the member adopts a def whose
+			// default-member shape) UNLESS the member adopts a def whose
 			// `hooks:` map scopes lifecycle hooks to its engine. teamHooks remains the
-			// separate runner the coordination tools use; it is the per-def fallback so a
-			// defined member with no scoped hooks behaves as before.
+			// separate runner the coordination tools use; a defined member with no
+			// scoped hooks keeps the inert memberHooks (defHookRunner's fallback).
 			memberHooks port.HookRunner = hookexec.New(nil)
 			// isolateReadOnly is set true iff this is a NON-mutating member that we
 			// nonetheless gave Shell (runner wired AND a read-only forker available). It
@@ -8460,8 +8440,7 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 			pc = agentPromptConfig(cfg, def, model, memHead, bodies...)
 			mode = resolvePermissionMode(cfg.diag(), def)
 			// A def's `hooks:` scope lifecycle hooks to this member's engine. A def that
-			// scopes none keeps the inert default (memberHooks unchanged), preserving the
-			// historical defined-member engine shape.
+			// scopes none keeps the inert default (memberHooks unchanged).
 			memberHooks = defHookRunner(cfg, def, memberHooks)
 			cfg.diag().Log(context.Background(), port.LevelInfo, "team member adopts agent def",
 				"member", spec.Name, "agent", def.Name, "tools", strings.Join(names, ","),
@@ -8486,8 +8465,8 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 			// member, so run it on the ALREADY-RESOLVED routed model in place of the
 			// def-less default (a DEFINED member never reaches here — its def pinned the
 			// model via resolveChildProvider above). applyMemberRoute is a no-op on an empty
-			// routedModel (router off, miss, or zero-caps RunTeam), so the default is
-			// byte-identical to today.
+			// routedModel (router off, miss, or zero-caps RunTeam), so the default
+			// keeps the member's own model.
 			model, windowFn, pc = applyMemberRoute(cfg, provReg, parentProviderID, routedModel, model, windowFn, pc)
 		}
 
@@ -8876,10 +8855,9 @@ const memoryPostureLead = "You have a durable memory store holding facts saved e
 //
 // The storage advice MUST agree with memorytools.rememberDescription, which is the
 // tool's own model-facing contract: "never store credentials, transient state,
-// instructions, or facts rediscoverable from the workspace". This clause used to
-// recommend "workspace-specific findings" and "learned project conventions", which
-// are the rediscoverable and instruction categories that description excludes —
-// two model-facing contracts telling the model opposite things.
+// instructions, or facts rediscoverable from the workspace". It must not recommend
+// storing workspace-specific findings or project conventions, which are the
+// rediscoverable and instruction categories that description excludes.
 //
 // The tool names are NOT enumerated (see memoryPostureLead).
 // The "Project memory" substring is a stable test key.
@@ -9190,7 +9168,7 @@ func foldOperatorReasoningEffort(cfg Config) Config {
 // operator YAML says true and the flag left it false. It is a no-op when no
 // operator-tier key was configured or the flag already set it. Mirrors
 // foldOperatorPosture. cfg is taken and returned by
-// value (issue #206 Wave 6a).
+// value (issue #206).
 func foldOperatorPlanModeAutoApprove(cfg Config) Config {
 	if cfg.PlanModeAutoApprove {
 		return cfg // already enabled (CLI flag or direct Config set).
@@ -9522,7 +9500,7 @@ func defaultRules() []governance.Rule {
 		// an interactive Ask: its outbound payload is a query string, lower-risk than
 		// WebFetch's arbitrary-URL fetch.
 		{Scope: governance.ScopeBuiltinDefault, Tool: "WebSearch", Effect: governance.Allow},
-		// FetchMcpResource (issue #223 Phase 2): floor-Allow, same posture as
+		// FetchMcpResource (issue #223): floor-Allow, same posture as
 		// WebFetch — config-overridable to ask/deny in any scope. It is an outbound
 		// read-only fetch of an https:// resource URI an MCP tool surfaced as a
 		// resource_link; the SSRF gate is session.ValidateMediaURL (re-run on every
@@ -9634,9 +9612,9 @@ func mainRules(cfg Config) []governance.Rule {
 // rule from leaking into the interactive engine. When cfg.AllowAllTools (posture
 // auto OR yolo) it additionally loosens the built-in substitution Ask floor
 // (WithLooseSubstitution) — consistent with the mutate-ask floor the ScopeCLI
-// allow-all rule already loosens, so a substitution command no longer prompts on the
+// allow-all rule already loosens, so a substitution command does not prompt on the
 // MAIN engine. A configured Deny/Ask in any scope still wins (deny-dominance and the
-// configured-ask floor are unaffected). The CHILD substitution loosening is now
+// configured-ask floor are unaffected). The CHILD substitution loosening is
 // TIER-DEPENDENT, not main-only: childEvaluatorOptions(cfg) ALSO adds
 // WithLooseSubstitution under posture yolo (cfg.LooseChildSubstitution) — so at auto
 // the main loosens but children still resolve their substitution through the child-ask
@@ -9726,9 +9704,8 @@ func (p pinnedResolver) Resolve(ctx context.Context, _ tool.WorkspaceReader) []g
 // childRules returns the child/member engine's static ruleset: the canonical
 // allow-all-at-the-floor (permpolicy.AllowAllFloorRules — the ONE definition,
 // shared with every "default child posture" test fixture so they cannot
-// drift). Children were historically allow-all at the zero Scope
-// (ScopeManaged); the re-scope to the BUILT-IN floor is behaviour-neutral with
-// no config (allow-all still matches everything → Allow, and the
+// drift). Scoping the allow-all to the BUILT-IN floor rather than the zero
+// Scope (ScopeManaged) is behaviour-neutral with no config (allow-all still matches everything → Allow, and the
 // floor-exception in resolveSimple only keys on the ASK side's scope) — pinned
 // by TestChildRulesFloorScopeNeutral — but it is load-bearing for the issue-#32
 // decision bits: the floor allow-all must NOT register as a CONFIGURED Allow
@@ -9786,7 +9763,7 @@ func childEvaluatorOptions(cfg Config) []governance.EvaluatorOption {
 // (plus, under PostureYolo, the child substitution loosening — childEvaluatorOptions
 // is tier-aware). With no config wired (cfg.childPermResolver nil — every
 // direct-call test and the no-config default) and PostureStrict it behaves
-// byte-identically to the historical bare allow-all policy.
+// identically to a bare allow-all policy.
 func childPermPolicy(cfg Config) *permpolicy.Policy {
 	return permpolicy.NewPolicyWithResolver(childRules(cfg), nil /* children never learn */, cfg.childPermResolver, childEvaluatorOptions(cfg)...)
 }

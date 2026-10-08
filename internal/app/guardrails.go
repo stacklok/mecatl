@@ -530,19 +530,18 @@ const (
 // resolveGuardrailsCheckerModel is the SINGLE source of truth for the resolved guardrail
 // checker model + its provenance. It is PURE (no diagnostics, no provider) so the
 // build-once posture line (logGuardrailsPosture) and the per-session checker builder
-// (buildGuardrailsChecker) read the SAME resolution and cannot drift. Precedence mirrors
-// the pre-#46 buildGuardrailsChecker exactly:
+// (buildGuardrailsChecker) read the SAME resolution and cannot drift. Precedence:
 //
 //  1. slot: resolveSlotModel(cfg, slotGuardrail, "") → if ok, model = that; src = srcSlot
 //     (or srcSlotSupersedingGate when cfg.GuardrailsModel != "" AND differs from the
 //     slot's resolved model — a same-id gate value stays srcSlot, no "superseding").
 //  2. else gate: sel := cfg.GuardrailsModel; resolved, _ := lookupModelAlias(cfg, sel);
 //     src = srcGate. Under UseMock an unresolved gate value passes through as the literal
-//     sel verbatim (matching the old buildGuardrailsChecker:245-251 fail-soft).
+//     sel verbatim (fail-soft).
 //  3. else nothing: model = "", src = srcNone.
 //
 // configured = src != srcNone. A slot that is bound but unresolvable falls through to the
-// gate value (today's fail-soft — a broken slot never wedges the checker).
+// gate value (fail-soft — a broken slot never wedges the checker).
 func resolveGuardrailBinding(cfg Config, reg *providerRegistry) (providerID, model string, src guardrailSource, configured bool, err error) {
 	if cfg.GuardrailsDisabled {
 		return "", "", srcNone, false, nil

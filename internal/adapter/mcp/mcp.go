@@ -647,14 +647,14 @@ func requestOrigin(u *url.URL) string {
 // notification arriving during the re-list re-arms it — the safe direction
 // (at worst one redundant refresh, never a lost update).
 //
-// Catalog mutation (live tool.Catalog refresh) is deliberately Phase 2 — it
-// gets its own design. In Phase 1, Tools() DOES re-list on dirty (so a per-session
+// Catalog mutation (live tool.Catalog refresh) is not implemented. Tools() DOES
+// re-list on dirty (so a per-session
 // catalog assembly that calls mgr.Tools() after a list_changed picks up the
 // fresh set), but the already-registered remoteTool specs in an existing session
 // are NOT updated — a tool the server dropped surfaces a tool-call error on
 // use. This means two sessions created around the same notification may see
-// different tool surfaces (a timing-dependent split); this is the accepted
-// Phase 1 trade-off.
+// different tool surfaces (a timing-dependent split); this is an accepted
+// trade-off.
 //
 // A dropped session (the SDK's ErrConnectionClosed / errSessionMissing, surfacing
 // as "session not found" / "connection closed") is re-established transparently

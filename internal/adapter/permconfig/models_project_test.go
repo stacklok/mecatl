@@ -13,7 +13,7 @@ import (
 )
 
 // operatorAllowlistYAML is an operator-tier models: block carrying an allowlist (the
-// Phase-4 opt-in) plus the operator's own bindings.
+// project-models opt-in) plus the operator's own bindings.
 const operatorAllowlistYAML = `
 models:
   allowlist:
@@ -59,7 +59,7 @@ func newCapturedResolver(t *testing.T, operatorPath, operatorYAML string, trust 
 	return r, &buf
 }
 
-// TestProjectModelsHonouredWithinAllowlist pins the Phase-4 happy path: a
+// TestProjectModelsHonouredWithinAllowlist pins the happy path: a
 // TRUSTED project's models: bindings are CAPTURED (slots/aliases/default) when an operator
 // allowlist exists. The allowlist-MEMBERSHIP cap is enforced in composition; permconfig
 // captures the raw bindings within the trust/opt-in gate.
@@ -90,8 +90,8 @@ func TestProjectModelsHonouredWithinAllowlist(t *testing.T) {
 }
 
 // TestProjectModelsByteIdenticalNoAllowlist pins the OPT-IN: with NO
-// operator allowlist, a project models: block stays WARN-ignored (byte-identical to
-// pre-Phase-4) — ProjectModelBindings returns nil and the ignore-WARN fires.
+// operator allowlist, a project models: block stays WARN-ignored —
+// ProjectModelBindings returns nil and the ignore-WARN fires.
 func TestProjectModelsByteIdenticalNoAllowlist(t *testing.T) {
 	// Operator models: block WITHOUT an allowlist (just slots) — the opt-in is OFF.
 	r, buf := newCapturedResolver(t, "/etc/mecatl/op.yaml", operatorModelsYAML, true)

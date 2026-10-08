@@ -363,8 +363,8 @@ func (p *countingProvider) Stream(ctx context.Context, req port.LLMRequest) (ite
 	return p.inner.Stream(ctx, req)
 }
 
-// TestOrdinaryRunUsesZeroBudgetBaseline is the restart-budget guard (cloud-native
-// Phase 1): an ordinary Engine.Run always has a zero baseline, so a session loaded
+// TestOrdinaryRunUsesZeroBudgetBaseline is the restart-budget guard: an
+// ordinary Engine.Run always has a zero baseline, so a session loaded
 // carrying cumulative Usage ALREADY past the MaxRunTokens ceiling trips StopBudget
 // at the FIRST turn boundary — before any model call — instead of re-granting a
 // fresh budget. Internal cleanup/synthesis baselines must never leak into this

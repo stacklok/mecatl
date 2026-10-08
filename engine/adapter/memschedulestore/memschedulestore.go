@@ -1,5 +1,5 @@
 // Package memschedulestore is the in-memory reference port.ScheduleStore
-// (scheduled-tasks issue #189, Phase 1b): the offline, clock-injected
+// (scheduled-tasks issue #189): the offline, clock-injected
 // single-process schedule registry the conformance suite validates and that
 // composition can wire as the default-store opt-in. It keeps per-schedule
 // Spec+State records and per-fire ScheduleFire records in mutex-guarded maps

@@ -143,7 +143,7 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 	h.mux.HandleFunc("POST /v1/teams/{id}/run", h.runTeam)
 	h.mux.HandleFunc("GET /v1/teams/{id}", h.listTeam)
 	h.mux.HandleFunc("DELETE /v1/teams/{id}", h.cleanupTeam)
-	// Schedule routes (issue #232, Phase 2a): a peer REST surface over the same
+	// Schedule routes (issue #232): a peer REST surface over the same
 	// Service.CreateSchedule/... methods the gRPC ScheduleService delegates to.
 	h.mux.HandleFunc("POST /v1/schedules", h.createSchedule)
 	h.mux.HandleFunc("GET /v1/schedules", h.listSchedules)
@@ -223,8 +223,8 @@ func (h *HTTPHandler) getServerInfo(w http.ResponseWriter, r *http.Request) {
 type createSessionBody struct {
 	Mode   string    `json:"mode,omitempty"`
 	Limits *limitsIn `json:"limits,omitempty"`
-	// ProviderID / ModelID select a per-session provider+model (multi-provider
-	// Phase 0, S3). Empty both => the server default provider. ProviderID without
+	// ProviderID / ModelID select a per-session provider+model.
+	// Empty both => the server default provider. ProviderID without
 	// ModelID => the provider's default model; ModelID without ProviderID is a
 	// client error (a bare model on the default provider is ambiguous).
 	ProviderID string `json:"provider_id,omitempty"`
@@ -499,8 +499,7 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 	// ("unknown field \"mcpServers\""), which turns an otherwise baffling 400 into a
 	// self-diagnosing one. It describes the caller's own input, so it leaks nothing.
 	//
-	// It is a deliberate behaviour CHANGE: a request carrying a stray field used to
-	// succeed. The strictness matches decodeLearningJSON's existing posture on this
+	// A request carrying a stray field is rejected. The strictness matches decodeLearningJSON's existing posture on this
 	// same handler set.
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
@@ -1064,7 +1063,7 @@ func (h *HTTPHandler) relayRunSSE(w http.ResponseWriter, r *http.Request, id ses
 	// wedge in its own sends behind a dead relay. The failure flag is sticky —
 	// no further write happens after the first error.
 	//
-	// The durable event-log Append (cloud-native Phase 3a) is DECOUPLED from the
+	// The durable event-log Append is DECOUPLED from the
 	// client write: it runs for EVERY observed event, BEFORE and independent of the
 	// drain-to-discard guard, so a disconnected client never stops the log (the
 	// whole point of a server-side durable log is to survive the client — it must
@@ -2464,7 +2463,7 @@ func (h *HTTPHandler) listWorktrees(w http.ResponseWriter, r *http.Request) {
 }
 
 // listSessions handles GET /v1/sessions — the stored-session inventory picker
-// (issue #245 Phase 1). Read-only; loads no conversation content.
+// (issue #245). Read-only; loads no conversation content.
 func (h *HTTPHandler) listSessions(w http.ResponseWriter, r *http.Request) {
 	pageSize := 0
 	if raw := r.URL.Query().Get("page_size"); raw != "" {
@@ -2552,8 +2551,8 @@ func (h *HTTPHandler) getSessionCleanupJob(w http.ResponseWriter, r *http.Reques
 }
 
 // streamSessionEvents handles GET /v1/sessions/{id}/events — replays a session's
-// durable event log as a Server-Sent Events stream (issue #245 Phase 1; cloud-
-// native Phase 3a read-back). This is the READ path: it never calls appendEvent
+// durable event log as a Server-Sent Events stream (issue #245). This is
+// the READ path: it never calls appendEvent
 // and never starts a run.
 func (h *HTTPHandler) streamSessionEvents(w http.ResponseWriter, r *http.Request) {
 	id := session.SessionID(r.PathValue("id"))
@@ -2744,11 +2743,9 @@ func writeError(w http.ResponseWriter, code int, msg string) {
 
 // writeServiceError writes a service sentinel error as an RFC 9457 problem.
 //
-// It is a REGISTRY LOOKUP, not a switch. It used to be a 49-case
-// errors.Is chain maintained in parallel with toStatus in grpc.go; the two
-// agreed only by discipline, and a sentinel added to one and forgotten in the
-// other would have reported a different class per transport. Both now read
-// errorRegistry, so they cannot disagree.
+// It is a REGISTRY LOOKUP, not a switch. It and toStatus in grpc.go both read
+// errorRegistry, so the two transports cannot report a different class for the
+// same sentinel.
 func writeServiceError(w http.ResponseWriter, err error) {
 	writeProblem(w, classifyError(err), err.Error())
 }

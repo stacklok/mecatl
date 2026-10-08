@@ -107,7 +107,7 @@ func TestAppAndMecak8sLeaseCompositionSharesMutationCapability(t *testing.T) {
 	}
 }
 
-// TestCrossProcessLeaseExclusion is the cloud-native Phase 4 falsifiable gate: a
+// TestCrossProcessLeaseExclusion is the cross-process lease falsifiable gate: a
 // session leased by one Build (replica) cannot be run by a second Build over the
 // SAME store + lease dir, until the first settles its local run and releases
 // ownership (EndSession) or its lease lapses (TTL).

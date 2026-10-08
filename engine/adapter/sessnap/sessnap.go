@@ -19,7 +19,7 @@
 //     faithfully via Session.RecordedStopReason() (which performs no limit
 //     derivation) and restored via the matching terminal transition
 //     Complete/Stop/Cancel/Fail. Capturing the recorded value directly means the
-//     snapshot no longer has to infer the reason from the conflated
+//     snapshot does not have to infer the reason from the conflated
 //     Session.StopReason(), so terminal round-trips are exact.
 package sessnap
 
@@ -126,7 +126,7 @@ type Snapshot struct {
 	// restart: the resume path reads it back and reuses it instead of minting a
 	// new one.
 	//
-	// omitempty keeps a pre-0245 snapshot with no "run_id" key decoding to "" —
+	// omitempty keeps an older snapshot with no "run_id" key decoding to "" —
 	// purely additive, no format-tag bump (the Profile/ProviderID/Usage
 	// precedent). A legacy session restores with no run id and is stamped on its
 	// next run; there is no migration sweep.
@@ -141,7 +141,7 @@ type Snapshot struct {
 	// Added/minor).
 	Owner *session.Principal `json:"owner,omitempty"`
 	// Authority is the plain, derived capability payload. A nil pointer is a
-	// genuinely pre-feature legacy record; a present payload must decode to the
+	// genuine legacy record written without authority; a present payload must decode to the
 	// one governance.CapabilitySet representation or restore fails closed.
 	Authority *session.Authority `json:"authority,omitempty"`
 	// EnvironmentRef is the sole durable execution-environment identity. It is
@@ -602,7 +602,7 @@ func Unmarshal(line []byte) (*session.Session, error) {
 
 func validateAuthorityWireClaim(raw json.RawMessage) error {
 	if len(raw) == 0 {
-		return nil // Genuinely pre-feature record: no authority field.
+		return nil // Genuine legacy record: no authority field.
 	}
 	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		return errors.New("null authority claim")

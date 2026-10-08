@@ -194,8 +194,8 @@ func (s *Service) FireNow(ctx context.Context, name string) (port.ScheduleFire, 
 // EmitScheduleEvent appends a SchedulePayload as an EvSchedule* event to the fire
 // session's durable EventLog. It is the composition-injected emit callback the
 // scheduler invokes (via scheduler.Config.EmitScheduleEvent) for fired/failed/
-// skipped fires. For v1 delivery is durable-log-only (pull-only via
-// GetFire/ListFires); a live broadcast stream is a future phase. A skipped fire
+// skipped fires. Delivery is durable-log-only (pull-only via
+// GetFire/ListFires); a live broadcast stream is not implemented. A skipped fire
 // (no session id) is dropped from the durable log (the log is session-keyed) and
 // surfaces only via the operator diagnostic.
 //
@@ -218,9 +218,9 @@ func (s *Service) EmitScheduleEvent(ctx context.Context, payload session.Schedul
 }
 
 // scheduleStore returns the ScheduleStore the capabilities gate (Scheduling)
-// reads — now off the embedded manager (the Service no longer self-discovers
-// the store; it consumes the manager). Returns nil when the store
-// backs no ScheduleStore (the byte-identical no-schedule path), so
+// reads, off the embedded manager (the Service does not self-discover the
+// store; it consumes the manager). Returns nil when the store
+// backs no ScheduleStore (the no-schedule path), so
 // ServerCapabilities.Scheduling stays false honestly.
 func (s *Service) scheduleStore() port.ScheduleStore {
 	if m := s.schedMgr; m != nil {
@@ -233,8 +233,8 @@ func (s *Service) scheduleStore() port.ScheduleStore {
 // late-bind seam). It is the delegated setter: composition builds the
 // scheduler AFTER NewService (the FireFunc closes over the Service) and
 // attaches it here; the manager holds the atomic scheduler pointer FireNow
-// reads. Nil-safe (no manager wired → no-op, the byte-identical no-scheduling
-// path). The Service's own s.mu is no longer involved (the manager's atomic
+// reads. Nil-safe (no manager wired → no-op, the no-scheduling
+// path). The Service's own s.mu is not involved (the manager's atomic
 // pointer is the single truth); Close/Drain read s.schedMgr.HasScheduler()
 // instead of a Service-held scheduler field.
 func (s *Service) SetScheduler(sch *scheduler.Scheduler) {

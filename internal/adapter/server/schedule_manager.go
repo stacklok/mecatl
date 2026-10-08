@@ -122,7 +122,7 @@ type scheduleManager struct {
 	// already in flight.
 	scheduleMinIntervalNanos atomic.Int64
 	// scheduler is the OPTIONAL late-set in-process scheduled-tasks tick loop
-	// (issue #189, Phase 1f). SetScheduler late-binds it AFTER the manager is
+	// (issue #189). SetScheduler late-binds it AFTER the manager is
 	// constructed (buildScheduler needs the Service for the FireFunc, so the
 	// scheduler is built AFTER NewService and attached here). nil when no
 	// scheduler is wired (the byte-identical default — FireNow distinguishes
@@ -269,7 +269,7 @@ func (m *scheduleManager) setPlacementDeleter(fn func(context.Context, session.E
 // when ScheduleManagerConfig.ScheduleStore was set, else the
 // scheduleStoreProvider accessor result). It is the read the Service's
 // capabilities() Scheduling gate + the delegating schedule verbs use — kept
-// here so the Service no longer self-discovers the store (it consumes the
+// here so the Service does not self-discover the store (it consumes the
 // manager). Always non-nil on a constructed manager (the constructor returns
 // nil otherwise).
 func (m *scheduleManager) scheduleStore() port.ScheduleStore {
@@ -500,8 +500,7 @@ func (m *scheduleManager) CreateSchedule(ctx context.Context, spec port.Schedule
 	// is ONE atomic backend operation: two concurrent creates of the same name
 	// yield exactly one success and one ErrScheduleAlreadyExists, never a
 	// silent overwrite. Ownership enforcement REQUIRES that capability; only
-	// the ownerless compatibility path retains the historical check-then-Save
-	// fallback.
+	// the ownerless compatibility path keeps a check-then-Save fallback.
 	if creator, ok := m.schedStore.(port.ScheduleCreator); ok {
 		if err := creator.Create(ctx, sched); err != nil {
 			cleanupErr := rollbackPlacement()
@@ -560,7 +559,7 @@ const defaultOneShotMaxRetries = 3
 // Singleton field. A bare bool has no "set" marker, so v1 treats false as
 // "unset" and applies the intended default (true). This stub exists so a future
 // wire field (a *bool or a sentinel) can carry explicit-override semantics
-// without reworking the create-seam — for now it always returns false (the
+// without reworking the create-seam — it always returns false (the
 // default is always applied when Singleton is false).
 func scheduleSingletonExplicit(_ port.ScheduleSpec) bool { return false }
 
@@ -653,8 +652,7 @@ func (m *scheduleManager) validateCronTrigger(spec port.ScheduleSpec, now time.T
 	if err != nil {
 		return time.Time{}, fmt.Errorf("%w: invalid cron expression %q: %v", ErrInvalidArgument, spec.Trigger.Cron, err)
 	}
-	// The cadence floor (AC1.3 — SchedulerMinInterval, no longer
-	// inert): two consecutive computed fires are the schedule's true
+	// The cadence floor (SchedulerMinInterval): two consecutive computed fires are the schedule's true
 	// cadence, so a fixed-field cron that fires multiple times within one
 	// minute (e.g. "*/30 * * * * *" has no seconds field, but "* * * * *"
 	// fires every 60s) is measured honestly. A cadence tighter than the
@@ -921,7 +919,7 @@ func (m *scheduleManager) DeleteSchedule(ctx context.Context, name string) error
 	if err != nil {
 		return scheduleNotFoundErr(err, name)
 	}
-	// Preserve the historical idempotent direct-delete path for every borrowed,
+	// Use the idempotent direct-delete path for every borrowed,
 	// host-local, no-FS, and legacy-ambiguous record.
 	if !sched.Spec.PlacementOwned {
 		return m.schedStore.Delete(ctx, physicalName)
@@ -1092,7 +1090,7 @@ func (m *scheduleManager) FireNow(ctx context.Context, name string) (port.Schedu
 }
 
 // SetScheduler wires a scheduler onto the manager. It is the late-bind seam for
-// the scheduled-tasks tick loop (issue #189, Phase 1f): buildScheduler needs the
+// the scheduled-tasks tick loop (issue #189): buildScheduler needs the
 // Service for the FireFunc, so the scheduler is built AFTER NewService and
 // attached here. Nil-safe.
 func (m *scheduleManager) SetScheduler(sch *scheduler.Scheduler) {
@@ -1100,9 +1098,8 @@ func (m *scheduleManager) SetScheduler(sch *scheduler.Scheduler) {
 }
 
 // SetScheduleMinInterval injects the scheduler cadence floor the create-seam
-// enforces (AC1.3 — the composition half of
-// scheduler.Config.MinInterval / app Config.SchedulerMinInterval, previously
-// inert while there was no in-band create API). It lives on the manager, NOT
+// enforces (the composition half of
+// scheduler.Config.MinInterval / app Config.SchedulerMinInterval). It lives on the manager, NOT
 // the scheduler: the floor guards the SHARED validateScheduleSpec — the
 // Schedule tool's create AND the REST/gRPC create — whether or not the tick
 // loop runs (a --no-scheduler deployment still manages schedules manually).

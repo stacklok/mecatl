@@ -87,7 +87,7 @@ func TestLiveInstructionAttachmentRetainedUntilCloseSettlementSucceeds(t *testin
 }
 
 // TestCloseCompletesWhenOneSessionSettlementFails pins that a single session's
-// external-authorization settlement failure during shutdown (P1-7) must not
+// external-authorization settlement failure during shutdown must not
 // abort the mandatory cleanup (lease release, subscription close, engine
 // close, shutdownComplete) for every other session.
 func TestCloseCompletesWhenOneSessionSettlementFails(t *testing.T) {

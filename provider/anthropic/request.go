@@ -575,16 +575,16 @@ func buildMessages(msgs []session.Message, caps port.ProviderCapabilities) ([]sd
 //
 // Otherwise (no Parts, or routing returns nil — every block filtered out by the
 // capability intersection) it falls back to the single-string
-// NewToolResultBlock(callID, Content, isError) — BYTE-IDENTICAL to the pre-T7
-// path, so the legacy/mock/mecademo path is unchanged.
+// NewToolResultBlock(callID, Content, false), so the legacy/mock/mecademo path
+// stays stable.
 func toolResultBlock(tr session.ToolResult, caps port.ProviderCapabilities) sdk.ContentBlockParamUnion {
 	blocks := port.RouteToolResultParts(tr, caps)
 	if len(blocks) == 0 {
-		// Legacy single-string form — byte-identical to the pre-T7 path, which
-		// hard-coded is_error=false (it did not project tr.IsError). Preserved
-		// verbatim so the legacy/mock/mecademo path is unchanged, EXCEPT an empty
-		// Content is substituted with a deterministic placeholder (see the const-block
-		// anchor comment for the empty-text-brick rationale).
+		// Legacy single-string form with is_error hard-coded to false (it does
+		// not project tr.IsError). Kept verbatim so the legacy/mock/mecademo
+		// path is stable, EXCEPT an empty Content is substituted with a
+		// deterministic placeholder (see the const-block anchor comment for the
+		// empty-text-brick rationale).
 		return sdk.NewToolResultBlock(string(tr.CallID), cmp.Or(tr.Content, emptyToolOutputPlaceholder), false)
 	}
 	content := make([]sdk.ToolResultBlockParamContentUnion, 0, len(blocks))

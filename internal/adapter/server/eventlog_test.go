@@ -392,7 +392,7 @@ func askingEventLogService(t *testing.T, log port.EventLog) (*server.Service, *m
 	return svc, csResp
 }
 
-// TestEventLogRecordsApprovalVerdict is the cloud-native Phase 3a GATE: drive a
+// TestEventLogRecordsApprovalVerdict is the durable event-log GATE: drive a
 // session through tool.call -> permission.ask -> approve(allow_always) ->
 // tool.result over the gRPC relay, then assert EventLog.Read yields the ordered
 // stream INCLUDING exactly one EvApproval{Verdict:"allow_always", Tool:"Write"}
@@ -930,7 +930,7 @@ func (g *gateTool) Execute(ctx context.Context, in session.ToolCall, _ tool.Envi
 
 var _ tool.Tool = (*gateTool)(nil)
 
-// --- StreamSessionEvents (issue #245 Phase 1) --------------------------------
+// --- StreamSessionEvents (issue #245) --------------------------------
 
 // driveAskingSessionToCompletion drives the askingEventLogService session through
 // its full Converse cycle (tool.call -> permission.ask -> approve(allow_always) ->

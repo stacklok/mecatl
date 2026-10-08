@@ -50,8 +50,7 @@ func TestCreateSessionWithSessionIDOverride(t *testing.T) {
 }
 
 // TestCreateSessionWithSessionIDNoOverrideIsByteIdentical: with no
-// WithSessionID option, the Service's NewID generator mints the id — the
-// pre-Phase-2 path is unchanged.
+// WithSessionID option, the Service's NewID generator mints the id.
 func TestCreateSessionWithSessionIDNoOverrideIsByteIdentical(t *testing.T) {
 	var newIDCalls atomic.Int32
 	shared := agent.NewEngine(agent.Deps{

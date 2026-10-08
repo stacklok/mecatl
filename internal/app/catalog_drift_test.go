@@ -165,8 +165,8 @@ func fullyLoadedScheduleStore(t *testing.T, cfg Config) port.SessionStore {
 // must contain every conditionally-registered family (requiredFamilyTools — the
 // both-paths-drop blindspot). The shared baseline is the catalog buildCatalog
 // ACTUALLY RETURNS — not a direct assembleCatalog call — so a post-assembly
-// MustRegister snuck into buildCatalog/buildEngine (the exact historical bug
-// shape, three prior firings) shifts the baseline and the equality catches it.
+// MustRegister snuck into buildCatalog/buildEngine (a recurring bug
+// shape) shifts the baseline and the equality catches it.
 //
 // The ONLY sanctioned per-session deltas are:
 //  1. the client MCP tools (a session's own mcpServers) — covered by the

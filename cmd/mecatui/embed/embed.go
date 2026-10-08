@@ -579,7 +579,7 @@ func wirePerfSinks(cfg *app.Config, metrics *telemetry.Metrics, tracing port.Eve
 	}
 	cfg.Sink = telemetry.NewSink(sinks...)
 	cfg.ToolCallRecorder = cliconfig.TeeToolCallRecorder(mainScoped, oldToolCallRecorder)
-	// Schedule metrics (issue #233, Phase 2b): wire the metrics callback over the
+	// Schedule metrics (issue #233): wire the metrics callback over the
 	// telemetry adapter's EmitSchedule, mirroring MetricsRoleScoper. Schedule
 	// metrics are NOT a role-family; this is a separate schedule-lifecycle
 	// dimension. EmitSchedule is nil-safe, so a nil metrics (perf off) stays the

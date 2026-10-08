@@ -167,9 +167,9 @@ type Config struct {
 	// Models holds the per-slot model config: the `models.slots` /
 	// `models.aliases` maps, the session `default`, and the operator-tier `allowlist`
 	// cap. At the OPERATOR tier (user-global + CLI) all fields are honoured. At the
-	// PROJECT tier (Phase 4) a models: block is honoured WITHIN the operator allowlist
+	// PROJECT tier a models: block is honoured WITHIN the operator allowlist
 	// on a TRUSTED workspace (slots/aliases/default only); with no operator allowlist
-	// it stays WARN-ignored (the opt-in — byte-identical to pre-Phase-4), and a
+	// it stays WARN-ignored (the opt-in), and a
 	// project-tier allowlist: key is always ignored with a WARN (non-wideable cap).
 	// The TOP `models:` mapping is parsed STRICTLY (an unknown key like `slotz:`
 	// errors), the inner slots/aliases maps stay free-form (composition validates the
@@ -186,7 +186,7 @@ type Config struct {
 	// permconfig only reads the scalar.
 	ReasoningEffort string `yaml:"reasoning-effort"`
 	// PlanModeAutoApprove is the OPERATOR-TIER plan-mode-auto-approve flag (issue
-	// #206 Wave 6a). Like Posture/ReasoningEffort it is honoured ONLY
+	// #206). Like Posture/ReasoningEffort it is honoured ONLY
 	// from the user-global + CLI tiers; a project-tier file's plan-mode-auto-approve:
 	// key is IGNORED with a WARN (operator-tier only — a project repo enabling
 	// autonomous plan approval is a security DOWNGRADE). false = absent (the resolver
@@ -1639,8 +1639,7 @@ func (s *ModelSlots) UnmarshalYAML(node ast.Node) error {
 // maps are free-form name→selector (composition validates the slot names fail-soft
 // via knownSlotNames).
 //
-// The block appears at BOTH tiers but the tiers differ in what they may carry
-// (Phase 4):
+// The block appears at BOTH tiers but the tiers differ in what they may carry:
 //   - OPERATOR tier (user-global + CLI): all four fields. The Allowlist is the
 //     non-wideable cap on what a PROJECT may bind; Slots/Aliases/Default are the
 //     operator's own bindings (never capped — the operator is authoritative).
@@ -1689,7 +1688,7 @@ type ModelsSection struct {
 	// Allowlist is the OPERATOR-TIER, non-wideable cap: the set of
 	// model selectors (alias names and/or concrete ids) a PROJECT-tier models: block
 	// may bind to. An empty/absent allowlist means project models stay WARN-ignored
-	// (the opt-in: no cap ⇒ no project override, byte-identical to pre-Phase-4). It is
+	// (the opt-in: no cap ⇒ no project override). It is
 	// honoured ONLY from the operator tiers; a project-tier allowlist: key is ignored
 	// with a WARN (a project cannot widen its own cap).
 	Allowlist []string `yaml:"allowlist"`

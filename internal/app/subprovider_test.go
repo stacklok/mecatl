@@ -216,7 +216,7 @@ func TestSubproviderChildCompactorAndCounter(t *testing.T) {
 
 // TestSubproviderChildTelemetryOff guards the telemetry-leak regression: a child
 // engine's Deps.Sink and Deps.ToolCallRecorder are NIL even though engineDepsForProvider sets
-// them from cfg — restoring byte-identity with the pre-feature child shape, so a
+// them from cfg — the unmetered child shape, so a
 // sub-agent's turns/tool-calls don't double-count against the operator-facing
 // histograms. A regression that dropped the nil-restore would fail here.
 func TestSubproviderChildTelemetryOff(t *testing.T) {
@@ -491,7 +491,7 @@ func TestHalfBSelectedSessionHasSubagentTool(t *testing.T) {
 		t.Fatal("a provider-selected session must now carry the Subagent tool (Half B); it does not")
 	}
 	// InspectSubagent is registered UNCONDITIONALLY wherever Subagent is — including the
-	// per-session (sessionEngineFactory) catalog, the historically-fragile registration
+	// per-session (sessionEngineFactory) catalog, a fragile registration
 	// site (the MCP-strip regression class).
 	if !res.Engine.HasTool("InspectSubagent") {
 		t.Fatal("a provider-selected session must carry the InspectSubagent tool alongside Subagent; it does not")

@@ -25,7 +25,7 @@ import (
 // modeRecordingFactory returns a SessionEngineFactory that records every mode it was
 // called with and resolves a per-mode MODEL (planModel for ModePlan, sessionModel
 // otherwise), echoing it back as ModelID + BuiltForMode — the composition factory's
-// Phase 3 contract, faked. It builds a fresh engine each call so a rebuild is observable.
+// mode contract, faked. It builds a fresh engine each call so a rebuild is observable.
 func modeRecordingFactory(sessionModel, planModel string, modes *[]session.PermissionMode, calls *atomic.Int32) server.SessionEngineFactory {
 	return func(_ context.Context, _ server.ProviderSelector, _ []mcp.ServerConfig, _ server.SessionProfile, _ string, mode session.PermissionMode) (server.SessionEngineResult, error) {
 		calls.Add(1)
@@ -266,7 +266,7 @@ func TestModeFlipRebuildsBackToExecute(t *testing.T) {
 
 // TestModeFlipByteIdenticalWithoutPlanSlot is the regression guard: with ModeNeedsEngine
 // NIL (no plan slot configured), a default-FS session NEVER promotes on a mode switch —
-// it keeps the shared engine, byte-identical to pre-Phase-3. The factory is never
+// it keeps the shared engine. The factory is never
 // consulted and the engine pointer (reply) is unchanged across the flip.
 func TestModeFlipByteIdenticalWithoutPlanSlot(t *testing.T) {
 	ctx := context.Background()
@@ -352,7 +352,7 @@ func drainAndFinish(t *testing.T, svc *server.Service, id session.SessionID, run
 }
 
 // TestPlanModeSessionRehydratesOnPlanModel pins the restart path (mode→model +
-// cloud-native Phase 1): a session persisted with Mode=plan, whose per-session engine
+// restart rehydration): a session persisted with Mode=plan, whose per-session engine
 // died with the process, is REHYDRATED at the run-entry seam on the PLAN model — the
 // factory is invoked with mode=plan read off the persisted aggregate, never the default.
 func TestPlanModeSessionRehydratesOnPlanModel(t *testing.T) {
@@ -459,21 +459,21 @@ func mustStart(t *testing.T, svc *server.Service, id session.SessionID, text str
 
 // TestPreP3FactoryBuiltForModeEmptyNoRebuild pins the `se.builtForMode != ""` skip
 // (MUST-FIX #2): a per-session engine registered by a factory that returns an EMPTY
-// BuiltForMode (a pre-Phase-3 factory, or an old in-flight shape) is treated as
+// BuiltForMode (a mode-unaware factory, or an old in-flight shape) is treated as
 // "no mode pin" — a later mode change must NOT trigger a rebuild. Dropping the `!= ""`
-// guard would make every pre-Phase-3 selector session rebuild on its first mode touch.
+// guard would make every mode-unaware selector session rebuild on its first mode touch.
 func TestPreP3FactoryBuiltForModeEmptyNoRebuild(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()
 	var calls atomic.Int32
-	// A pre-Phase-3 factory: builds a per-session engine but leaves BuiltForMode "".
+	// A mode-unaware factory: builds a per-session engine but leaves BuiltForMode "".
 	preP3 := func(_ context.Context, _ server.ProviderSelector, _ []mcp.ServerConfig, _ server.SessionProfile, _ string, _ session.PermissionMode) (server.SessionEngineResult, error) {
 		calls.Add(1)
 		eng := agent.NewEngine(agent.Deps{
 			LLM:     mockllm.New(mockllm.TextTurn("pre-p3"), mockllm.TextTurn("pre-p3")),
 			Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "gpt-5",
 		})
-		// BuiltForMode deliberately left "" (the pre-Phase-3 shape).
+		// BuiltForMode deliberately left "" (the mode-unaware shape).
 		return server.SessionEngineResult{Engine: eng, ModelID: "gpt-5", ProviderID: "openai", Close: func() error { return nil }}, nil
 	}
 	// ModeNeedsEngine active (a plan slot exists), so only the `!= ""` skip prevents a rebuild.
@@ -823,10 +823,10 @@ func TestEngineAndWorkspaceForResolutionMatrix(t *testing.T) {
 				}, nil
 			},
 		},
-		// ── REUSE (empty builtForMode — pre-Phase-3 factory compat) ──────────────
+		// ── REUSE (empty builtForMode — mode-unaware factory compat) ─────────────
 		{
 			name: "reuse/empty-builtForMode-no-rebuild",
-			// A pre-Phase-3 factory returns BuiltForMode="" for a selector session.
+			// A mode-unaware factory returns BuiltForMode="" for a selector session.
 			// Even after a mode change the engine must NOT rebuild (the != "" guard).
 			run: func(t *testing.T) (func(), error) {
 				t.Helper()
@@ -839,7 +839,7 @@ func TestEngineAndWorkspaceForResolutionMatrix(t *testing.T) {
 						LLM:     mockllm.New(mockllm.TextTurn("pre-p3"), mockllm.TextTurn("pre-p3")),
 						Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "gpt-5",
 					})
-					// BuiltForMode deliberately left "" (pre-Phase-3 shape).
+					// BuiltForMode deliberately left "" (mode-unaware shape).
 					return server.SessionEngineResult{Engine: eng, ModelID: "gpt-5", ProviderID: "openai", Close: func() error { return nil }}, nil
 				}
 				svc := modeServiceOverStore(t, store, preP3,

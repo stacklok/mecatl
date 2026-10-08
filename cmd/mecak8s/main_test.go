@@ -277,9 +277,9 @@ func TestMecak8sDefaultsToNoFS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
-	// No --workspace: the default is a file-less deployment. The flag no longer
-	// defaults to the process cwd, so a container root can never become the agent
-	// workspace by omission (the reason this used to force cfg.workspace = "/").
+	// No --workspace: the default is a file-less deployment. The flag does not
+	// default to the process cwd, so a container root can never become the agent
+	// workspace by omission.
 	if cfg.workspace != "" {
 		t.Fatalf("default workspace = %q, want empty (file-less by default)", cfg.workspace)
 	}
@@ -396,7 +396,7 @@ func TestMecak8sFixtureRunsNoFS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
-	// No --workspace: file-less by default (the flag no longer defaults to cwd, so
+	// No --workspace: file-less by default (the flag does not default to cwd, so
 	// the container root cannot become the agent workspace by omission).
 	cfg.sessionLeaseK8sNamespace = ""
 	appCfg := appConfig(cfg, port.NopDiagnostics{}, observability{})

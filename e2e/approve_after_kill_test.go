@@ -21,7 +21,7 @@ import (
 	"github.com/stacklok/mecatl/e2e/harness"
 )
 
-// approveAfterKillSpecs is the cloud-native Phase 2 LIVE scenario: raise a real
+// approveAfterKillSpecs is the approve-after-kill LIVE scenario: raise a real
 // permission ask against a real model, SIGKILL the mecated process WITHOUT
 // cleanup, restart a SECOND mecated over the SAME --store-dir, POST approve over
 // HTTP, and assert the pending tool ran EXACTLY ONCE (real filesystem effect) and
@@ -151,12 +151,13 @@ func approveAfterKillSpecs() {
 					"the resumed run did not reach a clean end_turn\n--- mecated log tail ---\n"+local2.LogTail(4096))
 				sseDump := "\n--- durable events ---\n" + truncate(string(sse), 2048) + "\n--- mecated log tail ---\n" + local2.LogTail(4096)
 
-				// ASSERT exactly-once AT THE EVENT LAYER — the core of Phase 2. The
+				// ASSERT exactly-once AT THE EVENT LAYER — the core of this scenario. The
 				// detached resumed run is appended to the durable event log. Count
 				// tool.result frames for the PENDING Write call id (captured from local
 				// #1's pre-restart stream): assert EXACTLY ONE, and that the one result
 				// is NOT an error. A double-dispatch of the pending Write (the regression
-				// Phase 2 prevents) would append TWO tool.result frames for the call id — which content-equality + end_turn
+				// this scenario guards) would append TWO tool.result frames for the
+				// call id — which content-equality + end_turn
 				// alone cannot see (a re-Write writes identical bytes; end_turn rides any
 				// clean end). Mirrors the offline twin's EvToolResult==1 count.
 				var total, nonError int

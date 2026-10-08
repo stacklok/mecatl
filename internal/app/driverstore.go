@@ -11,11 +11,10 @@ import (
 	"github.com/stacklok/mecatl/adapters/grpcdriver"
 )
 
-// Remote store drivers (Phase B): the composition seam that swaps the local
+// Remote store drivers: the composition seam that swaps the local
 // session/memory stores for gRPC driver clients (internal/adapter/grpcdriver)
 // when the operator points a *StoreURL at a driver process. All-empty URLs
-// keep today's behaviour byte-identical (validateDriverConfig + the untouched
-// default branches in buildStore/buildCatalog guarantee it).
+// use the local stores (the default branches in buildStore/buildCatalog).
 
 // validateDriverConfig rejects a config that sets BOTH a local store
 // directory and a remote driver URL for the same store — the two are

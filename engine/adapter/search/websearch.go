@@ -13,7 +13,7 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
-// Carry-over helpers that previously lived in the root module
+// Carry-over helpers whose originals live in the root module
 // (internal/adapter/toolkit). They are carried here rather than imported so the
 // engine module's adapter tree remains self-contained — the engine module must
 // not import the root module (the fstools precedent, #269).

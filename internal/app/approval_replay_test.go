@@ -34,8 +34,8 @@ type sseEvent struct {
 // approve a permission.ask inline via a concurrent /controls/resolve-ask). It returns whether
 // any permission.ask was observed on the stream. The relay loop behind /prompt is
 // what Appends every event to the durable EventLog (the loop itself never does),
-// so driving through it is what exercises the Phase 3a logging the 3b replay
-// consumes.
+// so driving through it is what exercises the EventLog logging the approval
+// replay consumes.
 func promptOverHTTP(t *testing.T, srvURL, id, text string, onEvent func(ev sseEvent)) (sawAsk bool) {
 	t.Helper()
 	resp, err := http.Post(srvURL+"/v1/sessions/"+id+"/prompt", "application/json",
@@ -65,11 +65,11 @@ func promptOverHTTP(t *testing.T, srvURL, id, text string, onEvent func(ev sseEv
 	return sawAsk
 }
 
-// TestApprovalReplayAfterRestartE2E is the cloud-native Phase 3b permstore-replay
-// sub-gate through the FULL composition (app.Build + server.Service over the HTTP
+// TestApprovalReplayAfterRestartE2E is the permstore-replay
+// gate through the FULL composition (app.Build + server.Service over the HTTP
 // SSE relay), offline over a real on-disk jsonlstore. It proves an allow-always
-// verdict survives a process restart via the durable EventLog: the consumer that
-// kills the Phase 2 re-ask wart.
+// verdict survives a process restart via the durable EventLog, so the tool is
+// not re-asked after the restart.
 //
 //  1. built1 over a shared StoreDir. The model issues a single Write tool call
 //     (gated Ask under ModeDefault: a mutating tool, no allow rule; learnable, its

@@ -14,7 +14,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-// TestScheduleManagerConfig_ScheduleStoreOverride pins issue #257 Wave 3: the
+// TestScheduleManagerConfig_ScheduleStoreOverride pins issue #257: the
 // OPTIONAL ScheduleManagerConfig.ScheduleStore explicit override WINS over the
 // Store type-assertion discovery, and a nil override keeps the byte-identical
 // accessor-discovery posture. The three cases:
@@ -71,7 +71,7 @@ func TestScheduleManagerConfig_ScheduleStoreOverride(t *testing.T) {
 }
 
 // TestScheduleManagerConfig_ScheduleStoreOverridePreventsSplitBrain is the
-// split-brain guard (issue #257 Wave 3): when BOTH an accessor-ful session
+// split-brain guard (issue #257): when BOTH an accessor-ful session
 // store AND a ScheduleStore override are configured, the manager MUST read
 // the OVERRIDE, not the accessor's store — the --schedule-store-url override
 // backs the tick loop, so the tool must share that ONE registry (an

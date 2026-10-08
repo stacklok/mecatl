@@ -31,7 +31,7 @@ func renderApprovalModalWithRenderer(r *renderer, ask pendingAsk, expand bool, w
 }
 
 func approvalSurfaceForRender(r *renderer, ask pendingAsk, expand bool, queued, argsOffset int) approvalSurface {
-	// Approval cards no longer expand in place; keep this fixture parameter so
+	// Approval cards do not expand in place; keep this fixture parameter so
 	// callers can prove an ambient expanded-tools state cannot change that.
 	_ = expand
 	return approvalSurface{

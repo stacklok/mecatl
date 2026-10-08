@@ -37,7 +37,7 @@ const (
 	// (re-exported through internal/configgen), so the read and write paths can never
 	// resolve different files.
 	UserSettingsRelPath = "mecatl/settings.yaml"
-	// userSubdirMecatl is the historical internal alias for UserSettingsRelPath.
+	// userSubdirMecatl is an internal alias for UserSettingsRelPath.
 	userSubdirMecatl = UserSettingsRelPath // joined under <config>/...
 	// userSubdirClaude is the Claude-Code-compatible user-level settings file,
 	// rooted at the home directory (~/.claude/settings.json).
@@ -155,7 +155,7 @@ type Resolver struct {
 	operatorReasoningEffort string
 
 	// operatorPlanModeAutoApprove is the OPERATOR-TIER plan-mode-auto-approve: bool
-	// (issue #206 Wave 6a), read ONCE at construction from the user-global + CLI
+	// (issue #206), read ONCE at construction from the user-global + CLI
 	// tiers ONLY. A project-tier file's plan-mode-auto-approve: key is deliberately
 	// IGNORED (a project repo enabling autonomous plan approval is a security
 	// DOWNGRADE — loadProjectRules WARNs when it sees one). false when no
@@ -183,7 +183,7 @@ type Resolver struct {
 	// construction from the user-global + CLI tiers ONLY (the SOLE capture path is
 	// captureModels from loadUserRules; there is no second capture path). It carries
 	// the operator's own slots/aliases/default AND the non-wideable Allowlist cap that
-	// gates the PROJECT-tier bindings (Phase 4). A project-tier file's models: block is
+	// gates the PROJECT-tier bindings. A project-tier file's models: block is
 	// honoured only WITHIN this Allowlist on a trusted workspace (loadProjectRules) —
 	// when the Allowlist is empty the project block stays WARN-ignored (the opt-in).
 	// nil when no operator-tier file carried a models: section. CLI (explicit files)
@@ -398,8 +398,8 @@ func (r *Resolver) OperatorReasoningEffort() string {
 }
 
 // OperatorPlanModeAutoApprove returns the operator-tier plan-mode-auto-approve:
-// bool (user-global + CLI only), or false when none was configured (issue #206
-// Wave 6a). It is the SOLE accessor the composition layer uses to read the flag
+// bool (user-global + CLI only), or false when none was configured (issue #206).
+// It is the SOLE accessor the composition layer uses to read the flag
 // from config — by construction it never returns a project-tier value (a project
 // plan-mode-auto-approve: is ignored with a WARN in loadProjectRules). nil-safe.
 // Mirrors OperatorPosture().
@@ -772,7 +772,7 @@ func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule,
 				"reasoning-effort: IGNORING a project-tier reasoning-effort: scalar (operator-tier only — set reasoning-effort in your user-global settings.yaml or via --reasoning-effort)",
 				"file", src.path, "root", ws.Root())
 		}
-		// PlanModeAutoApprove is OPERATOR-TIER ONLY (issue #206 Wave 6a), for
+		// PlanModeAutoApprove is OPERATOR-TIER ONLY (issue #206), for
 		// consistency with posture/guardrails: a project file's plan-mode-auto-approve:
 		// key is IGNORED with a loud WARN. Enabling it from a project repo would let a
 		// repo enable autonomous plan approval — a security DOWNGRADE (the same
@@ -837,8 +837,8 @@ func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule,
 		// stripped + WARN; opt-in by operator allowlist; trust gate) and merges the
 		// honoured slots/aliases/default across project files (local > shared by load
 		// order — first non-empty wins per field/key). It WARNs precisely on each
-		// not-honoured reason. Outside an operator allowlist this is byte-identical to the
-		// pre-Phase-4 WARN-ignore.
+		// not-honoured reason. Without an operator allowlist the project block is
+		// WARN-ignored.
 		if cfg.Models != nil {
 			projectModels = r.captureProjectModels(ws, src.path, cfg.Models, projectModels)
 		}
@@ -1089,7 +1089,7 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 		r.capturePosture(cfg.Posture)
 		// Operator-tier reasoning-effort: same discipline as posture.
 		r.captureReasoningEffort(cfg.ReasoningEffort)
-		// Operator-tier plan-mode-auto-approve (issue #206 Wave 6a): same discipline as posture.
+		// Operator-tier plan-mode-auto-approve (issue #206): same discipline as posture.
 		r.capturePlanModeAutoApprove(cfg.PlanModeAutoApprove)
 		// Operator-tier learning: same first-non-nil-keeps-CLI discipline.
 		r.captureLearning(cfg.Learning)
@@ -1135,7 +1135,7 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 				r.capturePosture(cfg.Posture)
 				// User-global reasoning-effort: same discipline as posture.
 				r.captureReasoningEffort(cfg.ReasoningEffort)
-				// User-global plan-mode-auto-approve (issue #206 Wave 6a): same discipline as posture.
+				// User-global plan-mode-auto-approve (issue #206): same discipline as posture.
 				r.capturePlanModeAutoApprove(cfg.PlanModeAutoApprove)
 				// User-global learning: captured only if no higher CLI file already did.
 				r.captureLearning(cfg.Learning)
@@ -1262,7 +1262,7 @@ func (r *Resolver) captureLearning(s *LearningSection) {
 // wins on first-non-zero). It is called only from loadUserRules — the operator
 // (user-global + CLI) tiers — never from loadProjectRules, so a project file can
 // never supply it (operator-tier only, for consistency with posture/guardrails —
-// issue #206 Wave 6a).
+// issue #206).
 func (r *Resolver) capturePlanModeAutoApprove(p bool) {
 	if r.operatorPlanModeAutoApprove {
 		return

@@ -20,9 +20,9 @@ import (
 // mockllm request observer to assert the provider saw the session model on turn 1 and
 // the plan model on turn 2 across a real SetMode. The live harness driver currently
 // exposes no SetMode primitive (RunOpts carries no Mode field and the driver issues no
-// session/set_mode), so a live plan↔execute flip cannot be driven here yet — this spec
-// asserts the slot WIRING (the only live-observable half) and the flip is a follow-up
-// once the harness driver gains a SetMode verb. A plan slot that failed to resolve
+// session/set_mode), so a live plan↔execute flip cannot be driven here — this spec
+// asserts the slot WIRING (the only live-observable half); the flip itself is not
+// covered live. A plan slot that failed to resolve
 // would WARN+degrade (no ACTIVE line) and fail this spec.
 func modeModelSpecs() {
 	ginkgo.Describe("mode model (plan slot)", func() {

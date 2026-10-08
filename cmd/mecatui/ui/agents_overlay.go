@@ -767,8 +767,8 @@ func newAgentsOverlayLayout(th theme.Theme, tab agentsTab, width, height int) ag
 // renderBody lets the existing section renderers reduce their content window
 // against the real physical result. It never crops assembled output: a body is
 // accepted whole, or the normal card is declined. The added frameRows translate
-// the body-only capacity to the historical renderer-height convention while R2/R3
-// replace the current cursor windows.
+// the body-only capacity to the section renderers' height parameter, which
+// includes the frame rows.
 func (l agentsOverlayLayout) renderBody(build func(int) string, essential func() string) (string, bool) {
 	if !l.bounded {
 		return build(0), true
@@ -1019,7 +1019,7 @@ func centerAgentsCard(th theme.Theme, body string, outerWidth, width, height int
 // agentsEmptyHint is the "tab switch · esc close" footer used by the empty
 // subagent/parallel/team-tab states. The chords read the LIVE NextTab/Close
 // markings so an override propagates (issue #457); with defaults it is
-// byte-identical to the historical literal.
+// "tab switch · esc close".
 func agentsEmptyHint(hk helpKeys) string {
 	return hk.nextTab + " switch · " + hk.closeOnly + " close"
 }

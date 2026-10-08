@@ -137,7 +137,7 @@ func validateUnixSocketPath(path string) error {
 }
 
 // listenGRPC binds the gRPC listener the configuration selects: a UNIX socket
-// when --grpc-unix-socket is set, otherwise the historical TCP bind on
+// when --grpc-unix-socket is set, otherwise the TCP bind on
 // --grpc-addr. It is the SINGLE bind point, so "the socket opens no TCP port" is
 // structural rather than a discipline anyone has to remember.
 func listenGRPC(cfg config) (grpcListener, error) {

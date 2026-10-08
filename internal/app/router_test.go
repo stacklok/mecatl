@@ -17,7 +17,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 )
 
-// router_test.go covers the OPT-IN semantic Subagent model router (Phase 5):
+// router_test.go covers the OPT-IN semantic Subagent model router:
 // the buildModelRouterTask closure (category→model mapping, precedence, fail-soft,
 // breaker) and the end-to-end proof through the REAL composition that a routed
 // delegation mints the child on the classifier-chosen model.
@@ -593,10 +593,10 @@ func drainRunWithSubagentStart(run interface {
 // category-selector-empty miss (issue #287) — a detailed reason like
 // "category-selector-empty (category=small)" — must be REDUCED to the bare static code
 // before it reaches the delegation-start event (routingReasonPayload's allowlist,
-// engine/agent/subagent.go). This closes the composition-to-wire seam that was previously
-// only indirectly verified: TestBuildModelRouterTaskFailSoftOnEmptySelector proves the
-// closure returns the detailed string, and the routingReasonPayload unit tests prove the
-// reduction in isolation, but nothing drove the two together through a real Build → Run.
+// engine/agent/subagent.go). This covers the composition-to-wire seam end to end:
+// TestBuildModelRouterTaskFailSoftOnEmptySelector proves the closure returns the detailed
+// string and the routingReasonPayload unit tests prove the reduction in isolation; this
+// test drives the two together through a real Build → Run.
 func TestRouterCategorySelectorEmptyReasonReducesOnWireE2E(t *testing.T) {
 	ctx := context.Background()
 	workspace := t.TempDir()

@@ -297,8 +297,7 @@ func TestAllowAllToolsBindsMainAndChildren(t *testing.T) {
 	}
 }
 
-// TestChildSubstitutionLooseningIsTierDependent (evolved from the historical
-// TestSubstitutionLooseningStaysMainOnly) codifies the posture-ladder rule that the
+// TestChildSubstitutionLooseningIsTierDependent codifies the posture-ladder rule that the
 // CHILD substitution-floor loosening is YOLO-ONLY, while the MAIN loosening fires at
 // auto+yolo. It drives the EVALUATOR-OPTION seam directly (ruleset held constant at
 // the floor allow-all) so only the option set under test varies:
