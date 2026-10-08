@@ -111,6 +111,28 @@ describe("schedule fire history", () => {
       ),
     ).toBe(4_500);
   });
+
+  it("does not present a terminal deadline as a completed duration", () => {
+    const terminal = {
+      deadline: "2026-01-01T00:30:00.000Z",
+      startedAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    expect(fireDurationMs(fire({ ...terminal, id: "complete", stop: "end_turn" }))).toBeNull();
+    expect(fireDurationMs(fire({ ...terminal, id: "timeout", stop: "deadline_exceeded" }))).toBe(
+      1_800_000,
+    );
+    expect(
+      fireDurationMs(
+        fire({
+          ...terminal,
+          id: "progressed",
+          progressAt: "2026-01-01T00:00:03.000Z",
+          stop: "end_turn",
+        }),
+      ),
+    ).toBe(3_000);
+  });
 });
 
 describe("schedule actions and labels", () => {

@@ -570,10 +570,15 @@ export function sortScheduleFires(
 export function fireDurationMs(fire: ScheduleFire, now = Date.now()) {
   const started = dateValue(fire.startedAt);
   if (!started) return null;
-  const end = fire.inFlight
-    ? now
-    : dateValue(fire.progressAt) || dateValue(fire.deadline) || started;
-  return Math.max(0, end - started);
+  if (fire.inFlight) return Math.max(0, now - started);
+
+  // DECISION: A terminal deadline is not a completion time. Show an unknown
+  // duration unless progress records an end, except for deadline-exceeded runs.
+  const progress = dateValue(fire.progressAt);
+  if (progress) return Math.max(0, progress - started);
+  if (fireOutcome(fire) !== "Timed out") return null;
+  const deadline = dateValue(fire.deadline);
+  return deadline ? Math.max(0, deadline - started) : null;
 }
 
 export function fireOutcome(fire: ScheduleFire) {
