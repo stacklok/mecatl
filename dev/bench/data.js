@@ -312247,6 +312247,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791461328645,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "49339c81685c43352184da4f3d9872505512f7ff",
+          "message": "docs: drop ADR citations from the domain model and fix acceptEdits (#2191)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-08T08:03:38-04:00",
+          "tree_id": "b91ac723d27480c5b06b3c832c2fea980af01bac",
+          "url": "https://github.com/stacklok/mecatl/commit/49339c81685c43352184da4f3d9872505512f7ff"
+        },
+        "date": 1791462046591,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3273.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 74,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -408501,6 +408540,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791462042981,
+  "lastUpdate": 1791462047517,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
