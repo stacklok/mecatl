@@ -115,8 +115,7 @@ order:
    spec at docs/specs/foo.md".
 3. **PRD / spec files** under conventional locations matching the
    branch name or feature: `docs/specs/<name>.md`,
-   `docs/prd/<name>.md`, `specs/<name>.md`, `.scratch/<name>.md`,
-   `docs/acceptance/<name>.md`.
+   `docs/prd/<name>.md`, `specs/<name>.md`, `.scratch/<name>.md`.
 4. **If nothing is found**, ask the user:
 
    > I don't see a spec or issue reference for this branch. Path

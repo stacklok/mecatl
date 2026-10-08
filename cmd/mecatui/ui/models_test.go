@@ -2407,9 +2407,7 @@ func markedRowsFor(view, rowSubstring string) (found, marked bool) {
 // This is a RENDERER contract: it feeds PromptCached=false in directly, because
 // the renderer's job is to mark whatever false it is handed. Composition can
 // only produce false under --no-prompt-cache (a harness-wide switch), which the
-// sibling PromptCachedTrueWithoutDialect test in internal/app covers. The test name
-// keeps its Scenario2 prefix because the approved acceptance plan cites it
-// verbatim in AC3.5's verify line.
+// sibling PromptCachedTrueWithoutDialect test in internal/app covers.
 func TestUnifiedPromptCache_Scenario2_PickerMarksUncachedRow(t *testing.T) {
 	m := newModelsModel(t, uncachedModels(), &fakeStore{}, modelsCaps(),
 		client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5"})

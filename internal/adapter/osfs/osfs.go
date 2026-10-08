@@ -148,8 +148,8 @@ func WithRelaxedReads() Option {
 // workspace only at every posture (never a child engine), and always pairs it
 // with the root-aware wrapping permission policy that resolves a write escape
 // Allow at yolo / Ask below yolo and hard-denies
-// pseudo-fs (/proc, /sys, /dev) before the tool body — docs/acceptance/
-// path-escape-posture.md Scenario 3. A relaxed workspace without the policy
+// pseudo-fs (/proc, /sys, /dev) before the tool body. A relaxed workspace
+// without the policy
 // wrapper is a mis-wire: the workspace's job is only to SERVE the path the
 // policy already authorized.
 //
@@ -713,8 +713,7 @@ func ResolveRoot(path string) (string, error) { return resolveRoot(path) }
 // resolveInRoot. The only I/O is the Lstat/EvalSymlinks ancestor resolution
 // resolveInRoot itself performs. The path-escape-posture composition
 // classifier consumes this with LocalizeInRoot so its in-root/escape verdict is
-// single-sourced with the tool body (docs/acceptance/path-escape-posture.md
-// Scenario 1) instead of reimplementing the algorithms.
+// single-sourced with the tool body instead of reimplementing the algorithms.
 func Canonicalize(base, path string) (string, error) {
 	abs := path
 	if !filepath.IsAbs(abs) {

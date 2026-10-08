@@ -19,12 +19,11 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
-// escapepolicy.go is the path-escape-posture Scenario 2+3+4 decision half
-// (docs/acceptance/path-escape-posture.md): a root-aware wrapping
-// port.PermissionPolicy that relaxes an out-of-root Read/ListDir escape at the
-// yolo/auto operator postures (Scenario 2), an out-of-root WRITE escape at
-// yolo (Allow) / auto (Ask — Scenario 3), and resolves a strict/trusted
-// out-of-root read OR write escape to ASK (Scenario 4 — instead of today's
+// escapepolicy.go is the path-escape-posture decision half: a root-aware
+// wrapping port.PermissionPolicy that relaxes an out-of-root Read/ListDir
+// escape at the yolo/auto operator postures, an out-of-root WRITE escape at
+// yolo (Allow) / auto (Ask), and resolves a strict/trusted out-of-root read OR
+// write escape to ASK (instead of today's
 // hard ErrPathEscape dead-end that only pushes the model to an opaque Shell
 // `cat /path`). It is COMPOSITION, not domain — the escape decision is a
 // posture/policy concern, and the osfs containment vetting is never stripped
@@ -192,8 +191,7 @@ func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID
 				decision.Decision = governance.PermissionDecision{Effect: governance.Allow}
 				return decision
 			}
-			// Scenario 4 (docs/acceptance/path-escape-posture.md): at
-			// strict/trusted a read-only escape ASKS on the FS tool itself instead
+			// At strict/trusted a read-only escape ASKS on the FS tool itself instead
 			// of dead-ending on ErrPathEscape (which only pushed the model to
 			// an opaque Shell workaround). The inner policy already ran first:
 			// a configured Deny and a configured Ask both returned above

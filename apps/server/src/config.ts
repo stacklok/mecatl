@@ -30,7 +30,7 @@ export interface ActivityLimits {
 }
 
 export interface StudioConfig {
-  /** Bounds on durable activity replay (see docs/acceptance/studio-chat.md). */
+  /** Bounds on durable activity replay. */
   readonly activity: ActivityLimits;
   /** Inside the released image, allow static-token or no-auth runtimes. */
   readonly allowUnauthenticated: boolean;

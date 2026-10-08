@@ -18,8 +18,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
-// pathescape_scenario5_test.go pins the path-escape-posture Scenario 5
-// acceptance criteria (docs/acceptance/path-escape-posture.md): the
+// pathescape_scenario5_test.go pins the scope of the relax: the
 // out-of-root relax is SCOPED to the main session's workspace construction
 // only. A child engine (Subagent / team member / Parallel branch) never
 // inherits it — its workspace is built by the shared newForkWorkspace helper,

@@ -15,8 +15,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-// pathescape_scenario2_test.go pins the path-escape-posture Scenario 2
-// acceptance criteria (docs/acceptance/path-escape-posture.md): at posture
+// pathescape_scenario2_test.go pins relaxed out-of-root reads: at posture
 // yolo and auto an out-of-root absolute-path Read succeeds through the FS tool
 // (no ErrPathEscape) with full audit parity; strict stays unchanged; pseudo-fs
 // (/proc/self/environ) is never served even at yolo; a nested symlink escape

@@ -1,6 +1,6 @@
 package main
 
-// Daemon hosting (issue #821, Scenario 8 of docs/acceptance/sdk-server-enablers.md).
+// Daemon hosting (issue #821).
 //
 // This file owns everything a SPAWNED LOCAL DAEMON needs that a network daemon
 // does not: a UNIX-domain gRPC listener with no TCP port at all, a disabled HTTP

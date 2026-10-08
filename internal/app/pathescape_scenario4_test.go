@@ -17,8 +17,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
-// pathescape_scenario4_test.go pins the path-escape-posture Scenario 4
-// acceptance criteria (docs/acceptance/path-escape-posture.md): at strict and
+// pathescape_scenario4_test.go pins escape asks at strict postures: at strict and
 // trusted an out-of-root Read or Write resolves ASK (never today's hard
 // ErrPathEscape dead-end), the ask rides the ordinary surfaceAsk spine
 // (EvPermissionAsk → verdict → EvToolResult), plan mode still hard-denies a

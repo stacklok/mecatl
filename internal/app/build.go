@@ -9806,7 +9806,7 @@ func defaultLimits() session.Limits {
 // Workspace rooted at the session's workspace dir. A root that cannot be opened
 // yields a nil Workspace; tool calls against it return errors the model can read.
 //
-// PATH-ESCAPE POSTURE (docs/acceptance/path-escape-posture.md Scenarios 2–4):
+// PATH-ESCAPE POSTURE:
 // at EVERY posture the MAIN session's workspace is built WithRelaxedReads AND
 // WithRelaxedWrites (the osfs out-of-root carve-outs) and wrapped with the
 // session's escape classifier (newEscapeWorkspace), so the workspace and the

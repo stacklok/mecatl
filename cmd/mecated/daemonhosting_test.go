@@ -1,7 +1,6 @@
 package main
 
-// Scenario 8 of docs/acceptance/sdk-server-enablers.md (issue #821): daemon
-// hosting — UDS, HTTP-disable, ready file, lifetime pipe.
+// Daemon hosting (issue #821): UDS, HTTP-disable, ready file, lifetime pipe.
 //
 // The serve-driving tests run the REAL serve() against the real listener,
 // ready-file, and lifetime-pipe code paths over an offline service (mockllm +

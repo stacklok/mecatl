@@ -14,9 +14,8 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
-// pathescape_guardrail_test.go pins AC-W2-G2
-// (docs/acceptance/path-escape-posture.md, deferred decision
-// "Guardrail-routed escape checking"): at posture auto WITH the operator-tier
+// pathescape_guardrail_test.go pins guardrail-routed escape checking: at
+// posture auto WITH the operator-tier
 // escape knob (guardrails.escape) configured, an out-of-root escape is routed
 // through the LLM guardrail checker as a composition-level PRE-CHECK inside
 // the escape policy — a checker "unsafe" verdict DENIES the escape, a "safe"
