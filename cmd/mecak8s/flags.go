@@ -236,7 +236,7 @@ type config struct {
 	// lets CLI out-rank the operator-global settings.yaml posture: key.
 	posture        string
 	postureFlagSet bool
-	// permissionMode is the raw --permission-mode token (ADR 0375), validated at
+	// permissionMode is the raw --permission-mode token, validated at
 	// parse time. Empty (the default) leaves the deprecated --posture default
 	// "auto" in force, so an unconfigured pod keeps posture auto with the default
 	// session mode and operator YAML can still override it.
@@ -808,7 +808,7 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		PermissionConfigs:        cfg.permissionConfigs,
 		Posture:                  app.ParsePosture(cfg.posture),
 		PostureFlagSet:           cfg.postureFlagSet,
-		// Permission mode (ADR 0375): an explicit token out-ranks the deprecated
+		// Permission mode: an explicit token out-ranks the deprecated
 		// --posture (default auto) in app.Build's foldPermissionMode.
 		PermissionMode:        cfg.permissionMode,
 		PermissionModeFlagSet: cfg.permissionModeFlagSet,

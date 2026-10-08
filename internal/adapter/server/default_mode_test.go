@@ -17,7 +17,7 @@ import (
 
 // TestGRPCCreateSessionUnspecifiedModeUsesServerDefault pins that a gRPC
 // CreateSession leaving mode UNSPECIFIED starts in the server's configured
-// DefaultMode (the session half of the operator's permission mode, ADR 0375),
+// DefaultMode (the session half of the operator's permission mode),
 // while an explicit mode still wins.
 func TestGRPCCreateSessionUnspecifiedModeUsesServerDefault(t *testing.T) {
 	llm := mockllm.New()

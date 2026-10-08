@@ -94,7 +94,7 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 
 // helpBody renders the overlay body for this model's transport: the permission
 // mode section's restart guidance differs between the embedded server and
-// `mecatui connect` (ADR 0375).
+// `mecatui connect`.
 func (m Model) helpBody() string {
 	return helpBodyFor(m.deps.Theme, m.caps, m.helpKeyMarkings(), m.deps.Embedded)
 }
@@ -239,7 +239,7 @@ func helpBodyFor(th theme.Theme, caps client.Capabilities, hk helpKeys, embedded
 	return b.String()
 }
 
-// PermissionModeEntry is one row of the ADR 0375 permission-mode vocabulary as
+// PermissionModeEntry is one row of the permission-mode vocabulary as
 // the TUI displays it: the token, the process-wide posture it sets, and the
 // session mode new sessions start in (the TUI spelling).
 type PermissionModeEntry struct {
@@ -266,7 +266,7 @@ func PermissionModeVocabulary() []PermissionModeEntry {
 // writeHelpPermissionModes lists every permission-mode token with its two
 // halves, states that the posture half is process-wide while the session half is
 // only a new-session default, that cycling the session mode never changes the
-// posture, and whose restart a posture change needs (ADR 0375, AC5.2/AC5.5).
+// posture, and whose restart a posture change needs.
 // Runtime selection of a posture from the TUI is deliberately not offered.
 func writeHelpPermissionModes(b *strings.Builder, th theme.Theme, hk helpKeys, embedded bool) {
 	b.WriteString("\n" + th.Style("muted").Render("Permission modes (--permission-mode, set at launch)") + "\n")

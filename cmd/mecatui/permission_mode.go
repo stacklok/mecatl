@@ -10,7 +10,7 @@ import (
 	"github.com/stacklok/mecatl/internal/app"
 )
 
-// permission_mode.go is mecatui's half of the ADR 0375 --permission-mode flag.
+// permission_mode.go is mecatui's half of the --permission-mode flag.
 // A token names an exact (posture, session mode) pair. The posture half goes to
 // the embedded server's composition (app.Config.PermissionMode); the session half
 // is the mode this client requests for the sessions it creates. The deprecated

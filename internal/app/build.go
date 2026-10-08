@@ -1068,7 +1068,7 @@ type Config struct {
 	// (CLI out-ranks YAML) and resolvePosture WARNs if an alias raised above the
 	// explicit value. Set by the cmd mains alongside Posture.
 	PostureFlagSet bool
-	// PermissionMode is the raw --permission-mode token (ADR 0375), meaningful only
+	// PermissionMode is the raw --permission-mode token, meaningful only
 	// when PermissionModeFlagSet. foldPermissionMode resolves it (or the
 	// operator-tier permissionMode: key) into Posture + DefaultSessionMode; an
 	// unknown token is a Build error naming the valid set.
@@ -1085,7 +1085,7 @@ type Config struct {
 	// foldPermissionMode; empty when only the deprecated surface was used.
 	permissionModeName string
 	// askReviewerDefaultOn is set by resolveAskReviewerDefault when the headless
-	// allow-all default engages the subagent ask reviewer (ADR 0375 decision 6).
+	// allow-all default engages the subagent ask reviewer.
 	askReviewerDefaultOn bool
 	// askReviewerOptOut records an explicit --subagent-ask-reviewer off.
 	askReviewerOptOut bool
@@ -1698,7 +1698,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	cfg.TrustProject = trust.Trusted
 	narratePosture(cfg.diag(), cfg.Posture, cfg.TrustProject)
 	narrateTrust(cfg.diag(), trust, cfg.Workspace)
-	// Headless admission gate (ADR 0375): after the trust fold, so every
+	// Headless admission gate: after the trust fold, so every
 	// legitimate trust source satisfies it.
 	if err := headlessTrustRefusal(cfg); err != nil {
 		return nil, err
@@ -2061,7 +2061,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	cfg.guardrailModel = guardrailModel
 	cfg.guardrailSource = guardrailSrc
 	cfg.guardrailConfigured = guardrailConfigured
-	// Allow-all admission gate (ADR 0375): the checker truth is the SAME the
+	// Allow-all admission gate: the checker truth is the SAME the
 	// posture line and the live checker use (the binding, else the resolver).
 	checkerConfigured := guardrailConfigured
 	if !checkerConfigured {
@@ -2420,7 +2420,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		mcpStatus = assets.mcpReconciler.statusSnapshot
 	}
 	svcCfg := server.Config{
-		// The session half of the permission-mode token (ADR 0375): the mode a
+		// The session half of the permission-mode token: the mode a
 		// CreateSession that leaves mode unspecified starts in. Empty keeps the
 		// server's own ModeDefault.
 		DefaultMode:          cfg.DefaultSessionMode,
@@ -7461,7 +7461,7 @@ func askAdjudicatorDeps(cfg Config, provReg *providerRegistry, provider port.LLM
 		// The --subagent-ask-reviewer flag STAYS the enable gate: a slot alone does
 		// NOT turn the reviewer on (a slot only chooses the model for a reviewer the
 		// operator already enabled). Empty flag ⇒ reviewer off, byte-identical —
-		// except the ADR 0375 headless allow-all default (askReviewerDefaultOn),
+		// except the headless allow-all default (askReviewerDefaultOn),
 		// which resolves through the slot, then the parent model, below.
 		return agent.Deps{}, false
 	}

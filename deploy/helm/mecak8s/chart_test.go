@@ -3028,12 +3028,12 @@ mcp:
 	}
 }
 
-// TestADR_0375_ShippedAllowAllDefaultsDeclareCheckerChoice pins ADR 0375 AC2.3 for
+// TestShippedAllowAllDefaultsDeclareCheckerChoice pins the checker declaration for
 // the chart: it runs mecak8s in the allow-all auto permission mode, and mecak8s
 // refuses that mode without a checker, so every render must declare the checker
 // choice. An empty guardrails.model is the explicit unsupervised --guardrails=off;
 // a set model becomes --guardrails-model and never carries the kill-switch.
-func TestADR_0375_ShippedAllowAllDefaultsDeclareCheckerChoice(t *testing.T) {
+func TestShippedAllowAllDefaultsDeclareCheckerChoice(t *testing.T) {
 	cases := []struct {
 		name    string
 		extra   []string

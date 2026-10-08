@@ -518,7 +518,7 @@ type config struct {
 	// postureFlagSet is true when --posture was passed explicitly (set after parse via
 	// fs.Visit), so composition lets CLI out-rank the settings.yaml posture: key.
 	postureFlagSet bool
-	// permissionMode is the raw --permission-mode token (ADR 0375), validated at
+	// permissionMode is the raw --permission-mode token, validated at
 	// parse time; permissionModeFlagSet records that it was passed explicitly, so
 	// composition (app.Build's foldPermissionMode) lets it out-rank every other
 	// posture source. --posture and --yolo are its deprecated aliases.
@@ -1349,7 +1349,7 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		// YAML-only allow-all tier cannot escape it.
 		Posture:        app.ParsePosture(cfg.posture),
 		PostureFlagSet: cfg.postureFlagSet,
-		// Permission mode (ADR 0375): the named token writes both the posture and
+		// Permission mode: the named token writes both the posture and
 		// the default session mode; app.Build's foldPermissionMode resolves it
 		// ahead of the deprecated --posture/--yolo surface.
 		PermissionMode:        cfg.permissionMode,
