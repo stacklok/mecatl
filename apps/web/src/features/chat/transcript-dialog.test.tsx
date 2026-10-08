@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // @vitest-environment happy-dom
 
+import { client as apiClient } from "@mecatl-studio/contracts/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TranscriptDialog } from "./transcript-dialog";
 
-const fixture = vi.hoisted(() => ({
+const fixture = {
   calls: [] as string[],
-  error: undefined as Error | { detail: string } | undefined,
+  error: undefined as { detail: string } | undefined,
   pending: false,
   response: {
     complete: true,
@@ -27,25 +28,25 @@ const fixture = vi.hoisted(() => ({
     }>,
     sessionId: "scheduled-session",
   },
-}));
-
-vi.mock("@mecatl-studio/contracts/query", () => ({
-  getSessionTranscriptOptions: ({ path }: { path: { sessionId: string } }) => ({
-    queryFn: async () => {
-      fixture.calls.push(path.sessionId);
-      if (fixture.pending) await new Promise<never>(() => undefined);
-      if (fixture.error) throw fixture.error;
-      return fixture.response;
-    },
-    queryKey: ["transcript", path.sessionId],
-  }),
-}));
+};
 
 beforeEach(() => {
   fixture.calls = [];
   fixture.error = undefined;
   fixture.pending = false;
   fixture.response = { complete: true, messages: [], sessionId: "scheduled-session" };
+  const fetch = vi.fn<typeof globalThis.fetch>(async (input) => {
+    const pathname = new URL(
+      input instanceof Request ? input.url : String(input),
+      window.location.href,
+    ).pathname;
+    if (!pathname.endsWith("/transcript")) throw new Error(`Unexpected request: ${pathname}`);
+    fixture.calls.push(decodeURIComponent(pathname.split("/").at(-2) ?? ""));
+    if (fixture.pending) await new Promise<never>(() => undefined);
+    if (fixture.error) return Response.json(fixture.error, { status: 410 });
+    return Response.json(fixture.response);
+  });
+  apiClient.setConfig({ baseUrl: window.location.origin, fetch });
 });
 
 afterEach(cleanup);
