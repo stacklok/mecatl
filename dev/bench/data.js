@@ -279276,6 +279276,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791444531114,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "abff477676e9858c139fda94bc61e43fd1fe18ba",
+          "message": "fix(release): stamp standalone host build identities (#2183)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-08T12:10:53+03:00",
+          "tree_id": "7146754242a21168bc1d9d3db54723c9ef74a016",
+          "url": "https://github.com/stacklok/mecatl/commit/abff477676e9858c139fda94bc61e43fd1fe18ba"
+        },
+        "date": 1791451349567,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -404890,6 +404924,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791451346506,
+  "lastUpdate": 1791451350338,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
