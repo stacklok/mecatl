@@ -313041,6 +313041,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791463953333,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "peppescg@gmail.com",
+            "name": "Giuseppe Scuglia",
+            "username": "peppescg"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "37cb74c8606197d12e4505ff8853553d747ab77a",
+          "message": "fix(studio): use full-width page layout outside chat (#2196)\n\nCo-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-10-08T16:31:34+02:00",
+          "tree_id": "d27cfca13ff5973498e5a8ce52c167258aa8d2e4",
+          "url": "https://github.com/stacklok/mecatl/commit/37cb74c8606197d12e4505ff8853553d747ab77a"
+        },
+        "date": 1791470681763,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3284,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 84,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -409523,6 +409562,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791470678313,
+  "lastUpdate": 1791470683094,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
