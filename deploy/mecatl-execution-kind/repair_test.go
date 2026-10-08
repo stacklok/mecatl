@@ -86,31 +86,6 @@ func TestProductionKindUsesShorterSyncPeriodsOnlyInFixture(t *testing.T) {
 	}
 }
 
-func TestLegacyFixtureDeploymentStepsMeasureBuildSeedAndPodReadiness(t *testing.T) {
-	production := scriptRange(t, "run.sh", "if [ \"${MECATL_EXECUTION_QUAL_PROFILE:-development}\" = production ]; then\n  # Establish", "\nkube -n execution-qualification create configmap execution-mock")
-	root := t.TempDir()
-	clock := filepath.Join(root, "clock")
-	writeFixture(t, clock, "10\n", 0o600)
-	out, err := runStep(t, root, `
-kube() { printf 'kube %s\n' "$*"; }
-dev() { case "$1" in go) printf 'build\n' ;; env) printf 'seed\n' ;; *) return 1 ;; esac; }
-date() { read -r n < "$CLOCK"; n=$((n+1)); printf '%s\n' "$n" > "$CLOCK"; printf '%s\n' "$n"; }
-`+production, "CLOCK="+clock, "MECATL_EXECUTION_QUAL_PROFILE=production")
-	if err != nil {
-		t.Fatalf("legacy fixture steps: %v: %s", err, out)
-	}
-	log := string(out)
-	built := strings.Index(log, "build\n")
-	buildTime := strings.Index(log, "qualification deployment_step=legacyfixture_build elapsed=1s\n")
-	seed := strings.Index(log, "seed\n")
-	seedTime := strings.Index(log, "qualification deployment_step=legacyfixture_seed elapsed=1s\n")
-	pods := strings.Index(log, "kube -n execution-qualification wait --for=condition=Ready pod/executor-legacy-migration")
-	ready := strings.Index(log, "qualification deployment_step=legacyfixture_pods_ready elapsed=1s\n")
-	if built < 0 || buildTime <= built || seed <= buildTime || seedTime <= seed || pods <= seedTime || ready <= pods {
-		t.Fatalf("build, seed and Pod readiness timings must bracket their respective steps: %s", out)
-	}
-}
-
 func TestQualificationTestBinaryWaitAndWorkingDirectory(t *testing.T) {
 	build := scriptRange(t, "run.sh", "test_build_start=$(date +%s)", "\nkube create namespace execution-qualification")
 	run := scriptRange(t, "run.sh", "test_build_wait_start=$(date +%s)", "\nphase_done tests")
@@ -180,8 +155,8 @@ exit 17
 	}
 }
 
-func TestProductionHelmSkipsOnlyTheManuallyInstalledLegacyCRD(t *testing.T) {
-	deploy := scriptRange(t, "run.sh", "set -- upgrade --install mecatl-execution", "\nif [ \"${MECATL_EXECUTION_QUAL_PROFILE:-development}\" = production ]; then\n  # Establish")
+func TestHelmInstallsCurrentCRDWithDefaultApplyMode(t *testing.T) {
+	deploy := scriptRange(t, "run.sh", "set -- upgrade --install mecatl-execution", "\nkube -n execution-qualification create configmap execution-mock")
 	for _, profile := range []string{"development", "production"} {
 		t.Run(profile, func(t *testing.T) {
 			root := t.TempDir()
@@ -196,12 +171,11 @@ helm_kube() { printf '%s\n' "$@" > "$MARKER"; }
 			if err != nil {
 				t.Fatal(err)
 			}
-			hasSkip := strings.Contains("\n"+string(args), "\n--skip-crds\n")
-			if hasSkip != (profile == "production") {
-				t.Fatalf("profile %s --skip-crds=%v, want production only; args=%s", profile, hasSkip, args)
+			if strings.Contains("\n"+string(args), "\n--skip-crds\n") {
+				t.Fatalf("profile %s must install the current CRD; args=%s", profile, args)
 			}
 			if strings.Contains("\n"+string(args), "\n--server-side=false\n") {
-				t.Fatal("initial fixture install must preserve Helm 4 default apply mode for the migration proof")
+				t.Fatal("initial fixture install must preserve Helm 4 default apply mode for the lifetime proof")
 			}
 		})
 	}
