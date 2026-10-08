@@ -285004,6 +285004,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791482112387,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "peppescg@gmail.com",
+            "name": "Giuseppe Scuglia",
+            "username": "peppescg"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "51d5842054db946002743a7f9644b64e02b51153",
+          "message": "fix(studio): make Badge identical to the prototype (#2212)\n\nCo-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-10-08T19:45:32+02:00",
+          "tree_id": "cb852f95f87e096d0437a01814911d6190176f8c",
+          "url": "https://github.com/stacklok/mecatl/commit/51d5842054db946002743a7f9644b64e02b51153"
+        },
+        "date": 1791482828929,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -413066,6 +413100,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791482825870,
+  "lastUpdate": 1791482829682,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
