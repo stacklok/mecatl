@@ -286436,6 +286436,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791490999139,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "34f485da08490d538944314966b98a76bb333190",
+          "message": "feat: add provider-aware model aliases and delegation selectors (#2019)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-08T16:07:38-07:00",
+          "tree_id": "8fe714b17430fd45c48610c52418bf2825d0e51b",
+          "url": "https://github.com/stacklok/mecatl/commit/34f485da08490d538944314966b98a76bb333190"
+        },
+        "date": 1791501553053,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -415110,6 +415144,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791501550360,
+  "lastUpdate": 1791501553731,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
