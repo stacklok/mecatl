@@ -2564,8 +2564,10 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			return out
 		},
 		SkillSourceFor: func(ctx context.Context) tool.SkillSource {
+			// Without a learned-skill store there is no live catalog; the deployment's skills are
+			// still readable through the static source ListSkills falls back to.
 			if assets.liveSkills == nil {
-				return nil
+				return assets.skillSource
 			}
 			return assets.liveSkills.SourceForPartitions(learnedSkillPartitions(ctx, "", cfg)...)
 		},

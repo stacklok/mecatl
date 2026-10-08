@@ -1366,6 +1366,7 @@ export const ServerFeature: {
     readonly PromptFreeControls: "prompt_free_controls";
     readonly ServerInfo: "server_info";
     readonly SessionActivityInventory: "session_activity_inventory";
+    readonly SkillFiles: "skill_files";
     readonly WatchSessionEvents: "watch_session_events";
 };
 

@@ -3223,7 +3223,8 @@ SkillFileInfo is one readable file of a skill.
 | Field | Type | Label | Oneof | Description |
 |---|---|---|---|---|
 | `name` | `string` |  |  | name is the file&#39;s logical name: &#34;SKILL.md&#34; for the instruction body, otherwise a slash-separated relative name such as &#34;references/api.md&#34;. Never a filesystem path. |
-| `size` | `int64` |  |  | size is the file&#39;s size in bytes. |
+| `size` | `int64` |  |  | size is the file&#39;s size in bytes. For the instruction body it is the size of the body text after the frontmatter, not of the file on disk. |
+| `instructions` | `bool` |  |  | instructions marks the skill&#39;s instruction body. Its content is the text after the frontmatter (name, description, license, allowed-tools), so it is NOT the raw SKILL.md file and is not a valid skill definition on its own. A client keys off this field, not off the name &#34;SKILL.md&#34;, to find the body. |
 
 
 
