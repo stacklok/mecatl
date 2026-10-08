@@ -80,7 +80,7 @@ type approvalSurface struct {
 func (s *approvalSurface) setSurfacePresentation(p surfacePresentation) {
 	if s.deps.theme.Name != p.theme.Name || s.deps.theme.Palette != p.theme.Palette || s.deps.marks != p.marks {
 		s.render = newApprovalRender(newRenderer(p.theme, p.marks))
-		s.planVPReady, s.argsVPReady = false, false
+		s.planVPFingerprint, s.argsVPFingerprint = "", ""
 	}
 	s.deps.refreshPresentation(p)
 }
@@ -124,6 +124,12 @@ func (s *approvalSurface) Render(width, height int) (string, []ClickableRegion) 
 }
 
 func (s *approvalSurface) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
+	if s.regionW <= 0 || s.regionH <= 0 {
+		if key.Matches(msg, s.deps.keys.Deny) {
+			s.intent = s.resolveAsk(client.VerdictDeny)
+		}
+		return nil, true, false
+	}
 	if key.Matches(msg, s.deps.keys.Toolcalls) {
 		if isPlanAsk(s.ask.Tool) {
 			return nil, true, false

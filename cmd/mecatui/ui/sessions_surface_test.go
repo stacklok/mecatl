@@ -171,6 +171,7 @@ func TestSessionsTranscriptEscapeRetainsModalAndRestoresModelPhase(t *testing.T)
 	st := newSessionsPanelState()
 	st.deps = (&m).surfaceDeps()
 	st.view = sessionsTranscript
+	m = applyAll(m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m.modal = &st
 	m.phase = phaseReplay
 

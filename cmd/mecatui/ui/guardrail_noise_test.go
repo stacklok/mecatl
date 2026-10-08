@@ -32,6 +32,7 @@ func (r *guardrailDetailRecorder) GetGuardrailReviewDetail(_ context.Context, _,
 func guardrailTestModel(t *testing.T, r *guardrailDetailRecorder, debug bool) Model {
 	t.Helper()
 	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()), func(d *Deps) { d.Guardrails, d.Debug = r, debug })
+	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
 	m.sessionID = "session"
 	return m
 }

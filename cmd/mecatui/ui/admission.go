@@ -67,13 +67,19 @@ const admissionUnavailableCopy = "Model context metadata is unavailable. Executi
 type admissionRecoveryState struct {
 	deps           surfaceDeps
 	confirmReplace bool
+	zeroOffer      bool
 }
 
 func (s *admissionRecoveryState) setSurfacePresentation(p surfacePresentation) {
 	s.deps.refreshPresentation(p)
 }
 
-func (s *admissionRecoveryState) Render(width, _ int) (string, []ClickableRegion) {
+func (s *admissionRecoveryState) Render(width, height int) (string, []ClickableRegion) {
+	if width <= 0 || height <= 0 {
+		s.zeroOffer = true
+		return "", nil
+	}
+	s.zeroOffer = false
 	text := admissionUnavailableCopy + "\n\nr: Retry  " + firstKey(s.deps.keys.Close, "esc") + ": Back  d: Discard submission"
 	if s.confirmReplace {
 		text = "Replace the newer draft with the rejected submission?\n\ny: Replace draft  " + firstKey(s.deps.keys.Close, "esc") + ": Cancel"
@@ -94,6 +100,20 @@ func (m Model) onAdmissionKey(msg tea.KeyPressMsg, s *admissionRecoveryState) (t
 		m.admissionSubmission = nil
 		m.closeModal()
 		return m, nil
+	}
+	if s.zeroOffer {
+		if !key.Matches(msg, m.keys.Close) {
+			return m, nil
+		}
+		if s.confirmReplace {
+			s.confirmReplace = false
+			return m, nil
+		}
+		if m.prompt.Value() != "" || len(m.pendingPromptMedia.Parts) > 0 || len(m.stagedMedia) > 0 || len(m.stagedPastes) > 0 {
+			s.confirmReplace = true
+			return m, nil
+		}
+		return m.restoreAdmission()
 	}
 	if s.confirmReplace {
 		switch {

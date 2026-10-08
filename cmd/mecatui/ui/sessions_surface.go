@@ -398,6 +398,15 @@ func (s *sessionsState) Render(width, height int) (string, []ClickableRegion) {
 }
 
 func (s *sessionsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
+	if s.compact {
+		if key.Matches(msg, s.deps.keys.Close) {
+			if s.view == sessionsTranscript {
+				s.intent = sessionsPhaseIntent{phase: sessionsIntentPhaseIdle}
+			}
+			return nil, true, true
+		}
+		return nil, true, false
+	}
 	if s.view == sessionsTranscript {
 		if key.Matches(msg, s.deps.keys.ExpandConversation) {
 			s.transcriptExpand = !s.transcriptExpand
@@ -425,12 +434,6 @@ func (s *sessionsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 		}
 		s.transcriptStuck = s.transcriptVP.AtBottom()
 		return cmd, true, false
-	}
-	if s.compact {
-		if key.Matches(msg, s.deps.keys.Close) {
-			return nil, true, true
-		}
-		return nil, true, false
 	}
 	if cmd, handled := s.handleActionKey(msg); handled {
 		return cmd, true, false

@@ -2457,6 +2457,7 @@ func (m Model) dispatchPhaseKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // / esc-only. Returns handled=false when no overlay is open so onKey falls through.
 func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	if s, ok := m.modal.(*admissionRecoveryState); ok {
+		(&m).prepareSurfaceInput()
 		mm, cmd := m.onAdmissionKey(msg, s)
 		return mm, cmd, true
 	}
@@ -2485,6 +2486,13 @@ func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	return m, nil, false
 }
 
+// prepareSurfaceInput refreshes the offer without publishing its hit regions.
+func (m *Model) prepareSurfaceInput() {
+	_ = m.renderModalSurface()
+	m.hits.clear()
+	m.metrics.clear()
+}
+
 // dispatchSurfaceKey routes a KeyPressMsg through the open modal surface when
 // one is open. On handled+closed it runs the surface's (no-return) Close, nils
 // the field, and batches the textarea refocus — the parent refocuses because
@@ -2494,10 +2502,7 @@ func (m Model) dispatchSurfaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool
 	if m.modal == nil {
 		return m, nil, false
 	}
-	// Prepare the View offer before input, but never publish an undisplayed frame.
-	_ = (&m).renderModalSurface()
-	m.hits.clear()
-	m.metrics.clear()
+	(&m).prepareSurfaceInput()
 	cmd, handled, closed := m.modal.HandleKey(msg)
 	if !handled {
 		return m, nil, false
@@ -4248,9 +4253,7 @@ func (m Model) endRun(stop string) Model {
 // The conversation viewport receives wheel events only while no modal is open.
 func (m Model) onMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	if m.modal != nil {
-		_ = (&m).renderModalSurface()
-		m.hits.clear()
-		m.metrics.clear()
+		(&m).prepareSurfaceInput()
 		if m.width <= 0 || m.vp.Height() <= 0 {
 			return m, nil
 		}

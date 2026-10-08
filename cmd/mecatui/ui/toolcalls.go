@@ -466,12 +466,13 @@ func (s *toolcallsState) restoreChildSummaryAnchor(previous *toolcallDetail) {
 func (s *toolcallsState) setSurfacePresentation(p surfacePresentation) { s.deps.refreshPresentation(p) }
 
 func (s *toolcallsState) Render(width, height int) (string, []ClickableRegion) {
-	s.compact = false
+	s.compact = true
 	s.hitItems = nil
 	if !s.open || width <= 0 || height <= 0 {
 		s.list = nil
 		return "", nil
 	}
+	s.compact = false
 	th := s.deps.theme
 	line := func(style lipgloss.Style, text string) string {
 		return ansi.Cut(style.Render(terminaltext.Sanitize(text)), 0, width) + "\x1b[0m"

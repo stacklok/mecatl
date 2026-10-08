@@ -132,6 +132,10 @@ func (s *modelsState) Render(width, height int) (string, []ClickableRegion) {
 
 func (s *modelsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 	switch {
+	case key.Matches(msg, s.deps.keys.Close) && s.rowBudget == 0:
+		return nil, true, true
+	case s.rowBudget == 0:
+		return nil, true, false
 	case key.Matches(msg, s.deps.keys.Close):
 		if s.filter.Value() != "" {
 			s.filter.SetValue("")
