@@ -242,6 +242,8 @@ include mutations, as described below.
 |`ListCommands`|unary|slash commands for an owned source session; owner-authorizes and exactly reattaches first; no-FS returns empty|
 |`ListWorktrees`|unary|display-safe eligible worktrees plus opaque caller/source-scoped selectors for ClearSession/ForkSession; no paths or exact refs; relist after restart|
 |`ListSkills`|unary|the discovered skills inventory (name + one-line description)|
+|`ListSkillFiles`|unary|the readable files of one skill in the caller's own skill view (deployment skills plus the caller's learned skills): `SKILL.md`, the instruction body without frontmatter and marked `instructions`, first, then bundled files by name, each with its size. A learned skill lists only `SKILL.md`. A skill outside the caller's view is `NOT_FOUND`|
+|`ReadSkillFile`|unary|one skill file's text, at most 25,000 bytes of UTF-8 with no NUL byte. An invalid file name is `INVALID_ARGUMENT`, an unknown file `NOT_FOUND`, and an oversize or non-text file `FAILED_PRECONDITION`; none is truncated or repaired. The `skill_files` compatibility feature announces both RPCs|
 |`GetSoul`|unary|the resolved soul's build-time snapshot: content, size/hash, provenance, trust + drift state|
 |`GetUserModel`|unary|the **live**, bounded user-model index; optional `key` lazily returns exact read-only detail plus up to 16 revisions, including proposal linkage when present. Read-only; Forget remains a permission-gated tool|
 |`ReflectSession`|unary|synchronously reflect one caller-owned completed session through its persisted provider/model (the reflection slot may change only the model); remains available with automatic mode off through lazy Build-owned initialization|

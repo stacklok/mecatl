@@ -343,6 +343,19 @@ service HarnessService {
   // a skill remains a run-path concern (the Skill tool reads the body).
   rpc ListSkills(ListSkillsRequest) returns (ListSkillsResponse);
 
+  // ListSkillFiles lists the readable files of one skill in the caller's skill view:
+  // the instruction body as "SKILL.md" first, then the skill's bundled assets by
+  // logical name. A learned skill lists only "SKILL.md". Read-only and bounded; an
+  // unknown skill is NOT_FOUND. Files are addressed by logical name, never by a
+  // filesystem path.
+  rpc ListSkillFiles(ListSkillFilesRequest) returns (ListSkillFilesResponse);
+
+  // ReadSkillFile returns the text of one file of a skill in the caller's skill view,
+  // capped at the same size the Skill tool returns. An unknown skill or file is
+  // NOT_FOUND, an invalid logical name is INVALID_ARGUMENT, and a file that is not valid
+  // text or exceeds the cap is refused rather than returned truncated or repaired.
+  rpc ReadSkillFile(ReadSkillFileRequest) returns (ReadSkillFileResponse);
+
   // GetSoul returns the resolved soul (user-scoped persona) BUILD-TIME SNAPSHOT:
   // the selected soul's content + size/hash + provenance (user/project) + trust
   // and drift state. The soul is selected once at startup (USER-wins precedence,
@@ -3080,6 +3093,47 @@ message ListSkillsRequest {}
 message ListSkillsResponse {
   // skills are the (possibly empty) discovered skills, name-sorted.
   repeated SkillInfo skills = 1;
+}
+
+// SkillFileInfo is one readable file of a skill.
+message SkillFileInfo {
+  // name is the file's logical name: "SKILL.md" for the instruction body, otherwise a
+  // slash-separated relative name such as "references/api.md". Never a filesystem path.
+  string name = 1;
+  // size is the file's size in bytes. For the instruction body it is the size of the body text
+  // after the frontmatter, not of the file on disk.
+  int64 size = 2;
+  // instructions marks the skill's instruction body. Its content is the text after the
+  // frontmatter (name, description, license, allowed-tools), so it is NOT the raw SKILL.md file
+  // and is not a valid skill definition on its own. A client keys off this field, not off the
+  // name "SKILL.md", to find the body.
+  bool instructions = 3;
+}
+
+// ListSkillFilesRequest names the skill whose files to list.
+message ListSkillFilesRequest {
+  // name is the skill's activation name from ListSkills.
+  string name = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+// ListSkillFilesResponse carries the skill's files.
+message ListSkillFilesResponse {
+  // files lists "SKILL.md" first, then the assets sorted by name.
+  repeated SkillFileInfo files = 1;
+}
+
+// ReadSkillFileRequest names one file of one skill.
+message ReadSkillFileRequest {
+  // name is the skill's activation name from ListSkills.
+  string name = 1 [(buf.validate.field).string.min_len = 1];
+  // file is a logical file name from ListSkillFiles.
+  string file = 2 [(buf.validate.field).string.min_len = 1];
+}
+
+// ReadSkillFileResponse carries one file's text.
+message ReadSkillFileResponse {
+  // content is the file's text, valid UTF-8, at most the Skill tool's output cap.
+  string content = 1;
 }
 
 // --- Soul (persona) inspection ----------------------------------------------

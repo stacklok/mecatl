@@ -86,6 +86,8 @@ const (
 	HarnessService_CancelSessionCleanup_FullMethodName            = "/mecatl.v1.HarnessService/CancelSessionCleanup"
 	HarnessService_GetSessionCleanupJob_FullMethodName            = "/mecatl.v1.HarnessService/GetSessionCleanupJob"
 	HarnessService_ListSkills_FullMethodName                      = "/mecatl.v1.HarnessService/ListSkills"
+	HarnessService_ListSkillFiles_FullMethodName                  = "/mecatl.v1.HarnessService/ListSkillFiles"
+	HarnessService_ReadSkillFile_FullMethodName                   = "/mecatl.v1.HarnessService/ReadSkillFile"
 	HarnessService_GetSoul_FullMethodName                         = "/mecatl.v1.HarnessService/GetSoul"
 	HarnessService_GetUserModel_FullMethodName                    = "/mecatl.v1.HarnessService/GetUserModel"
 	HarnessService_ReflectSession_FullMethodName                  = "/mecatl.v1.HarnessService/ReflectSession"
@@ -401,6 +403,17 @@ type HarnessServiceClient interface {
 	// process lifetime); it performs no live discovery. Metadata only — activating
 	// a skill remains a run-path concern (the Skill tool reads the body).
 	ListSkills(ctx context.Context, in *ListSkillsRequest, opts ...grpc.CallOption) (*ListSkillsResponse, error)
+	// ListSkillFiles lists the readable files of one skill in the caller's skill view:
+	// the instruction body as "SKILL.md" first, then the skill's bundled assets by
+	// logical name. A learned skill lists only "SKILL.md". Read-only and bounded; an
+	// unknown skill is NOT_FOUND. Files are addressed by logical name, never by a
+	// filesystem path.
+	ListSkillFiles(ctx context.Context, in *ListSkillFilesRequest, opts ...grpc.CallOption) (*ListSkillFilesResponse, error)
+	// ReadSkillFile returns the text of one file of a skill in the caller's skill view,
+	// capped at the same size the Skill tool returns. An unknown skill or file is
+	// NOT_FOUND, an invalid logical name is INVALID_ARGUMENT, and a file that is not valid
+	// text or exceeds the cap is refused rather than returned truncated or repaired.
+	ReadSkillFile(ctx context.Context, in *ReadSkillFileRequest, opts ...grpc.CallOption) (*ReadSkillFileResponse, error)
 	// GetSoul returns the resolved soul (user-scoped persona) BUILD-TIME SNAPSHOT:
 	// the selected soul's content + size/hash + provenance (user/project) + trust
 	// and drift state. The soul is selected once at startup (USER-wins precedence,
@@ -1001,6 +1014,26 @@ func (c *harnessServiceClient) ListSkills(ctx context.Context, in *ListSkillsReq
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListSkillsResponse)
 	err := c.cc.Invoke(ctx, HarnessService_ListSkills_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) ListSkillFiles(ctx context.Context, in *ListSkillFilesRequest, opts ...grpc.CallOption) (*ListSkillFilesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListSkillFilesResponse)
+	err := c.cc.Invoke(ctx, HarnessService_ListSkillFiles_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) ReadSkillFile(ctx context.Context, in *ReadSkillFileRequest, opts ...grpc.CallOption) (*ReadSkillFileResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReadSkillFileResponse)
+	err := c.cc.Invoke(ctx, HarnessService_ReadSkillFile_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1635,6 +1668,17 @@ type HarnessServiceServer interface {
 	// process lifetime); it performs no live discovery. Metadata only — activating
 	// a skill remains a run-path concern (the Skill tool reads the body).
 	ListSkills(context.Context, *ListSkillsRequest) (*ListSkillsResponse, error)
+	// ListSkillFiles lists the readable files of one skill in the caller's skill view:
+	// the instruction body as "SKILL.md" first, then the skill's bundled assets by
+	// logical name. A learned skill lists only "SKILL.md". Read-only and bounded; an
+	// unknown skill is NOT_FOUND. Files are addressed by logical name, never by a
+	// filesystem path.
+	ListSkillFiles(context.Context, *ListSkillFilesRequest) (*ListSkillFilesResponse, error)
+	// ReadSkillFile returns the text of one file of a skill in the caller's skill view,
+	// capped at the same size the Skill tool returns. An unknown skill or file is
+	// NOT_FOUND, an invalid logical name is INVALID_ARGUMENT, and a file that is not valid
+	// text or exceeds the cap is refused rather than returned truncated or repaired.
+	ReadSkillFile(context.Context, *ReadSkillFileRequest) (*ReadSkillFileResponse, error)
 	// GetSoul returns the resolved soul (user-scoped persona) BUILD-TIME SNAPSHOT:
 	// the selected soul's content + size/hash + provenance (user/project) + trust
 	// and drift state. The soul is selected once at startup (USER-wins precedence,
@@ -1896,6 +1940,12 @@ func (UnimplementedHarnessServiceServer) GetSessionCleanupJob(context.Context, *
 }
 func (UnimplementedHarnessServiceServer) ListSkills(context.Context, *ListSkillsRequest) (*ListSkillsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListSkills not implemented")
+}
+func (UnimplementedHarnessServiceServer) ListSkillFiles(context.Context, *ListSkillFilesRequest) (*ListSkillFilesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListSkillFiles not implemented")
+}
+func (UnimplementedHarnessServiceServer) ReadSkillFile(context.Context, *ReadSkillFileRequest) (*ReadSkillFileResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReadSkillFile not implemented")
 }
 func (UnimplementedHarnessServiceServer) GetSoul(context.Context, *GetSoulRequest) (*GetSoulResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetSoul not implemented")
@@ -2755,6 +2805,42 @@ func _HarnessService_ListSkills_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _HarnessService_ListSkillFiles_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListSkillFilesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).ListSkillFiles(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_ListSkillFiles_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).ListSkillFiles(ctx, req.(*ListSkillFilesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HarnessService_ReadSkillFile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReadSkillFileRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).ReadSkillFile(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_ReadSkillFile_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).ReadSkillFile(ctx, req.(*ReadSkillFileRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _HarnessService_GetSoul_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetSoulRequest)
 	if err := dec(in); err != nil {
@@ -3493,6 +3579,14 @@ var HarnessService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListSkills",
 			Handler:    _HarnessService_ListSkills_Handler,
+		},
+		{
+			MethodName: "ListSkillFiles",
+			Handler:    _HarnessService_ListSkillFiles_Handler,
+		},
+		{
+			MethodName: "ReadSkillFile",
+			Handler:    _HarnessService_ReadSkillFile_Handler,
 		},
 		{
 			MethodName: "GetSoul",

@@ -75,6 +75,8 @@ the bidi Converse stream that drives one agent run.
 | **RPC:** `CancelSessionCleanup`<br />**Request:** `CancelSessionCleanupRequest`<br />**Response:** `CleanupJob` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No |  |
 | **RPC:** `GetSessionCleanupJob`<br />**Request:** `GetSessionCleanupJobRequest`<br />**Response:** `CleanupJob` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No |  |
 | **RPC:** `ListSkills`<br />**Request:** `ListSkillsRequest`<br />**Response:** `ListSkillsResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="ListSkills">ListSkills returns the resolved skills inventory snapshot: each discovered skill&#39;s name + one-line description. Derived from the snapshot taken at startup (skills are discovered once at build time and immutable for the process lifetime); it performs no live discovery. Metadata only — activating a skill remains a run-path concern (the Skill tool reads the body).</GrpcDescription> |
+| **RPC:** `ListSkillFiles`<br />**Request:** `ListSkillFilesRequest`<br />**Response:** `ListSkillFilesResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="ListSkillFiles">ListSkillFiles lists the readable files of one skill in the caller&#39;s skill view: the instruction body as &#34;SKILL.md&#34; first, then the skill&#39;s bundled assets by logical name. A learned skill lists only &#34;SKILL.md&#34;. Read-only and bounded; an unknown skill is NOT_FOUND. Files are addressed by logical name, never by a filesystem path.</GrpcDescription> |
+| **RPC:** `ReadSkillFile`<br />**Request:** `ReadSkillFileRequest`<br />**Response:** `ReadSkillFileResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="ReadSkillFile">ReadSkillFile returns the text of one file of a skill in the caller&#39;s skill view, capped at the same size the Skill tool returns. An unknown skill or file is NOT_FOUND, an invalid logical name is INVALID_ARGUMENT, and a file that is not valid text or exceeds the cap is refused rather than returned truncated or repaired.</GrpcDescription> |
 | **RPC:** `GetSoul`<br />**Request:** `GetSoulRequest`<br />**Response:** `GetSoulResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="GetSoul">GetSoul returns the resolved soul (user-scoped persona) BUILD-TIME SNAPSHOT: the selected soul&#39;s content + size/hash + provenance (user/project) + trust and drift state. The soul is selected once at startup (USER-wins precedence, project trust gate, drift check — issue #14 Phase 3 Items 1+2), so this is a pure read of that snapshot, never a live re-read. Read-only inspection: it never mutates the soul (the agent-read-only invariant).</GrpcDescription> |
 | **RPC:** `GetUserModel`<br />**Request:** `GetUserModelRequest`<br />**Response:** `GetUserModelResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="GetUserModel">GetUserModel returns the CURRENT user-model entries (durable FACTS about the operator): each entry&#39;s key + one-line description, plus an aggregate size + hash. Unlike GetSoul (a startup snapshot) this is a LIVE read of the user-model store&#39;s index, so it reflects entries the agent has saved since startup. Metadata only — the per-entry values are omitted (Recall loads them).</GrpcDescription> |
 | **RPC:** `ReflectSession`<br />**Request:** `ReflectSessionRequest`<br />**Response:** `ReflectSessionResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="ReflectSession">ReflectSession explicitly reflects one completed, caller-owned session. It remains available when automatic learning is off if reflection is configured.</GrpcDescription> |
@@ -1982,6 +1984,28 @@ by modified_at descending then session_id ascending.
 
 
 
+#### `mecatl.v1.ListSkillFilesRequest`
+
+ListSkillFilesRequest names the skill whose files to list.
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `name` | `string` |  |  | name is the skill&#39;s activation name from ListSkills. |
+
+
+
+
+#### `mecatl.v1.ListSkillFilesResponse`
+
+ListSkillFilesResponse carries the skill&#39;s files.
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `files` | `SkillFileInfo` | repeated |  | files lists &#34;SKILL.md&#34; first, then the assets sorted by name. |
+
+
+
+
 #### `mecatl.v1.ListSkillsRequest`
 
 ListSkillsRequest requests the resolved skills inventory snapshot.
@@ -2533,6 +2557,29 @@ ReadMcpResourceResponse carries the read resource&#39;s content chunks.
 | Field | Type | Label | Oneof | Description |
 |---|---|---|---|---|
 | `contents` | `McpResourceContents` | repeated |  | contents are the resource&#39;s content chunks. |
+
+
+
+
+#### `mecatl.v1.ReadSkillFileRequest`
+
+ReadSkillFileRequest names one file of one skill.
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `name` | `string` |  |  | name is the skill&#39;s activation name from ListSkills. |
+| `file` | `string` |  |  | file is a logical file name from ListSkillFiles. |
+
+
+
+
+#### `mecatl.v1.ReadSkillFileResponse`
+
+ReadSkillFileResponse carries one file&#39;s text.
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `content` | `string` |  |  | content is the file&#39;s text, valid UTF-8, at most the Skill tool&#39;s output cap. |
 
 
 
@@ -3165,6 +3212,19 @@ SetModeResponse wraps the updated session snapshot returned by SetMode.
 | `treatment` | `string` |  |  |  |
 | `reason` | `string` |  |  |  |
 | `at` | `google.protobuf.Timestamp` |  |  |  |
+
+
+
+
+#### `mecatl.v1.SkillFileInfo`
+
+SkillFileInfo is one readable file of a skill.
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `name` | `string` |  |  | name is the file&#39;s logical name: &#34;SKILL.md&#34; for the instruction body, otherwise a slash-separated relative name such as &#34;references/api.md&#34;. Never a filesystem path. |
+| `size` | `int64` |  |  | size is the file&#39;s size in bytes. For the instruction body it is the size of the body text after the frontmatter, not of the file on disk. |
+| `instructions` | `bool` |  |  | instructions marks the skill&#39;s instruction body. Its content is the text after the frontmatter (name, description, license, allowed-tools), so it is NOT the raw SKILL.md file and is not a valid skill definition on its own. A client keys off this field, not off the name &#34;SKILL.md&#34;, to find the body. |
 
 
 

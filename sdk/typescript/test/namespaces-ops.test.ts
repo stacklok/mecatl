@@ -25,6 +25,8 @@ const batchBCatalogKeys = [
   "HarnessService.CancelSessionCleanup",
   "HarnessService.GetSessionCleanupJob",
   "HarnessService.ListSkills",
+  "HarnessService.ListSkillFiles",
+  "HarnessService.ReadSkillFile",
   "HarnessService.GetSoul",
   "HarnessService.GetUserModel",
   "HarnessService.ReflectSession",
@@ -111,6 +113,8 @@ const expectedSignatures = {
   ],
   Skills: [
     "list(request: ListSkillsRequest, options?: RequestOptions): Promise<ListSkillsResponse>;",
+    "listFiles(request: ListSkillFilesRequest, options?: RequestOptions): Promise<ListSkillFilesResponse>;",
+    "readFile(request: ReadSkillFileRequest, options?: RequestOptions): Promise<ReadSkillFileResponse>;",
   ],
   Soul: ["get(request: GetSoulRequest, options?: RequestOptions): Promise<GetSoulResponse>;"],
   Storage: [
@@ -278,6 +282,8 @@ describe("operational typed namespaces", () => {
       () => client.storage.cancelCleanup(request("HarnessService.CancelSessionCleanup")),
       () => client.storage.getCleanupJob(request("HarnessService.GetSessionCleanupJob")),
       () => client.skills.list(request("HarnessService.ListSkills")),
+      () => client.skills.listFiles(request("HarnessService.ListSkillFiles")),
+      () => client.skills.readFile(request("HarnessService.ReadSkillFile")),
       () => client.soul.get(request("HarnessService.GetSoul")),
       () => client.userModel.get(request("HarnessService.GetUserModel")),
       () => client.reflection.reflect(request("HarnessService.ReflectSession")),

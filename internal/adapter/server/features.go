@@ -34,6 +34,12 @@ const (
 	// implements the routes the TypeScript SDK can drive.
 	FeatureHTTPSteer = "http_steer"
 
+	// FeatureSkillFiles is the read-only skill-file pair: the ListSkillFiles and
+	// ReadSkillFile RPCs and their GET /v1/skills/files routes. Against a daemon
+	// that lacks it, the routes answer a generic 404 that looks like skill_not_found,
+	// so a client checks this identifier before offering a skill's files.
+	FeatureSkillFiles = "skill_files"
+
 	// FeatureServerInfo is this RPC itself. It is degenerate over the wire — a
 	// client that received a response already knows the server implements it —
 	// but it is load-bearing as the registry's self-test: the feature set is
@@ -112,6 +118,7 @@ var allFeatures = []string{
 	FeaturePromptFreeControls,
 	FeatureServerInfo,
 	FeatureSessionActivityInventory,
+	FeatureSkillFiles,
 	FeatureWatchSessionEvents,
 }
 

@@ -186,6 +186,8 @@ These routes mirror the gRPC inventory, introspection, and learning methods.
 |`GET /v1/models`|the selectable provider/model inventory (`ListModels`)|
 |`GET /v1/agents`|the agent-definition inventory|
 |`GET /v1/skills`|the skills inventory|
+|`GET /v1/skills/files?name=...`|the readable files of one skill in the caller's own skill view: `SKILL.md` (the instruction body, without frontmatter, marked `instructions: true`) first, then bundled files by name, each with its size; unknown skill is `404 skill_not_found`|
+|`GET /v1/skills/files/read?name=...&file=...`|one file's text, at most 25,000 bytes of UTF-8 with no NUL byte: `404 skill_file_not_found`, `422 skill_file_too_large`, and `422 skill_file_not_text` refuse rather than truncate or repair|
 |`GET /v1/commands?session_id=...`|slash commands for an owned, exactly reattached source; no-FS returns empty|
 |`GET /v1/worktrees?session_id=...`|display-safe worktrees plus ephemeral caller/source-scoped selectors; no paths/exact refs|
 |`GET /v1/soul`|the resolved soul snapshot (provenance, trust, drift)|

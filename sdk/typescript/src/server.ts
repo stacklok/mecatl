@@ -24,6 +24,7 @@ export const ServerFeature = {
   PromptFreeControls: "prompt_free_controls",
   ServerInfo: "server_info",
   SessionActivityInventory: "session_activity_inventory",
+  SkillFiles: "skill_files",
   WatchSessionEvents: "watch_session_events",
 } as const;
 // END MECATL_SERVER_FEATURES
