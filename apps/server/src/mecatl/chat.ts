@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type {
+  ClearSessionRequest,
   CreateSessionRequest,
   ForkSessionRequest,
   ListSessionsResponse,
@@ -73,7 +74,7 @@ export interface ChatService {
    * distinct from `fork()` (which copies history). This handle keeps
    * existing (it is not mutated); the caller navigates to the new id.
    */
-  clearSession(sessionId: string): Promise<{ id: string }>;
+  clearSession(sessionId: string, request?: ClearSessionRequest): Promise<{ id: string }>;
   compactSession(sessionId: string): Promise<{ compacted: boolean }>;
   createSession(request: CreateSessionRequest): Promise<{ id: string }>;
   deleteSession(sessionId: string): Promise<void>;
@@ -243,9 +244,13 @@ export function createMecatlChatService(client: Client): ChatService {
       }
     },
 
-    async clearSession(sessionId) {
+    async clearSession(sessionId, request) {
       const session = await client.sessions.get(sessionId);
-      const cleared = await session.clear();
+      const cleared = await session.clear(
+        request?.worktreeSelector === undefined
+          ? undefined
+          : { worktreeSelector: request.worktreeSelector },
+      );
       return { id: cleared.id };
     },
 
@@ -295,7 +300,30 @@ export function createMecatlChatService(client: Client): ChatService {
           modelSelection: compatibility.capabilities.modelSelection,
         },
         id: snapshot.sessionId,
+        kind: snapshot.kind,
         mode: fromSessionMode(snapshot.mode),
+        ...(snapshot.relationship === undefined
+          ? {}
+          : {
+              relationship: {
+                ...(snapshot.relationship.debugTargetSessionId === undefined
+                  ? {}
+                  : { debugTargetSessionId: snapshot.relationship.debugTargetSessionId }),
+                ...(snapshot.relationship.parentSessionId === undefined
+                  ? {}
+                  : { parentSessionId: snapshot.relationship.parentSessionId }),
+              },
+            }),
+        ...(snapshot.placement === undefined
+          ? {}
+          : {
+              placement: {
+                branch: snapshot.placement.branch,
+                kind: snapshot.placement.kind,
+                label: snapshot.placement.label,
+                revision: snapshot.placement.revision,
+              },
+            }),
         ...(resolvedModel === undefined
           ? {}
           : {
@@ -318,6 +346,9 @@ export function createMecatlChatService(client: Client): ChatService {
         ...(request.reasoningEffort === "default"
           ? {}
           : { reasoningEffort: request.reasoningEffort }),
+        ...(request.worktreeSelector === undefined
+          ? {}
+          : { worktreeSelector: request.worktreeSelector }),
       });
       return { id: session.id };
     },
@@ -335,22 +366,31 @@ export function createMecatlChatService(client: Client): ChatService {
         });
 
         for (const session of response.sessions) {
-          const publicChatReason = session.capabilities?.reasons?.publicChat ?? "";
-          const debugSession = Boolean(session.relationship?.debugTargetSessionId);
-          if (!session.sessionId || (publicChatReason === "inspect_only_kind" && !debugSession)) {
+          if (!session.sessionId) {
             continue;
           }
 
           items.push({
             capabilities: {
+              copyId: session.capabilities?.copyId === true,
+              copyIdReason: session.capabilities?.reasons?.copyId ?? "",
               delete: session.capabilities?.delete === true,
               deleteReason: session.capabilities?.reasons?.delete ?? "",
+              fork: session.capabilities?.fork === true,
+              forkReason: session.capabilities?.reasons?.fork ?? "",
+              inspect: session.capabilities?.inspect === true,
+              inspectReason: session.capabilities?.reasons?.inspect ?? "",
+              publicChat: session.capabilities?.publicChat === true,
+              publicChatReason: session.capabilities?.reasons?.publicChat ?? "",
               rename: session.capabilities?.rename === true,
               renameReason: session.capabilities?.reasons?.rename ?? "",
+              viewTranscript: session.capabilities?.viewTranscript === true,
+              viewTranscriptReason: session.capabilities?.reasons?.viewTranscript ?? "",
             },
             createdAt: unixSecondsToIso(session.createdAtUnix),
             debugTargetSessionId: session.relationship?.debugTargetSessionId ?? "",
             id: session.sessionId,
+            kind: session.kind,
             modelId: session.modelId,
             state: session.state,
             title: session.titleMetadata?.title || "Untitled chat",

@@ -24,6 +24,8 @@ export interface ChatMessage {
   failure?: { detail: string; message: string; permanent: boolean };
   id: string;
   images?: ChatImage[];
+  /** Zero-based index in an authoritative transcript, including non-rendered tool results. */
+  recordedOrdinal?: number;
   reasoning?: string;
   role: string;
   stopReason?: string;
@@ -174,6 +176,7 @@ export function messagesFromTranscript(
       content: entry.text,
       delivery: entry.delivery,
       id: `transcript-${index}`,
+      recordedOrdinal: index,
       images: entry.images?.length
         ? entry.images.map((image, imageIndex) => ({
             ...image,
