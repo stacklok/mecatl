@@ -309865,6 +309865,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791451353373,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6d66b05bd20d27a1bba6e57635aaa5271cc7ec01",
+          "message": "docs: lean rewrite of contributor docs (#2157)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-08T05:37:36-04:00",
+          "tree_id": "03b739aca5c4327611fbd4750ad982c2ec2949bf",
+          "url": "https://github.com/stacklok/mecatl/commit/6d66b05bd20d27a1bba6e57635aaa5271cc7ec01"
+        },
+        "date": 1791452964339,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3263,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 63.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -405435,6 +405474,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791452961199,
+  "lastUpdate": 1791452965321,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
