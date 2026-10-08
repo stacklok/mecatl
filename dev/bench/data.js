@@ -317011,6 +317011,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791487526836,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29139614+renovate[bot]@users.noreply.github.com",
+            "name": "renovate[bot]",
+            "username": "renovate[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cba3613ed0264d878161f37f77aeb5fcfef98f67",
+          "message": "chore(deps): update go grpc and protobuf (#1951)\n\nCo-authored-by: renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>\nCo-authored-by: Jakub Hrozek <jakub.hrozek@posteo.se>\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-08T22:10:32+02:00",
+          "tree_id": "a5b21540f78edb81647187c8fbe6fe6f1c837989",
+          "url": "https://github.com/stacklok/mecatl/commit/cba3613ed0264d878161f37f77aeb5fcfef98f67"
+        },
+        "date": 1791491003492,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3275.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 75,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -414633,6 +414672,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791491000199,
+  "lastUpdate": 1791491004595,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
