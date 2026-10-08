@@ -308674,6 +308674,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791414405451,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0ccf581cb3a262d84dac5307f0c11c0050f9fba1",
+          "message": "refactor(execution): remove unused prototype migrations (#2159)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-08T10:04:37+03:00",
+          "tree_id": "b6fc56987ad63c59f1eb9307197936172d842445",
+          "url": "https://github.com/stacklok/mecatl/commit/0ccf581cb3a262d84dac5307f0c11c0050f9fba1"
+        },
+        "date": 1791443839898,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3274.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 75,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -403902,6 +403941,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791443836860,
+  "lastUpdate": 1791443841086,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
