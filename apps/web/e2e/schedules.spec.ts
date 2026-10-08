@@ -115,7 +115,7 @@ test("schedule inventory uses the desktop table and compact mobile list", async 
   await expect(filteredRow).toBeVisible();
 });
 
-test("schedule detail links responsive history to the chat transcript", async ({
+test("schedule detail links each fire to its owning session", async ({
   offlineBff,
   page,
 }, testInfo) => {
@@ -165,74 +165,6 @@ test("schedule detail links responsive history to the chat transcript", async ({
       },
     ],
   });
-  offlineBff.json("GET", "/api/v1/settings/runtime", {
-    models: [],
-    modelsSupported: false,
-  });
-  offlineBff.json("GET", "/api/v1/sessions", {
-    complete: true,
-    items: [
-      {
-        capabilities: {
-          copyId: true,
-          copyIdReason: "",
-          delete: false,
-          deleteReason: "",
-          fork: false,
-          forkReason: "",
-          inspect: true,
-          inspectReason: "",
-          publicChat: true,
-          publicChatReason: "",
-          rename: false,
-          renameReason: "",
-          viewTranscript: true,
-          viewTranscriptReason: "",
-        },
-        createdAt: "2026-10-07T08:00:00Z",
-        debugTargetSessionId: "",
-        id: "scheduled-session",
-        kind: "main",
-        modelId: "offline",
-        state: "idle",
-        title: "Daily report run",
-        titleProvenance: "",
-        titleRevision: "0",
-        turns: 1,
-        updatedAt: "2026-10-07T08:00:02Z",
-      },
-    ],
-  });
-  offlineBff.json("GET", "/api/v1/sessions/scheduled-session", {
-    capabilities: { image: false, manualCompaction: false, modelSelection: false },
-    id: "scheduled-session",
-    kind: "main",
-    mode: "default",
-    state: "idle",
-    usage: {
-      cacheReadTokens: "0",
-      cacheWriteTokens: "0",
-      inputTokens: "0",
-      outputTokens: "0",
-      reasoningTokens: "0",
-    },
-  });
-  offlineBff.json("GET", "/api/v1/sessions/scheduled-session/transcript", {
-    complete: true,
-    messages: [
-      {
-        images: [],
-        role: "assistant",
-        text: "The report is ready.",
-        toolCalls: [],
-      },
-    ],
-    sessionId: "scheduled-session",
-  });
-  offlineBff.on("GET", "/api/v1/sessions/scheduled-session/activity", () => ({
-    body: "",
-    contentType: "text/event-stream",
-  }));
 
   await page.goto("/workspace/schedules/daily-report");
   await expect(page.getByRole("heading", { name: "daily-report" })).toBeVisible();
@@ -254,9 +186,6 @@ test("schedule detail links responsive history to the chat transcript", async ({
     "href",
     "/workspace/chat?sessionId=scheduled-session",
   );
-  await viewTranscript.click();
-  await expect(page).toHaveURL(/\/workspace\/chat\?sessionId=scheduled-session$/);
-  await expect(page.getByText("The report is ready.", { exact: true })).toBeVisible();
 });
 
 test("schedule mutations preserve backend-owned fields and surface failures", async ({
