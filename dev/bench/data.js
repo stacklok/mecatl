@@ -281782,6 +281782,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791461324602,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "radoslav@stacklok.com",
+            "name": "Radoslav Dimitrov",
+            "username": "rdimitrov"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "49339c81685c43352184da4f3d9872505512f7ff",
+          "message": "docs: drop ADR citations from the domain model and fix acceptEdits (#2191)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-08T08:03:38-04:00",
+          "tree_id": "b91ac723d27480c5b06b3c832c2fea980af01bac",
+          "url": "https://github.com/stacklok/mecatl/commit/49339c81685c43352184da4f3d9872505512f7ff"
+        },
+        "date": 1791462041721,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -408467,6 +408501,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791462038776,
+  "lastUpdate": 1791462042981,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
