@@ -46,6 +46,7 @@ import {
 } from "../../components/ui/table";
 import { pageTitleClass } from "../../lib/typography";
 import { TranscriptDialog } from "../chat/transcript-dialog";
+import { describeCron } from "./cron-builder";
 import { canEditSchedule, ScheduleForm } from "./schedule-form";
 
 type Schedule = ListSchedulesResponse["items"][number];
@@ -260,40 +261,45 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
           />
         </FactGroup>
         <FactGroup title="Frequency">
-          <Fact label="Type" value={schedule.trigger.kind === "cron" ? "Recurring" : "One time"} />
-          {schedule.trigger.kind === "cron" ? (
-            <>
-              <Fact label="Cron expression" value={schedule.trigger.expression} />
-              <Fact label="Timezone" value={timezoneLabel(schedule.trigger.timezone)} />
-              <Fact
-                label="Maximum runs"
-                value={schedule.maxFires ? String(schedule.maxFires) : "Unlimited"}
-              />
-            </>
-          ) : (
-            <>
-              <Fact label="Runs at" value={formatDate(schedule.trigger.at)} />
-              <Fact
-                label="Retry"
-                value={
-                  schedule.oneShotRetry
-                    ? schedule.oneShotMaxRetries
-                      ? `Up to ${schedule.oneShotMaxRetries} times`
-                      : "Enabled without a fixed limit"
-                    : "Disabled"
-                }
-              />
-            </>
+          <Fact
+            label="Repeat"
+            title={
+              schedule.trigger.kind === "cron"
+                ? `${schedule.trigger.expression} (${timezoneLabel(schedule.trigger.timezone)})`
+                : undefined
+            }
+            value={
+              schedule.trigger.kind === "cron"
+                ? describeCron(schedule.trigger.expression)
+                : `Once at ${formatDate(schedule.trigger.at)}`
+            }
+          />
+          {schedule.trigger.kind === "cron" && (
+            <Fact label="Timezone" value={timezoneLabel(schedule.trigger.timezone)} />
           )}
           <Fact
             label="Next run"
-            value={schedule.nextFireAt ? formatDate(schedule.nextFireAt) : "None"}
+            title={schedule.nextFireAt ? formatDate(schedule.nextFireAt) : undefined}
+            value={describeNextRun(schedule)}
           />
           <Fact
             label="Last run"
-            value={schedule.lastFireAt ? formatDate(schedule.lastFireAt) : "Never"}
+            title={schedule.lastFireAt ? formatDate(schedule.lastFireAt) : undefined}
+            value={describeLastRun(schedule)}
           />
-          <Fact label="Runs" value={String(schedule.fireCount)} />
+          <Fact label="Runs" value={describeRuns(schedule)} />
+          {schedule.trigger.kind === "once" && (
+            <Fact
+              label="Retry"
+              value={
+                schedule.oneShotRetry
+                  ? schedule.oneShotMaxRetries
+                    ? `Up to ${schedule.oneShotMaxRetries} times`
+                    : "Enabled without a fixed limit"
+                  : "Disabled"
+              }
+            />
+          )}
         </FactGroup>
       </div>
 
@@ -512,6 +518,38 @@ export function timezoneLabel(timezone: string) {
   return timezone || "UTC";
 }
 
+/** Bare span between two instants ("5m", "2h", "3d"); a due-or-past gap reads "<1m". */
+function formatSpan(milliseconds: number) {
+  const minutes = Math.floor(milliseconds / 60_000);
+  if (minutes < 1) return "<1m";
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return hours < 24 ? `${hours}h` : `${Math.floor(hours / 24)}d`;
+}
+
+/** A paused or completed schedule will not fire, so it has no next run to promise. */
+export function describeNextRun(
+  schedule: Pick<Schedule, "enabled" | "nextFireAt">,
+  now = Date.now(),
+) {
+  const at = Date.parse(schedule.nextFireAt);
+  if (!schedule.enabled || Number.isNaN(at)) return "—";
+  return `in ${formatSpan(at - now)}`;
+}
+
+export function describeLastRun(schedule: Pick<Schedule, "lastFireAt">, now = Date.now()) {
+  const at = Date.parse(schedule.lastFireAt);
+  if (Number.isNaN(at)) return "Never";
+  return `${formatSpan(now - at)} ago`;
+}
+
+export function describeRuns(schedule: Pick<Schedule, "fireCount" | "maxFires">) {
+  if (schedule.fireCount === 0) return "None yet";
+  if (schedule.maxFires <= 0) return String(schedule.fireCount);
+  const base = `${schedule.fireCount} of ${schedule.maxFires}`;
+  return schedule.fireCount >= schedule.maxFires ? `${base} — limit reached` : base;
+}
+
 export function sortScheduleFires(
   fires: readonly ScheduleFire[],
   key: FireSortKey,
@@ -573,11 +611,13 @@ function FactGroup({ children, title }: { children: React.ReactNode; title: stri
   );
 }
 
-function Fact({ label, value }: { label: string; value: string }) {
+function Fact({ label, title, value }: { label: string; title?: string; value: string }) {
   return (
     <div className="flex items-start justify-between gap-4 px-4 py-3">
       <dt className="text-sm">{label}</dt>
-      <dd className="min-w-0 text-right text-sm text-muted-foreground">{value}</dd>
+      <dd className="min-w-0 text-right text-sm text-muted-foreground" title={title}>
+        {value}
+      </dd>
     </div>
   );
 }

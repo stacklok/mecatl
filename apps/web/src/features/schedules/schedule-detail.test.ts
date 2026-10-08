@@ -5,6 +5,9 @@ import { describe, expect, it } from "vitest";
 import {
   canRunNow,
   canTogglePause,
+  describeLastRun,
+  describeNextRun,
+  describeRuns,
   fireDurationMs,
   fireOutcome,
   scheduleDetailPollInterval,
@@ -145,5 +148,37 @@ describe("schedule actions and labels", () => {
   it("labels an empty cron time zone as UTC", () => {
     expect(timezoneLabel("")).toBe("UTC");
     expect(timezoneLabel("Europe/Rome")).toBe("Europe/Rome");
+  });
+});
+
+describe("schedule frequency facts", () => {
+  const now = Date.parse("2026-10-08T12:00:00Z");
+
+  it("shows the next run as time remaining, and nothing for a schedule that will not fire", () => {
+    expect(describeNextRun({ enabled: true, nextFireAt: "2026-10-08T12:30:00Z" }, now)).toBe(
+      "in 30m",
+    );
+    expect(describeNextRun({ enabled: true, nextFireAt: "2026-10-08T17:00:00Z" }, now)).toBe(
+      "in 5h",
+    );
+    expect(describeNextRun({ enabled: true, nextFireAt: "2026-10-08T11:00:00Z" }, now)).toBe(
+      "in <1m",
+    );
+    expect(describeNextRun({ enabled: false, nextFireAt: "2026-10-09T12:00:00Z" }, now)).toBe("—");
+    expect(describeNextRun({ enabled: true, nextFireAt: "" }, now)).toBe("—");
+  });
+
+  it("shows the last run as time elapsed", () => {
+    expect(describeLastRun({ lastFireAt: "2026-10-08T09:00:00Z" }, now)).toBe("3h ago");
+    expect(describeLastRun({ lastFireAt: "2026-10-05T12:00:00Z" }, now)).toBe("3d ago");
+    expect(describeLastRun({ lastFireAt: "2026-10-08T11:59:30Z" }, now)).toBe("<1m ago");
+    expect(describeLastRun({ lastFireAt: "" }, now)).toBe("Never");
+  });
+
+  it("folds the run limit into the run count", () => {
+    expect(describeRuns({ fireCount: 0, maxFires: 0 })).toBe("None yet");
+    expect(describeRuns({ fireCount: 3, maxFires: 0 })).toBe("3");
+    expect(describeRuns({ fireCount: 3, maxFires: 10 })).toBe("3 of 10");
+    expect(describeRuns({ fireCount: 10, maxFires: 10 })).toBe("10 of 10 — limit reached");
   });
 });
