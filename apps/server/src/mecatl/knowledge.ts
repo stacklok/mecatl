@@ -16,10 +16,11 @@ import type {
   MemoryConsolidationReceiptResponse,
   MemoryDetailResponse,
   ReflectionReceiptResponse,
+  SkillFilesResponse,
   UndoLearningPromotionRequest,
   UserMemoryResponse,
 } from "@mecatl-studio/contracts";
-import type { Client } from "@stacklok-oss/mecatl-sdk";
+import { type Client, MecatlError } from "@stacklok-oss/mecatl-sdk";
 import type {
   DreamParticipant,
   DreamReviewPlan,
@@ -73,6 +74,7 @@ export interface KnowledgeService {
   getMemory(key: string): Promise<MemoryDetailResponse>;
   generateMemoryConsolidationPlan(): Promise<MemoryConsolidationPlanResponse>;
   listConfiguredSkills(): Promise<ConfiguredSkillsResponse>;
+  listSkillFiles(name: string): Promise<SkillFilesResponse>;
   listLearnedSkills(): Promise<LearnedSkillsResponse>;
   listLearnedSkillChanges(): Promise<LearnedSkillChangesResponse>;
   listLearningProposals(status: string): Promise<LearningProposalsResponse>;
@@ -220,6 +222,37 @@ export function createMecatlKnowledgeService(
         reason: "",
         supported: true,
       };
+    },
+
+    // DECISION: this method cannot merge until a published `@stacklok-oss/mecatl-sdk` release
+    // contains `skills.listFiles` and `skills.readFile`, and `server/package.json`,
+    // `pnpm-workspace.yaml`'s age-gate exclusion, and the lockfile pin that release. Reason:
+    // `apps/` depends on the published SDK only (ADR 0351), never on `sdk/typescript` by path.
+    // Rejected: a workspace link, which would also make CI pass on code that cannot ship.
+    async listSkillFiles(name) {
+      const listing = await client.skills.listFiles({
+        $typeName: "mecatl.v1.ListSkillFilesRequest",
+        name,
+      });
+      const shown = listing.files.slice(0, maxSkillFilesShown);
+      const files = await Promise.all(
+        shown.map(async (file) => {
+          const base = { content: "", name: file.name, size: Number(file.size), unavailable: "" };
+          try {
+            const response = await client.skills.readFile({
+              $typeName: "mecatl.v1.ReadSkillFileRequest",
+              file: file.name,
+              name,
+            });
+            return { ...base, content: response.content };
+          } catch (error) {
+            const reason = skillFileUnavailableReason(error);
+            if (reason === undefined) throw error;
+            return { ...base, unavailable: reason };
+          }
+        }),
+      );
+      return { files, omitted: listing.files.length - shown.length };
     },
 
     async listLearnedSkills() {
@@ -414,6 +447,34 @@ function memoryParticipantFromSdk(participant: DreamParticipant | undefined) {
     key: participant?.key ?? "",
     value: participant?.value ?? "",
   };
+}
+
+/**
+ * DECISION: the BFF loads a skill's file contents in one response, so the browser makes a single
+ * request. Reason: real skills have few files (on one machine, 95 skills averaged 1.3 assets, the
+ * most 6), so a request per file is cost with no benefit. Rejected: load on click, and a bulk RPC
+ * in the daemon contract.
+ *
+ * LIMITATION (intentional): only the first `maxSkillFilesShown` files are loaded, and the response
+ * says how many more exist. There is no paging, virtualization, or load-more. Reason: a skill with
+ * dozens of files is very unlikely, and showing them well needs a real front-end design that does
+ * not exist yet. Each file is at most the daemon's 25,000-byte cap, so the response stays bounded.
+ */
+const maxSkillFilesShown = 32;
+
+/** One line saying why a file's text is not shown, or undefined when the failure is not about the file. */
+function skillFileUnavailableReason(error: unknown): string | undefined {
+  if (!(error instanceof MecatlError)) return undefined;
+  switch (error.code) {
+    case "skill_file_too_large":
+      return "Too large to show here.";
+    case "skill_file_not_text":
+      return "This is a binary file, so it can't be shown here.";
+    case "skill_file_not_found":
+      return "No longer available.";
+    default:
+      return undefined;
+  }
 }
 
 function learnedSkillFromSdk(skill: LearnedSkillVersion | undefined): LearnedSkillResponse {
