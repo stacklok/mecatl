@@ -16,6 +16,24 @@ export const configuredSkillsResponseSchema = z.object({
   supported: z.boolean(),
 });
 
+/**
+ * One file of a configured skill as the browser shows it. `content` is the file's text, or empty
+ * when it could not be shown; `unavailable` then says why in one line, and is empty otherwise.
+ * The BFF loads every file's text in one request so the browser makes a single call.
+ */
+export const skillFileSchema = z.object({
+  content: z.string(),
+  name: z.string(),
+  size: z.number().int().nonnegative(),
+  unavailable: z.string(),
+});
+
+export const skillFilesResponseSchema = z.object({
+  files: z.array(skillFileSchema),
+  /** How many further files the skill has that are not included in `files`. */
+  omitted: z.number().int().nonnegative(),
+});
+
 export const learnedSkillActionsSchema = z.object({
   activate: z.boolean(),
   archive: z.boolean(),
@@ -222,6 +240,7 @@ export const memoryDetailResponseSchema = z.object({
 });
 
 export type ConfiguredSkillsResponse = z.infer<typeof configuredSkillsResponseSchema>;
+export type SkillFilesResponse = z.infer<typeof skillFilesResponseSchema>;
 export type DecideLearningProposalRequest = z.infer<typeof decideLearningProposalRequestSchema>;
 export type DecideMemoryConsolidationPlanRequest = z.infer<
   typeof decideMemoryConsolidationPlanRequestSchema

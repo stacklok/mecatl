@@ -2273,6 +2273,81 @@ export type ListConfiguredSkillsResponses = {
 
 export type ListConfiguredSkillsResponse = ListConfiguredSkillsResponses[keyof ListConfiguredSkillsResponses];
 
+export type ListSkillFilesData = {
+    body?: never;
+    path: {
+        name: string;
+    };
+    query?: never;
+    url: '/api/v1/skills/{name}/files';
+};
+
+export type ListSkillFilesErrors = {
+    /**
+     * The request could not be completed.
+     */
+    404: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    501: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type ListSkillFilesError = ListSkillFilesErrors[keyof ListSkillFilesErrors];
+
+export type ListSkillFilesResponses = {
+    /**
+     * A configured skill's files with their text.
+     */
+    200: {
+        files: Array<{
+            content: string;
+            name: string;
+            size: number;
+            unavailable: string;
+        }>;
+        omitted: number;
+    };
+};
+
+export type ListSkillFilesResponse = ListSkillFilesResponses[keyof ListSkillFilesResponses];
+
 export type ListLearnedSkillsData = {
     body?: never;
     path?: never;

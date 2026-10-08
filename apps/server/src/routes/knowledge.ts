@@ -18,6 +18,7 @@ import {
   memoryDetailResponseSchema,
   problemDetailsSchema,
   reflectionReceiptSchema,
+  skillFilesResponseSchema,
   undoLearningPromotionRequestSchema,
   userMemoryResponseSchema,
 } from "@mecatl-studio/contracts";
@@ -80,6 +81,30 @@ const listConfiguredSkillsRoute = createRoute({
       description: "The configured skill inventory.",
     },
     500: errorResponse,
+    503: errorResponse,
+  },
+});
+
+const skillNameParameters = z.object({
+  name: z
+    .string()
+    .min(1)
+    .openapi({ param: { in: "path", name: "name" } }),
+});
+
+const listSkillFilesRoute = createRoute({
+  method: "get",
+  operationId: "listSkillFiles",
+  path: "/api/v1/skills/{name}/files",
+  request: { params: skillNameParameters },
+  responses: {
+    200: {
+      content: { "application/json": { schema: skillFilesResponseSchema } },
+      description: "A configured skill's files with their text.",
+    },
+    404: errorResponse,
+    500: errorResponse,
+    501: errorResponse,
     503: errorResponse,
   },
 });
@@ -323,6 +348,17 @@ export function registerKnowledgeRoutes(
   app.openapi(listConfiguredSkillsRoute, async (context) => {
     if (!knowledge) return unavailable(context);
     return context.json(await knowledge.listConfiguredSkills(), 200);
+  });
+  app.openapi(listSkillFilesRoute, async (context) => {
+    if (!knowledge) return unavailable(context);
+    if (!knowledge.capabilities.skills)
+      return unsupported(
+        context,
+        "skills_unsupported",
+        "Skills are not enabled on this deployment.",
+      );
+    const { name } = context.req.valid("param");
+    return context.json(await knowledge.listSkillFiles(name), 200);
   });
   app.openapi(listLearnedSkillsRoute, async (context) => {
     if (!knowledge) return unavailable(context);
