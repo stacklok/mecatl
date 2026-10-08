@@ -130,6 +130,12 @@ probe, then installs a fresh verified release or reuses (restarting if stopped) 
 configured daemon. Policy conflicts and unrecognized state fail without rewriting or deleting
 anything. Source builds lack the link-time release defaults and fail closed.
 
+Runtime-directory selection budgets the canonical repository socket paths, including the
+hosted-network suffix and macOS's `/tmp` expansion to `/private/tmp`. If the XDG runtime
+path is too long, the manager uses the owner-only `/tmp/mv-<UID>` directory and checks that
+fallback against the same bound. Existing ownership, symlink, and daemon-identity checks
+still apply.
+
 `mecated microvm doctor|status|delete` is the local, current-user administration surface;
 remote clients have none. Doctor and status never boot or repair a VM. Delete removes one exact
 logical attachment and its clean worktree; dirty worktrees and the VM stay.

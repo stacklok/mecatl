@@ -32,7 +32,8 @@ const (
 	DarwinSocketPathLimit = 104
 	// longestRuntimeSocketSuffix is the longest socket path microvmd derives below
 	// RuntimeDir: the hosted network socket for a repository generation.
-	longestRuntimeSocketSuffix = "generations/repository-0000000000000000-00000000.sock.network/hosted-net.sock"
+	longestRepositorySocketSuffix = "repository-0000000000000000-00000000.sock.network/hosted-net.sock"
+	longestRuntimeSocketSuffix    = "generations/" + longestRepositorySocketSuffix
 )
 
 // ReadinessStage is one bounded, secret-free phase of EnsureReady.
@@ -130,12 +131,23 @@ func DefaultPaths(host HostPaths) (Paths, error) {
 	runtimeDir := ""
 	if filepath.IsAbs(host.XDGRuntimeDir) {
 		candidate := filepath.Join(host.XDGRuntimeDir, "mecatl-microvm")
-		if len(filepath.Join(candidate, longestRuntimeSocketSuffix)) < DarwinSocketPathLimit {
+		fits, err := runtimeSocketsFit(candidate)
+		if err != nil {
+			return Paths{}, err
+		}
+		if fits {
 			runtimeDir = candidate
 		}
 	}
 	if runtimeDir == "" {
 		runtimeDir = filepath.Join(string(filepath.Separator)+"tmp", "mv-"+strconv.Itoa(host.UID))
+		fits, err := runtimeSocketsFit(runtimeDir)
+		if err != nil {
+			return Paths{}, err
+		}
+		if !fits {
+			return Paths{}, errors.New("microVM runtime socket paths exceed Darwin-safe bound")
+		}
 	}
 	paths := Paths{
 		StateDir: filepath.Join(state, "mecatl", "microvm"), RuntimeDir: runtimeDir,
@@ -148,6 +160,34 @@ func DefaultPaths(host HostPaths) (Paths, error) {
 		return Paths{}, err
 	}
 	return paths, nil
+}
+
+// runtimeSocketsFit budgets the path after the repository registry canonicalizes
+// its endpoint root, including ambient aliases such as Darwin's /tmp -> /private/tmp.
+func runtimeSocketsFit(runtimeDir string) (bool, error) {
+	canonical, err := canonicalProspectivePath(filepath.Join(runtimeDir, "generations"))
+	if err != nil {
+		return false, fmt.Errorf("resolve microVM runtime directory: %w", err)
+	}
+	return len(filepath.Join(runtimeDir, "microvmd.sock")) < DarwinSocketPathLimit &&
+		len(filepath.Join(canonical, longestRepositorySocketSuffix)) < DarwinSocketPathLimit, nil
+}
+
+// canonicalProspectivePath resolves existing ancestors without creating anything.
+// Missing descendants are retained; dangling symlinks and other errors fail closed.
+func canonicalProspectivePath(path string) (string, error) {
+	canonical, err := filepath.EvalSymlinks(path)
+	if err == nil || !errors.Is(err, fs.ErrNotExist) {
+		return canonical, err
+	}
+	if _, statErr := os.Lstat(path); !errors.Is(statErr, fs.ErrNotExist) {
+		return "", err
+	}
+	parent, err := canonicalProspectivePath(filepath.Dir(path))
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(parent, filepath.Base(path)), nil
 }
 
 func xdgBase(value, fallback string) string {
