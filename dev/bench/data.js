@@ -315423,6 +315423,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791481387950,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29139614+renovate[bot]@users.noreply.github.com",
+            "name": "renovate[bot]",
+            "username": "renovate[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cf76bd70c63ef285daf5070ba1add21bcf798586",
+          "message": "chore(deps): update go charm (#1949)\n\nCo-authored-by: renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-08T19:34:16+02:00",
+          "tree_id": "f48589eda7e7b86a01d6c2073ac52fdc1aabcf55",
+          "url": "https://github.com/stacklok/mecatl/commit/cf76bd70c63ef285daf5070ba1add21bcf798586"
+        },
+        "date": 1791482116015,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3253,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 53,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -412589,6 +412628,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791482113195,
+  "lastUpdate": 1791482117258,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
