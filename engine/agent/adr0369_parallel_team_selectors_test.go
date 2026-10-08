@@ -205,6 +205,183 @@ func TestDelegatedSessionPersistenceUsesActualEngineIdentity(t *testing.T) {
 			t.Fatalf("persisted member identity = %q/%q, want fallback-provider/fallback-model", persisted.ProviderID, persisted.ModelID)
 		}
 	})
+
+	t.Run("Parallel explicit selection persists the selected engine identity", func(t *testing.T) {
+		store := memstore.New()
+		var resolves, factoryCalls int
+		var requestedModels []string
+		selectedProvider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {
+			requestedModels = append(requestedModels, req.Model)
+		})}, mockllm.TextTurn("selected branch"))
+		parallel := NewParallelTool(markerEngine("parent-model"), &countingParallelForker{},
+			WithParallelProvider("parent-provider"),
+			WithParallelStore(store),
+			WithParallelSelectorResolver(func(provider, model string) (ResolvedModelSelector, error) {
+				resolves++
+				if provider != "selector-provider" || model != "selector-model" {
+					t.Fatalf("resolver input = %q/%q", provider, model)
+				}
+				return ResolvedModelSelector{Target: ModelTarget{Provider: "selected-provider", Model: "selected-model"}, ActualProvider: "selected-provider", ProviderBearing: true}, nil
+			}),
+			WithParallelEngineFactory(func(target ModelTarget) (*Engine, bool) {
+				factoryCalls++
+				if target != (ModelTarget{Provider: "selected-provider", Model: "selected-model"}) {
+					t.Fatalf("factory target = %+v", target)
+				}
+				return NewEngine(Deps{LLM: selectedProvider, Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: "selected-model"}), true
+			}),
+		).(*ParallelTool)
+		args, _ := json.Marshal(parallelArgs{Tasks: []string{"inspect"}, Provider: "selector-provider", Model: "selector-model"})
+		var start *session.ParallelPayload
+		result, err := parallel.ExecuteWithParent(t.Context(), session.NewToolCall("parallel", "Parallel", args), memEnv(t.TempDir()), func(ev session.Event) {
+			if ev.Type == session.EvParallelBranch && ev.Parallel != nil && ev.Parallel.Kind == session.ParallelBranchStart {
+				start = ev.Parallel
+			}
+		}, parentCaps{children: newChildRunRegistry(), parentSessionID: "parent", parentIncarnation: session.NewIncarnationID(), routeDecision: func(context.Context, string) modelRoutingResult {
+			t.Fatal("explicit selection invoked route decision")
+			return modelRoutingResult{}
+		}})
+		if err != nil || result.IsError || start == nil {
+			t.Fatalf("ExecuteWithParent = (%+v, %v), start=%+v", result, err, start)
+		}
+		if resolves != 1 || factoryCalls != 1 || selectedProvider.Calls() != 1 || len(requestedModels) != 1 || requestedModels[0] != "selected-model" {
+			t.Fatalf("resolves=%d factoryCalls=%d calls=%d requested=%v", resolves, factoryCalls, selectedProvider.Calls(), requestedModels)
+		}
+		persisted, err := store.Load(t.Context(), session.SessionID(start.ChildID))
+		if err != nil {
+			t.Fatalf("load persisted branch: %v", err)
+		}
+		if start.Provider != "selected-provider" || start.Model != "selected-model" || persisted.ProviderID != start.Provider || persisted.ModelID != start.Model || persisted.ProviderID == "parent-provider" || persisted.ModelID == "parent-model" {
+			t.Fatalf("event=%q/%q persisted=%q/%q", start.Provider, start.Model, persisted.ProviderID, persisted.ModelID)
+		}
+	})
+
+	t.Run("Parallel automatic routing persists the selected engine identity", func(t *testing.T) {
+		store := memstore.New()
+		var routes, factoryCalls int
+		var requestedModels []string
+		selectedProvider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {
+			requestedModels = append(requestedModels, req.Model)
+		})}, mockllm.TextTurn("routed branch"))
+		parallel := NewParallelTool(markerEngine("parent-model"), &countingParallelForker{},
+			WithParallelProvider("parent-provider"), WithParallelStore(store),
+			WithParallelEngineFactory(func(target ModelTarget) (*Engine, bool) {
+				factoryCalls++
+				if target != (ModelTarget{Provider: "routed-provider", Model: "routed-model"}) {
+					t.Fatalf("factory target = %+v", target)
+				}
+				return NewEngine(Deps{LLM: selectedProvider, Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: "routed-model"}), true
+			}),
+		).(*ParallelTool)
+		var start *session.ParallelPayload
+		result, err := parallel.ExecuteWithParent(t.Context(), session.NewToolCall("parallel", "Parallel", parallelArgsJSON("inspect")), memEnv(t.TempDir()), func(ev session.Event) {
+			if ev.Type == session.EvParallelBranch && ev.Parallel != nil && ev.Parallel.Kind == session.ParallelBranchStart {
+				start = ev.Parallel
+			}
+		}, parentCaps{children: newChildRunRegistry(), parentSessionID: "parent", parentIncarnation: session.NewIncarnationID(), routeDecision: func(context.Context, string) modelRoutingResult {
+			routes++
+			return modelRoutingResult{category: "large", provider: "routed-provider", model: "routed-model", ok: true}
+		}})
+		if err != nil || result.IsError || start == nil {
+			t.Fatalf("ExecuteWithParent = (%+v, %v), start=%+v", result, err, start)
+		}
+		if routes != 1 || factoryCalls != 1 || selectedProvider.Calls() != 1 || len(requestedModels) != 1 || requestedModels[0] != "routed-model" {
+			t.Fatalf("routes=%d factoryCalls=%d calls=%d requested=%v", routes, factoryCalls, selectedProvider.Calls(), requestedModels)
+		}
+		persisted, err := store.Load(t.Context(), session.SessionID(start.ChildID))
+		if err != nil {
+			t.Fatalf("load persisted branch: %v", err)
+		}
+		if start.Provider != "routed-provider" || start.Model != "routed-model" || persisted.ProviderID != start.Provider || persisted.ModelID != start.Model || persisted.ProviderID == "parent-provider" || persisted.ModelID == "parent-model" {
+			t.Fatalf("event=%q/%q persisted=%q/%q", start.Provider, start.Model, persisted.ProviderID, persisted.ModelID)
+		}
+	})
+
+	t.Run("Team explicit selection persists the selected engine identity", func(t *testing.T) {
+		store := memstore.New()
+		var resolves, factoryCalls int
+		var requestedModels []string
+		selectedProvider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {
+			requestedModels = append(requestedModels, req.Model)
+		})}, mockllm.TextTurn("work"), mockllm.TextTurn("synthesis"))
+		teamTool := NewTeamTool(func(_ *team.Team, spec MemberSpec, _ string) MemberBuild {
+			factoryCalls++
+			if spec.Selector == nil || spec.Selector.Target != (ModelTarget{Provider: "selected-provider", Model: "selected-model"}) {
+				t.Fatalf("selector = %+v", spec.Selector)
+			}
+			return MemberBuild{Engine: NewEngine(Deps{LLM: selectedProvider, Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: "selected-model"}), Provider: "selected-provider"}
+		}, WithTeamToolStore(store), WithTeamSelectorResolver(func(provider, model string) (ResolvedModelSelector, error) {
+			resolves++
+			if provider != "selector-provider" || model != "selector-model" {
+				t.Fatalf("resolver input = %q/%q", provider, model)
+			}
+			return ResolvedModelSelector{Target: ModelTarget{Provider: "selected-provider", Model: "selected-model"}, ActualProvider: "selected-provider", ProviderBearing: true}, nil
+		})).(*TeamTool)
+		args, _ := json.Marshal(teamArgs{Goal: "goal", Members: []TeamMemberArg{{Name: "lead", Role: "inspect", Provider: "selector-provider", Model: "selector-model"}}})
+		var start *session.TeamPayload
+		result, err := teamTool.ExecuteWithParent(t.Context(), session.NewToolCall("team", "Team", args), memEnv(t.TempDir()), func(ev session.Event) {
+			if ev.Type == session.EvTeamStart {
+				start = ev.Team
+			}
+		}, parentCaps{children: newChildRunRegistry(), parentSessionID: "parent", parentIncarnation: session.NewIncarnationID(), routeDecision: func(context.Context, string) modelRoutingResult {
+			t.Fatal("explicit selection invoked route decision")
+			return modelRoutingResult{}
+		}})
+		if err != nil || result.IsError || start == nil || len(start.Roster) != 1 {
+			t.Fatalf("ExecuteWithParent = (%+v, %v), start=%+v", result, err, start)
+		}
+		if resolves != 1 || factoryCalls != 1 || selectedProvider.Calls() != 2 || len(requestedModels) != 2 || requestedModels[0] != "selected-model" || requestedModels[1] != "selected-model" {
+			t.Fatalf("resolves=%d factoryCalls=%d calls=%d requested=%v", resolves, factoryCalls, selectedProvider.Calls(), requestedModels)
+		}
+		persisted, err := store.Load(t.Context(), "team-parent-team-lead")
+		if err != nil {
+			t.Fatalf("load persisted member: %v", err)
+		}
+		member := start.Roster[0]
+		if member.Provider != "selected-provider" || member.Model != "selected-model" || persisted.ProviderID != member.Provider || persisted.ModelID != member.Model || persisted.ProviderID == "parent-provider" || persisted.ModelID == "parent-model" {
+			t.Fatalf("event=%q/%q persisted=%q/%q", member.Provider, member.Model, persisted.ProviderID, persisted.ModelID)
+		}
+	})
+
+	t.Run("Team automatic routing persists the selected engine identity", func(t *testing.T) {
+		store := memstore.New()
+		var routes, factoryCalls int
+		var requestedModels []string
+		selectedProvider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {
+			requestedModels = append(requestedModels, req.Model)
+		})}, mockllm.TextTurn("work"), mockllm.TextTurn("synthesis"))
+		teamTool := NewTeamTool(func(_ *team.Team, spec MemberSpec, _ string) MemberBuild {
+			factoryCalls++
+			if spec.Selector == nil || spec.Selector.Target != (ModelTarget{Provider: "routed-provider", Model: "routed-model"}) {
+				t.Fatalf("selector = %+v", spec.Selector)
+			}
+			return MemberBuild{Engine: NewEngine(Deps{LLM: selectedProvider, Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: "routed-model"}), Provider: "routed-provider"}
+		}, WithTeamToolStore(store)).(*TeamTool)
+		args, _ := json.Marshal(teamArgs{Goal: "goal", Members: []TeamMemberArg{{Name: "lead", Role: "inspect"}}})
+		var start *session.TeamPayload
+		result, err := teamTool.ExecuteWithParent(t.Context(), session.NewToolCall("team", "Team", args), memEnv(t.TempDir()), func(ev session.Event) {
+			if ev.Type == session.EvTeamStart {
+				start = ev.Team
+			}
+		}, parentCaps{children: newChildRunRegistry(), parentSessionID: "parent", parentIncarnation: session.NewIncarnationID(), routeDecision: func(context.Context, string) modelRoutingResult {
+			routes++
+			return modelRoutingResult{category: "large", provider: "routed-provider", model: "routed-model", ok: true}
+		}})
+		if err != nil || result.IsError || start == nil || len(start.Roster) != 1 {
+			t.Fatalf("ExecuteWithParent = (%+v, %v), start=%+v", result, err, start)
+		}
+		if routes != 1 || factoryCalls != 1 || selectedProvider.Calls() != 2 || len(requestedModels) != 2 || requestedModels[0] != "routed-model" || requestedModels[1] != "routed-model" {
+			t.Fatalf("routes=%d factoryCalls=%d calls=%d requested=%v", routes, factoryCalls, selectedProvider.Calls(), requestedModels)
+		}
+		persisted, err := store.Load(t.Context(), "team-parent-team-lead")
+		if err != nil {
+			t.Fatalf("load persisted member: %v", err)
+		}
+		member := start.Roster[0]
+		if member.Provider != "routed-provider" || member.Model != "routed-model" || persisted.ProviderID != member.Provider || persisted.ModelID != member.Model || persisted.ProviderID == "parent-provider" || persisted.ModelID == "parent-model" {
+			t.Fatalf("event=%q/%q persisted=%q/%q", member.Provider, member.Model, persisted.ProviderID, persisted.ModelID)
+		}
+	})
 }
 
 func TestTeamMemberSelectorValidationAndLifetime(t *testing.T) {

@@ -49,9 +49,12 @@ otherwise the ask is denied with the real cause. [Governance](governance.md) has
 ### Provider and model selectors
 
 Calls may supply optional `provider` and `model` selectors. Omitting both preserves
-inherited defaults and automatic routing. A literal model uses the parent provider;
-a pair alias or explicit provider/model pair builds a fresh child through the
-provider-specific factory. `provider: "model-router"` plus an exact discovered category
+inherited defaults and automatic routing. A literal model or unbound scalar alias,
+including a CLI scalar alias, uses the parent provider. Operator-settings scalar
+aliases bind to `models.default_provider` (or `--default-provider`) when configured;
+otherwise they remain parent-relative. A pair alias or explicit provider/model pair
+builds a fresh child through the provider-specific factory.
+`provider: "model-router"` plus an exact discovered category
 selects that operator category without classification. Explicit selection fails before
 child construction rather than falling back.
 

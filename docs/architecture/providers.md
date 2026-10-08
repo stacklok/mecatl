@@ -150,8 +150,8 @@ ID or an atomic `{provider, model}` target. Operator scalar aliases bind to
 `models.default_provider` (or `--default-provider`) when configured, otherwise to
 the consumer's contextual provider. Configured scalar slots, subagent defaults,
 and router categories use that configured default provider even when a paired
-session default selects another provider. Bare literal per-call models and CLI
-scalar aliases remain contextual without a configured default provider.
+session default selects another provider. Bare literal per-call models and unbound
+aliases, including CLI scalar aliases, remain contextual.
 Composition preserves the pair across defaults, slots, definitions, router categories,
 and delegation selectors. CLI aliases keep `--model-alias name=model-id`, with an
 optional matching `--model-alias-provider name=provider-id`; model IDs stay opaque.

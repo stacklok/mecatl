@@ -149,10 +149,9 @@ func routerDecision(router *SubagentModelRouter, result ModelRouteResult, outcom
 // It is a SIBLING of guardrailcheck.go and askadjudicator.go: a free function
 // that drives a dedicated, composition-built, tool-less ONE-TURN classifier Engine
 // over a fenced task prompt
-// and parses a single-JSON verdict naming the chosen category. The engine layer is
-// model-string-only (the layering rule): RunModelRouter returns a CATEGORY NAME, and
-// composition owns the category→model mapping (aliases/slots/the allowlist cap) — the
-// engine never sees an alias or a slot.
+// and parses a single-JSON verdict naming the chosen category. RunModelRouter returns
+// a CATEGORY NAME; composition resolves it to a concrete provider/model target.
+// The engine never sees an alias or a slot.
 //
 // FAIL-SOFT is the whole posture: the router is NEVER load-bearing for correctness or
 // safety. Any run failure, cancellation, unparseable verdict, or hallucinated category

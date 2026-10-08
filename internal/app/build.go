@@ -860,9 +860,8 @@ type Config struct {
 	// the call keeps the session model (resolveSlotModel returns ("", false) and
 	// every routed site uses its unconfigured behaviour). Sources: --model-slot,
 	// the user-global settings.yaml `models.slots:` subtree (folded by
-	// foldOperatorModelSlots), and a TRUSTED project's `.mecatl/settings.yaml`
-	// models.slots block, capped by the operator allowlist
-	// (foldProjectModelBindings). Resolution is FAIL-SOFT: a typo'd slot key or an
+	// foldOperatorModelSlots). Project-tier model bindings are ignored.
+	// Resolution is FAIL-SOFT: a typo'd slot key or an
 	// alias meaning inherit WARNs and degrades to the session model — a broken
 	// housekeeping slot never wedges a compaction / ask-review / guardrail call.
 	ModelSlots map[string]string
@@ -1859,10 +1858,8 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// the snapshot is only a faithful CLI-vs-YAML discriminator BECAUSE at THIS point cfg
 	// holds ONLY the CLI bindings (foldOperatorModelSlots has not merged operator-YAML in
 	// yet) and cfg.Model is the bare CLI --model (the registry default + operator-YAML
-	// default are applied LATER). Capturing after either fold would record YAML-set keys as
-	// "CLI-set" and silently invert the precedence (project/operator-YAML would stop
-	// overriding). Pinned by TestPrecedenceCombinedTiersSameSlotCLIWins +
-	// TestPrecedenceCombinedTiersOperatorYAMLAndProject (the all-three-tiers seam guards).
+	// default are applied LATER). Capturing after either fold would incorrectly
+	// treat YAML bindings as explicit CLI choices.
 	cliModelKeys := captureCLIModelKeys(cfg)
 	cfg = foldOperatorModelSlots(cfg)
 
