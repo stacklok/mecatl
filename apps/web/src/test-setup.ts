@@ -53,18 +53,20 @@ import { resetApiClientState } from "./lib/api-client";
  * properties). Add a reset here only for state a serial `--no-isolate` run
  * proves is shared; the unproven ones are not worth the lines.
  *
- * SPEC: after any test, fake timers and the fake system clock are off, React
- * Testing Library trees are unmounted, Web Storage
+ * SPEC: after any test, the text selection is cleared, fake timers and the fake
+ * system clock are off, React Testing Library trees are unmounted, Web Storage
  * is empty, `account-storage`'s and `api-client`'s module-level state is reset,
- * and the shared generated client has its original `baseUrl` and `fetch`. Testing
- * Library registers its own auto-cleanup once per module load, which under
- * `isolate: false` means only the first file in a worker, so it is explicit.
+ * and the shared generated client has its original `baseUrl` and `fetch`.
+ * Testing Library registers its own auto-cleanup once per module load, which
+ * under `isolate: false` means only the first file in a worker, so cleanup is
+ * explicit here.
  */
 
 // Captured at load, before any test can `vi.stubGlobal("window", ...)`: the hook
 // below must clear the real stores, not whatever a test swapped in.
 const realLocal = typeof window === "undefined" ? undefined : window.localStorage;
 const realSession = typeof window === "undefined" ? undefined : window.sessionStorage;
+const realWindow = typeof window === "undefined" ? undefined : window;
 
 const initialApiConfig = apiClient.getConfig();
 
@@ -84,4 +86,6 @@ afterEach(() => {
   clearUserScopedStorage(realLocal, realSession);
   realLocal?.clear();
   realSession?.clear();
+  // The text selection lives on the shared document; addRange() is a no-op while one exists.
+  realWindow?.getSelection()?.removeAllRanges();
 });
