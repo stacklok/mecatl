@@ -118,7 +118,12 @@ describe("settings routes", () => {
 
     const queryClient = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
     queryClient.setQueryData(getRuntimeQueryKey(), {
-      capabilities: { manualDream: { userModel: { decide: true, generate: true } } },
+      capabilities: {
+        manualDream: {
+          projectMemory: { decide: false, generate: false },
+          userModel: { decide: true, generate: true },
+        },
+      },
     });
     queryClient.setQueryData(listUserMemoryQueryKey(), {
       items: [{ description: "A voice preference", key }],
@@ -163,7 +168,7 @@ describe("settings routes", () => {
     );
     expect(list).toContain('href="/workspace/memory?item=team%2Fvoice"');
     expect(list).toContain("Consolidate memory");
-    expect(list).toContain("Generate plan");
+    expect(list).toContain("Memory to consolidate");
     const detail = renderToStaticMarkup(
       <QueryClientProvider client={queryClient}>
         <RouterContextProvider router={reloaded}>

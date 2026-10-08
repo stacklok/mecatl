@@ -6,18 +6,19 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { PageShell } from "../../components/shell/page-shell";
 import { Badge } from "../../components/ui/badge";
-import { MemoryConsolidation } from "../knowledge/memory-consolidation";
+import { ConsolidateMemoryCard } from "../memory/consolidate-memory-card";
 import { FactsAboutYou } from "../memory/facts-about-you";
 
 /**
  * Settings → Memory below the stores card: the remembered facts, then the
- * consolidation review, which hides itself when the agent cannot consolidate.
+ * consolidation review, which hides itself when the agent reports no
+ * consolidation target at all.
  */
 export function MemorySettings() {
   return (
     <>
       <FactsAboutYou />
-      <MemoryConsolidation />
+      <ConsolidateMemoryCard />
     </>
   );
 }

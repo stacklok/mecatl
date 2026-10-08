@@ -77,7 +77,10 @@ function runtime(overrides: Partial<GetRuntimeResponse> = {}): GetRuntimeRespons
       learnedSkills: true,
       learningProposals: true,
       manualCompaction: true,
-      manualDream: { userModel: { decide: true, generate: true } },
+      manualDream: {
+        projectMemory: { decide: false, generate: false },
+        userModel: { decide: true, generate: true },
+      },
       mcp: true,
       mcpConnectorStatus: false,
       memory: true,
@@ -415,7 +418,7 @@ describe("settings facts", () => {
     });
     const page = await renderSection("memory", client);
     expect(page).toContain("Consolidate memory");
-    expect(page).toContain("Generate plan");
+    expect(page).toContain("Memory to consolidate");
     expect(page).toContain('href="/workspace/memory?item=team%2Fvoice"');
     expect(page).toContain("Memory is set where the agent runs");
     expect(page).toContain('data-testid="memory-stores"');
