@@ -307,7 +307,7 @@
   }
 
   body {
-    @apply text-foreground;
+    @apply text-foreground antialiased;
     font-family: var(--font-sans);
     font-synthesis: none;
     text-rendering: optimizeLegibility;
