@@ -284646,6 +284646,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791481383869,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29139614+renovate[bot]@users.noreply.github.com",
+            "name": "renovate[bot]",
+            "username": "renovate[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cf76bd70c63ef285daf5070ba1add21bcf798586",
+          "message": "chore(deps): update go charm (#1949)\n\nCo-authored-by: renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-08T19:34:16+02:00",
+          "tree_id": "f48589eda7e7b86a01d6c2073ac52fdc1aabcf55",
+          "url": "https://github.com/stacklok/mecatl/commit/cf76bd70c63ef285daf5070ba1add21bcf798586"
+        },
+        "date": 1791482112387,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -412555,6 +412589,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791482109375,
+  "lastUpdate": 1791482113195,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
