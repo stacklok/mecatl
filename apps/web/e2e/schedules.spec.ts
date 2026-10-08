@@ -115,7 +115,7 @@ test("schedule inventory uses the desktop table and compact mobile list", async 
   await expect(filteredRow).toBeVisible();
 });
 
-test("schedule detail shows responsive history and a read-only transcript", async ({
+test("schedule detail links responsive history to the chat transcript", async ({
   offlineBff,
   page,
 }, testInfo) => {
@@ -165,6 +165,58 @@ test("schedule detail shows responsive history and a read-only transcript", asyn
       },
     ],
   });
+  offlineBff.json("GET", "/api/v1/settings/runtime", {
+    models: [],
+    modelsSupported: false,
+  });
+  offlineBff.json("GET", "/api/v1/sessions", {
+    complete: true,
+    items: [
+      {
+        capabilities: {
+          copyId: true,
+          copyIdReason: "",
+          delete: false,
+          deleteReason: "",
+          fork: false,
+          forkReason: "",
+          inspect: true,
+          inspectReason: "",
+          publicChat: true,
+          publicChatReason: "",
+          rename: false,
+          renameReason: "",
+          viewTranscript: true,
+          viewTranscriptReason: "",
+        },
+        createdAt: "2026-10-07T08:00:00Z",
+        debugTargetSessionId: "",
+        id: "scheduled-session",
+        kind: "main",
+        modelId: "offline",
+        state: "idle",
+        title: "Daily report run",
+        titleProvenance: "",
+        titleRevision: "0",
+        turns: 1,
+        updatedAt: "2026-10-07T08:00:02Z",
+      },
+    ],
+  });
+  offlineBff.json("GET", "/api/v1/sessions/scheduled-session", {
+    capabilities: { image: false, manualCompaction: false, modelSelection: false },
+    id: "scheduled-session",
+    kind: "main",
+    mode: "default",
+    state: "idle",
+    usage: {
+      cacheReadTokens: "0",
+      cacheWriteTokens: "0",
+      inputTokens: "0",
+      outputTokens: "0",
+      reasoningTokens: "0",
+    },
+  });
   offlineBff.json("GET", "/api/v1/sessions/scheduled-session/transcript", {
     complete: true,
     messages: [
@@ -172,12 +224,15 @@ test("schedule detail shows responsive history and a read-only transcript", asyn
         images: [],
         role: "assistant",
         text: "The report is ready.",
-        toolCalls: [{ args: '{"path":"report.txt"}', id: "tool-1", name: "Write" }],
-        toolResult: { callId: "tool-1", content: "saved", isError: false },
+        toolCalls: [],
       },
     ],
     sessionId: "scheduled-session",
   });
+  offlineBff.on("GET", "/api/v1/sessions/scheduled-session/activity", () => ({
+    body: "",
+    contentType: "text/event-stream",
+  }));
 
   await page.goto("/workspace/schedules/daily-report");
   await expect(page.getByRole("heading", { name: "daily-report" })).toBeVisible();
@@ -194,21 +249,14 @@ test("schedule detail shows responsive history and a read-only transcript", asyn
   }
   await expect(visibleHistory.getByText("Provider unavailable", { exact: true })).toBeVisible();
 
-  const viewTranscript = page.getByRole("button", { name: "View transcript" });
+  const viewTranscript = page.getByRole("link", { name: "View transcript" });
+  await expect(viewTranscript).toHaveAttribute(
+    "href",
+    "/workspace/chat?sessionId=scheduled-session",
+  );
   await viewTranscript.click();
-  const dialog = page.getByRole("dialog", { name: /daily-report/ });
-  await expect(dialog).toContainText("The report is ready.");
-  await expect(dialog).toContainText("Tool: Write");
-  await expect(dialog.getByRole("textbox")).toHaveCount(0);
-  for (const name of ["Retry", "Fork", "Rename", "Delete", "Send message"]) {
-    await expect(dialog.getByRole("button", { name })).toHaveCount(0);
-  }
-  await dialog.getByRole("button", { name: "Close" }).click();
-  await expect(viewTranscript).toBeFocused();
-  expect(
-    offlineBff.requestsFor("GET", "/api/v1/sessions/scheduled-session/transcript"),
-  ).toHaveLength(1);
-  expect(offlineBff.requestsFor("POST", "/api/v1/sessions/scheduled-session/runs")).toHaveLength(0);
+  await expect(page).toHaveURL(/\/workspace\/chat\?sessionId=scheduled-session$/);
+  await expect(page.getByText("The report is ready.", { exact: true })).toBeVisible();
 });
 
 test("schedule mutations preserve backend-owned fields and surface failures", async ({
