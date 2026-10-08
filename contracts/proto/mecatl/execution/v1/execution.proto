@@ -31,7 +31,6 @@ service ExecutionProviderService {
   rpc ReplaceExecutor(ReplaceExecutorRequest) returns (google.protobuf.Empty);
   rpc RecoverEnvironment(RecoverEnvironmentRequest) returns (google.protobuf.Empty);
   rpc DeleteRetiredEnvironment(DeleteRetiredEnvironmentRequest) returns (google.protobuf.Empty);
-  rpc MigrateEnvironment(MigrateEnvironmentRequest) returns (google.protobuf.Empty);
   rpc RevokeEnvironment(RevokeEnvironmentRequest) returns (RevokeEnvironmentResponse);
   rpc Files(FileRequest) returns (FileResponse);
   rpc StartCommand(CommandStartRequest) returns (CommandStartResponse);
@@ -186,15 +185,6 @@ message RevokeEnvironmentRequest {
   string operation_id = 4;
 }
 message RevokeEnvironmentResponse { uint64 grant_generation = 1; }
-
-message MigrateEnvironmentRequest {
-  EnvironmentRef environment = 1;
-  Owner owner = 2;
-  optional uint32 expected_schema_version = 3;
-  string expected_pod_uid = 4;
-  string expected_pvc_uid = 5;
-  string operation_id = 6;
-}
 
 enum FileOperation {
   FILE_OPERATION_UNSPECIFIED = 0;

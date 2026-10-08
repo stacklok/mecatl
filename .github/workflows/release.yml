@@ -652,10 +652,21 @@ jobs:
           binary="dist/${binary_name}-${VERSION}-${platform}"
           mkdir -p dist
           CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" go build -trimpath -buildvcs=false \
-            -ldflags="-s -w -X ${version_symbol}=${VERSION} -X main.microVMReleaseDefaultsB64=${MICROVM_RELEASE_DEFAULTS_B64} -X main.microVMReleaseStampRequired=release" \
+            -ldflags="-s -w -X ${version_symbol}=${VERSION} -X github.com/stacklok/mecatl/internal/buildinfo.BuildID=${VERSION} -X main.microVMReleaseDefaultsB64=${MICROVM_RELEASE_DEFAULTS_B64} -X main.microVMReleaseStampRequired=release" \
             -o "${binary}" "./cmd/${binary_name}"
           digest="$(sha256sum "${binary}" | cut -d' ' -f1)"
           printf '%s  %s\n' "${digest}" "$(basename "${binary}")" > "${binary}.sha256"
+      - name: Verify native host binary version
+        if: steps.existing-assets.outputs.reused != 'true' && matrix.platform == 'linux-amd64'
+        run: |
+          set -euo pipefail
+          binary="dist/${{ matrix.binary }}-${VERSION}-${{ matrix.platform }}"
+          output="$("${binary}" --version)"
+          expected="${{ matrix.binary }} ${VERSION}"
+          if [ "${output}" != "${expected}" ]; then
+            echo "::error::${{ matrix.binary }} --version printed '${output}', expected '${expected}'" >&2
+            exit 1
+          fi
       - name: Generate host binary SBOM
         if: steps.existing-assets.outputs.reused != 'true'
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0

@@ -130,7 +130,7 @@ const (
 )
 
 // CandidateListBudget bounds aggregate list ingestion across every server in one
-// all-or-nothing reconciliation candidate. A single shared value is attached to
+// reconciliation candidate. A single shared value is attached to
 // every candidate ServerConfig so pages, bytes, and entries cannot multiply by
 // server count.
 type CandidateListBudget struct {
@@ -141,6 +141,7 @@ type CandidateListBudget struct {
 	entries    int
 	pages      int
 	bytes      int
+	exceeded   bool
 	sealed     bool
 }
 
@@ -156,9 +157,11 @@ func (b *CandidateListBudget) consumePage(entries int) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.entries+entries > b.maxEntries {
+		b.exceeded = true
 		return fmt.Errorf("mcp: active list entries exceed limit %d", b.maxEntries)
 	}
 	if b.pages+1 > b.maxPages {
+		b.exceeded = true
 		return fmt.Errorf("mcp: candidate list pages exceed limit %d", b.maxPages)
 	}
 	b.entries += entries
@@ -174,6 +177,7 @@ func (b *CandidateListBudget) readResponse(body io.Reader, p []byte) (int, error
 	}
 	remaining := b.maxBytes - b.bytes
 	if remaining <= 0 {
+		b.exceeded = true
 		b.mu.Unlock()
 		return 0, fmt.Errorf("mcp: candidate response bytes exceed limit %d", b.maxBytes)
 	}
@@ -202,6 +206,13 @@ func (b *CandidateListBudget) Seal() {
 	b.mu.Lock()
 	b.sealed = true
 	b.mu.Unlock()
+}
+
+// Exceeded reports whether any server exhausted the shared candidate limit.
+func (b *CandidateListBudget) Exceeded() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.exceeded
 }
 
 // Stats returns the successfully consumed aggregate counts.
@@ -1498,10 +1509,33 @@ func NewManager(ctx context.Context, configs []ServerConfig, onError func(cfg Se
 // Unlike NewManager's startup-compatible fail-soft behavior, one failed server
 // closes every successfully-created peer and rejects the complete candidate.
 func NewCompleteManager(ctx context.Context, configs []ServerConfig, diag port.Diagnostics) (*Manager, error) {
+	m, failures := connectCompleteServers(ctx, configs, diag)
+	var candidateErr error
+	for i, err := range failures {
+		if err != nil {
+			candidateErr = errors.Join(candidateErr, fmt.Errorf("mcp: candidate server %q: %w", configs[i].Name, err))
+		}
+	}
+	if candidateErr != nil {
+		_ = m.Close()
+		return nil, RedactErrorValue(candidateErr)
+	}
+	return m, nil
+}
+
+// NewPartialCompleteManager returns complete snapshots for the servers that
+// succeeded, and one redacted error per failed config (nil on success).
+// The caller owns the returned manager even when every server failed.
+func NewPartialCompleteManager(ctx context.Context, configs []ServerConfig, diag port.Diagnostics) (*Manager, []error) {
+	return connectCompleteServers(ctx, configs, diag)
+}
+
+func connectCompleteServers(ctx context.Context, configs []ServerConfig, diag port.Diagnostics) (*Manager, []error) {
 	diag = redactDiagnostics(diag)
 	m := &Manager{}
+	failures := make([]error, len(configs))
 	if len(configs) == 0 {
-		return m, nil
+		return m, failures
 	}
 	type result struct {
 		srv *Server
@@ -1520,19 +1554,14 @@ func NewCompleteManager(ctx context.Context, configs []ServerConfig, diag port.D
 		}(i, cfg)
 	}
 	wg.Wait()
-	var candidateErr error
 	for i, result := range results {
 		if result.err != nil {
-			candidateErr = errors.Join(candidateErr, fmt.Errorf("mcp: candidate server %q: %w", configs[i].Name, result.err))
+			failures[i] = RedactErrorValue(result.err)
 			continue
 		}
 		m.servers = append(m.servers, result.srv)
 	}
-	if candidateErr != nil {
-		_ = m.Close()
-		return nil, RedactErrorValue(candidateErr)
-	}
-	return m, nil
+	return m, failures
 }
 
 // safeCallbackConfig returns cfg with its two credential-bearing fields made safe
