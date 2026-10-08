@@ -77,11 +77,23 @@ type approvalSurface struct {
 	hits map[HitID]client.Verdict
 }
 
+func (s *approvalSurface) setSurfacePresentation(p surfacePresentation) {
+	if s.deps.theme.Name != p.theme.Name || s.deps.theme.Palette != p.theme.Palette || s.deps.marks != p.marks {
+		s.render = newApprovalRender(newRenderer(p.theme, p.marks))
+		s.planVPReady, s.argsVPReady = false, false
+	}
+	s.deps.refreshPresentation(p)
+}
+
 func (s *approvalSurface) Render(width, height int) (string, []ClickableRegion) {
+	s.regionW, s.regionH = width, height
+	s.hits = nil
+	if width <= 0 || height <= 0 {
+		return "", nil
+	}
 	if s.render.diff == nil || s.render.markdown == nil {
 		return "", nil
 	}
-	s.regionW, s.regionH = width, height
 	var body string
 	var rects []buttonRect
 	var buttonsRow, buttonsHeight int

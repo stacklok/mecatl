@@ -463,6 +463,8 @@ func (s *toolcallsState) restoreChildSummaryAnchor(previous *toolcallDetail) {
 	}
 }
 
+func (s *toolcallsState) setSurfacePresentation(p surfacePresentation) { s.deps.refreshPresentation(p) }
+
 func (s *toolcallsState) Render(width, height int) (string, []ClickableRegion) {
 	s.compact = false
 	s.hitItems = nil

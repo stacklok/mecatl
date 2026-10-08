@@ -56,6 +56,8 @@ type soulState struct {
 	compact   bool
 }
 
+func (s *soulState) setSurfacePresentation(p surfacePresentation) { s.deps.refreshPresentation(p) }
+
 func (*soulState) modalMaxOuterWidth() int { return 128 }
 func (s *soulState) modalFrame() bool      { return !s.compact }
 

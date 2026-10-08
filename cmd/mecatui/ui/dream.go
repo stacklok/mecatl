@@ -55,6 +55,8 @@ type dreamResultMsg struct {
 	result    client.DreamMsg
 }
 
+func (s *dreamState) setSurfacePresentation(p surfacePresentation) { s.deps.refreshPresentation(p) }
+
 func (*dreamState) modalMaxOuterWidth() int { return 128 }
 func (s *dreamState) modalFrame() bool      { return !s.compact }
 
@@ -112,8 +114,10 @@ func (s *dreamState) generateDream() tea.Cmd {
 	return s.dreamCmd(dreamGenerating, "")
 }
 
+// handled consumes input; closed requests generic teardown, not an internal back step.
+//
 //nolint:gocyclo // the explicit review/confirmation state machine is intentionally visible
-func (s *dreamState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
+func (s *dreamState) HandleKey(msg tea.KeyPressMsg) (cmd tea.Cmd, handled bool, closed bool) {
 	if s.compact {
 		return nil, true, key.Matches(msg, s.deps.keys.Close)
 	}

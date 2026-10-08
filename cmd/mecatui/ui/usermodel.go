@@ -254,6 +254,8 @@ func (s *userModelState) contentRowsFit(width, height, titleLines, metaLines, fo
 	return rows, true
 }
 
+func (s *userModelState) setSurfacePresentation(p surfacePresentation) { s.deps.refreshPresentation(p) }
+
 func (s *userModelState) Render(width, height int) (string, []ClickableRegion) {
 	s.compact = true
 	if width <= 0 || height <= 0 {

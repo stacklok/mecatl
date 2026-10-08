@@ -55,10 +55,15 @@ rather than keeping a second set of row offsets.
 
 Overlays that take over the conversation region own their interaction state and
 size themselves from the geometry offered on each render; the parent owns placement
-and pointer mapping. Follow the [`surface` contract](../cmd/mecatui/ui/surface.go)
-and its [migration guidance](drafts/surface-migration-plan.md) when adding or
-converting an overlay. A closed surface must not receive late results or leak
-keyboard and wheel events into the conversation.
+and pointer mapping. Before keys or wheel events on any open surface, the parent
+prepares its current Render offer; only View publishes pointer hits. Resize and
+undisplayed preparation invalidate both hits and placement metrics. Surfaces may
+receive live theme, keymap, and help markings before Render, while context,
+capabilities, clients, and hit allocation retain their Open-time identities.
+Follow the [`surface` contract](../cmd/mecatui/ui/surface.go) and its
+[migration guidance](drafts/surface-migration-plan.md) when adding or converting
+an overlay. A closed surface must not receive late results or leak keyboard and
+wheel events into the conversation.
 
 Selectable inventories use `presentListRow` for the cursor marker, status cells,
 and selected-row styling. Follow `/models`: use the `spinner` accent style for

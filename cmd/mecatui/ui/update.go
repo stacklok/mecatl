@@ -2052,11 +2052,9 @@ func (m Model) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 		m.refreshView()
 		m.conversationView.observe(m.vp)
 	}
-	if _, ok := m.modal.(*dreamState); ok {
-		m.hits.clear()
-		m.metrics.clear()
-	}
-	// Other open modal surfaces derive geometry at Render time; no resize fan-out is needed.
+	m.hits.clear()
+	m.metrics.clear()
+	// Open modal surfaces derive geometry at Render time; no resize fan-out is needed.
 	return m, m.maybeKittyTransmit()
 }
 
@@ -2496,11 +2494,10 @@ func (m Model) dispatchSurfaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool
 	if m.modal == nil {
 		return m, nil, false
 	}
-	if _, ok := m.modal.(*dreamState); ok {
-		// Prepare the same offer used by View before input, including the first key.
-		_ = (&m).renderModalSurface()
-		defer m.hits.clear() // no prepared hit becomes clickable before the next View
-	}
+	// Prepare the View offer before input, but never publish an undisplayed frame.
+	_ = (&m).renderModalSurface()
+	m.hits.clear()
+	m.metrics.clear()
 	cmd, handled, closed := m.modal.HandleKey(msg)
 	if !handled {
 		return m, nil, false
@@ -4251,12 +4248,11 @@ func (m Model) endRun(stop string) Model {
 // The conversation viewport receives wheel events only while no modal is open.
 func (m Model) onMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	if m.modal != nil {
+		_ = (&m).renderModalSurface()
+		m.hits.clear()
+		m.metrics.clear()
 		if m.width <= 0 || m.vp.Height() <= 0 {
 			return m, nil
-		}
-		if _, ok := m.modal.(*dreamState); ok {
-			_ = (&m).renderModalSurface()
-			defer m.hits.clear()
 		}
 		cmd, _ := m.modal.HandleWheel(msg)
 		return m, cmd

@@ -106,10 +106,15 @@ These rules record the working conventions refined through `/sessions` and
 9. **Geometry flows through `Render` every frame; there is NO `Resize` event.**
    The parent owns the card-content offer and passes it to `Render`; the surface
    derives view caches there, never from terminal dimensions in input handlers.
-   When navigation must work before the first `View()` or after resize, the
-   parent may prepare that same render path before dispatching key/wheel input.
-   Zero-sized offers clear geometry-dependent caches and hit regions. Pointer
-   input uses only the last displayed frame's current hits, not prepared hits.
+   Before every key or wheel event on ANY open surface, the parent prepares
+   the same Render offer used by View (including a zero-sized offer); zero-sized
+   preparation must not enable actions hidden by the previous frame. Only View
+   publishes hits: pointer input uses displayed hits, never prepared ones.
+   Resize and prepared frames invalidate both hits and placement metrics.
+   An optional `surfacePresentationSource` refreshes live theme, keymap, and
+   help markings before Render; all production surface owners implement it.
+   Context, capabilities, clients, and the hit allocator retain their Open-time
+   identities; there is no generic full-deps setter.
 10. **Geometry-dependent view state is a per-frame cache, marked as such.**
     This is the ImGui `ImGuiWindow.Scroll` model: a surface's scroll offset,
     cursor, and any re-derived layout are retained VIEW state that lives on the
@@ -175,9 +180,9 @@ deps parameter: the ambient base lives on the surface state (decision 8).
 computes the card-content offer and passes it through `Render(width, height)`.
 It is the ONE geometry consumer; a surface sizes itself from the offered args
 and MUST NOT call `centerCard` internally (the Model centers in `renderBody`).
-The parent may call its existing render path before key/wheel dispatch so
-navigation works without a preceding `View()`; pointer hits remain tied to the
-last displayed frame, never an undisplayed preparation. A surface that must
+The parent prepares that same render path before every key/wheel dispatch,
+including before the first `View()` and after resize; pointer hits remain tied
+only to the last displayed frame, never an undisplayed preparation. A surface that must
 re-derive geometry-dependent view state (a scroll clamp against `maxScroll`, a
 re-wrap) does it at the TOP of `Render` from the fresh `width`/`height` — exactly as
 ImGui clamps `Scroll` inside `Begin` — so the clamp is always current and needs

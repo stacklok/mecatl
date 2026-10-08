@@ -8,8 +8,9 @@ package ui
 // the Model-side routing (view/update/builtins/selection) is the thin registration
 // point. The structural gate (surface_arch_test.go) confines surface/soul
 // vocabulary to surface.go + the surface's own file. The deps are held ON THE
-// SURFACE STATE (set once at Open): a surface non-Render method with a deps
-// param is archived-past design, not current (see docs/drafts/surface-migration-plan.md).
+// SURFACE STATE (set at Open, with only presentation refreshed before Render):
+// a surface non-Render method with a deps param is archived-past design
+// (see docs/drafts/surface-migration-plan.md).
 
 import (
 	"context"
@@ -114,10 +115,25 @@ type surfaceIntentSource interface {
 	takeSurfaceIntent() surfaceIntent
 }
 
-// surfaceDeps is the SHARED ambient base every surface may reach, built once at
-// Open by (m *Model).surfaceDeps() and held on the surface state as its deps
-// field. Fields are ambient collaborators only: ctx is ambient (any modal that
-// talks to the server needs the parent context). Surface-specific immutable
+// surfacePresentationSource optionally receives live display controls before Render.
+type surfacePresentationSource interface {
+	setSurfacePresentation(surfacePresentation)
+}
+
+type surfacePresentation struct {
+	theme theme.Theme
+	keys  keyMap
+	marks helpKeys
+}
+
+func (d *surfaceDeps) refreshPresentation(p surfacePresentation) {
+	d.theme, d.keys, d.marks = p.theme, p.keys, p.marks
+}
+
+// surfaceDeps is the SHARED ambient base every surface may reach, built at Open
+// by (m *Model).surfaceDeps() and held on the surface state as its deps field.
+// Only presentation fields are refreshed at Render; capabilities, context and
+// allocator keep their Open-time identities. Surface-specific immutable
 // inputs (lifecycle clients, epoch mints) live beside deps on the surface state.
 type surfaceDeps struct {
 	theme theme.Theme
@@ -183,19 +199,21 @@ func (m *Model) setResolvedSessionModel(resolved client.ResolvedModel) (changed 
 }
 
 func (m *Model) renderModalSurface() string {
-	if s, ok := m.modal.(*dreamState); ok {
-		s.deps.theme, s.deps.marks, s.deps.keys = m.deps.Theme, m.helpKeyMarkings(), m.keys
+	if source, ok := m.modal.(surfacePresentationSource); ok {
+		source.setSurfacePresentation(surfacePresentation{theme: m.deps.Theme, keys: m.keys, marks: m.helpKeyMarkings()})
 	}
 	placement := modalPlacementCard
 	if source, ok := m.modal.(modalPlacementSource); ok {
 		placement = source.modalPlacement()
 	}
 	top := convTopRow(*m)
+	if top < 0 {
+		m.hits.clear()
+		m.metrics.clear()
+	}
 	bodyW, bodyH := m.width, m.vp.Height()
 	if bodyW <= 0 || bodyH <= 0 {
-		if _, ok := m.modal.(*dreamState); ok {
-			m.modal.Render(0, 0)
-		}
+		m.modal.Render(0, 0)
 		m.hits.clear()
 		m.metrics.clear()
 		return ""

@@ -69,6 +69,10 @@ type admissionRecoveryState struct {
 	confirmReplace bool
 }
 
+func (s *admissionRecoveryState) setSurfacePresentation(p surfacePresentation) {
+	s.deps.refreshPresentation(p)
+}
+
 func (s *admissionRecoveryState) Render(width, _ int) (string, []ClickableRegion) {
 	text := admissionUnavailableCopy + "\n\nr: Retry  " + firstKey(s.deps.keys.Close, "esc") + ": Back  d: Discard submission"
 	if s.confirmReplace {

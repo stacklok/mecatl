@@ -195,6 +195,8 @@ type argField struct {
 	input textinput.Model
 }
 
+func (s *mcpState) setSurfacePresentation(p surfacePresentation) { s.deps.refreshPresentation(p) }
+
 // Render returns the MCP surface body; the parent centers it.
 func (s *mcpState) Render(width, _ int) (string, []ClickableRegion) {
 	th := s.deps.theme

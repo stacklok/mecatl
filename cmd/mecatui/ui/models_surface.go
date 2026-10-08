@@ -68,7 +68,14 @@ type modelsGlobalDefaultIntent struct {
 
 func (modelsGlobalDefaultIntent) isSurfaceIntent() {}
 
+func (s *modelsState) setSurfacePresentation(p surfacePresentation) { s.deps.refreshPresentation(p) }
+
 func (s *modelsState) Render(width, height int) (string, []ClickableRegion) {
+	if width <= 0 || height <= 0 {
+		s.rowBudget = 0
+		s.hitItems = nil
+		return "", nil
+	}
 	prefix, suffix := modelsFixedLines(*s, s.provenance)
 	s.rowBudget = max(0, height-len(prefix)-len(suffix))
 	list := s.listControl()
