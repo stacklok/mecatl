@@ -4,6 +4,7 @@ import { getRuntimeOptions, listConfiguredSkillsOptions } from "@mecatl-studio/c
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
+import { PageShell } from "../../components/shell/page-shell";
 import { Input } from "../../components/ui/input";
 import { SortableHead, type SortDirection } from "../../components/ui/sortable-head";
 import { Table, TableBody, TableCell, TableHeader, TableRow } from "../../components/ui/table";
@@ -38,35 +39,33 @@ export function KnowledgeWorkspace({
   const learnedHidden = runtime.data?.capabilities.learnedSkills === false && view !== "learned";
   const activeView = view;
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="mx-auto w-full max-w-6xl space-y-5 px-4 py-7 sm:px-8 sm:py-10">
-        <SkillToolDisabledBanner />
-        <h1 className={pageTitleClass()}>Skills</h1>
-        <div className="inline-flex max-w-full items-center gap-0.5 overflow-x-auto rounded-full bg-muted p-1">
-          {(
-            [
-              ["configured", "All"],
-              ...(learnedHidden ? [] : [["learned", "Learned"] as const]),
-            ] as const
-          ).map(([value, label]) => (
-            <button
-              aria-pressed={activeView === value}
-              className={`h-7 rounded-full px-3.5 text-sm transition-colors ${activeView === value ? "bg-background font-medium text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-              key={value}
-              onClick={() => onViewChange(value)}
-              type="button"
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        {activeView === "configured" ? (
-          <ConfiguredSkills />
-        ) : (
-          <LearnedSkills onSelect={onItemChange} selectedId={item} />
-        )}
+    <PageShell className="space-y-5">
+      <SkillToolDisabledBanner />
+      <h1 className={pageTitleClass()}>Skills</h1>
+      <div className="inline-flex max-w-full items-center gap-0.5 overflow-x-auto rounded-full bg-muted p-1">
+        {(
+          [
+            ["configured", "All"],
+            ...(learnedHidden ? [] : [["learned", "Learned"] as const]),
+          ] as const
+        ).map(([value, label]) => (
+          <button
+            aria-pressed={activeView === value}
+            className={`h-7 rounded-full px-3.5 text-sm transition-colors ${activeView === value ? "bg-background font-medium text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+            key={value}
+            onClick={() => onViewChange(value)}
+            type="button"
+          >
+            {label}
+          </button>
+        ))}
       </div>
-    </div>
+      {activeView === "configured" ? (
+        <ConfiguredSkills />
+      ) : (
+        <LearnedSkills onSelect={onItemChange} selectedId={item} />
+      )}
+    </PageShell>
   );
 }
 
