@@ -274,7 +274,7 @@ func TestLiveImageDigestUsesRuntimeSpecificInspect(t *testing.T) {
 	for _, runtime := range []string{"docker", "podman"} {
 		t.Run(runtime, func(t *testing.T) {
 			root := t.TempDir()
-			writeFixture(t, filepath.Join(root, runtime), "#!/bin/sh\ncase \"$*\" in\n  'image exists docker.io/library/golang:1.27'|'image inspect docker.io/library/golang:1.27') exit 0 ;;\n  'image inspect docker.io/library/golang:1.27 --format {{.Digest}}') test \"$RUNTIME\" = podman || exit 1; printf 'sha256:fake' ;;\n  'image inspect docker.io/library/golang:1.27 --format {{index .RepoDigests 0}}') test \"$RUNTIME\" = docker || exit 1; printf 'golang@sha256:fake' ;;\n  *) exit 1 ;;\nesac\n", 0o700)
+			writeFixture(t, filepath.Join(root, runtime), "#!/bin/sh\ncase \"$*\" in\n  'image exists docker.io/library/golang:1.27.2'|'image inspect docker.io/library/golang:1.27.2') exit 0 ;;\n  'image inspect docker.io/library/golang:1.27.2 --format {{.Digest}}') test \"$RUNTIME\" = podman || exit 1; printf 'sha256:fake' ;;\n  'image inspect docker.io/library/golang:1.27.2 --format {{index .RepoDigests 0}}') test \"$RUNTIME\" = docker || exit 1; printf 'golang@sha256:fake' ;;\n  *) exit 1 ;;\nesac\n", 0o700)
 			out, err := runStep(t, root, string(data[start:end])+"\ntest \"$go_image\" = docker.io/library/golang@sha256:fake", "PATH="+root+":"+os.Getenv("PATH"), "runtime="+runtime, "RUNTIME="+runtime)
 			if err != nil {
 				t.Fatalf("digest selection: %v: %s", err, out)

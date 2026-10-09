@@ -211,11 +211,11 @@ image_step_done netprobe_build
 # Resolve the public Go base from the local OCI store, then feed its observed
 # digest to the production workload recipe without weakening its pin check.
 if [ "$runtime" = podman ]; then
-  podman image exists docker.io/library/golang:1.27 || podman pull docker.io/library/golang:1.27 >/dev/null
-  go_digest=$(podman image inspect docker.io/library/golang:1.27 --format '{{.Digest}}')
+  podman image exists docker.io/library/golang:1.27.2 || podman pull docker.io/library/golang:1.27.2 >/dev/null
+  go_digest=$(podman image inspect docker.io/library/golang:1.27.2 --format '{{.Digest}}')
 else
-  docker image inspect docker.io/library/golang:1.27 >/dev/null 2>&1 || docker pull docker.io/library/golang:1.27 >/dev/null
-  go_ref=$(docker image inspect docker.io/library/golang:1.27 --format '{{index .RepoDigests 0}}')
+  docker image inspect docker.io/library/golang:1.27.2 >/dev/null 2>&1 || docker pull docker.io/library/golang:1.27.2 >/dev/null
+  go_ref=$(docker image inspect docker.io/library/golang:1.27.2 --format '{{index .RepoDigests 0}}')
   go_digest=${go_ref#*@}
 fi
 go_image="docker.io/library/golang@${go_digest}"
