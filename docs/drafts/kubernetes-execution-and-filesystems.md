@@ -173,6 +173,21 @@ permission, and lifecycle services are omitted. Boxes indicate placement, not pr
 The agent loop sends file requests through its `Workspace` adapter to a service interface. For example, `Read` asks
 for a file, and `Edit` asks the service to update it. The loop does not mount the filesystem.
 
+Separating file access from execution enables independent scaling and resource sharing. Sessions that need only file
+operations require no executor Pod; multiple authorized users and sessions can share a filesystem-service deployment.
+Executor compute can be provisioned when commands are needed and retired without removing file access, while the file
+service scales separately. This depends on backend capacity, coordination across API replicas, and per-tenant resource
+controls for expensive operations such as recursive searches. Adding replicas alone does not remove storage bottlenecks
+or make process-local locks sufficient, and shared capacity must not combine users' or agents' authority.
+
+The separation also supports a smaller executor attack surface and a more restrictive security profile. The executor
+need not host the filesystem API, its request handlers, or its server credentials; it runs programs against an authorized
+filesystem view. Filesystem serving and broader storage authority remain in trusted infrastructure outside untrusted
+execution. That infrastructure still needs hardening, and the benefit depends on protecting mount clients, credentials,
+and control interfaces from the shell. A privileged or broadly credentialed mount client reachable from the shell would
+erode this separation. A command endpoint may still be needed; this option removes the need for an executor-hosted
+filesystem endpoint, not necessarily all executor network access.
+
 Programs inside the executor expect normal filesystem access. A trusted mount client exposes the same stored files,
 not a separate copy to synchronize. Both file-tool requests and shell filesystem operations must participate in the
 same authorization and consistency model, with no route around the enforced restrictions. A trusted FUSE client can
