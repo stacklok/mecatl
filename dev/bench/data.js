@@ -320187,6 +320187,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791572247297,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ecda8fe88b448dd2860852b6a1ed7a0af14676da",
+          "message": "fix(test): isolate command XDG storage (#2238)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-09T11:49:54-07:00",
+          "tree_id": "57d1f6e1642f2bda83209a5d0e563af6bf6ccfa6",
+          "url": "https://github.com/stacklok/mecatl/commit/ecda8fe88b448dd2860852b6a1ed7a0af14676da"
+        },
+        "date": 1791572979668,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3276.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 77,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -418721,6 +418760,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791572976570,
+  "lastUpdate": 1791572980579,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
