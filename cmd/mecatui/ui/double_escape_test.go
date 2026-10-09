@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
 func escapePress(repeat ...bool) tea.KeyPressMsg {
@@ -295,9 +296,12 @@ func TestDoubleEscapeAllEscapeOwnersSuppressGesture(t *testing.T) {
 		{"modal", func(m Model) Model { m.modal = shellAskModel(t, `{"command":"true"}`).modal; return m }},
 		{"team", func(m Model) Model { m.team.view = teamRoster; return m }},
 		{"agents inventory", func(m Model) Model { m.agentsInv.view = agentsInvPanel; return m }},
-		{"user model", func(m Model) Model { m.modal = &userModelState{view: userModelPanel}; return m }},
+		{"user model", func(m Model) Model {
+			m.modal = &userModelState{view: userModelPanel, deps: (&m).surfaceDeps(), list: new(bounded.List), viewport: new(bounded.Viewport)}
+			return m
+		}},
 		{"reflections", func(m Model) Model { m.reflections.view = reflectionsList; return m }},
-		{"dream", func(m Model) Model { m.dream.view = dreamGenerating; return m }},
+		{"dream", func(m Model) Model { m.modal = &dreamState{view: dreamGenerating}; return m }},
 		{"connect", func(m Model) Model { m.connect.open = true; return m }},
 		{"effort", func(m Model) Model { m.effort.view = effortPanel; return m }},
 		{"worktrees", func(m Model) Model { m.worktrees.view = worktreesPanel; return m }},

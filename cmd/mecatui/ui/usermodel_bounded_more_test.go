@@ -231,9 +231,10 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario2_DetailHistoryAndReturn(t *te
 		"Down": {"d"}, "ScrollD": {"n"}, "ScrollTop": {"t"}, "ScrollBottom": {"b"},
 	})
 	m, s := openedUserModel(t, m)
-	s.Render(60, 12)
+	m = resize(m, 66, 24)
+	_ = (&m).renderModalSurface()
 	s.list.SetCursor(20)
-	s.Render(60, 12)
+	_ = (&m).renderModalSurface()
 	selected, offset := s.list.CursorID(), s.list.Offset()
 	mm, cmd, _ := m.dispatchSurfaceKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
@@ -242,7 +243,7 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario2_DetailHistoryAndReturn(t *te
 	}
 	detail := client.UserModel{Entries: savedMemoryEntries(30), Detail: &client.UserModelDetail{Current: client.UserModelRevision{Key: selected, Value: strings.Repeat("value ", 100), Writer: "agent", Origin: "session"}, HistoryAvailable: true, History: []client.UserModelRevision{{Version: "v1", Status: "active"}}}}
 	m = applyAll(m, client.UserModelDetailMsg{Generation: s.generation, RequestKey: selected, UserModel: detail})
-	s.Render(60, 12)
+	_ = (&m).renderModalSurface()
 	for _, step := range []struct {
 		code rune
 		want string
@@ -250,7 +251,7 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario2_DetailHistoryAndReturn(t *te
 		{'d', "down"}, {'n', "page"}, {'t', "top"}, {'b', "bottom"},
 	} {
 		m = applyAll(m, tea.KeyPressMsg{Code: step.code})
-		s.Render(60, 12)
+		_ = (&m).renderModalSurface()
 		if step.want == "top" && s.viewport.Offset() != 0 || step.want != "top" && s.viewport.Offset() == 0 {
 			t.Fatalf("remapped detail %s offset=%d", step.want, s.viewport.Offset())
 		}
@@ -258,12 +259,12 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario2_DetailHistoryAndReturn(t *te
 	if s.viewport.Offset() == 0 {
 		t.Fatal("detail scroll not available")
 	}
-	end, _ := s.Render(60, 12)
+	end := (&m).renderModalSurface()
 	if !strings.Contains(stripANSIstr(end), "v1 · active") {
 		t.Fatalf("history not reachable at end: %q", stripANSIstr(end))
 	}
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEsc})
-	s.Render(60, 12)
+	_ = (&m).renderModalSurface()
 	if m.modal != s || s.view != userModelPanel || s.list.CursorID() != selected || s.list.Offset() != offset {
 		t.Fatalf("return lost inventory selection/offset: %d/%d", s.list.Offset(), offset)
 	}
@@ -272,7 +273,7 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario2_DetailHistoryAndReturn(t *te
 		t.Fatal("reopening detail failed")
 	}
 	s.HandleMsg(client.UserModelDetailMsg{Generation: s.generation, RequestKey: selected, UserModel: detail})
-	s.Render(60, 12)
+	_ = (&m).renderModalSurface()
 	if s.viewport.Offset() != 0 {
 		t.Fatal("reopened detail retained old scroll")
 	}
@@ -425,6 +426,7 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario3_RejectsStaleResults(t *testi
 }
 func TestMecatuiSavedMemoryBoundedBrowser_Scenario3_WheelAndPointerIsolation(t *testing.T) {
 	m, s := savedMemoryOpened(t, savedMemoryEntries(60))
+	m = resize(m, 51, 20)
 	m.vp.SetContent(strings.Repeat("conversation\n", 100))
 	m.vp.SetYOffset(5)
 	before := m.vp.YOffset()
@@ -436,14 +438,14 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario3_WheelAndPointerIsolation(t *
 		t.Fatalf("wheel without modal did not move scrollable conversation: got %d, want > %d", got, before)
 	}
 
-	s.Render(45, 9)
+	_ = (&m).renderModalSurface()
 	selected := s.list.CursorID()
 	m = applyAll(m, tea.MouseWheelMsg{Button: tea.MouseWheelUp, X: 1, Y: 1})
 	if s.list.Offset() != 0 || m.vp.YOffset() != before {
 		t.Fatal("top endpoint wheel escaped saved-memory panel")
 	}
 	m = applyAll(m, tea.MouseWheelMsg{Button: tea.MouseWheelDown, X: 1, Y: 1})
-	s.Render(45, 9)
+	_ = (&m).renderModalSurface()
 	if s.list.Offset() != 1 || s.list.CursorID() != selected || m.vp.YOffset() != before {
 		t.Fatalf("wheel escaped visible viewport: offset=%d", s.list.Offset())
 	}
@@ -459,7 +461,8 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario3_WheelAndPointerIsolation(t *
 	if m.sel.active || s.list.CursorID() != selected || s.view != userModelPanel {
 		t.Fatal("pointer selected or activated fact")
 	}
-	s.Render(2, 2)
+	m = resize(m, 10, 12)
+	_ = (&m).renderModalSurface()
 	offset := s.list.Offset()
 	m = applyAll(m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 	if s.list.Offset() != offset || !s.compact {
@@ -467,13 +470,14 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario3_WheelAndPointerIsolation(t *
 	}
 
 	m, s = savedMemoryOpened(t, savedMemoryEntries(2))
-	s.Render(45, 9)
+	m = resize(m, 51, 20)
+	_ = (&m).renderModalSurface()
 	mm, cmd, _ := m.dispatchSurfaceKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
 	detail := cmd().(client.UserModelDetailMsg)
 	detail.UserModel.Detail = &client.UserModelDetail{Current: client.UserModelRevision{Key: detail.RequestKey, Value: strings.Repeat("detail ", 200)}}
 	m = applyAll(m, detail)
-	s.Render(45, 9)
+	_ = (&m).renderModalSurface()
 	detailBefore := m.vp.YOffset()
 	m = applyAll(m, tea.MouseWheelMsg{Button: tea.MouseWheelUp})
 	if s.viewport.Offset() != 0 || m.vp.YOffset() != detailBefore {

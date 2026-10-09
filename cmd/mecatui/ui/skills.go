@@ -127,6 +127,7 @@ func (s *skillsState) Render(width, height int) (string, []ClickableRegion) {
 	s.normal, s.compact = false, false
 	s.bodyWidth, s.bodyRows, s.externalRows, s.learnedRows, s.learnedStart = 0, 0, 0, 0, 0
 	if s.view == skillsNone || width <= 0 || height <= 0 {
+		s.compact = s.view != skillsNone
 		s.viewport = nil
 		s.filter.Blur()
 		return "", nil

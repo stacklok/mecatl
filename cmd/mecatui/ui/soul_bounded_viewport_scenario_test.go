@@ -312,7 +312,7 @@ func TestMecatuiSoulBoundedViewport_Scenario2_WheelOwnershipAndCompactIsolation(
 	_ = m.View()
 	mm, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 	m = mm.(Model)
-	offset, conversationOffset := soulActive(m).viewport.Offset(), m.vp.YOffset()
+	_, conversationOffset := soulActive(m).viewport.Offset(), m.vp.YOffset()
 	m = resize(m, 94, 0)
 	m.vp.SetHeight(0)
 	_ = m.View()
@@ -321,8 +321,8 @@ func TestMecatuiSoulBoundedViewport_Scenario2_WheelOwnershipAndCompactIsolation(
 	}
 	mm, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 	m = mm.(Model)
-	if got := soulActive(m).viewport.Offset(); got != offset {
-		t.Fatalf("zero-height wheel moved invisible soul from %d to %d", offset, got)
+	if soulActive(m).viewport != nil {
+		t.Fatal("zero-height wheel reconstructed invisible soul viewport")
 	}
 	if m.vp.YOffset() != conversationOffset {
 		t.Fatalf("zero-height wheel moved hidden conversation from %d to %d", conversationOffset, m.vp.YOffset())

@@ -78,10 +78,14 @@ type approvalSurface struct {
 }
 
 func (s *approvalSurface) Render(width, height int) (string, []ClickableRegion) {
+	s.regionW, s.regionH = width, height
+	s.hits = nil
+	if width <= 0 || height <= 0 {
+		return "", nil
+	}
 	if s.render.diff == nil || s.render.markdown == nil {
 		return "", nil
 	}
-	s.regionW, s.regionH = width, height
 	var body string
 	var rects []buttonRect
 	var buttonsRow, buttonsHeight int
@@ -112,6 +116,12 @@ func (s *approvalSurface) Render(width, height int) (string, []ClickableRegion) 
 }
 
 func (s *approvalSurface) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
+	if s.regionW <= 0 || s.regionH <= 0 {
+		if key.Matches(msg, s.deps.keys.Deny) {
+			s.intent = s.resolveAsk(client.VerdictDeny)
+		}
+		return nil, true, false
+	}
 	if key.Matches(msg, s.deps.keys.Toolcalls) {
 		if isPlanAsk(s.ask.Tool) {
 			return nil, true, false

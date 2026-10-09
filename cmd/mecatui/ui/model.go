@@ -654,9 +654,6 @@ type Model struct {
 	userModelRequestToken        uint64             // Model-lifetime fence for delayed saved-memory results
 	reflections                  reflectionsState
 	reflectionsGen               uint64
-	dream                        dreamState
-	dreamGen                     uint64
-	dreamRequest                 uint64
 	// steer is the steer-mode (Capabilities.Steer) mid-run state: ONE bundle (the
 	// merged operator steer text + its client-minted message_id) with its
 	// AUTHORITATIVE lifecycle — idle → pending (sent, un-acked) → sent (acked,

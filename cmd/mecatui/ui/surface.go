@@ -7,9 +7,9 @@ package ui
 // touches this file for the interface and its own file for the state/behaviour;
 // the Model-side routing (view/update/builtins/selection) is the thin registration
 // point. The structural gate (surface_arch_test.go) confines surface/soul
-// vocabulary to surface.go + the surface's own file. The deps are held ON THE
-// SURFACE STATE (set once at Open): a surface non-Render method with a deps
-// param is archived-past design, not current (see docs/drafts/surface-migration-plan.md).
+// vocabulary to surface.go + the surface's own file. Dependencies are held on the
+// surface state at Open; a surface non-Render method with a deps parameter is
+// archived-past design.
 
 import (
 	"context"
@@ -114,11 +114,10 @@ type surfaceIntentSource interface {
 	takeSurfaceIntent() surfaceIntent
 }
 
-// surfaceDeps is the SHARED ambient base every surface may reach, built once at
-// Open by (m *Model).surfaceDeps() and held on the surface state as its deps
-// field. Fields are ambient collaborators only: ctx is ambient (any modal that
-// talks to the server needs the parent context). Surface-specific immutable
-// inputs (lifecycle clients, epoch mints) live beside deps on the surface state.
+// surfaceDeps is the SHARED ambient base every surface may reach, built at Open
+// by (m *Model).surfaceDeps() and held on the surface state as its deps field.
+// They are captured at Open; surface-specific immutable inputs (lifecycle clients,
+// epoch mints) live beside deps on the surface state.
 type surfaceDeps struct {
 	theme theme.Theme
 	keys  keyMap              // for key.Matches
@@ -188,8 +187,13 @@ func (m *Model) renderModalSurface() string {
 		placement = source.modalPlacement()
 	}
 	top := convTopRow(*m)
+	if top < 0 {
+		m.hits.clear()
+		m.metrics.clear()
+	}
 	bodyW, bodyH := m.width, m.vp.Height()
 	if bodyW <= 0 || bodyH <= 0 {
+		m.modal.Render(0, 0)
 		m.hits.clear()
 		m.metrics.clear()
 		return ""

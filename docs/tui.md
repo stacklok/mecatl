@@ -55,13 +55,40 @@ rather than keeping a second set of row offsets.
 
 Overlays that take over the conversation region own their interaction state and
 size themselves from the geometry offered on each render; the parent owns placement
-and pointer mapping. Follow the [`surface` contract](../cmd/mecatui/ui/surface.go)
-and its [migration guidance](drafts/surface-migration-plan.md) when adding or
+and pointer mapping. Before keys or wheel events on any open surface, the parent
+prepares its current Render offer; only View publishes pointer hits. Resize and
+undisplayed preparation invalidate both hits and placement metrics. A surface
+captures its presentation and operating dependencies when it opens. Introduce
+dynamic theme or keybinding updates only with a deliberate UI-wide design that
+covers every affected component.
+Follow the [`surface` contract](../cmd/mecatui/ui/surface.go) when adding or
 converting an overlay. A closed surface must not receive late results or leak
 keyboard and wheel events into the conversation.
 
+Keep surface-specific state, transitions, asynchronous result validation, and view
+caches on the surface. The parent owns modal lifetime, placement, frame-scoped
+pointer mapping, and effects that change root-owned state. A surface that needs a
+root-owned effect emits a narrow intent; it does not require the parent to inspect
+its concrete type. Correlate asynchronous results with the surface instance and
+its active request, then discard results the open surface does not own.
+
+The `ui` package is large, so keep its internal components narrow and their
+contracts explicit. Prefer a shared contract when all comparable components use
+the same behavior. Treat a concrete type assertion in generic UI flow as a smell:
+justify the component's genuinely unique lifecycle before adding one. Do not add
+an interface for a speculative future capability; introduce it when the shared
+behavior exists and the contract can make the code simpler.
+
 Selectable inventories use `presentListRow` for the cursor marker, status cells,
-and selected-row styling. Let the surface own item semantics and activation.
+and selected-row styling. Follow `/models`: use the `spinner` accent style for
+selected rows and `muted` for unselected rows. The `▶` cursor appears only on the
+first visible physical row of the selected item; selected styling covers all its
+wrapped rows. Optional current or default status cells remain distinct from the
+cursor. `presentListRow` owns the gutter and cursor/status markers; surfaces must
+not embed those markers or their padding in item text. Let the surface own item
+semantics and activation.
+Keep unavailable entries visible when that explains the available choices, but
+exclude them from selection and activation.
 Tool-call status uses `…` with `toolName`, `✓` with `toolOk`, and `✗` with
 `toolErr`. Pending and failed calls retain readable labels; settled successful
 single-line calls use the glyph and name without a redundant success label.
@@ -93,10 +120,13 @@ independently inspectable.
 
 List-and-detail browsers use a bounded list for selection and a separate bounded
 viewport for detail. Wheel scrolling moves the list window without changing
-selection. Returning from detail preserves the selected item and list window, and
-detail follows appended lines only while the reader is at the bottom. The
-saved-memory browser shows list/detail ownership; Sessions shows a surface that
-fills the conversation region while keeping the header, prompt, and footer.
+selection. Keyboard navigation and clicking an enabled row select and reveal it;
+selection alone does not activate it. Returning from detail preserves the selected
+item and list window, and detail follows appended lines only while the reader is
+at the bottom. Consequential activation requires a separate explicit confirmation
+using keyboard, pointer, or both as appropriate to the widget. The saved-memory
+browser shows list/detail ownership; Sessions shows a surface that fills the
+conversation region while keeping the header, prompt, and footer.
 
 List and inspector cards cap their outer width at 128 cells, permission cards at
 132, and inline tool cards at 100, or the available width if smaller. Budget

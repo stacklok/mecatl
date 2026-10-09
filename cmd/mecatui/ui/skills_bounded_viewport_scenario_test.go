@@ -576,10 +576,12 @@ func TestMecatuiSkillsInventoryBoundedViewport_Scenario3_WheelOwnershipAndCompac
 	if st.cursor != len(st.learned)-1 || m.vp.YOffset() != before {
 		t.Fatal("learned bottom endpoint was not consumed")
 	}
-	_, _ = st.Render(10, 3)
+	m = resize(m, 10, 11)
+	_ = m.View()
+	compactConversationOffset := m.vp.YOffset()
 	mm, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 	m = mm.(Model)
-	if st.viewport != nil || st.cursor != 0 || m.vp.YOffset() != before {
+	if st.viewport != nil || st.cursor != 0 || m.vp.YOffset() != compactConversationOffset {
 		t.Fatal("compact wheel constructed or moved state")
 	}
 }
@@ -656,5 +658,17 @@ func TestMecatuiSkillsInventoryBoundedViewport_Scenario3_PreservesLearnedControl
 	cmd, _, _ = st.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd != nil {
 		t.Fatal("compact exposed learned action")
+	}
+	st.view, st.detail = skillsDetail, &longDetail
+	_, _ = st.Render(80, 14)
+	if st.compact {
+		t.Fatal("sized learned detail unexpectedly compact")
+	}
+	_, _ = st.Render(0, 0)
+	if cmd, handled, _ := st.HandleKey(tea.KeyPressMsg{Code: 'a', Text: "a"}); !handled || cmd != nil || !st.compact {
+		t.Fatal("zero-sized learned detail exposed a hidden lifecycle action")
+	}
+	if _, handled, closed := st.HandleKey(tea.KeyPressMsg{Code: tea.KeyEsc}); !handled || !closed {
+		t.Fatal("zero-sized learned detail cannot close")
 	}
 }

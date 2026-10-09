@@ -106,12 +106,11 @@ func TestDispatchSurfaceMsgAdoptsTranscriptIntent(t *testing.T) {
 }
 
 func TestDispatchSurfaceKeyIgnoresUnhandledIntent(t *testing.T) {
-	m := Model{
-		phase: phaseReplay,
-		modal: &surfaceIntentTestSurface{
-			intent:     sessionsPhaseIntent{phase: sessionsIntentPhaseIdle},
-			keyHandled: false,
-		},
+	m := newTestModelFromDeps(Deps{Ctx: context.Background(), Theme: testTheme(), NoAltScreen: true})
+	m.phase = phaseReplay
+	m.modal = &surfaceIntentTestSurface{
+		intent:     sessionsPhaseIntent{phase: sessionsIntentPhaseIdle},
+		keyHandled: false,
 	}
 
 	got, _, handled := m.dispatchSurfaceKey(tea.KeyPressMsg{})
