@@ -40,15 +40,9 @@ type helpRow struct {
 // widening just shifts the action column right uniformly.
 const helpKeyWidth = 22
 
-// helpMinCardWidth keeps the Help overlay readable once the terminal is large
-// enough, helpCardWidthFraction keeps it from filling wide terminals, and
 // helpMaxCardWidth is the shared 128-cell cap for normal list and inspector cards
 // (docs/tui.md, "Layout and navigation").
-const (
-	helpMinCardWidth      = 69
-	helpCardWidthFraction = 80
-	helpMaxCardWidth      = 128
-)
+const helpMaxCardWidth = 128
 
 // helpState owns the Help overlay's wrapped viewport and frame geometry.
 type helpState struct {
@@ -157,10 +151,7 @@ func helpViewportView(lines []string, width, height int, viewport *bounded.Viewp
 }
 
 func helpCardWidth(width int) int {
-	if width <= 0 {
-		return helpMinCardWidth
-	}
-	return min(width, helpMaxCardWidth, max(helpMinCardWidth, width*helpCardWidthFraction/100))
+	return min(max(0, width), helpMaxCardWidth)
 }
 
 func helpBodyWidth(th theme.Theme, width int) int {

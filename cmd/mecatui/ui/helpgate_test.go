@@ -148,7 +148,7 @@ func TestHelpCardWidthIsTerminalBounded(t *testing.T) {
 	for _, tc := range []struct{ terminal, want int }{
 		{terminal: 40, want: 40},
 		{terminal: 69, want: 69},
-		{terminal: 100, want: 80},
+		{terminal: 100, want: 100},
 		{terminal: 160, want: 128},
 		{terminal: 200, want: 128},
 	} {
