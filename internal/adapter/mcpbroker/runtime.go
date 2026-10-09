@@ -259,12 +259,10 @@ type Runtime struct {
 	bindingPrefix    string
 	closed           bool
 	drainSessions    []*logicalSession
-	// process is set only when this Runtime is owned by a bundled ToolHive
-	// Process (NewToolHiveProcess). It lets an Attachment reach the pre-prompt
-	// authenticated-discovery primitives without widening the neutral contract.
-	// nil for a plain Compile-based Runtime, which never supports workspace
-	// enrollment.
-	process *Process
+	// Bundled capabilities are supplied by composition; plain runtimes have none.
+	enrollment  *enrollmentConfig
+	discovery   authenticatedDiscoverer
+	publication publicationGate
 }
 
 var _ contract.Service = (*Runtime)(nil)
@@ -370,15 +368,7 @@ func (r *Runtime) AttachSession(ctx context.Context, id session.SessionID) (cont
 	r.mu.Unlock()
 
 	attachment := &Attachment{runtime: r, logical: logical, creator: outcome == contract.AttachCreated}
-	tools := make([]tool.Tool, len(r.catalogue.routes))
-	for i, route := range r.catalogue.routes {
-		base := &sessionTool{attachment: attachment, route: route}
-		if route.oauth != nil {
-			tools[i] = &protectedSessionTool{sessionTool: base}
-		} else {
-			tools[i] = base
-		}
-	}
+	tools := attachmentTools(attachment, r.catalogue.routes)
 	attachment.catalogue = newAttachmentCatalogue(r.catalogue.routes, tools, nil)
 	logical.mu.RLock()
 	completed := logical.completedEnrollment
