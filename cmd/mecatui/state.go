@@ -341,6 +341,7 @@ func gitCommonWorktreeRoot(workspace string) (string, bool) {
 	dir := abs
 	for {
 		gitPath := filepath.Join(dir, ".git")
+		// #nosec G703 -- inspect .git metadata along the selected workspace's ancestors; the walk intentionally crosses its root and rejects non-regular entries.
 		info, err := os.Lstat(gitPath)
 		if err == nil {
 			if info.IsDir() {

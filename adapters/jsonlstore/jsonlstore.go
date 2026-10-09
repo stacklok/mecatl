@@ -209,6 +209,7 @@ func normalizeStoreRoot(dir string) (string, error) {
 	existing := root
 	var missing []string
 	for {
+		// #nosec G703 -- inspect the caller-selected storage authority and its ancestors, rejecting symlinks before admitting the root.
 		info, err := os.Lstat(existing)
 		if err == nil {
 			if info.Mode()&os.ModeSymlink != 0 {
@@ -263,9 +264,11 @@ func createDurableDirectoryHierarchy(path string, ops snapshotOps) error {
 	slices.Reverse(hierarchy)
 
 	for _, current := range hierarchy {
+		// #nosec G703 -- inspect the normalized store authority plus fixed adapter directories; no session ID contributes path components.
 		_, err := os.Lstat(current)
 		created := false
 		if os.IsNotExist(err) {
+			// #nosec G703 -- create the configured storage hierarchy, then validate every directory before publishing it.
 			if err := os.Mkdir(current, 0o700); err != nil {
 				if !os.IsExist(err) {
 					return err
