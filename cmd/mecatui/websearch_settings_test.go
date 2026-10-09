@@ -19,7 +19,7 @@ func TestEmbeddedWebSearchSettingsComposition(t *testing.T) {
 	}{
 		{"generic URL", "url: https://settings.example/search", "WebSearch ENABLED with operator HTTP backend (settings.yaml)"},
 		{"disabled", "enabled: false\n  url: https://settings.example/search", "WebSearch DISABLED by operator"},
-		{"SearXNG", "searxng_url: https://searx.example/search", "WebSearch ENABLED with SearXNG backend"},
+		{"SearXNG", "searxng:\n    url: https://searx.example/search", "WebSearch ENABLED with SearXNG backend"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("SEARXNG_URL", "https://conflicting-searx.example/search")

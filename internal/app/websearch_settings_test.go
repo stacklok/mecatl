@@ -108,7 +108,7 @@ func TestBuildWebSearchCredentialLoaderDoesNotSendSearXNGAuthHeader(t *testing.T
 			mockllm.ToolCallTurn(session.NewToolCall("search", "WebSearch", json.RawMessage(`{"query":"test query"}`))),
 			mockllm.TextTurn("done"),
 		),
-		PermissionConfigs:        []string{writeOperatorSettingsFile(t, fmt.Sprintf("websearch:\n  searxng_url: %s\n", server.URL))},
+		PermissionConfigs:        []string{writeOperatorSettingsFile(t, fmt.Sprintf("websearch:\n  searxng:\n    url: %s\n", server.URL))},
 		permConfigEnv:            isolatedPermConfigEnv(t),
 		ProviderCredentialLoader: &capturingProviderCredentialLoader{profile: ProviderCredentials{WebSearchAPIKey: "test-websearch-key"}},
 	})
@@ -150,11 +150,11 @@ func TestBuildOperatorWebSearchEndpointDiagnostics(t *testing.T) {
 		name, body, want string
 	}{
 		{"generic valid", "websearch:\n  url: https://search.example/search\n", "operator HTTP backend (settings.yaml) endpoint https://search.example/search"},
-		{"SearXNG valid", "websearch:\n  searxng_url: https://searx.example/search\n", "SearXNG backend (settings.yaml) endpoint https://searx.example/search"},
+		{"SearXNG valid", "websearch:\n  searxng:\n    url: https://searx.example/search\n", "SearXNG backend (settings.yaml) endpoint https://searx.example/search"},
 		{"generic query string", "websearch:\n  url: https://search.example/search?api_key=secret-value\n", "operator HTTP backend misconfigured"},
-		{"SearXNG query string", "websearch:\n  searxng_url: https://searx.example/search?api_key=secret-value\n", "operator SearXNG backend misconfigured"},
+		{"SearXNG query string", "websearch:\n  searxng:\n    url: https://searx.example/search?api_key=secret-value\n", "operator SearXNG backend misconfigured"},
 		{"generic userinfo", "websearch:\n  url: https://user:secret-value@search.example/search\n", "operator HTTP backend misconfigured"},
-		{"SearXNG userinfo", "websearch:\n  searxng_url: https://user:secret-value@searx.example/search\n", "operator SearXNG backend misconfigured"},
+		{"SearXNG userinfo", "websearch:\n  searxng:\n    url: https://user:secret-value@searx.example/search\n", "operator SearXNG backend misconfigured"},
 		{"malformed", "websearch:\n  url: '://secret-value'\n", "operator HTTP backend misconfigured"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -179,8 +179,8 @@ func TestRejectedWebSearchEndpointDoesNotFallThroughOrLeak(t *testing.T) {
 		{"settings generic query", "websearch:\n  url: https://search.example/search?api_key=secret-value\n", "", ""},
 		{"settings generic userinfo", "websearch:\n  url: https://user:secret-value@search.example/search\n", "", ""},
 		{"settings generic malformed", "websearch:\n  url: https://user:secret-value@search.example/%zz\n", "", ""},
-		{"settings SearXNG query", "websearch:\n  searxng_url: https://searx.example/search?api_key=secret-value\n", "", ""},
-		{"settings SearXNG fragment", "websearch:\n  searxng_url: https://searx.example/search#secret-value\n", "", ""},
+		{"settings SearXNG query", "websearch:\n  searxng:\n    url: https://searx.example/search?api_key=secret-value\n", "", ""},
+		{"settings SearXNG fragment", "websearch:\n  searxng:\n    url: https://searx.example/search#secret-value\n", "", ""},
 		{"CLI generic query", "websearch: {}\n", "https://search.example/search?api_key=secret-value", ""},
 		{"CLI generic malformed", "websearch: {}\n", "https://user:secret-value@search.example/%zz", ""},
 		{"CLI generic fragment", "websearch: {}\n", "https://search.example/search#secret-value", ""},
@@ -268,9 +268,9 @@ func TestBuildOperatorWebSearchPrecedence(t *testing.T) {
 		name, settings, url, searx, want string
 		off                              bool
 	}{
-		{"settings URL beats SearXNG and Brave", "websearch:\n  url: https://settings.example/search\n  searxng_url: https://configured-searx.example/search\n", "", "https://legacy.example/search", "operator HTTP backend (settings.yaml)", false},
+		{"settings URL beats SearXNG and Brave", "websearch:\n  url: https://settings.example/search\n  searxng:\n    url: https://configured-searx.example/search\n", "", "https://legacy.example/search", "operator HTTP backend (settings.yaml)", false},
 		{"empty URL flag does not beat settings URL", "websearch:\n  url: https://settings.example/search\n", "  ", "", "operator HTTP backend (settings.yaml)", false},
-		{"settings SearXNG beats legacy", "websearch:\n  searxng_url: https://configured-searx.example/search\n", "", "https://legacy.example/search", "SearXNG backend (settings.yaml)", false},
+		{"settings SearXNG beats legacy", "websearch:\n  searxng:\n    url: https://configured-searx.example/search\n", "", "https://legacy.example/search", "SearXNG backend (settings.yaml)", false},
 		{"legacy beats Brave", "websearch: {}\n", "", "https://legacy.example/search", "SearXNG backend (SEARXNG_URL) endpoint https://legacy.example/search", false},
 		{"Brave beats Exa", "websearch: {}\n", "", "", "Brave backend", false},
 		{"disabled beats configured URL", "websearch:\n  enabled: false\n  url: https://settings.example/search\n", "", "https://legacy.example/search", "DISABLED by operator", false},

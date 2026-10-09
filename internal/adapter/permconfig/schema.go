@@ -262,8 +262,20 @@ type WebSearchSection struct {
 	AuthHeader string `yaml:"auth_header"`
 	// QueryParam is the query-string parameter that carries the search text.
 	QueryParam string `yaml:"query_param"`
-	// SearxngURL is an optional SearXNG search endpoint.
-	SearxngURL string `yaml:"searxng_url"`
+	// Searxng configures the optional SearXNG backend.
+	Searxng *WebSearchSearxngSection `yaml:"searxng"`
+}
+
+// WebSearchSearxngSection configures the SearXNG backend.
+type WebSearchSearxngSection struct {
+	// URL is the SearXNG search endpoint.
+	URL string `yaml:"url"`
+}
+
+// UnmarshalYAML strictly decodes SearXNG settings so misspelled keys cannot
+// silently alter outbound-search configuration.
+func (s *WebSearchSearxngSection) UnmarshalYAML(node ast.Node) error {
+	return decodeStrictMapping(node, "websearch.searxng", map[string]any{"url": &s.URL})
 }
 
 // UnmarshalYAML strictly decodes web-search settings so misspelled keys cannot
@@ -278,7 +290,7 @@ func (s *WebSearchSection) strictFields() map[string]any {
 		"url":         &s.URL,
 		"auth_header": &s.AuthHeader,
 		"query_param": &s.QueryParam,
-		"searxng_url": &s.SearxngURL,
+		"searxng":     newPermconfigNodePointer(&s.Searxng),
 	}
 }
 

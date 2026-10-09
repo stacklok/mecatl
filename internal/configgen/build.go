@@ -572,6 +572,11 @@ func telemetrySubtree(docs Docs) *Subtree {
 
 func webSearchSubtree(docs Docs) *Subtree {
 	fields := fieldsOf("WebSearchSection", permconfig.WebSearchSection{}, docs)
+	for _, f := range fields {
+		if f.Key == "searxng" {
+			f.Nested = fieldsOf("WebSearchSearxngSection", permconfig.WebSearchSearxngSection{}, docs)
+		}
+	}
 	return &Subtree{
 		Key:          "websearch",
 		Tier:         TierOperator,

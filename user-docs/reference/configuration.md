@@ -459,7 +459,8 @@ HTTP web-search adapter settings. Operator-tier only; project values are ignored
 | `websearch.url` | `string` | `(empty)` | URL is the generic JSON search endpoint. |
 | `websearch.auth_header` | `string` | `(empty)` | AuthHeader is the optional request header that carries the search credential. |
 | `websearch.query_param` | `string` | `(empty)` | QueryParam is the query-string parameter that carries the search text. |
-| `websearch.searxng_url` | `string` | `(empty)` | SearxngURL is an optional SearXNG search endpoint. |
+| `websearch.searxng` | `websearchsearxngsection` | `(absent)` | Searxng configures the optional SearXNG backend. |
+| `websearch.searxng.url` | `string` | `(empty)` | URL is the SearXNG search endpoint. |
 
 ## Flag- / file-configured features (NOT in `settings.yaml`)
 

@@ -71,12 +71,13 @@ guardrails are enabled.
 |-|-|-|
 |[Exa](#exa)|You want the default web search backend.|No configuration for the anonymous tier. An Exa credential enables its paid tier.|
 |[Brave Search](#brave-search)|You have a Brave Search credential.|Configure the Brave search credential.|
-|[SearXNG](#self-hosted-searxng)|You run a SearXNG instance.|Set its endpoint in `settings.yaml`.|
-|[Generic HTTP JSON](#generic-http-json)|You have a compatible search API.|Set its endpoint in `settings.yaml`. Add its credential to `auth.yaml` when required.|
+|[SearXNG](#self-hosted-searxng)|You run a SearXNG instance.|Set its endpoint in the operator `websearch` settings.|
+|[Generic HTTP JSON](#generic-http-json)|You have a compatible search API.|Set its endpoint and request shape in the operator `websearch` settings.|
 
-All settings in this section are operator-only and belong in the user-global
-`$XDG_CONFIG_HOME/mecatl/settings.yaml`. Project settings cannot configure
-`WebSearch`.
+Web-search backend settings are operator-only. See [Configure
+Mecatl](/operating/settings.md#ownership-and-precedence) for settings ownership
+and precedence, and the [configuration
+reference](/reference/configuration.md#websearch) for every `websearch` field.
 
 #### Exa
 
@@ -88,49 +89,36 @@ providers and storage](/operating/mecated/configure-providers-and-storage.md#mod
 
 Configure the `brave` search credential to select Brave Search. [Configure
 mecated providers and storage](/operating/mecated/configure-providers-and-storage.md#model-and-search-credential-file)
-describes the credential file, environment-variable precedence, and credential
-custody.
+describes credential custody and environment-variable precedence.
 
 #### Self-hosted SearXNG
 
-Set `searxng_url` to your SearXNG `/search` endpoint:
+Set `searxng.url` to your SearXNG `/search` endpoint:
 
-```yaml title="settings.yaml"
+```yaml
 websearch:
-  searxng_url: https://search.example.com/search
+  searxng:
+    url: https://search.example.com/search
 ```
 
 SearXNG must enable JSON output because Mecatl requests `format=json`.
-`mecated` also accepts `SEARXNG_URL` for an existing deployment, but
-`settings.yaml` works with both `mecated` and bare `mecatui`.
+`mecated` also accepts `SEARXNG_URL` for an existing deployment, but the
+operator setting works with both `mecated` and bare `mecatui`.
 
 #### Generic HTTP JSON
 
-For an authenticated endpoint, edit these two operator-owned files:
+Set the endpoint and request shape:
 
-1. In `settings.yaml`, set the endpoint and request shape.
+```yaml
+websearch:
+  url: https://search.example.com/api/search
+  auth_header: X-API-Key
+  query_param: query
+```
 
-   ```yaml title="settings.yaml"
-   websearch:
-     url: https://search.example.com/api/search
-     auth_header: X-API-Key
-     query_param: query
-   ```
-
-2. In `auth.yaml`, add the endpoint credential.
-
-   ```yaml title="auth.yaml"
-   providers:
-     websearch:
-       api_key: <WEBSEARCH_API_KEY>
-   ```
-
-The conventional paths are `$XDG_CONFIG_HOME/mecatl/settings.yaml` and
-`$XDG_CONFIG_HOME/mecatl/auth.yaml`, normally beneath `~/.config/mecatl/`.
-`--api-key-file <PATH>` or `credential_store.api_key.file` can select another
-credential file. You can instead set `WEBSEARCH_API_KEY` in the process
-environment; it takes precedence over the `auth.yaml` entry. For a
-credential-free endpoint, configure only `settings.yaml`.
+For an authenticated endpoint, configure the `websearch` credential in
+[Configure mecated providers and storage](/operating/mecated/configure-providers-and-storage.md#model-and-search-credential-file).
+For a credential-free endpoint, configure only the `websearch` settings.
 
 `url` selects a generic HTTP JSON endpoint. `auth_header` defaults to
 `Authorization`, which sends the credential as a Bearer token. Any other
@@ -149,20 +137,18 @@ For `mecated`, the first matching item in this order selects the backend:
 3. `websearch.enabled: false` disables outbound search when no explicit URL is
    set.
 4. `websearch.url` selects the generic HTTP endpoint.
-5. `websearch.searxng_url` selects SearXNG.
+5. `websearch.searxng.url` selects SearXNG.
 6. `SEARXNG_URL` selects SearXNG.
 7. The Brave search credential selects Brave Search.
 8. Exa is the default. Its search credential selects its authenticated paid
    tier; otherwise, Exa runs anonymously.
 
 `--websearch-auth-header` and `--websearch-query-param` override the generic
-endpoint's corresponding `settings.yaml` values. The generated [server CLI
-reference](/reference/server-cli.md#mecated-serve) lists the `mecated` flags,
-and the [configuration reference](/reference/configuration.md#websearch) lists
-every `websearch` field.
+endpoint's corresponding `websearch` settings. The generated [server CLI
+reference](/reference/server-cli.md#mecated-serve) lists the `mecated` flags.
 
-Bare `mecatui` uses its embedded server's operator `settings.yaml` and
-`auth.yaml`, including `websearch.url` and `websearch.searxng_url`. It does not
+Bare `mecatui` uses its embedded server's operator web-search settings and
+credentials, including `websearch.url` and `websearch.searxng.url`. It does not
 read `SEARXNG_URL` or accept the `mecated` web-search flags. `mecatui connect`
 uses the remote server's web-search configuration.
 

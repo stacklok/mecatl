@@ -15,16 +15,22 @@ import (
 )
 
 func TestWebSearchStrictDecoding(t *testing.T) {
-	cfg, err := parseYAML([]byte("websearch:\n  enabled: false\n  url: https://search.example/api\n  auth_header: X-Search-Key\n  query_param: query\n  searxng_url: https://searx.example/search\n"))
+	cfg, err := parseYAML([]byte("websearch:\n  enabled: false\n  url: https://search.example/api\n  auth_header: X-Search-Key\n  query_param: query\n  searxng:\n    url: https://searx.example/search\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.WebSearch == nil || cfg.WebSearch.Enabled == nil || *cfg.WebSearch.Enabled || cfg.WebSearch.URL != "https://search.example/api" || cfg.WebSearch.AuthHeader != "X-Search-Key" || cfg.WebSearch.QueryParam != "query" || cfg.WebSearch.SearxngURL != "https://searx.example/search" {
+	if cfg.WebSearch == nil || cfg.WebSearch.Enabled == nil || *cfg.WebSearch.Enabled || cfg.WebSearch.URL != "https://search.example/api" || cfg.WebSearch.AuthHeader != "X-Search-Key" || cfg.WebSearch.QueryParam != "query" || cfg.WebSearch.Searxng == nil || cfg.WebSearch.Searxng.URL != "https://searx.example/search" {
 		t.Fatalf("websearch = %#v", cfg.WebSearch)
 	}
 
-	if _, err := parseYAML([]byte("websearch: {enabled: false, typo: true}\n")); err == nil {
-		t.Fatal("unknown websearch key was accepted")
+	for _, input := range []string{
+		"websearch: {enabled: false, typo: true}\n",
+		"websearch: {searxng_url: https://searx.example/search}\n",
+		"websearch: {searxng: {typo: true}}\n",
+	} {
+		if _, err := parseYAML([]byte(input)); err == nil {
+			t.Fatalf("unknown websearch key was accepted: %s", input)
+		}
 	}
 }
 

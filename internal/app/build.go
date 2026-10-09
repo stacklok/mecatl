@@ -9245,8 +9245,8 @@ func foldOperatorWebSearch(cfg Config) Config {
 	if !cfg.WebSearchQueryParamFlagSet && cfg.WebSearchQueryParam == "" {
 		cfg.WebSearchQueryParam = settings.QueryParam
 	}
-	if strings.TrimSpace(settings.SearxngURL) != "" {
-		cfg.SearXNGURL = settings.SearxngURL
+	if settings.Searxng != nil && strings.TrimSpace(settings.Searxng.URL) != "" {
+		cfg.SearXNGURL = settings.Searxng.URL
 		cfg.searxngURLFromSettings = true
 	}
 	return cfg
