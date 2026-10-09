@@ -65,13 +65,15 @@ guardrails are enabled.
 
 ### Configure web search
 
-`WebSearch` is enabled by default and uses Exa's public MCP endpoint
-anonymously. Set `EXA_API_KEY` or put `providers.exa.api_key` in the
-operator-owned `auth.yaml` to use Exa's authenticated/paid tier. The environment
-variable overrides the file entry. Exa is a search credential, not a model
-provider: it does not satisfy the requirement for an LLM credential. Leave both
-unset for anonymous search. Set `BRAVE_API_KEY` to use Brave Search, or
-`SEARXNG_URL` to use a self-hosted SearXNG `/search` endpoint.
+`WebSearch` is enabled by default. `SEARXNG_URL` selects a self-hosted SearXNG
+`/search` endpoint, and otherwise `BRAVE_API_KEY` or
+`providers.brave.api_key` in the operator-owned `auth.yaml` selects Brave Search.
+`BRAVE_API_KEY` overrides the file entry. If neither backend is selected, Mecatl
+uses Exa's public MCP endpoint anonymously; set `EXA_API_KEY` or
+`providers.exa.api_key` in `auth.yaml` to use Exa's authenticated/paid tier, with
+the environment variable overriding the file entry. Exa and Brave are search
+credentials, not model providers: neither satisfies the requirement for an LLM
+credential. SearXNG takes priority over Brave, and Brave takes priority over Exa.
 SearXNG must enable JSON output because Mecatl requests `format=json`.
 
 For another HTTP JSON service, set `--websearch-url` and `WEBSEARCH_API_KEY`.

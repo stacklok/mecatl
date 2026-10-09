@@ -436,10 +436,9 @@ type config struct {
 	websearchQueryParam string
 
 	// WebSearch backend ladder (issue #26): web search is ON by default (Exa
-	// anonymous). SearXNG and Brave select different backends; the Exa key
-	// is resolved by the shared provider credential lifecycle.
+	// anonymous). SearXNG selects a different backend; Exa and Brave keys
+	// are resolved by the shared provider credential lifecycle.
 	searxngURL    string
-	braveAPIKey   string
 	websearchMode string // raw --websearch value ("off" → websearchOff)
 	websearchOff  bool
 
@@ -1304,7 +1303,6 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		WebSearchAuthHeader: cfg.websearchAuthHeader,
 		WebSearchQueryParam: cfg.websearchQueryParam,
 		SearXNGURL:          cfg.searxngURL,
-		BraveAPIKey:         cfg.braveAPIKey,
 		WebSearchOff:        cfg.websearchOff,
 		ForkPreservedCap:    cfg.forkPreservedCap,
 		EnableTeams:         cfg.enableTeams,
@@ -1981,10 +1979,9 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	// WebSearch (issue #26): the search backend's API key is a SECRET, read from the
 	// environment (never a flag value), mirroring the provider keys' custody rule.
 	cfg.websearchAPIKey = os.Getenv("WEBSEARCH_API_KEY")
-	// WebSearch backend ladder (issue #26): SearXNG URL and Brave key select
-	// their backends; Exa's optional key uses the shared provider credentials.
+	// WebSearch backend ladder (issue #26): SearXNG selects its backend;
+	// Brave and Exa credentials use the shared provider credential lifecycle.
 	cfg.searxngURL = os.Getenv("SEARXNG_URL")
-	cfg.braveAPIKey = os.Getenv("BRAVE_API_KEY")
 	// An auth token from the environment is honored when the flag is unset, so a
 	// secret need not appear in the process argv.
 	if cfg.authToken == "" {

@@ -104,6 +104,17 @@ func TestBuildSearchProviderPrecedence(t *testing.T) {
 		}
 	})
 
+	t.Run("BRAVE_API_KEY beats EXA_API_KEY", func(t *testing.T) {
+		d := &searchDiag{}
+		p := buildSearchProvider(context.Background(), Config{Diagnostics: d, BraveAPIKey: braveKey, ExaAPIKey: exaKey})
+		if _, ok := p.(*refsearch.HTTPProvider); !ok {
+			t.Fatalf("BRAVE_API_KEY should resolve to *HTTPProvider, got %T", p)
+		}
+		if !strings.Contains(d.all(), "Brave backend") || strings.Contains(d.all(), "Exa backend") || strings.Contains(d.all(), braveKey) || strings.Contains(d.all(), exaKey) {
+			t.Fatalf("Brave must win over Exa without leaking keys; got:\n%s", d.all())
+		}
+	})
+
 	t.Run("SEARXNG_URL => HTTP provider (SearXNG)", func(t *testing.T) {
 		d := &searchDiag{}
 		p := buildSearchProvider(context.Background(), Config{Diagnostics: d, SearXNGURL: "https://searx.example/search"})

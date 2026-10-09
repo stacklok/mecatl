@@ -36,7 +36,7 @@ import (
 // knownAuthProviders is the closed set of provider names an auth.yaml entry
 // may use — passed into authfile.Load so that package stays agnostic of which
 // providers mecatl specifically knows about.
-var knownAuthProviders = []string{"anthropic", "openai", "openrouter", "opencode", "openai-codex", "exa"}
+var knownAuthProviders = []string{"anthropic", "openai", "openrouter", "opencode", "openai-codex", "brave", "exa"}
 
 // Provider credential / base-URL environment variables. These are the SECRET-shaped
 // inputs the cmd layer reads on the operator's behalf (the registry also auto-detects
@@ -49,6 +49,7 @@ const (
 	envOpenCodeKey   = "OPENCODE_API_KEY"
 	envTypesafeKey   = "TYPESAFE_API_KEY"
 	envExaKey        = "EXA_API_KEY"
+	envBraveKey      = "BRAVE_API_KEY"
 )
 
 // ProviderFlagHelp carries the per-main help text for the three provider base-URL
@@ -159,6 +160,7 @@ func (pf *ProviderFlags) resolve(env xdgconfig.ResolveEnv, now time.Time) Resolv
 	keys.Anthropic = cmp.Or(keys.Anthropic, af.APIKey("anthropic"))
 	keys.OpenCode = cmp.Or(keys.OpenCode, af.APIKey("opencode"))
 	keys.Exa = cmp.Or(keys.Exa, af.APIKey("exa"))
+	keys.Brave = cmp.Or(keys.Brave, af.APIKey("brave"))
 	loadCodexCredential(&keys, af, path, now)
 	return keys
 }
@@ -231,6 +233,7 @@ func ResolveProviderCredentials(pf *ProviderFlags, definitions permconfig.Provid
 	keys.Anthropic = cmp.Or(keys.Anthropic, file.APIKey("anthropic"))
 	keys.OpenCode = cmp.Or(keys.OpenCode, file.APIKey("opencode"))
 	keys.Exa = cmp.Or(keys.Exa, file.APIKey("exa"))
+	keys.Brave = cmp.Or(keys.Brave, file.APIKey("brave"))
 	loadCodexCredential(&keys, file, path, time.Now())
 	keys.customAPIKeys = make(map[string]string, len(definitions))
 	keys.customMethods = make(map[string]string, len(definitions))
@@ -290,6 +293,7 @@ func (*ProviderFlags) applyResolvedAPIKeys(cfg *app.Config, keys ResolvedCredent
 	cfg.OpenCodeKey = keys.OpenCode
 	cfg.TypesafeAPIKey = keys.Typesafe
 	cfg.ExaAPIKey = keys.Exa
+	cfg.BraveAPIKey = keys.Brave
 }
 
 // EndpointOverrides returns the non-secret CLI endpoint overrides. Command roots
@@ -326,6 +330,7 @@ func readProviderKeys(getenv func(string) string) ResolvedCredentials {
 		OpenCode:   getenv(envOpenCodeKey),
 		Typesafe:   getenv(envTypesafeKey),
 		Exa:        getenv(envExaKey),
+		Brave:      getenv(envBraveKey),
 	}
 }
 
@@ -339,6 +344,7 @@ type ResolvedCredentials struct {
 	OpenCode   string
 	Typesafe   string
 	Exa        string
+	Brave      string
 	// OpenAICodex is a distinct billing identity from OpenAIKey. Its fields are
 	// immutable outside the provider adjunct and it is populated only after
 	// startup validation of a file-backed manual token.

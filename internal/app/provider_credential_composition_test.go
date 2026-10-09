@@ -40,20 +40,23 @@ func (d *credentialStoreDiagnostics) contains(s string) bool {
 	return strings.Contains(strings.Join(d.lines, "\n"), s)
 }
 
-func TestBuildLoadsExaCredentialStoreAPIKeyFile(t *testing.T) {
+func TestBuildLoadsSearchCredentialStoreAPIKeyFile(t *testing.T) {
+	const exaKey = "paid-exa-key"
+	const braveKey = "paid-brave-key"
 	xdgConfigHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", xdgConfigHome)
 	t.Setenv("EXA_API_KEY", "")
+	t.Setenv("BRAVE_API_KEY", "")
 
-	credentialFile := filepath.Join(xdgConfigHome, "exa-auth.yaml")
-	if err := os.WriteFile(credentialFile, []byte("providers:\n  exa:\n    api_key: paid-exa-key\n"), 0o600); err != nil {
+	credentialFile := filepath.Join(xdgConfigHome, "search-auth.yaml")
+	if err := os.WriteFile(credentialFile, []byte("providers:\n  exa:\n    api_key: "+exaKey+"\n  brave:\n    api_key: "+braveKey+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	settingsDir := filepath.Join(xdgConfigHome, "mecatl")
 	if err := os.MkdirAll(settingsDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(settingsDir, "auth.yaml"), []byte("providers:\n  exa:\n    api_key: ambient-exa-key\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(settingsDir, "auth.yaml"), []byte("providers:\n  poisoned:\n    api_key: should-not-be-read\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(settingsDir, "settings.yaml"), []byte("credential_store:\n  api_key:\n    file: "+credentialFile+"\n"), 0o600); err != nil {
@@ -78,14 +81,14 @@ func TestBuildLoadsExaCredentialStoreAPIKeyFile(t *testing.T) {
 	}
 	defer built.Close()
 
-	if !diagnostics.contains("WebSearch ENABLED with Exa backend") || !diagnostics.contains("authenticated/paid") {
-		t.Fatal("credential_store.api_key.file did not produce a paid Exa search provider")
+	if !diagnostics.contains("WebSearch ENABLED with Brave backend") || diagnostics.contains(exaKey) || diagnostics.contains(braveKey) {
+		t.Fatal("credential_store.api_key.file did not produce a secret-safe Brave search provider")
 	}
 	credentials, _, err := loader.Load(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if credentials.ExaAPIKey != "paid-exa-key" {
-		t.Fatal("credential_store.api_key.file did not override conventional auth.yaml")
+	if credentials.ExaAPIKey != exaKey || credentials.BraveAPIKey != braveKey {
+		t.Fatal("credential_store.api_key.file did not override the poisoned conventional auth.yaml")
 	}
 }
