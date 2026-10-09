@@ -288226,6 +288226,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791539221628,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "599bf013a8e8ff894b30086acd0f12ef3ef447ef",
+          "message": "fix(microvm): recognize absent Darwin daemon processes (#2220)\n\nConfirm absent Darwin daemon PIDs independently after failed ps identity queries while preserving fail-closed handling for live or uncertain processes.\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-09T21:01:56+03:00",
+          "tree_id": "e0b2dc40a87ce6d609806ec8f50da2713e22c947",
+          "url": "https://github.com/stacklok/mecatl/commit/599bf013a8e8ff894b30086acd0f12ef3ef447ef"
+        },
+        "date": 1791569638392,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -417665,6 +417699,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791569635862,
+  "lastUpdate": 1791569639144,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
