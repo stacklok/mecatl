@@ -287152,6 +287152,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791529605985,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "jakub@stacklok.com",
+            "name": "Jakub Hrozek",
+            "username": "jhrozek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a4771a7872a63a4a26f14812998af6dbbc3bc188",
+          "message": "feat(authn): harden OIDC HTTPS and validate Kubernetes tokens (#2218)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-09T08:54:18+02:00",
+          "tree_id": "e4e4a1c39e31e66facd8095550f721583cf8228c",
+          "url": "https://github.com/stacklok/mecatl/commit/a4771a7872a63a4a26f14812998af6dbbc3bc188"
+        },
+        "date": 1791530308127,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -416132,6 +416166,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791530305384,
+  "lastUpdate": 1791530308734,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
