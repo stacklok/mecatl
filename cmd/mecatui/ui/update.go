@@ -473,9 +473,6 @@ func (m Model) dispatchNonInputMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if result, ok := msg.(client.ModelsMsg); ok && result.RequestToken < m.modelCatalogRequestToken {
 		return m, nil
 	}
-	if _, ok := msg.(dreamResultMsg); ok {
-		return m, nil // no longer owned by an open Dream surface
-	}
 	// Lifecycle / transport msgs (session-ready, connect/stream error, stream
 	// close, clipboard results, slash-command discovery).
 	if mm, cmd, handled := m.updateLifecycle(msg); handled {

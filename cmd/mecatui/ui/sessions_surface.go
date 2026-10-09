@@ -365,13 +365,6 @@ func (*sessionsState) modalPlacement() modalPlacement {
 	return modalPlacementFill
 }
 
-func (s *sessionsState) setSurfacePresentation(p surfacePresentation) {
-	if s.deps.theme.Name != p.theme.Name || s.deps.theme.Palette != p.theme.Palette || s.deps.marks != p.marks {
-		s.transcriptRend = nil
-	}
-	s.deps.refreshPresentation(p)
-}
-
 func (s *sessionsState) Render(width, height int) (string, []ClickableRegion) {
 	if width <= 0 || height <= 0 {
 		s.rowBudget, s.compact = 0, true

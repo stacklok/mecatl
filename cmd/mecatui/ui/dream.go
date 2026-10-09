@@ -55,8 +55,6 @@ type dreamResultMsg struct {
 	result    client.DreamMsg
 }
 
-func (s *dreamState) setSurfacePresentation(p surfacePresentation) { s.deps.refreshPresentation(p) }
-
 func (*dreamState) modalMaxOuterWidth() int { return 128 }
 func (s *dreamState) modalFrame() bool      { return !s.compact }
 

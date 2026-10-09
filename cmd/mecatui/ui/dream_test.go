@@ -605,16 +605,6 @@ func TestDreamSurfaceViewThemeAndBackOwnership(t *testing.T) {
 	if dreamSurface(t, m).view != dreamReview {
 		t.Fatal("Esc did not back out of confirmation")
 	}
-	m = m.switchTheme(theme.Solar())
-	_ = m.View()
-	if dreamSurface(t, m).deps.theme.Name != m.deps.Theme.Name {
-		t.Fatal("open surface retained prior theme")
-	}
-	m.keys = applyKeyOverrides(m.keys, map[string][]string{"Close": {"ctrl+f33"}})
-	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyF33, Mod: tea.ModCtrl})
-	if dreamSurface(t, m).view != dreamTargets {
-		t.Fatal("Dream retained old keymap")
-	}
 }
 
 func TestDreamReaderWheelMovesOnlyReader(t *testing.T) {
@@ -1068,17 +1058,15 @@ func TestDreamReceiptAffordancesFollowRecovery(t *testing.T) {
 	}
 }
 
-func TestDreamLiveCapabilityHintsAndKeymap(t *testing.T) {
+func TestDreamCapabilityHintsAndRecovery(t *testing.T) {
 	caps := &client.ManualDreamCapabilities{ProjectMemory: client.DreamTargetCapability{Generate: true, Decide: false, UnavailableReason: "read only"}}
 	m := dreamModel(t, &fakeDream{}, caps)
 	mm, _ := m.openDream()
 	m = mm.(Model)
 	_ = m.View()
-	m.keys = applyKeyOverrides(m.keys, map[string][]string{"Choose": {"ctrl+f33"}, "Close": {"ctrl+f34"}})
-	m = m.switchTheme(theme.Solar())
 	out := m.View().Content
-	if !strings.Contains(out, "read only") || !strings.Contains(out, m.helpKeyMarkings().choose) || dreamSurface(t, m).deps.theme.Name != m.deps.Theme.Name {
-		t.Fatal("live theme/keymap did not reach target hints")
+	if !strings.Contains(out, "read only") {
+		t.Fatal("target hints omitted unavailable capability")
 	}
 	plan := &client.DreamPlan{Target: client.DreamTargetProjectMemory}
 	s := dreamSurface(t, m)

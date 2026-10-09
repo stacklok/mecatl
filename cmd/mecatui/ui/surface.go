@@ -115,26 +115,10 @@ type surfaceIntentSource interface {
 	takeSurfaceIntent() surfaceIntent
 }
 
-// surfacePresentationSource optionally receives live display controls before Render.
-type surfacePresentationSource interface {
-	setSurfacePresentation(surfacePresentation)
-}
-
-type surfacePresentation struct {
-	theme theme.Theme
-	keys  keyMap
-	marks helpKeys
-}
-
-func (d *surfaceDeps) refreshPresentation(p surfacePresentation) {
-	d.theme, d.keys, d.marks = p.theme, p.keys, p.marks
-}
-
 // surfaceDeps is the SHARED ambient base every surface may reach, built at Open
 // by (m *Model).surfaceDeps() and held on the surface state as its deps field.
-// Only presentation fields are refreshed at Render; capabilities, context and
-// allocator keep their Open-time identities. Surface-specific immutable
-// inputs (lifecycle clients, epoch mints) live beside deps on the surface state.
+// They are captured at Open; surface-specific immutable inputs (lifecycle clients,
+// epoch mints) live beside deps on the surface state.
 type surfaceDeps struct {
 	theme theme.Theme
 	keys  keyMap              // for key.Matches
@@ -199,9 +183,6 @@ func (m *Model) setResolvedSessionModel(resolved client.ResolvedModel) (changed 
 }
 
 func (m *Model) renderModalSurface() string {
-	if source, ok := m.modal.(surfacePresentationSource); ok {
-		source.setSurfacePresentation(surfacePresentation{theme: m.deps.Theme, keys: m.keys, marks: m.helpKeyMarkings()})
-	}
 	placement := modalPlacementCard
 	if source, ok := m.modal.(modalPlacementSource); ok {
 		placement = source.modalPlacement()

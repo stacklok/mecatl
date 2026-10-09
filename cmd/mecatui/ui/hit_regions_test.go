@@ -27,10 +27,6 @@ type hitDispatchSurface struct {
 	wheels   int
 }
 
-func (s *hitDispatchSurface) setSurfacePresentation(p surfacePresentation) {
-	s.deps.refreshPresentation(p)
-}
-
 func (s *hitDispatchSurface) Render(width, height int) (string, []ClickableRegion) {
 	s.renders = append(s.renders, [2]int{width, height})
 	s.hits = nil

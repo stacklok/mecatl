@@ -119,8 +119,6 @@ type skillsResultMsg struct {
 	result    client.SkillsMsg
 }
 
-func (s *skillsState) setSurfacePresentation(p surfacePresentation) { s.deps.refreshPresentation(p) }
-
 func (*skillsState) modalMaxOuterWidth() int { return skillsMaxOuterWidth }
 func (s *skillsState) modalFrame() bool      { return !s.compact }
 

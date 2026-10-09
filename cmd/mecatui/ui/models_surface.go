@@ -68,8 +68,6 @@ type modelsGlobalDefaultIntent struct {
 
 func (modelsGlobalDefaultIntent) isSurfaceIntent() {}
 
-func (s *modelsState) setSurfacePresentation(p surfacePresentation) { s.deps.refreshPresentation(p) }
-
 func (s *modelsState) Render(width, height int) (string, []ClickableRegion) {
 	if width <= 0 || height <= 0 {
 		s.rowBudget = 0

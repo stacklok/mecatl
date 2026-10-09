@@ -77,14 +77,6 @@ type approvalSurface struct {
 	hits map[HitID]client.Verdict
 }
 
-func (s *approvalSurface) setSurfacePresentation(p surfacePresentation) {
-	if s.deps.theme.Name != p.theme.Name || s.deps.theme.Palette != p.theme.Palette || s.deps.marks != p.marks {
-		s.render = newApprovalRender(newRenderer(p.theme, p.marks))
-		s.planVPFingerprint, s.argsVPFingerprint = "", ""
-	}
-	s.deps.refreshPresentation(p)
-}
-
 func (s *approvalSurface) Render(width, height int) (string, []ClickableRegion) {
 	s.regionW, s.regionH = width, height
 	s.hits = nil

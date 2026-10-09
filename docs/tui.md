@@ -57,13 +57,21 @@ Overlays that take over the conversation region own their interaction state and
 size themselves from the geometry offered on each render; the parent owns placement
 and pointer mapping. Before keys or wheel events on any open surface, the parent
 prepares its current Render offer; only View publishes pointer hits. Resize and
-undisplayed preparation invalidate both hits and placement metrics. Surfaces may
-receive live theme, keymap, and help markings before Render, while context,
-capabilities, clients, and hit allocation retain their Open-time identities.
+undisplayed preparation invalidate both hits and placement metrics. A surface
+captures its presentation and operating dependencies when it opens. Introduce
+dynamic theme or keybinding updates only with a deliberate UI-wide design that
+covers every affected component.
 Follow the [`surface` contract](../cmd/mecatui/ui/surface.go) and its
 [migration guidance](drafts/surface-migration-plan.md) when adding or converting
 an overlay. A closed surface must not receive late results or leak keyboard and
 wheel events into the conversation.
+
+The `ui` package is large, so keep its internal components narrow and their
+contracts explicit. Prefer a shared contract when all comparable components use
+the same behavior. Treat a concrete type assertion in generic UI flow as a smell:
+justify the component's genuinely unique lifecycle before adding one. Do not add
+an interface for a speculative future capability; introduce it when the shared
+behavior exists and the contract can make the code simpler.
 
 Selectable inventories use `presentListRow` for the cursor marker, status cells,
 and selected-row styling. Follow `/models`: use the `spinner` accent style for

@@ -8,7 +8,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
-	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
 func TestZeroOfferModelsKeyBeforeFirstView(t *testing.T) {
@@ -107,18 +106,17 @@ func TestZeroOfferApprovalNeverGrantsBeforeFirstView(t *testing.T) {
 	}
 }
 
-func TestAdmissionKeyPreparesLiveSurfaceWithoutPublishingHits(t *testing.T) {
+func TestAdmissionKeyPreparesSurfaceWithoutPublishingHits(t *testing.T) {
 	m, _ := admissionModel(t, false)
 	m.prompt.Rewrite("retry me")
 	m = rejectAdmission(t, submitAdmission(t, m))
 	s := m.modal.(*admissionRecoveryState)
-	m.deps.Theme = theme.Solar()
 	m.hits.frame = []renderedHitRegion{{}}
 	*m.metrics = renderedSurfaceMetrics{outerBounds: cellRect{x1: 1, y1: 1}}
 	mm, cmd := m.Update(tea.KeyPressMsg{Code: 'z', Text: "z"})
 	m = mm.(Model)
-	if cmd != nil || m.modal != s || s.deps.theme.Name != m.deps.Theme.Name || len(m.hits.frame) != 0 || *m.metrics != (renderedSurfaceMetrics{}) {
-		t.Fatal("admission key skipped live presentation or published prepared frame")
+	if cmd != nil || m.modal != s || len(m.hits.frame) != 0 || *m.metrics != (renderedSurfaceMetrics{}) {
+		t.Fatal("admission key published prepared frame")
 	}
 	if !m.admissionSubmission.rejected {
 		t.Fatal("unrelated admission key lost retained submission")

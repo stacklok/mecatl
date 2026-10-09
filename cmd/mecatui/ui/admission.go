@@ -70,10 +70,6 @@ type admissionRecoveryState struct {
 	zeroOffer      bool
 }
 
-func (s *admissionRecoveryState) setSurfacePresentation(p surfacePresentation) {
-	s.deps.refreshPresentation(p)
-}
-
 func (s *admissionRecoveryState) Render(width, height int) (string, []ClickableRegion) {
 	if width <= 0 || height <= 0 {
 		s.zeroOffer = true

@@ -2,15 +2,10 @@ package ui
 
 import (
 	"context"
-	"encoding/json"
-	"reflect"
 	"strings"
 	"testing"
 
-	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
-
-	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
 type fillHitDispatchSurface struct{ hitDispatchSurface }
@@ -55,9 +50,7 @@ func TestModalFrameLifecycleSharedAcrossPlacements(t *testing.T) {
 			if len(wheelSpy.renders) != 1 || wheelSpy.renders[0] != ([2]int{wheelW, wheelH}) || wheelSpy.wheels != 1 || len(firstWheel.hits.frame) != 0 || *firstWheel.metrics != (renderedSurfaceMetrics{}) || firstWheel.vp.YOffset() != 9 {
 				t.Fatal("first wheel must prepare exactly once without publishing hits")
 			}
-			m.deps.Theme = theme.Solar()
 			s.deps.caps.UserModel = true
-			m.keys = applyKeyOverrides(defaultKeys(), overrideAll())
 			m.hits.clear()
 			m.metrics.clear()
 			mm, _, handled := m.dispatchSurfaceKey(tea.KeyPressMsg{Code: 'z', Text: "z"})
@@ -71,8 +64,8 @@ func TestModalFrameLifecycleSharedAcrossPlacements(t *testing.T) {
 			if !handled || len(s.renders) != 1 || s.keys != 1 || s.renders[0] != ([2]int{wantW, wantH}) {
 				t.Fatalf("first key preparation: renders=%v keys=%d handled=%v", s.renders, s.keys, handled)
 			}
-			if s.deps.theme.Name != m.deps.Theme.Name || s.deps.marks != m.helpKeyMarkings() || !reflect.DeepEqual(s.deps.keys, m.keys) || !s.deps.caps.UserModel || m.caps.UserModel || s.deps.ctx != openCtx || s.deps.ctx == m.deps.Ctx || s.deps.hits != openHits || s.deps.hits == m.hits || len(m.hits.frame) != 0 || *m.metrics != (renderedSurfaceMetrics{}) || m.vp.YOffset() != conversationOffset {
-				t.Fatal("presentation or undisplayed frame state after key")
+			if !s.deps.caps.UserModel || m.caps.UserModel || s.deps.ctx != openCtx || s.deps.ctx == m.deps.Ctx || s.deps.hits != openHits || s.deps.hits == m.hits || len(m.hits.frame) != 0 || *m.metrics != (renderedSurfaceMetrics{}) || m.vp.YOffset() != conversationOffset {
+				t.Fatal("stable dependencies or undisplayed frame state after key")
 			}
 			checkConversation := func(where string) {
 				t.Helper()
@@ -144,139 +137,6 @@ func TestModalFrameLifecycleSharedAcrossPlacements(t *testing.T) {
 				t.Fatal("zero-size wheel must prepare and consume without dispatch")
 			}
 		})
-	}
-}
-
-func TestModalPresentationRebuildsApprovalWithoutLosingReadingPosition(t *testing.T) {
-	cases := []struct {
-		name, title string
-		model       func(*testing.T) Model
-		viewport    func(*approvalSurface) *viewport.Model
-	}{
-		{
-			name: "plan", title: "Plan ready for review",
-			model: func(t *testing.T) Model {
-				m := planAskModel(t, true)
-				plan, err := json.Marshal(map[string]string{"plan": strings.Repeat("plan row\n\n", 70)})
-				if err != nil {
-					t.Fatal(err)
-				}
-				approvalSurfaceOf(t, m).ask.Args = string(plan)
-				return m
-			},
-			viewport: func(s *approvalSurface) *viewport.Model { return &s.planVP },
-		},
-		{
-			name: "args", title: "Ask args: Shell",
-			model:    func(t *testing.T) Model { return openArgsView(t, shellAskModel(t, tallShellArgs)) },
-			viewport: func(s *approvalSurface) *viewport.Model { return &s.argsVP },
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			m := tc.model(t)
-			s := approvalSurfaceOf(t, m)
-			oldTheme := m.deps.Theme
-			_ = m.View()
-			vp := tc.viewport(s)
-			if vp.TotalLineCount() <= vp.Height()+8 {
-				t.Fatalf("precondition: viewport must scroll: lines=%d height=%d content=%q", vp.TotalLineCount(), vp.Height(), stripANSIstr(vp.GetContent()))
-			}
-			oldStyledTitle := oldTheme.Style("askTitle").Render(tc.title)
-			if !strings.Contains(m.View().Content, oldStyledTitle) {
-				t.Fatal("old styled title missing from parent output")
-			}
-			vp.SetYOffset(5)
-			before := vp.YOffset()
-			if before != 5 || strings.Contains(stripANSIstr(vp.View()), tc.title) {
-				t.Fatal("precondition: title must be offscreen")
-			}
-			oldVisibleLine := strings.Split(vp.View(), "\n")[0]
-			if !strings.Contains(m.View().Content, oldVisibleLine) {
-				t.Fatal("old off-top viewport line missing from parent output")
-			}
-			oldHint := s.deps.marks.scroll
-			m.deps.Theme = theme.Solar()
-			m.deps.scrollKeysMarking = func() string { return "new-scroll-keys" }
-			// Preparation uses the same parent render path as View, without publishing hits.
-			mm, _, handled := m.dispatchSurfaceKey(tea.KeyPressMsg{Code: 'z', Text: "z"})
-			m = mm.(Model)
-			if !handled || vp.YOffset() != before || !s.planVPReady && tc.name == "plan" || !s.argsVPReady && tc.name == "args" {
-				t.Fatalf("pre-input refresh lost %s reading position or readiness: %d → %d", tc.name, before, vp.YOffset())
-			}
-			out := m.View().Content
-			if !strings.Contains(out, "new-scroll-keys") || strings.Contains(out, oldHint) || vp.YOffset() != before {
-				t.Fatalf("refreshed %s hints or offset incorrect: %d → %d", tc.name, before, vp.YOffset())
-			}
-			newVisibleLine := strings.Split(vp.View(), "\n")[0]
-			if oldVisibleLine == newVisibleLine || !strings.Contains(out, newVisibleLine) || strings.Contains(out, oldVisibleLine) {
-				t.Fatalf("%s off-top content retained old theme", tc.name)
-			}
-			m.deps.scrollKeysMarking = func() string { return "second-scroll-keys" }
-			mm, _, handled = m.dispatchSurfaceKey(tea.KeyPressMsg{Code: 'z', Text: "z"})
-			m = mm.(Model)
-			out = m.View().Content
-			if !handled || vp.YOffset() != before || !strings.Contains(out, "second-scroll-keys") || strings.Contains(out, "new-scroll-keys") || !strings.Contains(out, newVisibleLine) {
-				t.Fatalf("%s marks-only refresh lost viewport position, content, or updated hint", tc.name)
-			}
-			vp.SetYOffset(0)
-			out = m.View().Content
-			newStyledTitle := m.deps.Theme.Style("askTitle").Render(tc.title)
-			if oldStyledTitle == newStyledTitle || !strings.Contains(out, newStyledTitle) || strings.Contains(out, oldStyledTitle) {
-				t.Fatalf("%s parent output retained old styled title", tc.name)
-			}
-			vp.GotoBottom()
-			atEnd := vp.YOffset()
-			if atEnd <= before {
-				t.Fatal("precondition: must scroll past new geometry")
-			}
-			m = resize(m, 100, 50)
-			_ = m.View()
-			want := min(atEnd, max(0, vp.TotalLineCount()-vp.Height()))
-			if want >= atEnd {
-				t.Fatal("precondition: resize must clamp the previous offset")
-			}
-			if got := vp.YOffset(); got != want {
-				t.Fatalf("%s geometry clamp: got %d, want %d", tc.name, got, want)
-			}
-		})
-	}
-}
-
-func TestModalPresentationRebuildsTranscriptWithoutFollowingTail(t *testing.T) {
-	m, _ := hitDispatchModel(t)
-	s := &sessionsState{deps: (&m).surfaceDeps(), view: sessionsTranscript}
-	s.transcript.appendAssistant(strings.Repeat("transcript row\n\n", 80))
-	m.modal = s
-	oldTheme := m.deps.Theme
-	_ = m.View()
-	s.transcriptVP.SetYOffset(5)
-	s.transcriptStuck = false
-	before := s.transcriptVP.YOffset()
-	if before != 5 || s.transcriptVP.AtBottom() {
-		t.Fatalf("precondition: transcript must be off tail: lines=%d height=%d offset=%d", s.transcriptVP.TotalLineCount(), s.transcriptVP.Height(), before)
-	}
-	oldVisibleLine := strings.Split(s.transcriptVP.View(), "\n")[0]
-	if !strings.Contains(m.View().Content, oldVisibleLine) {
-		t.Fatal("old transcript line missing from parent output")
-	}
-	m.deps.Theme = theme.Solar()
-	m.keys = applyKeyOverrides(defaultKeys(), map[string][]string{"Close": {"ctrl+f16"}})
-	mm, _, handled := m.dispatchSurfaceKey(tea.KeyPressMsg{Code: 'z', Text: "z"})
-	m = mm.(Model)
-	if !handled || s.transcriptVP.YOffset() != before || s.transcriptStuck {
-		t.Fatal("pre-input refresh followed transcript tail")
-	}
-	out := m.View().Content
-	newVisibleLine := strings.Split(s.transcriptVP.View(), "\n")[0]
-	if oldVisibleLine == newVisibleLine || !strings.Contains(out, newVisibleLine) || strings.Contains(out, oldVisibleLine) {
-		t.Fatal("transcript content retained old style")
-	}
-	oldStyle := oldTheme.Style("muted").Render("Inspecting session · read-only")
-	newStyle := m.deps.Theme.Style("muted").Render("Inspecting session · read-only")
-	if oldStyle == newStyle || !strings.Contains(out, newStyle) || strings.Contains(out, oldStyle) ||
-		!strings.Contains(out, "ctrl+f16: Back") || strings.Contains(out, "esc: Back") || s.transcriptVP.YOffset() != before || s.transcriptStuck {
-		t.Fatal("transcript parent output retained old presentation or changed reading position")
 	}
 }
 
