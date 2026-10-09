@@ -318996,6 +318996,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791535591349,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e9c216aa1894b120c1a2be7fb21053196f0c9301",
+          "message": "fix(security): update Go and x/net vulnerability floors (#2221)\n\nRequire Go 1.27.2 across modules, workspace, and builders; update affected golang.org/x/net requirements to v0.60.0. Update golangci-lint for Go export-data compatibility and document independently reviewed statement-local G703 false positives without changing runtime behavior or vulnerability allowlists.\n\nValidated at a02adbbdec303853a51667eb4036f113ed378034: 36 checks passed, four expected skips, no failures or pending checks.\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-09T12:34:25+03:00",
+          "tree_id": "4cb5a968b015b3a90fcc7830f707cde80f5f9545",
+          "url": "https://github.com/stacklok/mecatl/commit/e9c216aa1894b120c1a2be7fb21053196f0c9301"
+        },
+        "date": 1791539225173,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3277,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 77.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -417188,6 +417227,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791539222316,
+  "lastUpdate": 1791539225696,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
