@@ -171,10 +171,22 @@ describe("schedule trigger lock", () => {
     }
   });
 
-  it("leaves the retry fields of an existing one-shot schedule editable", () => {
-    const existing = schedule({ trigger: STORED_TRIGGERS[1] });
-    const value = { ...valueFromSchedule(existing), oneShotMaxRetries: "5", oneShotRetry: true };
-    expect(bodyFromValue(displayedValue(value, existing), existing)).toMatchObject({
+  it("round-trips hidden limits and retry policy unchanged", () => {
+    const cron = schedule({ maxFires: 7 });
+    expect(bodyFromValue(valueFromSchedule(cron), cron)).toMatchObject({
+      maxFires: 7,
+      oneShotMaxRetries: 0,
+      oneShotRetry: false,
+      trigger: cron.trigger,
+    });
+
+    const once = schedule({
+      oneShotMaxRetries: 5,
+      oneShotRetry: true,
+      trigger: STORED_TRIGGERS[1],
+    });
+    expect(bodyFromValue(valueFromSchedule(once), once)).toMatchObject({
+      maxFires: 0,
       oneShotMaxRetries: 5,
       oneShotRetry: true,
       trigger: STORED_TRIGGERS[1],
