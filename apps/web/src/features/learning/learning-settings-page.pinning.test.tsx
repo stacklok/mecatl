@@ -11,7 +11,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Toaster } from "@/components/ui/sonner";
 import { routeTree } from "@/routeTree.gen";
-import { LearningReview as Subject } from "./learning-settings-page";
+import { LearningSettingsPage as Subject } from "./learning-settings-page";
 
 /**
  * Pins what Settings → Learning does today, through the rendered page and the
@@ -32,23 +32,23 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 const copy = {
   approve: "Approve",
-  approved: "Proposal approved.",
+  approved: "Suggestion approved",
   cancel: "Cancel",
   confirm: "Confirm",
   conflict:
-    "That proposal changed since it was loaded. The queue was refreshed; review it again before deciding.",
-  emptyPending: "Nothing is waiting for review.",
-  noFinishedChats: "No completed chats are available yet.",
-  promotedFilter: "Promoted",
-  receipt: "Reflection completed: 2 staged · 0 promoted · 0 conflicted.",
-  reflect: "Reflect",
-  reflectionOff: "Session reflection is not enabled on this Mecatl deployment.",
+    "That suggestion changed since it was loaded, so the list was refreshed. Review it again before deciding.",
+  emptyPending: "Nothing waiting for review.",
+  noFinishedChats: "No finished chats yet.",
+  promotedFilter: "Approved",
+  receipt: "Done: 2 to review.",
+  reflect: "Find suggestions",
+  reflectionOff: "Learning from a chat is not available right now.",
   reject: "Reject",
-  rejected: "Proposal rejected.",
+  rejected: "Suggestion rejected",
   rejectedFilter: "Rejected",
-  sessionPicker: "Completed session",
-  undo: "Undo promotion",
-  undone: "Promotion undone.",
+  sessionPicker: "Finished chat",
+  undo: "Undo approval",
+  undone: "Approval undone",
 };
 
 type Proposal = ListLearningProposalsResponse["items"][number];
@@ -201,16 +201,19 @@ async function row(title: string) {
 }
 
 async function chooseSession(user: ReturnType<typeof userEvent.setup>, title: string) {
-  const picker = await screen.findByLabelText(copy.sessionPicker);
-  await user.selectOptions(picker, title);
+  await user.click(await screen.findByRole("combobox", { name: copy.sessionPicker }));
+  await user.click(await screen.findByRole("option", { name: title }));
 }
 
+/** The chats the picker offers, read by opening it once the sessions have loaded. */
 async function sessionChoices() {
-  const picker = (await screen.findByLabelText(copy.sessionPicker)) as HTMLSelectElement;
-  await waitFor(() => expect(picker.options.length).toBeGreaterThan(1));
-  return [...picker.options]
-    .filter((option) => option.value !== "")
-    .map((option) => option.textContent);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("combobox", { name: copy.sessionPicker }));
+  const options = await screen.findAllByRole("option");
+  const names = options.map((option) => option.textContent);
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+  return names;
 }
 
 const listStatuses = () => state.listCalls.map((query) => query.get("status"));

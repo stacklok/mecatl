@@ -160,7 +160,7 @@ describe("settings responsive accessibility", () => {
   it("sizes personal preferences and Learning controls for touch", () => {
     const client = new QueryClient();
     client.setQueryData(getRuntimeQueryKey(), {
-      capabilities: { reflection: true },
+      capabilities: { learningProposals: true, reflection: true },
       connection: "online",
     } as GetRuntimeResponse);
     for (const section of ["profile", "agent"] as const) {
@@ -201,15 +201,15 @@ describe("settings responsive accessibility", () => {
       <SettingsWorkspace section="learning" />,
       client,
     );
-    for (const name of ["Pending", "Promoted", "Rejected"]) {
+    for (const name of ["Pending", "Deferred", "Approved", "Rejected", "Refresh suggestions"]) {
       const button = [...learning.querySelectorAll<HTMLButtonElement>("button")].find(
-        (item) => item.textContent === name,
+        (item) => item.textContent === name || item.getAttribute("aria-label") === name,
       );
       expect(button?.classList.contains("min-h-11"), name).toBe(true);
     }
     expect(
       learning
-        .querySelector('select[aria-label="Completed session"]')
+        .querySelector('[role="combobox"][aria-label="Finished chat"]')
         ?.classList.contains("min-h-11"),
     ).toBe(true);
   });

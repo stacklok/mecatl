@@ -101,6 +101,24 @@ Studio reports an error and refreshes the dialog with the current state.
 **Recent changes** shows the 20 most recent lifecycle events. The learned-skills
 list displays only the first 100 skills.
 
+### Review learning suggestions
+
+When the deployment enables learning proposals, open **Settings > Learning** to
+review what the agent suggests remembering. Filter the list by **Pending**,
+**Deferred**, **Approved**, or **Rejected**, and select **Load more** to reach
+suggestions past the first page. Select **Details** to see where a suggestion
+came from: a link to each source chat, whether the source is still available,
+and the excerpt the agent read.
+
+**Approve**, **Reject**, and **Undo approval** each ask for confirmation. If a
+suggestion changed since the page loaded, Studio refreshes the list and asks you
+to review it again. A deferred procedure can be approved as a learned-skill
+draft.
+
+When the deployment enables reflection, **Learn from a chat** asks the agent to
+re-read a finished chat and add any suggestions to the list. The deployment
+manages the learning mode and sensitivity; Studio does not change them.
+
 ### Client guidance
 
 Studio explains settings ownership in the settings pages: personal choices stay
