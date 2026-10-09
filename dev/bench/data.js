@@ -318202,6 +318202,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791529609255,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "jakub@stacklok.com",
+            "name": "Jakub Hrozek",
+            "username": "jhrozek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a4771a7872a63a4a26f14812998af6dbbc3bc188",
+          "message": "feat(authn): harden OIDC HTTPS and validate Kubernetes tokens (#2218)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-09T08:54:18+02:00",
+          "tree_id": "e4e4a1c39e31e66facd8095550f721583cf8228c",
+          "url": "https://github.com/stacklok/mecatl/commit/a4771a7872a63a4a26f14812998af6dbbc3bc188"
+        },
+        "date": 1791530311308,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3250,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 51,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 794,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -416166,6 +416205,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791530308734,
+  "lastUpdate": 1791530312029,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
