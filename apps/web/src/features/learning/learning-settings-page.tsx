@@ -1,21 +1,41 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type {
-  ListLearningProposalsResponse,
-  ReflectSessionResponse,
-} from "@mecatl-studio/contracts/generated";
+/**
+ * Settings → Learning, ported from the prototype's
+ * `features/learning/learning-settings-page.tsx`: the read-only Learning card
+ * first, then the Suggestions queue and the "Learn from a chat" card.
+ *
+ * The prototype restyled the review queue and reflection without changing what
+ * they call, and Studio keeps its semantics under the new layout:
+ *
+ * - every Approve, Reject, and Undo approval is confirmed first and sends the
+ *   version the row was loaded at;
+ * - a version conflict refreshes the queue, says so, and is never retried;
+ * - the queue pages with the daemon's cursor and keeps the chosen filter;
+ * - reflection offers completed chats only, refreshes the queue it feeds, and
+ *   explains when it is unsupported or fails.
+ */
+
+import type { ReflectSessionResponse } from "@mecatl-studio/contracts/generated";
 import {
   decideLearningProposalMutation,
   getRuntimeOptions,
-  listLearningProposalsOptions,
-  listLearningProposalsQueryKey,
+  listLearningProposalsInfiniteOptions,
+  listLearningProposalsInfiniteQueryKey,
   listSessionsOptions,
   reflectSessionMutation,
   undoLearningPromotionMutation,
 } from "@mecatl-studio/contracts/query";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { GraduationCap, RotateCcw, Sparkles } from "lucide-react";
+import {
+  type InfiniteData,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { GraduationCap, RotateCw } from "lucide-react";
 import { useMemo, useState } from "react";
+import { toast } from "sonner";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -25,82 +45,164 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "../../components/ui/alert-dialog";
-import { Badge } from "../../components/ui/badge";
-import { Button } from "../../components/ui/button";
-import { errorMessage } from "../../lib/error-message";
-import { formatDate } from "../../lib/formatters";
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Note, SettingsCard } from "@/features/settings/settings-card";
+import { errorMessage } from "@/lib/error-message";
+import { cn } from "@/lib/utils";
+import { LearningModeSection } from "./learning-mode-section";
+import { isProposalConflict, type Proposal, ProposalRow, proposalTitle } from "./proposal-row";
 
-type Proposal = ListLearningProposalsResponse["items"][number];
-type ProposalFilter = "promoted" | "rejected" | "staged";
+/**
+ * Status pills over the daemon's proposal vocabulary: "staged" is pending,
+ * "deferred_unsupported" is a suggestion the daemon could not apply when it
+ * was made, and "promoted" is approved and remembered. The value is the exact
+ * token the list request sends.
+ */
+const PROPOSAL_FILTERS = [
+  { empty: "Nothing waiting for review.", label: "Pending", value: "staged" },
+  { empty: "No deferred suggestions.", label: "Deferred", value: "deferred_unsupported" },
+  { empty: "No approved suggestions.", label: "Approved", value: "promoted" },
+  { empty: "No rejected suggestions.", label: "Rejected", value: "rejected" },
+] as const;
+type ProposalFilterValue = (typeof PROPOSAL_FILTERS)[number]["value"];
+
+/** One page of the queue per request; Load more appends the next. */
+const PROPOSAL_PAGE_SIZE = 50;
+
+const CONFLICT_NOTICE =
+  "That suggestion changed since it was loaded, so the list was refreshed. Review it again before deciding.";
+
 type PendingProposalAction =
   | { kind: "review"; decision: "approve" | "reject"; proposal: Proposal }
   | { kind: "undo"; proposal: Proposal };
 
-const filters: Array<{ label: string; value: ProposalFilter }> = [
-  { label: "Pending", value: "staged" },
-  { label: "Promoted", value: "promoted" },
-  { label: "Rejected", value: "rejected" },
-];
-
-export function LearningReview() {
-  const queryClient = useQueryClient();
+export function LearningSettingsPage() {
   const runtime = useQuery(getRuntimeOptions());
-  const sessions = useQuery(listSessionsOptions());
-  const [filter, setFilter] = useState<ProposalFilter>("staged");
-  const [selectedSession, setSelectedSession] = useState("");
+  const proposalsSupported = runtime.data?.capabilities.learningProposals === true;
+  const reflectionSupported = runtime.data?.capabilities.reflection === true;
+  const learningSupported = proposalsSupported || reflectionSupported;
+
+  return (
+    <div className="space-y-6">
+      <LearningModeSection />
+      {!learningSupported ? (
+        <div className="rounded-xl border bg-card p-5" role="status">
+          <div className="flex items-start gap-3">
+            <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted">
+              <GraduationCap aria-hidden="true" className="size-5 text-muted-foreground" />
+            </div>
+            <div className="min-w-0 space-y-1">
+              <h2 className="text-sm font-semibold">Learning is off</h2>
+              <p className="text-sm text-muted-foreground">Learning is off for this agent.</p>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <>
+          {proposalsSupported ? (
+            <ProposalQueueCard />
+          ) : (
+            <SettingsCard title="Suggestions">
+              <Note role="status">Reviewing suggestions is not available right now.</Note>
+            </SettingsCard>
+          )}
+          {reflectionSupported ? (
+            <ReflectionCard />
+          ) : (
+            <SettingsCard title="Learn from a chat">
+              <Note role="status">Learning from a chat is not available right now.</Note>
+            </SettingsCard>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function ProposalQueueCard() {
+  const queryClient = useQueryClient();
+  const [filter, setFilter] = useState<ProposalFilterValue>("staged");
   const [notice, setNotice] = useState<string>();
+  const [error, setError] = useState<string>();
   const [pendingAction, setPendingAction] = useState<PendingProposalAction>();
-  const proposals = useQuery(listLearningProposalsOptions({ query: { status: filter } }));
+  const listOptions = { query: { limit: PROPOSAL_PAGE_SIZE, status: filter } };
+  const proposals = useInfiniteQuery({
+    ...listLearningProposalsInfiniteOptions(listOptions),
+    getNextPageParam: (page) => (page.supported && page.nextCursor ? page.nextCursor : undefined),
+    initialPageParam: "",
+  });
   const decide = useMutation(decideLearningProposalMutation());
   const undo = useMutation(undoLearningPromotionMutation());
-  const reflection = useMutation(reflectSessionMutation());
-  const completedSessions = useMemo(
-    () =>
-      (sessions.data?.items ?? []).filter((session) => session.state === "completed").slice(0, 20),
-    [sessions.data?.items],
-  );
+  const busy = decide.isPending || undo.isPending;
+
+  const pages = proposals.data?.pages ?? [];
+  const unsupported = pages.find((page) => !page.supported);
+  /** Every page in order; an id a moving queue already showed is not listed twice. */
+  const items = useMemo(() => {
+    const seen = new Set<string>();
+    return (proposals.data?.pages ?? [])
+      .flatMap((page) => (page.supported ? page.items : []))
+      .filter((proposal) => {
+        if (seen.has(proposal.id)) return false;
+        seen.add(proposal.id);
+        return true;
+      });
+  }, [proposals.data?.pages]);
 
   async function refreshProposals() {
-    await queryClient.invalidateQueries({ queryKey: listLearningProposalsQueryKey() });
+    await queryClient.invalidateQueries({ queryKey: listLearningProposalsInfiniteQueryKey() });
   }
 
-  async function review(proposal: Proposal, decision: "approve" | "reject") {
+  /** Refresh restarts the walk from the daemon's first page. */
+  function restart() {
     setNotice(undefined);
-    try {
-      await decide.mutateAsync({
-        body: { decision, expectedVersion: proposal.version, reason: "" },
-        path: { proposalId: proposal.id },
-      });
-      setNotice(decision === "approve" ? "Proposal approved." : "Proposal rejected.");
-      await refreshProposals();
-    } catch (error) {
-      if (isProposalConflict(error)) {
-        setNotice(
-          "That proposal changed since it was loaded. The queue was refreshed; review it again before deciding.",
-        );
-        await refreshProposals();
-      }
-    } finally {
-      setPendingAction(undefined);
-    }
+    setError(undefined);
+    void queryClient.resetQueries({
+      queryKey: listLearningProposalsInfiniteQueryKey(listOptions),
+    });
   }
 
-  async function undoPromotion(proposal: Proposal) {
+  /** Details re-read a proposal; the list shows that current version. */
+  function replaceProposal(current: Proposal) {
+    queryClient.setQueryData<InfiniteData<(typeof pages)[number]>>(
+      listLearningProposalsInfiniteQueryKey(listOptions),
+      (data) =>
+        data && {
+          ...data,
+          pages: data.pages.map((page) => ({
+            ...page,
+            items: page.items.map((item) => (item.id === current.id ? current : item)),
+          })),
+        },
+    );
+  }
+
+  /**
+   * Runs one confirmed decision or undo. A 409 proposal_conflict means the
+   * proposal changed underneath the review: refresh and re-review, never a
+   * blind retry with the new version.
+   */
+  async function act(run: () => Promise<unknown>, done: string) {
     setNotice(undefined);
+    setError(undefined);
     try {
-      await undo.mutateAsync({
-        body: { expectedVersion: proposal.version },
-        path: { proposalId: proposal.id },
-      });
-      setNotice("Promotion undone.");
+      await run();
+      toast.success(done);
       await refreshProposals();
-    } catch (error) {
-      if (isProposalConflict(error)) {
-        setNotice(
-          "That proposal changed since it was loaded. The queue was refreshed; review it again before deciding.",
-        );
+    } catch (caught) {
+      if (isProposalConflict(caught)) {
+        setNotice(CONFLICT_NOTICE);
         await refreshProposals();
+      } else {
+        setError(errorMessage(caught));
       }
     } finally {
       setPendingAction(undefined);
@@ -109,162 +211,147 @@ export function LearningReview() {
 
   function confirmPendingAction() {
     if (!pendingAction) return;
-    if (pendingAction.kind === "review")
-      void review(pendingAction.proposal, pendingAction.decision);
-    else void undoPromotion(pendingAction.proposal);
-  }
-
-  function pendingActionDescription(action: PendingProposalAction): string {
-    return action.kind === "review"
-      ? reviewConfirmation(action.proposal, action.decision)
-      : `Undo the promotion for ${action.proposal.title || action.proposal.key || action.proposal.id}? The daemon will revert the associated memory write.`;
-  }
-
-  async function reflect() {
-    if (!selectedSession) return;
-    setNotice(undefined);
-    try {
-      const receipt = await reflection.mutateAsync({ path: { sessionId: selectedSession } });
-      setNotice(reflectionSummary(receipt));
-      await refreshProposals();
-    } catch {
-      // The generated mutation error is rendered below.
+    const { proposal } = pendingAction;
+    if (pendingAction.kind === "undo") {
+      void act(
+        () =>
+          undo.mutateAsync({
+            body: { expectedVersion: proposal.version },
+            path: { proposalId: proposal.id },
+          }),
+        "Approval undone",
+      );
+      return;
     }
+    const { decision } = pendingAction;
+    void act(
+      () =>
+        decide.mutateAsync({
+          body: { decision, expectedVersion: proposal.version, reason: "" },
+          path: { proposalId: proposal.id },
+        }),
+      decision === "approve" ? "Suggestion approved" : "Suggestion rejected",
+    );
   }
+
+  const emptyText =
+    PROPOSAL_FILTERS.find((item) => item.value === filter)?.empty ?? "Nothing here.";
 
   return (
-    <div className="space-y-6">
-      <section className="rounded-xl border bg-card p-5">
-        <div className="flex items-start gap-3">
-          <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
-            <Sparkles className="size-5" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <h2 className="font-semibold">Learning review queue</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Review daemon-curated proposals before they become memory. This screen never composes
-              memory content.
-            </p>
+    <SettingsCard title="Suggestions">
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          {/* Four 44px pills do not fit one phone row at the 18px root size, so on phones
+              they share the row in equal columns instead of scrolling sideways. */}
+          <div className="inline-flex max-w-full items-center gap-0.5 rounded-full bg-muted p-1 max-[499px]:grid max-[499px]:w-full max-[499px]:grid-cols-4">
+            {PROPOSAL_FILTERS.map((item) => (
+              <button
+                aria-pressed={filter === item.value}
+                className={cn(
+                  "min-h-11 shrink-0 rounded-full px-3.5 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-brand max-[499px]:px-1",
+                  filter === item.value
+                    ? "bg-background font-medium text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+                key={item.value}
+                onClick={() => {
+                  setFilter(item.value);
+                  setNotice(undefined);
+                  setError(undefined);
+                }}
+                type="button"
+              >
+                {item.label}
+              </button>
+            ))}
           </div>
-        </div>
-
-        <div className="mt-5 inline-flex max-w-full overflow-x-auto rounded-full bg-muted p-1">
-          {filters.map((item) => (
-            <button
-              className={`min-h-11 rounded-full px-4 text-sm focus-visible:outline-2 focus-visible:outline-brand ${filter === item.value ? "bg-background font-medium shadow-sm" : "text-muted-foreground"}`}
-              key={item.value}
-              onClick={() => {
-                setFilter(item.value);
-                setNotice(undefined);
-              }}
-              type="button"
-            >
-              {item.label}
-            </button>
-          ))}
+          <Button
+            aria-label="Refresh suggestions"
+            className="ml-auto min-h-11 min-w-11"
+            disabled={proposals.isFetching}
+            onClick={restart}
+            size="icon"
+            title="Refresh suggestions"
+            type="button"
+            variant="ghost"
+          >
+            <RotateCw className={cn(proposals.isFetching && "animate-spin")} />
+          </Button>
         </div>
 
         {notice && (
-          <p className="mt-4 rounded-lg bg-info/10 p-3 text-sm text-foreground">{notice}</p>
+          <p
+            className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-foreground"
+            role="status"
+          >
+            {notice}
+          </p>
         )}
-        {(decide.isError || undo.isError) && (
-          <p className="mt-4 rounded-lg bg-destructive/10 p-3 text-sm text-foreground">
-            {errorMessage(decide.error ?? undo.error)}
+        {error && (
+          <p className="text-sm text-destructive" role="alert">
+            {error}
           </p>
         )}
 
         {proposals.isPending ? (
-          <QueueState text="Loading proposals…" />
-        ) : proposals.isError ? (
-          <QueueState error text={errorMessage(proposals.error)} />
-        ) : !proposals.data.supported ? (
-          <QueueState text={proposals.data.reason} />
-        ) : proposals.data.items.length === 0 ? (
-          <QueueState
-            text={
-              filter === "staged" ? "Nothing is waiting for review." : `No ${filter} proposals.`
-            }
-          />
+          <p className="py-6 text-center text-sm text-muted-foreground" role="status">
+            Loading suggestions…
+          </p>
+        ) : proposals.isError && items.length === 0 ? (
+          <p className="text-sm text-destructive" role="alert">
+            {errorMessage(proposals.error)}
+          </p>
+        ) : unsupported && items.length === 0 ? (
+          <p
+            className="rounded-lg border border-dashed py-8 text-center text-sm text-muted-foreground"
+            role="status"
+          >
+            {unsupported.reason}
+          </p>
+        ) : items.length === 0 ? (
+          <p
+            className="rounded-lg border border-dashed py-8 text-center text-sm text-muted-foreground"
+            role="status"
+          >
+            {emptyText}
+          </p>
         ) : (
-          <ul className="mt-4 space-y-3">
-            {proposals.data.items.map((proposal) => (
-              <ProposalCard
-                busy={decide.isPending || undo.isPending}
+          <ul className="space-y-3" data-testid="learning-pending">
+            {items.map((proposal) => (
+              <ProposalRow
+                busy={busy}
                 key={proposal.id}
                 onApprove={() =>
                   setPendingAction({ decision: "approve", kind: "review", proposal })
                 }
                 onReject={() => setPendingAction({ decision: "reject", kind: "review", proposal })}
+                onReplace={replaceProposal}
                 onUndo={() => setPendingAction({ kind: "undo", proposal })}
                 proposal={proposal}
               />
             ))}
           </ul>
         )}
-        {proposals.data && !proposals.data.complete && (
-          <p className="mt-3 text-xs text-warning">
-            Showing the first 100 proposals in this state.
+        {proposals.isFetchNextPageError && (
+          <p className="text-sm text-destructive" role="alert">
+            {errorMessage(proposals.error)}
           </p>
         )}
-      </section>
-
-      <section className="rounded-xl border bg-card p-5">
-        <div className="flex items-start gap-3">
-          <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
-            <GraduationCap className="size-5" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <h2 className="font-semibold">Reflect on a completed session</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Ask Mecatl to re-read a finished chat and stage anything worth remembering into the
-              review queue.
-            </p>
-          </div>
-        </div>
-
-        {runtime.data && !runtime.data.capabilities.reflection ? (
-          <QueueState text="Session reflection is not enabled on this Mecatl deployment." />
-        ) : (
-          <div className="mt-5 flex flex-col gap-2 sm:flex-row">
-            <select
-              aria-label="Completed session"
-              className="min-h-11 min-w-0 flex-1 rounded-lg border bg-background px-3 text-sm focus-visible:outline-2 focus-visible:outline-brand"
-              onChange={(event) => setSelectedSession(event.target.value)}
-              value={selectedSession}
-            >
-              <option value="">Pick a completed chat…</option>
-              {completedSessions.map((session) => (
-                <option key={session.id} value={session.id}>
-                  {session.title || session.id}
-                </option>
-              ))}
-            </select>
+        {proposals.hasNextPage && (
+          <div className="flex justify-center">
             <Button
               className="min-h-11"
-              disabled={!selectedSession || reflection.isPending}
-              onClick={() => void reflect()}
-              variant="action"
+              disabled={proposals.isFetchingNextPage}
+              onClick={() => void proposals.fetchNextPage()}
+              size="sm"
+              type="button"
+              variant="outline"
             >
-              {reflection.isPending ? "Reflecting…" : "Reflect"}
+              {proposals.isFetchingNextPage ? "Loading more…" : "Load more"}
             </Button>
           </div>
         )}
-        {runtime.data?.capabilities.reflection &&
-          !sessions.isPending &&
-          completedSessions.length === 0 && (
-            <p className="mt-3 text-xs text-muted-foreground">
-              No completed chats are available yet.
-            </p>
-          )}
-        {reflection.isPending && (
-          <p className="mt-3 text-xs text-muted-foreground">
-            Reflection is model-driven and may take a minute.
-          </p>
-        )}
-        {reflection.isError && (
-          <p className="mt-3 text-sm text-destructive">{errorMessage(reflection.error)}</p>
-        )}
-      </section>
+      </div>
 
       <AlertDialog
         onOpenChange={(open) => !open && setPendingAction(undefined)}
@@ -279,145 +366,130 @@ export function LearningReview() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel className="min-h-11">Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="min-h-11"
-              disabled={decide.isPending || undo.isPending}
-              onClick={confirmPendingAction}
-            >
+            <AlertDialogAction className="min-h-11" disabled={busy} onClick={confirmPendingAction}>
               Confirm
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </SettingsCard>
   );
 }
 
-function ProposalCard({
-  busy,
-  onApprove,
-  onReject,
-  onUndo,
-  proposal,
-}: {
-  busy: boolean;
-  onApprove: () => void;
-  onReject: () => void;
-  onUndo: () => void;
-  proposal: Proposal;
-}) {
-  const title = proposal.title || proposal.key || proposal.id;
-  const digest = proposal.value || proposal.body;
-  const actionReason =
-    proposal.promotionUnavailableReason || "This proposal has no trusted memory target.";
+/**
+ * Explicit reflection over one completed chat: the daemon re-reads the session
+ * and stages suggestions from it, which then land in the queue above. It is
+ * synchronous and model-driven, so it can take a minute.
+ */
+function ReflectionCard() {
+  const queryClient = useQueryClient();
+  const sessions = useQuery(listSessionsOptions());
+  const [selected, setSelected] = useState("");
+  const reflection = useMutation(reflectSessionMutation());
+  const [receipt, setReceipt] = useState<ReflectSessionResponse>();
+  const [error, setError] = useState<string>();
+
+  const completedSessions = useMemo(
+    () =>
+      (sessions.data?.items ?? []).filter((session) => session.state === "completed").slice(0, 20),
+    [sessions.data?.items],
+  );
+
+  async function reflect() {
+    if (!selected) return;
+    setError(undefined);
+    setReceipt(undefined);
+    try {
+      setReceipt(await reflection.mutateAsync({ path: { sessionId: selected } }));
+      await queryClient.invalidateQueries({ queryKey: listLearningProposalsInfiniteQueryKey() });
+    } catch (caught) {
+      setError(errorMessage(caught));
+    }
+  }
+
+  const summary = receipt ? reflectionSummary(receipt) : undefined;
+
   return (
-    <li className="rounded-xl border bg-background p-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <h3 className="min-w-0 flex-1 font-medium">{title}</h3>
-        {proposal.kind && <Badge variant="muted">{proposal.kind}</Badge>}
-        {proposal.projectScoped && <Badge variant="outline">project</Badge>}
-      </div>
-      {proposal.key && proposal.key !== title && (
-        <p className="mt-1 font-mono text-xs text-muted-foreground">{proposal.key}</p>
-      )}
-      {proposal.description && (
-        <p className="mt-2 text-sm text-muted-foreground">{proposal.description}</p>
-      )}
-      {digest && (
-        <pre className="mt-3 max-h-48 overflow-y-auto whitespace-pre-wrap rounded-lg bg-muted p-3 font-mono text-xs leading-5">
-          {digest}
-        </pre>
-      )}
-      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        {proposal.evidenceCount > 0 && <span>{proposal.evidenceCount} evidence references</span>}
-        {proposal.triggers.slice(0, 4).map((trigger) => (
-          <Badge key={trigger} variant="outline">
-            {trigger}
-          </Badge>
-        ))}
-        {proposal.updatedAt && (
-          <span className="ml-auto">Updated {formatDate(proposal.updatedAt)}</span>
-        )}
-      </div>
-      <div className="mt-4 flex flex-wrap gap-2">
-        {proposal.status === "staged" && (
-          <>
-            <Button
-              className="min-h-11"
-              disabled={busy || !proposal.promotionAvailable}
-              onClick={onApprove}
-              size="sm"
-              title={proposal.promotionAvailable ? undefined : actionReason}
-              variant="action"
+    <SettingsCard title="Learn from a chat">
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Select onValueChange={setSelected} value={selected}>
+            <SelectTrigger
+              aria-label="Finished chat"
+              className="min-h-11 w-full min-w-0 min-[500px]:w-96"
             >
-              Approve
-            </Button>
-            <Button
-              className="min-h-11"
-              disabled={busy}
-              onClick={onReject}
-              size="sm"
-              variant="outline"
-            >
-              Reject
-            </Button>
-          </>
-        )}
-        {proposal.status === "promoted" && (
+              <SelectValue placeholder="Choose a finished chat…" />
+            </SelectTrigger>
+            <SelectContent>
+              {completedSessions.map((session) => (
+                <SelectItem key={session.id} value={session.id}>
+                  {session.title || session.id}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Button
             className="min-h-11"
-            disabled={busy || !proposal.promotionAvailable}
-            onClick={onUndo}
+            disabled={!selected || reflection.isPending}
+            onClick={() => void reflect()}
             size="sm"
-            title={proposal.promotionAvailable ? undefined : actionReason}
-            variant="outline"
           >
-            <RotateCcw />
-            Undo promotion
+            {reflection.isPending ? "Looking…" : "Find suggestions"}
           </Button>
+        </div>
+        {!sessions.isPending && completedSessions.length === 0 && (
+          <Note role="status">No finished chats yet.</Note>
         )}
-        {proposal.status !== "staged" && proposal.status !== "promoted" && (
-          <Badge variant="muted">{proposal.status.replaceAll("_", " ")}</Badge>
+        {reflection.isPending && (
+          <p className="text-xs text-muted-foreground" role="status">
+            This can take a minute. Keep this page open.
+          </p>
+        )}
+        {summary && (
+          <p className="text-sm text-muted-foreground" role="status">
+            {summary}
+          </p>
+        )}
+        {error && (
+          <p className="text-sm text-destructive" role="alert">
+            {error}
+          </p>
         )}
       </div>
-    </li>
+    </SettingsCard>
   );
 }
 
-function QueueState({ error, text }: { error?: boolean; text: string }) {
-  return (
-    <p
-      className={`mt-4 rounded-xl border border-dashed p-6 text-center text-sm ${error ? "border-destructive/40 text-destructive" : "text-muted-foreground"}`}
-    >
-      {text}
-    </p>
-  );
+/**
+ * The receipt in plain words; the daemon's own abstention message wins. A
+ * receipt that did not complete (queued, duplicate, rate limited) leads with
+ * that disposition instead of "Done".
+ */
+export function reflectionSummary(receipt: ReflectSessionResponse): string {
+  if (receipt.abstained) {
+    return receipt.message || "Nothing in that chat was worth remembering.";
+  }
+  const parts = [`${receipt.staged} to review`];
+  if (receipt.promoted > 0) parts.push(`${receipt.promoted} remembered`);
+  if (receipt.conflicted > 0) parts.push(`${receipt.conflicted} clashed with existing memory`);
+  if (receipt.queued > 0) parts.push(`${receipt.queued} still being checked`);
+  const disposition = receipt.disposition.replaceAll("_", " ");
+  const lead =
+    disposition === "" || disposition === "completed"
+      ? "Done"
+      : `${disposition.charAt(0).toUpperCase()}${disposition.slice(1)}`;
+  return `${lead}: ${parts.join(" · ")}.`;
 }
 
-export function reflectionSummary(receipt: ReflectSessionResponse) {
-  if (receipt.abstained)
-    return receipt.message || "Mecatl abstained; nothing in that session was worth remembering.";
-  const counts = [
-    `${receipt.staged} staged`,
-    `${receipt.promoted} promoted`,
-    `${receipt.conflicted} conflicted`,
-  ];
-  if (receipt.queued > 0) counts.push(`${receipt.queued} queued`);
-  return `Reflection ${receipt.disposition || "completed"}: ${counts.join(" · ")}.`;
-}
-
-function reviewConfirmation(proposal: Proposal, decision: "approve" | "reject") {
-  const title = proposal.title || proposal.key || proposal.id;
-  return decision === "approve"
-    ? `Approve ${title}? Mecatl will promote this daemon-curated digest into memory.`
-    : `Reject ${title}? The proposal will be retired without changing memory.`;
-}
-
-function isProposalConflict(error: unknown) {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    error.code === "proposal_conflict"
-  );
+function pendingActionDescription(action: PendingProposalAction): string {
+  const title = proposalTitle(action.proposal);
+  if (action.kind === "undo") {
+    return `Undo the approval for ${title}? Mecatl will revert the memory change it made.`;
+  }
+  if (action.decision === "reject") {
+    return `Reject ${title}? The suggestion will be retired without changing memory.`;
+  }
+  return action.proposal.kind === "procedure"
+    ? `Approve ${title}? Mecatl will draft a learned skill from it.`
+    : `Approve ${title}? Mecatl will remember this suggestion.`;
 }
