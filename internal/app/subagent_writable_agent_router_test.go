@@ -11,6 +11,7 @@ import (
 
 	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
@@ -143,9 +144,10 @@ func TestWritableRoutableDefFullBuildE2E(t *testing.T) {
 }
 
 // TestBuildAgentWritableModelEngineFactoryGuards pins the composition-side defensive
-// policy. The router gate normally bypasses these defs; the factory itself must still
-// reject pinned, known provider-switched, and inline-MCP defs. An unknown provider keeps
-// resolveProviderModel's established loud fallback and remains on the parent provider.
+// policy. The canonical ModelTarget factory declines pinned and inline-MCP defs; an
+// unpinned specialist accepts the resolved target provider/model, including a provider
+// selected by its definition. An unknown provider keeps resolveProviderModel's established
+// loud fallback and remains on the parent provider.
 func TestBuildAgentWritableModelEngineFactoryGuards(t *testing.T) {
 	parent := mockllm.New()
 	other := mockllm.New()
@@ -160,15 +162,14 @@ func TestBuildAgentWritableModelEngineFactoryGuards(t *testing.T) {
 	if got := routableAgentNames(provReg, defs, providerOpenAI); !slices.Equal(got, []string{"unknown-provider"}) {
 		t.Fatalf("router eligibility = %v, want only the unknown-provider fallback def", got)
 	}
-	_, factory := buildAgentWritableEngineFactories(context.Background(), cfg, provReg, parent,
-		providerOpenAI, "gpt-5", defs, nil, hookexec.New(nil), nil)
+	factory := buildAgentWritableTargetEngineFactory(context.Background(), cfg, provReg, providerOpenAI, defs, nil, hookexec.New(nil), nil)
 
-	for _, name := range []string{"pinned", "switched", "inline"} {
-		if eng, ok := factory(name, routerLarge); ok || eng != nil {
+	for _, name := range []string{"pinned", "inline"} {
+		if eng, ok := factory(name, agent.ModelTarget{Model: routerLarge}); ok || eng != nil {
 			t.Fatalf("factory(%q, routed) = (%v,%v), want defensive decline", name, eng, ok)
 		}
 	}
-	eng, ok := factory("unknown-provider", routerLarge)
+	eng, ok := factory("unknown-provider", agent.ModelTarget{Model: routerLarge})
 	if !ok || eng == nil {
 		t.Fatal("unknown provider must preserve the established fallback to the parent provider")
 	}

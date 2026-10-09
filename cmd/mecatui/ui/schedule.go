@@ -16,10 +16,10 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
-// schedule.go is the /schedule overlay (issue #234, Phase 3a) — a selecting
+// schedule.go is the /schedule overlay (issue #234) — a selecting
 // overlay mirroring /worktrees' cursor+filter+confirm shape, with an added
 // read-only inspect sub-view (full spec + state + fires), per-row action keys
-// (pause/resume/fire-now/delete), and a Create form (Phase 3b, issue #236). The
+// (pause/resume/fire-now/delete), and a Create form (issue #236). The
 // form's trigger field accepts EITHER raw cron OR a natural-language phrase
 // (compiled client-side via cmd/mecatui/schedparse, stdlib-only).
 //
@@ -37,7 +37,7 @@ const (
 	schedulePanel                       // the flat, type-to-filter list
 	scheduleConfirm                     // the post-d delete confirmation
 	scheduleInspect                     // the read-only full-spec + fires view
-	scheduleCreate                      // the in-overlay Create form (Phase 3b)
+	scheduleCreate                      // the in-overlay Create form
 )
 
 // scheduleState holds the /schedule overlay state on the Model. Value-embedded so
@@ -63,10 +63,9 @@ type scheduleState struct {
 	form         scheduleForm
 }
 
-// scheduleForm is the in-overlay Create form (Phase 3b, issue #236): a small,
-// common-path authoring surface mirroring the per-row action keys. The CLI
-// (mecated schedule create) covers the full flag surface; the form keeps it
-// SIMPLE — name, prompt, trigger (cron OR NL), mutating. The trigger
+// scheduleForm is the in-overlay Create form (issue #236): a small,
+// common-path authoring surface mirroring the per-row action keys. The form
+// keeps it SIMPLE — name, prompt, trigger (cron OR NL), mutating. The trigger
 // field accepts EITHER a raw cron expression OR a natural-language phrase; on
 // submit, schedparse.Compile is tried first (compile to cron or one-shot), and
 // only on no-match is the value treated verbatim as raw cron. Mode defaults to
@@ -226,10 +225,10 @@ func (m Model) openScheduleConfirm() (tea.Model, tea.Cmd, bool) {
 	return m, nil, true
 }
 
-// openScheduleCreate opens the in-overlay Create form (Phase 3b, issue #236).
+// openScheduleCreate opens the in-overlay Create form (issue #236).
 // It mints a fresh scheduleForm with the focus on the name field and default
 // values (singleton=true, mutating=false). The form is a common-path authoring
-// surface — the CLI covers the full flag surface; the form keeps it simple.
+// surface and keeps it simple.
 func (m Model) openScheduleCreate() (tea.Model, tea.Cmd, bool) {
 	newInput := func(placeholder string) textinput.Model {
 		ti := textinput.New()
@@ -657,8 +656,7 @@ func renderSchedulePanel(th theme.Theme, st scheduleState, _ client.Capabilities
 	}
 	// The enter (Choose) and esc (Close) chords read the LIVE keyMap markings;
 	// the c/p/r/f/d// action keys are BARE keys consumed via msg.String (NOT
-	// keyMap bindings), so they stay literal (issue #457). With defaults the
-	// hint is byte-identical to the historical literal.
+	// keyMap bindings), so they stay literal (issue #457).
 	b.WriteString("\n" + th.Style("muted").Render(hk.choose+": inspect  c: create  p: pause  r: resume  f: fire-now  d: delete  /: filter  "+hk.closeOnly+": close"))
 	return b.String()
 }
@@ -829,7 +827,7 @@ func renderScheduleFireLine(f client.ScheduleFire, selected bool) string {
 	return line
 }
 
-// renderScheduleCreate renders the in-overlay Create form (Phase 3b, issue #236).
+// renderScheduleCreate renders the in-overlay Create form (issue #236).
 // The focused field is highlighted with the accent style; the mutating toggle
 // shows y/n when focused. The footer hint advertises the keybindings.
 func renderScheduleCreate(th theme.Theme, st scheduleState, hk helpKeys, _, _ int) string {

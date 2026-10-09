@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // @vitest-environment happy-dom
 
+import { client as apiClient } from "@mecatl-studio/contracts/client";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createMemoryHistory,
   createRootRoute,
@@ -12,17 +14,8 @@ import {
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { TooltipProvider } from "../ui/tooltip";
 import { TopNav } from "./top-nav";
-
-vi.mock("../../features/search/global-search", () => ({
-  GlobalSearch: () => <button aria-label="Search" type="button" />,
-}));
-
-vi.mock("../ui/tooltip", () => ({
-  Tooltip: ({ children }: { children: React.ReactNode }) => children,
-  TooltipContent: () => null,
-  TooltipTrigger: ({ children }: { children: React.ReactNode }) => children,
-}));
 
 const destinations = [
   ["Chats", "/workspace/chat"],
@@ -49,11 +42,19 @@ function testRouter() {
   });
 }
 
+const initialApiConfig = apiClient.getConfig();
+
 beforeEach(() => {
+  // Search asks for the auth session; answer it at the network boundary.
+  const fetch = vi.fn<typeof globalThis.fetch>(async () =>
+    Response.json({ mode: "none", status: "disabled" }),
+  );
+  apiClient.setConfig({ baseUrl: window.location.origin, fetch });
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 });
 
 afterEach(() => {
+  apiClient.setConfig({ baseUrl: initialApiConfig.baseUrl, fetch: initialApiConfig.fetch });
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   document.body.replaceChildren();
 });
@@ -65,7 +66,13 @@ describe("TopNav routing", () => {
     document.body.append(host);
     const root = createRoot(host);
     await act(async () => {
-      root.render(<RouterProvider router={router} />);
+      root.render(
+        <QueryClientProvider client={new QueryClient()}>
+          <TooltipProvider>
+            <RouterProvider router={router} />
+          </TooltipProvider>
+        </QueryClientProvider>,
+      );
       await router.load();
     });
 

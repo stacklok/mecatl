@@ -53,12 +53,6 @@ describe("settings responsive accessibility", () => {
     const selector = page.querySelector<HTMLSelectElement>("#settings-section");
     const navigation = page.querySelector<HTMLElement>('nav[aria-label="Settings sections"]');
     const buttons = navigation?.querySelectorAll<HTMLButtonElement>("button");
-    const returnLink = [...page.querySelectorAll<HTMLAnchorElement>("a")].find((link) =>
-      /← Chats/u.test(link.textContent ?? ""),
-    );
-    expect(returnLink?.getAttribute("href")).toBe("/workspace/chat");
-    expect(returnLink?.classList.contains("min-h-11")).toBe(true);
-    expect(returnLink?.className).toContain("focus-visible:");
     expect(selector?.querySelector('option[value="models"]')?.hasAttribute("selected")).toBe(true);
     expect(selector?.classList.contains("min-h-11")).toBe(true);
     expect(selector?.className).toContain("focus-visible:");

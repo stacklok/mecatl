@@ -210,7 +210,7 @@ jobs:
           version: 11.25.0
           run_install: false
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node-version }}
           cache: pnpm
@@ -263,7 +263,7 @@ jobs:
           version: 11.25.0
           run_install: false
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24.x'
           cache: pnpm
@@ -323,7 +323,7 @@ jobs:
           version: 11.25.0
           run_install: false
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24.x'
           cache: pnpm
@@ -386,7 +386,7 @@ jobs:
           version: 11.25.0
           run_install: false
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24.x'
           cache: pnpm
@@ -451,7 +451,7 @@ jobs:
 
       # setup-node and setup-go include runner OS and architecture in their cache
       # keys, so this macos-14 job cannot restore either Linux cache family.
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22.x'
           cache: pnpm
@@ -498,7 +498,7 @@ jobs:
           version: 11.25.0
           run_install: false
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
           cache: pnpm
@@ -618,9 +618,9 @@ jobs:
   studio:
     name: Mecatl Studio (apps/)
     needs: changes
-    # Studio builds the checked-out SDK until the execution-template contract
-    # is published; the job runs on apps/, SDK, or Go changes. The no-push
-    # image build uses the same root-context Dockerfile as the release job.
+    # Studio builds the checked-out SDK for execution-template APIs and drives
+    # its integration suite against the daemon; run for apps/, SDK, or Go changes.
+    # The image build is push: false.
     if: needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.studio_relevant == 'true' || needs.changes.outputs.go_relevant == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -640,7 +640,7 @@ jobs:
           package_json_file: apps/package.json
           run_install: false
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: apps/.node-version
           cache: pnpm
@@ -694,7 +694,7 @@ jobs:
       - name: Test Studio browser journeys (Playwright, offline)
         run: task studio:browser
 
-      - uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       # The same apps/Dockerfile the release job publishes, loaded locally so the
       # steps below can run and scan it. amd64 only here — the release job builds
@@ -850,7 +850,7 @@ jobs:
         if: needs.changes.outputs.microvm_relevant == 'true'
         run: cd environment/microvm && go build ./...
 
-      # provider/ holds the opt-in LLM-provider Go submodules (ADR 0093), each
+      # provider/ holds the opt-in LLM-provider Go submodules, each
       # its own module under the workspace — build them explicitly too.
       - name: go build (provider modules)
         run: |
@@ -942,7 +942,7 @@ jobs:
       - name: Exercise provider configuration writes
         run: |
           go test ./internal/adapter/privatefile ./internal/adapter/authfile ./internal/adapter/permconfig ./internal/adapter/credentialstore -count=1
-          go test ./cmd/mecatui -run '^(TestProviderCommandsOIDCLoginPreparesAbsentPrivateRoot|TestInvariant_ProviderSetupFollowup_TerminalCancellationAndSecretSafety|TestProviderReview.*)$' -count=1
+          go test ./cmd/mecatui -run '^(TestProviderCommandsOIDCLoginPreparesAbsentPrivateRoot|TestInvariant_ProviderSetupFollowup_SecretSafety|TestProviderReview.*)$' -count=1
 
   managed-temp-macos:
     name: Managed temporary storage (macOS)
@@ -974,8 +974,8 @@ jobs:
       - name: Run managed temporary storage tests
         run: |
           go test ./internal/adapter/managedtemp -count=1
-          go test ./internal/adapter/osfs -run '^TestADR_0281_.*' -count=1
-          go test ./internal/app -run '^TestADR_0281_ManagedModeUnixAdmission$' -count=1
+          go test ./internal/adapter/osfs -run '^TestManagedTemp_' -count=1
+          go test ./internal/app -run '^TestManagedModeUnixAdmission$' -count=1
           # The FreeBSD check covers the OS adapter. The app is released for
           # Linux/macOS, and ToolHive's 1Password SDK cannot compile on FreeBSD.
           GOOS=freebsd GOARCH=amd64 go test -c -o "$RUNNER_TEMP/osfs-freebsd.test" ./internal/adapter/osfs
@@ -1083,7 +1083,7 @@ jobs:
       - name: golangci-lint (microVM integration module)
         run: cd integration/microvm && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...
 
-      # provider/ submodules (ADR 0093) — each its own module, sharing the ROOT
+      # provider/ submodules — each its own module, sharing the ROOT
       # golangci config so the depguard allowlists stay the single source of truth.
       - name: golangci-lint (provider modules)
         run: |
@@ -1273,10 +1273,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Proves the importable-core module builds + tests with NO workspace and NO
-    # host-repo deps: the engine's tiny dependency closure (doublestar + x/sync +
-    # goleak) is self-contained, so an external `go get
-    # github.com/stacklok/mecatl/engine` resolves only that closure, not mecatl's
-    # heavy require cone. See docs/adr/0036-engine-module.md.
+    # host-repo deps: the engine's small dependency closure is self-contained, so
+    # an external `go get github.com/stacklok/mecatl/engine` resolves only that
+    # closure, not mecatl's heavy require cone.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1354,7 +1353,7 @@ jobs:
     # `require provider/ssefilter v0.0.0`, which is unresolvable until the first
     # provider/ssefilter/vX.Y.Z tag — deferred (issue #379); covered by the
     # workspace (GOWORK=on) build/test jobs. Once mecatl is open-sourced the warm
-    # needs no token (proxy serves the modules). See ADR 0093.
+    # needs no token (proxy serves the modules).
     permissions:
       contents: read
     steps:
@@ -1416,8 +1415,8 @@ jobs:
     if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    # The engine module's public API surface (the seven core packages) is a
-    # committed compatibility contract — see engine/COMPATIBILITY.md + ADR 0037.
+    # The engine module's public API surface (the eight core packages) is a
+    # committed compatibility contract — see engine/COMPATIBILITY.md.
     # This gate re-derives the surface and fails on any drift from the committed
     # engine/api/*.txt baselines, forcing a deliberate, reviewed `task api:update`
     # + an engine/CHANGELOG.md note. The dumper test lives in the ROOT module
@@ -1538,7 +1537,7 @@ jobs:
           cd authn/oidc && govulncheck -format json ./... \
             | go run ../../.github/scripts/govulncheck-gate.go # v1.8.0
 
-      # provider/ submodules (ADR 0093) — each its own module; scan against its
+      # provider/ submodules — each its own module; scan against its
       # own go.mod so the provider library's closure is checked independently.
       - name: govulncheck (provider modules — strict, no allowlist)
         shell: bash
@@ -1645,7 +1644,7 @@ jobs:
       # matlatl's composite action builds the gate from ITS OWN checkout, so
       # there is no binary step and no extra credentials here — only org Actions
       # access to stacklok/matlatl (granted org-wide). strict also fails on
-      # orphans / unreachable / ambiguous links (ADR 0005), not just broken
+      # orphans / unreachable / ambiguous links, not just broken
       # links/anchors. Pinned to a release SHA (house rule); the # comment
       # records the tag. findings.json + junit.xml land in matlatl-out/.
       - name: matlatl docs gate (strict)
@@ -1681,7 +1680,7 @@ jobs:
           version: 11.25.0
           run_install: false
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
           cache: 'npm'

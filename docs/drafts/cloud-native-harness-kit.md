@@ -1,7 +1,5 @@
 # Cloud-Native Harness Kit — definition
 
-Status: **strawman / working draft.**
-
 This is the *conceptual / positioning* definition of the cloud-native harness kit. It
 sits **above** `adr/0027-cloud-native.md`, which is the mecatl-internal engineering arc (make
 *this process* disposable). This doc asks the broader question: what is the **kit**, what

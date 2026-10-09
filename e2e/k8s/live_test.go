@@ -30,7 +30,7 @@ import (
 // once in BeforeSuite), so there is no patch/unpatch dance. Each live spec uses a
 // fresh session to avoid cross-spec lease/state coupling.
 func liveSpecs() {
-	ginkgo.Describe("live LLM runs through the pods (ADR 0048 under real load)", func() {
+	ginkgo.Describe("live LLM runs through the pods (under real load)", func() {
 		// liveBeforeEach is the shared gate: skip the WHOLE live block when the key
 		// is absent (the mock suite already ran; these specs add nothing offline).
 		ginkgo.BeforeEach(func() {

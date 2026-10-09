@@ -26,8 +26,21 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   calculation used by instruction discovery and pending target reservations.
   Added (minor).
 
+- **Delegated tool-call correlation** — adds optional `ChildToolCallID` to
+  `session.SubagentPayload`, `session.ParallelPayload`, and `session.TeamPayload`
+  for child tool.call/tool.result projections, scoped by child lane. Added (minor).
+
 - **Live tool-result availability** — adds `session.EvToolResultAvailable` for
   safe display payloads ahead of the canonical `tool.result`. Added (minor).
+
+- **Provider-aware delegation target seam** — adds `agent.ModelTarget`,
+  `agent.ResolvedModelSelector`, `agent.SubagentSelectorResolver`, provider-aware
+  delegation engine factories, and the optional `Provider`
+  field on `agent.ModelRouteResult`. `session.SubagentPayload`,
+  `session.ParallelPayload`, and `session.TeamMemberSpec` gain concrete `Provider`
+  and `ExplicitRouterCategory` start metadata. Composition can preserve direct,
+  aliased, and automatic router provider/model pairs while rebuilding
+  provider-dependent child dependencies. Added (minor).
 
 - **Configurable standard commit co-author guidance** — adds
   `prompt.Config.CommitCoauthor`. `nil` and `true` include the canonical Mecatl
@@ -381,6 +394,13 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   targets without consulting child checkout files; this is also a breaking pre-v1
   minor contract change.
 
+- **Delegation factory consolidation** — `agent.WithParallelEngineFactory`,
+  `WithSubagentEngineFactory`, `WithWritableEngineFactory`,
+  `WithAgentModelEngineFactory`, and `WithAgentWritableModelEngineFactory` now
+  receive provider-aware `ModelTarget` values. Team's existing member-engine
+  factories receive resolved selections through `MemberSpec.Selector`, including
+  automatic routing. Changed (breaking, pre-v1 minor).
+
 - **Workspace-free harness prompt sources (ADR 0357)** — `prompt.InstructionAssembler.Assemble`, `CommandExpander.Expand`, `CommandLister.List`, and `AssembleWithManifest` no longer accept an execution workspace. `RootAssembler` and `NewDirCommandExpander` instead bind a source `tool.Workspace` at construction. This intentionally breaks implementers and callers so execution placement cannot implicitly select instruction or command authority. Changed (breaking, pre-v1 minor).
 
 - **Exact reflection identity** — `agent.NewEvidenceReflector` now requires a
@@ -545,6 +565,13 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   breaking under `COMPATIBILITY.md` (pre-v1 a minor bump).
 
 ### Removed
+
+- **Redundant delegation selector APIs** — removes `WithParallelTargetEngineFactory`,
+  `WithSubagentTargetEngineFactory`, `WithWritableTargetEngineFactory`,
+  `WithAgentTargetEngineFactory`, `WithAgentWritableTargetEngineFactory`,
+  `WithTeamToolSelectorFactory`, `WithTeamMemberSelectorFactory`,
+  `Supervisor.MemberProvider`, and `Supervisor.MemberSelectionEvidence` (the last
+  is now package-private). Removed (breaking, pre-v1 minor).
 
 - **`port.RetryDisposition`, `port.StreamProgress`, and their constants** — removes
   the temporary source-compatibility aliases. Providers and decorators use the

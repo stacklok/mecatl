@@ -1,16 +1,18 @@
 # Writing Mecatl user documentation
 
 This directory contains the public documentation for [Mecatl](../README.md). It
-helps people use `mecatui` and helps developers and operators embed, extend, and
-deploy Mecatl. The Docusaurus site renders this directory; keep site
-infrastructure in `website/`. For Docusaurus mechanics, see
+helps people use Mecatl through `mecatui`, helps operators deploy Mecatl, and helps
+builders integrate Mecatl into applications. The Docusaurus site renders this
+directory; keep site infrastructure in `website/`. For Docusaurus mechanics, see
 [`website/AGENTS.md`](../website/AGENTS.md).
 
 Before drafting or substantively editing a page, use the repository's
 [style guide](_STYLE.md). It is the
 canonical source for prose, voice, terminology, and formatting. This file
 remains canonical for information architecture, content ownership, links, and
-verification.
+verification. Coding agents should also use the repository's
+[`tech-writer` skill](../.claude/skills/tech-writer/SKILL.md) for Diataxis mode
+guidance and write-time anti-patterns.
 
 ## Find the right place
 
@@ -19,25 +21,30 @@ directories; do not create a manual sidebar to express this structure.
 
 |Location|Audience and content|Exclusions|
 |-|-|-|
-|`intro.md`|New readers choosing between the terminal-client and builder paths.|Detailed instructions and reference material. Link to the owning section.|
-|`install.md`|Readers who need Mecatl's executables on a workstation or host: Homebrew, release archives and their verification, deployment artifacts, and source builds.|First-run workflow, configuration, and deployment-specific steps. Link to the owning client or deployment page.|
+|`intro.md`|New readers choosing among the terminal-client, operator, and builder paths.|Detailed instructions and reference material. Link to the owning section.|
+|`cloud-native-harness.md`|Readers understanding Mecatl's defining architecture and how it differs from desktop harnesses.|Task-oriented setup, deployment, and configuration. Link to the owning guide.|
 |`mecatui/`|Terminal users who need to install, start, connect, configure, or troubleshoot the `mecatui` client.|Server deployment, server policy, and shared feature semantics. Link to the owning server or feature page.|
-|`building/getting-started/`|Builders and embedders following a first path, such as creating an agent or choosing a deployment.|Exhaustive API reference, operations procedures, and feature configuration.|
+|`operating/`|Operators deploying, securing, and maintaining `mecated`, `mecak8s`, Studio, and remote services.|Client workflows, embedding APIs, and shared capability behavior. Link to the owning client, builder, or capability page.|
+|`building/go/`|Go builders following tutorial, concepts, embedding, extension points, and compatibility.|Operator runbooks and duplicate capability explanations.|
+|`building/ci/`|Builders integrating one-shot agent jobs into CI.|Long-running service deployment.|
 |`building/typescript-sdk/`|TypeScript developers connecting applications, controlling sessions and runs, or owning a local daemon.|Wire-protocol reference and shared feature semantics. Link to the owning reference or feature page.|
-|`building/what-you-get/`|Builders who need an overview or technical reference for engine capabilities included in an embedding.|Operator procedures and feature configuration that applies across deployment options. Link to the feature page for those.|
-|`building/extension-points/`|Developers integrating with Mecatl's public seams, ports, and APIs.|How to operate a supplied deployment or use an existing feature.|
-|`building/deployment/`|Operators and platform builders deploying, securing, and maintaining a specific Mecatl deployment. The Studio page also guides people using that deployment's browser client.|Other client workflows and shared feature behavior except where a deployment changes availability or operation.|
-|`features/`|Users and operators enabling or understanding a capability of the shared agent and server core. Each feature page states availability and links to deployment-specific instructions.|Terminal-client controls, embedding APIs, and deployment runbooks.|
+|`building/go/embed-engine.md`|Go developers embedding the engine and supplying its runtime dependencies.|Shared capability behavior and operator procedures. Link to the owning feature or operations page.|
+|`building/go/extension-points/`|Developers integrating with Mecatl's public seams, ports, and APIs.|How to operate a supplied deployment or use an existing feature.|
+|`features/`|Readers understanding a capability of the shared agent and server core. The sidebar labels this section **Capabilities**. Each page owns shared behavior and availability.|Terminal-client controls, embedding APIs, and deployment runbooks.|
 |`reference/`|Readers looking up generated configuration or SDK fields and exact gRPC and HTTP/SSE contracts.|Tutorials, deployment workflows, and conceptual background. Link to the owning guide.|
 
-`building/` is the builder and operator umbrella. Its `index.md` routes readers
-to the appropriate subsection; it does not own a second copy of their material.
+The top-level navigation follows three journeys: Use Mecatl, deploy and
+operate Mecatl, or build with Mecatl. `features/` is the canonical capability
+spine rather than a fourth persona journey. Persona-specific pages briefly
+introduce shared behavior, then link to the capability page that owns it.
+
 `mecatui` is a terminal client over an embedded or connected server, not a
-separate agent implementation.
+separate agent implementation. `building/` is for application builders and
+embedders. `operating/` is for people who own a deployed service.
 
 Keep shared behavior in `features/`. Put differences among `mecated`, `mecak8s`,
-and embedded `mecatui` in `building/deployment/` and the
-[capability matrix](./features/capability-matrix.md).
+and embedded `mecatui` in `operating/` and the
+[capability matrix](./features/get-oriented/capability-matrix.md).
 
 ## Keep one canonical page
 
@@ -49,24 +56,26 @@ feature guide.
 
 |Topic|Canonical page|Supporting page responsibility|
 |-|-|-|
-|Installing Mecatl|`install.md`|`mecatui/getting-started.md` keeps its Homebrew happy path; deployment pages own their deployment-specific artifacts and operation.|
+|Installing `mecatui` or `mecated`|`mecatui/installation.md` and `operating/mecated.md`|Each guide owns its package and release-archive instructions. The shared archive-verification fragment keeps verification commands identical.|
 |Using the terminal client|`mecatui/`|Feature pages link to the relevant client guide rather than repeat terminal-client workflows.|
-|Scheduled tasks|`features/scheduled-tasks.md`|`building/what-you-get/scheduled-tasks.md` describes the builder-facing storage, claiming, and recovery model.|
-|Permissions and posture|`features/permissions-and-posture.md`|`building/what-you-get/permissions.md` describes evaluator, delegated-authority, and custom-policy integration.|
-|Install and first run|`building/getting-started/first-agent.md` and `building/getting-started/demo.md`|Deployment pages cover their own prerequisites only.|
-|`mecated` operation and flags|`building/deployment/mecated.md`|Feature pages explain shared behavior and link to the deployment guide for flags.|
-|`mecak8s` operation and Helm values|`building/deployment/mecak8s.md`|Feature pages describe shared behavior without restating chart values.|
-|`mecatequi` and GitHub Actions|`building/deployment/mecatequi.md`|Workflow maintainers keep implementation notes in `.github/workflows/README.md`.|
-|Mecatl Studio web UI|`building/deployment/studio.md`|Feature pages describe shared behavior; the Studio page owns browser chat workflows, the image, browser login, and its environment variables. The workspace's own `apps/README.md` covers local development modes.|
-|Provider and model selection|`features/choose-models.md`|`building/deployment/mecated.md` owns daemon-specific credential and flag details.|
-|Workspace trust|`features/permissions-and-posture.md`|`features/project-instructions-and-rules.md` describes the project-content consequence.|
-|Skills, commands, soul, and user model|`features/skills-commands-and-soul.md` and `building/what-you-get/memory.md`|Extension-point pages document the importable interfaces.|
-|Hooks|`building/what-you-get/hooks.md`|`building/extension-points/hook-runner.md` owns host-integration details.|
-|Configuration schema|`reference/configuration.md`|`building/deployment/settings.md` explains which configuration plane to use.|
-|gRPC API behavior|`reference/grpc-api.md`|`building/deployment/grpc-http.md` explains client integration and transport choice.|
-|gRPC schema|`reference/grpc-schema.md`|The generated page owns exact services, RPC signatures, messages, enums, fields, and proto comments; `reference/grpc-api.md` owns behavior and semantics.|
-|HTTP and SSE API|`reference/http-sse-api.md`|`building/deployment/grpc-http.md` explains client integration and transport choice.|
-|TypeScript SDK workflows|`building/getting-started/typescript-sdk.md` and `building/typescript-sdk/`|Deployment and feature pages link to the SDK guide that owns the application workflow.|
+|Agent loop and built-in tools|`features/sessions/agent-loop.md` and `features/sessions/tools.md`|Embedding guides show the minimum wiring and link to these pages for shared behavior.|
+|Scheduled tasks|`features/sessions/scheduled-tasks.md`|Deployment pages own scheduler flags and storage configuration.|
+|Permissions and posture|`features/security-and-execution/permissions-and-posture.md`|`building/go/extension-points/permission-policy.md` owns custom-policy integration.|
+|Install and first run|`building/go/first-agent.md` and `building/go/demo.md`|Deployment pages cover their own prerequisites only.|
+|`mecated` operation|`operating/mecated.md` and its workflow guides|Shared semantics stay in Capabilities; complete flags belong in the generated server CLI reference.|
+|`mecak8s` operation and Helm values|`operating/mecak8s.md` and its workflow guides|Feature pages describe shared behavior without restating chart values.|
+|`mecatequi` and GitHub Actions|`building/ci/mecatequi.md`|Workflow maintainers keep implementation notes in `.github/workflows/README.md`.|
+|Mecatl Studio web UI|`operating/studio.md`|Feature pages describe shared behavior; the Studio page owns the image, browser login, and its environment variables. The workspace's own `apps/README.md` covers local development modes. Keep external Studio guidance operator-focused; retain unique essential user instructions until product guidance covers them.|
+|Provider and model selection|`features/sessions/choose-models.md`|`features/sessions/model-routing.md` owns aliases and task routing; operator guides own credential custody and server configuration.|
+|Workspace trust|`features/security-and-execution/permissions-and-posture.md`|`features/agent-behavior/project-instructions-and-rules.md` describes the project-content consequence.|
+|Skills, commands, soul, and user model|`features/agent-behavior/skills-commands-and-soul.md` and `features/agent-behavior/memory.md`|Extension-point pages document the importable interfaces.|
+|Hooks|`features/security-and-execution/hooks.md`|`building/go/extension-points/hook-runner.md` owns host-integration details.|
+|Server CLI flags|`reference/server-cli.md`|Generate from trusted help with `task docs:server-cli`; verify freshness with `task docs:server-cli:check`. Guides name only flags needed by their workflows.|
+|Runtime observability and resilience|`features/runtime/observability-and-resilience.md`|`operating/observability.md` owns collection and exporter setup.|
+|Configuration schema|`reference/configuration.md`|`operating/settings.md` explains which configuration plane to use.|
+|gRPC API|`reference/grpc-api.md`|`building/grpc-http.md` explains client integration and transport choice.|
+|HTTP and SSE API|`reference/http-sse-api.md`|`building/grpc-http.md` explains client integration and transport choice.|
+|TypeScript SDK workflows|`building/typescript-sdk/first-run.md` and `building/typescript-sdk/`|Deployment and feature pages link to the SDK guide that owns the application workflow.|
 |TypeScript SDK method reference|`reference/typescript-sdk-api/`|SDK guides link to the generated entry-point reference instead of copying signatures or option inventories.|
 |Troubleshooting|The troubleshooting section nearest the affected workflow|Do not create a second catch-all list when the owning page can provide the remedy.|
 
@@ -78,8 +87,11 @@ changes and must follow the published URL policy in
 
 Extend an existing page when it already answers the reader's question. Add a
 page only for a distinct user task or concept that has no suitable home. New
-section directories need an `index.md` and `_category_.json` so the
-autogenerated sidebar has an entry point and label.
+section directories need an entry page and `_category_.json` so the
+autogenerated sidebar has an entry point and label. Use `index.md` for a new
+section; when splitting an existing guide into workflow pages, the category can
+link to that guide as its entry point. Keep its published URL and avoid adding
+a second overview that answers the same question.
 
 ## Write a page
 
@@ -104,7 +116,9 @@ sidebar_position: 1
 # Page title
 ```
 
-Write about current behavior in clear technical prose. Use sentence-case
+Write about current behavior in clear technical prose. Keep roadmap discussion explicitly separated in `cloud-native-harness.md`; public task guides and reference must describe delivered surfaces. Contributor qualification commands and test receipts belong in the owning internal documentation. Preserve verified operator limitations when trimming that material.
+
+Use sentence-case
 headings, descriptive links, and examples that help readers complete a task.
 Style Mecatl as a proper noun, and write the component and binary names
 `mecatui`, `mecated`, and `mecak8s` in code font. For deeper guidance, see
@@ -128,7 +142,7 @@ Use content-root-relative Markdown paths for links across sections, including
 the `.md` extension:
 
 ```md
-[Run mecated standalone](/building/deployment/mecated.md)
+[Run mecated standalone](/operating/mecated.md)
 ```
 
 For a sibling in the same directory, use a relative `.md` path. Do not use a
@@ -140,21 +154,19 @@ For a sibling in the same directory, use a relative `.md` path. Do not use a
 Start with the applicable implementation source:
 
 - `docs/architecture/*.md` for subsystem behavior
-- `docs/adr/*.md` for the design rationale
 - `contracts/proto/` for gRPC messages and services
 - command flag registration, configuration schemas, handlers, and adapters for
   deployed behavior
 
 Generated reference pages are exceptions to direct editing:
 
+- For `reference/server-cli.md`, change flag registration/help or `scripts/server-cli-reference.py`, then run `task docs:server-cli`. Never edit the generated output by hand.
 - For `reference/configuration.md`, change the configuration schema or
   generator, then run `task docs:configref`.
-- For `reference/grpc-schema.md`, change the public protobuf contracts or the
-  generator template, then run `task docs:grpc-ref`.
-- For `reference/typescript-sdk-api/core.md`, `node.md`, and `deno.md`, change the
-  TSDoc in `sdk/typescript/src/` or the SDK documentation generator, then run
-  `task sdk:docs`. Use `task sdk:docs:check` to verify that the committed output
-  is current without changing it.
+- For `reference/typescript-sdk-api/core.md`, `node.md`, and `deno.md`, change
+  the TSDoc in `sdk/typescript/src/` or the SDK documentation generator, then
+  run `task sdk:docs`. Use `task sdk:docs:check` to verify that the committed
+  output is current without changing it.
 
 Confirm availability and defaults against the shipped public surface: flags or
 configuration, composition, capability advertisement, handlers, and deployed
@@ -182,4 +194,4 @@ links. `task site:format` is optional prose/list/table normalization; nothing in
 CI checks formatting. It skips the generated reference pages listed above
 (`user-docs/.prettierignore`) so it never fights their own generators. Do not
 put working plans, authoring ledgers, or internal implementation queues in
-`user-docs/`; keep them in issues, project planning, or an acceptance plan.
+`user-docs/`; keep them in issues or pull request descriptions.

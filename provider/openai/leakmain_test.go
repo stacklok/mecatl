@@ -6,8 +6,7 @@ import (
 	"go.uber.org/goleak"
 )
 
-// TestMain installs a goroutine-leak gate (decision 10 of
-// docs/adr/0018-perf-observability.md) over the OpenAI adapter — the
+// TestMain installs a goroutine-leak gate over the OpenAI adapter — the
 // SSE→Chunk stream consumer (stream.go) and the SDK streaming goroutine
 // must unwind on cancel/EOF. A leaked stream consumer fails the suite.
 //

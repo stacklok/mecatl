@@ -88,7 +88,7 @@ func TestGRPCCreateSessionProfileRoundTrip(t *testing.T) {
 }
 
 // TestGRPCCreateSessionProfileValidation: the three rejection shapes on the
-// gRPC surface — default+empty workspace (today's behaviour preserved),
+// gRPC surface — default+empty workspace,
 // no-fs+workspace (contradictory), and an unknown profile — are all
 // InvalidArgument.
 func TestGRPCCreateSessionProfileValidation(t *testing.T) {

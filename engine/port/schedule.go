@@ -102,7 +102,7 @@ const SchedulerLeaderLeaseID session.SessionID = "__scheduler__"
 // the same posture as a session created with no selector.
 //
 // It deliberately omits a reasoning-effort field (the third field on the internal
-// ProviderSelector, ADR 0055). Reasoning-effort is an ADAPTER OPTION (a
+// ProviderSelector). Reasoning-effort is an ADAPTER OPTION (a
 // per-provider construction knob), NOT a port.LLMRequest field (the DTO-neutrality
 // discipline), so it does not cross the port boundary. A v1 schedule runs on the
 // operator's configured default effort for the selected model; a per-schedule
@@ -255,15 +255,15 @@ const (
 //     (the singleton / skip-overlap guard). The intended default is true (overlapping
 //     fires of the same schedule are suppressed, so a slow run does not pile up
 //     concurrent fires); it is a bare `bool` whose zero value is false, and the
-//     Phase-2 create-seam is what sets it to true by default (Phase 1 has no create
-//     API, so a schedule's Singleton is whatever its Save carried). The authoritative
+//     server's create seam sets it to true by default (a direct Save stores
+//     whatever Singleton it carries). The authoritative
 //     cross-replica liveness oracle for the "prior still running" check is the
 //     per-session LEASE on ScheduleState.LastFireSessionID: a stale pointer to a
 //     finished fire (lease released/expired) yields a free trial-acquire, so the
 //     next fire is NOT skipped — a crashed fire self-heals by being treated as done.
 //   - CreatedAt is the schedule's creation timestamp.
-//   - OneShotRetry is the opt-in at-least-once retry for a one-shot (ADR 0059
-//     Phase 2). The DEFAULT is false: a one-shot is at-most-once (a crash
+//   - OneShotRetry is the opt-in at-least-once retry for a one-shot. The
+//     DEFAULT is false: a one-shot is at-most-once (a crash
 //     mid-fire SKIPS the slot — the claim-before-fire advance already happened,
 //     so a retry does not re-fire). A one-shot that cannot tolerate crash-loss
 //     sets this true: the tick loop's re-arm path re-enables the schedule (up
@@ -278,7 +278,7 @@ const (
 //     OneShotRetry is true and OneShotMaxRetries is 0. OneShotRetryCount on the
 //     State is incremented on each re-arm; when it exceeds OneShotMaxRetries
 //     the schedule stays disabled (the one-shot is permanently done).
-//   - CarryContext is the opt-in carried-context toggle (ADR 0059 Phase 2).
+//   - CarryContext is the opt-in carried-context toggle.
 //     The DEFAULT is false: each fire is a FRESH context (no prior fire's
 //     history is carried). When true, the fire path loads the prior fire's
 //     session and renders its conversation as a FENCED UNTRUSTED PREAMBLE
@@ -314,7 +314,7 @@ type ScheduleSpec struct {
 	// PlacementOwned marks an exact placement provisioned exclusively for this
 	// schedule. It is trusted durable host metadata: public schedule mappings
 	// never accept or project it. Legacy records decode false and are therefore
-	// conservatively treated as borrowed, so an ambiguous historical schedule
+	// conservatively treated as borrowed, so an ambiguous legacy schedule
 	// can never cause placement deletion.
 	PlacementOwned bool
 	Mode           session.PermissionMode
@@ -347,10 +347,9 @@ type ScheduleSpec struct {
 	// receive the fire's outcome. Empty means no delivery — the fire's result
 	// is discoverable only through the pull-only GetFire/ListFires channel
 	// (the v1 pre-delivery posture). A non-empty value names the session the
-	// fire's terminal EvResult is delivered to (per ADR 0075, fire-result-
-	// delivery). The field is METADATA-ONLY: it is NEVER rendered into a
-	// prompt, NEVER surfaced to the model, and NEVER appears in any
-	// model-visible surface. It is an infrastructure-level routing key the
+	// fire's terminal EvResult is delivered to. The field is METADATA-ONLY: it
+	// is NEVER rendered into a prompt, NEVER surfaced to the model, and NEVER
+	// appears in any model-visible surface. It is an infrastructure-level routing key the
 	// fire path reads to route the outcome; the model has no access to it.
 	//
 	// The create-seam validates it: a non-empty OriginSessionID that names a
@@ -358,10 +357,9 @@ type ScheduleSpec struct {
 	// class as the other spec rejections). An empty OriginSessionID is always
 	// valid (delivery is OFF — the byte-identical pre-delivery posture).
 	OriginSessionID session.SessionID
-	// Owner is the verified caller the schedule is attributed to (ADR 0204
-	// decision 6). It is captured ONCE at create time — never derived at fire
-	// time, because the origin session may be swept by retention while the
-	// schedule lives on. The capture rule is the CREATE SEAM's business (the
+	// Owner is the verified caller the schedule is attributed to. It is
+	// captured ONCE at create time — never derived at fire time, because the
+	// origin session may be swept by retention while the schedule lives on. The capture rule is the CREATE SEAM's business (the
 	// Schedule-tool path reads the executing session's owner via the origin
 	// binder; an out-of-band REST/CLI create reads the context principal); the
 	// store is identity-blind and round-trips the value verbatim. A nil Owner is
@@ -429,9 +427,9 @@ type ScheduleState struct {
 	// Claim sets this to port.PendingFireSessionID; RecordFire overwrites it with
 	// the real fire's session id.
 	LastFireSessionID session.SessionID
-	// OneShotRetryCount is the durable counter of one-shot re-arms (ADR 0059
-	// Phase 2). It is incremented atomically by ScheduleOneShotReArmer.ReArmOneShot
-	// on each re-arm. When it exceeds ScheduleSpec.OneShotMaxRetries the schedule
+	// OneShotRetryCount is the durable counter of one-shot re-arms. It is
+	// incremented atomically by ScheduleOneShotReArmer.ReArmOneShot on each
+	// re-arm. When it exceeds ScheduleSpec.OneShotMaxRetries the schedule
 	// stays disabled (the one-shot is permanently done — the retry budget is
 	// exhausted). The DEFAULT is 0 (no re-arms yet). It is one-shot-only: a cron
 	// schedule never re-arms (a cron self-heals via misfire) so the counter stays
@@ -515,8 +513,8 @@ type ScheduleFire struct {
 	Err string
 }
 
-// ScheduleStore is the OPTIONAL durable schedule registry port (scheduled-tasks
-// Phase 1a) — a peer of port.SessionLease / port.EventLog. It is discovered by type
+// ScheduleStore is the OPTIONAL durable schedule registry port (scheduled tasks)
+// — a peer of port.SessionLease / port.EventLog. It is discovered by type
 // assertion exactly like PrunableStore / SessionLease: a store/backend that does not
 // implement it is simply never consulted, and composition wires a scheduler ONLY
 // when an operator selects a backend by flag — the default path is byte-identical
@@ -772,7 +770,7 @@ type ScheduleManager interface {
 }
 
 // ScheduleOneShotReArmer is the OPTIONAL at-least-once re-arm seam for one-shot
-// schedules (ADR 0059 Phase 2). It is discovered by type assertion on a
+// schedules. It is discovered by type assertion on a
 // ScheduleStore exactly like PrunableStore / SessionLease / MetaLister are on a
 // SessionStore: a store that does not implement it is simply never consulted, and
 // the tick loop's one-shot re-arm path degrades to at-most-once (byte-identical to

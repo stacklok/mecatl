@@ -19,7 +19,7 @@ import (
 )
 
 // teamsupervisor.go is the APPLICATION-layer orchestrator for agent teams (see
-// docs/adr/0014-agent-teams.md). It owns one shared *team.Team and drives a
+// docs/architecture/subagents-and-teams.md). It owns one shared *team.Team and drives a
 // set of long-lived member sessions that coordinate through that team's task list
 // and mailbox. Unlike Subagent/Fork (one-shot, drained internally), team members are
 // re-driven across rounds and their events are STREAMED to the caller (tagged with
@@ -122,7 +122,7 @@ const defaultMemberTurnBudget = 200
 
 // defaultMemberErrorRetries is how many times a member whose round ended in
 // StopError — and whose session the supervisor then RECOVERED successfully — is left
-// SCHEDULABLE instead of benched (ADR 0200, issue #318). One retry is the
+// SCHEDULABLE instead of benched (issue #318). One retry is the
 // default because the failure this closes is a TRANSIENT one (the terminal 180s
 // stream-idle stall): a single re-drive is enough to survive a network hiccup, while
 // keeping the wasted provider spend of a permanently-failing member to one extra
@@ -190,6 +190,8 @@ type MemberSpec struct {
 	// InitialPrompt is the member's first-turn input, run in round 0 (typically the
 	// lead's top-level task, or a teammate's role briefing).
 	InitialPrompt string
+	// Selector is the composition-validated explicit target, if one was requested.
+	Selector *ResolvedModelSelector
 }
 
 // MemberBuild is what the per-member engine factory returns: the constructed
@@ -204,6 +206,8 @@ type MemberBuild struct {
 	// Engine is the member's loop engine. It must be non-nil; AddMember rejects a
 	// nil Engine with ErrNilEngine.
 	Engine *Engine
+	// Provider is the concrete provider backing Engine.
+	Provider string
 	// Mode is the optional per-member permission mode. Empty => the team default.
 	Mode session.PermissionMode
 	// Limits are the OPTIONAL per-member, per-round stop conditions resolved from the
@@ -263,12 +267,10 @@ type MemberBuild struct {
 // runs in its OWN worktree/fork, never the shared parent base — which is why an
 // isolated member MAY be given Shell while a base-sharing read-only member must not.
 //
-// routedModel is the OPT-IN semantic model router's classification for an UNDEFINED
-// member (ADR 0034), the ALREADY-RESOLVED concrete model id the member's engine should
-// be minted on; it is "" when the router was off, missed, or the member is DEFINED (a
-// def pins its own model — the factory IGNORES routedModel then). The supervisor owns
-// the route decision (it holds the parent caps) and passes the result here; composition
-// substitutes routedModel for the default child model only on the undefined branch.
+// routedModel is the OPT-IN router's concrete model for an undefined member.
+// For provider-aware selections (explicit or automatic), spec.Selector carries
+// the complete target and evidence to the same factory. A defined member without
+// an explicit selector keeps its own model.
 type MemberEngine func(spec MemberSpec, routedModel string) MemberBuild
 
 // Supervisor orchestrates one agent team. Build it with NewSupervisor, enrol
@@ -474,7 +476,7 @@ type memberRT struct {
 	// folded in the same capture block as turnsUsed, before Reopen.
 	tokensUsed session.Usage
 	// routedCategory / routedModel are the OPT-IN semantic model router's classification
-	// for this member (ADR 0034), captured ONCE at AddMember (decide-once — a member's
+	// for this member, captured ONCE at AddMember (decide-once — a member's
 	// engine is built once and reused across rounds via Reopen, so it is never re-routed).
 	// Both empty when the router was off, missed, or the member is DEFINED (a def pins its
 	// own model so the router never fired). routingReason is the bare-metadata WHY-NOT
@@ -482,10 +484,12 @@ type memberRT struct {
 	// a routed hit. They are BARE METADATA the Team tool reads back (MemberRouting) to
 	// project onto the EvTeamStart roster — never member content. Written once in
 	// AddMember (single goroutine, before any round), read after AddMember.
-	routedCategory  string
-	routedModel     string
-	routingReason   string
-	routingDecision *session.RoutingDecision
+	routedCategory         string
+	routedModel            string
+	routingReason          string
+	routingDecision        *session.RoutingDecision
+	provider               string
+	explicitRouterCategory string
 }
 
 // SupervisorOption configures a Supervisor.
@@ -606,7 +610,7 @@ func WithMemberTurnBudget(n int) SupervisorOption {
 // WithMemberErrorRetries sets how many times a member whose round ended in
 // session.StopError — and whose session the supervisor then RECOVERED successfully —
 // is left SCHEDULABLE for a later round instead of being benched (default
-// defaultMemberErrorRetries = 1; ADR 0200, issue #318). A retried member
+// defaultMemberErrorRetries = 1; issue #318). A retried member
 // releases its in-progress task claim (so it, or a peer, can re-claim the work) and is
 // force-scheduled for exactly one turn even when it holds no message and no claimable
 // task. Once its errored-round count EXCEEDS this cap it is benched exactly as before
@@ -747,7 +751,7 @@ func NewSupervisor(t *team.Team, base tool.Environment, factory MemberEngine, op
 		concurrency: defaultTeamConcurrency,
 		turnBudget:  defaultMemberTurnBudget,
 		// The retry cap is a NONZERO default, so a caller that never sets an option still
-		// survives one transient member failure (ADR 0200).
+		// survives one transient member failure.
 		memberErrorRetries: defaultMemberErrorRetries,
 		idPrefix:           strings.TrimSuffix(TeamSessionPrefix, "-"), // the exported convention is the source
 		teamID:             strings.TrimSuffix(TeamSessionPrefix, "-"),
@@ -784,6 +788,9 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	if _, ok := s.members[spec.Name]; ok {
 		return fmt.Errorf("%w: %q", ErrMemberAlreadyAdded, spec.Name)
 	}
+	if spec.Selector != nil && strings.TrimSpace(spec.AgentType) != "" && spec.Selector.ProviderBearing {
+		return fmt.Errorf("agent: named team member %q does not accept a provider-bearing selector", spec.Name)
+	}
 	if err := s.team.AddMember(spec.Name, spec.AgentType); err != nil {
 		// The team aggregate's sentinels (ErrMemberExists / ErrReservedName /
 		// ErrTooManyMembers) flow through unchanged so a caller can classify them
@@ -800,7 +807,7 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 		}
 	}
 
-	// OPT-IN model router (ADR 0034): classify this member ONCE here, before the engine
+	// OPT-IN model router: classify this member ONCE here, before the engine
 	// is built (decide-once — the member engine is built once and reused across rounds via
 	// Reopen, never re-routed). maybeRouteMember gates on a PLAIN UNDEFINED member (no
 	// agent def) AND a wired routeTask, and is FAIL-SOFT (a miss returns ""). routedModel
@@ -809,13 +816,39 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	// the model). AddMember runs SERIALLY on the single Team-tool dispatch goroutine (and
 	// the route happens here, OUTSIDE the round errgroup), so the breaker mutex inside
 	// routeTask sees one classification at a time.
-	routedCategory, routedModel, routingReason, routingDecision := s.maybeRouteMember(ctx, spec)
+	var routedCategory, routedModel, routingReason string
+	var routingDecision *session.RoutingDecision
+	selected := ResolvedModelSelector{}
+	if spec.Selector != nil {
+		selected = *spec.Selector
+		if selected.ExplicitRouterCategory == "" {
+			routingReason = session.RoutingReasonPinnedModel
+		}
+	} else {
+		var routedTarget ModelTarget
+		routedCategory, routedTarget, routingReason, routingDecision = s.maybeRouteMember(ctx, spec)
+		routedModel = routedTarget.Model
+		selected = ResolvedModelSelector{Target: routedTarget, ActualProvider: routedTarget.Provider}
+	}
 
 	// Build the engine FIRST: the factory reads only spec (never the workspace), and
 	// its MemberBuild.IsolateReadOnly decides whether a read-only member needs its own
 	// (worktree) fork — so workspace selection depends on the build, not the reverse.
-	build := s.factory(spec, routedModel)
+	// Pass the selection in the existing member spec, so one factory handles both
+	// explicit provider choices and automatic routed targets.
+	buildSpec := spec
+	if strings.TrimSpace(selected.Target.Model) != "" {
+		buildSpec.Selector = &selected
+	}
+	build := s.factory(buildSpec, selected.Target.Model)
 	eng := build.Engine
+	if eng == nil && spec.Selector == nil && routedModel != "" {
+		if build.Close != nil {
+			_ = build.Close()
+		}
+		build = s.factory(spec, "")
+		eng = build.Engine
+	}
 	if eng == nil {
 		if build.Close != nil {
 			_ = build.Close()
@@ -823,9 +856,13 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 		s.team.RemoveMember(spec.Name)
 		return fmt.Errorf("%w for %q", ErrNilEngine, spec.Name)
 	}
-	routeAccepted := strings.TrimSpace(routedModel) == "" || eng.Model() == strings.TrimSpace(routedModel)
-	routedCategory, routedModel, routingReason, routingDecision = reconcileRoutedModel(
-		routedCategory, routedModel, routingReason, routeAccepted, routingDecision)
+	if spec.Selector == nil {
+		routeAccepted := strings.TrimSpace(routedModel) == "" ||
+			(eng.Model() == strings.TrimSpace(routedModel) &&
+				(selected.Target.Provider == "" || build.Provider == selected.Target.Provider))
+		routedCategory, routedModel, routingReason, routingDecision = reconcileRoutedModel(
+			routedCategory, routedModel, routingReason, routeAccepted, routingDecision)
+	}
 
 	// Workspace selection (three tiers). needFork is true for any member that runs in
 	// its OWN isolated workspace — a Mutating member (force-copy fork, s.forker) or a
@@ -886,6 +923,10 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	// team's tool-call/failure caps, and a member that pins nothing runs on s.limits
 	// unchanged.
 	limits := mergeLimits(s.limits, build.Limits)
+	provider := strings.TrimSpace(build.Provider)
+	if provider == "" && spec.Selector != nil {
+		provider = strings.TrimSpace(selected.ActualProvider)
+	}
 	sess, err := newTeamMemberSessionInEnvironment(s.sessionID(spec.Name), mode, ws, limits, build.Engine.now(), s.teamID, spec.Name, s.caps.parentSessionID, s.caps.parentIncarnation)
 	if err == nil && s.parentCallID != "" {
 		rel := sess.Relationship
@@ -899,7 +940,7 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 		s.team.RemoveMember(spec.Name)
 		return fmt.Errorf("agent: stamp team-member relationship: %w", err)
 	}
-	// The member is attributed to the PARENT session's owner (ADR 0204 decision 4),
+	// The member is attributed to the PARENT session's owner,
 	// or carries delegated authority when the parent run is authority-bound.
 	if s.caps.parentSessionID != "" && s.caps.authorityBound {
 		if authorityErr := stampDelegatedLabels(sess, s.caps.owner, delegatedAuthority); authorityErr != nil {
@@ -915,6 +956,8 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	if err := s.stampDirectTeamRoot(sess, cleanup, spec.Name); err != nil {
 		return err
 	}
+	sess.ProviderID = provider
+	sess.ModelID = eng.Model()
 	if err := s.publishMemberSession(ctx, spec.Name, sess, cleanup); err != nil {
 		return err
 	}
@@ -945,10 +988,15 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 	// done means de-scheduled (see childFamilyTeamMember's caution).
 	s.caps.startChildRun(sess.ID)
 
+	explicitCategory := ""
+	if spec.Selector != nil {
+		explicitCategory = spec.Selector.ExplicitRouterCategory
+	}
 	s.members[spec.Name] = &memberRT{spec: spec, engine: eng, env: ws, cleanup: cleanup, sess: sess,
 		isolated: needFork, ctx: memberCtx, cancel: memberCancel,
 		routedCategory: routedCategory, routedModel: routedModel, routingReason: routingReason,
-		routingDecision: cloneRoutingDecision(routingDecision)}
+		routingDecision: cloneRoutingDecision(routingDecision), provider: provider,
+		explicitRouterCategory: explicitCategory}
 	s.order = append(s.order, spec.Name)
 	// Cache the lead's name on first enrolment of a Lead member, so the synthesis
 	// phase finds it without re-scanning. The Team tool synthesises member 0 as the
@@ -973,7 +1021,7 @@ func (s *Supervisor) stampDirectTeamRoot(sess *session.Session, cleanup func() e
 	return nil
 }
 
-// maybeRouteMember consults the OPT-IN semantic model router (ADR 0034) for a PLAIN
+// maybeRouteMember consults the OPT-IN semantic model router for a PLAIN
 // UNDEFINED member and returns the classified category + the ALREADY-RESOLVED concrete
 // model id the member's engine should be minted on (both empty when not routed).
 // PRECEDENCE is enforced by GATING, mirroring maybeRouteModel (the Subagent gate): a
@@ -990,15 +1038,15 @@ func (s *Supervisor) stampDirectTeamRoot(sess *session.Session, cleanup func() e
 // is empty it falls back to the member's name so the classifier always has a signal. ctx
 // is the enrolment ctx, threaded to routeTask so a cancel propagates into the classifier
 // turn (issue #94).
-func (s *Supervisor) maybeRouteMember(ctx context.Context, spec MemberSpec) (category, model, reason string, decision *session.RoutingDecision) {
+func (s *Supervisor) maybeRouteMember(ctx context.Context, spec MemberSpec) (category string, target ModelTarget, reason string, decision *session.RoutingDecision) {
 	if strings.TrimSpace(spec.AgentType) != "" {
 		if s.caps.skipRoute != nil {
 			decision = s.caps.skipRoute(session.RoutingReasonAgentDefPinned)
 		}
-		return "", "", session.RoutingReasonAgentDefPinned, decision
+		return "", ModelTarget{}, session.RoutingReasonAgentDefPinned, decision
 	}
 	if s.caps.routeDecision == nil {
-		return "", "", session.RoutingReasonRouterDisabled, nil
+		return "", ModelTarget{}, session.RoutingReasonRouterDisabled, nil
 	}
 	artifact := strings.TrimSpace(spec.InitialPrompt)
 	if artifact == "" {
@@ -1006,9 +1054,9 @@ func (s *Supervisor) maybeRouteMember(ctx context.Context, spec MemberSpec) (cat
 	}
 	routed := s.caps.routeConfigured(ctx, artifact)
 	if routed.ok {
-		return routed.category, strings.TrimSpace(routed.model), "", routed.decision
+		return routed.category, ModelTarget{Provider: strings.TrimSpace(routed.provider), Model: strings.TrimSpace(routed.model)}, "", routed.decision
 	}
-	return "", "", routed.reason, routed.decision
+	return "", ModelTarget{}, routed.reason, routed.decision
 }
 
 // MemberRouting returns the OPT-IN model router's bare-metadata classification (category,
@@ -1039,13 +1087,21 @@ func (s *Supervisor) memberIdentity(name string) (session.SessionID, session.Inc
 	return m.sess.ID, m.sess.Incarnation(), true
 }
 
+// memberSelectionEvidence returns concrete provider and explicit router category.
+func (s *Supervisor) memberSelectionEvidence(name string) (provider, explicitRouterCategory string) {
+	if m, ok := s.members[name]; ok {
+		return m.provider, m.explicitRouterCategory
+	}
+	return "", ""
+}
+
 // MemberModel returns the concrete MODEL id the named member's engine actually runs
 // on ("" for an unknown member). It is the read-only seam the Team tool uses to
 // surface the member's resolved model on the EvTeamStart roster — independent of how
 // it was chosen (inherited default member model, agent-def pin, or the opt-in router).
 // Captured at AddMember (the engine is built once and reused). Bare metadata, never
 // member content. When the router classified the member, MemberModel == the routed
-// model. See issue #112 / ADR 0035.
+// model. See issue #112.
 func (s *Supervisor) MemberModel(name string) string {
 	if m, ok := s.members[name]; ok {
 		return m.engine.Model()
@@ -1115,8 +1171,8 @@ func (s *Supervisor) selectMemberWorkspace(ctx context.Context, spec MemberSpec,
 // DOES carry the dirty-overlay, so a degraded read-only-member fork could surface this
 // advisory symmetrically to a member's prompt — a deliberate scope boundary: the
 // surfacing was implemented for the read-only SUBAGENT (the user's case), and threading
-// it through the member-engine prompt assembly is a separate, intentional follow-up,
-// not a silent omission. The mutating-member forker (s.forker) is force-copy and never
+// it through the member-engine prompt assembly is not implemented (an intentional
+// boundary, not a silent omission). The mutating-member forker (s.forker) is force-copy and never
 // degrades, so for it the discard is correct unconditionally.
 func forkOrWrap(ctx context.Context, f tool.EnvironmentForker, base tool.Environment, name string, ledgerFactory func() tool.ReadLedger) (tool.Environment, func() error, error) {
 	child, cl, _, err := f.Fork(ctx, base, name)
@@ -1188,7 +1244,7 @@ type MemberStopReason string
 const (
 	// StopReasonError is a run that failed (StopError) or a session that could not be
 	// returned to idle — both the internal-fault class. A failed run is RECOVERED
-	// (issue #318), so this reason no longer implies the session is undrivable; only
+	// (issue #318), so this reason does not imply the session is undrivable; only
 	// memberRT.nonResumable says that.
 	StopReasonError MemberStopReason = "error"
 	// StopReasonCancelled is a member ended by ctx cancellation.
@@ -1215,8 +1271,8 @@ type MemberOutcome struct {
 	// done member.
 	Reason MemberStopReason
 	// ErrorRounds is how many of this member's rounds ended in session.StopError,
-	// whether it was RETRIED through them or finally benched by them (issue #318 /
-	// ADR 0200). It is the disposition-HONESTY signal: a bounded retry means
+	// whether it was RETRIED through them or finally benched by them (issue #318).
+	// It is the disposition-HONESTY signal: a bounded retry means
 	// a member can fail a round and still finish, and such a member reports
 	// DispositionDone with no Reason — so without this count a transient failure would
 	// be invisible to the caller and the run would read as silently clean. It is a
@@ -1578,11 +1634,10 @@ func (s *Supervisor) runTurn(ctx context.Context, ti turnInput, evCh chan<- Team
 	// idle — and is set ONLY when that transition itself failed. `stopped` keeps its
 	// MEANING: a member BENCHED by its errors is descheduled and reports StopReasonError,
 	// because the honest signal to the lead ("this member stopped before finishing") and
-	// the task release that lets a peer pick the work up both hang off it. It is no longer
-	// where an errored round LANDS, though: the bounded-retry block ~20 lines below leaves
+	// the task release that lets a peer pick the work up both hang off it. It is not
+	// where every errored round LANDS, though: the bounded-retry block ~20 lines below leaves
 	// a member that is still under the cap schedulable and stop-reason-free. Read the two
 	// together — this comment describes the benched end state, not every errored round.
-	// See docs/adr/0200-resume-a-failed-subagent.md.
 	var reopenErr error
 	if m.sess.State == session.StateFailed {
 		reopenErr = m.sess.Recover()
@@ -1591,7 +1646,7 @@ func (s *Supervisor) runTurn(ctx context.Context, ti turnInput, evCh chan<- Team
 	}
 	warnUnexpectedRecovery(ctx, s.caps.diag, m.spec.Name, stop, reopenErr)
 
-	// BOUNDED RETRY (ADR 0200, issue #318). Recovering the session made the
+	// BOUNDED RETRY (issue #318). Recovering the session made the
 	// member DRIVABLE again; on its own that only rescued the lead's synthesis turn,
 	// because `stopped` still descheduled the member for the rest of the run. A member
 	// that hits ONE transient stall must still participate in later rounds, so an errored
@@ -2189,7 +2244,7 @@ func MemberSessionID(teamID, member string) session.SessionID {
 // (team-namespaced) prefix. The prefix is "<memberSessionIDPrefix><teamID>" so the
 // full id is "team-<teamID>-<member>" — identical to MemberSessionID(teamID, name)
 // — keeping the supervisor's saved id in lock-step with the inspect tool's derived
-// id. A supervisor constructed without WithMemberSessionPrefix keeps the historical
+// id. A supervisor constructed without WithMemberSessionPrefix keeps the
 // "team-<member>" shape (no team id), used only by tests that do not persist.
 func (s *Supervisor) sessionID(name string) session.SessionID {
 	return session.SessionID(fmt.Sprintf("%s-%s", s.idPrefix, name))

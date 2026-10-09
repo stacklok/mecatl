@@ -47,11 +47,10 @@ const maxTeamPreview = 200
 // session — it is the exact shape server.MemberEngineFactory has, so one factory
 // serves both paths.
 //
-// routedModel is the OPT-IN model router's classification (ADR 0034) — the
-// ALREADY-RESOLVED concrete model id for an UNDEFINED member, "" otherwise. The factory
-// substitutes it for the default child model on the undefined branch only; a DEFINED
-// member's factory ignores it (its def pins the model). The supervisor owns the route
-// decision (it holds the parent caps) and threads the result through.
+// routedModel is the OPT-IN model router's concrete model id for an UNDEFINED
+// member, "" otherwise. When a selector is resolved (explicitly or by routing),
+// spec.Selector carries the full provider/model target and its evidence to the
+// same factory. A defined member without an explicit selector uses its own def.
 type TeamMemberEngineFactory func(t *team.Team, spec MemberSpec, routedModel string) MemberBuild
 
 // TeamMemberArg is one roster entry the model supplies in a Team call. It maps
@@ -68,6 +67,11 @@ type TeamMemberArg struct {
 	// INSPECTION (git log/show, cat, build, test) but no Edit/Write. Neither tier is
 	// merged back into the base.
 	Mutating bool `json:"mutating,omitempty"`
+	// Agent optionally names a configured specialist definition.
+	Agent string `json:"agent,omitempty"`
+	// Provider and Model form this member's optional explicit selector.
+	Provider string `json:"provider,omitempty"`
+	Model    string `json:"model,omitempty"`
 }
 
 // teamArgs is the argument payload the model supplies when calling the Team tool.
@@ -105,7 +109,10 @@ var teamSchema = json.RawMessage(`{
         "properties": {
           "name": {"type": "string", "description": "Unique member handle peers address messages to."},
           "role": {"type": "string", "description": "The member's role briefing — its first-turn instruction. Lead example: 'Break the goal into tasks, track progress, and synthesise a final report that answers X'. Worker example: 'Investigate the auth code path; RecordFinding each conclusion; message the lead when done'."},
-          "mutating": {"type": "boolean", "description": "True if the member needs to edit/write files (runs in a self-contained copied workspace with edit/write/shell). False (default) runs read-only in an isolated throwaway git worktree with full shell for INSPECTION (git log/show, cat, build, test) but no Edit/Write. Neither is merged back."}
+          "mutating": {"type": "boolean", "description": "True if the member needs to edit/write files (runs in a self-contained copied workspace with edit/write/shell). False (default) runs read-only in an isolated throwaway git worktree with full shell for INSPECTION (git log/show, cat, build, test) but no Edit/Write. Neither is merged back."},
+          "agent": {"type": "string", "description": "Optional configured specialist definition for this member."},
+          "provider": {"type": "string", "description": "Optional provider id for this member's model selector. Requires model."},
+          "model": {"type": "string", "description": "Optional model selector for this member. Omit provider and model to retain current routing."}
         },
         "required": ["name", "role"]
       }
@@ -150,6 +157,8 @@ var teamSchema = json.RawMessage(`{
 type TeamTool struct {
 	// factory builds each member's Engine, bound to the per-call team. Required.
 	factory TeamMemberEngineFactory
+	// selectorResolver preflights the complete roster before team construction.
+	selectorResolver SubagentSelectorResolver
 	// forker isolates a Mutating member's workspace (force-copy: own `.git`). Required
 	// only if any member is Mutating; a Mutating member without it yields a tool error
 	// (the model can retry with a read-only roster).
@@ -230,6 +239,11 @@ func WithTeamToolTokenBudget(n int) TeamOption {
 			t.tokenBudget = n
 		}
 	}
+}
+
+// WithTeamSelectorResolver injects composition-owned provider/model resolution.
+func WithTeamSelectorResolver(r SubagentSelectorResolver) TeamOption {
+	return func(t *TeamTool) { t.selectorResolver = r }
 }
 
 // NewTeamTool constructs the Team tool over a per-member engine factory. factory
@@ -315,6 +329,8 @@ func (t *TeamTool) ExecuteObserved(ctx context.Context, call session.ToolCall, e
 // projection of member activity, and returns the lead's consolidated synthesis
 // (or the labelled fallback) as the single ToolResult that folds back into the
 // parent conversation.
+//
+//nolint:gocyclo // Team validation, enrolment, observation, and teardown remain one transaction.
 func (t *TeamTool) run(ctx context.Context, call session.ToolCall, env tool.Environment, emit func(session.Event), caps parentCaps) (session.ToolResult, error) {
 	var args teamArgs
 	if msg, ok := session.ParseArgs(call, &args); !ok {
@@ -322,6 +338,10 @@ func (t *TeamTool) run(ctx context.Context, call session.ToolCall, env tool.Envi
 	}
 	if msg, ok := validateTeamArgs(args); !ok {
 		return session.NewToolError(call.ID, "Team: "+msg), nil
+	}
+	memberSpecs, selectorErr := t.resolveMemberSelectors(args.Members)
+	if selectorErr != nil {
+		return session.NewToolError(call.ID, "Team: "+selectorErr.Error()), nil
 	}
 
 	// Namespace the team id under the PARENT session's own id (review finding 2,
@@ -386,7 +406,7 @@ func (t *TeamTool) run(ctx context.Context, call session.ToolCall, env tool.Envi
 	sup := NewSupervisor(tm, env, factory, opts...)
 
 	roster := teamRoster(args.Members)
-	for i, spec := range memberSpecs(args.Members) {
+	for i, spec := range memberSpecs {
 		if err := sup.AddMember(ctx, spec); err != nil {
 			// A bad roster (e.g. a Mutating member with no forker wired) is a tool error
 			// the model can recover from. AddMember already tore down the FAILING
@@ -399,7 +419,7 @@ func (t *TeamTool) run(ctx context.Context, call session.ToolCall, env tool.Envi
 	}
 
 	if emit != nil {
-		// Project each member's OPT-IN model-router classification (ADR 0034) onto its
+		// Project each member's OPT-IN model-router classification onto its
 		// roster entry: AddMember routed each undefined member once and recorded the bare
 		// category/model metadata, which MemberRouting reads back by name. A defined member
 		// (its def pinned the model) and a router miss both leave the fields empty. This is
@@ -411,6 +431,7 @@ func (t *TeamTool) run(ctx context.Context, call session.ToolCall, env tool.Envi
 			roster[i].RoutingReason = routingReasonPayload(reason)
 			roster[i].RoutingDecision = sup.memberRoutingDecision(roster[i].Name)
 			roster[i].Model = sup.MemberModel(roster[i].Name)
+			roster[i].Provider, roster[i].ExplicitRouterCategory = sup.memberSelectionEvidence(roster[i].Name)
 			if memberID, incarnation, ok := sup.memberIdentity(roster[i].Name); ok {
 				roster[i].MemberSessionID = memberID
 				roster[i].MemberIncarnation = incarnation
@@ -511,6 +532,39 @@ func renderTeamResult(teamID, body string) string {
 		"with this exact team_id and the member's name.)\n\n%s", teamID, body)
 }
 
+func (t *TeamTool) resolveMemberSelectors(members []TeamMemberArg) ([]MemberSpec, error) {
+	specs := memberSpecs(members)
+	for i := range members {
+		if !validDelegationSelectorValue(members[i].Provider) || !validDelegationSelectorValue(members[i].Model) {
+			return nil, fmt.Errorf("member %q: selector values must be valid UTF-8 without control or format characters and at most 512 bytes", specs[i].Name)
+		}
+		provider := strings.TrimSpace(members[i].Provider)
+		model := strings.TrimSpace(members[i].Model)
+		if provider != "" && model == "" {
+			return nil, fmt.Errorf("member %q: `provider` requires `model`", specs[i].Name)
+		}
+		if model == "" {
+			continue
+		}
+		if t.selectorResolver == nil {
+			return nil, fmt.Errorf("member %q: provider/model selection is not supported in this deployment", specs[i].Name)
+		}
+		resolved, err := t.selectorResolver(provider, model)
+		if err != nil || strings.TrimSpace(resolved.Target.Model) == "" {
+			detail := "unresolvable selector"
+			if err != nil {
+				detail = sanitizedRoutingText(err.Error())
+			}
+			return nil, fmt.Errorf("member %q: invalid provider/model selector: %s", specs[i].Name, detail)
+		}
+		if specs[i].AgentType != "" && resolved.ProviderBearing {
+			return nil, fmt.Errorf("member %q: a named specialist does not accept a provider-bearing selector", specs[i].Name)
+		}
+		specs[i].Selector = &resolved
+	}
+	return specs, nil
+}
+
 // validateTeamArgs enforces the roster preconditions: a non-empty goal, at least
 // one member, and non-empty unique member names. It returns a model-readable
 // message and ok=false on the first violation.
@@ -546,6 +600,7 @@ func memberSpecs(members []TeamMemberArg) []MemberSpec {
 	for i, m := range members {
 		specs = append(specs, MemberSpec{
 			Name:          strings.TrimSpace(m.Name),
+			AgentType:     strings.TrimSpace(m.Agent),
 			Lead:          i == 0,
 			Mutating:      m.Mutating,
 			InitialPrompt: m.Role,
@@ -602,16 +657,18 @@ func projectTeamEvent(parentCallID, teamID string, te TeamEvent) (session.Event,
 		}
 		base.Text = clampPreview(ev.Text)
 	case session.EvToolCall:
-		if ev.ToolCall == nil {
+		if ev.ToolCall == nil || !previewChildToolCallID(ev.ToolCall.ID) {
 			return session.Event{}, false
 		}
 		base.ToolName = ev.ToolCall.Name
+		base.ChildToolCallID = ev.ToolCall.ID
 		base.Detail = clampPreview(string(ev.ToolCall.Args))
-	case session.EvToolResult:
-		if ev.ToolResult == nil {
+	case session.EvToolResultAvailable, session.EvToolResult:
+		if ev.ToolResult == nil || !previewChildToolCallID(ev.ToolResult.CallID) {
 			return session.Event{}, false
 		}
 		base.IsError = ev.ToolResult.IsError
+		base.ChildToolCallID = ev.ToolResult.CallID
 		base.Detail = clampPreview(ev.ToolResult.Content)
 	case session.EvTurnEnd:
 		if ev.TurnEnd != nil {

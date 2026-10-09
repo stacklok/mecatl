@@ -38,7 +38,7 @@ func main() {
 	must(issue(dir, "provider", ca, caKey, []string{"mecatl-execution", "mecatl-execution.execution-qualification.svc", "mecatl-execution.execution-qualification.svc.cluster.local"}, "", []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}))
 	must(issue(dir, "mecak8s", ca, caKey, nil, "spiffe://mecatl.test/client/mecak8s", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}))
 	must(issue(dir, "intruder", ca, caKey, nil, "spiffe://mecatl.test/client/intruder", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}))
-	for _, name := range []string{"operations", "wrong-scope"} {
+	for _, name := range []string{"operations", "wrong-scope", "qualification"} {
 		must(issue(dir, name, ca, caKey, nil, "spiffe://mecatl.test/client/"+name, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}))
 	}
 	manifest, err := json.Marshal(map[string]any{
@@ -49,6 +49,8 @@ func main() {
 			map[string]any{"uri": "spiffe://mecatl.test/client/intruder", "mayAttestOwner": true, "administrator": false},
 			map[string]any{"uri": "spiffe://mecatl.test/client/operations", "mayAttestOwner": true, "administrator": true, "administratorFor": []string{"spiffe://mecatl.test/client/mecak8s"}},
 			map[string]any{"uri": "spiffe://mecatl.test/client/wrong-scope", "mayAttestOwner": true, "administrator": true, "administratorFor": []string{"spiffe://mecatl.test/client/intruder"}},
+			// qualification owns synthetic intents the in-cluster mecak8s reconciler must never see.
+			map[string]any{"uri": "spiffe://mecatl.test/client/qualification", "mayAttestOwner": true, "administrator": true},
 		},
 	})
 	must(err)

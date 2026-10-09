@@ -8,7 +8,7 @@ import (
 // GoroutinesAfterSettle returns the live goroutine count after a settle delay,
 // so transient run-teardown goroutines (a draining emitter, a parked sampler,
 // the GC) are not miscounted as a leak. It is the tracked-number promotion of
-// goleak's boolean pass/fail (perf-tracking.md Phase 2): the end-of-run
+// goleak's boolean pass/fail (perf-tracking.md "The benchmark harness"): the end-of-run
 // goroutine count is a gate-hard KPI for the delegation/team/background leak
 // class.
 //

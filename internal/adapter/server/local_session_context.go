@@ -11,7 +11,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-// LocalSessionContextServer implements ADR 0296's privileged local-client
+// LocalSessionContextServer implements the privileged local-client
 // workspace-root projection. Registration is deliberately left to composition,
 // which must attest the listener is local-client trusted.
 type LocalSessionContextServer struct {

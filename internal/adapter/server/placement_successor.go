@@ -299,7 +299,7 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	// The lease context covers provider binding and engine construction. Recheck
 	// ownership immediately before the only publication point.
 	//
-	// TODO(ADR 0291 follow-up): SessionStore has no lease-token CAS Save. A lease
+	// TODO: SessionStore has no lease-token CAS Save. A lease
 	// can therefore be lost after stillHeld and before/while Save publishes. Context
 	// cancellation is advisory because supported stores may already be committing;
 	// closing this residual window requires a new token-fenced store seam.

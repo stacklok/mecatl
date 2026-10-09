@@ -27,6 +27,7 @@ import {
   useUserAvatar,
   useUserDisplayName,
 } from "../../lib/profile-preferences";
+import { spyOnLocalStorage } from "../../test-storage";
 import { useChatFolders } from "../chat/chat-folders";
 import { useQueuedMessages } from "../chat/chat-queue";
 import { readFailedRun } from "../chat/failed-run-storage";
@@ -412,7 +413,7 @@ it("quarantines every account-scoped caller after partial removal, including sto
   });
 
   const remove = window.localStorage.removeItem.bind(window.localStorage);
-  vi.spyOn(window.localStorage, "removeItem").mockImplementation((key) => {
+  spyOnLocalStorage("removeItem").mockImplementation((key) => {
     if (key.startsWith("studio.") && key !== "studio.account") {
       throw new Error("partial removal blocked");
     }

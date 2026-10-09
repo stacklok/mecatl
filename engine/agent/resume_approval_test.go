@@ -383,7 +383,7 @@ func TestPendingAskCarriesGatedCallID(t *testing.T) {
 	}
 }
 
-// TestRunRequestAskIDDiscriminatorReplacesSerial (#117/ADR-0044, T5 positive
+// TestRunRequestAskIDDiscriminatorReplacesSerial (#117, T5 positive
 // case): a host-supplied colon-free discriminator REPLACES the "r<serial>"
 // trailing askID component, making the askID reconstructable across processes.
 func TestRunRequestAskIDDiscriminatorReplacesSerial(t *testing.T) {
@@ -409,7 +409,7 @@ func TestRunRequestAskIDDiscriminatorReplacesSerial(t *testing.T) {
 	}
 }
 
-// TestAskIDDiscriminatorReconstructableAcrossRuns (#117/ADR-0044) proves the
+// TestAskIDDiscriminatorReconstructableAcrossRuns (#117) proves the
 // END-TO-END property the feature exists for: two INDEPENDENT runs (two separate
 // Engine.Run→startRun→authorize→newAskID chains) over the SAME session id with
 // the SAME AskIDDiscriminator and the SAME scripted tool-call mint a byte-IDENTICAL
@@ -447,7 +447,7 @@ func TestAskIDDiscriminatorReconstructableAcrossRuns(t *testing.T) {
 	}
 }
 
-// TestRunRequestAskIDDiscriminatorColonFallsBack (#117/ADR-0044, T5 negative
+// TestRunRequestAskIDDiscriminatorColonFallsBack (#117, T5 negative
 // case): a colon-containing discriminator is IGNORED (it would make the askID
 // grammar ambiguous) and the run falls back to the process-global "r<serial>"
 // component — the minted askID must NOT embed the rejected value.

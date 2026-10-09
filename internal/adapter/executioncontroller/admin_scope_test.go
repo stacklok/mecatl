@@ -47,10 +47,6 @@ func newAdminScopeFixture(t *testing.T, route, actor string) *adminScopeFixture 
 	if route == "data" {
 		env = runFixtureEnvironment(4, 4)
 	}
-	if route == "migrate" {
-		_ = unstructured.SetNestedField(env.Object, int64(1), "spec", "schemaVersion")
-		_ = unstructured.SetNestedField(env.Object, int64(1), "status", "schemaVersion")
-	}
 	if route == "recover" {
 		_ = unstructured.SetNestedField(env.Object, "FenceUnknown", "status", "fenceState")
 	}
@@ -123,9 +119,6 @@ func callScopedAdmin(ctx context.Context, c executionv1.ExecutionProviderService
 		_, err = c.RecoverEnvironment(ctx, &executionv1.RecoverEnvironmentRequest{Environment: ref, Owner: o, ExpectedExecutionEpoch: q.ExpectedEpoch, ExpectedPodUid: q.ExpectedPodUID, ExpectedPvcUid: q.ExpectedPVCUID, OperationId: q.OperationID})
 	case "delete":
 		_, err = c.DeleteRetiredEnvironment(ctx, &executionv1.DeleteRetiredEnvironmentRequest{Environment: ref, Owner: o, ExpectedPvcUid: q.ExpectedPVCUID, OperationId: q.OperationID})
-	case "migrate":
-		schema := uint32(q.ExpectedSchema)
-		_, err = c.MigrateEnvironment(ctx, &executionv1.MigrateEnvironmentRequest{Environment: ref, Owner: o, ExpectedSchemaVersion: &schema, ExpectedPodUid: q.ExpectedPodUID, ExpectedPvcUid: q.ExpectedPVCUID, OperationId: q.OperationID})
 	case "revoke":
 		_, err = c.RevokeEnvironment(ctx, &executionv1.RevokeEnvironmentRequest{Environment: ref, Owner: o, ExpectedGrantGeneration: q.ExpectedEpoch, OperationId: q.OperationID})
 	default:
@@ -135,11 +128,10 @@ func callScopedAdmin(ctx context.Context, c executionv1.ExecutionProviderService
 }
 
 func TestScopedAdminAllRoutesOverMTLS(t *testing.T) {
-	for _, route := range []string{"retire", "replace", "recover", "delete", "migrate", "revoke"} {
+	for _, route := range []string{"retire", "replace", "recover", "delete", "revoke"} {
 		t.Run(route, func(t *testing.T) {
 			f := newAdminScopeFixture(t, route, scopeAdmin)
 			q := adminRequestFixture()
-			q.ExpectedSchema = 1
 			call := func(q adminLifecycleRequest, owner executionenv.Owner) error {
 				return callScopedAdmin(t.Context(), f.client, route, q, owner)
 			}
@@ -191,13 +183,6 @@ func TestScopedAdminAllRoutesOverMTLS(t *testing.T) {
 					t.Fatalf("stale Pod UID: %v", err)
 				}
 			}
-			if route == "migrate" {
-				stale = q
-				stale.ExpectedSchema = 0
-				if err := call(stale, scopeOwner); status.Code(err) != codes.Aborted {
-					t.Fatalf("wrong schema: %v", err)
-				}
-			}
 			before, err := f.dynamic.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{})
 			if err != nil {
 				t.Fatal(err)
@@ -238,7 +223,6 @@ func TestScopedAdminAllRoutesOverMTLS(t *testing.T) {
 		t.Run(route+"/creator", func(t *testing.T) {
 			f := newAdminScopeFixture(t, route, scopeCreator)
 			q := adminRequestFixture()
-			q.ExpectedSchema = 1
 			if err := callScopedAdmin(t.Context(), f.client, route, q, scopeOwner); status.Code(err) != codes.PermissionDenied {
 				t.Fatalf("normal creator is admin: %v", err)
 			}
@@ -251,7 +235,7 @@ func TestScopedAdminAllRoutesOverMTLS(t *testing.T) {
 }
 
 func TestScopedAdminCASRetryRechecksSubject(t *testing.T) {
-	for _, route := range []string{"retire", "replace", "recover", "delete", "migrate", "revoke"} {
+	for _, route := range []string{"retire", "replace", "recover", "delete", "revoke"} {
 		t.Run(route, func(t *testing.T) {
 			f := newAdminScopeFixture(t, route, scopeAdmin)
 			f.policy(t, true, []string{scopeCreator})
@@ -272,7 +256,6 @@ func TestScopedAdminCASRetryRechecksSubject(t *testing.T) {
 				return true, nil, apierrors.NewConflict(ExecutionEnvironmentGVR.GroupResource(), "env", nil)
 			})
 			q := adminRequestFixture()
-			q.ExpectedSchema = 1
 			if err := callScopedAdmin(t.Context(), f.client, route, q, scopeOwner); status.Code(err) != codes.NotFound {
 				t.Fatalf("CAS retry escaped scope: %v", err)
 			}
@@ -337,69 +320,6 @@ func TestScopedAdminCompletedReplacementReceiptReauthorizes(t *testing.T) {
 	f.policy(t, true, nil)
 	if err := callScopedAdmin(t.Context(), f.client, "replace", q, scopeOwner); status.Code(err) != codes.NotFound {
 		t.Fatalf("receipt bypassed removed scope: %v", err)
-	}
-}
-
-func TestScopedAdminMigrationReceiptRetainsUIDPreconditions(t *testing.T) {
-	f := newAdminScopeFixture(t, "migrate", scopeAdmin)
-	f.policy(t, true, []string{scopeCreator})
-	q := adminRequestFixture()
-	q.ExpectedSchema = 1
-	if err := callScopedAdmin(t.Context(), f.client, "migrate", q, scopeOwner); err != nil {
-		t.Fatal(err)
-	}
-	if err := callScopedAdmin(t.Context(), f.client, "migrate", q, scopeOwner); err != nil {
-		t.Fatalf("exact migration replay failed: %v", err)
-	}
-	q.ExpectedSchema = 0
-	if err := callScopedAdmin(t.Context(), f.client, "migrate", q, scopeOwner); status.Code(err) != codes.Aborted {
-		t.Fatalf("migration receipt bypassed source schema: %v", err)
-	}
-	q.ExpectedSchema = 1
-	q.ExpectedPVCUID = "stale"
-	if err := callScopedAdmin(t.Context(), f.client, "migrate", q, scopeOwner); status.Code(err) != codes.Aborted {
-		t.Fatalf("migration receipt bypassed UID: %v", err)
-	}
-}
-
-func TestMigrationCompletedCASReplayRequiresExactSourceSchema(t *testing.T) {
-	for _, receipt := range []string{"exact", "changed", "absent", "expired"} {
-		t.Run(receipt, func(t *testing.T) {
-			f := newAdminScopeFixture(t, "migrate", scopeAdmin)
-			f.policy(t, true, []string{scopeCreator})
-			var raced bool
-			f.dynamic.PrependReactor("update", "executionenvironments", func(action k8stesting.Action) (bool, runtime.Object, error) {
-				u := action.(k8stesting.UpdateAction).GetObject().(*unstructured.Unstructured)
-				if raced || textNested(u.Object, "status", "lastMigrationOperationID") == "" {
-					return false, nil, nil
-				}
-				raced = true
-				completed := u.DeepCopy()
-				switch receipt {
-				case "changed":
-					_ = unstructured.SetNestedField(completed.Object, int64(0), "status", "lastMigrationFromSchema")
-				case "absent":
-					unstructured.RemoveNestedField(completed.Object, "status", "lastMigrationFromSchema")
-				case "expired":
-					unstructured.RemoveNestedField(completed.Object, "status", "lastMigrationOperationID")
-					unstructured.RemoveNestedField(completed.Object, "status", "lastMigrationFromSchema")
-				}
-				if err := f.dynamic.Tracker().Update(ExecutionEnvironmentGVR, completed, "ns"); err != nil {
-					t.Fatal(err)
-				}
-				return true, nil, apierrors.NewConflict(ExecutionEnvironmentGVR.GroupResource(), "env", nil)
-			})
-			q := adminRequestFixture()
-			q.ExpectedSchema = 1
-			err := callScopedAdmin(t.Context(), f.client, "migrate", q, scopeOwner)
-			want := codes.Aborted
-			if receipt == "exact" {
-				want = codes.OK
-			}
-			if !raced || status.Code(err) != want {
-				t.Fatalf("CAS replay raced=%t code=%v, want %v", raced, status.Code(err), want)
-			}
-		})
 	}
 }
 

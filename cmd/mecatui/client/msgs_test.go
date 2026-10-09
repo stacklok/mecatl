@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,6 +12,83 @@ import (
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
+
+func TestDelegationChildToolCallIDIngress(t *testing.T) {
+	for _, id := range []string{"bad\xff", strings.Repeat("x", 257), strings.Repeat("é", 129)} {
+		for _, kind := range []string{"tool.call", "tool.result.available", "tool.result"} {
+			for _, tc := range []struct {
+				name string
+				ev   *mecatlv1.Event
+				get  func(tea.Msg) (string, string, string)
+			}{
+				{"subagent", &mecatlv1.Event{Type: "subagent.tool", Subagent: &mecatlv1.Subagent{ChildToolCallId: id, InnerKind: kind, ToolName: "Read"}}, func(m tea.Msg) (string, string, string) {
+					p := m.(SubagentMsg)
+					return p.ChildToolCallID, p.InnerKind, p.ToolName
+				}},
+				{"parallel", &mecatlv1.Event{Type: "parallel.branch", Parallel: &mecatlv1.Parallel{Kind: "branch_tool", ChildToolCallId: id, InnerKind: kind, ToolName: "Read"}}, func(m tea.Msg) (string, string, string) {
+					p := m.(ParallelMsg)
+					return p.ChildToolCallID, p.InnerKind, p.ToolName
+				}},
+				{"team", &mecatlv1.Event{Type: "team.member", Team: &mecatlv1.Team{ChildToolCallId: id, InnerKind: kind, ToolName: "Read"}}, func(m tea.Msg) (string, string, string) {
+					p := m.(TeamMsg)
+					return p.ChildToolCallID, p.InnerKind, p.ToolName
+				}},
+			} {
+				t.Run(tc.name+"/"+kind, func(t *testing.T) {
+					gotID, gotKind, gotName := tc.get(EventToMsg(tc.ev))
+					if gotID != "" || gotKind != "" || gotName != "" {
+						t.Fatalf("unsafe preview: %q %q %q", gotID, gotKind, gotName)
+					}
+				})
+			}
+		}
+	}
+	if got := childPreviewID(strings.Repeat("é", 128)); got != strings.Repeat("é", 128) {
+		t.Fatal("valid 256-byte ID not preserved")
+	}
+}
+
+func TestDelegationChildToolCallIDTranslation(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ev   *mecatlv1.Event
+		id   func(tea.Msg) string
+	}{
+		{"subagent", &mecatlv1.Event{Type: "subagent.tool", Subagent: &mecatlv1.Subagent{ChildToolCallId: "exact-id"}}, func(m tea.Msg) string { return m.(SubagentMsg).ChildToolCallID }},
+		{"parallel", &mecatlv1.Event{Type: "parallel.branch", Parallel: &mecatlv1.Parallel{Kind: "branch_tool", ChildToolCallId: "exact-id"}}, func(m tea.Msg) string { return m.(ParallelMsg).ChildToolCallID }},
+		{"team", &mecatlv1.Event{Type: "team.member", Team: &mecatlv1.Team{ChildToolCallId: "exact-id"}}, func(m tea.Msg) string { return m.(TeamMsg).ChildToolCallID }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.id(EventToMsg(tc.ev)); got != "exact-id" {
+				t.Fatalf("ID = %q", got)
+			}
+			// An older server omits the field; the message must keep its zero value.
+			switch tc.name {
+			case "subagent":
+				tc.ev.Subagent.ChildToolCallId = ""
+			case "parallel":
+				tc.ev.Parallel.ChildToolCallId = ""
+			case "team":
+				tc.ev.Team.ChildToolCallId = ""
+			}
+			if got := tc.id(EventToMsg(tc.ev)); got != "" {
+				t.Fatalf("old ID = %q", got)
+			}
+		})
+	}
+	for _, tc := range []struct {
+		ev *mecatlv1.Event
+		id func(tea.Msg) string
+	}{
+		{&mecatlv1.Event{Type: "subagent.start", Subagent: &mecatlv1.Subagent{}}, func(m tea.Msg) string { return m.(SubagentMsg).ChildToolCallID }},
+		{&mecatlv1.Event{Type: "parallel.start", Parallel: &mecatlv1.Parallel{}}, func(m tea.Msg) string { return m.(ParallelMsg).ChildToolCallID }},
+		{&mecatlv1.Event{Type: "team.start", Team: &mecatlv1.Team{}}, func(m tea.Msg) string { return m.(TeamMsg).ChildToolCallID }},
+	} {
+		if got := tc.id(EventToMsg(tc.ev)); got != "" {
+			t.Errorf("%s non-tool ID = %q", tc.ev.Type, got)
+		}
+	}
+}
 
 func TestRoutingDecisionProjectionPreservesOptionalPresence(t *testing.T) {
 	zero := 0.0

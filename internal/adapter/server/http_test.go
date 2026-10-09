@@ -191,7 +191,8 @@ func TestHTTPPromptSSE(t *testing.T) {
 }
 
 // TestHTTPApprove mirrors the gRPC headline test over HTTP: a prompt pauses on
-// a permission.ask; a concurrent POST /approve resolves it; the run completes.
+// a permission.ask; a concurrent POST /controls/resolve-ask resolves it; the run
+// completes.
 func TestHTTPApprove(t *testing.T) {
 	write := &scriptTool{name: "Write", readOnly: false, content: "wrote"}
 	llm := mockllm.New(
@@ -215,7 +216,8 @@ func TestHTTPApprove(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	// Read the SSE stream incrementally; when the ask arrives, POST /approve.
+	// Read the SSE stream incrementally; when the ask arrives, POST
+	// /controls/resolve-ask.
 	r := bufio.NewReader(resp.Body)
 	var events []*mecatlv1.Event
 	var approved bool
@@ -955,7 +957,7 @@ func TestHTTPRunTeamEmptyTeamOutcomeOnly(t *testing.T) {
 	}
 }
 
-// TestHTTPScheduleLifecycle (S7): the schedule REST surface over
+// TestHTTPScheduleLifecycle: the schedule REST surface over
 // httptest.NewServer(NewHTTPHandler(svc)) — create+get+fire+pause over a
 // jsonlstore-backed Service, plus the no-store→501 path on a memstore-backed
 // Service. Mirrors the repo's http_test.go convention.
@@ -986,7 +988,7 @@ func TestHTTPScheduleLifecycle(t *testing.T) {
 	if !created.GetSchedule().GetState().GetEnabled() {
 		t.Error("Enabled = false, want true")
 	}
-	// Singleton defaulted to true (S3: the create-seam applies the default).
+	// Singleton defaulted to true (the create-seam applies the default).
 	if !created.GetSchedule().GetSpec().GetSingleton() {
 		t.Error("Singleton = false, want true (the create-seam default)")
 	}
@@ -1160,7 +1162,7 @@ func TestHTTPCreateSessionRejectsLegacyCarryoverField(t *testing.T) {
 	}
 }
 
-// TestHTTPScheduleNoStore501 (S7): a Service with no ScheduleStore (memstore)
+// TestHTTPScheduleNoStore501: a Service with no ScheduleStore (memstore)
 // reports schedule RPCs as 501.
 func TestHTTPScheduleNoStore501(t *testing.T) {
 	svc := newService(t, mockllm.New(), allowRules())

@@ -21,8 +21,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-// pathescape_scenario5c_test.go pins AC5.1d/AC5.1e
-// (docs/acceptance/path-escape-posture.md Scenario 5): a base-SHARING
+// pathescape_scenario5c_test.go pins that a base-SHARING
 // (shell-less) read-only team member — the supervisor's base-share fallback
 // tier, reached whenever the factory cannot isolate the member (no read-only
 // runner / forker wired) — must NOT inherit the main session's relaxed

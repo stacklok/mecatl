@@ -95,7 +95,6 @@ type adminLifecycleBackend interface {
 	RetireExact(context.Context, adminLifecycleRequest) error
 	RecoverEnvironment(context.Context, adminLifecycleRequest) error
 	DeleteRetiredEnvironment(context.Context, adminLifecycleRequest) error
-	MigrateEnvironment(context.Context, adminLifecycleRequest) error
 	RevokeEnvironment(context.Context, adminLifecycleRequest, uint64) (uint64, error)
 }
 
@@ -461,22 +460,6 @@ func (h *Handler) DeleteRetiredEnvironment(ctx context.Context, q *executionv1.D
 		if h.cfg.Diagnostics != nil {
 			h.cfg.Diagnostics.Log(ctx, port.LevelWarn, "execution backend failure", "operation", "delete_retired", "reason", backendReasonClass(err))
 		}
-		return nil, backendError(err)
-	}
-	return &emptypb.Empty{}, nil
-}
-
-func (h *Handler) MigrateEnvironment(ctx context.Context, q *executionv1.MigrateEnvironmentRequest) (*emptypb.Empty, error) {
-	req, err := h.adminRequest(ctx, q.GetEnvironment(), q.GetOwner(), 1, q.GetExpectedPodUid(), q.GetExpectedPvcUid(), q.GetOperationId())
-	if err != nil {
-		return nil, err
-	}
-	if q == nil || q.ExpectedSchemaVersion == nil || q.GetExpectedSchemaVersion() > 1 {
-		return nil, wireError(executionenv.CodeInvalidArgument, false)
-	}
-	req.ExpectedEpoch = 0
-	req.ExpectedSchema = int64(q.GetExpectedSchemaVersion())
-	if err := h.adminLifecycleBackend.MigrateEnvironment(ctx, req); err != nil {
 		return nil, backendError(err)
 	}
 	return &emptypb.Empty{}, nil

@@ -176,8 +176,7 @@ const (
 	//
 	// WHY IT EXISTS: without it the durable log could not show WHAT THE USER ASKED (the
 	// relay never re-emits the user prompt it received), and an event-sourced fold of the
-	// log (engine/adapter/eventsource) could not reconstruct user-role turns — closing
-	// that gap is ADR 0038 / the ADR 0027 row-11 follow-up.
+	// log (engine/adapter/eventsource) could not reconstruct user-role turns.
 	//
 	// NO-LEAK CONTRACT (gauntlet #7): a CHILD's user prompt (a Subagent goal, a team
 	// member task, a structured-output correction) is recorded into the CHILD session and
@@ -192,12 +191,11 @@ const (
 	// content. It carries only the parent call id, the child session id, and a
 	// short goal label so a client can attribute and title the subagent card.
 	EvSubagentStart EventType = "subagent.start"
-	// EvSubagentTool is emitted each time a Subagent tool's child tool call
-	// resolves. It is a REDACTED observability projection: it forwards ONLY the
-	// child tool's NAME and error bool plus a running count — never the child's
-	// tool args or result content, and never the child's message text. This keeps
-	// the context-isolation guarantee (gauntlet #7) intact: nothing the child
-	// produces enters the parent's conversation.
+	// EvSubagentTool projects bounded child activity, including early available and
+	// canonical results. It is a REDACTED observability projection: it forwards
+	// the child tool's name, error bool, bounded preview, and a running count.
+	// Bounded previews keep the context-isolation guarantee (gauntlet #7) intact:
+	// nothing the child produces enters the parent's conversation.
 	EvSubagentTool EventType = "subagent.tool"
 	// EvSubagentEnd is emitted when a Subagent tool run terminates. It is a
 	// REDACTED observability projection carrying only aggregate metadata — the
@@ -212,7 +210,7 @@ const (
 	// member content). See TeamPayload for the redaction contract.
 	EvTeamStart EventType = "team.start"
 	// EvTeamMember is emitted for each forwarded member-session event during a Team
-	// run. Unlike the metadata-only subagent.tool projection, it is deliberately
+	// run. Unlike the narrower subagent.tool projection, it is deliberately
 	// FULLER — a team is meant to be watched — so it carries the member's message
 	// text and BOUNDED tool-call/result previews, tagged by member name. It ALWAYS
 	// sets Member (the member whose activity it projects) and InnerKind (that
@@ -253,11 +251,9 @@ const (
 	EvParallelStart EventType = "parallel.start"
 	// EvParallelBranch is emitted for each per-branch lifecycle transition of a Parallel
 	// run, discriminated by ParallelPayload.Kind (branch_start / branch_tool / branch_end).
-	// Like EvSubagentTool it is METADATA ONLY: a branch_tool carries only the child tool's
-	// NAME + error bool + running count (forwarded via the SAME drainChildObserved
-	// chokepoint Subagent uses), and a branch_end carries only the branch's stop / usage /
-	// duration / failed flag / fork-root path — never branch args, result bodies, or
-	// message text. This keeps gauntlet #7 intact.
+	// EvParallelBranch includes bounded branch activity, including early available
+	// and canonical results; branch_end carries only stop / usage / duration /
+	// failed / fork-root-path metadata. This keeps gauntlet #7 intact.
 	EvParallelBranch EventType = "parallel.branch"
 	// EvParallelEnd is emitted when a Parallel run terminates. It is a REDACTED, RUN-LEVEL
 	// projection carrying the join strategy, the WINNER branch index (-1 for join=all /
@@ -471,8 +467,8 @@ func VerdictString(v ApprovalVerdict) string {
 // CompactionArchivePayload is the structured detail carried by an
 // EvCompactionArchive Event: the pre-compaction conversation that ReplaceHistory
 // replaced. It is the durable, non-destructive archive of the history a
-// compaction would otherwise drop — a later consumer (the Phase 3 reconstruct
-// gate, issue #28 session-scoped detach) replays the EventLog and recovers the
+// compaction would otherwise drop — a consumer (e.g. the eventsource
+// reconstruction adapter) replays the EventLog and recovers the
 // pre-compaction turns that the session snapshot no longer holds.
 //
 // CAPTURE ORDERING (load-bearing): the loop captures the original Messages slice
@@ -797,7 +793,7 @@ type TurnEndPayload struct {
 // TeamPayload — all project the SAME underlying child-loop LIFECYCLE: a redacted child
 // doing tool work, start → tool → end. The shared lifecycle is the parent call id, a
 // child/branch/member identity, a tool name / error bool / running count, usage, stop
-// reason, and duration, PLUS — as of ADR 0079 — the bounded preview fields (Text /
+// reason, and duration, PLUS the bounded preview fields (Text /
 // Detail / InnerKind) all three families now carry for their tool/message events; and
 // the redaction of that lifecycle (previews included) is shared in EXACTLY ONE place —
 // agent.drainChildObserved (the single redaction chokepoint all three reuse, every
@@ -843,7 +839,7 @@ type RoutingDecision struct {
 // subagent.* events (EvSubagentStart / EvSubagentTool / EvSubagentEnd). It is the
 // ONLY information about a Subagent tool's child run that surfaces to clients.
 //
-// REDACTION CONTRACT — bounded previews (ADR 0079, superseding the former
+// REDACTION CONTRACT — bounded previews (superseding the former
 // metadata-only contract): on tool events it deliberately forwards BOUNDED previews
 // of the child's content — Text is a bounded, clamped preview of the child's message
 // text, Detail is a bounded, clamped preview of a child tool call's args or a tool
@@ -858,8 +854,8 @@ type RoutingDecision struct {
 // Which fields are set depends on the event kind:
 //   - EvSubagentStart: ParentCallID, ChildID, Goal, [RoutedCategory, RoutedModel, RoutingReason], Model.
 //   - EvSubagentTool:  ParentCallID, ChildID, ToolName, IsError, ToolCount, and —
-//     when a preview is available — Text / Detail / InnerKind (which inner event kind
-//     the preview came from: message.delta / tool.call / tool.result / result).
+//     when a preview is available — Text / Detail / InnerKind (message.delta /
+//     tool.call / tool.result.available / tool.result / result).
 //   - EvSubagentEnd:   ParentCallID, ChildID, ToolCount, Usage, Stop, [Cause], DurationMs.
 type SubagentPayload struct {
 	// ParentCallID is the parent's Subagent tool-call id, used by clients to attribute
@@ -881,7 +877,7 @@ type SubagentPayload struct {
 	// one boolean on subagent.* (the ChildActivity trip-wire stands).
 	Background bool
 	// RoutedCategory / RoutedModel are the OPT-IN semantic model router's classification
-	// for this child (ADR 0031): the chosen CATEGORY label and the concrete MODEL id the
+	// for this child: the chosen CATEGORY label and the concrete MODEL id the
 	// child was minted on. Set on EvSubagentStart ONLY when the router was wired AND
 	// classified this delegation (both empty otherwise — no router, or a fail-soft miss
 	// that inherited the default model). They are BARE METADATA — a category label and a
@@ -893,6 +889,10 @@ type SubagentPayload struct {
 	// the gRPC + HTTP relays and the mecatui client).
 	RoutedCategory string
 	RoutedModel    string
+	// Provider is the concrete provider that actually ran this child.
+	Provider string
+	// ExplicitRouterCategory is set only for provider:"model-router" selection.
+	ExplicitRouterCategory string
 	// RoutingReason names WHY the router did NOT classify this delegation (EvSubagentStart
 	// only): EMPTY on a routed hit (RoutedCategory/RoutedModel set), otherwise one of the
 	// RoutingReason* gate constants (pinned-model / agent-def-pinned-model / resume / fork /
@@ -912,11 +912,15 @@ type SubagentPayload struct {
 	// — a model id, never child content — so it is gauntlet-#7 safe (no child content
 	// crosses). When the router classified this delegation, Model == RoutedModel. It rides
 	// the proto/client wire end-to-end (subagent.start: Subagent.model = field 13),
-	// surfaced via the server mapper — see ADR 0035.
+	// surfaced via the server mapper.
 	Model string
 	// ToolName is the name of a child tool that just ran. Set on EvSubagentTool
 	// only. It is the tool NAME alone — never the child's tool args or result.
 	ToolName string
+	// ChildToolCallID is the exact child call, available-result, or canonical-result ID
+	// for tool projections only. It is scoped by ChildID; older and non-tool events leave it empty.
+	// IDs longer than 256 bytes or invalid UTF-8 are omitted with their previews.
+	ChildToolCallID ToolCallID
 	// IsError reports whether the child tool call failed. Set on EvSubagentTool
 	// only.
 	IsError bool
@@ -932,13 +936,13 @@ type SubagentPayload struct {
 	// kinds when a preview is available.
 	Text string
 	// Detail is a BOUNDED preview of a child tool call's args (tool.call) or a
-	// tool result's body (tool.result) — control-byte scrubbed and rune-capped by
+	// tool result's body (tool.result.available or tool.result) — control-byte scrubbed and rune-capped by
 	// clampPreview in engine/agent, never the raw, unbounded args/result body. Set
-	// on EvSubagentTool for the tool.call / tool.result inner kinds when a preview
+	// on EvSubagentTool for the tool.call / tool.result.available / tool.result inner kinds when a preview
 	// is available.
 	Detail string
 	// InnerKind discriminates which inner child event kind the projection came from
-	// (message.delta / tool.call / tool.result / result / turn.end) and which preview
+	// (message.delta / tool.call / tool.result.available / tool.result / result / turn.end) and which preview
 	// fields it populates (Text/Detail). A turn.end projection carries NO Text/Detail;
 	// it only advances Usage. A child's permission.ask is never projected.
 	InnerKind EventType
@@ -974,7 +978,7 @@ type SubagentPayload struct {
 // ParallelPayload is the REDACTED observability projection carried by the parallel.*
 // events (EvParallelStart / EvParallelBranch / EvParallelEnd).
 //
-// REDACTION CONTRACT — bounded previews (ADR 0079, superseding the former
+// REDACTION CONTRACT — bounded previews (superseding the former
 // metadata-only contract): on branch tool events it deliberately forwards BOUNDED
 // previews of the branch's content — Text is a bounded, clamped preview of the
 // branch's message text, Detail is a bounded, clamped preview of a branch tool
@@ -1034,7 +1038,7 @@ type ParallelPayload struct {
 	// Set on the branch_start kind. Clamped identically to SubagentPayload.Goal.
 	Goal string
 	// RoutedCategory / RoutedModel are the OPT-IN semantic model router's classification
-	// for this branch (ADR 0031 / ADR 0034): the chosen CATEGORY label and the concrete
+	// for this branch: the chosen CATEGORY label and the concrete
 	// MODEL id the branch was minted on. Set on the branch_start kind ONLY when the router
 	// was wired AND classified this branch (both empty otherwise — no router, a fail-soft
 	// miss that inherited the default branch model, or a branch cancelled before it started).
@@ -1042,7 +1046,7 @@ type ParallelPayload struct {
 	// label and a model id, never the branch prompt or the classifier's reasoning — so they
 	// are gauntlet-#7 safe (no branch content, no model-influenced free text crosses). They
 	// ride the proto/client wire end-to-end (parallel.branch_start: Parallel.routed_category
-	// = field 19 / routed_model = field 20), surfaced via the server mapper — see ADR 0034.
+	// = field 19 / routed_model = field 20), surfaced via the server mapper.
 	RoutedCategory string
 	RoutedModel    string
 	// RoutingReason names WHY the router did NOT classify this branch (branch_start kind
@@ -1063,12 +1067,19 @@ type ParallelPayload struct {
 	// branch content — so it is gauntlet-#7 safe (no branch content crosses). When the
 	// router classified this branch, Model == RoutedModel. It rides the proto/client wire
 	// end-to-end (parallel.branch_start: Parallel.model = field 21), surfaced via the
-	// server mapper — see ADR 0035.
+	// server mapper.
 	Model string
-
+	// Provider is the concrete provider that actually ran the branch.
+	Provider string
+	// ExplicitRouterCategory is set only for an explicit model-router selector.
+	ExplicitRouterCategory string
 	// ToolName is the name of a branch's child tool that just ran. Set on the
 	// branch_tool kind only. It is the tool NAME alone — never branch args/result.
 	ToolName string
+	// ChildToolCallID is the exact branch call/result ID for tool.call/tool.result
+	// projections only, scoped by the branch lane. Otherwise it is empty.
+	// IDs longer than 256 bytes or invalid UTF-8 are omitted with their previews.
+	ChildToolCallID ToolCallID
 	// IsError reports whether that branch tool call failed. Set on branch_tool only.
 	IsError bool
 	// ToolCount is the running (branch_tool) or final (branch_end) number of a branch's
@@ -1080,13 +1091,13 @@ type ParallelPayload struct {
 	// inner kinds when a preview is available.
 	Text string
 	// Detail is a BOUNDED preview of a branch tool call's args (tool.call) or a
-	// tool result's body (tool.result) — control-byte scrubbed and rune-capped by
+	// tool result's body (tool.result.available or tool.result) — control-byte scrubbed and rune-capped by
 	// clampPreview in engine/agent, never the raw, unbounded args/result body. Set
-	// on the branch_tool kind for the tool.call / tool.result inner kinds when a
+	// on the branch_tool kind for the tool.call / tool.result.available / tool.result inner kinds when a
 	// preview is available.
 	Detail string
 	// InnerKind discriminates which inner branch event kind the preview came from
-	// (message.delta / tool.call / tool.result / result). Set on the branch_tool
+	// (message.delta / tool.call / tool.result.available / tool.result / result). Set on the branch_tool
 	// kind alongside Text / Detail. A branch's permission.ask is never projected.
 	InnerKind EventType
 
@@ -1164,7 +1175,7 @@ type TeamMemberSpec struct {
 	// Lead marks the coordinating member.
 	Lead bool
 	// RoutedCategory / RoutedModel are the OPT-IN semantic model router's classification
-	// for this member (ADR 0031 / ADR 0034): the chosen CATEGORY label and the concrete
+	// for this member: the chosen CATEGORY label and the concrete
 	// MODEL id the member's engine was minted on. Set on the EvTeamStart roster entry ONLY
 	// when the router was wired AND classified this member (both empty otherwise — no
 	// router, a fail-soft miss that inherited the default member model, or a DEFINED member
@@ -1173,7 +1184,7 @@ type TeamMemberSpec struct {
 	// the member's role/prompt or the classifier's reasoning — so they are gauntlet-#7 safe
 	// (no member content crosses). They ride the proto/client wire end-to-end (team.start
 	// roster: TeamMemberSpec.routed_category = field 5 / routed_model = field 6), surfaced
-	// via the server mapper — see ADR 0034.
+	// via the server mapper.
 	RoutedCategory string
 	RoutedModel    string
 	// RoutingReason names WHY the router did NOT classify this member (EvTeamStart roster
@@ -1194,8 +1205,12 @@ type TeamMemberSpec struct {
 	// METADATA — a model id, never member content — so it is gauntlet-#7 safe (no member
 	// content crosses). When the router classified this member, Model == RoutedModel. It
 	// rides the proto/client wire end-to-end (team.start roster: TeamMemberSpec.model =
-	// field 7), surfaced via the server mapper — see ADR 0035.
+	// field 7), surfaced via the server mapper.
 	Model string
+	// Provider is the concrete provider backing the retained member engine.
+	Provider string
+	// ExplicitRouterCategory is set only for an explicit model-router selector.
+	ExplicitRouterCategory string
 	// MemberSessionID and MemberIncarnation are trusted, log-only correlation for the
 	// exact enrolled member lifetime. They are deliberately omitted from every public
 	// wire and debugger JSON projection and must never be derived from the naming scheme.
@@ -1317,7 +1332,7 @@ type TeamMemberDisposition struct {
 // about an in-process team's run that surfaces to clients on the event stream.
 //
 // REDACTION CONTRACT — fuller-but-bounded. Like SubagentPayload / ParallelPayload
-// (bounded previews per ADR 0079) but fuller, since a team is meant to be WATCHED:
+// (bounded previews) but fuller, since a team is meant to be WATCHED:
 // this payload deliberately forwards member
 // CONTENT on team.member events: the member's streamed/terminal message text and
 // BOUNDED previews of its tool calls (name + capped arg preview) and tool results
@@ -1364,17 +1379,21 @@ type TeamPayload struct {
 	// MemberIncarnation is internal durable correlation metadata, never projected.
 	MemberIncarnation IncarnationID
 	// InnerKind is the member's underlying session event kind being projected
-	// (e.g. "message.delta", "tool.call", "tool.result", "turn.end", "result").
+	// (e.g. "message.delta", "tool.call", "tool.result.available", "tool.result", "turn.end", "result").
 	// Set on EvTeamMember only. permission.ask is never projected.
 	InnerKind EventType
 	// Text is the member's message/result text or a BOUNDED preview of it. Set on
 	// EvTeamMember for message.delta / result inner kinds.
 	Text string
 	// ToolName is the name of a member tool that was called. Set on EvTeamMember
-	// for tool.call / tool.result inner kinds.
+	// for tool.call / tool.result.available / tool.result inner kinds.
 	ToolName string
+	// ChildToolCallID is the exact member call/result ID for tool.call/tool.result
+	// projections only, scoped by the member lane. Otherwise it is empty.
+	// IDs longer than 256 bytes or invalid UTF-8 are omitted with their previews.
+	ChildToolCallID ToolCallID
 	// Detail is a BOUNDED preview of a member tool call's args (tool.call) or
-	// result body (tool.result) — capped at maxTeamPreview runes. It is never the
+	// result body (tool.result.available or tool.result) — capped at maxTeamPreview runes. It is never the
 	// raw, unbounded args/result body. Set on EvTeamMember for tool.* inner kinds.
 	Detail string
 	// IsError reports whether a member tool.result failed. Set on EvTeamMember for
@@ -1576,8 +1595,8 @@ type Event struct {
 	// metadata-only observability projection of a Parallel fork-join run (group-level
 	// join/winner facts + per-branch metadata + fork paths, never branch content).
 	Parallel *ParallelPayload
-	// RunID is the opaque, host-minted identity of the run that emitted this event
-	// (ADR 0249). It is STAMPED BY THE LOOP, at Run.emit/emitOrAbort, beside the
+	// RunID is the opaque, host-minted identity of the run that emitted this event.
+	// It is STAMPED BY THE LOOP, at Run.emit/emitOrAbort, beside the
 	// existing Seq stamp — every event a run emits carries it, so no relay,
 	// transport, or persistence path can omit it.
 	//
@@ -1601,11 +1620,11 @@ type Event struct {
 	// stream includes them, which is why the two are separate operations.
 	//
 	// A host that supplies no RunID emits events with an empty one, byte-identical
-	// to the behaviour before ADR 0249. Like Actor, it is not a reconstruction
+	// to the behaviour before RunID existed. Like Actor, it is not a reconstruction
 	// input: eventsource.Fold ignores it.
 	RunID string
 	// Actor is the verified caller who ACTED — who drove the request this event
-	// belongs to (ADR 0204 decision 5). It is LOG-ONLY and DERIVE-AT-APPEND: every
+	// belongs to. It is LOG-ONLY and DERIVE-AT-APPEND: every
 	// emit site — the loop included — leaves it nil (the loop is storage-agnostic
 	// and knows nothing about principals), and the server relay's single appendEvent
 	// chokepoint stamps it from the CONTEXT PRINCIPAL just before the durable

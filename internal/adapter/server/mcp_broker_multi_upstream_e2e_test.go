@@ -257,10 +257,10 @@ func newMultiUpstreamFixture(t *testing.T, rejectB bool, contexts ...context.Con
 
 	svc, err := NewService(Config{
 		Engine: brokerEngineResult().Engine, Store: memstore.New(),
-		PlacementProvider: brokerPlacementProvider{}, PlacementScope: "test", NewID: func() session.SessionID { return "adr-0298-e2e" },
+		PlacementProvider: brokerPlacementProvider{}, PlacementScope: "test", NewID: func() session.SessionID { return "broker-e2e" },
 		MCPBroker: process.Runtime, WorkspaceEnrollment: true,
 		RootAuthority: func(session.SessionKind) session.Authority {
-			return session.Authority{CapabilitySet: governance.CapabilitySet{Tools: []string{"mcp__backend-a__whoami", "mcp__backend-b__whoami"}}, Provenance: "adr-0298-test"}
+			return session.Authority{CapabilitySet: governance.CapabilitySet{Tools: []string{"mcp__backend-a__whoami", "mcp__backend-b__whoami"}}, Provenance: "broker-e2e-test"}
 		},
 		SessionEngineWithTools: func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, _ session.PermissionMode, tools []tool.Tool) (SessionEngineResult, error) {
 			f.mu.Lock()
@@ -405,7 +405,7 @@ func completeMultiUpstream(t *testing.T) (*multiUpstreamFixture, WorkspaceEnroll
 	return f, started, tools
 }
 
-func TestADR_0298_ToolHiveTwoUpstreamBrokerBootsE2E(t *testing.T) {
+func TestToolHiveTwoUpstreamBrokerBootsE2E(t *testing.T) {
 	f := newMultiUpstreamFixture(t, false)
 	if !f.process.WorkspaceEnrollmentRequired() {
 		t.Fatal("two protected ToolHive profiles did not require enrollment")
@@ -416,7 +416,7 @@ func TestADR_0298_ToolHiveTwoUpstreamBrokerBootsE2E(t *testing.T) {
 	}
 }
 
-func TestADR_0298_ToolHiveCompletesTwoUpstreamEnrollmentE2E(t *testing.T) {
+func TestToolHiveCompletesTwoUpstreamEnrollmentE2E(t *testing.T) {
 	f := newMultiUpstreamFixture(t, false)
 	secondEntered := make(chan struct{})
 	releaseSecond := make(chan struct{})
@@ -490,7 +490,7 @@ func fixtureToolMetadataFor(tools []tool.Tool) []fixtureToolMetadata {
 	return metadata
 }
 
-func TestADR_0298_ToolHiveCompletedEnrollmentRetriesHostCompletionE2E(t *testing.T) {
+func TestToolHiveCompletedEnrollmentRetriesHostCompletionE2E(t *testing.T) {
 	f := newMultiUpstreamFixture(t, false)
 	started := f.start()
 	if status := f.drive(started.URL); status != http.StatusOK {
@@ -538,7 +538,7 @@ func TestADR_0298_ToolHiveCompletedEnrollmentRetriesHostCompletionE2E(t *testing
 	}
 }
 
-func TestADR_0298_ToolHiveInjectsIsolatedUpstreamTokensE2E(t *testing.T) {
+func TestToolHiveInjectsIsolatedUpstreamTokensE2E(t *testing.T) {
 	f, _, tools := completeMultiUpstream(t)
 	for _, backend := range []string{"backend-a", "backend-b"} {
 		wrapped := toolFromFixture(t, tools, "mcp__"+backend+"__whoami")
@@ -559,7 +559,7 @@ func TestADR_0298_ToolHiveInjectsIsolatedUpstreamTokensE2E(t *testing.T) {
 	}
 }
 
-func TestADR_0298_ToolHiveChainFailureDoesNotPublishPartialCatalogueE2E(t *testing.T) {
+func TestToolHiveChainFailureDoesNotPublishPartialCatalogueE2E(t *testing.T) {
 	// ToolHive v0.45 does not correlate an upstream access_denied response back to
 	// mecatl's outer callback, so denial remains internally pending until expiry.
 	// Use a deterministic, correlatable second-backend authenticated-discovery
@@ -593,7 +593,7 @@ func TestADR_0298_ToolHiveChainFailureDoesNotPublishPartialCatalogueE2E(t *testi
 	}
 }
 
-func TestADR_0298_ToolHiveChainRetryHasNoMecatlGrantStateE2E(t *testing.T) {
+func TestToolHiveChainRetryHasNoMecatlGrantStateE2E(t *testing.T) {
 	f := newMultiUpstreamFixture(t, true)
 	first := f.start()
 	if status := f.drive(first.URL); status != http.StatusOK {
@@ -625,7 +625,7 @@ func TestADR_0298_ToolHiveChainRetryHasNoMecatlGrantStateE2E(t *testing.T) {
 	}
 }
 
-func TestADR_0298_ToolHiveRefreshIsProviderScopedE2E(t *testing.T) {
+func TestToolHiveRefreshIsProviderScopedE2E(t *testing.T) {
 	f, _, tools := completeMultiUpstream(t)
 	f.store.expire(t, "backend-a")
 	for _, backend := range []string{"backend-a", "backend-b"} {
@@ -649,7 +649,7 @@ func TestADR_0298_ToolHiveRefreshIsProviderScopedE2E(t *testing.T) {
 	assertOnlyBearer(t, headersB, "Bearer backend-b-token")
 }
 
-func TestADR_0298_ToolHiveRefreshDoesNotReenrollMecatlSessionE2E(t *testing.T) {
+func TestToolHiveRefreshDoesNotReenrollMecatlSessionE2E(t *testing.T) {
 	f, _, tools := completeMultiUpstream(t)
 	f.store.expire(t, "backend-a")
 	wrapped := toolFromFixture(t, tools, "mcp__backend-a__whoami")

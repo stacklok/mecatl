@@ -57,8 +57,7 @@ type AuthorizationTimerFactory func(time.Duration, func()) AuthorizationTimer
 // id when nil; tests may inject a deterministic generator.
 type IDGenerator func() session.SessionID
 
-// ProviderSelector names a per-session provider+model (multi-provider Phase 0,
-// S3). The zero value (both empty) means "server default" — the shared engine,
+// ProviderSelector names a per-session provider+model. The zero value (both empty) means "server default" — the shared engine,
 // no per-session build. It is a NEUTRAL value object owned by the server adapter:
 // the composition root (internal/app) resolves it against the registry/catalog;
 // the adapter never imports either. Setting ModelID with an empty ProviderID is a
@@ -70,7 +69,7 @@ type ProviderSelector struct {
 	// ModelID is the model selector ("" => provider default; a non-empty id the
 	// catalog doesn't know is passed through to the provider verbatim).
 	ModelID string
-	// ReasoningEffort is the per-session reasoning-effort selector (ADR 0055): a
+	// ReasoningEffort is the per-session reasoning-effort selector: a
 	// NEUTRAL token ("" / "auto" => unset, the operator default applies; otherwise
 	// low/medium/high/xhigh/max). It is OPAQUE to the adapter — the composition root
 	// normalises + clamps it per provider and re-mints the engine's adapter when it
@@ -108,7 +107,7 @@ type SessionEngineResult struct {
 	ProviderID string
 	ModelID    string
 	// ReasoningEffort is the EFFECTIVE, normalised + per-provider-clamped reasoning
-	// effort this session resolved to (ADR 0055): "" when unset (provider default),
+	// effort this session resolved to: "" when unset (provider default),
 	// else the neutral token actually sent to the adapter (e.g. openai + "max" echoes
 	// "high"). Computed ONCE in composition from the SAME resolved value that re-mints
 	// (or reuses) the engine's adapter; the server echoes it verbatim on
@@ -116,13 +115,13 @@ type SessionEngineResult struct {
 	// source discipline as ProviderID/ModelID.
 	ReasoningEffort string
 	// BuiltForMode is the session PermissionMode the factory RESOLVED THE MODEL FOR
-	// (ADR 0030 Layer 3, the mode→model re-resolution). The factory echoes back the
+	// (the mode→model re-resolution). The factory echoes back the
 	// mode it was handed — the SAME single-source discipline as ProviderID/ModelID —
 	// so the Service can stamp sessionEngine.builtForMode from this one value and later
 	// detect a stale engine (sess.Mode != se.builtForMode) without re-resolving any
 	// model itself. The empty value (a factory that predates the mode axis) is
 	// session.ModeDefault-equivalent: the Service treats "" as "no mode pin" and the
-	// stale check degrades to never-rebuild-on-mode (byte-identical to pre-Phase-3).
+	// stale check degrades to never-rebuild-on-mode.
 	BuiltForMode session.PermissionMode
 	// DebugMCPTools is the exact direct-tool ceiling resolved by a debug factory.
 	// It contains model-facing tool names only and is persisted on the session.
@@ -188,8 +187,8 @@ type ResolvedModel struct {
 	ProviderID    string
 	ModelID       string
 	ContextWindow int64
-	// ReasoningEffort is the effective per-session reasoning-effort token (ADR
-	// 0055), "" when unset. Carried on the resolved-model echo so the wire (and the
+	// ReasoningEffort is the effective per-session reasoning-effort token,
+	// "" when unset. Carried on the resolved-model echo so the wire (and the
 	// TUI footer) can show the active effort; it is the value held on the
 	// per-session engine record (sessionEngine.reasoningEffort), not recomputed.
 	ReasoningEffort string
@@ -224,8 +223,8 @@ type ResolvedModel struct {
 // the server flag's root, or a fork root. Empty (a no-fs session) pins no
 // project root (user/CLI rules only).
 //
-// mode is the session's PermissionMode (ADR 0030 Layer 3, the mode→model
-// re-resolution): when it is session.ModePlan the composition factory re-resolves
+// mode is the session's PermissionMode (the mode→model re-resolution): when it
+// is session.ModePlan the composition factory re-resolves
 // the engine's model through the `plan` slot (within the SAME provider — the
 // provider stays fixed per session), so a planning turn runs on a strong-reasoning
 // model and an executing turn on the session model (the opusplan pattern).
@@ -326,7 +325,7 @@ type Config struct {
 	OwnershipEnforced bool
 	// ClientMCPOnCreate permits CLIENT-PROVIDED MCP servers on a session-creating
 	// API request (CreateSessionRequest.mcp_servers and its HTTP peer). It is a
-	// deployment/composition policy in the shape ADR 0237 requires, NOT an
+	// deployment/composition policy (listener-scoped authority), NOT an
 	// inference the server package makes from its own socket state.
 	//
 	// The zero value FAILS CLOSED: a Service built without an explicit grant
@@ -347,7 +346,7 @@ type Config struct {
 	// The SAME value drives the mcp_servers_on_create advertisement (FeatureScope),
 	// so a deployment cannot advertise what it will refuse.
 	ClientMCPOnCreate bool
-	// PlacementProvider is the deployment-owned atomic placement seam (ADR 0291).
+	// PlacementProvider is the deployment-owned atomic placement seam.
 	// Bind authorizes creation/successor choices, Reattach resolves only an exact
 	// persisted EnvironmentRef, and ListWorktrees issues source-scoped ephemeral
 	// selectors. app.Build always supplies the trusted local default; alternative
@@ -449,7 +448,7 @@ type Config struct {
 	// (when a session uses no per-session engine) AND ProviderCapabilities() (the ACP
 	// gate). The server adapter holds only this neutral value — it never imports the
 	// catalog or registry. The zero value (text-only) is the safe default for a
-	// child/member service with no provider. (multi-provider Phase 0, S5.)
+	// child/member service with no provider.
 	DefaultCapabilities port.ProviderCapabilities
 	// ResolveCapabilities returns the composition-owned capability intersection for
 	// an exact persisted provider/model pair. It lets GetSession remain accurate
@@ -474,7 +473,7 @@ type Config struct {
 	// hostname, pod name, or environment: infrastructure topology is not something
 	// an authenticated caller is owed, and a label the operator did not choose is a
 	// leak with no consenting author. Bounded and validated at the composition
-	// root (mecated --deployment-id), not here. See ADR 0248.
+	// root (mecated --deployment-id), not here.
 	DeploymentID string
 
 	// DefaultResolvedModel is the EFFECTIVE provider+model the DEFAULT/shared engine
@@ -605,14 +604,13 @@ type Config struct {
 	WorkspaceEnrollment bool
 
 	// ModeNeedsEngine reports whether a given session PermissionMode resolves a model
-	// that DIFFERS from the shared engine's model (ADR 0030 Layer 3) — i.e. whether a
+	// that DIFFERS from the shared engine's model — i.e. whether a
 	// plan slot is configured and active. It is the composition-injected predicate that
 	// lets a DEFAULT-FS session (which normally rides the shared engine, zero overhead)
 	// be PROMOTED to a per-session factory engine when its mode would change the model.
 	// The Service never resolves a model itself; it asks this predicate.
 	//
-	// When nil (no plan slot configured, or a deployment that predates Phase 3) a
-	// default-FS session is NEVER promoted — BYTE-IDENTICAL to pre-Phase-3 behaviour
+	// When nil (no plan slot configured) a default-FS session is NEVER promoted
 	// (a mode flip changes nothing, the shared engine is unchanged). This is the
 	// regression-guard seam: composition wires it ONLY when a plan slot is active.
 	ModeNeedsEngine func(mode session.PermissionMode) bool
@@ -667,7 +665,7 @@ type Config struct {
 	// base's out-of-root reach (the path-escape-posture Scenario 5 boundary —
 	// threaded to agent.WithTeamSharedBaseWorkspace). The composition root wires it
 	// whenever the Workspaces factory may return a relaxed workspace (auto/yolo).
-	// Optional; nil keeps the historical verbatim base share.
+	// Optional; nil shares the base verbatim.
 	SharedBaseWorkspace func(tool.Workspace) tool.Workspace
 	// TeamHooks fires the team lifecycle hooks (TeammateIdle) and is passed to
 	// member coordination tools for the TaskCreated / TaskCompleted gates.
@@ -701,8 +699,8 @@ type Config struct {
 	// nil-safe.
 	OnCloseSession func(session.SessionID)
 
-	// EventLog durably records the relay-side event projection per session
-	// (cloud-native Phase 3a). Relays observe every event, including the
+	// EventLog durably records the relay-side event projection per session.
+	// Relays observe every event, including the
 	// drain-to-discard tail, while their run-scoped recorders coalesce streaming
 	// text deltas before Append; the loop itself stays storage-agnostic (it only
 	// emits). Optional and nil-safe: when nil the relay records nothing
@@ -725,10 +723,9 @@ type Config struct {
 	SessionLoadFailureMetric func(port.SessionLoadFailureClass)
 
 	// ReplayApprovals repopulates the in-memory learned-rule store (permstore) for a
-	// loaded session from its durable EventLog allow-always verdicts (cloud-native
-	// Phase 3b). It is the consumer that kills the Phase 2 re-ask wart: the permstore
-	// is in-memory and lost on restart, so a previously allow-always'd tool would
-	// otherwise re-ask after a process restart. The composition root (internal/app)
+	// loaded session from its durable EventLog allow-always verdicts. The permstore
+	// is in-memory and lost on restart, so without this a previously allow-always'd
+	// tool would re-ask after a process restart. The composition root (internal/app)
 	// supplies the closure — it owns BOTH the EventLog and the Policy.Learn seam, so
 	// it reads the verdicts, correlates each allow-always askID back to its ToolCall
 	// in the loaded conversation (the askID encodes the call id; see agent.newAskID),
@@ -756,15 +753,14 @@ type Config struct {
 	// the effective provider/model window. Nil preserves compatibility for embedders.
 	AwaitContextWindow func(context.Context, string, string) error
 
-	// SessionLease is the OPTIONAL cross-process single-writer seam (cloud-native
-	// Phase 4, ADR 0027). When wired, the run-entry funnel acquires a per-session
+	// SessionLease is the OPTIONAL cross-process single-writer seam. When wired, the run-entry funnel acquires a per-session
 	// lease (AFTER the same-process runEntryMu, so same-process exclusion stays
 	// cheap) before driving the engine, refreshes it from a Service-owned renewer
 	// goroutine, and releases it on CloseSession / shutdown. A competing process
 	// holding the lease makes StartRunContent / resumeFromAwaiting fail with
 	// ErrSessionLeasedElsewhere. Optional and nil-safe: when nil there is NO
-	// acquire, NO renewer, and NO release — byte-identical to the pre-Phase-4
-	// single-writer-by-affinity posture. The loop NEVER imports port.SessionLease;
+	// acquire, NO renewer, and NO release — the single-writer-by-affinity
+	// posture. The loop NEVER imports port.SessionLease;
 	// the renewer and the held-lease registry live entirely on Service (the same
 	// storage-agnostic discipline as EventLog). A backend that reports
 	// ErrLeaseUnsupported is stickily disabled (one INFO, then the no-lease path).
@@ -790,8 +786,8 @@ type Config struct {
 	// non-positive value defaults to LeaseTTL/3. Ignored when SessionLease is nil.
 	LeaseRenewInterval time.Duration
 
-	// Scheduler is the OPTIONAL in-process scheduled-tasks tick loop (issue #189,
-	// Phase 1f). When wired, NewService stores it on the Service so Close drains it
+	// Scheduler is the OPTIONAL in-process scheduled-tasks tick loop (issue #189).
+	// When wired, NewService stores it on the Service so Close drains it
 	// (Stop cancels the tick loop + joins in-flight fires) and Drain arms its drain
 	// gate (no new fires mid-tick during shutdown). The scheduler is STARTED by
 	// composition (app.Build) AFTER NewService — its FireFunc closes over the
@@ -799,13 +795,13 @@ type Config struct {
 	// nil = no scheduling (the byte-identical default).
 	//
 	// NOTE: this field is the LEGACY late-attach path. The schedule surface now
-	// lives on the store-shaped scheduleManager (ADR 0076) — see ScheduleManager
+	// lives on the store-shaped scheduleManager — see ScheduleManager
 	// below. NewService still seeds the Service's manager-side scheduler reference
 	// from this field for byte-identical Close/Drain; composition attaches the
 	// scheduler via SetScheduler (delegated to the manager) AFTER NewService.
 	Scheduler *scheduler.Scheduler
 
-	// ScheduleManager is the pre-Service store-shaped schedule manager (ADR 0076):
+	// ScheduleManager is the pre-Service store-shaped schedule manager:
 	// the validated create/read/update/fire seam constructed BEFORE buildEngine
 	// from the store + now-func, with the scheduler / model-inventory as
 	// late-bound atomic fields. When non-nil, the Service delegates its nine
@@ -918,12 +914,13 @@ var engineCloseTimeout = 10 * time.Second
 // GetSession, Approve and Cancel for a session id NOT in the in-memory run
 // registry fall back to SessionStore.Load, so a session created (or last
 // persisted) before a restart is still observable and its terminal/awaiting
-// state is loadable. Resuming an in-flight STREAM across a restart is out of
-// scope: the *agent.Run and its event channel live only in process memory, so
-// after a restart there is no run to deliver an approval to. A persisted
-// awaiting session remains loadable (a client can GET it and re-attach), but an
-// Approve/Cancel that finds the session only in the store — with no live run —
-// returns ErrNoActiveRun rather than silently succeeding.
+// state is loadable. An in-flight STREAM does not survive a restart: the
+// *agent.Run and its event channel live only in process memory. A persisted
+// awaiting session is resumable instead: an approval that finds it only in the
+// store (ResolveRunAsk → resolvePersistedRunAsk, or Approve → resumeFromAwaiting)
+// rebuilds the engine and re-enters the loop at the ask via
+// Engine.ResumeApproval. A Cancel that finds the session only in the store —
+// with no live run — returns ErrNoActiveRun rather than silently succeeding.
 type Service struct {
 	cfg Config
 
@@ -1038,7 +1035,7 @@ type Service struct {
 
 	// clientMCPSpecs holds the ORIGINAL client-supplied MCP server specs for a
 	// session's lifetime, guarded by mu. The Service never threaded these through
-	// a session-engine REBUILD (mode change, ADR-0310 full enrollment freeze, or a
+	// a session-engine REBUILD (mode change, full enrollment freeze, or a
 	// broker grant refresh) — callSessionEngine's specs argument was hardcoded nil
 	// there — so a rebuild silently dropped every client-provided MCP tool. This
 	// map closes that gap: written once at session creation (createPerSessionEngine)
@@ -1079,8 +1076,8 @@ type Service struct {
 	// Guarded by s.mu.
 	runEntryGenerations map[session.SessionID]uint64
 
-	// resumeMu serializes the awaiting-approval resume DECISION per session id
-	// (cloud-native Phase 2): ApproveRun holds the per-session lock across the whole
+	// resumeMu serializes the awaiting-approval resume DECISION per session id:
+	// ApproveRun holds the per-session lock across the whole
 	// (LookupRun-miss check → ResumeApproval → register) sequence, so two concurrent
 	// Approves for the SAME awaiting session can never both spawn a resumed run. The
 	// loser, on acquiring the lock, sees the now-registered live run via LookupRun and
@@ -1092,8 +1089,8 @@ type Service struct {
 	// unbounded.
 	resumeMu keyedMutex
 
-	// runEntryMu serializes the per-session RUN-ENTRY critical section (ADR 0030
-	// Layer 3, the use-after-close guard): the engine-resolve (engineAndEnvironmentFor,
+	// runEntryMu serializes the per-session RUN-ENTRY critical section (the
+	// mode→model use-after-close guard): the engine-resolve (engineAndEnvironmentFor,
 	// which may REBUILD/promote a per-session engine) + run launch + register sequence
 	// is taken under this per-session lock by BOTH StartRunContent and (nested inside
 	// resumeMu) resumeFromAwaiting. It guarantees a mode→model rebuild that displaces a
@@ -1108,20 +1105,19 @@ type Service struct {
 	runEntryMu keyedMutex
 
 	// replayedApprovals tracks the session ids whose learned-rule store has already
-	// been repopulated from the durable EventLog this process lifetime (cloud-native
-	// Phase 3b). loadAndReopen replays a session's allow-always verdicts AT MOST ONCE
+	// been repopulated from the durable EventLog this process lifetime.
+	// loadAndReopen replays a session's allow-always verdicts AT MOST ONCE
 	// per id: a session created live in this process never needs it, and a re-run of
 	// an already-replayed session would only re-derive idempotent rules. Guarded by
 	// s.mu.
 	replayedApprovals map[session.SessionID]struct{}
 
 	// heldLeases tracks the cross-process session leases this process currently
-	// holds (cloud-native Phase 4, ADR 0027). A lease is acquired ONCE per session
+	// holds. A lease is acquired ONCE per session
 	// on first run-entry (after the per-session runEntryMu) and held for the
 	// session's life: a per-session renewer goroutine refreshes it, and CloseSession
 	// / shutdown stop the renewer and Release it. Guarded by s.mu. Nil/empty when
-	// Config.SessionLease is not wired (the byte-identical default). See List 1
-	// (the resource inventory) in ADR 0027.
+	// Config.SessionLease is not wired (the byte-identical default).
 	heldLeases map[session.SessionID]*heldLease
 	// lostOwnership remembers that this Service definitively lost an id even after
 	// the heavyweight heldLease/capability tombstones are removed at lifecycle
@@ -1184,7 +1180,7 @@ type Service struct {
 	// s.mu.
 	leaseSweepDisabled bool
 
-	// draining is the cloud-native drain gate (ADR 0048, mecak8s): once armed by
+	// draining is the cloud-native drain gate (mecak8s): once armed by
 	// Drain, acquireLease rejects new run-entries with ErrUnavailable so a
 	// shutting-down replica steers new traffic to a survivor within the
 	// termination grace period. It starts false (the byte-identical default), so
@@ -1211,7 +1207,7 @@ type Service struct {
 	// It is nil when title generation is unavailable.
 	titleCoordinator *titleCoordinator
 
-	// schedMgr is the embedded store-shaped schedule manager (ADR 0076): the
+	// schedMgr is the embedded store-shaped schedule manager: the
 	// single truth the Service's nine port.ScheduleManager methods +
 	// EmitScheduleEvent + GetFire delegate to. Constructed in NewService from
 	// cfg.ScheduleManager (the pre-Service path composition hands in) OR
@@ -1229,8 +1225,8 @@ type Service struct {
 	cleanupPlans    map[string]cleanupTokenPayload
 	cleanupJobs     map[string]cleanupJobRecord
 
-	// subscriptions is the per-session live event subscription registry (ADR 0075
-	// decision #5): a connected client (e.g. the embedded server's mecatui) holds
+	// subscriptions is the per-session live event subscription registry:
+	// a connected client (e.g. the embedded server's mecatui) holds
 	// open a per-session merged stream over the session's runs via Subscribe, and
 	// PublishSessionEvent fans events to every subscriber for that session ID.
 	// Guarded by subMu (a SEPARATE RWMutex from s.mu — a PublishSessionEvent in a
@@ -1247,9 +1243,9 @@ type Service struct {
 	subNextID           int64
 	subscriptionsClosed bool
 
-	// watches is the per-session DURABLE watch registry (ADR 0250): every
+	// watches is the per-session DURABLE watch registry: every
 	// attached WatchSessionEvents reader, so a failed durable append can terminate
-	// the ones in THIS process with a delivery gap (decision 6's guaranteed tier)
+	// the ones in THIS process with a delivery gap (the append-gap guaranteed tier)
 	// and shutdown can stop them all.
 	//
 	// It is deliberately NOT the subscriptions registry above, and the difference
@@ -1310,20 +1306,20 @@ type sessionEngine struct {
 	// can never diverge after a live-catalog swap. Same single-source discipline as caps.
 	providerID string
 	modelID    string
-	// reasoningEffort is the session's EFFECTIVE reasoning-effort token (ADR 0055),
+	// reasoningEffort is the session's EFFECTIVE reasoning-effort token,
 	// "" when unset. Stamped from SessionEngineResult.ReasoningEffort and echoed
 	// verbatim on resolved_model via ResolvedModel — never recomputed. Same single-
 	// source discipline as providerID/modelID.
 	reasoningEffort string
 	// builtForMode is the session PermissionMode this engine's model was RESOLVED FOR
-	// (ADR 0030 Layer 3). Stamped from SessionEngineResult.BuiltForMode at every
+	// (mode→model re-resolution). Stamped from SessionEngineResult.BuiltForMode at every
 	// construction site (create, rehydrate, mode-rebuild) — the SAME single source the
 	// composition factory echoes. engineAndEnvironmentFor compares it against the loaded
 	// session's current Mode: a mismatch means the session switched plan↔execute since
 	// the engine was built, so the model is stale and the engine is rebuilt through the
 	// shared buildAndRegisterSessionEngine path (the run-entry seam, between turns). The
-	// empty value means "no mode pin" (a pre-Phase-3 factory) and never triggers a
-	// rebuild — byte-identical to the old behaviour.
+	// empty value means "no mode pin" (a factory that does not stamp a mode) and
+	// never triggers a rebuild.
 	// runtimeRevision tags the immutable direct-MCP generation used to build the
 	// catalog. It is not a lease; the root run owns the operation pin.
 	runtimeRevision uint64
@@ -1574,7 +1570,7 @@ func NewService(cfg Config) (*Service, error) {
 		subscriptions:            make(map[session.SessionID]map[int64]chan session.Event),
 	}
 	svc.titleCoordinator = buildTitleCoordinator(svc, cfg)
-	// Narrow the durable log to the cursor seam once (ADR 0250). A backend that
+	// Narrow the durable log to the cursor seam once. A backend that
 	// does not implement it leaves this nil, and the watch surface reports the
 	// feature unsupported rather than degrading to a full replay.
 	if cfg.EventLog != nil {
@@ -1585,7 +1581,7 @@ func NewService(cfg Config) (*Service, error) {
 	// Standalone fixtures retain a local status snapshot; Build reads its owner.
 	var statusSeed []*mecatlv1.ProviderStatus
 	svc.providerStatus.Store(&statusSeed)
-	// Construct the embedded schedule manager (ADR 0076): the store-shaped
+	// Construct the embedded schedule manager: the store-shaped
 	// create/read/update/fire seam. Composition hands a pre-Service manager via
 	// cfg.ScheduleManager (constructed from the store BEFORE buildEngine); the
 	// Service adopts it and LATE-BINDS its own models pointer onto the manager
@@ -1599,7 +1595,7 @@ func NewService(cfg Config) (*Service, error) {
 	// store that backs no ScheduleStore (the in-memory memstore) yields a nil
 	// manager (the honest no-scheduling path, matching
 	// ServerCapabilities.Scheduling). The legacy cfg.Scheduler field, when set,
-	// is late-attached onto the manager (the byte-identical pre-ADR-0076
+	// is late-attached onto the manager (the byte-identical legacy
 	// attach-at-construction path; composition normally attaches via
 	// SetScheduler after NewService).
 	if cfg.ScheduleManager != nil {
@@ -1774,13 +1770,13 @@ func (s *Service) SetModelsRefresher(fn func(context.Context)) {
 // deliver the control to AND nothing to resume. The session state is still loadable
 // via GetSession.
 //
-// Since cloud-native Phase 2, an Approve/Deny against a runless AWAITING session is
-// NO LONGER ErrNoActiveRun: it re-enters the loop AT the ask and resumes
-// (resumeFromAwaiting). ErrNoActiveRun therefore now means "the session exists but is
-// in a terminal/idle state with nothing to resume" — idle, completed, cancelled, or
-// failed. A failed/cancelled session recovers only through a NEW prompt
-// (loadAndReopen → Recover/Interrupt), never through the approve seam. Cancel keeps
-// the original meaning for every state (no live run to cancel).
+// An Approve/Deny against a runless AWAITING session does not return
+// ErrNoActiveRun: it re-enters the loop AT the ask and resumes
+// (resumeFromAwaiting). For Approve/Deny, ErrNoActiveRun means "the session exists
+// but is in a terminal/idle state with nothing to resume" — idle, completed,
+// cancelled, or failed. A failed/cancelled session recovers only through a NEW
+// prompt (loadAndReopen → Recover/Interrupt), never through the approve seam.
+// Cancel returns it in every state with no live run to cancel.
 var ErrNoActiveRun = errors.New("server: no active run for session")
 
 // CreateSessionOption is a variadic option applied to a CreateSession* call
@@ -1804,8 +1800,8 @@ type createSessionOpts struct {
 	// first Store.Save so the seeded history is persisted. Empty = no carryover
 	// (byte-identical default).
 	sourceSessionID session.SessionID
-	// owner overrides the context principal as the created session's owner
-	// (ADR 0204 decision 4). ownerSet distinguishes "WithOwner was called
+	// owner overrides the context principal as the created session's owner.
+	// ownerSet distinguishes "WithOwner was called
 	// (possibly with nil — an explicitly ownerless session)" from "never
 	// called", which falls back to session.PrincipalFromContext.
 	owner    *session.Principal
@@ -1839,7 +1835,7 @@ type createSessionOpts struct {
 // the id MUST be non-empty and MUST NOT collide with a live per-session engine
 // (the sessionEngines map); a collision is rejected with ErrInvalidArgument.
 // An empty id is rejected. When no WithSessionID option is passed, the existing
-// NewID path is byte-identical. It is the seam ADR 0059 decision #7 Phase-2
+// NewID path is byte-identical. It is the seam the scheduler fire path
 // uses to mint "sched--"-prefixed fire-session ids.
 func WithSessionID(id session.SessionID) CreateSessionOption {
 	return func(o *createSessionOpts) { o.id, o.idSet = id, true }
@@ -1962,8 +1958,8 @@ func validateDebugMCPNames(target session.SessionID, names []string) error {
 	return nil
 }
 
-// WithOwner overrides the owner a CreateSession* call stamps on the new session
-// (ADR 0204 decision 4). By DEFAULT the owner comes from the verified principal
+// WithOwner overrides the owner a CreateSession* call stamps on the new session.
+// By DEFAULT the owner comes from the verified principal
 // on the context (session.PrincipalFromContext) — a caller can never name its
 // own owner in the request body, which is why CreateSessionRequest has no owner
 // field. This option is the in-process injection seam for a caller that already
@@ -1989,7 +1985,7 @@ func WithScheduledRelationship(scheduleName string, origin session.SessionID) Cr
 // resolveOwner picks the owner a create stamps: the explicit WithOwner value
 // when the option was passed (nil included — see WithOwner), else the verified
 // principal riding the context. An absent principal yields nil — the ownerless
-// no-auth path, byte-identical to the pre-ADR-0204 behaviour. It NEVER
+// no-auth path, byte-identical to the pre-ownership behaviour. It NEVER
 // fabricates one.
 func resolveOwner(ctx context.Context, opts createSessionOpts) *session.Principal {
 	if opts.ownerSet {
@@ -2017,7 +2013,7 @@ func (s *Service) CreateSession(ctx context.Context, mode session.PermissionMode
 }
 
 // CreateSessionWithProvider creates a session bound to a non-default
-// provider/model selector (multi-provider Phase 0, S3) via a PER-SESSION engine,
+// provider/model selector via a PER-SESSION engine,
 // with no client MCP and the DEFAULT profile.
 func (s *Service) CreateSessionWithProvider(ctx context.Context, mode session.PermissionMode, limits session.Limits, sel ProviderSelector) (*session.Session, error) {
 	return s.CreateSessionWithProfile(ctx, mode, limits, sel, ProfileDefault)
@@ -2026,8 +2022,10 @@ func (s *Service) CreateSessionWithProvider(ctx context.Context, mode session.Pe
 // CreateSessionWithProfile creates a session bound to an optional non-default
 // provider/model selector AND a tool-surface profile (issue #55), with no client
 // MCP. It is the gRPC/HTTP entry for a CreateSession request. The zero selector
-// + default profile delegates to the shared-engine fast path; a non-zero
-// selector OR the no-fs profile REQUIRES Config.SessionEngine (else
+// + default profile uses the shared engine unless Config.MCPBroker or
+// Config.LearnedSkills forces a per-session engine; a non-zero selector OR the
+// no-fs profile always needs one. A per-session engine REQUIRES
+// Config.SessionEngine or Config.SessionEngineWithTools (else
 // ErrInvalidArgument) and resolves through the factory (an unknown/unavailable
 // provider id surfaces as ErrInvalidArgument). Setting ModelID with an empty
 // ProviderID is rejected (a bare model on the env-derived default provider is
@@ -2035,9 +2033,8 @@ func (s *Service) CreateSessionWithProvider(ctx context.Context, mode session.Pe
 // explicit no-FS profile.
 //
 // opts is the variadic options pattern (CreateSessionOption): WithSessionID
-// overrides the minted id (ADR 0059 decision #7 Phase-2 — the scheduler fire
-// path mints a "sched--"-prefixed id). Zero opts is byte-identical to the
-// pre-Phase-2 signature.
+// overrides the minted id (the scheduler fire
+// path mints a "sched--"-prefixed id). Zero opts mints a fresh id as usual.
 func (s *Service) CreateSessionWithProfile(ctx context.Context, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, profile SessionProfile, opts ...CreateSessionOption) (*session.Session, error) {
 	if sel.ProviderID == "" && sel.ModelID != "" {
 		return nil, fmt.Errorf("%w: model_id requires provider_id (a bare model on the default provider is ambiguous)", ErrInvalidArgument)
@@ -2078,7 +2075,7 @@ func (s *Service) createSessionWithOptions(ctx context.Context, mode session.Per
 // ProviderSelector type, which stays a server-adapter type); persisting them is
 // what lets rehydrateSession rebuild the SAME engine after a restart. For the
 // empty-selector default profile this writes the zero values, so a default
-// session's snapshot is byte-identical to a pre-Phase-1 one (the labels omitempty
+// session's snapshot carries no selector/profile labels (the labels omitempty
 // out of the JSON).
 func setSessionLabels(sess *session.Session, sel ProviderSelector, profile SessionProfile, owner *session.Principal, authority session.Authority) error {
 	sess.Profile = string(profile)
@@ -2579,10 +2576,10 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 
 	needPerSession := s.cfg.MCPBroker != nil || s.sessionNeedsPerFactory(sel, specs, profile, workspace) || s.cfg.LearnedSkills != nil
 	if !needPerSession {
-		// Shared-engine fast path (today's behaviour, byte-identical). The labels are
+		// Shared-engine fast path. The labels are
 		// the empty pair + default profile here (the empty-selector default profile is
 		// exactly the no-per-session case), so setLabels persists nothing new — the
-		// snapshot stays byte-identical to a pre-Phase-1 default session.
+		// snapshot carries no selector/profile labels.
 		sess, err := newCreatedSession(mintID(), mode, placement.Ref, limits, s.cfg.Now(), opts)
 		if err != nil {
 			return nil, fmt.Errorf("server: create session metadata: %w", err)
@@ -2901,7 +2898,7 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 	}
 }
 
-// CompatibilityInfo returns the deployment's compatibility descriptor (ADR 0248): the
+// CompatibilityInfo returns the deployment's compatibility descriptor: the
 // API major, the operator-enabled capabilities, the build's supported feature
 // identifiers, and the optional build/deployment labels.
 //
@@ -3025,12 +3022,14 @@ func (s *Service) ClientMCPFromWire(servers []mcp.ClientServer) (ClientMCPGrant,
 // PER-SESSION engine. It is the ACP session/new entry for an editor that supplies
 // mcpServers.
 //
-//   - With NO specs it delegates to CreateSession: the session uses the SHARED
-//     engine, with zero per-session overhead and no registry entry.
-//   - With specs it REQUIRES Config.SessionEngine (else ErrInvalidArgument: "client
-//     MCP not supported"); it builds the per-session engine via that factory, and
-//     on success registers it under the new session id so StartRun routes the
-//     session's runs to it. A factory error is returned as-is (the caller maps it).
+//   - With NO specs it takes the same path as CreateSession: the session uses the
+//     SHARED engine unless Config.MCPBroker or Config.LearnedSkills forces a
+//     per-session engine.
+//   - A per-session engine REQUIRES Config.SessionEngine or
+//     Config.SessionEngineWithTools (else ErrInvalidArgument: "per-session engine
+//     not supported"); it is built via that factory and, on success, registered
+//     under the new session id so StartRun routes the session's runs to it. A
+//     factory error is returned as-is (the caller maps it).
 //
 // The per-session engine's MCP manager is torn down by CloseSession (editor
 // disconnect) or by the Service's Close.
@@ -3038,9 +3037,8 @@ func (s *Service) CreateSessionWithMCP(ctx context.Context, mode session.Permiss
 	// Thin wrapper over the generalized create path with the ZERO provider
 	// selector and the DEFAULT profile: no specs uses the shared engine (today's
 	// behaviour), specs build a per-session engine. The zero selector leaves the
-	// per-session engine bound to the DEFAULT provider, matching the pre-S3 MCP
-	// path exactly. (ACP carries no profile in P0 — every ACP session is the
-	// default filesystem profile.)
+	// per-session engine bound to the DEFAULT provider. (ACP carries no
+	// profile — every ACP session is the default filesystem profile.)
 	return s.createSession(ctx, mode, limits, ProviderSelector{}, specs, ProfileDefault, createSessionOpts{})
 }
 
@@ -3190,7 +3188,7 @@ func (s *Service) closeSessionLocal(id session.SessionID) {
 	delete(s.sessionEnvironmentCloses, id)
 	delete(s.sessionEnvironments, id)
 	delete(s.clientMCPSpecs, id)
-	// Drop the once-per-id approval-replay marker (cloud-native Phase 3b): the
+	// Drop the once-per-id approval-replay marker: the
 	// OnCloseSession above Forgot this session's learned rules, so a LATER reload of
 	// the same id in this process MUST be allowed to replay them from the durable log
 	// again — otherwise the replay would short-circuit (marker still set) and leave
@@ -3226,8 +3224,8 @@ func (s *Service) closeSessionLocal(id session.SessionID) {
 			s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "MCP broker attachment close failed")
 		}
 	}
-	// Stop the session's renewer and release its cross-process lease (cloud-native
-	// Phase 4): the session is ending, so a competitor may now take it over. No-op
+	// Stop the session's renewer and release its cross-process lease: the
+	// session is ending, so a competitor may now take it over. No-op
 	// when no lease is wired or held.
 	s.releaseLease(id)
 }
@@ -3327,7 +3325,7 @@ func (s *Service) Close() {
 	// still alive to serve them (the FireFunc drives StartRunContent on this
 	// Service). Stop cancels the tick loop, joins in-flight fires (with a grace),
 	// and releases the leader lease. The scheduler lives on the embedded
-	// scheduleManager (ADR 0076) as an atomic pointer; nil-safe (no scheduler
+	// scheduleManager as an atomic pointer; nil-safe (no scheduler
 	// wired, or no manager at all). Read via HasScheduler + the manager's
 	// atomic pointer — no s.mu (the manager's atomic is the single truth).
 	if m := s.schedMgr; m != nil {
@@ -3335,7 +3333,7 @@ func (s *Service) Close() {
 			_ = sch.Stop()
 		}
 	}
-	// Stop every attached durable watch (ADR 0250) so no pump goroutine outlives
+	// Stop every attached durable watch so no pump goroutine outlives
 	// the Service, and refuse later attachments. A shutdown cancel is a CLEAN end,
 	// not a gap: no append failed, so the stream simply ends and the client
 	// reconnects with its cursor.
@@ -3429,8 +3427,8 @@ func (s *Service) Close() {
 			}
 		}
 	}
-	// Stop every renewer and release every held cross-process lease on shutdown
-	// (cloud-native Phase 4), so a restarted process can take the sessions over
+	// Stop every renewer and release every held cross-process lease on shutdown,
+	// so a restarted process can take the sessions over
 	// without waiting out the TTL. Best-effort (detached short-timeout ctx).
 	for _, id := range leasedIDs {
 		s.releaseLease(id)
@@ -3440,7 +3438,7 @@ func (s *Service) Close() {
 	s.mu.Unlock()
 }
 
-// Drain arms the drain gate (ADR 0048, mecak8s): subsequent run-entries
+// Drain arms the drain gate (mecak8s): subsequent run-entries
 // (StartRunContent / resumeFromAwaiting via acquireLease) are rejected with
 // ErrUnavailable so a shutting-down replica stops accepting new runs and a
 // rolling update steers traffic to a survivor. It is idempotent and safe to
@@ -3470,7 +3468,7 @@ func (s *Service) Drain() {
 	}
 	// Arm the scheduler's drain gate too so no NEW fires start mid-tick during
 	// shutdown (in-flight fires complete or are cancelled by Close's Stop).
-	// The scheduler lives on the embedded scheduleManager (ADR 0076) as an
+	// The scheduler lives on the embedded scheduleManager as an
 	// atomic pointer; nil-safe (no scheduler wired, or no manager at all).
 	if m := s.schedMgr; m != nil {
 		if sch := m.scheduler.Load(); sch != nil {
@@ -3617,8 +3615,8 @@ func (s *Service) retainLeaseForTTL(id session.SessionID) {
 }
 
 // SetScheduler, SetScheduleMinInterval, HasScheduler, and ScheduleManager are
-// defined in schedule.go — the *Service's thin delegating schedule surface
-// (ADR 0076). They forward to the embedded scheduleManager (s.schedMgr); the
+// defined in schedule.go — the *Service's thin delegating schedule surface.
+// They forward to the embedded scheduleManager (s.schedMgr); the
 // manager holds the cadence floor + the late-set in-process scheduler.
 
 // Diagnostics returns the operational diagnostics sink the Service was
@@ -4230,8 +4228,8 @@ func (s *Service) logManagementLoadFailure(ctx context.Context, id session.Sessi
 // managementOwnershipPreflight keeps foreign callers out of caller-selected
 // per-session coordination. It deliberately checks ownership only and returns no
 // aggregate: managementTarget must reload and reauthorize under runEntryMu before
-// any mutation. The ownership-disabled compatibility path retains its historical
-// single authoritative load.
+// any mutation. The ownership-disabled compatibility path uses a single
+// authoritative load.
 func (s *Service) managementOwnershipPreflight(ctx context.Context, id session.SessionID, concealAbsence bool) (bool, error) {
 	if !s.cfg.OwnershipEnforced {
 		return false, nil
@@ -4464,7 +4462,7 @@ func (s *Service) validateCarryover(ctx context.Context, srcID session.SessionID
 	if src.State == session.StateRunning || src.State == session.StateAwaiting || src.State == session.StateAuthorizing {
 		return nil, nil, session.Authority{}, false, fmt.Errorf("%w: carryover requires a session at a turn boundary; source %q is %s", ErrFailedPrecondition, srcID, src.State)
 	}
-	// The SOURCE's owner travels with the carried history (ADR 0204 decision 4):
+	// The SOURCE's owner travels with the carried history:
 	// a fork is attributed to whoever owned the session it copied, never to the
 	// caller doing the forking — otherwise fork is an ownership-laundering path
 	// (copy someone else's session, become its owner). An ownerless source
@@ -4544,7 +4542,7 @@ func synthesizeOpenAIItemIDs(messages []session.Message) []session.Message {
 }
 
 // maybeReplayApprovals repopulates the learned-rule store from the durable
-// EventLog's allow-always verdicts for a loaded session (cloud-native Phase 3b),
+// EventLog's allow-always verdicts for a loaded session,
 // at most once per id per process. It is a no-op when no replay closure is wired
 // (no store / replay disabled) or when this id was already replayed in this
 // process lifetime. The composition closure owns the EventLog read + the
@@ -4709,8 +4707,8 @@ func (*Service) validateEnvironmentOverride(sess *session.Session, env, authoriz
 // already-ownership-authorized session. Run entry uses this form so its purpose
 // gate can reject a session before recovery mutates or persists it.
 //
-// It is ALSO the structural choke point for persisted workspace authority (ADR
-// 0237): every route that recovers a loaded session for use — loadAndReopen,
+// It is ALSO the structural choke point for persisted workspace authority:
+// every route that recovers a loaded session for use — loadAndReopen,
 // startRunContent, ForkSession — passes through here, so validating the persisted
 // root at the top means a new recovery route cannot silently skip the check the
 // way ForkSession once did. The check is a pure lexical no-op under client-selected
@@ -4723,7 +4721,7 @@ func (s *Service) reopenLoadedSession(ctx context.Context, sess *session.Session
 	}
 	id := sess.ID
 	// Repopulate the in-memory learned-rule store from the durable EventLog's
-	// allow-always verdicts (cloud-native Phase 3b) BEFORE the run starts, so a
+	// allow-always verdicts BEFORE the run starts, so a
 	// session that allow-always'd a tool before a restart does not re-ask. Done at
 	// most once per id per process (a live session learns as it runs; a re-run only
 	// re-derives idempotent rules). It reads the LOADED conversation to correlate the
@@ -4748,7 +4746,7 @@ func (s *Service) reopenLoadedSession(ctx context.Context, sess *session.Session
 // completed → Reopen, cancelled → Interrupt, failed →
 // Recover (each history-repaired), persisted, so the matching Run never drives
 // an illegal RecordUserPrompt-from-terminal. Awaiting, idle, and running are
-// deliberate no-ops: awaiting is the preserved Phase-2 resume point (repairing
+// deliberate no-ops: awaiting is the preserved resume point (repairing
 // it would clear its still-resolvable PendingAsk); idle is the target state;
 // running is repaired ONLY by StartRunContent's crash-orphan Abandon arm, AFTER
 // it holds the real lock/lease (issue #475) — never here.
@@ -4836,7 +4834,7 @@ func (s *Service) LoadSessionWithMCP(ctx context.Context, id session.SessionID, 
 	profile := profileForSession(sess)
 	// The exact persisted placement is the session's base namespace: the rebuilt
 	// engine's child permission resolver pins to that reattached root. The MODE is
-	// loaded session's persisted Mode (ADR 0030 Layer 3), so a session loaded into plan
+	// loaded session's persisted Mode, so a session loaded into plan
 	// mode mounts the plan model; builtForMode is stamped from the result so a later
 	// in-process mode switch on this reloaded session triggers the CASE 1 rebuild.
 	workspace, err := s.privateGovernanceRoot(ctx, sess)
@@ -5098,8 +5096,8 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	// With ownership enabled, prove ownership before entering caller-selected
 	// per-session coordination. This is only a preflight: the session may change
 	// before the lock is acquired, so the aggregate is deliberately discarded and
-	// loaded again under the lock. The compatibility path retains its historical
-	// single authoritative load.
+	// loaded again under the lock. The compatibility path uses a single
+	// authoritative load.
 	if s.cfg.OwnershipEnforced {
 		if _, err := s.GetSession(ctx, id); err != nil {
 			return nil, err
@@ -5187,13 +5185,13 @@ func (s *Service) startRunContentLocked(ctx context.Context, id session.SessionI
 	if err := s.deregisterTerminalRunForEntry(id, sess, ErrFailedPrecondition); err != nil {
 		return nil, err
 	}
-	// NOTE (ADR 0062): there is NO prompt-channel scan here. The guardrails
+	// NOTE: there is NO prompt-channel scan here. The guardrails
 	// approve-once flow is OUT-OF-BAND — a PreToolUse guardrail block surfaces to the
 	// human as an ordinary permission ask (Allow once / Allow & don't ask / Deny) and
 	// is resolved via Approve(askID, verdict), reusing the existing approval machinery.
 	// The session "Allow & don't ask again" waiver is armed IN-LOOP from a genuine
 	// human AllowAlways verdict, never from a parsed directive in `text`. This replaces
-	// the removed ADR-0061 /guardrail-allow prompt directive (no scan, no strip, no
+	// the removed /guardrail-allow prompt directive (no scan, no strip, no
 	// near-miss WARN). The `text` param flows straight through.
 	// Register a cancellable provisional lifecycle before lease acquisition and
 	// engine construction. Drain can now cancel admission even in the gap between
@@ -5227,7 +5225,7 @@ func (s *Service) startRunContentLocked(ctx context.Context, id session.SessionI
 		return nil, err
 	}
 	// Hold the per-session run-entry lock across engine-resolve (which may REBUILD a
-	// per-session engine for a mode→model change, ADR 0030 Layer 3) + run launch +
+	// per-session engine for a mode→model change) + run launch +
 	// register. The lock was acquired before loading so the entire run-entry
 	// transaction observes one authoritative snapshot.
 	// Crash-orphan repair (issue #475): loadAndReopen's switch deliberately does
@@ -5297,7 +5295,7 @@ func (s *Service) startRunContentLocked(ctx context.Context, id session.SessionI
 	// Mint this run's identity and stamp it on the aggregate BEFORE launching, so
 	// the id is on the snapshot the moment the run can park awaiting an approval —
 	// which is what lets a cross-process resume continue THE SAME run rather than
-	// mint a second one (ADR 0249). Every prompt-entry path funnels through here
+	// mint a second one. Every prompt-entry path funnels through here
 	// (StartRun, RetryFailedRun, scheduler fires, steer promotion), so this is the
 	// one mint site for a new run.
 	runID := newRunID()
@@ -5951,7 +5949,7 @@ func (s *Service) Steer(ctx context.Context, id session.SessionID, text string, 
 	// promoted steer pays the wait — the shared funnel stays byte-identical, so
 	// a concurrent legitimate prompt on the same live session is never wrongly
 	// delayed.
-	// STRICT STEER (ADR 0249): a caller that named a specific run did NOT ask to
+	// STRICT STEER: a caller that named a specific run did NOT ask to
 	// start a different one. Promotion is the right default for an unqualified
 	// steer — the operator meant "say this to the agent", and a fresh follow-up
 	// run says it — but it is the wrong answer for "say this to run X", where X
@@ -6037,9 +6035,9 @@ func (s *Service) notifySteerPromotionRegistered() {
 // steer that already drained at a turn boundary is ordinary recorded history and
 // cannot be retracted (the engine reports none_pending then: the drain won). A
 // session with no live run reports none_pending (there is no inbox to retract
-// from — the steer that would be pending is already lost with its run, the
-// best-effort in-memory contract the docs/acceptance/steer-while-running.md
-// Scenario-2 contract records). expectedRunID has the same optional strictness
+// from — the steer that would be pending is already lost with its run; the
+// inbox is a best-effort in-memory contract). expectedRunID has the same
+// optional strictness
 // as the other run controls: when set, no absent or replacement run may be
 // touched. The wire's steer_cancel message_id never crosses the Service (the
 // ack-side echo is the caller's own frame field), so the signature stays
@@ -6143,7 +6141,7 @@ func admitRunPurpose(sess *session.Session, purpose runPurpose) error {
 // (client MCP, provider/model routing, no-fs, or non-default placement root) is
 // preferred; otherwise the shared engine is used.
 //
-// MODE→MODEL RE-RESOLUTION (ADR 0030 Layer 3) widens the rebuild trigger between
+// MODE→MODEL RE-RESOLUTION widens the rebuild trigger between
 // turns, never mid-stream (this runs at the run-entry funnel, after loadAndReopen
 // drove the session idle; SetMode is rejected mid-turn, so the model is fixed per
 // turn). Two cases beyond restart-rehydration:
@@ -6155,7 +6153,7 @@ func admitRunPurpose(sess *session.Session, purpose runPurpose) error {
 //     trigger), but ModeNeedsEngine reports this mode resolves a different model (a
 //     plan slot is active): PROMOTE the default-FS session to a per-session factory
 //     engine. ModeNeedsEngine is nil (no plan slot) ⇒ this never fires and the session
-//     keeps the shared engine — BYTE-IDENTICAL to pre-Phase-3.
+//     keeps the shared engine.
 func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Session) (*agent.Engine, tool.Environment, string, error) { //nolint:gocyclo // the per-session engine/environment resolution is inherently branched
 	id := sess.ID
 	attribution := s.resolvedModelFor(sess)
@@ -6200,7 +6198,7 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 	}
 	switch {
 	case hasEngine && (se.runtimeRevision != desiredRuntimeRevision || se.builtForMode != "" && se.builtForMode != sess.Mode):
-		// CASE 1 (ADR 0030 Layer 3): the registered per-session engine was built for a
+		// CASE 1: the registered per-session engine was built for a
 		// DIFFERENT mode than the session now holds — a plan↔execute switch re-resolved
 		// the model. Rebuild through the shared factory path, REPLACING the prior engine.
 		// This runs only between turns (loadAndReopen drove the session idle and SetMode
@@ -6229,7 +6227,7 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 		s.mu.Unlock()
 	case !hasEngine && !s.needsRehydration(sess) && s.cfg.SessionEngine != nil &&
 		(desiredRuntimeRevision != s.cfg.SharedEngineRevision || s.cfg.ModeNeedsEngine != nil && s.cfg.ModeNeedsEngine(sess.Mode)):
-		// CASE 2 (ADR 0030 Layer 3): a DEFAULT-FS session that would otherwise ride the
+		// CASE 2: a DEFAULT-FS session that would otherwise ride the
 		// shared engine, but its mode (plan) resolves a DIFFERENT model — promote it to a
 		// per-session factory engine. A default-FS session has the empty selector + a real
 		// workspace, so no environment override is registered (the run-entry seam builds it
@@ -6245,7 +6243,7 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 		sess.EnvironmentRef.Kind != session.EnvKindNoFS &&
 		governanceRoot != s.cfg.SharedEngineRoot
 	if !hasEngine && (s.needsRehydration(sess) || placementNeedsEngine) {
-		// RESTART REHYDRATION (issue #55, widened in the cloud-native Phase 1): a
+		// RESTART REHYDRATION (issue #55): a
 		// PERSISTED session that needed a PER-SESSION engine — a non-default
 		// provider/model selector, OR the no-fs profile — has its engine + (for no-fs)
 		// its environment override living only in process memory; after a restart both
@@ -6334,7 +6332,7 @@ func profileForSession(sess *session.Session) SessionProfile {
 // used, reading the PERSISTED selector+profile+MODE back off the loaded session —
 // so a selector session rebuilds on the SAME provider/model (not the default
 // floor), a no-fs session rebuilds the no-FS catalog, and a session persisted with
-// Mode=plan rebuilds on the PLAN model (ADR 0030 Layer 3 — restart-into-plan picks
+// Mode=plan rebuilds on the PLAN model (restart-into-plan picks
 // the plan slot, not the default). No client MCP is re-mounted (the client
 // re-mounts via LoadSessionWithMCP; the server never stored the specs). It
 // delegates the cap/lock/factory/register discipline to buildAndRegisterSessionEngine
@@ -6374,8 +6372,8 @@ func (s *Service) rehydrateSession(ctx context.Context, sess *session.Session) (
 }
 
 // buildAndRegisterSessionEngine is the ONE shared build+cap-check+register+teardown
-// path for a per-session engine — used by BOTH rehydrateSession (restart, issue #55 /
-// cloud-native Phase 1) and the mode→model rebuild (ADR 0030 Layer 3). It calls the
+// path for a per-session engine — used by BOTH rehydrateSession (restart, issue #55)
+// and the mode→model rebuild. It calls the
 // SessionEngineFactory with the resolved selector/profile/MODE, stamps the result's
 // BuiltForMode, and registers it under the same cap/lock discipline as createSession
 // (cheap pre-check, build outside the lock, authoritative re-check + register under
@@ -6556,11 +6554,11 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 // cannot take image). This is the SAME value the CreateSessionResponse echoes for a
 // default-engine session, so the ACP gate and the wire echo cannot disagree.
 //
-// ACP carries NO per-session provider/model selector in P0 (session/new passes only
+// ACP carries NO per-session provider/model selector (session/new passes only
 // mcpServers, never a selector), so every ACP session rides the DEFAULT engine and
 // the Agent's capture-once a.caps = svc.ProviderCapabilities() is correct for every
-// ACP session. A per-session ACP capability gate lands only when an ACP selector
-// lands (P1+) — see docs/adr/0016-multi-provider.md.
+// ACP session. A per-session ACP capability gate is needed only if ACP gains a
+// per-session selector.
 func (s *Service) ProviderCapabilities() port.ProviderCapabilities {
 	return s.cfg.DefaultCapabilities
 }
@@ -6633,7 +6631,7 @@ func (s *Service) resolveModelWindow(rm ResolvedModel) ResolvedModel {
 // exists. Snapshot-aware transport and run-entry paths use resolvedModelFor so persisted
 // selector labels and mode-specific slots remain authoritative across restart.
 //
-// MODE→MODEL RE-EMIT (ADR 0030 Layer 3): the identity is read from the REGISTERED
+// MODE→MODEL RE-EMIT: the identity is read from the REGISTERED
 // per-session engine (se.providerID/se.modelID). After a plan↔execute switch
 // triggers the run-entry rebuild (engineAndEnvironmentFor swaps the registered engine
 // on the next StartRun), ResolvedModel AUTOMATICALLY returns the re-resolved model —
@@ -6830,7 +6828,7 @@ func submitInStreamApproval(target *agent.Run, resolution agent.ApprovalResoluti
 // in-memory channel while this process still holds the session lease. On a
 // LookupRun MISS — typically the
 // process that parked the ask died and a different process now serves the Approve —
-// it falls to resumeFromAwaiting (cloud-native Phase 2): if the persisted session is
+// it falls to resumeFromAwaiting: if the persisted session is
 // in StateAwaiting it loads the snapshot, rebuilds the engine, re-enters the loop AT
 // the ask, applies the verdict, and drives to completion; the caller relays the
 // returned run's events (the resumed run is registered like any other). A
@@ -6842,7 +6840,7 @@ func (s *Service) Approve(ctx context.Context, id session.SessionID, askID strin
 	return err
 }
 
-// ApproveRun is Approve plus the resumed *agent.Run handle (cloud-native Phase 2).
+// ApproveRun is Approve plus the resumed *agent.Run handle.
 // On the SAME-PROCESS path (a live registered run) it resolves the ask over the
 // channel and returns (nil, nil): there is no new run, the existing relay delivers
 // the verdict's effects. On the rehydrate path (no live run, the session is
@@ -6859,11 +6857,13 @@ func (s *Service) Approve(ctx context.Context, id session.SessionID, askID strin
 // runs EXACTLY ONCE. The common live-run case takes the service lock only long
 // enough to order approval against lease-loss invalidation.
 //
-// WIRE EXPOSURE: this legacy rehydrate-resume path (no live run →
-// resumeFromAwaiting) remains reachable through HTTP POST
-// /v1/sessions/{id}/approve, which relays the resumed run as SSE. Converse still
-// resolves only its own live run. The prompt-free ResolveRunAsk RPC and strict HTTP
-// mirror use the separate acknowledgement-only, Service-owned transition above.
+// WIRE EXPOSURE: no wire route calls Approve/ApproveRun; their callers are
+// in-process tests. resumeFromAwaiting is still reached from the wire through
+// ApprovePlan (gRPC ApprovePlan, HTTP POST /v1/sessions/{id}/plan:approve), which
+// relays the continuation run. Converse resolves only its own live run. Client ask
+// approval goes through gRPC ResolveRunAsk and HTTP POST
+// /v1/sessions/{id}/controls/resolve-ask → Service.ResolveRunAsk →
+// resolvePersistedRunAsk, the acknowledgement-only, Service-owned transition above.
 func (s *Service) ApproveRun(ctx context.Context, id session.SessionID, askID string, verdict session.ApprovalVerdict, expectedRunID string) (*agent.Run, error) {
 	return s.ResolveApprovalRun(ctx, id, agent.ApprovalResolution{AskID: askID, Verdict: verdict}, expectedRunID)
 }
@@ -6925,7 +6925,7 @@ func (s *Service) ResolveApprovalRun(ctx context.Context, id session.SessionID, 
 //     route the verdict to that run's channel and return (nil, nil) (same-process);
 //   - if the session is unknown → ErrNotFound (via the store load);
 //   - if the session is NOT in StateAwaiting → ErrNoActiveRun (awaiting is the ONLY
-//     state that stops being terminal under Phase 2; idle/completed/cancelled/failed
+//     non-terminal resumable state; idle/completed/cancelled/failed
 //     stay terminal, so a stale Approve cannot resurrect them);
 //   - if awaiting → rebuild the engine + workspace (the SAME engineAndEnvironmentFor
 //     the prompt path uses, so the two cannot drift), call Engine.ResumeApproval to
@@ -6971,7 +6971,7 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 	}
 	s.mu.Unlock()
 
-	// ADR 0030 Layer 3 note: engineAndEnvironmentFor's mode→model rebuild (CASE 1) is a
+	// Note: engineAndEnvironmentFor's mode→model rebuild (CASE 1) is a
 	// NO-OP here. SetMode is rejected from StateAwaiting by the aggregate, so a parked
 	// session's Mode cannot have changed since its engine was built — se.builtForMode ==
 	// sess.Mode always holds, and the stale-mode branch never fires. (A restart-parked
@@ -6990,13 +6990,13 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 	}
 	// On this path the persisted session IS the run — it parked awaiting the ask
 	// and no live *agent.Run exists — so the stored id is the authoritative answer
-	// to "which run would this verdict resolve?" (ADR 0249).
+	// to "which run would this verdict resolve?".
 	if err := checkExpectedRun(expectedRunID, sess.RunID()); err != nil {
 		return nil, err
 	}
 	if sess.State != session.StateAwaiting {
-		// Awaiting is the only state Phase 2 makes non-terminal. Everything else stays
-		// stranded-for-Approve as before (last-write-wins / nothing to resume).
+		// Awaiting is the only resumable non-terminal state. Everything else stays
+		// stranded-for-Approve (last-write-wins / nothing to resume).
 		return nil, ErrNoActiveRun
 	}
 	pending, ok := sess.PendingAsk()
@@ -7012,7 +7012,7 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 	}
 	promoted := false
 	defer s.cleanupRunAdmission(id, st, &promoted)
-	// Cross-process single-writer gate (cloud-native Phase 4): the resumed run is a
+	// Cross-process single-writer gate: the resumed run is a
 	// run-entry like any other, so it acquires the session lease too — a competing
 	// process that took over this evicted session must refuse the resume.
 	if err := s.acquireLease(admissionParent, id); err != nil {
@@ -7061,7 +7061,7 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 	return run, nil
 }
 
-// ApprovePlan is the atomic plan-approval RPC (issue #206, Wave 4). It resolves
+// ApprovePlan is the atomic plan-approval RPC (issue #206). It resolves
 // a parked PLAN-ORIGINATED permission ask (a PresentPlan call surfaced in plan
 // mode) and — on an ALLOW verdict — starts a FRESH continuation run carrying the
 // harness proceed message, streaming BOTH runs' events on the one returned
@@ -7256,9 +7256,9 @@ func planVerdictForMode(m session.PermissionMode) (verdict session.ApprovalVerdi
 	}
 }
 
-// Cancel cancels the session's in-flight run. The store-fallback semantics match
-// Approve: ErrNotFound when the session is unknown, ErrNoActiveRun when it
-// exists only in the store with no live run.
+// Cancel cancels the session's in-flight run. Store fallback: ErrNotFound when
+// the session is unknown, ErrNoActiveRun when it exists only in the store with
+// no live run (unlike Approve, Cancel never resumes a persisted awaiting run).
 func (s *Service) Cancel(ctx context.Context, id session.SessionID, expectedRunID string) error {
 	// Authorize before reading the in-memory registry: cancellation is a live
 	// signal and a foreign request must be absence-equivalent.
@@ -7395,7 +7395,7 @@ func (s *Service) noActiveRun(ctx context.Context, id session.SessionID) error {
 // When the session is StateAwaiting, Persist also marks the runState.awaiting
 // flag. Close uses that signal to protect the durable awaiting snapshot before
 // cancelling the local run in memory, preventing the terminal relay from
-// overwriting the cloud-native Phase 2 resume point with cancelled. Persist is
+// overwriting the awaiting resume point with cancelled. Persist is
 // called by the relay/test AFTER
 // observing an event (EvPermissionAsk → loop parked, or EvResult → loop done), so
 // reading sess.State here races no concurrent loop write (the loop is parked or
@@ -7584,8 +7584,8 @@ func (s *Service) admitRunEvent(id session.SessionID, ev session.Event) bool {
 // run-scoped recorder can make the warning sticky while continuing later
 // attempts.
 //
-// It is ALSO the SINGLE site that stamps session.Event.Actor (ADR 0204 decision
-// 5): the attribution is derive-at-append, read from the CONTEXT PRINCIPAL — the
+// It is ALSO the SINGLE site that stamps session.Event.Actor: the attribution
+// is derive-at-append, read from the CONTEXT PRINCIPAL — the
 // verified caller who drove this request — so the loop stays storage- and
 // identity-agnostic and every emit site leaves Actor nil. Callers pass a
 // cancel-detached ctx (context.WithoutCancel), which preserves the context VALUES
@@ -7605,15 +7605,15 @@ func (s *Service) appendEvent(ctx context.Context, id session.SessionID, ev sess
 		return fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
 	}
 	// The actor is the verified caller who ACTED, NOT the session's owner. The two
-	// are different questions and routinely different values: this phase ships no
-	// authorization, so any authenticated caller may act on any session, and an
-	// owner-derived stamp would put caller A on every event of a run caller B drove
-	// (worst on EvApproval, where the record IS a human granting a tool
-	// permission). The owner stays the identity of record for "whose is this?"; the
+	// are different questions and can be different values: unless
+	// Config.OwnershipEnforced is set, ownsResource admits any caller to any
+	// session, and an owner-derived stamp would put caller A on every event of a
+	// run caller B drove (worst on EvApproval, where the record IS a human
+	// granting a tool permission). The owner stays the identity of record for "whose is this?"; the
 	// actor answers "who did this?". PrincipalFromContext returns a COPY, so a
 	// later mutation cannot rewrite an already-recorded event.
 	ev.Actor = session.PrincipalFromContext(ctx)
-	// The cursor seam (ADR 0250) is used when the backend offers it, because THIS
+	// The cursor seam is used when the backend offers it, because THIS
 	// is where a durable position is assigned. AC7.8 is a structural claim, not a
 	// performance one: the position must be minted at the persistence chokepoint
 	// and nowhere else — never at an emit site in the loop, which stays
@@ -7639,8 +7639,8 @@ func (s *Service) appendEvent(ctx context.Context, id session.SessionID, ev sess
 	return s.cfg.EventLog.Append(ctx, id, ev)
 }
 
-// relayEvent applies the SHARED per-event relay discipline (cloud-native Phase
-// 3a/3b + the plan-mode auto-approve observer, issue #206 Wave 6a) that every
+// relayEvent applies the SHARED per-event relay discipline (durable event-log
+// recording plus the plan-mode auto-approve observer, issue #206) that every
 // event-relay loop (gRPC Converse, gRPC ApprovePlan, HTTP relayRunSSE, HTTP
 // relayEventsSSE) must run for EACH observed event, BEFORE the call site's own
 // wire write. It returns forward=true when the event should be sent on the
@@ -7651,10 +7651,10 @@ func (s *Service) appendEvent(ctx context.Context, id session.SessionID, ev sess
 //     streaming deltas and durably flushes them before this event when it is a
 //     boundary; client liveness never gates observation, so the post-disconnect
 //     tail still includes the terminal EvResult.
-//  2. skip the client wire for the seven log-only kinds (EvApproval,
-//     EvCompactionArchive, EvUserPrompt, EvNetworkAttempt, EvRequestManifest,
-//     EvAuthorizationRequired, EvAuthorizationResolved) — recorded above but
-//     NOT forwarded.
+//  2. skip the client wire for the five log-only kinds (EvApproval,
+//     EvCompactionArchive, EvUserPrompt, EvNetworkAttempt, EvRequestManifest)
+//     — recorded above but NOT forwarded. EvAuthorizationRequired and
+//     EvAuthorizationResolved ARE forwarded.
 //  3. on EvPermissionAsk: Persist (snapshot semantics, gated to the healthy
 //     path — the passed ctx, NOT the cancel-detached one) and — when autoApprove
 //     is true — MaybeAutoApprovePlan (the headless auto-approve observer).
@@ -7685,9 +7685,9 @@ func (s *Service) relayEvent(ctx context.Context, id session.SessionID, ev sessi
 			st.persistMu.Unlock()
 		}
 	}
-	// EvApproval (3a), EvCompactionArchive (3b), and EvUserPrompt (ADR 0038) are
+	// EvApproval (3a), EvCompactionArchive (3b), and EvUserPrompt are
 	// consumed by the durable log ONLY — appended above but NOT relayed to the
-	// client wire. EvNetworkAttempt (ADR 0255) and EvRequestManifest are the
+	// client wire. EvNetworkAttempt and EvRequestManifest are the
 	// remaining isPublicEvent exclusions. authorization.required/resolved ARE
 	// relayed — cmd/mecatui/client/msgs.go decodes them into MCPAuthorizationMsg,
 	// the client's only signal to show the MCP-authorization modal.
@@ -7707,7 +7707,7 @@ func (s *Service) relayEvent(ctx context.Context, id session.SessionID, ev sessi
 	return true
 }
 
-// MaybeAutoApprovePlan fires the plan-mode auto-approve (issue #206 Wave 6a) when
+// MaybeAutoApprovePlan fires the plan-mode auto-approve (issue #206) when
 // the Service observes a parked plan-approval ask on a headless deployment. It is
 // called by the gRPC/HTTP relay loops alongside appendEvent+Persist for every
 // EvPermissionAsk, and by tests simulating the relay. It is a NO-OP unless ALL of
@@ -7828,7 +7828,7 @@ func (s *Service) MaybeAutoApprovePlan(ctx context.Context, id session.SessionID
 }
 
 // autoApproveContinuation is the LIVE-path continuation half of
-// MaybeAutoApprovePlan (issue #206 Wave 6a). After the live run's verdict
+// MaybeAutoApprovePlan (issue #206). After the live run's verdict
 // terminates it with StopPlanApproved + the mode flip, a headless auto-approve
 // has no operator to re-prompt — so this drives the continuation execution run
 // (the SAME atomic behavior as ApprovePlan's cross-process continuation): it
@@ -7930,8 +7930,8 @@ func (s *Service) acquireMutationLease(ctx context.Context, id session.SessionID
 // deliberately fails fast forever once lostOwnership[id] is set — once this
 // process has been told it lost a session's lease, it must never quietly
 // resume acting as owner without an explicit CloseSession, even if the
-// backend would technically permit a fresh Acquire (TestADR_0294_
-// AwaitingLeaseLossRetractsLocalAskPreservesSnapshot and the Scenario5/7
+// backend would technically permit a fresh Acquire
+// (TestAwaitingLeaseLossRetractsLocalAskPreservesSnapshot and the Scenario5/7
 // session-affinity-and-handoff tests pin this: a stale owner must stay
 // refused even when no successor ever actually took the lease over).
 //
@@ -8011,8 +8011,8 @@ func (s *Service) mutationLeaseContext(parent context.Context, id session.Sessio
 	return ctx, cleanup, stillHeld
 }
 
-// acquireLease takes (or confirms) the cross-process single-writer lease for id
-// (cloud-native Phase 4). It is called at the run-entry seam AFTER the
+// acquireLease takes (or confirms) the cross-process single-writer lease for id.
+// It is called at the run-entry seam AFTER the
 // per-session runEntryMu so same-process exclusion stays cheap and the
 // resumeMu->runEntryMu lock order holds; the lease is the CROSS-process layer on
 // top of that in-process lock.
@@ -8035,7 +8035,7 @@ func (s *Service) mutationLeaseContext(parent context.Context, id session.Sessio
 // The Acquire RPC is bounded by leaseAcquireTimeout so a wedged backend cannot
 // stall run-entry indefinitely (this runs under s.runEntryMu on the hot path).
 func (s *Service) acquireLease(ctx context.Context, id session.SessionID) error {
-	// Drain gate (ADR 0048, mecak8s): once Drain is armed, refuse new run-entries
+	// Drain gate (mecak8s): once Drain is armed, refuse new run-entries
 	// BEFORE leasing/launching so a shutting-down replica steers new traffic to a
 	// survivor. Checked here (the single run-entry chokepoint covering
 	// StartRunContent + resumeFromAwaiting) so both prompt and awaiting-resume
@@ -9086,7 +9086,7 @@ func randomID() session.SessionID {
 
 // rootedRunContext is the context every server run entry hands to the engine: the
 // authoritative session becomes the causal root (overwriting anything the caller's
-// ctx carried, ADR 0360) and memory writes bind to the session's governance root.
+// ctx carried) and memory writes bind to the session's governance root.
 func rootedRunContext(ctx context.Context, sess *session.Session, governanceRoot string) context.Context {
 	return memory.WithWorkspace(port.WithRootSessionID(ctx, sess.ID), governanceRoot)
 }
@@ -9458,7 +9458,7 @@ type WorktreeLister interface {
 	List(ctx context.Context, root string) ([]Worktree, error)
 }
 
-// --- Stored-session inventory (issue #245 Phase 1) --------------------------
+// --- Stored-session inventory (issue #245) --------------------------
 
 // SessionSummary is one stored session's picker metadata — id, timestamps,
 // state, turn count, and the resolved model id. It carries NO conversation
@@ -9820,9 +9820,9 @@ func (s *Service) summaryFromMeta(meta port.SessionMeta) SessionSummary {
 }
 
 // StreamSessionEvents replays a session's durable event log as a lazy iterator
-// over the recorded events (cloud-native Phase 3a read-back). It is the
+// over the recorded events. It is the
 // service-layer surface over port.EventLog.Read that the gRPC/HTTP handlers
-// stream to a client opening an existing session (issue #245 Phase 1).
+// stream to a client opening an existing session (issue #245).
 //
 // A nil EventLog (no durable log configured) returns ErrNoEventLog so the wire
 // adapters map to UNIMPLEMENTED (HTTP 501) — honestly reporting the surface is
@@ -9852,8 +9852,8 @@ func (s *Service) StreamSessionEvents(ctx context.Context, id session.SessionID)
 }
 
 // ListSessions returns the stored-session inventory — the picker metadata a
-// client renders to let an operator open an EXISTING session by id (issue #245
-// Phase 1). It is backed by port.PrunableStore.List (type-asserted on the
+// client renders to let an operator open an EXISTING session by id (issue #245).
+// It is backed by port.PrunableStore.List (type-asserted on the
 // configured store); a store that does not implement PrunableStore, or one that
 // returns ErrPruneUnsupported, degrades to an EMPTY slice — never an error — so
 // a no-persistence/cloud server honestly reports "no sessions".
@@ -9870,7 +9870,7 @@ func (s *Service) StreamSessionEvents(ctx context.Context, id session.SessionID)
 // are sorted most-recently-active first (modified_at descending). Read-only.
 //
 // Cost: each row does a Store.Load (jsonlstore: reads the last snapshot line).
-// Acceptable for a picker; no pagination in Phase 1.
+// Acceptable for a picker; there is no pagination.
 //
 // FAST PATH: when the store implements port.MetaLister (jsonlstore does),
 // ListSessions uses MetaList — a CHEAP last-line read that skips the full

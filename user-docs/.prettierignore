@@ -4,3 +4,5 @@ reference/grpc-schema.md
 reference/typescript-sdk-api/core.md
 reference/typescript-sdk-api/node.md
 reference/typescript-sdk-api/deno.md
+
+reference/server-cli.md

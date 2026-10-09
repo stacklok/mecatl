@@ -299,8 +299,7 @@ func renderWorktreesPanel(th theme.Theme, st worktreesState, _ client.Capabiliti
 		}
 		b.WriteString(line + "\n")
 	}
-	// The Choose/Close chords read the LIVE keyMap markings (issue #457); with
-	// defaults the hint is byte-identical to the historical literal.
+	// The Choose/Close chords read the LIVE keyMap markings (issue #457).
 	b.WriteString("\n" + th.Style("muted").Render(hk.choose+": select  "+hk.closeOnly+": close"))
 	return b.String()
 }

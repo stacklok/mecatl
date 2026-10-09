@@ -107,7 +107,7 @@ func (ReadTool) Execute(ctx context.Context, in session.ToolCall, env tool.Envir
 	}
 
 	// Record the read with the ADAPTER-MINTED authoritative version (ReadVersion
-	// returned it) in the Environment's selected ledger (ADR 0281). It performs
+	// returned it) in the Environment's selected ledger. It performs
 	// NO file-content I/O; it stores this exact token so a later Edit/Write can
 	// assert read-before-mutate. A failed record is reported and establishes no
 	// new evidence; any older evidence keeps only its exact-version meaning.

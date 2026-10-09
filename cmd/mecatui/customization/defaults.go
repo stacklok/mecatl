@@ -6,8 +6,8 @@ package customization
 func defaultTemplateSet() TemplateSet {
 	return TemplateSet{
 		Header: SurfaceTemplates{
-			Full:    `<header><primary>mecatui{{if .Session.Title}} · {{elide 32 .Session.Title}}{{end}} · {{if .Model.ProviderID}}{{.Model.ProviderID}}/{{end}}{{.Model.DisplayName}}{{if .Model.Route}}/{{.Model.Route}}{{end}}</primary>{{if .Session.Mode}}<warning> · mode {{.Session.Mode}}</warning>{{end}}{{if and (eq .Server.ConnectionMode "connect") .Server.DisplayTarget}}<text> · {{.Server.DisplayTarget}}</text>{{end}}</header>`,
-			Compact: `<header><primary>mecatui{{if .Session.Title}} · {{elide 24 .Session.Title}}{{end}} · {{.Model.DisplayName}}</primary>{{if .Session.Mode}}<warning> · mode {{.Session.Mode}}</warning>{{end}}</header>`,
+			Full:    `<header><primary>mecatui{{if .Session.Title}} · {{elide 32 .Session.Title}}{{end}}{{if .Model.ProviderLabel}} · {{.Model.ProviderLabel}}{{if .Model.Route}}/{{.Model.Route}}{{end}}{{end}}</primary>{{if .Session.Mode}}<warning> · mode {{.Session.Mode}}</warning>{{end}}{{if and (eq .Server.ConnectionMode "connect") .Server.DisplayTarget}}<text> · {{.Server.DisplayTarget}}</text>{{end}}</header>`,
+			Compact: `<header><primary>mecatui{{if .Session.Title}} · {{elide 24 .Session.Title}}{{end}}{{if .Model.ProviderLabel}} · {{.Model.ProviderLabel}}{{end}}</primary>{{if .Session.Mode}}<warning> · mode {{.Session.Mode}}</warning>{{end}}</header>`,
 			Minimal: `<header><primary>mecatui{{if .Session.Title}} · {{elide 12 .Session.Title}}{{end}}</primary></header>`,
 		},
 		Footer: SurfaceTemplates{

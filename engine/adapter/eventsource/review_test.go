@@ -210,7 +210,7 @@ func TestFoldReasoningProviderDivergesOnSnapshotOnlyFields(t *testing.T) {
 	}
 	if foldReasoning != "" {
 		t.Fatalf("fold MUST NOT reconstruct Message.Reasoning (not event-carried), got %q "+
-			"— if reasoning is now evented, update the contract docs (COMPATIBILITY.md / ADR 0038)", foldReasoning)
+			"— if reasoning is now evented, update the contract docs (COMPATIBILITY.md)", foldReasoning)
 	}
 }
 
@@ -342,7 +342,7 @@ func TestFoldMultiRunResetsConsecutiveFailures(t *testing.T) {
 // the archive of a SUBSEQUENT compaction would carry it). That is a separate,
 // pre-existing event-coverage edge (the compaction summary is synthetic compactor state,
 // not user input), orthogonal to #115's user-prompt closure. So this variant asserts the
-// archive HEAD is recovered (the property #115/ADR 0038 promises) rather than a full
+// archive HEAD is recovered (the property #115 promises) rather than a full
 // snapshot deep-equal; the hand-built TestFoldRecoversCompactionArchiveHead proves the
 // archive-folding mechanics deterministically.
 func TestFoldRecoversLiveCompactionArchiveHead(t *testing.T) {

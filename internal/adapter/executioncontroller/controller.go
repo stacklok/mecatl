@@ -155,7 +155,7 @@ func reconcileInputsEqual(oldEnv, newEnv *unstructured.Unstructured) bool {
 		!reflect.DeepEqual(oldEnv.GetFinalizers(), newEnv.GetFinalizers()) {
 		return false
 	}
-	for _, path := range [][]string{{"spec"}, {statusField, "activeOperation"}, {statusField, "lifecycleOperation"}, {statusField, "migrationOperation"}, {statusField, "references"}, {statusField, "fenceState"}} {
+	for _, path := range [][]string{{"spec"}, {statusField, "activeOperation"}, {statusField, "lifecycleOperation"}, {statusField, "references"}, {statusField, "fenceState"}} {
 		oldValue, _, _ := unstructured.NestedFieldNoCopy(oldEnv.Object, path...)
 		newValue, _, _ := unstructured.NestedFieldNoCopy(newEnv.Object, path...)
 		if !reflect.DeepEqual(oldValue, newValue) {
@@ -219,7 +219,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, name string) error {
 		}
 	}
 	if requireCurrentSchema(env) != nil {
-		return r.setCondition(ctx, env, "Ready", false, "IncompatibleSchema", "explicit administrator migration to schema version 2 is required")
+		return r.setCondition(ctx, env, "Ready", false, "IncompatibleSchema", "only schema version 2 is supported")
 	}
 	if expires := textNested(env.Object, "status", "activeOperation", "expiresAt"); expires != "" {
 		deadline, parseErr := time.Parse(time.RFC3339Nano, expires)

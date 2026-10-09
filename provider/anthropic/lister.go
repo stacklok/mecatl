@@ -50,9 +50,11 @@ func (t cappedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 // ThinkingDescriptor is the adapter's OWN neutral projection of a model's
 // extended-thinking capability (Capabilities.Thinking.Types). It carries nothing
-// SDK-private; the composition layer maps it to its own neutral descriptor. The
-// zero value (none) means the model supports no extended thinking.
+// SDK-private; the composition layer maps it to its own neutral descriptor.
+// Known distinguishes an explicit unsupported declaration from omitted sparse
+// metadata, which must retain the model-prefix fallback.
 type ThinkingDescriptor struct {
+	Known    bool
 	Adaptive bool // Capabilities.Thinking.Types.adaptive.supported
 	Enabled  bool // Capabilities.Thinking.Types.enabled.supported (manual)
 }
@@ -153,11 +155,14 @@ func (l *Lister) ListModels(ctx context.Context) ([]Model, error) {
 }
 
 // mapModelInfo projects the SDK's rich ModelInfo into the neutral Model. The
-// thinking descriptor reads Capabilities.Thinking.Types directly (the live
-// replacement for the prefix matrix). int64 ceilings are narrowed to int (model
-// limits are well within int range on every supported platform).
+// thinking descriptor preserves presence: sparse capability records are unknown
+// so composition can use the prefix floor, while an explicit thinking-level
+// negative or a supported type remains authoritative. int64 ceilings are narrowed
+// to int (model limits are well within int range on every supported platform).
 func mapModelInfo(info sdk.ModelInfo) Model {
 	caps := info.Capabilities
+	unsupported := caps.JSON.Thinking.Valid() && caps.Thinking.JSON.Supported.Valid() && !caps.Thinking.Supported
+	thinkingKnown := unsupported || caps.Thinking.Types.Adaptive.Supported || caps.Thinking.Types.Enabled.Supported
 	return Model{
 		ID:           info.ID,
 		DisplayName:  info.DisplayName,
@@ -165,8 +170,9 @@ func mapModelInfo(info sdk.ModelInfo) Model {
 		OutputLimit:  int(info.MaxTokens),
 		Image:        caps.ImageInput.Supported,
 		Thinking: ThinkingDescriptor{
-			Adaptive: caps.Thinking.Types.Adaptive.Supported,
-			Enabled:  caps.Thinking.Types.Enabled.Supported,
+			Known:    thinkingKnown,
+			Adaptive: !unsupported && caps.Thinking.Types.Adaptive.Supported,
+			Enabled:  !unsupported && caps.Thinking.Types.Enabled.Supported,
 		},
 	}
 }

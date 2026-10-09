@@ -94,7 +94,7 @@ func TestSDKTypescriptRelease_Scenario1_RPCTransportCatalogParity(t *testing.T) 
 	assertSDKStringSetsEqual(t, "generated descriptors/TypeScript RPC catalog", wantKeys, gotKeys)
 }
 
-func TestADR_0304_ExactGRPCOnlySet(t *testing.T) {
+func TestSDKExactGRPCOnlySet(t *testing.T) {
 	t.Parallel()
 
 	source := sdkRPCCatalogSource(t)
@@ -109,8 +109,8 @@ func TestADR_0304_ExactGRPCOnlySet(t *testing.T) {
 			routeFamily[row.method] = struct{}{}
 		}
 	}
-	assertSDKStringSetsEqual(t, "ADR 0304 gRPC-only methods", stringSet("StreamSessionLive", "ListGuardrailCoverage", "GetGuardrailReviewDetail"), grpcOnly)
-	assertSDKStringSetsEqual(t, "ADR 0304 route-family methods", stringSet("Converse"), routeFamily)
+	assertSDKStringSetsEqual(t, "gRPC-only methods", stringSet("StreamSessionLive", "ListGuardrailCoverage", "GetGuardrailReviewDetail"), grpcOnly)
+	assertSDKStringSetsEqual(t, "route-family methods", stringSet("Converse"), routeFamily)
 	assertSDKRPCManifest(t, source, "MECATL_RPC_ROUTE_FAMILIES", stringSet("Converse"))
 	assertSDKRPCManifest(
 		t,
@@ -130,7 +130,7 @@ func TestADR_0304_ExactGRPCOnlySet(t *testing.T) {
 	)
 }
 
-func TestADR_0304_PlanApprovalContractParity(t *testing.T) {
+func TestSDKPlanApprovalContractParity(t *testing.T) {
 	t.Parallel()
 
 	_, filename, _, ok := runtime.Caller(0)
@@ -197,8 +197,9 @@ func TestSDKTypescriptRelease_Scenario1_PublicServiceProjectionParity(t *testing
 		"ActiveRuns",
 		"Approve",
 		"ApproveRun",
-		// HTTP approve and gRPC Converse controls call these contextual successors to
-		// ApproveRun inside the aggregate Converse catalog row.
+		// Contextual successors with no catalog row of their own: ResolveApprovalRun
+		// backs ApproveRun; the ResolveRunAsk handlers (gRPC and HTTP resolve-ask)
+		// call ResolveScopedRunAsk for guardrail-scoped asks.
 		"ResolveApprovalRun",
 		"ResolveScopedRunAsk",
 		"BindPlacement",

@@ -708,7 +708,7 @@ func TestServerIdentityAndInstructions(t *testing.T) {
 // TestMetricsSummaryRealExporterYieldsQuantiles is the issue #158 end-to-end proof
 // on the REAL exporter pipeline (NOT the hand-built fakeGatherer fixture): it stands
 // up telemetry.Setup (the same single MeterProvider + Prometheus reader + explicit-
-// bucket LatencyViews production uses, ADR 0045), records a spread of turn durations
+// bucket LatencyViews production uses), records a spread of turn durations
 // through the real telemetry.Metrics adapter, then drives metricsSummary over a Deps
 // whose Gatherer IS the real prometheus registry. It asserts the latency entry
 // reports a real Count and a NON-DEGENERATE p50<=p90<=p99 — not all collapsed to a

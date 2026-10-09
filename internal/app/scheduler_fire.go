@@ -62,8 +62,8 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 		// mutating (Mutating=false) runs in plan mode (read-only toolset) — the
 		// conservative posture for unattended runs. A schedule that opts into
 		// mutating (Mutating=true) honors its explicit Mode (or default if unset).
-		// This is the fire-time enforcement; the create-seam (Phase 2) will
-		// additionally reject Mutating=false with a write-capable Mode at save time.
+		// This is the fire-time enforcement; the create seam (the schedule
+		// manager) additionally rejects Mutating=false with a non-plan Mode at save time.
 		mode := sched.Spec.Mode
 		if mode == "" {
 			mode = session.ModeDefault
@@ -88,7 +88,7 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 			return fireFailed(sched, now, "", err), err
 		}
 
-		// Pre-mint the fire id (ADR 0059 decision #7 Phase-2): a "sched--"-prefixed
+		// Pre-mint the fire id: a "sched--"-prefixed
 		// id that serves as BOTH the fire id AND the session id. Minting it here
 		// (before CreateSessionWithProfile) and passing it as the WithSessionID
 		// override means the fire's persisted session carries the sched-- family
@@ -115,7 +115,7 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 		// would return ErrLeaseHeld and skip forever (review #189).
 		defer svc.CloseSession(sess.ID)
 
-		// Carried-context toggle (ADR 0059 Phase 2): when CarryContext is true,
+		// Carried-context toggle: when CarryContext is true,
 		// load the prior fire's session and render its conversation as a FENCED
 		// untrusted preamble prepended to the prompt — NOT as seeded history. The
 		// carried context is UNTRUSTED (model-authored + tool-result-laden; a prior
@@ -147,7 +147,7 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 			StartedAt:    startedAt,
 			Deadline:     deadline,
 		})
-		// "Started" notice (issue #386, Phase 4a): route a fenced-untrusted
+		// "Started" notice (issue #386): route a fenced-untrusted
 		// harness note carrying ONLY the schedule name + fire/session id back
 		// into the fire's origin conversation, right AFTER RecordFireStart.
 		// A nil deliverStarted is the byte-identical no-start-notice path.
@@ -289,7 +289,7 @@ func schedulerOwnerContext(ctx context.Context, owner *session.Principal) contex
 	return session.WithPrincipal(ctx, owner)
 }
 
-// fireSessionOwner projects the SCHEDULE's captured owner (ADR 0204 decision 6)
+// fireSessionOwner projects the SCHEDULE's captured owner
 // onto the fire session's owner: the same (issuer, subject) identity, with
 // GrantType client_credentials — a fire is automated, not interactive, and the
 // grant type says so honestly while attribution still collapses to the
@@ -312,7 +312,7 @@ func fireSessionOwner(owner *session.Principal) *session.Principal {
 }
 
 // newFireID mints a per-fire identifier: "sched--<name>-<UTC compact>-<randhex>".
-// It is pre-minted on the fire path (ADR 0059 decision #7 Phase-2) and passed
+// It is pre-minted on the fire path and passed
 // as the WithSessionID override to CreateSessionWithProfile, so the fire's
 // persisted session carries the "sched--" prefix the GC retention sweep
 // (ScheduleFireRetention) partitions on — and the fire id IS the session id.
@@ -370,8 +370,8 @@ func fireFailed(sched port.Schedule, now time.Time, sessID string, err error) po
 
 // carriedContextPrompt resolves the fire's prompt, optionally prepending a
 // FENCED untrusted preamble rendered from the prior fire's conversation when
-// CarryContext is set and a real (non-pending) prior session id exists (ADR
-// 0059 Phase 2). It is extracted from makeFireFunc to keep that func's
+// CarryContext is set and a real (non-pending) prior session id exists.
+// It is extracted from makeFireFunc to keep that func's
 // cyclomatic complexity under the lint cap. On prior-session-load failure (not
 // found, decode error) the fire degrades to fresh-context (WARN, never fails the
 // fire — the carried context is an enhancement, not a requirement).
@@ -441,7 +441,7 @@ const carriedContextMaxTurns = 20
 const carriedContextMaxRunes = 10000
 
 // renderCarriedContext renders the prior fire's conversation as a FENCED untrusted
-// preamble (ADR 0059 Phase 2). It walks the prior session's Conversation.Messages,
+// preamble. It walks the prior session's Conversation.Messages,
 // renders assistant text + a summary of tool results (NOT the full tool-result
 // content — just "Tool <name>: <truncated result>"), wraps the whole thing in
 // governance.FenceUntrusted, which applies governance.NeutraliseFraming so any forged

@@ -1,0 +1,8 @@
+{
+  "label": "Operate mecak8s",
+  "position": 31,
+  "link": {
+    "type": "doc",
+    "id": "operating/mecak8s"
+  }
+}

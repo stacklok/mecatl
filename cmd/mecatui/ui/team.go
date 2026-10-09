@@ -366,7 +366,7 @@ func teamRosterRuntime(ln *teamLane) string {
 	if ln.ctxWindow > 0 {
 		parts = append(parts, renderfmt.RenderContextMeterPlain(ln.ctxUsed, ln.ctxWindow))
 	}
-	if routed := subagentModelLabel(ln.routedCategory, ln.routedModel, ln.routingReason, ln.model); routed != "" {
+	if routed := delegationModelLabelWithSelection(ln.routedCategory, ln.routedModel, ln.routingReason, ln.model, ln.provider, ln.explicitRouterCategory, ln.routingDecision); routed != "" {
 		parts = append(parts, routed)
 	}
 	return strings.Join(parts, " · ")
@@ -446,7 +446,7 @@ func prepareTeamFocusAt(th theme.Theme, b *teamOverlaySnapshot, member string, d
 		subhead += " · " + renderfmt.RenderContextMeter(th, ln.ctxUsed, ln.ctxWindow)
 	}
 	out.WriteString(muted.Render(wrapFocusMetadataAtWidth(subhead, bodyWidth)))
-	if detail := routingDecisionDetail(ln.routingDecision, ln.model, ln.routingReason); detail != "" {
+	if detail := routingDecisionDetail(ln.routingDecision, qualifiedModelLabel(ln.provider, ln.model), ln.routingReason); detail != "" {
 		out.WriteString("\n")
 		out.WriteString(muted.Render(hangingIndentWrap(detail, "  ", bodyWidth)))
 	}
@@ -601,8 +601,7 @@ func taskGlyph(state string, blocked bool) string {
 
 // teamSubViewHint is the "<flip> roster · <close> close" footer used by the team
 // tasks/findings sub-views. The flip chord (Tasks/Findings) and the close chord
-// (Close) read the LIVE keyMap markings so an override propagates (issue #457);
-// with defaults it is byte-identical to the historical literal.
+// (Close) read the LIVE keyMap markings so an override propagates (issue #457).
 func teamSubViewHint(hk helpKeys, flip string) string {
 	return flip + " roster · " + hk.closeOnly + " close"
 }

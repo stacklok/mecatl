@@ -47,7 +47,7 @@ const (
 // injected mid-run that the loop drains at the next turn boundary and records
 // as an ordinary harness-authored user continuation (recordContinuation), so it
 // replays to the model like any user turn and flows through compaction /
-// session.ValidateToolPairing / ADR-0038 rehydration unchanged.
+// session.ValidateToolPairing / event-log rehydration unchanged.
 //
 // The slot is SINGLE and append-default: at most one steer BUNDLE is pending at
 // a time. A second enqueue on the occupied slot APPENDS to the pending bundle

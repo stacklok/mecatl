@@ -82,10 +82,10 @@ func assertLeaseLockHeld(t *testing.T, leasePath string) {
 	}
 }
 
-// TestADR_0281_BackgroundJobLeaseLifecycle pins that the streaming path used by
+// TestManagedTemp_BackgroundJobLeaseLifecycle pins that the streaming path used by
 // Shell background jobs allocates a job lease, retains it until its process group
 // has joined, and applies the foreground terminal cleanup rule.
-func TestADR_0281_BackgroundJobLeaseLifecycle(t *testing.T) {
+func TestManagedTemp_BackgroundJobLeaseLifecycle(t *testing.T) {
 	streamer := managedJobStreamer(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -120,10 +120,10 @@ func TestADR_0281_BackgroundJobLeaseLifecycle(t *testing.T) {
 	}
 }
 
-// TestADR_0281_ActiveLeaseLockDefeatsReaper pins the per-job exclusion a
+// TestManagedTemp_ActiveLeaseLockDefeatsReaper pins the per-job exclusion a
 // deterministic reaper relies on: concurrent deadline-free managed jobs have
 // distinct allocations and its non-blocking lock attempt cannot select either.
-func TestADR_0281_ActiveLeaseLockDefeatsReaper(t *testing.T) {
+func TestManagedTemp_ActiveLeaseLockDefeatsReaper(t *testing.T) {
 	streamer := managedJobStreamer(t)
 	type job struct {
 		cancel context.CancelFunc

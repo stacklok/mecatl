@@ -195,7 +195,7 @@ func BenchmarkBuildParamsAndMarshal(b *testing.B) {
 }
 
 // BenchmarkBuildParamsWithConversationCache measures buildParams with the
-// conversation-caching anchors (ADR 0100) exercised over a realistic
+// conversation-caching anchors exercised over a realistic
 // conversation shape — the baseline perf/cmd/allocsgate tracks for the new
 // derivation + mutation cost. Conversation caching is on by default, but this
 // benchmark names the Option explicitly so it keeps measuring the enabled path

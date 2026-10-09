@@ -72,13 +72,13 @@ type scheduleFireRecord struct {
 
 // scheduleStore is a file-backed port.ScheduleStore sharing the parent *Store's
 // dir + single-process mutex. It is the single-host production schedule
-// backend (scheduled-tasks issue #189, Phase 1d): the SAME logic as
+// backend (scheduled-tasks issue #189): the SAME logic as
 // memschedulestore with file persistence. The mutex is the at-most-once fence
 // for the Claim race — this is SINGLE-HOST ONLY (the same scope as the flock
 // lease): two replicas pointing at the same dir have NO cross-process fence and
 // MUST instead run a leader lease (port.SessionLease on
 // port.SchedulerLeaderLeaseID) so at most one replica ticks. The redis backend
-// (a SEPARATE follow-up) is the multi-host fence.
+// (redisstore) is the multi-host fence.
 //
 // It is parser-free (Claim's nextFire is caller-computed) and misfire-free
 // (Due does not read ScheduleSpec.Misfire) — the same discipline as the
@@ -92,7 +92,7 @@ type scheduleStore struct {
 var _ port.ScheduleStore = (*scheduleStore)(nil)
 
 // compile-time assertion that scheduleStore satisfies the OPTIONAL
-// ScheduleOneShotReArmer seam (ADR 0059 Phase 2).
+// ScheduleOneShotReArmer seam.
 var _ port.ScheduleOneShotReArmer = (*scheduleStore)(nil)
 
 // compile-time assertion that scheduleStore satisfies the OPTIONAL
@@ -740,9 +740,9 @@ func cloneSpec(spec port.ScheduleSpec) port.ScheduleSpec {
 	return out
 }
 
-// ReArmOneShot is the at-least-once re-arm primitive for a one-shot schedule
-// (ADR 0059 Phase 2). It atomically (under the shared mutex): re-enables the
-// schedule (Enabled=true), sets NextFireAt to nextFire, and increments
+// ReArmOneShot is the at-least-once re-arm primitive for a one-shot schedule.
+// It atomically (under the shared mutex): re-enables the schedule
+// (Enabled=true), sets NextFireAt to nextFire, and increments
 // OneShotRetryCount, then writes the record atomically (temp file + rename). The
 // not-found case wraps ErrScheduleNotFound. The retry-budget gate is the CALLER's
 // responsibility. One-shot-only.

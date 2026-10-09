@@ -26,7 +26,7 @@
 # them ever enters that closure, so this list cannot silently drift fail-open).
 #
 # Note on matching: POSIX `case` globs treat `*` as matching any string INCLUDING
-# `/`, so `docs/*.md` matches `docs/adr/nested.md` too (same convention as
+# `/`, so `docs/*.md` matches `docs/architecture/nested.md` too (same convention as
 # docs-only-changes.sh). Suffix patterns keep non-Markdown assets under docs/
 # (e.g. docs/architecture/*.yaml) OUT of the irrelevant set.
 set -euo pipefail

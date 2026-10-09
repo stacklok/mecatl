@@ -12,9 +12,9 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 )
 
-// TestADR_0247_SourcePublicAPI pins the concise source boundary consumed by
+// TestSourcePublicAPI pins the concise source boundary consumed by
 // mecatui composition and UI without changing its source-owned lifecycle.
-func TestADR_0247_SourcePublicAPI(t *testing.T) {
+func TestSourcePublicAPI(t *testing.T) {
 	source := NewDefaultSource(0)
 	acceptSource(source)
 	t.Cleanup(func() { _ = source.Close(context.Background()) })
@@ -26,7 +26,7 @@ func TestADR_0247_SourcePublicAPI(t *testing.T) {
 func acceptSource(Source) {}
 func acceptResult(Result) {}
 
-func TestADR_0247_SourceHasNoUIDependency(t *testing.T) {
+func TestSourceHasNoUIDependency(t *testing.T) {
 	file, err := parser.ParseFile(token.NewFileSet(), "source.go", nil, parser.ImportsOnly)
 	if err != nil {
 		t.Fatal(err)
@@ -37,7 +37,7 @@ func TestADR_0247_SourceHasNoUIDependency(t *testing.T) {
 		}
 	}
 }
-func TestADR_0247_SourceLatestWinsCoalesces(t *testing.T) {
+func TestSourceLatestWinsCoalesces(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	s := newSource(nil, func(_ context.Context, input Input) Result {
 		if input.Session.Title == "first" {
@@ -60,7 +60,7 @@ func TestADR_0247_SourceLatestWinsCoalesces(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
-func TestADR_0247_SourceSnapshotsAreIndependentAndTerminalSafe(t *testing.T) {
+func TestSourceSnapshotsAreIndependentAndTerminalSafe(t *testing.T) {
 	s := newSource(nil, func(_ context.Context, input Input) Result {
 		return Result{Header: Surface{Present: true, Spans: []Span{{Text: input.Session.Title + "\x1b]8;;https://bad.example\a", Href: "https://example.test/\x1b"}}}}
 	})
@@ -80,7 +80,7 @@ func TestADR_0247_SourceSnapshotsAreIndependentAndTerminalSafe(t *testing.T) {
 		t.Fatal("mutable snapshot")
 	}
 }
-func TestADR_0247_SourceCloseCancelsRender(t *testing.T) {
+func TestSourceCloseCancelsRender(t *testing.T) {
 	started := make(chan struct{})
 	s := newSource(nil, func(ctx context.Context, input Input) Result {
 		if input.Session.Title == "block" {
@@ -136,7 +136,7 @@ func TestStatusLine_CompactHeaderLabelsPermissionMode(t *testing.T) {
 	t.Cleanup(func() { _ = s.Close(context.Background()) })
 	s.Submit(Input{
 		Session:  Session{Handle: "deadbeef", Mode: "accept-edits"},
-		Model:    Model{DisplayName: "GPT-5"},
+		Model:    Model{ProviderLabel: "gpt-5", FriendlyName: "GPT-5"},
 		Terminal: Terminal{HeaderAvailCols: 50, FooterAvailCols: 80},
 	})
 	select {
@@ -144,7 +144,7 @@ func TestStatusLine_CompactHeaderLabelsPermissionMode(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("shipped source did not publish")
 	}
-	if got, want := statusSurfaceText(s.Latest().Header), "mecatui · GPT-5 · mode accept-edits"; got != want {
+	if got, want := statusSurfaceText(s.Latest().Header), "mecatui · gpt-5 · mode accept-edits"; got != want {
 		t.Fatalf("compact header = %q, want %q", got, want)
 	}
 }
@@ -191,7 +191,7 @@ func TestStatusCustomization_Scenario2_ReservedLanesAndResponsiveSelection(t *te
 	}
 }
 
-func TestADR_0247_SourceFallsBackToShippedDefaultOnInvalidVariant(t *testing.T) {
+func TestSourceFallsBackToShippedDefaultOnInvalidVariant(t *testing.T) {
 	s := NewTemplateSource(TemplateSet{
 		Header: SurfaceTemplates{
 			Full: `{{.Missing}}`, Compact: `{{.Missing}}`, Minimal: `{{.Missing}}`,

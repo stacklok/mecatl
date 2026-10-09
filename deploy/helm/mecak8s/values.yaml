@@ -6,7 +6,7 @@ image:
   # Release PRs keep this signed tag aligned with Chart.yaml. A digest overrides
   # it; clearing both selectors falls back to v<chart-version>.
   digest: ""
-  tag: "v0.0.44"
+  tag: "v0.0.47"
   pullPolicy: IfNotPresent
 
 # imagePullSecrets projects Secret(s) of type kubernetes.io/dockerconfigjson
@@ -51,7 +51,7 @@ extraArgs: []
 # declares its protected tool catalogue statically (name/description/
 # inputSchema/readOnly per entry): declared tools are admitted into the
 # session's catalogue immediately, with the credential itself deferred to the
-# model's first attempt to call one — see user-docs/building/deployment/mecak8s.md for a worked
+# model's first attempt to call one — see user-docs/operating/mecak8s.md for a worked
 # GitHub example of both.
 mcp:
   broker:
@@ -99,7 +99,7 @@ skills:
 # see mcp.broker.callbackURL above. The Deployment also renders strategy.type:
 # Recreate instead of RollingUpdate in that mode, so a rollout fully retires the
 # old incarnation before starting the new one (planned downtime, not zero-downtime
-# — see user-docs/building/deployment/mecak8s.md).
+# — see user-docs/operating/mecak8s.md).
 replicaCount: 2
 mockProvider: false
 
@@ -156,7 +156,7 @@ podDisruptionBudget:
 # workspace is the operator-mounted agent filesystem root (e.g. a PVC mount
 # path). Empty (the default) is a FILE-LESS deployment: every session is no-FS.
 # A non-empty ABSOLUTE path makes the deployment server-assigned filesystem
-# authority rooted there — clients cannot select another root (ADR 0237). Mount
+# authority rooted there — clients cannot select another root. Mount
 # the volume yourself; the chart only passes the flag.
 workspace: ""
 
@@ -177,7 +177,7 @@ execution:
 redis:
   # A production release never creates Redis. Supply the managed endpoint and,
   # when the service needs a private CA or ACL credentials, a Secret holding
-  # them. Client-certificate (mTLS) authentication is not supported (ADR 0233).
+  # them. Client-certificate (mTLS) authentication is not supported.
   endpoint: ""
   credentialsSecret: ""
   passwordKey: ""
@@ -202,7 +202,7 @@ redis:
     enabled: false
 
 oidc:
-  # Caller identity (ADR 0204/0205). Off for mock and explicit unsafe-bypass
+  # Caller identity. Off for mock and explicit unsafe-bypass
   # profiles; required for a real provider under the secure default.
   enabled: false
   issuer: ""

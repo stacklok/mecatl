@@ -21,7 +21,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-func TestADR_0359_HarnessContext_Scenario3_ChildAttenuationPreserved(t *testing.T) {
+func TestHarnessContext_ChildAttenuationPreserved(t *testing.T) {
 	t.Run("factory lifetime", testHarnessChildFactoryLifetime)
 	for _, profile := range []server.SessionProfile{server.ProfileDefault, server.ProfileNoFS} {
 		t.Run(string(profile), func(t *testing.T) {
@@ -158,9 +158,9 @@ func testHarnessChildFactoryLifetime(t *testing.T) {
 			case "isolated":
 				eng = buildChildEngine(cfg, reg, llm, providerMock, "m", nil)
 			case "direct-write":
-				eng, _ = buildWritableSubagentEngineFactory(cfg, reg, llm, providerMock, "m")("m")
+				eng, _ = buildWritableSubagentTargetEngineFactory(cfg, reg, llm, providerMock)(agent.ModelTarget{Model: "m"})
 			case "parallel":
-				eng, _ = buildParallelEngineFactory(cfg, reg, llm, providerMock, "m", nil)("m")
+				eng, _ = buildParallelTargetEngineFactory(cfg, reg, llm, providerMock, nil)(agent.ModelTarget{Model: "m"})
 			case "team":
 				member := buildMemberEngine(cfg, reg, llm, providerMock, "m", nil, nil, nil, nil, nil, false, nil, catalogAssets{}, false)(team.New("held"), agent.MemberSpec{Name: "reader"}, "")
 				eng, memberClose = member.Engine, member.Close
@@ -225,7 +225,7 @@ func testHarnessChildFactoryLifetime(t *testing.T) {
 	}
 }
 
-func TestADR_0359_HarnessContext_Scenario5_ContextOverridesCannotGrantAuthority(t *testing.T) {
+func TestHarnessContext_ContextOverridesCannotGrantAuthority(t *testing.T) {
 	for _, trusted := range []bool{false, true} {
 		t.Run(map[bool]string{false: "untrusted", true: "trusted"}[trusted], func(t *testing.T) {
 			kinds := harnessEmptyKinds()
@@ -286,5 +286,5 @@ func TestADR_0359_HarnessContext_Scenario5_ContextOverridesCannotGrantAuthority(
 			}
 		})
 	}
-	t.Run("specialist and profile ceiling", TestADR_0359_HarnessContext_Scenario3_ChildAttenuationPreserved)
+	t.Run("specialist and profile ceiling", TestHarnessContext_ChildAttenuationPreserved)
 }

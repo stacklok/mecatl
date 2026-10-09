@@ -40,7 +40,7 @@ func attrInt(s tracetest.SpanStub, key string) (int64, bool) {
 	return 0, false
 }
 
-func TestADR_0370_Scenario1_AvailabilityLatency(t *testing.T) {
+func TestToolAvailabilityLatency(t *testing.T) {
 	tr, exp := newTestTracing(t)
 	ctx := context.Background()
 	call := session.NewToolCall("availability-call", "read", nil)

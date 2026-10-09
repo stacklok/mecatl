@@ -518,6 +518,77 @@ func TestLibkrunStopThenBootCleanupPreservesPersistentRootFS(t *testing.T) {
 	}
 }
 
+func TestRepositoryRuntimeHostedSocketSuffix(t *testing.T) {
+	root := canonicalTempDir(t)
+	repository, _, _ := repositoryIdentityFixture(t, root, "repository")
+	// A native hosted socket needs a shorter root than t.TempDir's test-name prefix.
+	realRuntime := t.TempDir()
+	var err error
+	realRuntime, err = filepath.EvalSymlinks(realRuntime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filepath.Join(realRuntime, "generations/repository-0000000000000000-00000000.sock.network/hosted-net.sock")) >= 104 {
+		realRuntime, err = os.MkdirTemp("", "mv")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := os.RemoveAll(realRuntime); err != nil {
+				t.Errorf("remove short runtime directory: %v", err)
+			}
+		})
+		realRuntime, err = filepath.EvalSymlinks(realRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(filepath.Join(realRuntime, "generations/repository-0000000000000000-00000000.sock.network/hosted-net.sock")) >= 104 {
+		t.Skipf("TMPDIR cannot provide a Darwin-safe hosted socket root: %q", realRuntime)
+	}
+	alias := filepath.Join(root, "tmp")
+	if err := os.Symlink(realRuntime, alias); err != nil {
+		t.Fatal(err)
+	}
+	backend := &rollbackRuntimeBackend{stage: "backend"}
+	composition, err := NewRepositoryComposition(filepath.Join(root, "state"), RepositoryRuntimeConfig{
+		Backend: backend, Network: NewHostedBootNetworkController(), UnixEndpoint: true,
+		EndpointRoot: filepath.Join(alias, "generations"), GuestEgress: GuestEgressPolicy{Mode: EgressDenyAll},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, generation := range []uint32{1, ^uint32(0)} {
+		endpoint := composition.Registry.repositoryEndpoint(RepositoryIdentity{Key: strings.Repeat("a", 64)}, generation)
+		if filepath.Dir(endpoint) != filepath.Join(realRuntime, "generations") {
+			t.Fatalf("registry did not canonicalize endpoint: %q", endpoint)
+		}
+		record := RepositoryVMRecord{GitCommonDirectory: filepath.Join(repository, ".git"), Endpoint: endpoint, RootFSPath: filepath.Join(root, "rootfs")}
+		_, err := composition.Runtime.Start(t.Context(), record, VerifiedArtifacts{}, RepositoryBootAuthority{})
+		if err == nil || !strings.Contains(err.Error(), "injected backend failure") {
+			t.Fatalf("hosted network did not reach the offline backend: %v", err)
+		}
+		want := record.Endpoint + ".network/hosted-net.sock"
+		if backend.launch.NetworkSocket != want || len(want) >= 104 {
+			t.Fatalf("hosted socket = %q, want Darwin-safe %q", backend.launch.NetworkSocket, want)
+		}
+		// Keep the manager's longestRuntimeSocketSuffix budget tied to real callers.
+		if got := len(strings.TrimPrefix(backend.launch.NetworkSocket, realRuntime+string(filepath.Separator))); got != len("generations/repository-0000000000000000-00000000.sock.network/hosted-net.sock") {
+			t.Fatalf("repository socket suffix changed: %d bytes", got)
+		}
+		// Reproduce the observed 111-byte path: the guest socket fits, but hosted networking cannot bind.
+		longDir := filepath.Join(filepath.Dir(endpoint), strings.Repeat("x", 111-len(want)-1))
+		if err := os.MkdirAll(longDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		record.Endpoint = filepath.Join(longDir, filepath.Base(endpoint))
+		starts := backend.starts
+		if _, err := composition.Runtime.Start(t.Context(), record, VerifiedArtifacts{}, RepositoryBootAuthority{}); err == nil || !strings.Contains(err.Error(), "start selected microvm network provider") || backend.starts != starts {
+			t.Fatalf("overlong hosted socket reached backend: starts=%d, err=%v", backend.starts, err)
+		}
+	}
+}
+
 func TestRepositoryHealthDoesNotClaimOrRemoveEndpoint(t *testing.T) {
 	root := canonicalTempDir(t)
 	t.Chdir(root)

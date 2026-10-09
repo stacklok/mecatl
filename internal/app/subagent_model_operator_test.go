@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 )
 
@@ -51,9 +52,9 @@ func TestFoldOperatorSubagentModelFromYAML(t *testing.T) {
 		t.Fatalf("cfg.SubagentModel = %q, want the YAML selector kept verbatim (%q)", cfg.SubagentModel, "coder")
 	}
 	// The def-less child chain resolves the folded alias to the concrete id.
-	model, _ := resolveDefaultChildModel(cfg, nil, providerMock, "parent-model")
+	model := resolveModelFor(cfg, agents.AgentDef{}, "parent-model")
 	if model != "gpt-4o-mini" {
-		t.Fatalf("resolveDefaultChildModel over the folded alias = %q, want the mapped concrete id %q", model, "gpt-4o-mini")
+		t.Fatalf("resolveModelFor over the folded alias = %q, want the mapped concrete id %q", model, "gpt-4o-mini")
 	}
 }
 

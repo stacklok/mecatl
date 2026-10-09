@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/renderfmt"
 )
 
 func TestSkillIntentRequiresReceivedStringName(t *testing.T) {
@@ -17,11 +19,11 @@ func TestSkillIntentRequiresReceivedStringName(t *testing.T) {
 		{`{"name":"  "}`, "Skill"},
 		{`not json`, "Skill"},
 	} {
-		if got := toolcallIntentFor("Skill", tc.args); got != tc.want {
+		if got := renderfmt.ToolIntent("Skill", tc.args); got != tc.want {
 			t.Errorf("Skill(%q) intent = %q, want %q", tc.args, got, tc.want)
 		}
 	}
-	hostile := toolcallIntentFor("Skill", `{"name":"bad\u001b]8;;https://example.com\u0007\n\t\u202e界😀"}`)
+	hostile := renderfmt.ToolIntent("Skill", `{"name":"bad\u001b]8;;https://example.com\u0007\n\t\u202e界😀"}`)
 	if strings.ContainsAny(hostile, "\x1b\a\n\r\t") || !strings.Contains(hostile, "bad") || !strings.Contains(hostile, "界😀") {
 		t.Fatalf("Skill name is not safe single-line text: %q", hostile)
 	}
@@ -35,11 +37,11 @@ func TestGrepIntentQuotesPatternAndShowsScope(t *testing.T) {
 		{`{"pattern":"TODO","path":""}`, `"TODO"`},
 		{`{"path":"cmd/**"}`, "cmd/**"},
 	} {
-		if got := toolcallIntentFor("Grep", tc.args); got != tc.want {
+		if got := renderfmt.ToolIntent("Grep", tc.args); got != tc.want {
 			t.Errorf("Grep(%s) intent = %q, want %q", tc.args, got, tc.want)
 		}
 	}
-	hostile := toolcallIntentFor("Grep", `{"pattern":"bad\u001b[31m\nneedle","path":"cmd/\u001b]8;;https://example.com\u0007*.go"}`)
+	hostile := renderfmt.ToolIntent("Grep", `{"pattern":"bad\u001b[31m\nneedle","path":"cmd/\u001b]8;;https://example.com\u0007*.go"}`)
 	if strings.ContainsAny(hostile, "\x1b\a\n\r\t") || !strings.HasPrefix(hostile, `"bad`) || !strings.Contains(hostile, `" in cmd/`) || !strings.HasSuffix(hostile, "*.go") {
 		t.Fatalf("Grep intent lost scope or retained terminal controls: %q", hostile)
 	}
@@ -100,9 +102,6 @@ func TestToolcallPresentations(t *testing.T) {
 		{"Skill", "Skill-name", []string{"asset", "name"}},
 	}
 
-	if got, want := len(toolcallPresentations), len(tests); got != want {
-		t.Fatalf("presentation entries = %d, want %d", got, want)
-	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			fields := map[string]string{"z_extra": test.name + "-z", "a_extra": test.name + "-a"}
@@ -113,12 +112,12 @@ func TestToolcallPresentations(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := toolcallIntentFor(test.name, string(arguments)); got != test.intent {
+			if got := renderfmt.ToolIntent(test.name, string(arguments)); got != test.intent {
 				t.Fatalf("intent = %q, want %q", got, test.intent)
 			}
 
 			keys := append(append([]string(nil), test.detailKeys...), "a_extra", "z_extra")
-			if len(toolcallPresentations[test.name].argumentKeys) == 0 {
+			if len(renderfmt.ArgumentOrder(test.name)) == 0 {
 				sort.Strings(keys)
 			}
 			want := make([]string, 0, len(keys))
@@ -134,20 +133,20 @@ func TestToolcallPresentations(t *testing.T) {
 
 func TestToolcallPresentationUnknownFallback(t *testing.T) {
 	arguments := `{"z":"last","path":"target","a":"first"}`
-	if got, want := toolcallIntentFor("McpCustom", arguments), "target"; got != want {
+	if got, want := renderfmt.ToolIntent("McpCustom", arguments), "target"; got != want {
 		t.Fatalf("unknown intent = %q, want %q", got, want)
 	}
 	if got, want := strings.Join(toolcallArgumentLines("McpCustom", arguments), "\n"), "A: first\nPath: target\nZ: last"; got != want {
 		t.Fatalf("unknown detail arguments = %q, want %q", got, want)
 	}
-	if got, want := toolcallIntentFor("Copy", `{}`), "Copy"; got != want {
+	if got, want := renderfmt.ToolIntent("Copy", `{}`), "Copy"; got != want {
 		t.Fatalf("known missing fields intent = %q, want %q", got, want)
 	}
 	if got := toolcallArgumentLines("Copy", `{}`); len(got) != 0 {
 		t.Fatalf("known missing fields detail = %q, want no lines", got)
 	}
 
-	if got, want := toolcallIntentFor("bad\x1bname", `not json`), "badname"; got != want {
+	if got, want := renderfmt.ToolIntent("bad\x1bname", `not json`), "badname"; got != want {
 		t.Fatalf("malformed intent = %q, want %q", got, want)
 	}
 	if got := strings.Join(toolcallArgumentLines("McpCustom", "not\x1b json"), "\n"); got != "Original arguments: not json" {

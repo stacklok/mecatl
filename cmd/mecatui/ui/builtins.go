@@ -100,7 +100,7 @@ func (m Model) wiredCollaborators() wiredCollaborators {
 // worktrees AND a worktree lister is wired (w.Worktrees). /schedule (the
 // scheduled-tasks overlay, issue #234) only when the server advertises
 // scheduling AND a schedule lister is wired (w.Scheduling). /effort (the
-// reasoning-effort picker, ADR 0055) is gated identically to /models and sits
+// reasoning-effort picker) is gated identically to /models and sits
 // directly after it. The order is fixed (clear, help, quit, mcp, agents, team, skills,
 // soul, memory, models, effort, worktrees, schedule, tools-connect, tools-cancel) and locked by a test so
 // the palette ordering is stable.
@@ -231,7 +231,7 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 			desc: "pick the model for the next session",
 			run:  Model.runModels,
 		})
-		// /effort picks the reasoning-effort tier (ADR 0055). Gated identically to
+		// /effort picks the reasoning-effort tier. Gated identically to
 		// /models — the effort is a per-session server setting that only matters when
 		// model selection is available — and sits right after it (the natural pairing).
 		out = append(out, builtin{
@@ -515,7 +515,7 @@ func (m Model) runConnect() (tea.Model, tea.Cmd) {
 	return m.openConnect()
 }
 
-// runEffort opens the /effort picker (ADR 0055). Only registered when
+// runEffort opens the /effort picker. Only registered when
 // caps.ModelSelection && the model lister is wired, so openEffort's own nil/idle
 // guards are belt-and-braces here.
 func (m Model) runEffort() (tea.Model, tea.Cmd) {

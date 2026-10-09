@@ -20,7 +20,7 @@ const DefaultSlowTurnCapacity = 256
 // SlowTurn is one entry of the slow-turn ring buffer. It carries SCALARS ONLY —
 // turn index, the per-turn latency numerics, and the end timestamp. There is
 // deliberately NO prompt text, tool arguments, or session id field: redaction by
-// storage shape (decision 6 / §2.4 of docs/adr/0018-perf-observability.md) means
+// storage shape means
 // the buffer physically cannot leak conversation content, no matter how the data
 // is later surfaced. The shape mirrors mcpperf.SlowTurn so the cmd/embed wiring
 // can bridge the two with a trivial field copy (telemetry must NOT import mcpperf

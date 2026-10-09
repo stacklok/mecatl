@@ -13,7 +13,7 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
-// Carry-over helpers that previously lived in the root module
+// Carry-over helpers whose originals live in the root module
 // (internal/adapter/toolkit). They are carried here rather than imported so the
 // engine module's adapter tree remains self-contained — the engine module must
 // not import the root module (the fstools precedent, #269).
@@ -251,7 +251,7 @@ const webSearchDisabledMsg = "Web search is disabled on this deployment (the ope
 // backend instead of relying on the anonymous default.
 const webSearchBackendDownMsg = "Web search is temporarily unavailable: the default search backend (Exa) is " +
 	"unreachable or rate-limited. The operator can configure a dedicated backend by setting BRAVE_API_KEY or " +
-	"SEARXNG_URL (see https://mecatl.dev/docs/building/what-you-get/core-tools#configure-web-search). Do not retry immediately."
+	"SEARXNG_URL (see https://mecatl.dev/docs/features/tools#configure-web-search). Do not retry immediately."
 
 // clampSearchLimit normalises the model-supplied limit: nil/absent or <=0 uses the
 // default; anything above the hard max is clamped down. The result is always in

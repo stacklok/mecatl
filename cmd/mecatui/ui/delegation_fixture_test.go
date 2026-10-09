@@ -34,7 +34,7 @@ func (c *conversation) addTeamFixture(in teamOverlaySnapshot) {
 	c.addTool(callID, "Team", `{}`)
 	lanes := make([]scrollback.TeamLane, len(in.teamLanes))
 	for i, lane := range in.teamLanes {
-		lanes[i] = scrollback.TeamLane{Name: lane.name, SessionID: lane.sessionID, Role: lane.role, Mutating: lane.mutating, Lead: lane.lead, RoutedCategory: lane.routedCategory, RoutedModel: lane.routedModel, RoutingReason: lane.routingReason, Model: lane.model, Current: lane.current, ToolCount: lane.toolCount, Usage: scrollUsage(lane.usage), Trace: scrollTrace(lane.trace), Idle: lane.idle, Stopped: lane.stopped, StopReason: lane.stopReason, Cause: lane.cause, ErrorRounds: lane.errorRounds, ContextUsed: lane.ctxUsed, ContextWindow: lane.ctxWindow}
+		lanes[i] = scrollback.TeamLane{Name: lane.name, SessionID: lane.sessionID, Role: lane.role, Mutating: lane.mutating, Lead: lane.lead, RoutedCategory: lane.routedCategory, RoutedModel: lane.routedModel, RoutingReason: lane.routingReason, Model: lane.model, Provider: lane.provider, ExplicitRouterCategory: lane.explicitRouterCategory, Current: lane.current, ToolCount: lane.toolCount, Usage: scrollUsage(lane.usage), Trace: scrollTrace(lane.trace), Idle: lane.idle, Stopped: lane.stopped, StopReason: lane.stopReason, Cause: lane.cause, ErrorRounds: lane.errorRounds, ContextUsed: lane.ctxUsed, ContextWindow: lane.ctxWindow}
 	}
 	if !c.scrollback.Teams().Start(callID, scrollback.TeamStart{TeamID: in.teamID, Lanes: lanes}) {
 		return

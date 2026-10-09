@@ -33,9 +33,9 @@
 #          irrelevant.
 #   studio — the Mecatl Studio job (`studio`: apps/ lint, typecheck, test, the
 #          generated-artifact drift check, and a no-push image build of
-#          apps/Dockerfile). Studio temporarily builds the in-tree SDK alongside
-#          apps/ so a change under sdk/typescript/ also requires Studio gates;
-#          Go runtime changes alone are covered by go_relevant.
+#          apps/Dockerfile). Studio builds the checked-out SDK alongside
+#          apps/, so a change under sdk/typescript/ also requires Studio gates;
+#          Go runtime changes are covered by go_relevant.
 #   microvm — the opt-in nested runtime's build, test, lint, standalone, and live
 #          hypervisor jobs. It runs for that runtime's direct root integration
 #          closure and the exact workflow/scripts that execute those jobs. Other
@@ -55,7 +55,7 @@
 # and EVERY path is irrelevant. It never evaluates a path as shell code.
 #
 # Note on matching: POSIX `case` globs treat `*` as matching any string INCLUDING
-# `/`, so `docs/*.md` matches `docs/adr/nested.md` too and `sdk/typescript/*`
+# `/`, so `docs/*.md` matches `docs/architecture/nested.md` too and `sdk/typescript/*`
 # matches every path under it (same convention as docs-only-changes.sh and
 # macos-relevant-changes.sh).
 set -euo pipefail

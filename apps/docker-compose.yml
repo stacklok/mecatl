@@ -16,7 +16,7 @@
 # With no OIDC issuer in front of this mecated, Studio comes up with interactive
 # login DISABLED (runtime mode "none") and a startup WARN; every browser that
 # reaches 127.0.0.1:3100 acts as one principal. STUDIO_ALLOW_UNAUTHENTICATED=1
-# is what lets the image accept that (ADR 0351, decision 6). Do not publish
+# is what lets the image accept that. Do not publish
 # this port beyond loopback.
 #
 # Usage: copy .env.example to .env, set a provider key, then

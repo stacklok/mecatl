@@ -12,7 +12,7 @@ type LocalSessionContextGetter interface {
 	GetLocalSessionContext(context.Context, string) (string, error)
 }
 
-// GetLocalSessionContext reads ADR 0296's optional local-client projection.
+// GetLocalSessionContext reads the optional local-client session-context projection.
 // An unavailable service is returned as its normal gRPC error; callers retain
 // their launch-directory fallback.
 func (c *Client) GetLocalSessionContext(ctx context.Context, sessionID string) (string, error) {

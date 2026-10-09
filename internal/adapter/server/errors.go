@@ -27,8 +27,8 @@ var (
 	// ErrCleanupBackend is the sanitized stable maintenance failure.
 	ErrCleanupBackend = errors.New("server: storage maintenance failed")
 	// ErrStaleRunControl is returned when a control (approve / cancel / steer)
-	// carries an expected_run_id that does NOT name the run it would affect
-	// (ADR 0249). The control is refused and the current run is left untouched.
+	// carries an expected_run_id that does NOT name the run it would affect.
+	// The control is refused and the current run is left untouched.
 	//
 	// It is a PRECONDITION-class failure, not a bad request: the request is
 	// well-formed and the caller's belief was simply overtaken by events — the run
@@ -56,8 +56,8 @@ var (
 	// ErrChildNotFound signals a CancelChild for a child id the session's
 	// in-flight run does not hold live — unknown, or already finished (the
 	// finished-as-you-pressed race). The wording is FAMILY-NEUTRAL ("child
-	// agent", never "subagent"): the same error will cover team-member and
-	// parallel-branch ids once their cancel wiring lands. Distinct from
+	// agent", never "subagent"): it covers subagent, parallel-branch,
+	// team-member, and background-shell child ids alike. Distinct from
 	// ErrNotFound (whose message names a session) so the HTTP /cancel-child
 	// mirror reports a child-appropriate message; adapters map it to the same
 	// codes.NotFound / HTTP 404.
@@ -117,7 +117,7 @@ var (
 	ErrTooManySessionEngines = errors.New("server: too many live per-session engines")
 	// ErrSessionLeasedElsewhere is returned by the run-entry funnel
 	// (StartRunContent / resumeFromAwaiting) when a cross-process session lease
-	// (cloud-native Phase 4, ADR 0027) for the id is held by a DIFFERENT, still-live
+	// for the id is held by a DIFFERENT, still-live
 	// process: in a multi-replica deployment another replica owns this session, so
 	// this one must NOT drive it (the single-writer invariant). It is the
 	// composition-side surfacing of port.ErrLeaseHeld at the run-entry gate.
@@ -128,7 +128,7 @@ var (
 	ErrSessionLeasedElsewhere = errors.New("server: session is leased by another process")
 	// ErrUnavailable is returned by the run-entry funnel (acquireLease, covering
 	// StartRunContent + resumeFromAwaiting) when the server is DRAINING — it has
-	// been asked to stop accepting new runs (mecak8s graceful shutdown, ADR 0048).
+	// been asked to stop accepting new runs (mecak8s graceful shutdown).
 	// A drained run-entry is rejected before leasing/launching so a rolling update
 	// steers new traffic to a survivor. In-flight runs are cancelled (not drained
 	// to completion); a same-process Approve on a LIVE run is NOT a new run-entry
@@ -140,7 +140,7 @@ var (
 	// the speculative floor could irreversibly compact valid persisted history.
 	ErrContextWindowUnavailable = errors.New("server: context window unavailable")
 	// ErrNotAwaitingPlan is returned by ApprovePlan when the session is not parked
-	// awaiting a PLAN-ORIGINATED permission ask (issue #206, Wave 4): either a run
+	// awaiting a PLAN-ORIGINATED permission ask (issue #206): either a run
 	// is LIVE for the session (an approve mid-run — use the Converse ResumeApproval
 	// frame for a live run), the session is not in StateAwaiting, or its pending
 	// ask is a generic tool-permission ask rather than the plan-approval gate's
@@ -157,8 +157,8 @@ var (
 	// configured store backend does not expose one. Adapters map it to
 	// Unimplemented / HTTP 501.
 	ErrNoScheduleStore = errors.New("server: scheduled tasks are not supported by the configured store")
-	// ErrNoEventLog signals that no durable EventLog (cloud-native Phase 3a,
-	// port.EventLog) is configured — the configured store backend does not expose
+	// ErrNoEventLog signals that no durable EventLog
+	// (port.EventLog) is configured — the configured store backend does not expose
 	// one. It is the EventLog analogue of ErrNoScheduleStore:
 	// StreamSessionEvents returns it so the wire adapters map to UNIMPLEMENTED
 	// (HTTP 501), honestly reporting that the read-back surface is absent rather
@@ -166,7 +166,7 @@ var (
 	// an empty list via PrunableStore instead).
 	ErrNoEventLog = errors.New("server: no durable event log configured")
 	// ErrClientMCPUnsupported means this DEPLOYMENT does not accept
-	// client-provided MCP servers on session creation (ADR 0237's listener-scoped
+	// client-provided MCP servers on session creation (the listener-scoped
 	// authority, applied to outbound MCP). It is the deployment's refusal, not the
 	// build's: the RPC and the field exist, this deployment just does not offer
 	// them, exactly as ErrNoEventLog reports a wired-storage fact one level up.

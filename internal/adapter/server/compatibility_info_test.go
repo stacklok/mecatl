@@ -85,7 +85,7 @@ func TestSDKServerEnablers_Scenario1_CompatibilityInfoMatchesCapabilities(t *tes
 		t.Fatalf("GetCompatibilityInfo created %d session(s); it must answer without a probe session", n)
 	}
 
-	// Session creation no longer echoes deployment-wide capabilities.
+	// Session creation does not echo deployment-wide capabilities.
 	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
@@ -155,11 +155,11 @@ func TestSDKServerEnablers_Scenario1_CompatibilityInfoTransportParity(t *testing
 	}
 }
 
-// TestADR_0248_FeatureRegistryIsSingleSource is AC1.4.
+// TestFeatureRegistryIsSingleSource is AC1.4.
 //
 // The feature set is non-empty, sorted, duplicate-free, and identical on both
 // transports — it is one registry, not two lists that must be kept in step.
-func TestADR_0248_FeatureRegistryIsSingleSource(t *testing.T) {
+func TestFeatureRegistryIsSingleSource(t *testing.T) {
 	svc := compatibilityInfoService(t, "", port.ProviderCapabilities{})
 	client, cleanup := dialGRPC(t, svc)
 	defer cleanup()
@@ -204,13 +204,13 @@ func TestADR_0248_FeatureRegistryIsSingleSource(t *testing.T) {
 	}
 }
 
-// TestADR_0248_CapabilitiesAreNotFeatures is AC1.5.
+// TestCapabilitiesAreNotFeatures is AC1.5.
 //
 // The two vocabularies are independent. An operator toggle must never move the
 // feature set: a client that reads a disabled capability as version skew would
 // reject a correctly-configured deployment, and one that infers protocol
 // support from an operator toggle would call an RPC the server never had.
-func TestADR_0248_CapabilitiesAreNotFeatures(t *testing.T) {
+func TestCapabilitiesAreNotFeatures(t *testing.T) {
 	// Two services differing ONLY in an operator-controlled capability input.
 	plain := compatibilityInfoService(t, "", port.ProviderCapabilities{})
 	withImage := compatibilityInfoService(t, "", port.ProviderCapabilities{Image: true})
@@ -234,13 +234,13 @@ func TestADR_0248_CapabilitiesAreNotFeatures(t *testing.T) {
 	}
 }
 
-// TestADR_0248_DeploymentIdentityIsOperatorSetOnly is AC1.6.
+// TestDeploymentIdentityIsOperatorSetOnly is AC1.6.
 //
 // The label is empty unless the operator set it, and is passed through verbatim
 // when they did. The empty-by-default half is the security-relevant one: mecatl
 // must never infer a label from hostname, pod name, or environment, because
 // that leaks infrastructure topology to every authenticated caller.
-func TestADR_0248_DeploymentIdentityIsOperatorSetOnly(t *testing.T) {
+func TestDeploymentIdentityIsOperatorSetOnly(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 

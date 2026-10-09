@@ -120,7 +120,14 @@ class Fixture {
       return json({
         complete: true,
         items: ["chat-a", "thread-a"].map((id) => ({
-          capabilities: { delete: true, deleteReason: "", rename: true, renameReason: "" },
+          capabilities: {
+            delete: true,
+            deleteReason: "",
+            publicChat: true,
+            publicChatReason: "",
+            rename: true,
+            renameReason: "",
+          },
           createdAt: "2026-09-24T12:00:00.000Z",
           debugTargetSessionId: "",
           id,
@@ -619,7 +626,7 @@ describe("ordinary approval interactions", () => {
       expect(await screen.findByText(/outcome is uncertain/i)).toBeTruthy();
       cleanup();
     }
-  });
+  }, 20_000);
 });
 
 describe("side-thread plan review", () => {
@@ -799,7 +806,7 @@ describe("shortcut hints", () => {
     fireEvent.click(canvas);
     expect(await screen.findByText("Esc to Close")).toBeTruthy();
     const close = screen
-      .getAllByRole("button", { name: "Close preview" })
+      .getAllByRole("button", { name: "Close panel" })
       .at(-1) as HTMLButtonElement;
     close.focus();
     fireEvent.keyDown(close, { key: "Escape" });
@@ -808,7 +815,7 @@ describe("shortcut hints", () => {
     expect(document.activeElement).toBe(canvas);
     fireEvent.click(canvas);
     const closeAgain = screen
-      .getAllByRole("button", { name: "Close preview" })
+      .getAllByRole("button", { name: "Close panel" })
       .at(-1) as HTMLButtonElement;
     closeAgain.focus();
     fireEvent.click(closeAgain);

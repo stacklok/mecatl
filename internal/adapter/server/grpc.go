@@ -88,7 +88,7 @@ func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateS
 	if execution.Kind == PlacementSelectorNoFS {
 		profile = ProfileNoFS
 	}
-	// Per-session provider/model selector (multi-provider Phase 0, S3): the two
+	// Per-session provider/model selector: the two
 	// fields map to the neutral ProviderSelector; the zero selector keeps the
 	// shared-engine fast path. An unknown/unavailable provider, or model_id without
 	// provider_id, surfaces as InvalidArgument via toStatus.
@@ -101,7 +101,7 @@ func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateS
 	if names := req.GetDebugMcpServers(); len(names) > 0 {
 		opts = append(opts, WithDebugMCP(names))
 	}
-	// Client-provided MCP servers (issue #821, ADR 0237). Both wire transports go
+	// Client-provided MCP servers (issue #821). Both wire transports go
 	// through the ONE Service seam, which classifies through the same validator the
 	// ACP surface uses and then applies the deployment policy — so this handler
 	// neither classifies an entry nor decides whether the field is accepted here.
@@ -739,7 +739,7 @@ func (s *streamSender) Send(m *mecatlv1.ConverseResponse) error {
 // sends behind a dead relay. The error is sticky — no further Send happens
 // after it — and is returned once the run has fully drained.
 //
-// The durable event-log Append (cloud-native Phase 3a) is DECOUPLED from the
+// The durable event-log Append is DECOUPLED from the
 // client send: it runs for EVERY observed event, BEFORE and independent of the
 // drain-to-discard guard, so a disconnected client never stops the log (the
 // whole point of a server-side durable log is to survive the client — it must
@@ -1090,7 +1090,7 @@ func (h *HarnessServer) handleCancelFrame(ctx context.Context, id session.Sessio
 }
 
 // staleStreamControl reports a Converse control frame that names a run which is
-// no longer active (ADR 0249). Callers decide whether their control type has a
+// no longer active. Callers decide whether their control type has a
 // client-visible refusal lane; cancel remains fire-and-forget, while approval
 // emits control.refused correlated by ask id.
 func (h *HarnessServer) staleStreamControl(ctx context.Context, id session.SessionID, frame, expected string, run *agent.Run) error {
@@ -1290,11 +1290,10 @@ func (h *HarnessServer) GetMcpPrompt(ctx context.Context, req *mecatlv1.GetMcpPr
 	return &mecatlv1.GetMcpPromptResponse{Description: res.Description, Messages: msgs}, nil
 }
 
-// GetCompatibilityInfo returns the deployment's compatibility descriptor
-// (ADR 0248).
+// GetCompatibilityInfo returns the deployment's compatibility descriptor.
 //
 // Distinct from GetServerInfo above, which answers "which BUILD is this?" under
-// ADR 0245's privacy boundary. This answers "what may I do with this server?"
+// the server-info privacy boundary. This answers "what may I do with this server?"
 // and carries exactly the capabilities/configuration that boundary keeps out of
 // the identity response.
 //
@@ -1559,7 +1558,7 @@ func (h *HarnessServer) ListWorktrees(ctx context.Context, req *mecatlv1.ListWor
 }
 
 // StreamSessionEvents replays a session's durable event log as a server stream
-// of Event envelopes (issue #245 Phase 1; cloud-native Phase 3a read-back).
+// of Event envelopes (issue #245).
 func (h *HarnessServer) StreamSessionEvents(req *mecatlv1.StreamSessionEventsRequest, stream grpc.ServerStreamingServer[mecatlv1.Event]) error {
 	if err := validateGRPCSessionAffinity(stream.Context(), req.GetSessionId()); err != nil {
 		return err
@@ -1910,8 +1909,8 @@ func sameMCPAuthorizationControlEvent(first, next session.Event) bool {
 		first.Authorization.Status == next.Authorization.Status
 }
 
-// StreamSessionLive is the LIVE per-session event stream (ADR 0075
-// fire-result-delivery Scenario 6 / Wave 3): a thin transport over the in-process
+// StreamSessionLive is the LIVE per-session event stream
+// (fire-result delivery): a thin transport over the in-process
 // per-session subscription registry (Service.Subscribe / PublishSessionEvent). It
 // is the UNIFIED bridge serving BOTH the embedded mecatui (which dials its
 // in-process server over a real gRPC UNIX socket) AND a remote mecated — ONE
@@ -1975,8 +1974,8 @@ func (h *HarnessServer) StreamSessionLive(req *mecatlv1.StreamSessionLiveRequest
 	}
 }
 
-// WatchSessionEvents is the DURABLE replay-then-follow stream (issue #821, ADR
-// 0250): a thin transport over Service.WatchSessionEvents.
+// WatchSessionEvents is the DURABLE replay-then-follow stream (issue #821):
+// a thin transport over Service.WatchSessionEvents.
 //
 // The SSE route GET /v1/sessions/{id}/watch consumes the SAME service method, so
 // the two transports deliver identical envelope sequences by construction rather
@@ -2115,8 +2114,7 @@ func isDeliveryNoteText(text string) bool {
 }
 
 // ListSessions returns the stored-session inventory — the picker metadata a
-// client renders to let an operator open an EXISTING session by id (issue #245
-// Phase 1).
+// client renders to let an operator open an EXISTING session by id (issue #245).
 func (h *HarnessServer) ListSessions(ctx context.Context, req *mecatlv1.ListSessionsRequest) (*mecatlv1.ListSessionsResponse, error) {
 	page, err := h.svc.ListSessionPage(ctx, ListSessionsPageRequest{
 		PageSize: int(req.GetPageSize()), Cursor: req.GetCursor(),
@@ -2283,7 +2281,7 @@ func statusForEntry(entry errorCodeEntry, err error) error {
 		// AC2.2 requires the IDENTICAL string on both transports, and the HTTP
 		// problem body's `code`/`type` are lowercase to match RFC 9457 style.
 		// Upper-casing here would give one error identity two spellings, and
-		// every SDK a case conversion to know about. ADR 0248 decision 7 records
+		// every SDK a case conversion to know about. The contract accepts
 		// the trade; TestSDKServerEnablers_Scenario2_ErrorCodeTransportParity
 		// fails if the two ever diverge.
 		Reason: entry.Code,

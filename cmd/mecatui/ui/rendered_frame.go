@@ -23,7 +23,7 @@ const (
 	conversationRegionAppendix
 )
 
-// readingAnchor is the renderer-facing subset of ADR 0301's logical coordinate.
+// readingAnchor is the renderer-facing subset of the logical conversation coordinate.
 // Text rows use sourceOffset (a grapheme offset in ANSI-free visible text); chrome
 // and other derived rows retain their local row fallback.
 type readingAnchor struct {
@@ -93,7 +93,7 @@ func (f renderedFrame) firstRegionRow(blockID uint64, region regionKind) int {
 	return -1
 }
 
-// Phase 3 — anchor lookup/fallback: lookup starts from frame provenance;
+// Anchor lookup/fallback: lookup starts from frame provenance;
 // conversationView.restore owns the deterministic fallback policy.
 func (f renderedFrame) anchorForRow(row int) (readingAnchor, bool) {
 	if row < 0 || row >= len(f.provenance) {
@@ -152,7 +152,7 @@ func (f renderedFrame) rowForAnchor(anchor readingAnchor) (int, bool) {
 	return best, best >= 0
 }
 
-// Phase 1 — cache/render inputs: walk blocks once and pass its render-pass output
+// Cache/render inputs: walk blocks once and pass its render-pass output
 // explicitly to frame assembly. renderConversationLines remains the byte-identical
 // viewport wrapper.
 func (r *renderer) renderConversationFrame(c *scrollback.Conversation, expand bool) renderedFrame {

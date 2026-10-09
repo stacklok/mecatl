@@ -15,8 +15,8 @@ import (
 // card style is applied. Diff continuation rows retain the meaningful source
 // prefix and indentation rather than being reconstructed from a styled card.
 
-// TestMecatuiCardLayout_Scenario1_ExpandedToolCardWidthInvariant retains the
-// historical AC1.4 width guard for the now-unexpandable pending tool card.
+// TestMecatuiCardLayout_Scenario1_ExpandedToolCardWidthInvariant keeps the
+// AC1.4 width guard for the pending tool card, which does not expand in place.
 
 // TestMecatuiCardLayout_Scenario1_NoStyledBodyWrap verifies AC1.5: renderTool
 // frames the already-width-bounded regions directly, rather than wrapping a

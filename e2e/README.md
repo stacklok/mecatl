@@ -124,7 +124,7 @@ package would need its own suite bootstrap and its own server):
     cumulative-session budget from tripping over 6 reused turns. Haiku lane,
     `FlakeAttempts(2)`, local-target only (own-spawn flag + workspace read).
     Highest-fidelity guard for the role-blind-tail compaction bug
-    (`docs/adr/0012-compaction.md`, the back-snap section). A cascade / tier-4 variant
+    (`docs/architecture/context-and-compaction.md`, the kept-tail back-snap). A cascade / tier-4 variant
     (forcing the LLM summariser, env-gated `MECATL_E2E_COMPACTION_CASCADE`) is a
     deferred follow-up.
 11. **soul** — deterministic: the `soul ENABLED (user provenance...` composition

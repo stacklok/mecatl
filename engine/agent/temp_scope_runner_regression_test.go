@@ -18,9 +18,9 @@ func (r *unscopedShellRunner) Run(_ context.Context, command string) (tool.Comma
 	return r.res, nil
 }
 
-// TestADR_0281_ShellScopeRequiresScopedRunner pins that the advertised managed
+// TestShellScopeRequiresScopedRunner pins that the advertised managed
 // default cannot silently degrade to an unscoped command runner.
-func TestADR_0281_ShellScopeRequiresScopedRunner(t *testing.T) {
+func TestShellScopeRequiresScopedRunner(t *testing.T) {
 	runner := &unscopedShellRunner{res: tool.CommandResult{Stdout: "unexpected"}}
 	result, err := NewShellTool().Execute(context.Background(), scopedShellCall("scope", "echo unexpected", "managed"), shellEnvRunner(runner))
 	if err != nil {

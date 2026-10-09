@@ -19,12 +19,12 @@ func multiTurnReq(model string) port.LLMRequest {
 
 const breakpointJSON = `"prompt_cache_breakpoint":{"mode":"explicit"}`
 
-// TestADR_0346_BreakpointEmittedVendorAgnostic pins AC1.1: the marker goes out
+// TestBreakpointEmittedVendorAgnostic pins AC1.1: the marker goes out
 // on every Responses request, whatever the model's vendor. This is the whole
-// point of ADR 0346 — a name-keyed rule breaks when a second vendor ships
+// point of the vendor-agnostic ask — a name-keyed rule breaks when a second vendor ships
 // explicit-ask caching, and one staging gateway already exposes a single model
 // under four different ids.
-func TestADR_0346_BreakpointEmittedVendorAgnostic(t *testing.T) {
+func TestBreakpointEmittedVendorAgnostic(t *testing.T) {
 	// Deliberately spans vendors, namespacing conventions and a made-up vendor.
 	for _, model := range []string{
 		"anthropic/claude-opus-4.8",
@@ -47,10 +47,10 @@ func TestADR_0346_BreakpointEmittedVendorAgnostic(t *testing.T) {
 	}
 }
 
-// TestADR_0346_BreakpointAtPreviousTurnBoundary pins AC1.2: the marker sits on
+// TestBreakpointAtPreviousTurnBoundary pins AC1.2: the marker sits on
 // the LAST user message, so turn N writes what turn N+1 reads, and never on
 // top-level instructions, which the protocol forbids.
-func TestADR_0346_BreakpointAtPreviousTurnBoundary(t *testing.T) {
+func TestBreakpointAtPreviousTurnBoundary(t *testing.T) {
 	req := multiTurnReq("anthropic/claude-opus-4.8")
 	p := New(WithCacheDialect(CacheDialectOpenRouter), WithPromptCacheBreakpoints(true))
 
@@ -75,10 +75,10 @@ func TestADR_0346_BreakpointAtPreviousTurnBoundary(t *testing.T) {
 	}
 }
 
-// TestADR_0346_NoBreakpointWithoutAPreviousTurn pins AC1.3: a first call marks
+// TestNoBreakpointWithoutAPreviousTurn pins AC1.3: a first call marks
 // nothing. A cache write that is never read costs MORE than sending the prompt
 // uncached, and a one-shot run has no second call to read it.
-func TestADR_0346_NoBreakpointWithoutAPreviousTurn(t *testing.T) {
+func TestNoBreakpointWithoutAPreviousTurn(t *testing.T) {
 	req := cacheReq("anthropic/claude-opus-4.8")
 	// cacheReq's fixture ends on an assistant message; strip it to model a
 	// genuine first call (fragments + prompt, nothing answered yet).
@@ -107,8 +107,8 @@ func TestADR_0346_NoBreakpointWithoutAPreviousTurn(t *testing.T) {
 	}
 }
 
-// TestADR_0346_RootCacheControlRetired pins AC1.4 across every dialect.
-func TestADR_0346_RootCacheControlRetired(t *testing.T) {
+// TestRootCacheControlRetired pins AC1.4 across every dialect.
+func TestRootCacheControlRetired(t *testing.T) {
 	for _, d := range []CacheDialect{CacheDialectNone, CacheDialectOpenAI, CacheDialectOpenRouter} {
 		raw := marshalParams(t, New(WithCacheDialect(d), WithPromptCacheBreakpoints(true)), multiTurnReq("gpt-5.6"))
 		if strings.Contains(raw, "cache_control") {
@@ -117,12 +117,12 @@ func TestADR_0346_RootCacheControlRetired(t *testing.T) {
 	}
 }
 
-// TestADR_0346_CanonicalOpenAICarveOut pins AC1.5. This is the ONLY place a
+// TestCanonicalOpenAICarveOut pins AC1.5. This is the ONLY place a
 // model id gates a breakpoint, and it is scoped to the one endpoint whose
 // parameter strictness is documented: OpenAI states explicit breakpoints are
 // GPT-5.6-and-later and does NOT say whether an earlier model ignores or
 // rejects the field.
-func TestADR_0346_CanonicalOpenAICarveOut(t *testing.T) {
+func TestCanonicalOpenAICarveOut(t *testing.T) {
 	supported := []string{"gpt-5.6", "gpt-5.6-2026-01-01", "gpt-6"}
 	unsupported := []string{"gpt-5", "gpt-5.2", "gpt-4.1", "gpt-5.5"}
 
@@ -146,10 +146,10 @@ func TestADR_0346_CanonicalOpenAICarveOut(t *testing.T) {
 	}
 }
 
-// TestADR_0346_NoPromptCacheSuppressesBreakpoint pins AC1.6: --no-prompt-cache
+// TestNoPromptCacheSuppressesBreakpoint pins AC1.6: --no-prompt-cache
 // resolves every dialect to None in composition, which must also drop the
-// breakpoint, reproducing the pre-ADR-0100 wire.
-func TestADR_0346_NoPromptCacheSuppressesBreakpoint(t *testing.T) {
+// breakpoint, reproducing the wire without cache hints.
+func TestNoPromptCacheSuppressesBreakpoint(t *testing.T) {
 	raw := marshalParams(t, New(WithCacheDialect(CacheDialectNone)), multiTurnReq("anthropic/claude-opus-4.8"))
 	for _, key := range []string{"prompt_cache_breakpoint", "prompt_cache_key", "prompt_cache_retention", "cache_control"} {
 		if strings.Contains(raw, key) {
@@ -163,10 +163,10 @@ func TestADR_0346_NoPromptCacheSuppressesBreakpoint(t *testing.T) {
 	}
 }
 
-// TestADR_0346_BreakpointMarksMultimodalTextBlock covers the multimodal path and
+// TestBreakpointMarksMultimodalTextBlock covers the multimodal path and
 // the fail-soft floor: an image-only user message has no input_text block to
 // mark, and losing a breakpoint is a cost, never a reason to fail the request.
-func TestADR_0346_BreakpointMarksMultimodalTextBlock(t *testing.T) {
+func TestBreakpointMarksMultimodalTextBlock(t *testing.T) {
 	req := multiTurnReq("anthropic/claude-opus-4.8")
 	last := len(req.Messages) - 1
 	req.Messages[last] = session.Message{
@@ -190,7 +190,7 @@ func TestADR_0346_BreakpointMarksMultimodalTextBlock(t *testing.T) {
 	}
 }
 
-// TestADR_0346_BreakpointNotGatedOnDialect is the regression guard for the exact
+// TestBreakpointNotGatedOnDialect is the regression guard for the exact
 // mistake this implementation made once: gating the breakpoint on cacheDialect.
 //
 // Composition resolves an unrecognised endpoint — the ToolHive gateway, a
@@ -199,7 +199,7 @@ func TestADR_0346_BreakpointMarksMultimodalTextBlock(t *testing.T) {
 // other way to ask, and it is the shape of the reported incident. A breakpoint
 // gated on the dialect would look correct in every dialect-bearing test and
 // deliver nothing to the one case that matters.
-func TestADR_0346_BreakpointNotGatedOnDialect(t *testing.T) {
+func TestBreakpointNotGatedOnDialect(t *testing.T) {
 	req := multiTurnReq("anthropic/claude-opus-4.8")
 	p := New(WithCacheDialect(CacheDialectNone), WithPromptCacheBreakpoints(true))
 	raw := marshalParams(t, p, req)
@@ -215,10 +215,10 @@ func TestADR_0346_BreakpointNotGatedOnDialect(t *testing.T) {
 	}
 }
 
-// TestADR_0346_BreakpointOffByDefaultForLibraryConsumers pins the module's
-// compatibility story: a consumer that passes no Option keeps the pre-ADR-0346
-// wire, so the Added/Changed classification in the plan holds.
-func TestADR_0346_BreakpointOffByDefaultForLibraryConsumers(t *testing.T) {
+// TestBreakpointOffByDefaultForLibraryConsumers pins the module's
+// compatibility story: a consumer that passes no Option keeps the
+// breakpoint-free wire, so the Added/Changed classification in the plan holds.
+func TestBreakpointOffByDefaultForLibraryConsumers(t *testing.T) {
 	raw := marshalParams(t, New(WithCacheDialect(CacheDialectOpenRouter)), multiTurnReq("anthropic/claude-opus-4.8"))
 	if strings.Contains(raw, "prompt_cache_breakpoint") {
 		t.Errorf("no Option passed: the breakpoint must be off by default: %s", raw)

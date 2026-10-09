@@ -19,7 +19,7 @@ import (
 	contract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
-func TestADR_0310_AuthenticatedCatalogueReplacesDeclaredMembership(t *testing.T) {
+func TestAuthenticatedCatalogueReplacesDeclaredMembership(t *testing.T) {
 	runtime := testAnonymousRuntime(t)
 	attachment := testAttachment(t, runtime)
 	queries := &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{
@@ -51,7 +51,7 @@ func TestADR_0310_AuthenticatedCatalogueReplacesDeclaredMembership(t *testing.T)
 	}
 }
 
-func TestADR_0310_AuthenticatedReplacementFailsAtomically(t *testing.T) {
+func TestAuthenticatedReplacementFailsAtomically(t *testing.T) {
 	runtime := testAnonymousRuntime(t)
 	attachment := testAttachment(t, runtime)
 	queries := &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{
@@ -127,7 +127,7 @@ func TestADR_0310_AuthenticatedReplacementFailsAtomically(t *testing.T) {
 	}
 }
 
-func TestADR_0310_AuthenticatedReplacementUsesAdmissionBoundary(t *testing.T) {
+func TestAuthenticatedReplacementUsesAdmissionBoundary(t *testing.T) {
 	privateRuntime := testAnonymousRuntime(t)
 	privateAttachment := testAttachment(t, privateRuntime)
 	privateProcess := discoveryProcess(&discoveryQueries{response: &aggregator.BackendCapabilities{BackendID: "private", Tools: []vmcp.Tool{{
@@ -165,7 +165,7 @@ func TestADR_0310_AuthenticatedReplacementUsesAdmissionBoundary(t *testing.T) {
 	}
 }
 
-func TestADR_0310_AuthenticatedCatalogueReplacesDeclaredToolMetadata(t *testing.T) {
+func TestAuthenticatedCatalogueReplacesDeclaredToolMetadata(t *testing.T) {
 	runtime := testAnonymousRuntime(t)
 	staticSchema := json.RawMessage(`{"type":"object","properties":{"static":{"type":"string"}}}`)
 	liveSchema := json.RawMessage(`{"type":"object","properties":{"live":{"type":"boolean"}}}`)
@@ -189,7 +189,7 @@ func TestADR_0310_AuthenticatedCatalogueReplacesDeclaredToolMetadata(t *testing.
 	}
 }
 
-func TestADR_0310_AuthenticatedReadOnlyHintReplacesStaticHint(t *testing.T) {
+func TestAuthenticatedReadOnlyHintReplacesStaticHint(t *testing.T) {
 	runtime := testAnonymousRuntime(t)
 	static := route{backend: "first", spec: tool.ToolSpec{Name: "mcp__first__declared", Description: "declared", Schema: json.RawMessage(`{"type":"object"}`)}, readOnly: true, oauth: &oauthRoute{}, broker: true}
 	runtime.catalogue = &Catalogue{routes: append(runtime.catalogue.routes, static)}
@@ -216,7 +216,7 @@ func TestADR_0310_AuthenticatedReadOnlyHintReplacesStaticHint(t *testing.T) {
 	}
 }
 
-func TestADR_0310_AuthenticatedDeclaredMetadataIsSessionSpecific(t *testing.T) {
+func TestAuthenticatedDeclaredMetadataIsSessionSpecific(t *testing.T) {
 	runtime := testAnonymousRuntime(t)
 	static := route{backend: "first", spec: tool.ToolSpec{Name: "mcp__first__same", Description: "static", Schema: json.RawMessage(`{"type":"object"}`)}, oauth: &oauthRoute{}, broker: true}
 	runtime.catalogue = &Catalogue{routes: append(runtime.catalogue.routes, static)}
@@ -248,7 +248,7 @@ func TestADR_0310_AuthenticatedDeclaredMetadataIsSessionSpecific(t *testing.T) {
 	}
 }
 
-func TestADR_0310_ReplacedDeclaredToolRemainsBrokerRouted(t *testing.T) {
+func TestReplacedDeclaredToolRemainsBrokerRouted(t *testing.T) {
 	runtime := testAnonymousRuntime(t)
 	static := route{backend: "first", spec: tool.ToolSpec{Name: "mcp__first__same", Description: "static", Schema: json.RawMessage(`{"type":"object"}`)}, oauth: &oauthRoute{}, broker: true}
 	runtime.catalogue = &Catalogue{routes: append(runtime.catalogue.routes, static)}
@@ -280,7 +280,7 @@ func TestADR_0310_ReplacedDeclaredToolRemainsBrokerRouted(t *testing.T) {
 	}
 }
 
-func TestADR_0310_FreshSessionPerformsFreshAuthenticatedDiscovery(t *testing.T) {
+func TestFreshSessionPerformsFreshAuthenticatedDiscovery(t *testing.T) {
 	runtime := testAnonymousRuntime(t)
 	queries := &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{"first": {Backend: "first", Tools: []ToolDefinition{{Backend: "first", Name: "mcp__first__tool", Description: "old", Schema: json.RawMessage(`{"type":"object"}`)}}}}}
 	process := testCatalogueProcess(runtime, queries, "first")

@@ -54,7 +54,7 @@ func TestToolHiveBrokerConfigPreservesStaticOIDCClientVariants(t *testing.T) {
 	}
 }
 
-func TestADR_0314_ToolHiveConversionCarriesDCRConfig(t *testing.T) {
+func TestToolHiveConversionCarriesDCRConfig(t *testing.T) {
 	routes := []permconfig.MCPServerProfile{{Name: "protected", URL: "https://mcp.example/mcp", Auth: permconfig.MCPAuthProfile{Mode: "oauth", OAuth: &permconfig.MCPOAuthProfile{
 		Upstream: &permconfig.MCPOAuthUpstreamProfile{Mode: "oauth2", OAuth2: &permconfig.MCPOAuth2UpstreamProfile{AuthorizationEndpoint: "https://auth.example/authorize", TokenEndpoint: "https://auth.example/token"}},
 		Client:   permconfig.MCPOAuthClientProfile{Mode: "dcr", DCR: &permconfig.MCPDCRClientProfile{DiscoveryURL: "https://auth.example/.well-known/oauth-authorization-server"}}, Scopes: []string{"read"},
@@ -65,7 +65,7 @@ func TestADR_0314_ToolHiveConversionCarriesDCRConfig(t *testing.T) {
 	}
 }
 
-func TestADR_0314_DCRRequiresExplicitOAuth2Upstream(t *testing.T) {
+func TestDCRRequiresExplicitOAuth2Upstream(t *testing.T) {
 	_, err := mcpbroker.NewToolHiveProcess(t.Context(), mcpbroker.ToolHiveConfig{CallbackURL: "https://broker.example", Profiles: []mcpbroker.ToolHiveProfile{{Name: "protected", URL: "https://mcp.example/mcp", Auth: "oauth", OAuth: &mcpbroker.ToolHiveOAuth{DCRDiscoveryURL: "https://auth.example/discovery"}}}})
 	if err == nil {
 		t.Fatal("DCR without explicit OAuth2 endpoints constructed successfully")
@@ -89,7 +89,7 @@ func TestToolHiveBrokerConfigProjectsRefreshTokenRequest(t *testing.T) {
 	}
 }
 
-func TestADR_0298_ToolHiveBrokerConfigBuildsEveryProtectedProviderMapping(t *testing.T) {
+func TestToolHiveBrokerConfigBuildsEveryProtectedProviderMapping(t *testing.T) {
 	routes := []permconfig.MCPServerProfile{protectedToolHiveRoute("GitHub_Cloud"), protectedToolHiveRoute("Calendar")}
 	config := toolHiveBrokerConfig(routes, "https://broker.example/oauth/callback", nil, nil, nil)
 	if got := config.Profiles; len(got) != 2 || got[0].Name != "GitHub_Cloud" || got[1].Name != "Calendar" {
@@ -164,5 +164,24 @@ func TestBuildToolHiveAuthRedisClientFallsBackWithoutRedis(t *testing.T) {
 	closeClient()
 	if client != nil {
 		t.Fatalf("buildToolHiveAuthRedisClient client = %#v, want nil", client)
+	}
+}
+
+func TestToolHiveBrokerConfigMapsClientSecretSources(t *testing.T) {
+	route := func(name string, client permconfig.MCPPreregisteredClientProfile) permconfig.MCPServerProfile {
+		return permconfig.MCPServerProfile{Name: name, URL: "https://mcp.example/" + name, Auth: permconfig.MCPAuthProfile{Mode: "oauth", OAuth: &permconfig.MCPOAuthProfile{
+			Issuer: "https://issuer.example", Scopes: []string{"read"},
+			Client: permconfig.MCPOAuthClientProfile{Mode: "preregistered", Preregistered: &client},
+		}}}
+	}
+	config := toolHiveBrokerConfig([]permconfig.MCPServerProfile{
+		route("envroute", permconfig.MCPPreregisteredClientProfile{ID: "a", SecretEnv: "MECATL_CLIENT_SECRET"}),
+		route("fileroute", permconfig.MCPPreregisteredClientProfile{ID: "b", SecretFile: "/run/secrets/client"}),
+	}, "https://broker.example/callback", nil, nil, nil)
+	if o := config.Profiles[0].OAuth; o.ClientSecretEnv != "MECATL_CLIENT_SECRET" || o.ClientSecretFile != "" {
+		t.Fatalf("env route = %#v", o)
+	}
+	if o := config.Profiles[1].OAuth; o.ClientSecretFile != "/run/secrets/client" || o.ClientSecretEnv != "" {
+		t.Fatalf("file route = %#v", o)
 	}
 }

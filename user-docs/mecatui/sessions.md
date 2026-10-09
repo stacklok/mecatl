@@ -17,25 +17,27 @@ client uses the remote server's storage.
 Pass an exact session ID, or resume the newest eligible main chat:
 
 ```sh
-mecatui --resume 01JOPAQUESESSIONID
+mecatui --resume <SESSION_ID>
 mecatui connect 127.0.0.1:8080 --resume-latest
 ```
 
 On servers that provide session activity inventory, `--resume-latest` considers
 only main chats marked active in that inventory and verifies each candidate's
-authoritative transcript. It excludes chats awaiting approval and does not select drafts or
-unknown legacy rows automatically. Older servers use their mixed inventory but
-still reject an empty authoritative transcript. If no chat qualifies, `mecatui`
-starts a new one. Storage and listing failures still return an error. You can
-combine either resume option with `--prompt` to send a task after an ordinary
-transcript load; pending-approval recovery keeps it as a draft.
+authoritative transcript. It excludes chats awaiting approval and does not
+select drafts or unknown legacy rows automatically. Older servers use their
+mixed inventory but still reject an empty authoritative transcript. If no chat
+qualifies, `mecatui` starts a new one. Storage and listing failures still return
+an error. You can combine either resume option with `--prompt` to send a task
+after an ordinary transcript load; pending-approval recovery keeps it as a
+draft.
 
 A resumed chat is the stored chat, not a copy. It keeps its model, exact
 server-owned placement, cumulative token totals, and latest saved context meter.
 The meter includes an estimate marker when the server used display-only fallback
-accounting. A chat with no saved context measurement shows an unknown value until
-a completed turn establishes one. See [Session continuity](/features/session-continuity.md)
-for the storage and recovery behavior behind resume.
+accounting. A chat with no saved context measurement shows an unknown value
+until a completed turn establishes one. See
+[Session continuity](/features/sessions/session-continuity.md) for the storage
+and recovery behavior behind resume.
 
 ### Recover a pending approval
 
@@ -56,19 +58,21 @@ results. **Allow always** is unavailable during recovery.
 before your choice or automatically send it after the recovered run finishes.
 
 Press `esc` before choosing to leave the approval pending. After you choose,
-pressing `ctrl+c` twice can still exit while the acknowledgement is pending.
-The outcome may then be unknown: quitting cannot undo the decision, and
-`mecatui` does not resend the verdict automatically. Check the session before
-taking another action.
+pressing `ctrl+c` twice can still exit while the acknowledgement is pending. The
+outcome may then be unknown: quitting cannot undo the decision, and `mecatui`
+does not resend the verdict automatically. Check the session before taking
+another action.
 
 If the event history has a gap, the ask changed, or the session is no longer
-waiting, first check that the session still has the expected pending approval and
-that durable storage and watches are healthy. Retry with the exact ID only after
-those checks. A server without durable watch support cannot recover the approval;
-the operator must enable supported durable storage and watch support, or you must
-use another supported client or control path. Repeating the unchanged command
-will not add watch support. Plan approvals and guardrail reviews use their existing
-dedicated flows and cannot be recovered this way.
+waiting, first check that the session still has the expected pending approval
+and that durable storage and watches are healthy. Retry with the exact ID only
+after those checks. A server without durable watch support cannot recover the
+approval; the operator must enable supported durable storage and watch support,
+or you must use another supported client or control path. Repeating the
+unchanged command will not add watch support. Plan approvals and guardrail
+reviews use their existing dedicated flows and cannot be recovered this way.
+
+### Find the session ID and resume command
 
 To get the active session ID, run `/session` and press `c` to copy it. When an
 embedded session ends normally, `mecatui` writes an aligned summary to standard
@@ -99,13 +103,15 @@ mecatui: final-session-id="01JOPAQUESESSIONID"
 To resume it, use `mecatui connect <ADDRESS> --resume <SESSION_ID>` with the
 original server address.
 
+### Read the exit summary
+
 **Model calls** counts model calls begun in the chat, and **Tokens (main)**
 shows lifetime input and output tokens for the chat's agent runs. **Tokens
-(aux)** appears when auxiliary model work, such as title generation,
-compaction, routing, reviewers, or guardrails, used tokens in the chat. Counts
-are abbreviated, for example `29.7K` or `1.2M`. Nonzero cache-read and
-cache-write counts appear separately, not added to input or output. The latest
-context-meter reading is not included.
+(aux)** appears when auxiliary model work, such as title generation, compaction,
+routing, reviewers, or guardrails, used tokens in the chat. Counts are
+abbreviated, for example `29.7K` or `1.2M`. Nonzero cache-read and cache-write
+counts appear separately, not added to input or output. The latest context-meter
+reading is not included.
 
 If the session snapshot is unavailable, the title, model-call, and token lines
 are omitted; the session ID and resume commands still appear. An embedded ID
@@ -147,9 +153,10 @@ Available actions depend on the session and server:
 - **Copy**, **Rename**, and **Delete** manage the stored record when the server
   permits the action.
 
-The server checks active-session and lease protections before every action.
-Caller identity records ownership when enabled, but does not isolate sessions
-between authenticated callers.
+The server checks active-session and lease protections before every action. With
+OIDC enabled, callers can access only their own sessions. Without caller
+identity, everyone who can reach the server shares session access. Session
+ownership does not isolate a shared workspace filesystem.
 
 When the server provides storage management, the inventory can also offer
 **Clean up sessions**. Cleanup is destructive and requires confirmation. The
@@ -192,9 +199,9 @@ context limit. The server reduces the persisted history sent to the model while
 keeping the session and visible scrollback. The command creates no chat turn,
 but a cascade summary can use model tokens.
 
-The command appears only when the server supports manual compaction.
-See [Context windows](/features/context-windows.md) for automatic compaction,
-window resolution, and operator configuration.
+The command appears only when the server supports manual compaction. See
+[Context windows](/features/sessions/context-windows.md) for automatic
+compaction, window resolution, and operator configuration.
 
 ## Move a chat to a worktree
 
@@ -224,11 +231,18 @@ mecatui debug 01JOPAQUESESSIONID \
 mecatui debug 01JOPAQUESESSIONID --debug-mcp github
 ```
 
-`TARGET` can be the full ID or the short displayed handle. The handle is sanitized for terminal display and copy/paste as a debug `TARGET`; it is not an alternate server identity. If it is ambiguous, open `/session`, copy the full ID, and try again.
-Use the embedded command for an embedded store and `connect ADDRESS` for the server that owns the
-target. The optional `--prompt` value replaces the default diagnosis objective.
+`TARGET` can be the full ID or the short displayed handle. The handle is
+sanitized for terminal display and copy/paste as a debug `TARGET`; it is not an
+alternate server identity. If it is ambiguous, open `/session`, copy the full
+ID, and try again. Use the embedded command for an embedded store and
+`connect ADDRESS` for the server that owns the target. The optional `--prompt`
+value replaces the default diagnosis objective.
 
-When the debugger opens, `mecatui` keeps a visible privacy disclosure in the TUI stating that the selected model will receive bounded target evidence. That evidence can contain prompts, model output, tool arguments and results, paths, and secrets. Invoking the command is the consent gesture; the default diagnostic prompt is then submitted automatically.
+When the debugger opens, `mecatui` keeps a visible privacy disclosure in the TUI
+stating that the selected model will receive bounded target evidence. That
+evidence can contain prompts, model output, tool arguments and results, paths,
+and secrets. Invoking the command is the consent gesture; the default diagnostic
+prompt is then submitted automatically.
 
 The analysis session has no filesystem or shell access. By default, it can only
 use `InspectSession` to read bounded retained evidence. It cannot resume,
@@ -246,10 +260,10 @@ always require one-call approval, including in yolo mode.
 Debug views report when retained evidence is incomplete. Network views expose
 sanitized failure categories, plus a bounded structural summary of the outer
 provider attempt (whether the provider's protocol terminal was actually
-observed, and a closed outcome such as complete, incomplete, stream error, or
-cancelled) — never raw errors, URLs, headers, bodies, prompts, tool arguments,
-or credentials. This can distinguish a provider stream that finished cleanly
-but produced unexpected output from one that was cut off or failed in
+observed, and an outcome such as complete, incomplete, stream error, or
+cancelled). They exclude raw errors, URLs, headers, bodies, prompts, tool
+arguments, and credentials. This can distinguish a provider stream that finished
+cleanly but produced unexpected output from one that was cut off or failed in
 transport. The debug conversation is stored as a separate durable session.
 
 For local process diagnostics, `--perf` starts a private `admin.sock`. Its raw
@@ -269,5 +283,5 @@ Use `--no-store` only when you want a non-persistent, in-memory session.
 
 ## Related information
 
-- [Operate local session storage](/building/deployment/session-storage-operations.md)
-  for daemon retention, backup, and restore procedures.
+- [Operate local session storage](/operating/session-storage-operations.md) for
+  daemon retention, backup, and restore procedures.

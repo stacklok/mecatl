@@ -1,11 +1,8 @@
 # Cloud-Native Harness Systems — future work scoping
 
-*Status: speculative scoping only. Nothing in this doc is a committed direction, a
-design decision, or implemented. It exists to name questions worth exploring later,
-not to answer them. Not a design record under ADR 0002
-(no frozen decision to supersede) — closer in kind to
-[`docs/cloud-native-harness-kit.md`](cloud-native-harness-kit.md)'s strawman status,
-one level more speculative still.*
+This doc names questions worth exploring later; it does not answer them. It is
+closer in kind to [`docs/cloud-native-harness-kit.md`](cloud-native-harness-kit.md),
+one level more speculative still.
 
 ## Already resolved — out of scope here
 

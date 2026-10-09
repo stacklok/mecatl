@@ -30,8 +30,8 @@ func TestCandidateListBudgetBoundsInputBeforePublication(t *testing.T) {
 		t.Fatalf("byte over-bound read = (%d, %v)", n, err)
 	}
 	_, pages, bytes := budget.Stats()
-	if pages != 2 || bytes != 4 {
-		t.Fatalf("input counters: pages=%d bytes=%d", pages, bytes)
+	if pages != 2 || bytes != 4 || !budget.Exceeded() {
+		t.Fatalf("input counters: pages=%d bytes=%d exceeded=%v", pages, bytes, budget.Exceeded())
 	}
 
 	budget.Seal()

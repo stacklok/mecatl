@@ -11,8 +11,8 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-// TestCallerIdentity_Scenario0_OwnerSnapshotRoundTrip pins AC0.1 of
-// docs/acceptance/caller-identity.md: Session.Owner and Session.Authority
+// TestCallerIdentity_Scenario0_OwnerSnapshotRoundTrip pins caller-identity
+// persistence: Session.Owner and Session.Authority
 // round-trip through Marshal/Unmarshal byte-identically, restored via the
 // write-once aggregate method (RestoreLabels), with no RestoreState signature
 // change.

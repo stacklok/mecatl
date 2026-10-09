@@ -208,11 +208,13 @@ func (m Model) statusLineInput(now time.Time) customization.Input {
 	case phaseFatal:
 		state = statusFailed
 	}
+	model := m.statusModel()
+	model.ContextWindow = contextAtom(window)
 	return customization.Input{
 		Version: customization.ProtocolVersion,
 		Server:  customization.ServerTarget{DisplayTarget: m.deps.Server, ConnectionMode: m.deps.ConnectionMode},
 		Session: customization.Session{Title: m.sessionTitle, Handle: handle, Mode: mode, ReasoningEffort: m.resolvedSessionModel.ReasoningEffort},
-		Model:   customization.Model{ProviderID: m.resolvedSessionModel.ProviderID, ID: m.resolvedSessionModel.ModelID, DisplayName: m.headerModelLabel(), Route: m.providerRoute, ContextWindow: contextAtom(window)},
+		Model:   model,
 		Usage:   customization.Usage{Input: usageAtom(m.usage.InputTokens), Output: usageAtom(m.usage.OutputTokens), CacheRead: usageAtom(m.usage.CacheReadTokens), CacheWrite: usageAtom(m.usage.CacheWriteTokens), CacheReadPercent: cachePercent},
 		Context: customization.Context{Used: contextOccupancyAtom(m.contextTokens, contextKnown, m.contextEstimated), Window: contextAtom(window), Percent: contextPercent, Known: contextKnown, Estimated: m.contextEstimated}, Workspace: workspace,
 		MainAgent:  customization.MainAgent{State: state, Activity: activity, Approval: approval},
@@ -220,4 +222,20 @@ func (m Model) statusLineInput(now time.Time) customization.Input {
 		Clock:      customization.Clock{Now: now},
 		Terminal:   customization.Terminal{Rows: m.height, Cols: m.widthOr(), HeaderAvailCols: geometry.headerAvailable, FooterAvailCols: geometry.footerAvailable},
 	}
+}
+
+// statusModel projects both labels from the server-resolved identity. Inventory
+// names are metadata and cannot change the identity shown in the header.
+func (m Model) statusModel() customization.Model {
+	rm := m.resolvedSessionModel
+	model := customization.Model{ProviderID: rm.ProviderID, ID: rm.ModelID, Route: m.providerRoute}
+	if rm.ModelID == "" {
+		return model
+	}
+	model.ProviderLabel = rm.ModelID
+	if rm.ProviderID != "" {
+		model.ProviderLabel = rm.ProviderID + "/" + rm.ModelID
+	}
+	model.FriendlyName = m.liveModelLabel()
+	return model
 }

@@ -486,7 +486,7 @@ func TestResolveTrustRememberedMonotonicDenyHonoured(t *testing.T) {
 
 // TestResolveTrustNeverWritesRegistry (FIX 3 — mecated declarative, no write on the
 // fold path) pins that resolveTrust (the path Build runs, and the daemon's only
-// trust path) NEVER creates or modifies trust.yaml. Only Phase 2c's mecatui prompt
+// trust path) NEVER creates or modifies trust.yaml. Only the mecatui prompt
 // writes the registry. We remember a workspace (a legitimate prior write), snapshot
 // trust.yaml's mtime+size, run resolveTrust repeatedly, and assert the file is
 // byte-for-byte untouched (no create, no mtime bump).

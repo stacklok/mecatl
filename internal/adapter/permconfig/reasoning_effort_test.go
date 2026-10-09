@@ -15,7 +15,7 @@ import (
 
 // TestOperatorReasoningEffortFromCLIHonoured: an OPERATOR-TIER (CLI explicit)
 // reasoning-effort: scalar is read and returned by OperatorReasoningEffort()
-// (ADR 0055), mirroring the posture operator-tier test.
+// mirroring the posture operator-tier test.
 func TestOperatorReasoningEffortFromCLIHonoured(t *testing.T) {
 	const yaml = "reasoning-effort: high\n"
 	env := envWithExplicit("/etc/mecatl/effort.yaml", yaml)
@@ -30,7 +30,7 @@ func TestOperatorReasoningEffortFromCLIHonoured(t *testing.T) {
 
 // TestProjectReasoningEffortIgnoredWithWarn: a PROJECT-TIER reasoning-effort:
 // scalar must NEVER become the operator value, and the resolver WARNs naming why
-// (operator-tier only — ADR 0055, a project cannot raise the model's reasoning spend).
+// (operator-tier only — a project cannot raise the model's reasoning spend).
 func TestProjectReasoningEffortIgnoredWithWarn(t *testing.T) {
 	var buf bytes.Buffer
 	diag := slogdiag.New(&buf, false, port.LevelDebug)

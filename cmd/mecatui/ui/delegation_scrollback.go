@@ -26,9 +26,9 @@ func scrollRouting(in *client.RoutingDecision) scrollback.RoutingDecision {
 func scrollTrace(in []teamTrace) []scrollback.TraceEntry {
 	out := make([]scrollback.TraceEntry, len(in))
 	for i, t := range in {
-		out[i] = scrollback.TraceEntry{Text: t.text, ToolName: t.name, Detail: t.detail, Error: t.isError}
+		out[i] = scrollback.TraceEntry{Lane: t.lane, ID: t.id, Text: t.text, ToolName: t.name, Detail: t.detail, Intent: t.intent, Error: t.isError, Resolved: t.resolved, Provisional: t.provisional, Blocked: t.blocked, Serial: t.serial}
 		if t.kind == teamTraceTool {
-			out[i].Kind = "tool"
+			out[i].Kind = toolKind
 		} else {
 			out[i].Kind = "message"
 		}
@@ -39,7 +39,7 @@ func scrollTrace(in []teamTrace) []scrollback.TraceEntry {
 func traceFromScroll(in []scrollback.TraceEntry) []teamTrace {
 	out := make([]teamTrace, len(in))
 	for i, t := range in {
-		out[i] = teamTrace{text: t.Text, name: t.ToolName, detail: t.Detail, isError: t.Error}
+		out[i] = teamTrace{lane: t.Lane, id: t.ID, text: t.Text, name: t.ToolName, detail: t.Detail, intent: t.Intent, isError: t.Error, resolved: t.Resolved, provisional: t.Provisional, blocked: t.Blocked, serial: t.Serial}
 		if t.Kind == "tool" {
 			out[i].kind = teamTraceTool
 		} else {
@@ -61,7 +61,7 @@ func (c *conversation) subagentCard(callID string) (scrollback.SubagentCardSnaps
 func (c *conversation) applySubagentTyped(msg client.SubagentMsg) {
 	switch msg.Kind {
 	case client.SubagentStart:
-		c.scrollback.Subagents().Start(msg.ParentCallID, scrollback.SubagentStart{ChildID: msg.ChildID, Goal: msg.Goal, Model: msg.Model, RoutedCategory: msg.RoutedCategory, RoutedModel: msg.RoutedModel, RoutingReason: msg.RoutingReason, Background: msg.Background, Routing: scrollRouting(msg.RoutingDecision)})
+		c.scrollback.Subagents().Start(msg.ParentCallID, scrollback.SubagentStart{ChildID: msg.ChildID, Goal: msg.Goal, Model: msg.Model, Provider: msg.Provider, ExplicitRouterCategory: msg.ExplicitRouterCategory, RoutedCategory: msg.RoutedCategory, RoutedModel: msg.RoutedModel, RoutingReason: msg.RoutingReason, Background: msg.Background, Routing: scrollRouting(msg.RoutingDecision)})
 	case client.SubagentTool:
 		p, ok := c.subagentCard(msg.ParentCallID)
 		if !ok {
@@ -69,7 +69,7 @@ func (c *conversation) applySubagentTyped(msg client.SubagentMsg) {
 		}
 		u := p.Update
 		u.ToolCount, u.Usage = msg.ToolCount, scrollUsage(msg.Usage)
-		trace, current := routeTraceEvent(traceFromScroll(u.Trace), u.Current, msg.InnerKind, msg.ToolName, msg.Detail, msg.Text, msg.IsError)
+		trace, current := routeTraceEvent(traceFromScroll(u.Trace), u.Current, msg.InnerKind, msg.ChildToolCallID, msg.ToolName, msg.Detail, msg.Text, msg.IsError, msg.ChildID)
 		u.Trace, u.Current = scrollTrace(trace), current
 		c.scrollback.Subagents().Update(msg.ParentCallID, u)
 	case client.SubagentEnd:
@@ -84,7 +84,7 @@ func (c *conversation) applySubagentTyped(msg client.SubagentMsg) {
 }
 
 func scrollTeamLane(in client.TeamMemberSpec) scrollback.TeamLane {
-	return scrollback.TeamLane{Name: in.Name, Role: in.Role, Mutating: in.Mutating, Lead: in.Lead, RoutedCategory: in.RoutedCategory, RoutedModel: in.RoutedModel, RoutingReason: in.RoutingReason, Model: in.Model, Routing: scrollRouting(in.RoutingDecision)}
+	return scrollback.TeamLane{Name: in.Name, Role: in.Role, Mutating: in.Mutating, Lead: in.Lead, RoutedCategory: in.RoutedCategory, RoutedModel: in.RoutedModel, RoutingReason: in.RoutingReason, Model: in.Model, Provider: in.Provider, ExplicitRouterCategory: in.ExplicitRouterCategory, Routing: scrollRouting(in.RoutingDecision)}
 }
 
 func teamLaneFor(lanes []scrollback.TeamLane, name string) ([]scrollback.TeamLane, int) {
@@ -166,9 +166,9 @@ func applyTeamMemberUpdate(update *scrollback.TeamUpdate, msg client.TeamMsg) {
 		lane.Trace = scrollTrace(traceAppendMessage(traceFromScroll(lane.Trace), msg.Text))
 	case "tool.call":
 		lane.Idle, lane.Current, lane.ToolCount = false, msg.ToolName, lane.ToolCount+1
-		lane.Trace = scrollTrace(traceAppendTool(traceFromScroll(lane.Trace), msg.ToolName, msg.Detail, false))
-	case "tool.result":
-		lane.Trace = scrollTrace(traceMarkToolResult(traceFromScroll(lane.Trace), msg.ToolName, msg.Detail, msg.IsError))
+		lane.Trace = scrollTrace(traceAppendTool(traceFromScroll(lane.Trace), msg.ChildToolCallID, msg.ToolName, msg.Detail))
+	case "tool.result", "tool.result.available":
+		lane.Trace = scrollTrace(traceSetToolResult(traceFromScroll(lane.Trace), msg.ChildToolCallID, msg.ToolName, msg.Detail, msg.IsError, msg.InnerKind == "tool.result.available"))
 	case "turn.end":
 		lane.Idle, lane.Usage, lane.ContextUsed = false, sumScrollUsage(lane.Usage, msg.Usage), msg.Usage.InputTokens
 		if msg.ContextWindow > 0 {
@@ -243,6 +243,8 @@ type subagentCardPresentation struct {
 	routedModel             string
 	routingReason           string
 	model                   string
+	provider                string
+	explicitRouterCategory  string
 	routing                 *client.RoutingDecision
 }
 
@@ -254,7 +256,8 @@ func subagentCardPresentationFromSnapshot(p scrollback.SubagentCardSnapshot) sub
 		toolCount: p.Update.ToolCount, usage: clientUsage(p.Update.Usage), stop: p.Update.Stop,
 		durationMS: p.Update.DurationMS, done: p.Update.Done,
 		routedCategory: p.Start.RoutedCategory, routedModel: p.Start.RoutedModel,
-		routingReason: p.Start.RoutingReason, model: p.Start.Model, routing: clientRouting(p.Start.Routing),
+		routingReason: p.Start.RoutingReason, model: p.Start.Model, provider: p.Start.Provider,
+		explicitRouterCategory: p.Start.ExplicitRouterCategory, routing: clientRouting(p.Start.Routing),
 	}
 }
 
@@ -283,7 +286,7 @@ func teamCardPresentationFromSnapshot(p scrollback.TeamCardSnapshot) teamCardPre
 		lanes: make([]teamLane, len(p.Update.Lanes)), tasks: make([]teamTask, len(p.Update.Tasks)), findings: make([]teamFinding, len(p.Update.Findings)),
 	}
 	for i, lane := range p.Update.Lanes {
-		out.lanes[i] = teamLane{name: lane.Name, sessionID: lane.SessionID, role: lane.Role, mutating: lane.Mutating, lead: lane.Lead, routedCategory: lane.RoutedCategory, routedModel: lane.RoutedModel, routingReason: lane.RoutingReason, routingDecision: clientRouting(lane.Routing), model: lane.Model, current: lane.Current, toolCount: lane.ToolCount, usage: clientUsage(lane.Usage), trace: traceFromScroll(lane.Trace), idle: lane.Idle, stopped: lane.Stopped, stopReason: lane.StopReason, errorRounds: lane.ErrorRounds, cause: lane.Cause, ctxUsed: lane.ContextUsed, ctxWindow: lane.ContextWindow}
+		out.lanes[i] = teamLane{name: lane.Name, sessionID: lane.SessionID, role: lane.Role, mutating: lane.Mutating, lead: lane.Lead, routedCategory: lane.RoutedCategory, routedModel: lane.RoutedModel, routingReason: lane.RoutingReason, routingDecision: clientRouting(lane.Routing), model: lane.Model, provider: lane.Provider, explicitRouterCategory: lane.ExplicitRouterCategory, current: lane.Current, toolCount: lane.ToolCount, usage: clientUsage(lane.Usage), trace: traceFromScroll(lane.Trace), idle: lane.Idle, stopped: lane.Stopped, stopReason: lane.StopReason, errorRounds: lane.ErrorRounds, cause: lane.Cause, ctxUsed: lane.ContextUsed, ctxWindow: lane.ContextWindow}
 	}
 	for i, task := range p.Update.Tasks {
 		out.tasks[i] = teamTask{id: task.ID, desc: task.Description, state: task.State, assignee: task.Assignee, deps: append([]string(nil), task.Dependencies...)}

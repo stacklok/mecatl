@@ -69,7 +69,7 @@ func (v *conversationView) restoreViewport(vp *viewport.Model, frame renderedFra
 	}
 }
 
-// restore resolves an anchor using ADR 0301's exact/same-region/same-block/
+// restore resolves an anchor using the exact/same-region/same-block/
 // adjacent-block order. It returns a valid row whenever the frame has rows.
 func (conversationView) restore(frame renderedFrame, anchor readingAnchor) int {
 	if len(frame.provenance) == 0 {

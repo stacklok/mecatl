@@ -9,10 +9,8 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
-	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/jevrouter"
 	"github.com/stacklok/mecatl/internal/adapter/openaicompat"
-	"github.com/stacklok/mecatl/internal/adapter/osfs"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
@@ -22,41 +20,33 @@ const (
 	routerBackendJev = "jev"
 )
 
-// slots.go is the COMPOSITION-LAYER per-slot model resolver (ADR 0030, Phase 1+2):
+// slots.go is the COMPOSITION-LAYER per-slot model resolver:
 // the "aliases as the spine" layer plus the `models.slots` map that binds named
 // pipeline functions to aliases. It is a pure composition concern — engine/agent
-// never sees a slot or an alias, only the already-resolved concrete model id.
+// never sees a slot or an alias, only the already-resolved provider/model target.
 //
-// A SLOT is a named internal LLM call ("compaction", "ask-reviewer", "guardrail")
-// or a semantic TIER ("cheap", "fast", "reasoning"). resolveSlotModel maps a slot
-// name to a concrete model id THROUGH the existing alias machinery (lookupModelAlias),
-// so the two never drift: a slot value is itself an alias or a literal id, resolved
-// by the SAME grammar the agent-def `model:` path uses.
+// A SLOT is a named internal LLM call (e.g. "compaction", "ask-reviewer", "guardrail")
+// or a semantic TIER ("cheap", "fast", "reasoning"). Slot selectors resolve through
+// the same alias machinery as agent definitions.
 //
-// THE BYTE-IDENTICAL GUARANTEE: when no slot is configured (cfg.ModelSlots empty/
-// absent) resolveSlotModel returns ("", false) for every slot, and each of the three
-// routed call sites keeps its EXACT pre-feature behaviour (the session model). The
+// THE UNCONFIGURED GUARANTEE: when no slot is configured (cfg.ModelSlots empty/
+// absent) resolveSlotModel returns ("", false) for every slot, and every routed call
+// site keeps its EXACT unrouted behaviour (the session model). The
 // posture is FAIL-SOFT throughout: a typo'd slot key, an unknown/inherit alias, or
-// any other miss WARNs and degrades to today's behaviour — a broken housekeeping
+// any other miss WARNs and degrades to the session model — a broken housekeeping
 // slot must never wedge a compaction / ask-review / guardrail call.
 //
-// This slice routes exactly THREE internal lightweight calls to a slot: compaction
-// (the tier-4 summary LLM call), ask-reviewer, and guardrail. Team synthesis is
-// DEFERRED (it lacks a clean seam — the lead synthesis runs on the lead member's
-// whole engine), and the project-tier override / the subagent router (ADR 0030
-// Layer 3b and the project-merge-within-cap) are out of this slice.
+// The internal lightweight calls routed to a slot are compaction (the tier-4 summary
+// LLM call), ask-reviewer, guardrail, reflection, the semantic router's classifier,
+// and the opt-in title generator. Team synthesis has a defined slot but no consumer:
+// the lead synthesis runs on the lead member's whole engine and lacks a clean seam.
 //
-// Phase 3 (ADR 0030 Layer 3) adds the `plan` slot — wired on the MODE axis, NOT the
-// internal-call axis. Unlike the three call-slots above, `plan` does NOT route a
-// lightweight housekeeping call: it re-resolves the SESSION model when the session's
-// PermissionMode is ModePlan, re-resolved BETWEEN turns at the run-entry seam (the
-// opusplan pattern). It reuses resolveSlotModel UNCHANGED — the resolution grammar is
-// identical; only the consumer differs (the per-session engine factory in build.go,
-// keyed on the session's mode, instead of a per-call deps builder). And it defaults to
-// the `reasoning` tier, NOT `cheap`: a plan model is a STRONG-reasoning model, the one
-// place a slot's default tier diverges from cheap.
+// The `plan` slot is wired on the MODE axis, NOT the internal-call axis. Unlike the
+// call-slots above, `plan` does NOT route a lightweight housekeeping call: it
+// re-resolves the SESSION model when the session's PermissionMode is ModePlan,
+// BETWEEN turns at the run-entry seam. It defaults to the `reasoning` tier, not `cheap`.
 
-// Slot names — the three routed internal lightweight calls (Layer 2). Each is the
+// Slot names (Layer 2). Each is the
 // stable key an operator writes under `models.slots:` (or --model-slot).
 const (
 	// slotCompaction routes the CascadeCompactor's tier-4 summary LLM call.
@@ -66,15 +56,14 @@ const (
 	// slotGuardrail routes the LLM-backed guardrail content checker (issue #27).
 	slotGuardrail  = "guardrail"
 	slotReflection = "reflection"
-	// slotSynthesis is DEFINED for completeness (team synthesis is the cheap tier's
-	// natural fourth consumer) but is deliberately NOT wired this slice — the lead
+	// slotSynthesis is DEFINED and accepted as a key but has NO consumer — the lead
 	// synthesis runs on the lead member's whole engine and lacks a clean seam.
 	slotSynthesis = "synthesis"
 	// slotTitle routes the opt-in server-owned title generator. It deliberately has
 	// no default tier: title generation remains disabled until explicitly configured.
 	slotTitle = "title"
 	// slotPlan routes the SESSION model when the session's PermissionMode is ModePlan
-	// (ADR 0030 Layer 3, the opusplan pattern). It is the ONE slot wired on the MODE
+	// (the opusplan pattern). It is the ONE slot wired on the MODE
 	// axis rather than the internal-call axis: it is consumed by the per-session engine
 	// factory (sessionEngineFactory in build.go), re-resolved between turns at the
 	// run-entry seam when Session.Mode changes — NOT by a per-call deps builder. Its
@@ -82,7 +71,7 @@ const (
 	// strong-reasoning model.
 	slotPlan = "plan"
 	// slotRouter routes the CLASSIFIER call of the OPT-IN semantic Subagent model router
-	// (ADR 0031, Phase 5). Like the three internal call-slots it routes a lightweight
+	// Like the internal call-slots it routes a lightweight
 	// housekeeping call (one tiny classification turn), defaulting to the `cheap` tier —
 	// the classifier is housekeeping, NOT the routed work. The router's per-CATEGORY
 	// target models are a SEPARATE operator taxonomy (cfg.RouterCategories), not slots.
@@ -122,11 +111,10 @@ var knownSlotNames = map[string]struct{}{
 }
 
 // slotDefaultTier maps a slot to the semantic tier it falls through to when it has no
-// explicit binding. The three internal-call slots default to `cheap` (housekeeping
-// runs on the cheapest model unless the operator says otherwise — the ADR's immediate
-// token-savings win). The `plan` slot is the DELIBERATE divergence: it defaults to the
+// explicit binding. The internal-call slots default to `cheap` (housekeeping runs on
+// the cheapest model unless the operator says otherwise). The `plan` slot is the DELIBERATE divergence: it defaults to the
 // `reasoning` tier, because a plan-mode model is a STRONG-reasoning model, not a cheap
-// one (ADR 0030 Layer 3). A slot absent here has no default tier (an explicit binding
+// one. A slot absent here has no default tier (an explicit binding
 // is the only way to route it).
 var slotDefaultTier = map[string]string{
 	slotCompaction:  slotCheap,
@@ -163,24 +151,75 @@ var slotDefaultTier = map[string]string{
 // WARN here would re-fire N times for one misconfigured slot (the documented
 // per-derivation-duplication trap). The one-time misconfig WARN lives in the
 // build-once path instead (slotMisconfig, narrated by logSlotConfigFacts from Build).
-func resolveSlotModel(cfg Config, slotName, parentModel string) (model string, configured bool) {
-	_ = parentModel // the caller owns the fallback; named for call-site symmetry.
+func resolveSlotTarget(cfg Config, slotName, contextualProvider string) (ModelTarget, bool) {
 	sel := selectorForSlot(cfg, slotName)
 	if sel == "" {
-		return "", false // no slot configured: byte-identical default.
+		return ModelTarget{}, false
 	}
-	id, known := lookupModelAlias(cfg, sel)
-	if known && id != "" {
-		return id, true
+	target, err := resolveConfiguredModelTarget(cfg, contextualProvider, sel)
+	if err != nil || strings.TrimSpace(target.Model) == "" {
+		return ModelTarget{}, false
 	}
-	return "", false // configured but unresolvable: fail-soft, degrade to inherit.
+	return target, true
+}
+
+func resolveAuxiliarySlotTarget(cfg Config, reg *providerRegistry, slotName string, fallbackProvider port.LLMProvider, fallbackProviderID, fallbackModel string) (port.LLMProvider, string, string, bool) {
+	target, configured := resolveSlotTarget(cfg, slotName, fallbackProviderID)
+	if !configured {
+		return fallbackProvider, fallbackProviderID, fallbackModel, false
+	}
+	if target.ProviderID == "" || target.ProviderID == fallbackProviderID {
+		return fallbackProvider, fallbackProviderID, target.Model, true
+	}
+	if reg == nil {
+		return fallbackProvider, fallbackProviderID, fallbackModel, false
+	}
+	entry, ok := reg.Lookup(target.ProviderID)
+	if !ok || entry.provider == nil {
+		return fallbackProvider, fallbackProviderID, fallbackModel, false
+	}
+	return entry.provider, target.ProviderID, target.Model, true
+}
+
+func resolveSlotModel(cfg Config, slotName, parentModel string) (model string, configured bool) {
+	_ = parentModel // the caller owns the fallback; named for call-site symmetry.
+	target, configured := resolveSlotTarget(cfg, slotName, "")
+	if !configured {
+		return "", false
+	}
+	return target.Model, true
+}
+
+// resolvePlanSessionModel is the single provider-bound plan-slot resolver used by
+// construction, capability projection, debug construction, and reported identity.
+// A cross-provider target is incompatible with persisted provider replay and falls
+// back to the ordinary non-plan model without rebasing the target model.
+func resolvePlanSessionModel(cfg Config, providerID, ordinaryModel string, mode session.PermissionMode) (model string, crossProviderFallback bool) {
+	if mode != session.ModePlan {
+		return ordinaryModel, false
+	}
+	target, configured := resolveSlotTarget(cfg, slotPlan, providerID)
+	if !configured {
+		return ordinaryModel, false
+	}
+	if target.ProviderID != providerID {
+		return ordinaryModel, true
+	}
+	return target.Model, false
+}
+
+func warnPlanProviderFallback(ctx context.Context, cfg Config, fallback bool) {
+	if fallback {
+		cfg.diag().Log(ctx, port.LevelWarn,
+			"cross-provider plan model is incompatible with persisted session provider; using ordinary session model")
+	}
 }
 
 // titleGenerationEligible resolves the opt-in title slot once per session creation.
 // The returned closure intentionally exposes only eligibility to the server: title
 // routing remains composition-owned and the session provider is never changed.
 func titleGenerationEligible(cfg Config, reg *providerRegistry) func(server.ProviderSelector) bool {
-	if model, configured := resolveSlotModel(cfg, slotTitle, cfg.Model); !configured || model == "" {
+	if _, configured := resolveSlotTarget(cfg, slotTitle, ""); !configured {
 		return nil
 	}
 	return func(sel server.ProviderSelector) bool {
@@ -188,7 +227,11 @@ func titleGenerationEligible(cfg Config, reg *providerRegistry) func(server.Prov
 		if providerID == "" {
 			providerID = reg.Default()
 		}
-		_, available := reg.Lookup(providerID)
+		target, configured := resolveSlotTarget(cfg, slotTitle, providerID)
+		if !configured {
+			return false
+		}
+		_, available := reg.Lookup(target.ProviderID)
 		return available
 	}
 }
@@ -196,8 +239,7 @@ func titleGenerationEligible(cfg Config, reg *providerRegistry) func(server.Prov
 // titleGeneratorForSession resolves each call against the session's fixed provider.
 // It returns nil when the provider disappeared or the explicit slot is unavailable.
 func titleGeneratorForSession(cfg Config, reg *providerRegistry) func(server.ProviderSelector) server.SessionTitleGenerator {
-	model, configured := resolveSlotModel(cfg, slotTitle, cfg.Model)
-	if !configured || model == "" {
+	if _, configured := resolveSlotTarget(cfg, slotTitle, ""); !configured {
 		return nil
 	}
 	return func(sel server.ProviderSelector) server.SessionTitleGenerator {
@@ -209,7 +251,11 @@ func titleGeneratorForSession(cfg Config, reg *providerRegistry) func(server.Pro
 		if !ok {
 			return nil
 		}
-		generator, err := server.NewSessionTitleGeneratorWithAttribution(entry.provider, providerID, model)
+		provider, targetProviderID, model, configured := resolveAuxiliarySlotTarget(cfg, reg, slotTitle, entry.provider, providerID, "")
+		if !configured || provider == nil {
+			return nil
+		}
+		generator, err := server.NewSessionTitleGeneratorWithAttribution(provider, targetProviderID, model)
 		if err != nil {
 			return nil
 		}
@@ -250,6 +296,9 @@ func foldOperatorModelSlots(cfg Config) Config {
 	}
 	// Aliases: YAML entries fill in any key the CLI did not set (CLI wins per key).
 	if len(m.Aliases) > 0 {
+		if cfg.ModelAliasTargets == nil {
+			cfg.ModelAliasTargets = make(ModelAliases, len(m.Aliases))
+		}
 		if cfg.ModelAliases == nil {
 			cfg.ModelAliases = make(map[string]string, len(m.Aliases))
 		}
@@ -261,7 +310,14 @@ func foldOperatorModelSlots(cfg Config) Config {
 			if _, cliSet := cfg.ModelAliases[k]; cliSet {
 				continue // CLI --model-alias wins.
 			}
-			cfg.ModelAliases[k] = strings.TrimSpace(v)
+			if _, cliSet := cfg.ModelAliasTargets[k]; cliSet {
+				continue
+			}
+			if v.Provider == "" {
+				cfg.ModelAliases[k] = strings.TrimSpace(v.Model)
+			} else {
+				cfg.ModelAliasTargets[k] = ModelTarget{ProviderID: strings.TrimSpace(v.Provider), Model: strings.TrimSpace(v.Model)}
+			}
 		}
 	}
 	// Slots: same per-key CLI-wins fold, with fail-soft validation of the slot key.
@@ -293,23 +349,11 @@ func foldOperatorModelSlots(cfg Config) Config {
 	return cfg
 }
 
-func scalarModelSlots(slots permconfig.ModelSlots) map[string]string {
-	out := make(map[string]string, len(slots))
-	for name, value := range slots {
-		if !value.ExplicitProvider {
-			out[name] = value.Model
-		}
-	}
-	return out
-}
-
 // cliModelKeys is the snapshot of which model bindings the OPERATOR set on the CLI
 // (--model-slot / --model-alias / --model), taken BEFORE foldOperatorModelSlots merges
-// the operator-YAML in (ADR 0030 Phase 4). It is the mechanism by which a CLI flag
-// survives a project-tier override: foldProjectModelBindings overrides operator-YAML-set
-// keys but SKIPS any key recorded here, realising the precedence
+// the operator-YAML in. It preserves CLI precedence over operator settings.yaml.
 //
-//	CLI (operator flags) > project-YAML (capped) > operator-YAML (settings.yaml) > built-in
+//	CLI (operator flags) > operator-YAML (settings.yaml) > built-in
 //
 // At the capture point cfg.ModelSlots/cfg.ModelAliases hold ONLY the CLI-set keys (the
 // operator-YAML fold has not run yet), and cfg.Model is the CLI --model value (the
@@ -348,24 +392,89 @@ func captureCLIModelKeys(cfg Config) cliModelKeys {
 	for k := range cfg.ModelAliases {
 		keys.aliases[k] = struct{}{}
 	}
+	for k := range cfg.ModelAliasTargets {
+		keys.aliases[k] = struct{}{}
+	}
 	return keys
 }
 
-// foldOperatorModelDefault applies an operator-YAML `models.default:` to cfg.Model (ADR
-// 0030 Phase 4), the operator-YAML rung of the default precedence
+// foldOperatorModelDefault applies an operator-YAML `models.default:` to cfg.Model,
+// the operator-YAML rung of the default precedence
 //
-//	CLI --model > project-YAML default (capped) > operator-YAML default > registry default
+//	CLI --model > operator-YAML default > registry default
 //
-// It is UNCAPPED (the operator's own binding — the allowlist caps PROJECT bindings only,
-// the operator is authoritative) and resolved through lookupModelAlias (the operator-merged
-// alias map; foldOperatorModelSlots has already folded operator-YAML aliases by the time
-// this runs in Build). cliKeys.modelSet (the pre-foldOperatorModelSlots snapshot) gates it:
-// a CLI --model wins, so the operator-YAML default is SKIPPED when --model was set. It runs
-// AFTER the registry default is assigned (so it overrides it) and BEFORE
-// foldProjectModelBindings (so a capped project default can override it in turn). No-op
-// (byte-identical) when there is no permResolver, no operator models: block, or no
-// operator models.default (or it resolves to inherit/unknown — fail-soft, keep the
-// registry default).
+// It is resolved through lookupModelAlias (the operator-merged alias map;
+// foldOperatorModelSlots has already folded operator-YAML aliases by the time this runs
+// in Build). cliKeys.modelSet (the pre-foldOperatorModelSlots snapshot) gates it: a CLI
+// --model wins, so the operator-YAML default is SKIPPED when --model was set. It runs
+// AFTER the registry default is assigned (so it overrides it). No-op (byte-identical)
+// when there is no permResolver, no operator models: block, or no operator
+// models.default (or it resolves to inherit/unknown — fail-soft, keep the registry
+// default).
+// bindOperatorModelProvider fixes settings scalar aliases to the effective
+// operator default before a paired models.default replaces the session default.
+// CLI scalar aliases retain their contextual-provider semantics.
+func bindOperatorModelProvider(cfg Config, cliKeys cliModelKeys) Config {
+	provider := strings.TrimSpace(cfg.DefaultProvider)
+	if provider == "" {
+		return cfg
+	}
+	cfg.modelBindingProvider = provider
+	res, ok := cfg.permResolver.(*permconfig.Resolver)
+	if !ok || res == nil {
+		return cfg
+	}
+	policy := res.OperatorModelPolicy()
+	if policy == nil {
+		return cfg
+	}
+	for name, target := range policy.Aliases {
+		name = strings.TrimSpace(name)
+		model := strings.TrimSpace(target.Model)
+		if name == "" || target.Provider != "" || model == "" {
+			continue
+		}
+		if _, cliSet := cliKeys.aliases[name]; cliSet {
+			continue
+		}
+		if cfg.ModelAliasTargets == nil {
+			cfg.ModelAliasTargets = make(ModelAliases)
+		}
+		cfg.ModelAliasTargets[name] = ModelTarget{ProviderID: provider, Model: model}
+	}
+	return cfg
+}
+
+// foldOperatorPairModelDefault applies the provider half of an operator
+// models.default pair before registry construction. The pair overrides a
+// separately configured default provider; scalar and unknown selectors retain
+// the existing late fail-soft path in foldOperatorModelDefault.
+func foldOperatorPairModelDefault(cfg Config, cliKeys cliModelKeys) Config {
+	if cliKeys.modelSet {
+		return cfg
+	}
+	res, ok := cfg.permResolver.(*permconfig.Resolver)
+	if !ok || res == nil {
+		return cfg
+	}
+	policy := res.OperatorModelPolicy()
+	if policy == nil {
+		return cfg
+	}
+	selector := strings.TrimSpace(policy.Default)
+	target, known := lookupModelAliasTarget(cfg, selector)
+	if selector == "" || !known || strings.TrimSpace(target.ProviderID) == "" {
+		return cfg
+	}
+	provider := strings.TrimSpace(target.ProviderID)
+	cfg.DefaultProvider = provider
+	cfg.DefaultModel = target.Model
+	cfg.defaultModelFromAlias = true
+	return cfg
+}
+
+// foldOperatorModelDefault applies a scalar or already-provider-folded operator
+// default after registry construction while preserving the existing fail-soft posture.
 func foldOperatorModelDefault(cfg Config, cliKeys cliModelKeys) Config {
 	if cliKeys.modelSet {
 		return cfg // CLI --model wins over the operator-YAML default.
@@ -403,9 +512,8 @@ func foldOperatorModelDefault(cfg Config, cliKeys cliModelKeys) Config {
 // The value is the def-less child-default model selector for every Subagent /
 // Parallel-branch / team-member child that does not pin its own model.
 //
-// It is OPERATOR-TIER ONLY (read from OperatorModelPolicy(), the user-global + CLI tiers;
-// a project-tier subagent: was already stripped with a WARN in captureProjectModels). It
-// is a no-op (byte-identical) when --subagent-model was set on the CLI (cliKeys.subagentModelSet
+// It is OPERATOR-TIER ONLY (read from OperatorModelPolicy(), the user-global + CLI
+// tiers; project-tier models blocks are ignored with a WARN). It is a no-op (byte-identical) when --subagent-model was set on the CLI (cliKeys.subagentModelSet
 // — the flag WINS), when there is no permResolver, no operator models: block, or an empty
 // models.subagent. The value is set VERBATIM (NOT pre-resolved): the downstream
 // normalizeSubagentModel is the ONE validator and keeps aliases verbatim by design, so
@@ -471,181 +579,14 @@ func foldOperatorDefaultProvider(cfg Config) Config {
 	return cfg
 }
 
-// foldProjectModelBindings merges a TRUSTED project's `.mecatl/settings.yaml` models:
-// bindings (slots/aliases/default) onto cfg, CAPPED by the operator allowlist (ADR 0030
-// Phase 4). It runs in Build ONCE, AFTER foldOperatorModelSlots (so it overrides the
-// operator-YAML layer) and AFTER cfg.Model has been resolved to the registry default (so
-// a project `default` can re-bind cfg.Model and the cap resolves through the
-// operator-merged alias map), and BEFORE modeNeedsEngine/logSlotConfigFacts (so the plan
-// slot, the predicate, and the narration see the final merged maps).
-//
-// PRECEDENCE: CLI (operator flags) > project-YAML (capped) > operator-YAML > built-in.
-// A project binding overrides an operator-YAML-set key but SKIPS any key the operator set
-// on the CLI (cliKeys) — the operator's explicit per-run flag is a deliberate override
-// that still wins. This rests on the cliKeys SNAPSHOT having been taken BEFORE
-// foldOperatorModelSlots (see captureCLIModelKeys' ordering invariant): cliKeys must name
-// ONLY the CLI-set keys, never the operator-YAML ones, or a project binding would wrongly
-// skip an operator-YAML key (precedence inverts). The allowlist + its canonicalization are
-// ALWAYS operator-only.
-//
-// CAP — resolve-then-check: each project binding VALUE is resolved through lookupModelAlias
-// to a concrete id, and that id is tested for membership in the canonical allowlist set
-// (each allowlist ENTRY likewise resolved to a concrete id via the operator-merged alias
-// map). Accept ⇒ merge; reject ⇒ DROP and keep the operator/default value, with ONE
-// build-once WARN per dropped binding. Slots are ALSO validated against knownSlotNames.
-//
-// No-op fast paths (each keeps cfg byte-identical): nil/absent permResolver; empty
-// operator allowlist (the opt-in); project ingestion not admitted; no project
-// models block. Under any of these foldProjectModelBindings returns cfg unchanged
-// and logs nothing.
-func foldProjectModelBindings(cfg Config, cliKeys cliModelKeys) Config {
-	res, ok := cfg.permResolver.(*permconfig.Resolver)
-	if !ok || res == nil {
-		return cfg
-	}
-	policy := res.OperatorModelPolicy()
-	if policy == nil || len(policy.Allowlist) == 0 {
-		return cfg // opt-in: no operator allowlist ⇒ project models WARN-ignored upstream.
-	}
-	if !projectIngestionAdmitted(cfg) {
-		return cfg // untrusted, or ingestion grant withheld: the project block was already WARN-ignored at capture.
-	}
-	proj := res.ProjectModelBindings(projectModelWorkspace(cfg))
-	if proj == nil {
-		return cfg // no honoured project models block.
-	}
-
-	// Canonicalize the operator allowlist to a concrete-id SET (each entry resolved
-	// through the operator-merged alias map — at this point cfg.ModelAliases already
-	// holds the operator-YAML aliases, folded by foldOperatorModelSlots).
-	allowed := canonicalAllowlist(cfg, policy.Allowlist)
-
-	// default: re-bind cfg.Model within the cap (CLI --model still wins).
-	if sel := strings.TrimSpace(proj.Default); sel != "" && !cliKeys.modelSet {
-		if id, okCap := capResolve(cfg, sel, allowed); okCap {
-			cfg.Model = id
-			cfg.diag().Log(context.Background(), port.LevelInfo,
-				"models.default: project binding ACCEPTED (within the operator allowlist)", "selector", sel, "model", id)
-		} else {
-			cfg.diag().Log(context.Background(), port.LevelWarn,
-				"models.default: project binding DROPPED (outside the operator allowlist); keeping the operator/default model",
-				"selector", sel, "model", cfg.Model)
-		}
-	}
-
-	// aliases: re-bind each alias key within the cap (CLI --model-alias key wins).
-	cfg.ModelAliases = capMergeProjectBindings(cfg, "aliases", proj.Aliases, cfg.ModelAliases, cliKeys.aliases, allowed, false)
-	// slots: re-bind each slot key within the cap (CLI --model-slot key wins; the slot
-	// NAME is validated against knownSlotNames, the slot VALUE is capped resolve-then-check).
-	cfg.ModelSlots = capMergeProjectBindings(cfg, "slots", scalarModelSlots(proj.Slots), cfg.ModelSlots, cliKeys.slots, allowed, true)
-	return cfg
-}
-
-// capMergeProjectBindings merges one project-binding MAP (slots or aliases) onto dst,
-// capped by the operator allowlist (ADR 0030 Phase 4). For each project entry: SKIP a
-// CLI-set key (cliKeys — the CLI flag wins); for slots, drop an unknown slot NAME
-// fail-soft (knownSlotNames, validateName==true); resolve-then-check the VALUE against
-// the allowlist (accept→merge the concrete id, drop→keep dst's existing value); emit one
-// build-once INFO per accept and one build-once WARN per drop, tagged with kind
-// ("slots"/"aliases"). It is the shared loop body for the two project-binding maps so
-// foldProjectModelBindings stays under the gocyclo budget. dst is allocated lazily on the
-// first accept and returned (cfg's map is reassigned to it by the caller).
-func capMergeProjectBindings(cfg Config, kind string, src, dst map[string]string, cliKeys map[string]struct{}, allowed map[string]struct{}, validateName bool) map[string]string {
-	for k, v := range src {
-		k = strings.TrimSpace(k)
-		if k == "" {
-			continue
-		}
-		if validateName {
-			if _, known := knownSlotNames[k]; !known {
-				cfg.diag().Log(context.Background(), port.LevelWarn,
-					"models.slots: unknown project slot key IGNORED (not a known call-slot or tier)",
-					"slot", k, "known", knownSlotNamesList())
-				continue
-			}
-		}
-		if _, cli := cliKeys[k]; cli {
-			continue // a CLI --model-slot/--model-alias for this key wins.
-		}
-		if id, okCap := capResolve(cfg, strings.TrimSpace(v), allowed); okCap {
-			if dst == nil {
-				dst = map[string]string{}
-			}
-			dst[k] = id
-			cfg.diag().Log(context.Background(), port.LevelInfo,
-				"models."+kind+": project binding ACCEPTED (within the operator allowlist)", "key", k, "model", id)
-		} else {
-			cfg.diag().Log(context.Background(), port.LevelWarn,
-				"models."+kind+": project binding DROPPED (outside the operator allowlist); keeping the operator/default value",
-				"key", k, "selector", v)
-		}
-	}
-	return dst
-}
-
-// projectModelWorkspace builds the read-only workspace the resolver reads the project
-// models: block through (ProjectModelBindings). It mirrors the build-time workspace the
-// permission resolver/agent registry are resolved against (cfg.Workspace); a "" workspace
-// yields nil (no project root ⇒ no project models, the fast path in
-// foldProjectModelBindings handles the nil). It uses the read-only OS workspace so the
-// resolver's Stat/Read seam works against the host filesystem.
-func projectModelWorkspace(cfg Config) tool.WorkspaceReader {
-	if strings.TrimSpace(cfg.Workspace) == "" {
-		return nil
-	}
-	ws, err := osfs.NewWorkspace(cfg.Workspace)
-	if err != nil {
-		return nil
-	}
-	return ws
-}
-
-// canonicalAllowlist resolves every operator-allowlist ENTRY (an alias name or a concrete
-// id) through lookupModelAlias against the operator-merged alias map, returning the SET of
-// concrete ids a project binding must resolve INTO to be honoured. An entry that does not
-// resolve to a concrete id (unknown bare token, or an alias meaning inherit) contributes
-// nothing — fail-closed: an unresolvable allowlist entry never widens the cap.
-func canonicalAllowlist(cfg Config, entries []string) map[string]struct{} {
-	set := make(map[string]struct{}, len(entries))
-	for _, e := range entries {
-		e = strings.TrimSpace(e)
-		if e == "" {
-			continue
-		}
-		if id, known := lookupModelAlias(cfg, e); known && id != "" {
-			set[id] = struct{}{}
-		}
-	}
-	return set
-}
-
-// capResolve resolves a project selector to a concrete id and tests it against the
-// canonical allowlist set (resolve-then-check). It returns (id, true) when the selector
-// resolves to a concrete id that IS in the set, else ("", false). A selector that does not
-// resolve to a concrete id (unknown bare token / inherit) is rejected — a project binding
-// must name something the operator vetted.
-func capResolve(cfg Config, sel string, allowed map[string]struct{}) (string, bool) {
-	if sel == "" {
-		return "", false
-	}
-	id, known := lookupModelAlias(cfg, sel)
-	if !known || id == "" {
-		return "", false
-	}
-	if _, ok := allowed[id]; !ok {
-		return "", false
-	}
-	return id, true
-}
-
-// foldOperatorModelRouter folds the OPERATOR-TIER `models.router:` taxonomy (ADR 0031,
-// Phase 5) onto cfg: the routing categories, the default category, and the classifier
+// foldOperatorModelRouter folds the OPERATOR-TIER `models.router:` taxonomy
+// onto cfg: the routing categories, the default category, and the classifier
 // slot. It is OPERATOR-TIER ONLY (read from OperatorModelPolicy(), which is the
-// user-global + CLI tiers; a project-tier router: was already stripped with a WARN in
-// captureProjectModels). It is FAIL-SOFT: a category with an empty name OR an empty
+// user-global + CLI tiers; project-tier models blocks are ignored with a WARN). It is
+// FAIL-SOFT: a category with an empty name OR an empty
 // description OR an empty model selector is WARN-dropped (a category the classifier
 // cannot name/describe, or that maps to nothing, is useless) — the rest still load.
-// ADR 0042 (superseding 0031's enable model): the TAXONOMY enables the router, so this
+// The TAXONOMY enables the router, so this
 // fold ALSO ORs the YAML `disabled:` kill-switch onto cfg.RouterDisabled (mirroring
 // foldOperatorGuardrails' Disabled handling) — the CLI kill-switch sets the same field,
 // the two combine. A no-taxonomy operator (no router: block) leaves cfg byte-identical.
@@ -672,7 +613,7 @@ func foldOperatorModelRouter(cfg Config) Config {
 		cfg.RouterJevMinimumConfidence = router.Jev.MinimumConfidence
 		cfg.RouterJevMaximumInputBytes = router.Jev.MaximumInputBytes
 	}
-	// Disabled: OR the YAML kill-switch with the CLI one (either disables) — ADR 0042,
+	// Disabled: OR the YAML kill-switch with the CLI one (either disables),
 	// mirroring foldOperatorGuardrails.
 	if router.Disabled {
 		cfg.RouterDisabled = true
@@ -740,8 +681,8 @@ func prepareJevRouter(cfg *Config) error {
 	}
 }
 
-// resolveRouterClassifierModel resolves the model the model-router CLASSIFIER runs on
-// (ADR 0031), the SINGLE source both buildModelRouterTask (the live closure, keyed on the
+// resolveRouterClassifierModel resolves the model the model-router CLASSIFIER runs on,
+// the SINGLE source both buildModelRouterTask (the live closure, keyed on the
 // session's parentModel) and logModelRouterFacts (the build-once narration, keyed on
 // cfg.Model) call — so the logged classifier model is exactly the one a session of that
 // parentModel classifies on. Precedence: an operator `classifier-slot` wins; else the
@@ -787,10 +728,10 @@ func logSlotConfigFacts(cfg Config) {
 	if len(cfg.ModelSlots) == 0 {
 		return
 	}
-	for _, slot := range []string{slotCompaction, slotAskReviewer, slotGuardrail, slotTitle, slotPlan, slotRouter} {
+	for _, slot := range []string{slotCompaction, slotAskReviewer, slotGuardrail, slotReflection, slotTitle, slotPlan, slotRouter} {
 		model, ok := resolveSlotModel(cfg, slot, cfg.Model)
-		// The three internal call-slots route a lightweight housekeeping call; the
-		// plan slot (ADR 0030 Layer 3) instead re-resolves the SESSION model in plan
+		// The internal call-slots route a lightweight housekeeping call; the
+		// plan slot instead re-resolves the SESSION model in plan
 		// mode (the opusplan pattern) — narrate it distinctly so the INFO is honest.
 		active := "model slot ACTIVE: this internal lightweight call runs on the slot model instead of the session model"
 		if slot == slotPlan {
@@ -812,11 +753,10 @@ func logSlotConfigFacts(cfg Config) {
 	}
 }
 
-// logModelRouterFacts emits the build-once Subagent-model-router fact (ADR 0031; enable
-// model per ADR 0042) EXACTLY ONCE through cfg.diag(). Per ADR 0042 the TAXONOMY is the
+// logModelRouterFacts emits the build-once Subagent-model-router fact
+// EXACTLY ONCE through cfg.diag(). The TAXONOMY is the
 // enable, so:
-//   - no taxonomy (len(RouterCategories)==0)        → SILENT (byte-identical OFF; the
-//     0031 "flag set but no taxonomy" WARN is GONE — there is no enable flag anymore).
+//   - no taxonomy (len(RouterCategories)==0) → SILENT; there is no enable flag.
 //   - taxonomy present + cfg.RouterDisabled          → a one-time WARN: the taxonomy is
 //     configured but the kill-switch (CLI --subagent-model-router=false or the YAML
 //     models.router.disabled) forces it OFF, so no routing happens.
@@ -827,7 +767,7 @@ func logSlotConfigFacts(cfg Config) {
 // emits exactly THREE lines" invariant holds, this is a Build fact not a loop line).
 func logModelRouterFacts(cfg Config) {
 	if len(cfg.RouterCategories) == 0 {
-		return // No taxonomy: byte-identical, silent (ADR 0042 — taxonomy is the enable).
+		return // No taxonomy: byte-identical, silent (taxonomy is the enable).
 	}
 	if cfg.RouterDisabled {
 		cfg.diag().Log(context.Background(), port.LevelWarn,
@@ -887,7 +827,7 @@ func boundedRouterFact(value string) string {
 }
 
 // modeNeedsEngine returns the composition predicate wired into
-// server.Config.ModeNeedsEngine (ADR 0030 Layer 3): for a given session
+// server.Config.ModeNeedsEngine: for a given session
 // PermissionMode, does that mode resolve a model DIFFERING from the shared engine's
 // model (cfg.Model)? It is true ONLY for ModePlan when the `plan` slot resolves to a
 // concrete id that differs from cfg.Model — the only case where promoting a DEFAULT-FS
@@ -902,8 +842,12 @@ func boundedRouterFact(value string) string {
 // shared-engine model), because promotion only matters for a session that would
 // otherwise ride the shared engine.
 func modeNeedsEngine(cfg Config) func(mode session.PermissionMode) bool {
-	planModel, configured := resolveSlotModel(cfg, slotPlan, cfg.Model)
-	if !configured || planModel == "" || planModel == cfg.Model {
+	providerID := strings.TrimSpace(cfg.DefaultProvider)
+	if cfg.modelProviderRegistry != nil {
+		providerID = cfg.modelProviderRegistry.Default()
+	}
+	planModel, crossProviderFallback := resolvePlanSessionModel(cfg, providerID, cfg.Model, session.ModePlan)
+	if !crossProviderFallback && planModel == cfg.Model {
 		// No active plan slot (or it resolves to the shared-engine model): a mode flip
 		// never changes the model, so never promote — nil keeps the default-FS path
 		// byte-identical.

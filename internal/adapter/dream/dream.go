@@ -46,8 +46,8 @@ type Config struct {
 	// MaxInputBytes bounds the complete user message sent to the planner. Entries
 	// that do not fit are skipped; individual values are never truncated.
 	MaxInputBytes int
-	// MaxForgets caps admitted source retirements. Zero selects the historical
-	// default; a negative value disables application while still reporting the
+	// MaxForgets caps admitted source retirements. Zero selects the default
+	// (defaultMaxForgets); a negative value disables application while still reporting the
 	// normalized proposals as skipped.
 	MaxForgets int
 	Timeout    time.Duration

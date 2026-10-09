@@ -47,6 +47,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/goccy/go-yaml"
 	"github.com/goccy/go-yaml/ast"
@@ -164,17 +165,12 @@ type Config struct {
 	// keeps the CLI/default). The composition layer parses the string; permconfig only
 	// reads the scalar.
 	Posture string `yaml:"posture"`
-	// Models holds the per-slot model config (ADR 0030): the `models.slots` /
-	// `models.aliases` maps, the session `default`, and the operator-tier `allowlist`
-	// cap. At the OPERATOR tier (user-global + CLI) all fields are honoured. At the
-	// PROJECT tier (Phase 4) a models: block is honoured WITHIN the operator allowlist
-	// on a TRUSTED workspace (slots/aliases/default only); with no operator allowlist
-	// it stays WARN-ignored (the opt-in — byte-identical to pre-Phase-4), and a
-	// project-tier allowlist: key is always ignored with a WARN (non-wideable cap).
-	// The TOP `models:` mapping is parsed STRICTLY (an unknown key like `slotz:`
-	// errors), the inner slots/aliases maps stay free-form (composition validates the
-	// slot keys fail-soft). A nil Models means the key was absent. The composition
-	// layer reads the maps; permconfig only carries them.
+	// Models holds operator-tier model bindings. Project-tier models: blocks are
+	// ignored with a warning before nested schema decoding. The TOP `models:` mapping
+	// is parsed STRICTLY (an unknown key like `slotz:` errors), the inner slots/aliases
+	// maps stay free-form (composition validates the slot keys fail-soft). A nil Models
+	// means the key was absent. The composition layer reads the maps; permconfig only
+	// carries them.
 	Models *ModelsSection `yaml:"models"`
 	// ReasoningEffort is the OPERATOR-TIER reasoning-effort scalar (the
 	// neutral vocabulary "" / "auto" / "low" / "medium" / "high" / "xhigh" / "max").
@@ -186,7 +182,7 @@ type Config struct {
 	// permconfig only reads the scalar.
 	ReasoningEffort string `yaml:"reasoning-effort"`
 	// PlanModeAutoApprove is the OPERATOR-TIER plan-mode-auto-approve flag (issue
-	// #206 Wave 6a). Like Posture/ReasoningEffort it is honoured ONLY
+	// #206). Like Posture/ReasoningEffort it is honoured ONLY
 	// from the user-global + CLI tiers; a project-tier file's plan-mode-auto-approve:
 	// key is IGNORED with a WARN (operator-tier only — a project repo enabling
 	// autonomous plan approval is a security DOWNGRADE). false = absent (the resolver
@@ -734,8 +730,10 @@ type MCPOAuthClientProfile struct {
 type MCPPreregisteredClientProfile struct {
 	// ID is the required preregistered OAuth client identifier.
 	ID string `yaml:"id"`
-	// SecretEnv is a MECATL_* environment variable name containing the client secret.
+	// SecretEnv is a MECATL_* environment variable name containing the client secret; mutually exclusive with SecretFile.
 	SecretEnv string `yaml:"secret_env"`
+	// SecretFile is an absolute path to a regular file containing the client secret; mutually exclusive with SecretEnv.
+	SecretFile string `yaml:"secret_file"`
 }
 
 // MCPCIMDClientProfile contains the HTTPS client-id metadata document URL.
@@ -815,6 +813,7 @@ func ValidateMCPServerName(name string) error {
 
 const (
 	modeKey           = "mode"
+	modelKey          = "model"
 	mcpOAuth2Mode     = "oauth2"
 	mcpCredentialFile = "file"
 )
@@ -1074,7 +1073,7 @@ func (c *MCPOAuthClientProfile) UnmarshalYAML(node ast.Node) error {
 }
 
 func (c *MCPPreregisteredClientProfile) strictFields() map[string]any {
-	return map[string]any{"id": &c.ID, "secret_env": &c.SecretEnv}
+	return map[string]any{"id": &c.ID, "secret_env": &c.SecretEnv, "secret_file": &c.SecretFile}
 }
 
 // UnmarshalYAML strictly decodes preregistered client metadata.
@@ -1085,7 +1084,19 @@ func (c *MCPPreregisteredClientProfile) UnmarshalYAML(node ast.Node) error {
 	if err := validateMCPSafeValue("mcp.servers[].auth.oauth.client.preregistered.id", c.ID); err != nil {
 		return err
 	}
-	return validateMCPSecretRef("mcp.servers[].auth.oauth.client.preregistered.secret_env", c.SecretEnv)
+	if mappingHasKey(node, "secret_env") && mappingHasKey(node, "secret_file") {
+		return errors.New("mcp.servers[].auth.oauth.client.preregistered: secret_env and secret_file are mutually exclusive")
+	}
+	if mappingHasKey(node, "secret_env") {
+		return validateMCPSecretRef("mcp.servers[].auth.oauth.client.preregistered.secret_env", c.SecretEnv)
+	}
+	if err := validateMCPSafeValue("mcp.servers[].auth.oauth.client.preregistered.secret_file", c.SecretFile); err != nil {
+		return err
+	}
+	if !filepath.IsAbs(c.SecretFile) {
+		return errors.New("mcp.servers[].auth.oauth.client.preregistered.secret_file must be absolute")
+	}
+	return nil
 }
 
 func (c *MCPCIMDClientProfile) strictFields() map[string]any {
@@ -1599,7 +1610,7 @@ func (s *ModelSlots) UnmarshalYAML(node ast.Node) error {
 			seen := map[string]bool{}
 			for _, field := range fields.Values {
 				key, isString := permconfigMappingKey(field.Key)
-				if !isString || (key != "provider" && key != "model") {
+				if !isString || (key != "provider" && key != modelKey) {
 					return fmt.Errorf("models.slots.guardrail: unknown key %q", key)
 				}
 				if seen[key] {
@@ -1633,20 +1644,62 @@ func (s *ModelSlots) UnmarshalYAML(node ast.Node) error {
 	return nil
 }
 
-// ModelsSection is the `models:` YAML subtree (ADR 0030): a per-slot model-binding
-// map, an alias map, a session-default binding, and the operator-tier allowlist cap.
-// The TOP mapping is parsed STRICTLY (unknown keys error); the inner Slots/Aliases
-// maps are free-form name→selector (composition validates the slot names fail-soft
-// via knownSlotNames).
-//
-// The block appears at BOTH tiers but the tiers differ in what they may carry
-// (Phase 4):
-//   - OPERATOR tier (user-global + CLI): all four fields. The Allowlist is the
-//     non-wideable cap on what a PROJECT may bind; Slots/Aliases/Default are the
-//     operator's own bindings (never capped — the operator is authoritative).
-//   - PROJECT tier (.mecatl/settings.yaml): Slots/Aliases/Default ONLY, honoured
-//     only within the operator Allowlist and only on a TRUSTED workspace. A project
-//     Allowlist: key is IGNORED with a WARN (a project cannot widen its own cap).
+// ModelAliasTarget is one operator alias target. An empty Provider preserves the
+// scalar, contextual-provider form; a non-empty Provider is an atomic pair.
+type ModelAliasTarget struct {
+	// Provider optionally names the exact configured provider for this alias.
+	Provider string
+	// Model is the opaque provider model ID and is always required.
+	Model string
+}
+
+// ModelAliases is the strict models.aliases mapping.
+type ModelAliases map[string]ModelAliasTarget
+
+// UnmarshalYAML accepts scalar aliases and exact {provider, model} objects.
+func (a *ModelAliases) UnmarshalYAML(node ast.Node) error {
+	mapping, ok := permconfigMapping(node)
+	if !ok {
+		return fmt.Errorf("models.aliases: must be a mapping")
+	}
+	out := make(ModelAliases, len(mapping.Values))
+	for _, entry := range mapping.Values {
+		name, stringKey := permconfigMappingKey(entry.Key)
+		if !stringKey || strings.TrimSpace(name) == "" {
+			return fmt.Errorf("models.aliases: alias key must be a non-empty string")
+		}
+		if _, duplicate := out[name]; duplicate {
+			return fmt.Errorf("models.aliases.%s: duplicate alias key", name)
+		}
+		if _, isMapping := permconfigMapping(entry.Value); isMapping {
+			var target ModelAliasTarget
+			if err := decodeStrictMapping(entry.Value, "models.aliases."+name, map[string]any{
+				"provider": &target.Provider,
+				modelKey:   &target.Model,
+			}); err != nil {
+				return err
+			}
+			target.Provider = strings.TrimSpace(target.Provider)
+			target.Model = strings.TrimSpace(target.Model)
+			if target.Provider == "" || target.Model == "" {
+				return fmt.Errorf("models.aliases.%s: provider and model are both required and non-empty", name)
+			}
+			out[name] = target
+			continue
+		}
+		var scalar string
+		if err := yaml.NewDecoder(bytes.NewReader(nil)).DecodeFromNode(entry.Value, &scalar); err != nil {
+			return fmt.Errorf("models.aliases.%s: target must be a string or provider/model object", name)
+		}
+		out[name] = ModelAliasTarget{Model: strings.TrimSpace(scalar)}
+	}
+	*a = out
+	return nil
+}
+
+// ModelsSection holds operator-owned model aliases, slots, defaults, and router
+// settings. Project-tier models blocks are ignored. Unknown top-level keys fail
+// parsing; slots and aliases accept user-defined names.
 type ModelsSection struct {
 	// Slots binds a slot name to a model selector. Call slots include
 	// "compaction", "ask-reviewer", and "guardrail"; tier slots include
@@ -1656,51 +1709,30 @@ type ModelsSection struct {
 	// tier when configured. The guardrail slot alone also accepts an operator-only
 	// explicit provider route.
 	Slots ModelSlots `yaml:"slots"`
-	// Aliases binds a short alias to a concrete model id (merged onto the CLI
-	// --model-alias map, CLI winning per key).
-	Aliases map[string]string `yaml:"aliases"`
-	// Default is the session-default model selector (alias or concrete id). It is the
-	// project-overridable session default — within the operator
-	// allowlist; the operator's own Default is uncapped. Empty = absent.
+	// Aliases binds a short name to either a scalar model ID (bound to the
+	// effective configured default provider when present, otherwise contextual)
+	// or a strict provider/model object. CLI --model-alias replaces the whole
+	// lower-tier target with a contextual scalar; --model-alias-provider supplies
+	// its optional provider.
+	Aliases ModelAliases `yaml:"aliases"`
+	// Default is the operator-tier session-default model selector (alias or concrete
+	// id). A provider-aware alias selects the whole provider/model default; a
+	// separately configured default_provider applies only to scalar selectors.
+	// Empty = absent.
 	Default string `yaml:"default"`
-	// Subagent is the OPERATOR-TIER def-less child-default model selector (alias or
-	// concrete id): the settings.yaml twin of the --subagent-model flag (issue #288).
-	// It sets the global default model for every Subagent / Parallel-branch / team-member
-	// child that does not pin its own model (via an agent definition or a per-call
-	// override). Operator-tier ONLY: a project-tier subagent: is IGNORED with a WARN (the
-	// child-default model is an operator decision — the same operator-only captureModels
-	// discipline as default_provider/allowlist/router). The CLI --subagent-model WINS when
-	// both are set. Validated FAIL-FAST at Build (normalizeSubagentModel): a value that
-	// does not resolve to a usable model id is a startup error (unlike fail-soft
-	// models.default). Empty = absent (the flag/inherit-parent behaviour is unchanged).
+	// Subagent sets the default model for unpinned Subagent, Parallel, and Team
+	// members. --subagent-model takes precedence. Invalid targets fail startup.
 	Subagent string `yaml:"subagent"`
-	// DefaultProvider is the OPERATOR-TIER deployment-wide default provider id (e.g.
-	// openai, openrouter, anthropic, toolhive). It mirrors the --default-provider flag
-	// (app.Config.DefaultProvider) so an operator can declare "toolhive is my default
-	// despite my API key" persistently in settings.yaml without unsetting the key. It
-	// feeds the UNCHANGED preferredDefaultProvider ladder as an explicit override — it
-	// does NOT lower the precedence of key-driven providers. Operator-tier only: a
-	// project-tier default_provider: is IGNORED with a WARN (the same operator-only
-	// captureModels discipline as posture/guardrails/allowlist). Validated FAIL-FAST at
-	// Build (validateDefaultModel): an unknown/unavailable provider is a startup error.
-	// Empty = absent (the ladder's preferred default wins). The name pair
-	// (default = model, default_provider = provider) mirrors the wire grammar exactly.
+	// DefaultProvider sets the provider for scalar defaults, aliases, slots, and
+	// delegation routes. A provider-aware default alias selects its own provider
+	// for the main session; the configured default provider must still be available
+	// for scalar bindings. Unknown or unavailable providers fail startup.
 	DefaultProvider string `yaml:"default_provider"`
-	// Allowlist is the OPERATOR-TIER, non-wideable cap: the set of
-	// model selectors (alias names and/or concrete ids) a PROJECT-tier models: block
-	// may bind to. An empty/absent allowlist means project models stay WARN-ignored
-	// (the opt-in: no cap ⇒ no project override, byte-identical to pre-Phase-4). It is
-	// honoured ONLY from the operator tiers; a project-tier allowlist: key is ignored
-	// with a WARN (a project cannot widen its own cap).
+	// Allowlist is retained for compatibility, has no effect, and emits a warning when configured.
 	Allowlist []string `yaml:"allowlist"`
-	// Router is the OPERATOR-TIER semantic Subagent model-router taxonomy: a classifier slot, the routing
-	// categories, the default category, and the YAML kill-switch. It is operator-tier
-	// ONLY — a project-tier router: sub-block is STRIPPED with a WARN (the taxonomy is
-	// an autonomous-spend/capability decision the operator owns, like the allowlist).
-	// nil/absent = no taxonomy ⇒ the router is OFF (byte-identical, silent). The
-	// TAXONOMY is the enable: a non-empty router: with categories turns the
-	// router ON unless `disabled: true` (or the CLI kill-switch) forces it off — the
-	// guardrails-parity enable model, not a flag-to-enable.
+	// Router selects models for unpinned delegated work by category. A non-empty
+	// category list enables routing unless disabled here or by CLI. Project-tier
+	// models blocks are ignored, including router settings.
 	Router *RouterSection `yaml:"router"`
 	// ContextWindows is the OPERATOR-TIER exact provider ID → exact final model ID
 	// → total context token override map. It is intentionally not a selector map:
@@ -1766,7 +1798,7 @@ func (c *ContextWindows) UnmarshalYAML(node ast.Node) error {
 	return nil
 }
 
-// RouterSection is the `models.router:` operator-tier subtree (ADRs 0031 and 0352):
+// RouterSection is the `models.router:` operator-tier subtree:
 // the semantic delegated-model taxonomy and its explicitly selected classifier backend.
 // Composition maps the backend's exact category choice through the same local
 // category-to-model alias machinery.
@@ -1799,7 +1831,7 @@ type RouterSection struct {
 	Disabled bool `yaml:"disabled"`
 }
 
-// RouterCategory is one routing category in the operator taxonomy (ADR 0031): a name,
+// RouterCategory is one routing category in the operator taxonomy: a name,
 // a one-line description the classifier reads, and the model selector the category maps
 // to. A category with an empty Name or Description is WARN-dropped fail-soft in
 // composition (foldOperatorModelRouter) — a category the classifier cannot describe or
@@ -1812,6 +1844,7 @@ type RouterCategory struct {
 	Description string `yaml:"description"`
 	// Model is the model selector (alias / slot / concrete id) a task classified into
 	// this category is minted on, resolved through the operator-merged alias map.
+	// A scalar target uses the configured default provider when present.
 	Model string `yaml:"model"`
 }
 
@@ -1845,7 +1878,7 @@ func (j *JevRouterSection) UnmarshalYAML(node ast.Node) error {
 		}
 	}
 	if err := decodeStrictMapping(node, "models.router.jev", map[string]any{
-		"model": &j.Model, "base-url": &j.BaseURL, "minimum-confidence": &j.MinimumConfidence,
+		modelKey: &j.Model, "base-url": &j.BaseURL, "minimum-confidence": &j.MinimumConfidence,
 		"maximum-input-bytes": &j.MaximumInputBytes,
 	}); err != nil {
 		return err
@@ -1879,7 +1912,7 @@ func (r *RouterSection) strictFields() map[string]any {
 	}
 }
 
-// UnmarshalYAML decodes the models.router: mapping STRICTLY (ADR 0031): an unknown key
+// UnmarshalYAML decodes the models.router: mapping STRICTLY: an unknown key
 // inside the router subtree is a parse error (same rationale as ModelsSection).
 func (r *RouterSection) UnmarshalYAML(node ast.Node) error {
 	r.Backend = "llm"
@@ -1899,13 +1932,24 @@ func (c *RouterCategory) strictFields() map[string]any {
 	return map[string]any{
 		"name":        &c.Name,
 		"description": &c.Description,
-		"model":       &c.Model,
+		modelKey:      &c.Model,
 	}
 }
 
 // UnmarshalYAML decodes a router category mapping STRICTLY.
 func (c *RouterCategory) UnmarshalYAML(node ast.Node) error {
-	return decodeStrictMapping(node, "models.router.categories[]", c.strictFields())
+	if err := decodeStrictMapping(node, "models.router.categories[]", c.strictFields()); err != nil {
+		return err
+	}
+	if !utf8.ValidString(c.Description) || len(c.Description) > 512 {
+		return errors.New("models.router.categories[].description: must be valid UTF-8 and at most 512 bytes")
+	}
+	for _, r := range c.Description {
+		if r != '\n' && unicode.IsControl(r) {
+			return errors.New("models.router.categories[].description: must not contain control characters other than newlines")
+		}
+	}
+	return nil
 }
 
 func (m *ModelsSection) strictFields() map[string]any {
@@ -1921,7 +1965,7 @@ func (m *ModelsSection) strictFields() map[string]any {
 	}
 }
 
-// UnmarshalYAML decodes the models: mapping STRICTLY (ADR 0030): an unknown key
+// UnmarshalYAML decodes the models: mapping STRICTLY: an unknown key
 // inside the models subtree is a parse error — a typo like `slotz:` or `aliasez:`
 // must not silently drop a whole binding map. Same rationale as GuardrailsSection.
 func (m *ModelsSection) UnmarshalYAML(node ast.Node) error {
@@ -2005,7 +2049,7 @@ func (g *GuardrailsSection) UnmarshalYAML(node ast.Node) error {
 
 func (g *GuardrailsSection) strictFields() map[string]any {
 	return map[string]any{
-		"model":         &g.Model,
+		modelKey:        &g.Model,
 		"disabled":      &g.Disabled,
 		"onCheckerDown": &g.OnCheckerDown,
 		"defaultMode":   &g.DefaultMode,

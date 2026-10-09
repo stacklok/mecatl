@@ -15,13 +15,12 @@ executable. Add `status_customization` to
 embedded and connected sessions. Project files, remote servers, prompts, and
 sessions cannot change it.
 
-With no `status_customization:` entry, `mecatui` uses its shipped responsive
-templates. The header includes the active session title at every width and the
-remote target in its full variant. Keyboard help, the header
-posture/scroll/changed-file indicators, and the footer activity lane remain part
-of the client interface; customization cannot remove them. In a debug session,
-the header also keeps a `⚠ DEBUG target` cue ahead of generated content and a
-privacy disclosure below it, even if a custom header is empty.
+With no `status_customization:` entry, `mecatui` uses its shipped templates.
+The header includes the session title at every width and the connected remote
+target in its full variant. Customization cannot remove keyboard help, the
+posture, scroll, and changed-file indicators, or the activity cue. In a debug
+session, it cannot remove the `⚠ DEBUG target` cue or privacy disclosure, even
+if the custom header is empty.
 
 ## Choose a source
 
@@ -67,7 +66,9 @@ sequences, or links. Use StatusML tags in the template itself.
 Template fields have the same shape as the command JSON below. `Clock.Now` is a
 time value and supports `{{.Clock.Now.Format "15:04"}}`. The `Human` members are
 preformatted display values; use each `Raw` member when a template needs an
-exact count.
+exact count. For example, `<header><text>{{.Model.ProviderLabel}}</text></header>`
+shows the provider-qualified model identity; use `.Model.FriendlyName` when a
+human-readable catalog name is preferable.
 
 ### Common template functions
 
@@ -125,14 +126,17 @@ refreshes it.
 
 |JSON path|Type|Meaning|
 |-|-|-|
-|`Version`|integer|Status input protocol version (currently `4`).|
+|`Version`|integer|Status input protocol version (currently `5`).|
 |`Server.DisplayTarget`|string|Credential-free target shown by the client.|
 |`Server.ConnectionMode`|string|`embedded`, `connect`, or empty while unknown.|
 |`Session.Title`|string|Optional display title.|
 |`Session.Handle`|string|Short displayed session ID, available to custom status and terminal-title templates. Use `/session` to copy the full ID.|
 |`Session.Mode`|string|Active or pending permission mode used by the shipped header.|
 |`Session.ReasoningEffort`|string|`low`, `medium`, `high`, `xhigh`, `max`, or empty.|
-|`Model.ProviderID`, `Model.ID`, `Model.DisplayName`, `Model.Route`|strings|Provider/model routing identifiers, display label, and observed downstream route.|
+|`Model.ProviderID`, `Model.ID`|strings|Exact provider and model routing identifiers for the resolved session.|
+|`Model.ProviderLabel`|string|Provider-qualified identity (`provider-id/model-id`), or the raw model ID if provider evidence is unavailable. Slashes in the model ID are retained.|
+|`Model.FriendlyName`|string|Human-readable catalog name, falling back to the raw model ID. This is a display name, not the provider-qualified identity.|
+|`Model.Route`|string|Observed downstream route, separate from model identity.|
 |`Model.ContextWindow.{Raw,Human}`|integer, string|Resolved context capacity as exact and display-ready values.|
 |`Usage.{Input,Output,CacheRead,CacheWrite}.{Raw,Human}`|integer, string|Cumulative exact and display-ready token atoms. `CacheRead` is a subset of input.|
 |`Usage.CacheReadPercent`|integer|`CacheRead.Raw / Input.Raw` as an integer percentage, or `0` when input is zero.|
@@ -183,14 +187,14 @@ A link keeps its display text separate from its destination. Use the StatusML
 nested-link children are not supported:
 
 ```text
-<footer><link href="https://docs.example.test/status">status docs</link></footer>
+<footer><link href="https://docs.example.com/status">status docs</link></footer>
 ```
 
 These forms are invalid:
 
 ```text
-<footer><a href="https://docs.example.test/status">status docs</a></footer>
-<footer><link href="https://docs.example.test/status"><text>status docs</text></link></footer>
+<footer><a href="https://docs.example.com/status">status docs</a></footer>
+<footer><link href="https://docs.example.com/status"><text>status docs</text></link></footer>
 ```
 
 ### Escaping dynamic command output
@@ -226,11 +230,11 @@ or validate it with a URL parser before producing the StatusML document.
 Only bounded `http` and `https` URLs without user information are retained.
 Links emit native OSC 8 terminal hyperlinks. Terminals and multiplexers that
 support OSC 8 make them followable; others retain the theme-styled underlined
-text as a visual fallback. Unsafe link destinations lose
-their destination but retain their display text. Control characters, including
-ANSI, OSC, newline, tab, and Unicode line-separator controls, are removed from
-markup text, link metadata, and theme data before rendering. StatusML is always
-rendered as one terminal line.
+text as a visual fallback. Unsafe link destinations lose their destination but
+retain their display text. Control characters, including ANSI, OSC, newline,
+tab, and Unicode line-separator controls, are removed from markup text, link
+metadata, and theme data before rendering. StatusML is always rendered as one
+terminal line.
 
 ### Handle command failures
 
@@ -257,10 +261,9 @@ diagnostics somewhere other than standard error. Malformed StatusML in a
 template renders as literal text; malformed command output triggers the fallback
 behavior above.
 
-The v1 token-to-palette mapping is a best effort, not a cross-widget
-compatibility promise.
-[Issue #799](https://github.com/stacklok/mecatl/issues/799) tracks the stable
-semantic theme-token contract.
+Semantic tokens map to the current theme palette, but their appearance can vary
+between widgets. [Issue #799](https://github.com/stacklok/mecatl/issues/799)
+tracks the stable semantic theme-token contract.
 
 ## Use a direct executable
 
@@ -349,9 +352,8 @@ surface with a stale marker when it fits, or falls back to the shipped default.
 it on a clean exit. Title templates produce plain text and are independent of
 StatusML and status commands.
 
-Configure the title in the client-owned
-`$XDG_CONFIG_HOME/mecatui/settings.yaml` file (normally
-`~/.config/mecatui/settings.yaml`):
+Configure the title in the client-owned `$XDG_CONFIG_HOME/mecatui/settings.yaml`
+file (normally `~/.config/mecatui/settings.yaml`):
 
 ```yaml
 terminal_title:
@@ -365,19 +367,19 @@ state-aware: it prefixes a titled session with a state label and elides the
 title to 40 display columns. Without a title, it shows the state label with
 `mecatui` when a session handle is available, otherwise just `mecatui`. It does
 not include the session handle itself; add `.Session.Handle` when you want one.
-Title templates use the shared template input described in [Status input
-reference](#status-input-reference), including `Workspace.Path`, and support
-the common `elide` and `lookup` functions.
+Title templates use the shared template input described in
+[Status input reference](#status-input-reference), including `Workspace.Path`,
+and support the common `elide` and `lookup` functions.
 
 Title writes follow this precedence:
 
-1. `--terminal-title=off` disables the controller, while
-   `--terminal-title=on` enables it even when settings disable it. Both forms
-   accept `true`, `false`, `1`, and `0`.
+1. `--terminal-title=off` disables the controller, while `--terminal-title=on`
+   enables it even when settings disable it. Both forms accept `true`, `false`,
+   `1`, and `0`.
 2. When the flag is absent, `MECATUI_NO_TERMINAL_TITLE=1` or `true` disables
    title writes.
-3. When neither explicit control applies, `terminal_title.enabled` controls
-   the feature. The default is enabled.
+3. When neither explicit control applies, `terminal_title.enabled` controls the
+   feature. The default is enabled.
 
 A terminal emulator or multiplexer decides whether and where to show the title,
 so a tab or pane label can remain unchanged. Disable titles when the terminal

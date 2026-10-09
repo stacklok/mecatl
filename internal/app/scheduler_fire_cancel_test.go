@@ -235,7 +235,7 @@ func runFireCancelTest(t *testing.T, shareStore bool) {
 	}
 	// Recoverability: a cancelled session is Interrupt-recoverable (cancelled→idle).
 	// Pin that the aggregate accepts Interrupt from the persisted cancelled state,
-	// so a later loadAndReopen recovers it (the cloud-native Phase 1 guarantee).
+	// so a later loadAndReopen recovers it.
 	if err := sess.Interrupt(); err != nil {
 		t.Errorf("Interrupt on the persisted cancelled session failed: %v (the snapshot must be Interrupt-recoverable)", err)
 	}

@@ -5,8 +5,8 @@ import "encoding/json"
 // This file defines the ACP wire types this adapter (de)serializes. They are the
 // adapter's OWN JSON shapes — deliberately NOT the proto contract (contracts/gen)
 // — mirroring the relevant subset of the ACP schema
-// (github.com/zed-industries/agent-client-protocol). Only the Phase 1 fields are
-// modelled; unmodelled fields are simply not emitted (ACP treats absent optional
+// (github.com/zed-industries/agent-client-protocol). Only the fields this adapter uses
+// are modelled; unmodelled fields are simply not emitted (ACP treats absent optional
 // fields as defaults).
 
 // protocolVersion is the ACP protocol version this adapter implements. ACP bumps
@@ -349,7 +349,7 @@ const (
 // toolCallContent is the ToolCallContent union. Two variants are emitted:
 //   - the "content" variant wraps a text ContentBlock (results, progress lines);
 //   - the "diff" variant carries a file path + old/new text so the editor renders
-//     a native inline diff for an Edit/Write (Phase 2).
+//     a native inline diff for an Edit/Write.
 //
 // The two variants carry mutually-exclusive fields, so the unused ones are
 // omitempty and a single struct expresses both. (terminal is still deferred.)

@@ -8,12 +8,11 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
-// escapeclassifier.go is the path-escape-posture Scenario 1 seam
-// (docs/acceptance/path-escape-posture.md): a PURE composition-layer
-// classification answering "is this FS-tool call an out-of-root escape?" It
-// changes NO behaviour — a later wave's root-aware wrapping
-// port.PermissionPolicy consumes it; here it only needs to exist and be proven
-// to agree with the tool body. The classifier is composition, not domain, per
+// escapeclassifier.go is the path-escape-posture classification seam: a PURE
+// composition-layer classification answering "is this FS-tool call an
+// out-of-root escape?" It changes NO behaviour — the root-aware wrapping
+// port.PermissionPolicy in escapepolicy.go consumes it; this file only has to
+// agree with the tool body. The classifier is composition, not domain, per
 // the layering rule: the escape *decision* is a posture/policy concern, while
 // engine/tool keeps FileSystem/Workspace (the port↔tool cycle gotcha).
 //
@@ -107,8 +106,8 @@ type fsPathArg struct {
 // classify reports the escapeKind of an FS-tool call. Only Read/ListDir/Write/Edit
 // carry a workspace path the escape decision applies to: Shell commands are
 // gated by the bash classifiers (SplitCommands/ReadOnlyShell), Glob/Grep route
-// patterns (not paths) and stay workspace-confined at every posture (ADR-0047
-// point 5), and every other tool has no FS path — all classify in-root so the
+// patterns (not paths) and stay workspace-confined at every posture,
+// and every other tool has no FS path — all classify in-root so the
 // later wrapping policy leaves them to the inner policy untouched. A malformed
 // or missing path arg also classifies in-root (the tool body's own arg
 // validation rejects it; the escape decision never invents a path).

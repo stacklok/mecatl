@@ -204,9 +204,6 @@ func (r *Reconciler) finishReplacement(ctx context.Context, env *unstructured.Un
 		}
 		_ = unstructured.SetNestedField(o.Object, epoch+1, "status", "epoch")
 		_ = unstructured.SetNestedMap(o.Object, map[string]any{"name": pod.Name, "uid": string(pod.UID)}, "status", "pod")
-		// Completed migration receipts are bound to the runtime being replaced.
-		unstructured.RemoveNestedField(o.Object, "status", "lastMigrationOperationID")
-		unstructured.RemoveNestedField(o.Object, "status", "lastMigrationFromSchema")
 		_ = unstructured.SetNestedMap(o.Object, map[string]any{operationIDField: operationID, "previousPodUID": text(op, "expectedPodUID"), "replacementPodUID": string(pod.UID), "pvcUID": text(op, "expectedPVCUID"), "previousEpoch": intNested(op, "expectedEpoch"), "replacementEpoch": epoch + 1}, "status", "lastReplacement")
 		unstructured.RemoveNestedField(o.Object, "status", "lifecycleOperation")
 		setConditionObject(o, "Ready", true, "ReplacementReady", "replacement executor is ready on the retained workspace")

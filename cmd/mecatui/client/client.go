@@ -514,8 +514,8 @@ func (c *Client) ClearSession(ctx context.Context, sourceID string, selector *Wo
 }
 
 // ForkSession creates a peer session from the conversation-history snapshot of the
-// session srcID (ADR 0065) and returns the bare new session id. reasoningEffort is
-// the OPTIONAL effort override (ADR 0068): empty inherits the source's effort
+// session srcID and returns the bare new session id. reasoningEffort is
+// the OPTIONAL effort override: empty inherits the source's effort
 // verbatim; provider and model ALWAYS inherit. This is the SINGLE proto-build point
 // for the fork — the ui passes plain strings and never sees the proto request. The
 // caller owns the follow-up GetSession refetch for the forked session's resolved
@@ -805,7 +805,7 @@ func (b bearerCreds) RequireTransportSecurity() bool { return !b.allowInsecure }
 //     which satisfies every other plaintext guard in Dial.
 //
 // It lives in Dial rather than in a caller's transport policy so EVERY caller of
-// this package inherits it. See docs/adr/0287-target-aware-mecatui-tls.md.
+// this package inherits it.
 func bearerTransportRefusal(cfg DialConfig, local bool) error {
 	if local || (cfg.AuthToken == "" && cfg.TokenSource == nil) {
 		return nil
@@ -826,7 +826,7 @@ func bearerTransportRefusal(cfg DialConfig, local bool) error {
 // filesystem, not the network, protects). Every plaintext/TLS decision in this
 // package and in the mecatui connect TLS policy goes through THIS predicate, so
 // the pre-dial guards and the per-RPC credential can never disagree about a
-// target. See docs/adr/0287-target-aware-mecatui-tls.md.
+// target.
 func IsLocalTarget(server string) bool {
 	return strings.HasPrefix(strings.TrimSpace(server), "unix://") || IsLoopbackHost(server)
 }

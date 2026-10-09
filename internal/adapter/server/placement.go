@@ -713,8 +713,8 @@ func (s *Service) privateGovernanceRoot(ctx context.Context, sess *session.Sessi
 
 // PlacementGovernanceRoot returns explicit host-side governance context when
 // provided. A non-local empty root means no host governance context and never
-// falls back to the execution namespace; local bindings preserve their historical
-// governance fallback.
+// falls back to the execution namespace; local bindings fall back to the
+// execution root for governance.
 func PlacementGovernanceRoot(binding PlacementBinding) (string, error) {
 	if binding.Ref.Kind == session.EnvKindNoFS {
 		if binding.GovernanceRoot != "" {
@@ -725,8 +725,8 @@ func PlacementGovernanceRoot(binding PlacementBinding) (string, error) {
 	if binding.GovernanceRoot != "" {
 		return binding.GovernanceRoot, nil
 	}
-	// Local providers historically exposed one host namespace for both execution
-	// and governance. Preserve that internal compatibility without ever treating
+	// Local providers expose one host namespace for both execution and
+	// governance. Preserve that internal compatibility without ever treating
 	// a non-local guest root (notably microVM /workspace) as a host path.
 	if binding.Ref.Kind == session.EnvKindLocal {
 		return binding.Environment.Workspace().Root(), nil

@@ -20,7 +20,7 @@ type prefixMemo struct {
 	hash   string
 }
 
-// promptCacheKey derives the prompt_cache_key (ADR 0100):
+// promptCacheKey derives the prompt_cache_key:
 //
 //	"mecatl-" + hex(sha256(stablePrefix))[:12] + "-" + hex(sha256(anchorText))[:8]
 //

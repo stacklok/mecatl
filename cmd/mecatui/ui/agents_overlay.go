@@ -767,8 +767,8 @@ func newAgentsOverlayLayout(th theme.Theme, tab agentsTab, width, height int) ag
 // renderBody lets the existing section renderers reduce their content window
 // against the real physical result. It never crops assembled output: a body is
 // accepted whole, or the normal card is declined. The added frameRows translate
-// the body-only capacity to the historical renderer-height convention while R2/R3
-// replace the current cursor windows.
+// the body-only capacity to the section renderers' height parameter, which
+// includes the frame rows.
 func (l agentsOverlayLayout) renderBody(build func(int) string, essential func() string) (string, bool) {
 	if !l.bounded {
 		return build(0), true
@@ -1019,7 +1019,7 @@ func centerAgentsCard(th theme.Theme, body string, outerWidth, width, height int
 // agentsEmptyHint is the "tab switch · esc close" footer used by the empty
 // subagent/parallel/team-tab states. The chords read the LIVE NextTab/Close
 // markings so an override propagates (issue #457); with defaults it is
-// byte-identical to the historical literal.
+// "tab switch · esc close".
 func agentsEmptyHint(hk helpKeys) string {
 	return hk.nextTab + " switch · " + hk.closeOnly + " close"
 }
@@ -1306,7 +1306,7 @@ func subagentRosterTitle(ln *subagentLane, bodyWidth, titlePrefixWidth int) stri
 
 func subagentRosterDetails(ln *subagentLane) string {
 	details := []string{}
-	if routed := delegationModelLabel(ln.routedCategory, ln.routedModel, ln.routingReason, ln.model, ln.routingDecision); routed != "" {
+	if routed := delegationModelLabelWithSelection(ln.routedCategory, ln.routedModel, ln.routingReason, ln.model, ln.provider, ln.explicitRouterCategory, ln.routingDecision); routed != "" {
 		details = append(details, routed)
 	}
 	details = append(details,
@@ -1432,7 +1432,7 @@ const childIDHashLen = 6
 
 // renderSubagentFocus renders ONE child's detail: a header line (glyph + goal +
 // current/last tool + count + usage), the bounded-previews honesty note (the
-// previews are bounded + scrubbed + client-only per ADR 0079 — gauntlet #7 is about
+// previews are bounded + scrubbed + client-only — gauntlet #7 is about
 // the conversation, not the client), and the interleaved child trace in the Team
 // focus format (tool chips with bounded previews + capped message lines),
 // height-bounded to the rows that fit. A focused ChildID with no matching lane (the
@@ -1466,7 +1466,7 @@ func prepareSubagentFocusAt(th theme.Theme, fleet []subagentLane, child string, 
 	out.WriteString(th.Style("askTitle").Render(wrapFocusMetadataAtWidth("subagent · "+goal, bodyWidth)))
 	out.WriteString("\n")
 	out.WriteString(muted.Render(subagentRosterText(ln, bodyWidth, 0)))
-	if detail := routingDecisionDetail(ln.routingDecision, ln.model, ln.routingReason); detail != "" {
+	if detail := routingDecisionDetail(ln.routingDecision, qualifiedModelLabel(ln.provider, ln.model), ln.routingReason); detail != "" {
 		out.WriteString("\n")
 		out.WriteString(muted.Render(hangingIndentWrap(detail, "  ", bodyWidth)))
 	}
@@ -1654,7 +1654,7 @@ func branchHumanLabel(g *parallelGroup, index int) string {
 
 // renderParallelGroupFocus renders ONE Parallel group's detail (ONE level — plan Q4): a
 // header (join + branch tally + run stop), the bounded-previews honesty note (the
-// previews are bounded + scrubbed + client-only per ADR 0079 — gauntlet #7 is about the
+// previews are bounded + scrubbed + client-only — gauntlet #7 is about the
 // conversation, not the client), every branch inline (glyph + label + goal +
 // current/last tool + count + usage; the SELECTED row carries the "▶" cursor the `x`
 // cancel key addresses, the WINNER row a "★") with its interleaved trace in the same
@@ -1738,7 +1738,7 @@ func indentParallelBranchTrace(trace string, bodyWidth int) string {
 func parallelBranchText(br *parallelBranch, bodyWidth, titlePrefixWidth int) string {
 	text := parallelBranchTitle(br, bodyWidth, titlePrefixWidth) + "\n" +
 		hangingIndentWrap(parallelBranchDetails(br), "    ", bodyWidth)
-	if detail := routingDecisionDetail(br.routingDecision, br.model, br.routingReason); detail != "" {
+	if detail := routingDecisionDetail(br.routingDecision, qualifiedModelLabel(br.provider, br.model), br.routingReason); detail != "" {
 		text += "\n" + hangingIndentWrap(detail, "    ", bodyWidth)
 	}
 	return text
@@ -1761,7 +1761,7 @@ func parallelBranchTitle(br *parallelBranch, bodyWidth, titlePrefixWidth int) st
 
 func parallelBranchDetails(br *parallelBranch) string {
 	parts := []string{}
-	if routed := delegationModelLabel(br.routedCategory, br.routedModel, br.routingReason, br.model, br.routingDecision); routed != "" {
+	if routed := delegationModelLabelWithSelection(br.routedCategory, br.routedModel, br.routingReason, br.model, br.provider, br.explicitRouterCategory, br.routingDecision); routed != "" {
 		parts = append(parts, routed)
 	}
 	parts = append(parts, parallelBranchState(br), plural(br.toolCount, "tool"), "↑"+renderfmt.HumanizeTokens(br.usage.InputTokens)+" ↓"+renderfmt.HumanizeTokens(br.usage.OutputTokens))
@@ -1825,7 +1825,7 @@ func parallelBranchLine(br *parallelBranch) string {
 		state = truncate(terminaltext.Sanitize(br.current), maxTraceToolNameLen) + "…"
 	}
 	routed := ""
-	if r := delegationModelLabel(br.routedCategory, br.routedModel, br.routingReason, br.model, br.routingDecision); r != "" {
+	if r := delegationModelLabelWithSelection(br.routedCategory, br.routedModel, br.routingReason, br.model, br.provider, br.explicitRouterCategory, br.routingDecision); r != "" {
 		routed = " · " + r
 	}
 	return fmt.Sprintf("%s %s · %s%s · %s · %s · ↑%s ↓%s",

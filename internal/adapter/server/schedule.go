@@ -9,7 +9,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/scheduler"
 )
 
-// schedule.go is the *Service's THIN DELEGATING schedule surface (ADR 0076):
+// schedule.go is the *Service's THIN DELEGATING schedule surface:
 // the validated create/read/update/fire seam moved OFF *Service onto the
 // store-shaped scheduleManager (schedule_manager.go) — one seam, one truth.
 // The Service keeps delegating wrappers so the RPC surface (grpc_schedule.go,
@@ -27,7 +27,7 @@ import (
 // one place alongside the team/session sentinels.
 
 // CreateSchedule delegates to the embedded scheduleManager (the single
-// schedule truth, ADR 0076). The manager validates the spec fail-closed,
+// schedule truth). The manager validates the spec fail-closed,
 // applies the create-seam defaults, computes the first NextFireAt, and Saves.
 // When no manager is wired (the store backs no ScheduleStore) it returns
 // ErrNoScheduleStore — the byte-identical no-scheduling path the gRPC/REST
@@ -194,15 +194,15 @@ func (s *Service) FireNow(ctx context.Context, name string) (port.ScheduleFire, 
 // EmitScheduleEvent appends a SchedulePayload as an EvSchedule* event to the fire
 // session's durable EventLog. It is the composition-injected emit callback the
 // scheduler invokes (via scheduler.Config.EmitScheduleEvent) for fired/failed/
-// skipped fires. For v1 delivery is durable-log-only (pull-only via
-// GetFire/ListFires); a live broadcast stream is a future phase. A skipped fire
+// skipped fires. Delivery is durable-log-only (pull-only via
+// GetFire/ListFires); a live broadcast stream is not implemented. A skipped fire
 // (no session id) is dropped from the durable log (the log is session-keyed) and
 // surfaces only via the operator diagnostic.
 //
 // It routes through the ONE appendEvent chokepoint so the lifecycle events are
 // stamped with the acting caller exactly like the fire's run events — the
 // scheduler's system principal for a tick fire, the requester for a manual
-// FireNow (ADR 0204 decision 5: every durable append path stamps). ctx is the
+// FireNow (every durable append path stamps). ctx is the
 // caller's; it is cancel-detached here so a fire's finished/cancelled ctx cannot
 // abort the durable append, while its VALUES (the principal) survive.
 func (s *Service) EmitScheduleEvent(ctx context.Context, payload session.SchedulePayload) {
@@ -218,9 +218,9 @@ func (s *Service) EmitScheduleEvent(ctx context.Context, payload session.Schedul
 }
 
 // scheduleStore returns the ScheduleStore the capabilities gate (Scheduling)
-// reads — now off the embedded manager (the Service no longer self-discovers
-// the store; it consumes the manager, ADR 0076). Returns nil when the store
-// backs no ScheduleStore (the byte-identical no-schedule path), so
+// reads, off the embedded manager (the Service does not self-discover the
+// store; it consumes the manager). Returns nil when the store
+// backs no ScheduleStore (the no-schedule path), so
 // ServerCapabilities.Scheduling stays false honestly.
 func (s *Service) scheduleStore() port.ScheduleStore {
 	if m := s.schedMgr; m != nil {
@@ -230,11 +230,11 @@ func (s *Service) scheduleStore() port.ScheduleStore {
 }
 
 // SetScheduler wires a scheduler onto the embedded scheduleManager (the
-// late-bind seam, ADR 0076). It is the delegated setter: composition builds the
+// late-bind seam). It is the delegated setter: composition builds the
 // scheduler AFTER NewService (the FireFunc closes over the Service) and
 // attaches it here; the manager holds the atomic scheduler pointer FireNow
-// reads. Nil-safe (no manager wired → no-op, the byte-identical no-scheduling
-// path). The Service's own s.mu is no longer involved (the manager's atomic
+// reads. Nil-safe (no manager wired → no-op, the no-scheduling
+// path). The Service's own s.mu is not involved (the manager's atomic
 // pointer is the single truth); Close/Drain read s.schedMgr.HasScheduler()
 // instead of a Service-held scheduler field.
 func (s *Service) SetScheduler(sch *scheduler.Scheduler) {
@@ -244,7 +244,7 @@ func (s *Service) SetScheduler(sch *scheduler.Scheduler) {
 }
 
 // SetScheduleMinInterval injects the scheduler cadence floor the create-seam
-// enforces (ADR 0073, AC1.3). Delegated to the embedded manager: the floor
+// enforces (AC1.3). Delegated to the embedded manager: the floor
 // guards the SHARED validateScheduleSpec — the Schedule tool's create AND the
 // REST/gRPC create — whether or not the tick loop runs (a --no-scheduler
 // deployment still manages schedules manually). 0 disables the floor. Called
@@ -268,8 +268,8 @@ func (s *Service) HasScheduler() bool {
 }
 
 // ScheduleManager returns the consumer-local port.ScheduleManager the
-// model-facing Schedule tool (ADR 0073) drives: the embedded scheduleManager
-// (the single truth, ADR 0076) — NOT the Service itself. It returns nil UNLESS
+// model-facing Schedule tool drives: the embedded scheduleManager
+// (the single truth) — NOT the Service itself. It returns nil UNLESS
 // the configured Store backs a port.ScheduleStore (the manager constructor
 // returns nil in that case) — the SAME conditional gate the capabilities echo
 // (Scheduling) uses, so the tool registration and the capability bit agree and

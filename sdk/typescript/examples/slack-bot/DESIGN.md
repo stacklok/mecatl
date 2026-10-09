@@ -303,6 +303,6 @@ separate `onPlanApproval` hook, which this bot has never configured).
 - [Send controls to a live run](../../../../user-docs/building/typescript-sdk/sessions-and-runs.md#send-controls-to-a-live-run)
   — steering a running turn, relevant if the approval/steer experiment
   extends to mid-run Slack replies
-- [Caller identity](../../../../user-docs/features/caller-identity.md) — the
+- [Caller identity](../../../../user-docs/features/security-and-execution/caller-identity.md) — the
   infrastructure a future, separate identity-impersonation effort would build
   on (explicitly out of scope here)

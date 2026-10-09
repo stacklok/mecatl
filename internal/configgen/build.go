@@ -535,11 +535,10 @@ func modelsSubtree(docs Docs) *Subtree {
 	}
 	return &Subtree{
 		Key:  "models",
-		Tier: TierProject,
-		Doc: "Per-slot/alias/default model config + the operator allowlist cap and " +
-			"the semantic Subagent model-router taxonomy. At the operator tier all " +
-			"fields are honoured; a project tier honours slots/aliases/default within the operator " +
-			"allowlist on a trusted workspace (router/allowlist are operator-only).",
+		Tier: TierOperator,
+		Doc: "Provider/model aliases, slots, defaults, and delegated router taxonomy. Every effective " +
+			"binding is operator-owned. A project-tier models block is ignored in full with one warning, " +
+			"regardless of trust. The legacy operator allowlist key remains parseable but has no effect and warns.",
 		CommentedOut: true,
 		Fields:       fields,
 	}
@@ -610,7 +609,7 @@ func mcpSubtree(docs Docs) *Subtree {
 	return &Subtree{
 		Key:          "mcp",
 		Tier:         TierOperator,
-		Doc:          "Strict OPERATOR-TIER Streamable HTTP MCP authority configuration. Mode selects one mutually exclusive global or session-broker authority; broker mode carries its callback configuration and neutral route declarations. Authentication is a closed none/static_bearer/oauth union. Broker OAuth may use trusted explicit OAuth2 endpoints; all secret-shaped values are MECATL_* environment references, never values in YAML. Project mcp blocks are ignored with a value-free warning.",
+		Doc:          "Strict OPERATOR-TIER Streamable HTTP MCP authority configuration. Mode selects one mutually exclusive global or session-broker authority; broker mode carries its callback configuration and neutral route declarations. Authentication is a closed none/static_bearer/oauth union. Broker OAuth may use trusted explicit OAuth2 endpoints; preregistered clients take the client secret from secret_file (an absolute path) or secret_env (a MECATL_* environment variable name), in either mode; never put secret values in YAML. Keep secret files outside the workspace (mode 0400 recommended): agent shell commands run as the same user and can read a known file path. Other secret-shaped values are MECATL_* environment references. Project mcp blocks are ignored with a value-free warning.",
 		CommentedOut: true,
 		Fields:       fields,
 		Example: []string{
@@ -637,7 +636,8 @@ func mcpSubtree(docs Docs) *Subtree {
 			"            mode: preregistered",
 			"            preregistered:",
 			"              id: mecatl-github-mcp",
-			"              secret_env: MECATL_GITHUB_MCP_CLIENT_SECRET",
+			"              secret_file: /var/run/secrets/mecatl/github-mcp-client-secret",
+			"              # or: secret_env: MECATL_GITHUB_MCP_CLIENT_SECRET",
 			"          scopes: [repo]",
 			"          request_refresh_token: true",
 			"          network: {}",

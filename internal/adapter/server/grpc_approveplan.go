@@ -10,8 +10,8 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-// grpc_approveplan.go implements the ApprovePlan streaming RPC (issue #206,
-// Wave 4) over the shared Service. It mirrors the Converse/RunTeam event-relay
+// grpc_approveplan.go implements the ApprovePlan streaming RPC (issue #206)
+// over the shared Service. It mirrors the Converse/RunTeam event-relay
 // discipline: range the Service-returned event channel, observe each event through
 // the durable recorder, skip the three log-only kinds on the client wire, Persist
 // on EvPermissionAsk, and Send toProto(ev); on the first Send error cancel the ctx so the Service's

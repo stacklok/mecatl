@@ -19,9 +19,9 @@ import (
 )
 
 // recordingMerger is a tool.EnvironmentMerger test double recording every Merge call. It is
-// used to prove the Parallel single-branch path still consumes the shared
-// catalogAssets.autoMerger — the writable Subagent NO LONGER merges (direct-write,
-// ADR 0041), so it is the Parallel-only consumer now.
+// used to prove the Parallel single-branch path consumes the shared
+// catalogAssets.autoMerger — the writable Subagent does NOT merge (direct-write),
+// so Parallel is its only consumer.
 type recordingMerger struct {
 	mu    sync.Mutex
 	calls []struct{ fork, parent string }
@@ -42,7 +42,7 @@ func (m *recordingMerger) count() int {
 
 // TestBuildSubagentToolWritableWritesParentDirectly drives the REAL buildSubagentTool
 // with a writable subagent (mode:"read-write") and proves the direct-write wiring
-// (ADR 0041): the writable child runs Edit/Write/Shell DIRECTLY against the parent repo
+// the writable child runs Edit/Write/Shell DIRECTLY against the parent repo
 // (no fork, no merge). The probe is a child that writes a real file into the workspace
 // it is handed; the test asserts the file lands in the REAL repo and NO sibling fork
 // directory was created. A recording merger placed on the assets must receive ZERO
@@ -91,7 +91,7 @@ func TestBuildSubagentToolWritableWritesParentDirectly(t *testing.T) {
 	} else if !strings.Contains(string(got), "written directly") {
 		t.Fatalf("beta.txt content unexpected: %q", got)
 	}
-	// No merge happened — Subagent writes the parent tree directly (ADR 0041).
+	// No merge happened — Subagent writes the parent tree directly.
 	if merger.count() != 0 {
 		t.Fatalf("a direct-write subagent must NOT merge, but merger was called %d times", merger.count())
 	}
@@ -129,9 +129,9 @@ func TestNoFSSubagentToolRejectsWritable(t *testing.T) {
 	}
 }
 
-// TestSharedMergerReachesParallel proves the Parallel single-branch auto-merge still
-// consumes the shared catalogAssets.autoMerger (the writable Subagent no longer does —
-// direct-write, ADR 0041). One recording merger on the assets receives the Parallel
+// TestSharedMergerReachesParallel proves the Parallel single-branch auto-merge
+// consumes the shared catalogAssets.autoMerger (the writable Subagent does not —
+// direct-write). One recording merger on the assets receives the Parallel
 // branch's merge call.
 func TestSharedMergerReachesParallel(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {

@@ -9,7 +9,7 @@ import {
 import { MecatlError } from "@stacklok-oss/mecatl-sdk";
 import { HTTPException } from "hono/http-exception";
 import type { AuthenticationService } from "./auth/service.js";
-import { studioBuildId } from "./build-info.js";
+import { studioBuildId as bakedStudioBuildId } from "./build-info.js";
 import type { ActivityLimits } from "./config.js";
 import { requestBodyLimit } from "./http/body-limit.js";
 import type { AppEnv } from "./http/env.js";
@@ -28,6 +28,7 @@ import {
 import { spaHandler } from "./http/static.js";
 import { type Logger, silentLogger } from "./log.js";
 import { type ChatService, createMecatlChatService } from "./mecatl/chat.js";
+import { createMecatlInspectionService } from "./mecatl/inspection.js";
 import {
   createMecatlKnowledgeService,
   type KnowledgeCapabilities,
@@ -39,6 +40,7 @@ import { createMecatlSettingsService, type SettingsService } from "./mecatl/sett
 import { createMecatlStorageService, type StorageService } from "./mecatl/storage.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerChatRoutes } from "./routes/chat.js";
+import { registerInspectionRoutes } from "./routes/inspection.js";
 import { registerKnowledgeRoutes } from "./routes/knowledge.js";
 import { registerScheduleRoutes } from "./routes/schedules.js";
 import { registerSettingsRoutes } from "./routes/settings.js";
@@ -96,6 +98,8 @@ export interface AppDependencies {
   readonly storage?: StorageService;
   readonly logger?: Logger;
   readonly runtime?: MecatlRuntime;
+  /** The release stamp reported by About; defaults to the one baked into the bundle. */
+  readonly studioBuildId?: string;
   /** How long a feature request waits for compatibility negotiation before `503`. */
   readonly readinessTimeoutMs?: number;
   readonly security?: SecurityOptions;
@@ -104,6 +108,7 @@ export interface AppDependencies {
 }
 
 export function createApp(dependencies: AppDependencies = {}) {
+  const studioBuildId = dependencies.studioBuildId ?? bakedStudioBuildId;
   // Every route's request validation fails as RFC 9457 problem details, never
   // the validator's raw error object; a route may still install its own hook.
   const app = new OpenAPIHono<AppEnv>({
@@ -137,6 +142,17 @@ export function createApp(dependencies: AppDependencies = {}) {
     sameOriginPresentation(security),
   );
   app.use("/api/v1/*", requestBodyLimit());
+  // Inspection responses are private even when auth or readiness rejects the
+  // request before the route handler runs.
+  app.use("/api/v1/*", async (context, next) => {
+    if (
+      context.req.method === "GET" &&
+      (context.req.path === "/api/v1/soul" ||
+        /^\/api\/v1\/sessions\/[^/]+\/worktrees$/u.test(context.req.path))
+    )
+      context.header("Cache-Control", "private, no-store");
+    return next();
+  });
 
   registerAuthRoutes(app, authentication, runtime);
 
@@ -248,6 +264,20 @@ export function createApp(dependencies: AppDependencies = {}) {
       return undefined;
     }
   };
+  registerInspectionRoutes(
+    app,
+    runtime === undefined ? undefined : createMecatlInspectionService(runtime.client),
+    () => {
+      const snapshot = snapshotOrUndefined();
+      return snapshot === undefined
+        ? undefined
+        : {
+            connection: snapshot.connection,
+            soul: snapshot.capabilities.soul,
+            worktrees: snapshot.capabilities.worktrees,
+          };
+    },
+  );
   const settings =
     dependencies.settings ??
     (runtime === undefined

@@ -4,6 +4,7 @@ import { User } from "lucide-react";
 import { Input } from "../../components/ui/input";
 import { useUserAvatar, useUserDisplayName } from "../../lib/profile-preferences";
 import { AvatarPicker } from "./avatar-picker";
+import { Note, SettingsCard } from "./settings-card";
 
 export function IdentitySettings() {
   const userName = useUserDisplayName();
@@ -11,7 +12,7 @@ export function IdentitySettings() {
 
   return (
     <IdentityCard
-      description="Source: browser profile preferences. Owner: personal. These details appear beside your chat messages; your sign-in identity comes from the authenticated session and is read-only here."
+      description="These details appear beside your chat messages; your sign-in identity comes from the authenticated session and is read-only here."
       title="You"
     >
       <IdentityField description="What the agent should call you." label="Display name">
@@ -46,11 +47,10 @@ export function IdentityCard({
   title: string;
 }) {
   return (
-    <section className="rounded-2xl border bg-card p-5 sm:p-6">
-      <h2 className="text-lg font-semibold">{title}</h2>
-      <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+    <SettingsCard title={title}>
+      <Note>{description}</Note>
       <div className="mt-5 divide-y">{children}</div>
-    </section>
+    </SettingsCard>
   );
 }
 

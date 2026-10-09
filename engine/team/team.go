@@ -1,5 +1,5 @@
 // Package team is the DOMAIN coordination substrate for headless agent teams
-// (see docs/adr/0014-agent-teams.md). It holds the pure, in-memory state two
+// (see docs/architecture/subagents-and-teams.md). It holds the pure, in-memory state two
 // or more concurrently-running agent sessions share to coordinate: a roster of
 // members with lifecycle states, a dependency-aware task list members claim and
 // complete, and a mailbox members use to message one another.

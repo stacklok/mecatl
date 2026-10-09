@@ -56,3 +56,17 @@ task lint
 task test:race     # complete race suite before the PR is ready
 go run ./cmd/mecademo
 ```
+
+## Develop against a local engine checkout
+
+The engine is a separate Go module. For a consumer application that needs local
+engine changes, run these commands from its module directory:
+
+```sh
+go work init .
+go work use <PATH_TO_MECATL_CHECKOUT>/engine
+```
+
+Use the workspace for local development; published consumers depend on a tagged
+engine module. Verify the engine independently with `GOWORK=off` so workspace
+resolution does not hide missing dependencies.

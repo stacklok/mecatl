@@ -1,58 +1,82 @@
 ---
 sidebar_position: 1
-title: Features
+title: Capabilities
 description:
-  Explore Mecatl features for sessions, models, permissions, tools, and project
-  guidance.
+  Understand Mecatl capabilities, shared behavior, and deployment availability.
 ---
 
-# Features
+# Capabilities
 
-Find the Mecatl capability you want to use or configure. These features belong
-to the shared agent and server core. Deployment guides cover the differences
-between `mecated`, `mecak8s`, and `mecatui`.
+Explore the capabilities shared by Mecatl's clients and servers. These guides
+explain how each capability works, how to configure it, and which deployments
+support it.
 
 ## Get oriented
 
-- [Capability and deployment matrix](./capability-matrix.md) explains the
-  operational differences among server and terminal deployments.
-- [Ask Mecatl about itself](./ask-about-mecatl.md) covers the account of Mecatl
-  that every agent carries and how it answers questions about the product.
+- [Capability and deployment matrix](./get-oriented/capability-matrix.md)
+  explains the operational differences among server and terminal deployments.
+- [What is a cloud-native harness?](/cloud-native-harness.md) explains how
+  Mecatl separates the agent process from durable state and execution.
+- [Ask Mecatl about itself](./get-oriented/ask-about-mecatl.md) covers the
+  account of Mecatl that every agent carries and how it answers questions about
+  the product.
 
 ## Run and maintain sessions
 
-- [Start and resume sessions](./start-and-resume-sessions.md) covers creating,
-  selecting, and continuing sessions.
-- [Choose models and providers](./choose-models.md) covers provider, model, and
-  reasoning-effort selection.
-- [Multimodal input](./multimodal-input.md) covers image and other content
-  blocks supported by the selected provider.
-- [Context windows](./context-windows.md) covers model context-window resolution
-  and overrides.
-- [Session continuity](./session-continuity.md) covers persistence, recovery,
-  retention, and maintenance.
-- [Scheduled tasks](./scheduled-tasks.md) covers recurring and one-shot runs.
+- [The agent loop](./sessions/agent-loop.md) explains turns, events, tool
+  dispatch, permission pauses, and terminal states.
+- [Start and resume sessions](./sessions/start-and-resume-sessions.md) covers
+  creating, selecting, and continuing sessions.
+- [Choose models and providers](./sessions/choose-models.md) covers provider,
+  model, and reasoning-effort selection.
+- [Model routing](./sessions/model-routing.md) assigns models to internal calls
+  and delegated tasks, and explains routing decisions.
+- [Multimodal input](./sessions/multimodal-input.md) covers image and other
+  content blocks supported by the selected provider.
+- [Context windows](./sessions/context-windows.md) covers model context-window
+  resolution and overrides.
+- [Session continuity](./sessions/session-continuity.md) covers persistence,
+  recovery, retention, and maintenance.
+- [Scheduled tasks](./sessions/scheduled-tasks.md) covers recurring and one-shot
+  runs.
+- [Core tools](./sessions/tools.md) describes the built-in catalog and execution
+  model.
 
 ## Configure agent behavior
 
-- [Define named agents](./named-agents.md) covers agent definitions and
-  specialist delegation.
-- [Skills, commands, and soul](./skills-commands-and-soul.md) covers reusable
-  instructions and persona.
-- [Project instructions and rules](./project-instructions-and-rules.md) covers
-  trusted project guidance and `.claude/rules`.
-- [Learning](./learning.md) covers evidence-backed learning, reflection, and
-  learned-skill admission.
-- [Dreaming and memory consolidation](./dreaming.md) covers periodic
-  consolidation and manual review.
+- [Subagents, teams, and parallel work](./agent-behavior/subagents-and-teams.md)
+  compares the delegation tools and their workspace behavior.
+- [Define named agents](./agent-behavior/named-agents.md) covers agent
+  definitions and specialist delegation.
+- [Skills, commands, and soul](./agent-behavior/skills-commands-and-soul.md)
+  covers reusable instructions and persona.
+- [Project instructions and rules](./agent-behavior/project-instructions-and-rules.md)
+  covers trusted project guidance and `.claude/rules`.
+- [Memory and user model](./agent-behavior/memory.md) explains project memory,
+  the user model, and their lifecycle tools.
+- [Learning](./agent-behavior/learning.md) covers evidence-backed learning,
+  reflection, and learned-skill admission.
+- [Dreaming and memory consolidation](./agent-behavior/dreaming.md) covers
+  periodic consolidation and manual review.
 
 ## Secure connections and execution
 
-- [Permissions and posture](./permissions-and-posture.md) covers permission
-  modes, trust, guardrails, and autonomous operation.
-- [Caller identity and OIDC](./caller-identity.md) covers authenticated caller
-  identity and ownership separation.
-- [MCP OAuth and credentials](./mcp-oauth-and-credentials.md) covers OAuth
-  profiles and credential storage.
-- [Execution environments](./execution-environments.md) covers workspaces,
-  shells, forks, and environment persistence.
+- [Permissions and posture](./security-and-execution/permissions-and-posture.md)
+  covers permission modes, trust, guardrails, and autonomous operation.
+- [Caller identity and OIDC](./security-and-execution/caller-identity.md) covers
+  authenticated caller identity and ownership separation.
+- [MCP OAuth and credentials](./security-and-execution/mcp-oauth-and-credentials.md)
+  covers OAuth profiles and credential storage.
+- [MCP client](./security-and-execution/mcp-client.md) covers transports, tool
+  names, resources, prompts, and reconnect behavior.
+- [Execution environments](./security-and-execution/execution-environments.md)
+  covers workspaces, shells, forks, and environment persistence.
+- [Hook system](./security-and-execution/hooks.md) covers lifecycle hooks that
+  observe, block, or transform agent activity.
+
+## Understand runtime behavior
+
+- [Observability and resilience](./runtime/observability-and-resilience.md)
+  explains runtime signals, model-call recovery, and product metrics.
+- [Collect metrics, traces, and diagnostics](/operating/observability.md) covers
+  operator collection and endpoint configuration.

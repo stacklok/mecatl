@@ -33,6 +33,73 @@ describe("Mecatl chat event serialization", () => {
 });
 
 describe("Mecatl chat sessions", () => {
+  it("projects inspect only sessions without chat controls", async () => {
+    const row = (
+      id: string,
+      kind: string,
+      publicChat: boolean,
+      reason: string,
+      debugTargetSessionId = "",
+    ) => ({
+      capabilities: {
+        copyId: true,
+        delete: false,
+        fork: publicChat,
+        inspect: true,
+        publicChat,
+        reasons: {
+          copyId: "",
+          delete: "inspect_only_kind",
+          fork: reason,
+          inspect: "",
+          publicChat: reason,
+          rename: "inspect_only_kind",
+          viewTranscript: "",
+        },
+        rename: false,
+        viewTranscript: true,
+      },
+      createdAtUnix: 0n,
+      kind,
+      modifiedAtUnix: 0n,
+      relationship: { debugTargetSessionId },
+      sessionId: id,
+      state: "idle",
+      title: id,
+      turns: 0,
+    });
+    const list = vi.fn().mockResolvedValue({
+      nextCursor: "",
+      sessions: [
+        row("chat", "main", true, ""),
+        row("inspect", "child", false, "inspect_only_kind"),
+        row("pending", "main", false, "awaiting_approval"),
+        row("debug", "debug", false, "inspect_only_kind", "target"),
+      ],
+    });
+    const service = createMecatlChatService({ sessions: { list } } as unknown as Client);
+
+    const result = await service.listSessions();
+
+    expect(result.items.map(({ id }) => id)).toEqual(["chat", "inspect", "pending", "debug"]);
+    expect(result.items[1]).toMatchObject({
+      kind: "child",
+      capabilities: {
+        publicChat: false,
+        publicChatReason: "inspect_only_kind",
+        inspect: true,
+        copyId: true,
+        viewTranscript: true,
+        fork: false,
+      },
+    });
+    expect(result.items[2]).toMatchObject({
+      kind: "main",
+      capabilities: { publicChat: false, publicChatReason: "awaiting_approval" },
+    });
+    expect(result.items[3]).toMatchObject({ debugTargetSessionId: "target", kind: "debug" });
+  });
+
   it("maps product session controls to published SDK options", async () => {
     const create = vi.fn().mockResolvedValue({ id: "session-1" });
     const service = createMecatlChatService({ sessions: { create } } as unknown as Client);
@@ -41,6 +108,7 @@ describe("Mecatl chat sessions", () => {
       mode: "plan",
       model: { id: "claude-sonnet", providerId: "anthropic" },
       reasoningEffort: "high",
+      toolAccess: "all",
       execution: { none: {} },
     });
 
@@ -60,6 +128,7 @@ describe("Mecatl chat sessions", () => {
     await service.createSession({
       mode: "default",
       reasoningEffort: "default",
+      toolAccess: "all",
       execution: { template },
     });
     expect(create).toHaveBeenCalledWith({ mode: 1, execution: { template } });
@@ -69,7 +138,7 @@ describe("Mecatl chat sessions", () => {
   it("leaves execution omitted for default, even when template discovery is disabled", async () => {
     const create = vi.fn().mockResolvedValue({ id: "default" });
     const service = createMecatlChatService({ sessions: { create } } as unknown as Client);
-    await service.createSession({ mode: "default", reasoningEffort: "default" });
+    await service.createSession({ mode: "default", reasoningEffort: "default", toolAccess: "all" });
     expect(create).toHaveBeenCalledWith({ mode: 1 });
   });
 
@@ -120,6 +189,7 @@ describe("Mecatl chat sessions", () => {
       debugTargetSessionId: "session-1",
       mode: "default",
       reasoningEffort: "default",
+      toolAccess: "all",
       execution: { none: {} },
     });
 
@@ -236,6 +306,19 @@ describe("Mecatl chat sessions", () => {
       },
       sessionCapabilities: { image: true },
       sessionId: "session-1",
+      kind: "main",
+      relationship: {
+        parentSessionId: "parent",
+        debugTargetSessionId: "target",
+        callId: "private",
+      },
+      placement: {
+        kind: "local",
+        label: "Feature",
+        branch: "feature",
+        revision: "abc",
+        environmentRef: "/private/root",
+      },
       state: "idle",
       mode: SessionMode.Plan,
       tokenUsage: {
@@ -281,7 +364,10 @@ describe("Mecatl chat sessions", () => {
         modelSelection: true,
       },
       id: "session-1",
+      kind: "main",
       mode: "plan",
+      placement: { kind: "local", label: "Feature", branch: "feature", revision: "abc" },
+      relationship: { parentSessionId: "parent", debugTargetSessionId: "target" },
       model: {
         contextWindow: "200000",
         id: "claude-sonnet",
@@ -477,6 +563,28 @@ describe("Mecatl chat sessions", () => {
     });
   });
 
+  it("passes an opaque worktree selector only to Fork or Clear successors", async () => {
+    const clear = vi.fn().mockResolvedValue({ id: "clear-successor" });
+    const fork = vi.fn().mockResolvedValue({ id: "fork-successor" });
+    const get = vi.fn().mockResolvedValue({ clear });
+    const service = createMecatlChatService({ sessions: { fork, get } } as unknown as Client);
+
+    await service.clearSession("source", { worktreeSelector: "opaque-choice" });
+    await service.forkSession("source", {
+      model: { id: "model", providerId: "provider" },
+      reasoningEffort: "default",
+      worktreeSelector: "opaque-choice",
+    });
+
+    expect(get).toHaveBeenCalledWith("source");
+    expect(clear).toHaveBeenCalledWith({ worktreeSelector: "opaque-choice" });
+    expect(fork).toHaveBeenCalledWith("source", {
+      modelId: "model",
+      providerId: "provider",
+      worktreeSelector: "opaque-choice",
+    });
+  });
+
   it("cancels a reattached run through its exact durable run handle", async () => {
     const cancel = vi.fn().mockResolvedValue(undefined);
     const controls = vi.fn().mockReturnValue({ cancel });
@@ -639,7 +747,7 @@ describe("Mecatl chat sessions", () => {
     ]);
     expect(close).toHaveBeenCalledOnce();
   });
-  it("filters inspect-only sessions and reports an incomplete inventory on a cursor loop", async () => {
+  it("includes inspect-only sessions and reports an incomplete inventory on a cursor loop", async () => {
     const row = (sessionId: string, publicChat = "") => ({
       capabilities: { delete: true, rename: true, reasons: { delete: "", publicChat, rename: "" } },
       createdAtUnix: 1_700_000_000n,
@@ -661,7 +769,7 @@ describe("Mecatl chat sessions", () => {
 
     const response = await service.listSessions();
 
-    expect(response.items.map((item) => item.id)).toEqual(["visible", "second"]);
+    expect(response.items.map((item) => item.id)).toEqual(["visible", "inspect", "second"]);
     expect(response.items[0]?.title).toBe("Untitled chat");
     expect(response.items[0]?.createdAt).toBe("2023-11-14T22:13:20.000Z");
     expect(response.complete).toBe(false);

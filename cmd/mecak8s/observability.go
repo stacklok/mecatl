@@ -91,7 +91,7 @@ func buildObservability(ctx context.Context, cfg config, diag port.Diagnostics) 
 		SettingsEnabled: permResolver.OperatorProductMetricsEnabled(),
 	})
 	// mecak8s cannot use the local-file install-id mechanism the other three
-	// binaries share: it runs storage-free with no PVC (ADR 0048), so every
+	// binaries share: it runs storage-free with no PVC, so every
 	// pod restart would mint a fresh, never-reused id — the worst-case
 	// cardinality pattern for this pipeline. The Helm chart instead provisions
 	// ONE stable id per release in a ConfigMap (see
@@ -123,7 +123,7 @@ func buildObservability(ctx context.Context, cfg config, diag port.Diagnostics) 
 // productMetricsSnapshot derives the closed-set FeatureSnapshot the product-
 // metrics heartbeat reports, from fields already resolved on cfg — never a
 // model id/alias, only whether each feature is configured at all. No Memory:
-// mecak8s runs storage-free with no PVC (ADR 0048) — the same reason its
+// mecak8s runs storage-free with no PVC — the same reason its
 // install-id comes from a Helm ConfigMap rather than a local file (see
 // buildObservability's installIDOverride handling, above).
 func productMetricsSnapshot(cfg config) productmetrics.FeatureSnapshot {

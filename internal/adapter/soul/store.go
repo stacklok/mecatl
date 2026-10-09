@@ -1,4 +1,4 @@
-// Package soul implements issue #14, Phase 1: a user-scoped, agent-READ-ONLY
+// Package soul implements issue #14: a user-scoped, agent-READ-ONLY
 // persona/"soul" fragment loaded into the turn-0 conversation as data.
 //
 // SCOPING: the soul is USER-scoped, not project-scoped. It lives at
@@ -12,10 +12,10 @@
 // Every method on Store is READ-ONLY (Load / LoadWithMeta read+validate the body;
 // ResolvedPath only computes a path string), and this package contains NO
 // os.WriteFile/Create/MkdirAll and NO Catalog/tool registration. The drift-baseline
-// fingerprint (issue #14, Phase 3) is COMPUTED here (LoadWithMeta) but PERSISTED only
+// fingerprint (issue #14) is COMPUTED here (LoadWithMeta) but PERSISTED only
 // by the composition layer (internal/app/soulguard) — the adapter never writes.
 // A writable identity anchor is
-// the central trap the spike (docs/adr/0011-soul-and-user-model.md §4) warns against: a
+// the central trap to avoid: a
 // prompt injection that rewrites "who the agent is" would persist across every
 // future session. So identity is read-only-if-present and bootstrapped by hand
 // (a text editor), never by a tool. The soul is additionally injection-scanned
@@ -131,8 +131,8 @@ func newWith(opts Options, env xdgconfig.ResolveEnv, read readFunc) *Store {
 // when set, else the conventional <xdg>/mecatl/soul.md (fallback
 // ~/.config/mecatl/soul.md) — or "" when none can be resolved. It is a READ-ONLY
 // accessor (it computes a path string; it touches no file and writes nothing), used
-// by the composition layer to locate the drift-baseline sidecar (issue #14, Phase 3,
-// Item 1) as a sibling of this path. Exposing it does NOT add a write path.
+// by the composition layer to locate the drift-baseline sidecar (issue #14) as a
+// sibling of this path. Exposing it does NOT add a write path.
 func (s *Store) ResolvedPath() string {
 	return s.resolvePath()
 }
@@ -152,8 +152,8 @@ func (s *Store) resolvePath() string {
 }
 
 // Result is the outcome of LoadWithMeta: the clean soul body plus its content
-// fingerprint, for the composition-layer drift baseline (issue #14, Phase 3,
-// Item 1). The SHA256 is computed over the SAME clean body Load returns (after
+// fingerprint, for the composition-layer drift baseline (issue #14). The
+// SHA256 is computed over the SAME clean body Load returns (after
 // trim/scan/fence checks) — so it fingerprints the bytes that actually reach the
 // prompt, not the raw file. When there is no usable soul every field is its zero
 // value (empty Body, empty SHA256, zero Size), so an absent/rejected soul yields

@@ -41,16 +41,19 @@ func anyProviderHasLister(reg *providerRegistry) bool {
 }
 
 // modelEntry is source-neutral observed metadata. Nil modalities mean unknown;
-// a non-nil declaration, including an empty one, is authoritative.
+// a non-nil declaration, including an empty one, is authoritative. An omitted
+// reasoning capability can be marked unknown without changing other listers'
+// existing interpretation of a listed Reasoning:false row.
 type modelEntry struct {
-	ID              string
-	DisplayName     string
-	ContextLimit    int
-	OutputLimit     int
-	InputModalities []string
-	Reasoning       bool
-	ToolCall        bool
-	Thinking        thinkingDescriptor
+	ID               string
+	DisplayName      string
+	ContextLimit     int
+	OutputLimit      int
+	InputModalities  []string
+	Reasoning        bool
+	reasoningUnknown bool // a listed model may omit reasoning support; false preserves legacy known-row behavior
+	ToolCall         bool
+	Thinking         thinkingDescriptor
 }
 
 type thinkingDescriptor struct{ Known, Adaptive, Enabled bool }
@@ -148,8 +151,8 @@ func (l anthropicLister) ListModels(ctx context.Context) ([]modelEntry, error) {
 			mods = append(mods, "image")
 		}
 		out = append(out, modelEntry{ID: m.ID, DisplayName: m.DisplayName, ContextLimit: m.ContextLimit, OutputLimit: m.OutputLimit, InputModalities: mods,
-			Reasoning: m.Thinking.Adaptive || m.Thinking.Enabled, ToolCall: true,
-			Thinking: thinkingDescriptor{Known: true, Adaptive: m.Thinking.Adaptive, Enabled: m.Thinking.Enabled}})
+			Reasoning: m.Thinking.Adaptive || m.Thinking.Enabled, reasoningUnknown: !m.Thinking.Known, ToolCall: true,
+			Thinking: thinkingDescriptor{Known: m.Thinking.Known, Adaptive: m.Thinking.Adaptive, Enabled: m.Thinking.Enabled}})
 	}
 	return out, nil
 }

@@ -1,5 +1,5 @@
 // registry.go is the MACHINE-WRITTEN workspace-trust registry (Workspace-Trust
-// feature, Phase 2b). It reads and writes <xdg>/mecatl/trust.yaml — a HARNESS-OWNED
+// feature). It reads and writes <xdg>/mecatl/trust.yaml — a HARNESS-OWNED
 // state file, a SIBLING of but NEVER inside the human-authored settings.yaml (the
 // settings-vs-state split). An entry remembers that the operator trusted a
 // workspace AND the identity-anchor hash at the moment of trust, so a remembered
@@ -14,7 +14,7 @@
 // the workspace's realpath. drifted is true iff that entry's stored anchor hash
 // DIFFERS from currentAnchorHash. The fold (internal/app) turns these into the
 // TrustRemembered tier: matching ⇒ trusted; mismatch ⇒ untrusted+drifted (fail
-// safe — mecated has no prompt, so a drifted entry must NOT grant; Phase 2c's
+// safe — mecated has no prompt, so a drifted entry must NOT grant;
 // mecatui turns drift into a re-prompt).
 //
 // # Write API: Remember
@@ -23,8 +23,8 @@
 // workspace's realpath. The write is O_NOFOLLOW + 0o600 + temp-then-rename (the
 // soulguard discipline), so a pre-planted SYMLINK at the registry path cannot
 // redirect the write (CWE-59) and the file is owner-only. The only PRODUCTION
-// caller of Remember is the mecatui first-encounter prompt (Phase 2c); this phase
-// ships + unit-tests the API. mecated NEVER calls Remember (it is read-only on the
+// caller of Remember is the mecatui first-encounter prompt (via
+// app.RememberTrust). mecated NEVER calls Remember (it is read-only on the
 // registry — declarative).
 //
 // # Security (MUST-FIX 5)

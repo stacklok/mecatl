@@ -37,7 +37,7 @@ const loginRoute = createRoute({
   path: "/api/v1/auth/login",
   request: {
     query: z.object({
-      // The contract's public name; see docs/acceptance/studio-bootstrap.md.
+      // The public wire name of the browser login flow.
       flow: z.enum(["popup"]).optional(),
       return_to: z.string().optional(),
     }),

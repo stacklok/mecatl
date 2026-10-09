@@ -151,7 +151,14 @@ test("approves and denies exact asks through the browser journey", async ({
       complete: true,
       items: [
         {
-          capabilities: { delete: false, deleteReason: "", rename: false, renameReason: "" },
+          capabilities: {
+            delete: false,
+            deleteReason: "",
+            publicChat: true,
+            publicChatReason: "",
+            rename: false,
+            renameReason: "",
+          },
           createdAt: "2026-09-24T00:00:00Z",
           debugTargetSessionId: "",
           id: sessionId,
@@ -414,7 +421,14 @@ test("accepts real ordinary and plan asks once, then rejects their exact duplica
             complete: true,
             items: [
               {
-                capabilities: { delete: false, deleteReason: "", rename: false, renameReason: "" },
+                capabilities: {
+                  delete: false,
+                  deleteReason: "",
+                  publicChat: true,
+                  publicChatReason: "",
+                  rename: false,
+                  renameReason: "",
+                },
                 createdAt: "2026-09-24T00:00:00Z",
                 debugTargetSessionId: "",
                 id: sessionId,

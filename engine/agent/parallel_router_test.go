@@ -43,7 +43,7 @@ func multiTurnMarkerEngine(marker string) *Engine {
 	})
 }
 
-// parallel_router_test.go drives the Parallel runBranch routing seam (ADR 0034) directly,
+// parallel_router_test.go drives the Parallel runBranch routing seam directly,
 // asserting the per-branch precedence/fail-soft/decide-once contract and the gauntlet-#7
 // no-leak guarantee on the routed metadata — the seams the composition end-to-end test
 // cannot reach in isolation. It is the structural twin of modelrouter_internal_test.go.
@@ -64,8 +64,8 @@ func (routerForker) Fork(_ context.Context, _ tool.Environment, label string) (t
 func routerParallelTool(factoryWired bool) *ParallelTool {
 	opts := []ParallelOption{}
 	if factoryWired {
-		opts = append(opts, WithParallelEngineFactory(func(model string) (*Engine, bool) {
-			return markerEngine("ROUTED:" + model), true
+		opts = append(opts, WithParallelEngineFactory(func(target ModelTarget) (*Engine, bool) {
+			return markerEngine("ROUTED:" + target.Model), true
 		}))
 	}
 	return NewParallelTool(markerEngine("DEFAULT"), routerForker{}, opts...).(*ParallelTool)
@@ -192,8 +192,8 @@ func TestParallelRoutesEachBranchExactlyOnce(t *testing.T) {
 // one consult. Mutation-verified: moving the route call into the child turn loop FAILs here.
 func TestParallelRoutesMultiTurnBranchExactlyOnce(t *testing.T) {
 	tl := NewParallelTool(markerEngine("DEFAULT"), routerForker{},
-		WithParallelEngineFactory(func(model string) (*Engine, bool) {
-			return multiTurnMarkerEngine("ROUTED:" + model), true
+		WithParallelEngineFactory(func(target ModelTarget) (*Engine, bool) {
+			return multiTurnMarkerEngine("ROUTED:" + target.Model), true
 		})).(*ParallelTool)
 	var (
 		mu    sync.Mutex
@@ -275,7 +275,7 @@ func TestParallelBranchStartCarriesRoutedMetadata(t *testing.T) {
 			t.Fatalf("branch_start routed metadata = (%q, %q), want (large, big-model)",
 				ev.Parallel.RoutedCategory, ev.Parallel.RoutedModel)
 		}
-		// The generic Model field (issue #112 / ADR 0035) equals the routed branch
+		// The generic Model field (issue #112) equals the routed branch
 		// engine's resolved model — the router minted it on "ROUTED:big-model" (the
 		// routerParallelTool factory's marker for the routed model), so Model must equal
 		// that and equal RoutedModel's routed-engine manifestation. When routed, Model
@@ -332,7 +332,7 @@ func TestParallelBranchStartEmptyRoutedOnMiss(t *testing.T) {
 // the fallback that actually ran rather than claim the rejected target.
 func TestParallelBranchStartFactoryDeclineIsNotReportedAsRouted(t *testing.T) {
 	tl := NewParallelTool(markerEngine("DEFAULT"), routerForker{},
-		WithParallelEngineFactory(func(string) (*Engine, bool) { return nil, false })).(*ParallelTool)
+		WithParallelEngineFactory(func(ModelTarget) (*Engine, bool) { return nil, false })).(*ParallelTool)
 	var (
 		mu  sync.Mutex
 		evs []session.Event
@@ -415,7 +415,7 @@ func TestParallelFanOutSharesBreakerRace(t *testing.T) {
 	}
 }
 
-// GAUNTLET #7 (ADR 0079 shape): no branch-AUTHORED content rides ANY parallel.* event
+// GAUNTLET #7 (bounded-preview shape): no branch-AUTHORED content rides ANY parallel.* event
 // UNBOUNDED when the router classifies. The routed branch's child returns a secret
 // SUMMARY longer than the clampPreview cap, laced with control bytes; the projection may
 // carry only its clamped, scrubbed prefix — the full raw body and every control byte
@@ -438,7 +438,7 @@ func TestParallelRoutedEventsNoContentLeak(t *testing.T) {
 		Model:   "routed-model",
 	})
 	tl := NewParallelTool(markerEngine("DEFAULT"), routerForker{},
-		WithParallelEngineFactory(func(string) (*Engine, bool) {
+		WithParallelEngineFactory(func(ModelTarget) (*Engine, bool) {
 			return routed, true
 		})).(*ParallelTool)
 	var (

@@ -488,7 +488,7 @@ func (m Model) renderZeroState() string {
 }
 
 // legacyZeroStateBody is the plain (mascot-less, wordmark-less) welcome body used
-// under --no-banner / quiet / non-interactive. It is the historical zero-state
+// under --no-banner / quiet / non-interactive. It is the plain zero-state
 // card content, kept so the suppressed path still advertises the affordances and
 // carries the greppable title.
 func (m Model) legacyZeroStateBody() string {

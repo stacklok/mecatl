@@ -10,8 +10,8 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 )
 
-// soulguard is the composition-layer SOUL DRIFT BASELINE (issue #14, Phase 3, Item
-// 1). The soul itself is a USER-scoped, agent-READ-ONLY persona fragment (see
+// soulguard is the composition-layer SOUL DRIFT BASELINE (issue #14).
+// The soul itself is a USER-scoped, agent-READ-ONLY persona fragment (see
 // internal/adapter/soul) — the adapter is write-free by construction. This file is
 // the ONLY place that turns the soul's content hash into an on-disk baseline so a
 // later run can DETECT that the soul changed.
@@ -34,7 +34,7 @@ import (
 //
 // RESTORE-to-baseline is deliberately OUT of MVP: a hash-only baseline gives
 // detection + alert without a harness-owned COPY of the approved bytes (which would
-// be both a content write surface and disproportionate). See docs/adr/0011-soul-and-user-model.md.
+// be both a content write surface and disproportionate).
 //
 // LAYERING: drift is NOT routed through the permission evaluator — the soul is
 // fenced DATA, never a permission scope. The hash is computed in the adapter

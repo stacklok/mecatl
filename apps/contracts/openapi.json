@@ -953,10 +953,34 @@
                           "capabilities": {
                             "type": "object",
                             "properties": {
+                              "copyId": {
+                                "type": "boolean"
+                              },
+                              "copyIdReason": {
+                                "type": "string"
+                              },
                               "delete": {
                                 "type": "boolean"
                               },
                               "deleteReason": {
+                                "type": "string"
+                              },
+                              "fork": {
+                                "type": "boolean"
+                              },
+                              "forkReason": {
+                                "type": "string"
+                              },
+                              "inspect": {
+                                "type": "boolean"
+                              },
+                              "inspectReason": {
+                                "type": "string"
+                              },
+                              "publicChat": {
+                                "type": "boolean"
+                              },
+                              "publicChatReason": {
                                 "type": "string"
                               },
                               "rename": {
@@ -964,13 +988,29 @@
                               },
                               "renameReason": {
                                 "type": "string"
+                              },
+                              "viewTranscript": {
+                                "type": "boolean"
+                              },
+                              "viewTranscriptReason": {
+                                "type": "string"
                               }
                             },
                             "required": [
+                              "copyId",
+                              "copyIdReason",
                               "delete",
                               "deleteReason",
+                              "fork",
+                              "forkReason",
+                              "inspect",
+                              "inspectReason",
+                              "publicChat",
+                              "publicChatReason",
                               "rename",
-                              "renameReason"
+                              "renameReason",
+                              "viewTranscript",
+                              "viewTranscriptReason"
                             ]
                           },
                           "createdAt": {
@@ -980,6 +1020,9 @@
                             "type": "string"
                           },
                           "id": {
+                            "type": "string"
+                          },
+                          "kind": {
                             "type": "string"
                           },
                           "modelId": {
@@ -1011,6 +1054,7 @@
                           "createdAt",
                           "debugTargetSessionId",
                           "id",
+                          "kind",
                           "modelId",
                           "state",
                           "title",
@@ -1208,6 +1252,14 @@
                       "max"
                     ],
                     "default": "default"
+                  },
+                  "toolAccess": {
+                    "type": "string",
+                    "enum": [
+                      "all",
+                      "noFilesystem"
+                    ],
+                    "default": "all"
                   }
                 },
                 "additionalProperties": false
@@ -1754,6 +1806,9 @@
                     "id": {
                       "type": "string"
                     },
+                    "kind": {
+                      "type": "string"
+                    },
                     "mode": {
                       "type": "string",
                       "enum": [
@@ -1797,6 +1852,40 @@
                         "reasoningEffort"
                       ]
                     },
+                    "placement": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string"
+                        },
+                        "label": {
+                          "type": "string"
+                        },
+                        "branch": {
+                          "type": "string"
+                        },
+                        "revision": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "label",
+                        "branch",
+                        "revision"
+                      ]
+                    },
+                    "relationship": {
+                      "type": "object",
+                      "properties": {
+                        "debugTargetSessionId": {
+                          "type": "string"
+                        },
+                        "parentSessionId": {
+                          "type": "string"
+                        }
+                      }
+                    },
                     "state": {
                       "type": "string"
                     },
@@ -1831,6 +1920,7 @@
                   "required": [
                     "capabilities",
                     "id",
+                    "kind",
                     "mode",
                     "state",
                     "usage"
@@ -3225,6 +3315,10 @@
                       "xhigh",
                       "max"
                     ]
+                  },
+                  "worktreeSelector": {
+                    "type": "string",
+                    "minLength": 1
                   }
                 },
                 "required": [
@@ -3249,6 +3343,82 @@
                   },
                   "required": [
                     "id"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
                   ]
                 }
               }
@@ -3293,6 +3463,44 @@
             }
           },
           "500": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "501": {
             "description": "The request could not be completed.",
             "content": {
               "application/problem+json": {
@@ -3385,6 +3593,22 @@
             "name": "sessionId"
           }
         ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "worktreeSelector": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "201": {
             "description": "An empty-history successor session, replacing this one's conversation.",
@@ -3399,6 +3623,82 @@
                   },
                   "required": [
                     "id"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
                   ]
                 }
               }
@@ -3443,6 +3743,44 @@
             }
           },
           "500": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "501": {
             "description": "The request could not be completed.",
             "content": {
               "application/problem+json": {
@@ -7763,7 +8101,7 @@
         },
         "responses": {
           "200": {
-            "description": "The updated learned skill.",
+            "description": "The updated learned skill and whether publishing it into the live catalog succeeded.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7826,6 +8164,12 @@
                     },
                     "version": {
                       "type": "string"
+                    },
+                    "publicationError": {
+                      "type": "string"
+                    },
+                    "publicationStatus": {
+                      "type": "string"
                     }
                   },
                   "required": [
@@ -7840,7 +8184,9 @@
                     "state",
                     "supersedes",
                     "updatedAt",
-                    "version"
+                    "version",
+                    "publicationError",
+                    "publicationStatus"
                   ]
                 }
               }
@@ -9943,6 +10289,547 @@
           },
           "503": {
             "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/soul": {
+      "get": {
+        "operationId": "getSoulInspection",
+        "responses": {
+          "200": {
+            "description": "The connection's resolved soul snapshot.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "present": {
+                      "type": "boolean"
+                    },
+                    "content": {
+                      "type": "string"
+                    },
+                    "sizeBytes": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9]\\d*)$"
+                    },
+                    "sha256": {
+                      "type": "string"
+                    },
+                    "provenance": {
+                      "type": "string",
+                      "enum": [
+                        "unspecified",
+                        "user",
+                        "project",
+                        "driver"
+                      ]
+                    },
+                    "trusted": {
+                      "type": "boolean"
+                    },
+                    "drifted": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "present",
+                    "content",
+                    "sizeBytes",
+                    "sha256",
+                    "provenance",
+                    "trusted",
+                    "drifted"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The inspection could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The inspection could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The inspection could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "The inspection could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The inspection could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionId}/worktrees": {
+      "get": {
+        "operationId": "getSessionWorktrees",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "in": "path",
+            "name": "sessionId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Eligible choices for the owned source session.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "selector": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "branch": {
+                            "type": "string"
+                          },
+                          "revision": {
+                            "type": "string"
+                          },
+                          "bare": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "selector",
+                          "kind",
+                          "label",
+                          "branch",
+                          "revision",
+                          "bare"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "items"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The inspection could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The inspection could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The inspection could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The inspection could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "The inspection could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The inspection could not be completed.",
             "content": {
               "application/problem+json": {
                 "schema": {

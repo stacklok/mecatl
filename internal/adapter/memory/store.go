@@ -73,8 +73,8 @@ const (
 //     <dir>/memory.lock guards the read-modify-write. Writes (Remember,
 //     Remember, Forget) take an EXCLUSIVE lock; reads (Recall, List, Index) take a
 //     SHARED lock. The lock spans the whole load→mutate→save sequence, so two
-//     processes can no longer interleave read-modify-write and clobber each other
-//     (the lost-update bug the bare temp+rename did not prevent).
+//     processes cannot interleave read-modify-write and clobber each other
+//     (a lost update that a bare temp+rename does not prevent).
 //
 // Acquisition order is always s.mu THEN flock; the flock is acquired with a
 // bounded TryLockContext/TryRLockContext (lockRetryDelay / lockTimeout, also

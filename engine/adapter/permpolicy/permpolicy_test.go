@@ -229,7 +229,7 @@ func TestPolicyResolverDenyBeatsLearnedAllow(t *testing.T) {
 
 // TestPolicyAllowAllLoosensBuiltinFloor: a ScopeCLI allow-all rule loosens the
 // built-in ScopeBuiltinDefault Ask floor for mutating tools (the operator
-// allow-all posture). See docs/adr/0022-allow-all-posture.md.
+// allow-all posture).
 func TestPolicyAllowAllLoosensBuiltinFloor(t *testing.T) {
 	pShell := permpolicy.NewPolicy([]governance.Rule{
 		{Scope: governance.ScopeBuiltinDefault, Tool: "Shell", Effect: governance.Ask},

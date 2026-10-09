@@ -39,7 +39,7 @@ func TestLogGuardrailsPostureBranches(t *testing.T) {
 				ModelAliases: map[string]string{"cheap": "slot-id"},
 			},
 			wantCount: 1,
-			// The default set is BLOCK (ADR 0060), so the posture line reports mode=block.
+			// The default set is BLOCK, so the posture line reports mode=block.
 			wantSubs: []string{"guardrails: ON", "checker=slot-id", "via slot `guardrail`", "mode=block", "default set"},
 		},
 		{
@@ -272,7 +272,7 @@ func TestGuardrailsPostureLine(t *testing.T) {
 	}
 }
 
-// TestGuardrailsPostureLineStatesYoloDemotion (ADR 0062, item 10): the startup posture
+// TestGuardrailsPostureLineStatesYoloDemotion: the startup posture
 // line must SURFACE the yolo advisory demotion so an operator sees the security
 // downgrade in the log, not only in docs. Non-yolo tiers must NOT carry the note.
 func TestGuardrailsPostureLineStatesYoloDemotion(t *testing.T) {

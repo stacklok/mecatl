@@ -55,7 +55,7 @@ func stringify(a any) string {
 //
 // MUTATION-VERIFY (the default arm): delete the Exa default branch (return
 // refsearch.Unavailable{} instead) and the "nothing set => Exa default" sub-case
-// fails — the zero-config default is then no longer wired.
+// fails — the zero-config default is then not wired.
 func TestBuildSearchProviderPrecedence(t *testing.T) {
 	const braveKey = "brave-secret-key"
 	const exaKey = "exa-secret-key"

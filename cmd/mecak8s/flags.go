@@ -1,5 +1,5 @@
-// Command mecak8s is the storage-free, Kubernetes-native mecatl agent binary
-// (ADR 0048): a THIN peer of cmd/mecated that composes the SAME app.Build
+// Command mecak8s is the storage-free, Kubernetes-native mecatl agent binary:
+// a THIN peer of cmd/mecated that composes the SAME app.Build
 // assembly with k8s-native defaults — Redis session store + durable event log,
 // coordination.k8s.io Lease session leasing, a dynamic /readyz (drain-gated +
 // Redis-pinged), and a bounded GracefulStop that cancels in-flight runs on
@@ -9,11 +9,11 @@
 // / `perf-mcp` subcommands, no ACP (mecated-only), and NO --store-dir (storage-free:
 // state lives in Redis and the k8s API server). It shares the SAME provider +
 // model-alias/model-slot flag wiring (internal/cliconfig) so the three-mains
-// wiring cannot drift. Telemetry (issue #343, ADR 0098) is OPT-IN: a loopback
+// wiring cannot drift. Telemetry (issue #343) is OPT-IN: a loopback
 // --metrics-addr mounts the admin mux's /metrics for scrape, and --otlp-* pushes
 // traces/metrics to a collector. Both default off — the pre-telemetry posture.
 //
-// Honest shutdown contract (ADR 0048 §4d): new runs are rejected (503 via the
+// Honest shutdown contract: new runs are rejected (503 via the
 // drain gate) the moment SIGTERM (or the preStop httpGet /drain) fires.
 // In-flight runs are CANCELLED, not drained to completion — a multi-minute LLM
 // turn cannot survive a rolling update within terminationGracePeriodSeconds:
@@ -146,8 +146,9 @@ type config struct {
 	toolhiveLLMFlags *cliconfig.ToolhiveLLMFlags
 	// modelAliases/modelSlots are the repeatable --model-alias/--model-slot
 	// bindings (cliconfig.RegisterModelFlags), threaded onto app.Config.
-	modelAliases *cliconfig.KeyValueList
-	modelSlots   *cliconfig.KeyValueList
+	modelAliases        *cliconfig.KeyValueList
+	modelAliasProviders *cliconfig.KeyValueList
+	modelSlots          *cliconfig.KeyValueList
 	// mcpServers holds the repeatable --mcp-server name=URL entries (issue #341,
 	// the factory MCP wiring), via the SAME cliconfig.MCPServerList helper as
 	// mecated/mecatequi: a per-server bearer rides the MCP_<NAME>_TOKEN env (a
@@ -161,12 +162,11 @@ type config struct {
 	shellFlagSet bool
 	noShell      bool
 
-	// Storage-free state (ADR 0048): --redis-url points the session store +
+	// Storage-free state: --redis-url points the session store +
 	// durable event log at a Redis managed service. Credentials are read from
 	// Secret-mounted files; no credential value is accepted on the command line.
 	// Verified TLS comes from either the system trust store (--redis-tls) or a
-	// mounted PEM CA bundle (--redis-tls-ca). No client-certificate/mTLS support
-	// (ADR 0233).
+	// mounted PEM CA bundle (--redis-tls-ca). No client-certificate/mTLS support.
 	redisURL            string
 	redisUsernameFile   string
 	redisPasswordFile   string
@@ -201,7 +201,7 @@ type config struct {
 	llmBreakerThreshold  int
 	llmBreakerCooldown   time.Duration
 
-	// Provider-side prompt caching (ADR 0100).
+	// Provider-side prompt caching.
 	noPromptCache     bool
 	anthropicCacheTTL string
 
@@ -227,7 +227,7 @@ type config struct {
 	guardrailsMode  string
 	guardrailsOff   bool
 
-	// Subagent model router (ADR 0042): kill-switch flag.
+	// Subagent model router: kill-switch flag.
 	subagentModelRouter    bool
 	subagentModelRouterSet bool
 
@@ -241,7 +241,7 @@ type config struct {
 	posture        string
 	postureFlagSet bool
 
-	// Reasoning-effort tier (ADR 0055): operator-tier reasoning-effort default ("" =
+	// Reasoning-effort tier: operator-tier reasoning-effort default ("" =
 	// unset, the provider's own default applies). reasoningEffortFlagSet records an
 	// explicit --reasoning-effort so composition lets CLI out-rank the operator-global
 	// settings.yaml reasoning-effort: key (mirrors posture).
@@ -292,7 +292,7 @@ type config struct {
 	enableParallel bool
 	enableTeams    bool
 
-	// Scheduled tasks (issue #189, Phase 1f; ADR 0073): the in-process scheduler.
+	// Scheduled tasks (issue #189): the in-process scheduler.
 	// mecak8s is the multi-replica home — the leader-lease (the k8s session-lease
 	// backend) elects one ticker. ON by default on a schedule-capable store (the
 	// --redis-url backend); noScheduler is the opt-out.
@@ -301,9 +301,9 @@ type config struct {
 	schedulerMinInterval        time.Duration
 	schedulerMaxConcurrentFires int
 
-	// Headless telemetry (issue #343, ADR 0098): OPT-IN. --metrics-addr mounts a
+	// Headless telemetry (issue #343): OPT-IN. --metrics-addr mounts a
 	// SEPARATE loopback /metrics listener (the admin mux — Prometheus scrape,
-	// ADR 0018 decision 6: loopback only, fail-closed on a non-loopback bind).
+	// loopback only, fail-closed on a non-loopback bind).
 	// --otlp-* push traces/metrics to a collector (opt-in twin for non-scrape
 	// deployments). All empty (the default) leaves the pipeline off — byte-identical
 	// to the pre-telemetry posture (no /metrics listener, no OTLP).
@@ -387,7 +387,7 @@ func parseFlags(argv []string) (config, error) {
 	// config file, so this is inert unless an operator mounts one or passes
 	// --toolhive-llm-base-url explicitly.
 	cfg.toolhiveLLMFlags = cliconfig.RegisterToolhiveLLMFlags(fs, cliconfig.DefaultToolhiveLLMFlagHelp)
-	cfg.modelAliases, cfg.modelSlots = cliconfig.RegisterModelFlags(fs, cliconfig.ModelFlagHelp{})
+	cfg.modelAliases, cfg.modelAliasProviders, cfg.modelSlots = cliconfig.RegisterModelFlags(fs, cliconfig.ModelFlagHelp{})
 	// Remote MCP servers (issue #341): the shared repeatable name=URL flag +
 	// MCP_<NAME>_TOKEN bearer convention, identical to mecated/mecatequi.
 	cfg.mcpServers = cliconfig.RegisterMCPServerFlag(fs, "")
@@ -396,7 +396,7 @@ func parseFlags(argv []string) (config, error) {
 	fs.StringVar(&cfg.shell, "shell", "/bin/sh", "Shell for Shell tool commands. An empty value disables the tool")
 	fs.BoolVar(&cfg.noShell, "no-shell", false, "Disable the Shell tool. Overrides --shell")
 
-	// Storage-free state (ADR 0048): --redis-url is the session store + durable
+	// Storage-free state: --redis-url is the session store + durable
 	// event log. NO --store-dir (mutually exclusive, rejected at Build).
 	fs.StringVar(&cfg.redisURL, "redis-url", "", "Redis host:port for the session store and durable event log")
 	fs.BoolVar(&cfg.redisFilesystem, "redis-filesystem", false, "Use a principal-scoped, persistent, shell-less Redis workspace. Excludes --workspace")
@@ -421,7 +421,7 @@ func parseFlags(argv []string) (config, error) {
 	fs.DurationVar(&cfg.sessionLeaseTTL, "session-lease-ttl", 30*time.Second, "Session lease lifetime. Another replica can claim a lease after this period when its holder stops")
 	fs.DurationVar(&cfg.sessionLeaseRenewInterval, "session-lease-renew-interval", 0, "Interval for renewing held session leases. Zero uses one third of --session-lease-ttl")
 
-	// Scheduled tasks (issue #189, Phase 1f): mecak8s is the multi-replica home.
+	// Scheduled tasks (issue #189): mecak8s is the multi-replica home.
 	fs.BoolVar(&cfg.noScheduler, "no-scheduler", false, "Disable scheduled-task execution. Schedule management APIs remain available; one replica runs the scheduler when leasing is enabled")
 	fs.DurationVar(&cfg.schedulerTickInterval, "scheduler-tick-interval", 30*time.Second, "Interval for polling due schedules. Zero uses the default interval; inactive when scheduling is unavailable or disabled")
 	fs.DurationVar(&cfg.schedulerMinInterval, "scheduler-min-interval", time.Minute, "Minimum accepted schedule interval. Shorter intervals are rejected; zero disables the limit")
@@ -452,14 +452,14 @@ func parseFlags(argv []string) (config, error) {
 	fs.StringVar(&cfg.guardrailsModel, "guardrails-model", "", "Model ID or alias for checking outbound arguments and inbound results. A configured model or guardrail model slot enables checks")
 	fs.StringVar(&cfg.guardrailsMode, "guardrails", "", "Set to off to disable guardrails regardless of other configuration")
 
-	// Subagent model router (ADR 0042): kill-switch.
+	// Subagent model router: kill-switch.
 	fs.BoolVar(&cfg.subagentModelRouter, "subagent-model-router", false, "Disable operator-configured subagent model routing; this flag cannot enable routing")
 	fs.StringVar(&cfg.subagentModel, "subagent-model", "", "Default model for child agents without their own model. Empty inherits --model")
 
 	// Posture: DEFAULT "auto" (the recommended UNATTENDED single-tenant tier).
 	fs.StringVar(&cfg.posture, "posture", "auto", "Permission posture: strict prompts for mutations; trusted honors project allow rules; auto allows tools by default and relaxes main shell substitutions while child injection defenses remain enabled; yolo also runs child command substitutions automatically. Deny rules and configured ask rules still apply. auto and yolo require MECATL_SANDBOX when running as root")
 
-	// Reasoning-effort tier (ADR 0055): operator-tier only; help text verbatim from mecated.
+	// Reasoning-effort tier: operator-tier only; help text verbatim from mecated.
 	fs.StringVar(&cfg.reasoningEffort, "reasoning-effort", "",
 		"Default reasoning effort: auto, low, medium, high, xhigh, or max. Empty or auto uses configured or provider defaults; unsupported or invalid values fall back to a supported default")
 
@@ -500,7 +500,7 @@ func parseFlags(argv []string) (config, error) {
 	fs.BoolVar(&cfg.enableParallel, "enable-parallel", false, "Enable the Parallel tool for isolated child branches")
 	fs.BoolVar(&cfg.enableTeams, "enable-teams", false, "Enable the experimental agent-team capability")
 
-	// Headless telemetry (issue #343, ADR 0098): OPT-IN. --metrics-addr mounts a
+	// Headless telemetry (issue #343): OPT-IN. --metrics-addr mounts a
 	// SEPARATE loopback /metrics listener (the admin mux — Prometheus scrape).
 	// --otlp-* push traces/metrics to a collector (the opt-in twin for non-scrape
 	// deployments). All empty (default) leaves the pipeline off.
@@ -570,7 +570,7 @@ func parseFlags(argv []string) (config, error) {
 	cfg.shell = resolvedShell
 
 	// Default the schedule-fire retention to 7d when the operator did not set it
-	// explicitly (ADR 0059 decision #7 Phase-2, ADR 0073): the scheduler is ON by
+	// explicitly: the scheduler is ON by
 	// default on a schedule-capable store, and a durable store accumulates a
 	// "sched--" session per fire, so a sane default keeps it bounded. mecak8s is
 	// the multi-replica scheduling home, so the default is especially relevant
@@ -616,7 +616,7 @@ func parseFlags(argv []string) (config, error) {
 		}
 	}
 
-	// --metrics-addr MUST be loopback (ADR 0018 decision 6): the admin mux serves
+	// --metrics-addr MUST be loopback: the admin mux serves
 	// pprof/expvar/metrics output that can embed prompt text, file paths, and
 	// goroutine stacks — secret-shaped. A non-loopback bind is REJECTED at parse
 	// time (fail-closed) via the shared cliconfig.IsLoopbackAddr gate, mirroring
@@ -743,7 +743,7 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		DriverTLSCert:          cfg.driverTLSCert,
 		DriverTLSKey:           cfg.driverTLSKey,
 		// OwnershipEnforced mirrors cmd/mecated's wiring: the OIDC verifier being
-		// enabled IS the caller-isolation on-switch (ADR 0212). Without this line
+		// enabled IS the caller-isolation on-switch. Without this line
 		// mecak8s attributes ownership correctly but never enforces it — every
 		// caller-owned application boundary silently falls back to its
 		// ownerless-compatibility path, and the Helm chart's oidc.enabled
@@ -786,7 +786,8 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		RouterDisabled:                cfg.subagentModelRouterSet && !cfg.subagentModelRouter,
 		GuardrailsModel:               cfg.guardrailsModel,
 		GuardrailsDisabled:            cfg.guardrailsOff,
-		ModelAliases:                  cfg.modelAliases.AsMap(),
+		ModelAliases:                  cliconfig.ScalarModelAliases(cfg.modelAliases, cfg.modelAliasProviders),
+		ModelAliasTargets:             cliconfig.ModelAliasTargets(cfg.modelAliases, cfg.modelAliasProviders),
 		ModelSlots:                    cfg.modelSlots.AsMap(),
 		// Remote MCP servers (issue #341): the static name=URL entries (with any
 		// MCP_<NAME>_TOKEN bearer already resolved into Headers at parse time).
@@ -815,7 +816,7 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		PermissionConfigs:        cfg.permissionConfigs,
 		Posture:                  app.ParsePosture(cfg.posture),
 		PostureFlagSet:           cfg.postureFlagSet,
-		// Reasoning-effort tier (ADR 0055): operator-tier only; reasoningEffortFlagSet
+		// Reasoning-effort tier: operator-tier only; reasoningEffortFlagSet
 		// lets CLI out-rank the operator-global settings.yaml reasoning-effort: key
 		// (folded by foldOperatorReasoningEffort in app.Build, like posture).
 		ReasoningEffort:        cfg.reasoningEffort,
@@ -828,7 +829,7 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		// unresolved ask is auto-denied / routed to the opt-in ask-reviewer.
 		Interactive: !cfg.headless,
 		Diagnostics: diag,
-		// Observability (issue #343, ADR 0098): OPT-IN. With no --otlp-* flags the
+		// Observability (issue #343): OPT-IN. With no --otlp-* flags the
 		// handles are zero-valued (nil) — the byte-identical no-metrics posture.
 		// The opt-out product-metrics Sink/ToolCallRecorder are folded in
 		// alongside (nil-guarded fan-out): both nil reproduces the

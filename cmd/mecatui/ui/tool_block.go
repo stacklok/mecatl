@@ -66,23 +66,23 @@ func (r *renderer) renderToolSnapshot(idx int, s scrollback.BlockSnapshot, p scr
 }
 
 func (r *renderer) renderSettledToolLine(blockID uint64, projection toolcallProjection) blockRenderOutput {
-	glyph, _, style := projection.state.status()
-	line := r.th.Style(style).Render(glyph) + " " + projection.summary()
+	line := projection.line()
+	out := r.th.Style(line.StatusStyle()).Render(line.Glyph()) + " " + line.Content()
 	indent := 0
 	width := r.width
 	if r.width > r.indent {
 		indent = r.indent
 		width = r.contentWidth()
 	}
-	line = ansi.Truncate(line, width, "…")
+	out = ansi.Truncate(out, width, "…")
 	if indent > 0 {
-		line = strings.Repeat(" ", indent) + line
+		out = strings.Repeat(" ", indent) + out
 	}
 	return blockRenderOutput{
-		text: line,
+		text: out,
 		rows: []renderedRow{{
 			blockID: blockID, region: conversationRegionBody, text: true,
-			kind: scrollback.KindTool, indent: indent, leading: indent, span: graphemeCount(ansi.Strip(line)),
+			kind: scrollback.KindTool, indent: indent, leading: indent, span: graphemeCount(ansi.Strip(out)),
 		}},
 	}
 }
@@ -93,14 +93,17 @@ func (r *renderer) prepareTypedToolCard(p toolCardPresentation, state toolcallPr
 	_, _, bodyWidth := r.toolCardLayout()
 	theme := r.blockTheme()
 
-	glyphText, status, style := state.status()
-	glyph := r.th.Style(style).Render(glyphText)
+	line := renderfmt.PresentToolLine("", "", state.renderfmtState())
+	glyphText, status := line.Glyph(), line.Status()
+	glyph := r.th.Style(line.StatusStyle()).Render(glyphText)
 	mcpName, isMCP := mcpTitle(p.name)
 	headLabel := terminaltext.Sanitize(p.name)
 	if isMCP {
 		headLabel = mcpName
 	}
-	headLabel = status + " · " + headLabel
+	if status != "" {
+		headLabel = status + " · " + headLabel
+	}
 	head := renderToolHeader(glyph, glyphText, headLabel, r.th.Style("toolName"), bodyWidth)
 	sections := []preparedToolSection{{Region: blocks.RegionChrome, Text: head}}
 	if args := r.renderOrdinaryToolArgs(p.name, p.arguments, bodyWidth); args != "" {
@@ -230,8 +233,9 @@ func (r *renderer) prepareTeamCard(p teamCardPresentation, state toolcallProject
 func (r *renderer) prepareDelegationCard(name string, resolved bool, result string, isError bool, artifacts []client.ContentBlock, args string, state toolcallProjectionState) preparedToolCard {
 	r.toolCardPrepares++
 	_, _, bodyWidth := r.toolCardLayout()
-	glyphText, status, style := state.status()
-	glyph := r.th.Style(style).Render(glyphText)
+	line := renderfmt.PresentToolLine("", "", state.renderfmtState())
+	glyphText, status := line.Glyph(), line.Status()
+	glyph := r.th.Style(line.StatusStyle()).Render(glyphText)
 	mcpName, isMCP := mcpTitle(name)
 	headLabel := terminaltext.Sanitize(name)
 	if isMCP {
@@ -258,7 +262,7 @@ func (r *renderer) renderSubagentPresentation(p subagentCardPresentation, bodyWi
 		out.WriteString(renderDelegationToolCardText(muted, "↳ "+terminaltext.Sanitize(p.goal), bodyWidth))
 		out.WriteString("\n")
 	}
-	modelLabel := delegationModelLabel(p.routedCategory, p.routedModel, p.routingReason, p.model, p.routing)
+	modelLabel := delegationModelLabelWithSelection(p.routedCategory, p.routedModel, p.routingReason, p.model, p.provider, p.explicitRouterCategory, p.routing)
 	if modelLabel != "" {
 		out.WriteString(renderDelegationToolCardText(muted, modelLabel, bodyWidth))
 		out.WriteString("\n")

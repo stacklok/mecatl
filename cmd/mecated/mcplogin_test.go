@@ -450,7 +450,7 @@ func TestMCPLoginArgsAcceptServerInteractionAndConfigSelectionOnly(t *testing.T)
 	}
 }
 
-func TestADR_0325_DCRResetAndRetryCLI(t *testing.T) {
+func TestDCRResetAndRetryCLI(t *testing.T) {
 	fixture := newMCPLoginDCRFixture(t)
 	root := filepath.Join(t.TempDir(), "credentials")
 	settings := filepath.Join(t.TempDir(), "settings.yaml")

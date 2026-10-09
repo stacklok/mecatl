@@ -607,7 +607,7 @@ func TestParallelAutoMergeJoinAllNeverMerges(t *testing.T) {
 }
 
 // TestParallelAutoMergeNilMergerIsNoOp asserts that WITHOUT WithAutoMerge the
-// historical no-auto-merge boundary holds (the merge never fires).
+// no-auto-merge boundary holds (the merge never fires).
 func TestParallelAutoMergeNilMergerIsNoOp(t *testing.T) {
 	childRead := &fakeTool{name: "Read", readOnly: true,
 		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {

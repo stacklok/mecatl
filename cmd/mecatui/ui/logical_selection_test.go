@@ -10,11 +10,11 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
 
-// TestADR_0301_SelectionPreservesLiveStableText pins ADR 0301 §4: a selection
+// TestSelectionPreservesLiveStableText pins that a selection
 // is logical text, not a rendered row range. Reflow and a pending stream delta
 // must retain its exact ANSI-free copy while its context still resolves. A pending
 // delta never changes selection/copy's visible frame before its render tick.
-func TestADR_0301_SelectionPreservesLiveStableText(t *testing.T) {
+func TestSelectionPreservesLiveStableText(t *testing.T) {
 	const marker = "LOGICALSELECTIONMARKER"
 	m, _ := selModel(t)
 	m.conv.addUser("request")

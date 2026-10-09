@@ -153,7 +153,7 @@ func TestRunSkillsPromote(t *testing.T) {
 }
 
 // TestParseFlagsSchedulerMinIntervalDefault pins the cadence-floor security
-// default (ADR 0073, the panel-review repair): --scheduler-min-interval
+// default: --scheduler-min-interval
 // defaults to 1m (NOT 0/off), so an on-by-default scheduler + the floor-Allow
 // Schedule tool cannot mint an unbounded tight-cadence recurring fire out of
 // the box. An operator can still set it explicitly (tighter, or 0 to disable).
@@ -227,7 +227,7 @@ func TestParseFlagsOIDCMaxJWKSStaleness(t *testing.T) {
 	}
 }
 
-// TestParseFlagsSubagentModelRouter asserts the ADR 0042 kill-switch parses:
+// TestParseFlagsSubagentModelRouter asserts the subagent-model-router kill-switch parses:
 // unset → not set (router governed by taxonomy); a bare flag / =true still PARSES and is
 // a harmless no-op (router stays governed by taxonomy); =false maps to RouterDisabled via
 // appConfig.
@@ -305,6 +305,7 @@ func TestParseFlagsAgentDefs(t *testing.T) {
 		"--agents-conventional=false",
 		"--subagent-model", "cheap-id",
 		"--model-alias", "fast=gpt-4o-mini",
+		"--model-alias-provider", "smart=anthropic",
 		"--model-alias", "smart=gpt-5",
 		"--model-slot", "compaction=cheap",
 		"--model-slot", "guardrail=fast",
@@ -323,6 +324,9 @@ func TestParseFlagsAgentDefs(t *testing.T) {
 	}
 	if got := cfg.modelAliases.AsMap(); got["fast"] != "gpt-4o-mini" || got["smart"] != "gpt-5" {
 		t.Errorf("modelAliases = %v, want fast=gpt-4o-mini smart=gpt-5", got)
+	}
+	if got := cfg.modelAliasProviders.AsMap()["smart"]; got != "anthropic" {
+		t.Errorf("modelAliasProviders[smart] = %q, want anthropic", got)
 	}
 	if got := cfg.modelSlots.AsMap(); got["compaction"] != "cheap" || got["guardrail"] != "fast" {
 		t.Errorf("modelSlots = %v, want compaction=cheap guardrail=fast", got)
@@ -722,7 +726,7 @@ func readBody(t *testing.T, resp *http.Response) []byte {
 // TestPostureRefusalReason proves the generalised root-refusal (the exported
 // app.PostureRefusalReason) gates auto AND yolo (both waive the mutate-ask floor) while
 // strict/trusted are NEVER refused, and only when the process is PRIVILEGED. It would
-// fail if the gate regressed to the historical yolo-only check.
+// fail if the gate regressed to a yolo-only check.
 func TestPostureRefusalReason(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -909,7 +913,7 @@ func TestSlowTurnSourceBridge(t *testing.T) {
 }
 
 // TestPerfMCPPrintConfig asserts the print-config subcommand emits a paste-ready
-// .mcp.json with the right url and NO Authorization/headers (decision 6: loopback,
+// .mcp.json with the right url and NO Authorization/headers (loopback,
 // no auth).
 func TestPerfMCPPrintConfig(t *testing.T) {
 	var out bytes.Buffer
@@ -918,7 +922,7 @@ func TestPerfMCPPrintConfig(t *testing.T) {
 	}
 	body := out.String()
 	if strings.Contains(strings.ToLower(body), "authorization") || strings.Contains(strings.ToLower(body), "headers") {
-		t.Errorf("print-config emitted an auth header; decision 6 is loopback/no-auth:\n%s", body)
+		t.Errorf("print-config emitted an auth header; the endpoint is loopback/no-auth:\n%s", body)
 	}
 
 	var parsed struct {
@@ -944,7 +948,7 @@ func TestPerfMCPPrintConfig(t *testing.T) {
 	// Strict key-set: decode into a map and assert the server object's keys are
 	// EXACTLY {type,url}. A stray token/env/headers/Authorization field would
 	// otherwise slip past the typed struct (which silently drops unknown keys) —
-	// this is stronger than the substring grep above (decision 6: loopback, no auth).
+	// this is stronger than the substring grep above (loopback, no auth).
 	var raw struct {
 		McpServers map[string]map[string]json.RawMessage `json:"mcpServers"`
 	}
@@ -958,7 +962,7 @@ func TestPerfMCPPrintConfig(t *testing.T) {
 	wantKeys := map[string]bool{"type": true, "url": true}
 	for k := range rawSrv {
 		if !wantKeys[k] {
-			t.Errorf("server object carries an unexpected key %q (want exactly {type,url} — decision 6 forbids token/env/headers):\n%s", k, body)
+			t.Errorf("server object carries an unexpected key %q (want exactly {type,url} — no token/env/headers):\n%s", k, body)
 		}
 	}
 	for k := range wantKeys {

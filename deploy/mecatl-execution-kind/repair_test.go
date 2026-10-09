@@ -197,6 +197,10 @@ func TestProductionHelmInstallsCurrentCRDAndCanonicalTemplates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	deploy := scriptRange(t, "run.sh", "set -- upgrade --install mecatl-execution", "\nkube -n execution-qualification create configmap execution-mock")
+	if strings.Contains(deploy, "--skip-crds") || strings.Contains(deploy, "--server-side=false") {
+		t.Fatal("initial provider install must use Helm's default CRD and apply mode")
+	}
 	for _, required := range []string{"template-recipes.yaml", "templates-values-$run_id.yaml", "--set-string execution.templateRevision=\"$go_revision\""} {
 		if !strings.Contains(string(body), required) {
 			t.Fatalf("qualification deploy does not wire %q", required)

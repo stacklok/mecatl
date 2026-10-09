@@ -64,7 +64,7 @@ func runWithLauncher(t *testing.T, launcher BrowserLauncher, authorize Authorize
 	return runtime.Authorize(ctx, testIssuer, authorize)
 }
 
-func TestADR_0325_RegistrationBoundCallbackPath(t *testing.T) {
+func TestRegistrationBoundCallbackPath(t *testing.T) {
 	path := callbackPrefix + base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, callbackBytes))
 	var callbackRedirect, callbackState string
 	runtime, err := New(Options{Launcher: launcherFunc(func(context.Context, string) error {

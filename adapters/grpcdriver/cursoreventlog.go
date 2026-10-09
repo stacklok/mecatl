@@ -18,17 +18,17 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-// This file is the driver half of ADR 0250. The cursor is OPAQUE on this
-// transport in the strongest sense: unlike every other backend, this client does
-// not encode or decode one. The remote driver owns the encoding AND the
+// This file is the driver half of event-log cursors. The cursor is OPAQUE on
+// this transport in the strongest sense: unlike every other backend, this
+// client does not encode or decode one. The remote driver owns the encoding AND the
 // generation basis, and the client round-trips the string verbatim — which is
 // what lets a driver back its log with storage whose positions this repo knows
 // nothing about.
 
 const (
-	// cursorErrorDomain scopes the ErrorInfo reasons below. ADR 0248 pinned
-	// google.rpc.ErrorInfo as the gRPC error carrier for the harness API; the
-	// driver protocol reuses it rather than inventing a second mechanism.
+	// cursorErrorDomain scopes the ErrorInfo reasons below. The harness API uses
+	// google.rpc.ErrorInfo as its gRPC error carrier; the driver protocol reuses
+	// it rather than inventing a second mechanism.
 	cursorErrorDomain = "mecatl.stacklok.com"
 
 	// reasonCursorMalformed / reasonCursorExpired travel in an ErrorInfo so the
@@ -50,8 +50,8 @@ const (
 // It exists because a type assertion cannot answer this question across a wire:
 // this client satisfies port.CursorEventLog by construction, so composition
 // would otherwise believe every driver supports cursors and discover otherwise
-// only when a watch failed. ADR 0250 requires that a backend without cursor
-// support be reported as UNSUPPORTED rather than silently degraded, and this is
+// only when a watch failed. A backend without cursor support must be reported
+// as UNSUPPORTED rather than silently degraded, and this is
 // the value that makes that reportable.
 var ErrDriverCursorUnsupported = errors.New("grpcdriver: remote driver does not support event-log cursors")
 
@@ -150,7 +150,7 @@ func logRecordFromProto(id session.SessionID, resp *driverv1.ReadAfterResponse) 
 	}
 	switch rec.Kind {
 	case port.LogRecordGap:
-		// A gap carries no event, by construction (ADR 0250 decision 5).
+		// A gap carries no event, by construction.
 		return rec, nil
 	case port.LogRecordEvent:
 		env := resp.GetEvent()

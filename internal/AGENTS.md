@@ -15,7 +15,8 @@
 
 - Placement is server-owned (`app/placement.go`): exact
   `EnvironmentRef{Kind, ID, Revision}`, fail-closed reattachment, no public paths or
-  cwd-based inference.
+  cwd-based inference. A binding's governance root (the host checkout) is not its
+  execution root; see [placement](../docs/architecture/microvm-environments.md#exact-reattachment).
 - Operator `command_runner.environment.inherit` grants reach built-in main runners and
   direct-write children, not hardened children or internal Git. Reserved harness
   credential names stay scrubbed even when listed.

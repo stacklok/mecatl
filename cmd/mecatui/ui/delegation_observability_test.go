@@ -1,7 +1,6 @@
 package ui
 
-// Scenario tests for the delegation observability convergence (ADR 0079, plan
-// delegation-observability-convergence Scenario 3): the mecatui Subagent and
+// Scenario tests for the delegation observability convergence: the mecatui Subagent and
 // Parallel surfaces render the BOUNDED previews the wire now carries, converge on
 // the Team trace format, and stop claiming content is hidden. Team-unique
 // structures stay Team-only.
@@ -52,18 +51,17 @@ func TestDelegationObservability_Scenario3_CollapsedCardShowsCurrentTool(t *test
 	}
 }
 
-// TestDelegationObservability_Scenario3_ExpandedCardShowsBoundedPreviews retains the
-// historical AC3.2 name after the newer mecatui-quieter-conversation-tool-calls plan
-// retired ctrl+t card expansion. Bounded preview content remains observable in the
-// actual f6 Agents focus, which is the newer plan's replacement route.
+// TestDelegationObservability_Scenario3_ExpandedCardShowsBoundedPreviews keeps its
+// AC3.2 name although cards do not expand via ctrl+t. Bounded preview content is
+// observable in the f6 Agents focus.
 func TestDelegationObservability_Scenario3_ExpandedCardShowsBoundedPreviews(t *testing.T) {
 	const rawMessage = "child message must stay out of the parent conversation"
 	longMessage := strings.Repeat("m", maxTraceMessageLen+40)
 	m := newMCPModel(t, aztec(), nil)
 	m = seedSubagents(m, "p1",
 		startSub("p1", "c1", "audit auth"),
-		toolSubPreview("p1", "c1", "tool.call", "Grep", "pattern: auth", 1),
-		toolSubPreview("p1", "c1", "tool.call", "Read", "file: auth.go", 2),
+		toolSubPreview("p1", "c1", "tool.call", "Grep", `{"pattern":"auth"}`, 1),
+		toolSubPreview("p1", "c1", "tool.call", "Read", `{"path":"auth.go"}`, 2),
 		toolSubPreview("p1", "c1", "tool.result", "Read", "found the auth boundary", 2),
 		toolSubPreview("p1", "c1", "message.delta", "", rawMessage+longMessage, 2),
 	)
@@ -83,10 +81,10 @@ func TestDelegationObservability_Scenario3_ExpandedCardShowsBoundedPreviews(t *t
 		t.Fatalf("enter should focus the child in the f6 Agents view, view = %v", m.subagents.view)
 	}
 	focus := stripANSIstr(m.View().Content)
-	if !strings.Contains(focus, "✓ Grep — pattern: auth") {
+	if !strings.Contains(focus, "… Grep · \"auth\" · pending") {
 		t.Errorf("Agents focus should show the child tool args preview, got %q", focus)
 	}
-	if !strings.Contains(focus, "✓ Read — found the auth boundary") {
+	if !strings.Contains(focus, "✓ Read · auth.go") || strings.Contains(focus, "found the auth boundary") {
 		t.Errorf("Agents focus should show the child tool result preview, got %q", focus)
 	}
 	if strings.Contains(focus, rawMessage+longMessage) {
@@ -108,7 +106,7 @@ func TestDelegationObservability_Scenario3_ParallelViewsShowBoundedPreviews(t *t
 		branchStartPar("p1", 0, "branch-1", "explore"),
 		client.ParallelMsg{
 			Kind: client.ParallelBranchTool, ParentCallID: "p1", BranchIndex: 0,
-			InnerKind: "tool.call", ToolName: "Grep", Detail: `pattern: foo`, ToolCount: 1,
+			InnerKind: "tool.call", ToolName: "Grep", Detail: `{"pattern":"foo"}`, ToolCount: 1,
 		},
 		client.ParallelMsg{
 			Kind: client.ParallelBranchTool, ParentCallID: "p1", BranchIndex: 0,
@@ -129,7 +127,7 @@ func TestDelegationObservability_Scenario3_ParallelViewsShowBoundedPreviews(t *t
 		t.Errorf("group focus should show the branch roster line, got %q", out)
 	}
 	// Below it, the interleaved trace: the Team chip with its bounded preview…
-	if !strings.Contains(out, "✓ Grep — pattern: foo") {
+	if !strings.Contains(out, "… Grep · \"foo\" · pending") {
 		t.Errorf("group focus should show the branch tool chip with its bounded preview, got %q", out)
 	}
 	// …and the capped branch message line.

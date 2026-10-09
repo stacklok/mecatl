@@ -38,7 +38,7 @@ func ruleSpecs() {
 
 		ginkgo.It("withholds project-tier rules on an untrusted workspace", func() {
 			// The trust gate is the ONE boundary for always-on conventional
-			// discovery (ADR 0081 §5): a second mecated spawned with
+			// discovery: a second mecated spawned with
 			// --trust-project=false (Go's flag pkg: last wins over the standard
 			// args' --trust-project) must WITHHOLD the workspace lane
 			// (<workspace>/.claude/rules/testing.md) — the WARN is the

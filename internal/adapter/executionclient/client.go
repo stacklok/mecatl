@@ -615,12 +615,6 @@ func (c *Client) RevokeEnvironment(ctx context.Context, ref executionenv.Environ
 	return out.GetGrantGeneration(), nil
 }
 
-// MigrateEnvironment upgrades one explicitly identified legacy schema.
-func (c *Client) MigrateEnvironment(ctx context.Context, ref executionenv.EnvironmentRef, owner executionenv.Owner, expectedSchema uint32, podUID, pvcUID, operationID string) error {
-	_, err := c.rpc.MigrateEnvironment(ctx, &executionv1.MigrateEnvironmentRequest{Environment: refToProto(ref), Owner: ownerToProto(owner), ExpectedSchemaVersion: &expectedSchema, ExpectedPodUid: podUID, ExpectedPvcUid: pvcUID, OperationId: operationID})
-	return decodeError(ctx, err)
-}
-
 // RecoverEnvironment clears a fence only after the provider verifies exact terminal evidence.
 func (c *Client) RecoverEnvironment(ctx context.Context, req executionenv.RetireEnvironmentRequest) error {
 	_, err := c.rpc.RecoverEnvironment(ctx, &executionv1.RecoverEnvironmentRequest{Environment: refToProto(req.Environment), Owner: ownerToProto(req.Owner), ExpectedExecutionEpoch: req.ExpectedEpoch, ExpectedPodUid: req.ExpectedPodUID, ExpectedPvcUid: req.ExpectedPVCUID, OperationId: req.OperationID})

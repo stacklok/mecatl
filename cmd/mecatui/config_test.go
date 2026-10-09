@@ -241,7 +241,7 @@ func TestEmbeddedConfigEnablesAgentDefs(t *testing.T) {
 
 // TestEmbeddedConfigPermissionPosture asserts the TUI discovers the conventional
 // per-project permission config and imports Claude-Code settings (issue #13), but
-// that project TRUST is DEFAULT FALSE (WORKSPACE-TRUST Phase 0): unified with
+// that project TRUST is DEFAULT FALSE: unified with
 // mecated, a project's ALLOW rules + project soul are gated behind --trust-project.
 func TestEmbeddedConfigPermissionPosture(t *testing.T) {
 	ac := embeddedConfig(config{workspace: "/ws", model: "m", mock: true}, port.NopDiagnostics{})
@@ -567,7 +567,7 @@ func TestParseFlagsNoMouse(t *testing.T) {
 }
 
 // TestParseFlagsThemeResolution asserts cfg.theme (the light-theme
-// auto-detect gate's input, ADR 0280 — resolveThemeAutoDetect treats an empty
+// auto-detect gate's input — resolveThemeAutoDetect treats an empty
 // cfg.theme as "no explicit theme") stays empty with none given, and picks up
 // a theme name from either --theme or the MECATUI_THEME fallback.
 func TestParseFlagsThemeResolution(t *testing.T) {
@@ -1417,7 +1417,7 @@ func TestEmbeddedConfigMapsPosture(t *testing.T) {
 }
 
 // TestParseFlagsSubagentModelRouter covers the --subagent-model-router kill-switch
-// (ADR 0042) end-to-end through mecatui's embeddedConfig: the router is enabled by the
+// end-to-end through mecatui's embeddedConfig: the router is enabled by the
 // models.router: taxonomy, so the bool flag only sets RouterDisabled when given as
 // =false. Unset → set==false → RouterDisabled==false (taxonomy governs); bare/=true →
 // set==true/value==true, RouterDisabled stays false (a harmless no-op, does NOT disable);
@@ -1465,7 +1465,7 @@ func TestParseFlagsSubagentModelRouter(t *testing.T) {
 // TestPostureRefusalReason proves the generalised root-refusal (the exported
 // app.PostureRefusalReason) gates auto AND yolo (both waive the mutate-ask floor) while
 // strict/trusted are NEVER refused (they suppress no prompt), and only when PRIVILEGED.
-// It would fail if the gate regressed to the historical yolo-only check.
+// It would fail if the gate regressed to a yolo-only check.
 func TestPostureRefusalReason(t *testing.T) {
 	tests := []struct {
 		name       string

@@ -25,7 +25,7 @@ func (availabilityRewriteHook) Run(_ context.Context, ev governance.HookEvent) (
 	return governance.HookOutcome{}, nil
 }
 
-func TestADR_0370_Scenario2_AvailabilityAfterEffectiveRelease(t *testing.T) {
+func TestToolResultAvailability_AfterEffectiveRelease(t *testing.T) {
 	t.Run("released effective payload", testAvailabilityReleasedEffectivePayload)
 	t.Run("unattended hold", testAvailabilityUnattendedHold)
 	t.Run("PostToolUse UTF-8 repair", testAvailabilityAfterUTF8Repair)
@@ -93,7 +93,7 @@ func testAvailabilityAfterStalePrincipalRevision(t *testing.T) {
 	}
 }
 
-func TestADR_0370_Scenario2_StaleInboundSuppressesPostHookAnnotations(t *testing.T) {
+func TestToolResultAvailability_StaleInboundSuppressesPostHookAnnotations(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		readOnly bool
@@ -308,7 +308,7 @@ func (reviewer selectiveAvailabilityReviewer) Review(_ context.Context, req agen
 	return agent.ToolReviewResult{Assessment: agent.ReviewProhibited}, reviewer.usage, nil
 }
 
-func TestADR_0370_Scenario2_ExactReleasedAvailability(t *testing.T) {
+func TestToolResultAvailability_ExactRelease(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		verdict session.ApprovalVerdict
@@ -384,7 +384,7 @@ func TestADR_0370_Scenario2_ExactReleasedAvailability(t *testing.T) {
 	}
 }
 
-func TestADR_0370_Scenario2_CanonicalCancellationReplacement(t *testing.T) {
+func TestToolResultAvailability_CanonicalCancellationReplacement(t *testing.T) {
 	const private = "PRIVATE_HELD_RESULT"
 	read := &fakeTool{name: "Read", readOnly: true, exec: func(_ context.Context, c session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
 		if c.ID == "held" {
@@ -495,7 +495,7 @@ cancelRun:
 	}
 }
 
-func TestADR_0370_Scenario2_CleanSiblingBypassesHeldPresentation(t *testing.T) {
+func TestToolResultAvailability_CleanSiblingBypassesHeldPresentation(t *testing.T) {
 	started := make(chan session.ToolCallID, 3)
 	gates := map[session.ToolCallID]chan struct{}{"held-one": make(chan struct{}), "clean": make(chan struct{}), "held-two": make(chan struct{})}
 	read := &fakeTool{name: "Read", readOnly: true, exec: func(ctx context.Context, c session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {

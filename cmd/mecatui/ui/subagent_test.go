@@ -24,7 +24,7 @@ func subagentCard(t *testing.T, build func(c *conversation)) string {
 }
 
 // addSubTool routes a bare (kind-less) subagent.tool event into the card — the
-// pre-ADR-0079 shape, where a tool chip is appended with no preview. Returns the
+// pre-preview shape, where a tool chip is appended with no preview. Returns the
 // accumulator's match bool so the miss-attribution test can assert it.
 func addSubTool(c *conversation, parentCallID, toolName string, isError bool, toolCount int) bool {
 	return c.updateSubagentCard(client.SubagentMsg{
@@ -35,7 +35,7 @@ func addSubTool(c *conversation, parentCallID, toolName string, isError bool, to
 
 // TestSubagentLiveCollapsed asserts the default (collapsed, unresolved) card: the
 // goal title, a calm status line (LATEST child tool name + tokens + tool count)
-// with the f6 agents affordance — and no heartbeat ticker (ADR 0079: the line
+// with the f6 agents affordance — and no heartbeat ticker (the line
 // changes only when the tool actually changes).
 func TestSubagentLiveCollapsed(t *testing.T) {
 	out := subagentCard(t, func(c *conversation) {
@@ -120,7 +120,7 @@ func TestSubagentErrorResolves(t *testing.T) {
 		// caller-neutral: "Subagent: " + "failed without producing a summary").
 		c.resolveTool("p1", "Subagent: failed without producing a summary", true)
 	})
-	if got, want := out, " ✗ Subagent · investigate the loop"; got != want {
+	if got, want := out, " ✗ Subagent · investigate the loop · failed"; got != want {
 		t.Errorf("failed subagent line = %q, want %q", got, want)
 	}
 }
@@ -162,7 +162,7 @@ func TestSubagentMissAttributionIsSafe(t *testing.T) {
 }
 
 // TestSubagentRoutedMetadataSurfaced asserts the opt-in model router's bare
-// metadata (a category label + a model id, ADR 0031) surfaces on the inline
+// metadata (a category label + a model id) surfaces on the inline
 // Subagent card as a muted "routed: <category> → <model>" line — and is absent
 // when the child was not routed. It carries no child content (gauntlet #7).
 func TestSubagentRoutedMetadataSurfaced(t *testing.T) {
@@ -184,8 +184,8 @@ func TestSubagentRoutedMetadataSurfaced(t *testing.T) {
 	}
 }
 
-// TestSubagentModelMetadataSurfaced asserts the generic model surface (issue #112 /
-// ADR 0035) renders as a muted "model: <model>" line for the common non-routed cases
+// TestSubagentModelMetadataSurfaced asserts the generic model surface (issue #112)
+// renders as a muted "model: <model>" line for the common non-routed cases
 // (inherited default, agent-def pin, per-call override) — and that when the router
 // fired, the routed cue is shown instead (not duplicated as a model: line). Bare
 // metadata only, gauntlet #7.
@@ -235,8 +235,8 @@ func TestSubagentFleetRoutedMetadata(t *testing.T) {
 	}
 }
 
-// TestSubagentRoutingReasonSurfaced asserts the routing-miss reason (issue #397 /
-// ADR 0083) surfaces on the inline Subagent card and the fleet roster row, so a
+// TestSubagentRoutingReasonSurfaced asserts the routing-miss reason (issue #397)
+// surfaces on the inline Subagent card and the fleet roster row, so a
 // router-off / pinned / breaker-open delegation is distinguishable from a routed
 // one — the distinction the feature exists to expose. Bare metadata, gauntlet #7.
 func TestSubagentRoutingReasonSurfaced(t *testing.T) {

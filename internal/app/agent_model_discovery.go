@@ -16,6 +16,7 @@ import (
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
@@ -38,12 +39,20 @@ const (
 	agentModelDiscoveryOutputError   = "model inventory cannot make progress within the safe output bound"
 )
 
-func modelDiscoveryAvailable(reg *providerRegistry, inventory server.ModelInventory) bool {
-	return (inventory != nil && len(inventory.CurrentModelSnapshot().Models) > 0) || anyProviderHasLister(reg)
+func routerDiscoveryCategories(cfg Config) []permconfig.RouterCategory {
+	if cfg.RouterDisabled {
+		return nil
+	}
+	return cfg.RouterCategories
+}
+
+func modelDiscoveryAvailable(reg *providerRegistry, inventory server.ModelInventory, routerCategories []permconfig.RouterCategory) bool {
+	return len(routerCategories) > 0 || (inventory != nil && len(inventory.CurrentModelSnapshot().Models) > 0) || anyProviderHasLister(reg)
 }
 
 type agentModelDiscoveryTool struct {
-	inventory server.ModelInventory
+	inventory        server.ModelInventory
+	routerCategories []permconfig.RouterCategory
 }
 
 type agentModelDiscoveryArgs struct {
@@ -58,6 +67,7 @@ type agentModelDiscoveryModel struct {
 	ProviderID   string `json:"provider_id"`
 	ModelID      string `json:"model_id"`
 	DisplayName  string `json:"display_name"`
+	Description  string `json:"description,omitempty"`
 	Image        bool   `json:"image"`
 	Reasoning    bool   `json:"reasoning"`
 	ContextLimit int64  `json:"context_limit"`
@@ -87,15 +97,15 @@ type agentModelDiscoveryCursor struct {
 	Digest     string   `json:"digest"`
 }
 
-func newAgentModelDiscoveryTool(inventory server.ModelInventory) agentModelDiscoveryTool {
-	return agentModelDiscoveryTool{inventory: inventory}
+func newAgentModelDiscoveryTool(inventory server.ModelInventory, routerCategories []permconfig.RouterCategory) agentModelDiscoveryTool {
+	return agentModelDiscoveryTool{inventory: inventory, routerCategories: routerCategories}
 }
 
 func (agentModelDiscoveryTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{
 		Name: agentModelDiscoveryToolName,
-		Description: "Find exact selectable model handles in the bounded resolved inventory. Omit provider_id to search all selectable providers; an unfiltered first call also returns providers with model counts. " +
-			"provider_id and model_id are exact filters. query is split with strings.Fields and lowercased with strings.ToLower; every literal term must match one safe field. " +
+		Description: "Find exact provider/model pairs and model-router delegation categories in the bounded resolved inventory. Router-category rows use provider_id model-router, include an operator description, and are delegation categories rather than session-selection targets. " +
+			"Omit provider_id to search all selectable providers; an unfiltered first call also returns providers with model counts. provider_id and model_id are exact filters. query is a literal search split with strings.Fields and lowercased with strings.ToLower; every term must match one safe field, including descriptions. " +
 			"limit defaults to 20 and is at most 50. Pass next_cursor back as cursor by itself to continue; if inventory changed, restart without a cursor. Results are bounded to 32 KiB. " +
 			"This read-only tool never probes providers, never selects a model, and never changes the current session.",
 		Schema: json.RawMessage(`{
@@ -103,7 +113,7 @@ func (agentModelDiscoveryTool) Spec() tool.ToolSpec {
   "properties": {
     "provider_id": {"type": "string", "description": "Optional byte-exact provider id. Omit to search all selectable providers."},
     "model_id": {"type": "string", "description": "Optional byte-exact model id; never implies a provider."},
-    "query": {"type": "string", "description": "Optional bounded whitespace-separated literal terms matched across provider id, model id, and display name."},
+    "query": {"type": "string", "description": "Optional bounded whitespace-separated literal terms matched across provider id, model id, display name, and description."},
     "cursor": {"type": "string", "description": "Opaque next_cursor from the preceding page. When set, omit every other field."},
     "limit": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Maximum complete model rows to return (default 20, maximum 50)."}
   },
@@ -129,7 +139,11 @@ func (t agentModelDiscoveryTool) Execute(_ context.Context, call session.ToolCal
 		return session.NewToolError(call.ID, errMessage), nil
 	}
 
-	projection := discoveryProjection(t.inventory.CurrentModelSnapshot().Models)
+	var models []*mecatlv1.ModelInfo
+	if t.inventory != nil {
+		models = t.inventory.CurrentModelSnapshot().Models
+	}
+	projection := discoveryProjection(models, t.routerCategories)
 	digest := discoveryProjectionDigest(projection)
 	scope, errMessage := resolveAgentModelDiscoveryScope(args, digest)
 	if errMessage != "" {
@@ -221,8 +235,16 @@ func nextAgentModelDiscoveryResult(out agentModelDiscoveryResult, model agentMod
 	return out
 }
 
-func discoveryProjection(models []*mecatlv1.ModelInfo) []agentModelDiscoveryModel {
-	projection := make([]agentModelDiscoveryModel, 0, len(models))
+func discoveryProjection(models []*mecatlv1.ModelInfo, routerCategories []permconfig.RouterCategory) []agentModelDiscoveryModel {
+	projection := make([]agentModelDiscoveryModel, 0, len(models)+len(routerCategories))
+	for _, category := range routerCategories {
+		if category.Name == "" || category.Description == "" {
+			continue
+		}
+		projection = append(projection, agentModelDiscoveryModel{
+			ProviderID: providerModelRouter, ModelID: category.Name, Description: category.Description,
+		})
+	}
 	for _, model := range models {
 		if model == nil || model.GetProviderId() == "" || model.GetId() == "" {
 			continue
@@ -238,6 +260,9 @@ func discoveryProjection(models []*mecatlv1.ModelInfo) []agentModelDiscoveryMode
 		}
 		if projection[a].ModelID != projection[b].ModelID {
 			return projection[a].ModelID < projection[b].ModelID
+		}
+		if projection[a].Description != projection[b].Description {
+			return projection[a].Description < projection[b].Description
 		}
 		if projection[a].DisplayName != projection[b].DisplayName {
 			return projection[a].DisplayName < projection[b].DisplayName
@@ -276,7 +301,7 @@ func filterDiscoveryProjection(projection []agentModelDiscoveryModel, providerID
 		if providerID != "" && model.ProviderID != providerID || modelID != "" && model.ModelID != modelID {
 			continue
 		}
-		fields := []string{strings.ToLower(model.ProviderID), strings.ToLower(model.ModelID), strings.ToLower(model.DisplayName)}
+		fields := []string{strings.ToLower(model.ProviderID), strings.ToLower(model.ModelID), strings.ToLower(model.DisplayName), strings.ToLower(model.Description)}
 		matches := true
 		for _, term := range terms {
 			found := false

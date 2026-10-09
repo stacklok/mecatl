@@ -19,7 +19,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-// Scenario 6 of docs/acceptance/steer-while-running.md: the composition gate.
+// Steer while running: the composition gate.
 // The steer inbox is armed by a DEFAULT-ON composition knob (Config.DisableSteer
 // is the opt-OUT), threaded through engineDepsForProvider into agent.Deps.EnableSteer
 // and reflected — via the SAME wired engine's Engine.SteerEnabled() — in

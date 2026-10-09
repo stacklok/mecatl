@@ -852,7 +852,9 @@ func buildConfiguredReflectionObserver(
 		return nil
 	}
 	model := providerModel.ModelID
-	if selected, ok := resolveSlotModel(cfg, slotReflection, model); ok && selected != "" {
+	if reflectionProvider, reflectionProviderID, selected, ok := resolveAuxiliarySlotTarget(cfg, cfg.modelProviderRegistry, slotReflection, provider, providerModel.ProviderID, model); ok {
+		provider = reflectionProvider
+		providerModel.ProviderID = reflectionProviderID
 		model = selected
 		providerModel.ModelID = model
 	}

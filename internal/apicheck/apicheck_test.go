@@ -1,5 +1,5 @@
 // Package apicheck holds the MECHANICAL freshness gate for the engine module's
-// public API surface (issue #114, ADR 0037).
+// public API surface (issue #114).
 //
 // # The contract
 //
@@ -20,7 +20,7 @@
 // (a Go MINOR bump may reformat them → a one-time `task api:update`).
 //
 // The tooling deliberately lives in the ROOT module so the engine module's go.mod
-// stays tiny (no go/tools dependency travels with the importable core, ADR 0036).
+// stays tiny (no go/tools dependency travels with the importable core).
 // The committed .txt baselines, however, ship INSIDE the engine module so external
 // consumers can read the surface they depend on.
 package apicheck

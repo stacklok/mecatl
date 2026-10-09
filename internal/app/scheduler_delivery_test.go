@@ -166,7 +166,7 @@ func TestFireDelivery_Scenario2_ProvenanceHeaderNeutralised(t *testing.T) {
 	}
 }
 
-// --- Phase 4a: started-notice renderer tests (renderFireStarted) ---
+// --- started-notice renderer tests (renderFireStarted) ---
 
 // TestFireStarted_RenderFencesNotice verifies the started notice is fenced and
 // names the schedule + fire id — no model content.

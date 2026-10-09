@@ -143,8 +143,8 @@ func testPredictableSessionHandle(t *testing.T, checks predictableSessionHandleC
 		m := newTestModelFromDeps(Deps{Theme: testTheme(), Ctx: context.Background()})
 		m.sessionID = id
 		input := m.statusLineInput(time.Unix(1, 0))
-		if input.Version != 4 || input.Session.Handle != want {
-			t.Fatalf("status protocol = v%d handle %q, want v4 %q", input.Version, input.Session.Handle, want)
+		if input.Version != customization.ProtocolVersion || input.Session.Handle != want {
+			t.Fatalf("status protocol = v%d handle %q, want v%d %q", input.Version, input.Session.Handle, customization.ProtocolVersion, want)
 		}
 		if _, exists := reflect.TypeFor[customization.Session]().FieldByName("Digest"); exists {
 			t.Fatal("status protocol retains removed Session.Digest alias")
@@ -209,6 +209,6 @@ func TestPredictableSessionHandles_Scenario3_PresentationParitySafetyAndLayering
 	testPredictableSessionHandle(t, checkHandlePresentation|checkHandleStatus|checkHandleDebuggerEvidence|checkHandleAuthoritativeID)
 }
 
-func TestADR_0285_OrdinaryHandleDoesNotAlterDebuggerEvidenceHandles(t *testing.T) {
+func TestOrdinaryHandleDoesNotAlterDebuggerEvidenceHandles(t *testing.T) {
 	testPredictableSessionHandle(t, checkHandleDebuggerEvidence)
 }

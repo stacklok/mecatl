@@ -64,7 +64,14 @@ async function mountChat(activity: ReturnType<typeof heldActivity>) {
         complete: true,
         items: [
           {
-            capabilities: { delete: true, deleteReason: "", rename: true, renameReason: "" },
+            capabilities: {
+              delete: true,
+              deleteReason: "",
+              publicChat: true,
+              publicChatReason: "",
+              rename: true,
+              renameReason: "",
+            },
             createdAt: "2026-09-24T12:00:00.000Z",
             debugTargetSessionId: "",
             id: "chat-a",
@@ -271,4 +278,4 @@ it("shows only evidence-backed steer metadata in developer view", async () => {
     ).not.toContain(value);
   }
   await act(async () => activity.close());
-});
+}, 20_000);

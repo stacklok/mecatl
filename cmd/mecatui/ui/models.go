@@ -215,7 +215,7 @@ func (m Model) carryoverCmd(oldID string, sel client.ModelSelection, token uint6
 	}
 }
 
-// switchEffort performs the /effort fork-resume handoff (ADR 0068): like
+// switchEffort performs the /effort fork-resume handoff: like
 // restartOnModel it persists the pick, records provenance, ends any in-flight run,
 // and drives phaseConnecting — but it deliberately does NOT resetSession(): the
 // server forks the session's conversation onto the peer session, so the transcript

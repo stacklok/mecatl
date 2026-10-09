@@ -60,8 +60,8 @@ func TestDefaultExplorerUsesSubagentModel(t *testing.T) {
 }
 
 // TestDefaultExplorerInheritsParentWhenUnset is the zero-config guard: with NO
-// SubagentModel the explorer stays on the parent model with the default window —
-// behaviourally identical to the pre-#35 shape at the Deps seam.
+// SubagentModel the explorer stays on the parent model with the default window
+// at the Deps seam.
 func TestDefaultExplorerInheritsParentWhenUnset(t *testing.T) {
 	prov := mockllm.New()
 	reg := regForTest(prov, providerAnthropic, "claude-default")
@@ -236,8 +236,8 @@ func TestPerCallModelOverridesSubagentModel(t *testing.T) {
 	reg := regForTest(prov, providerAnthropic, "claude-default")
 	cfg := Config{Model: "claude-default", SubagentModel: "cheap-model-1.0"}
 
-	factory := buildSubagentEngineFactory(cfg, reg, prov, providerAnthropic, "claude-default", nil)
-	eng, ok := factory(catAnthropicModel)
+	factory := buildSubagentTargetEngineFactory(cfg, reg, prov, providerAnthropic, nil)
+	eng, ok := factory(agent.ModelTarget{Model: catAnthropicModel})
 	if !ok || eng == nil {
 		t.Fatalf("factory(%q) = (%v, %v), want a non-nil engine", catAnthropicModel, eng, ok)
 	}
@@ -415,7 +415,7 @@ func TestNormalizeSubagentModelKeepsConcreteIDVerbatim(t *testing.T) {
 // TestNormalizeSubagentModelKeepsOperatorAliasVerbatim pins the documented
 // verbatim semantics for an operator-defined alias: lookupModelAlias maps it to
 // the concrete id (so it VALIDATES), but normalize returns the ALIAS itself —
-// per-child resolution (resolveModelFor/resolveDefaultChildModel) maps it
+// per-child resolution (resolveModelFor) maps it
 // silently downstream.
 func TestNormalizeSubagentModelKeepsOperatorAliasVerbatim(t *testing.T) {
 	cfg := Config{SubagentModel: "fast", ModelAliases: map[string]string{"fast": "gpt-4o-mini"}}
@@ -427,9 +427,9 @@ func TestNormalizeSubagentModelKeepsOperatorAliasVerbatim(t *testing.T) {
 		t.Fatalf("normalizeSubagentModel = %q, want the alias kept verbatim (%q)", got, "fast")
 	}
 	// The per-child def-less chain resolves the kept alias to the concrete id.
-	model, _ := resolveDefaultChildModel(cfg, nil, providerMock, "parent-model")
+	model := resolveModelFor(cfg, agents.AgentDef{}, "parent-model")
 	if model != "gpt-4o-mini" {
-		t.Fatalf("resolveDefaultChildModel over the kept alias = %q, want the mapped concrete id %q", model, "gpt-4o-mini")
+		t.Fatalf("resolveModelFor over the kept alias = %q, want the mapped concrete id %q", model, "gpt-4o-mini")
 	}
 }
 
@@ -469,7 +469,7 @@ func TestBuildNarratesSubagentModelExactlyOnce(t *testing.T) {
 // the registered Parallel tool's BRANCH child must carry the configured
 // SubagentModel on its LLM request, proving registerParallelTool threads cfg +
 // the registry + the session model together into buildParallelChildEngine. A
-// revert to the pre-#35 modelCfgFor(cfg, s.model) wiring runs the branch on the
+// regression to modelCfgFor(cfg, s.model) wiring (issue #35) runs the branch on the
 // session model and fails here. The branch WINDOW through this seam is asserted
 // one level down (TestParallelBranchUsesSubagentModel over parallelChildDeps):
 // ParallelTool does not expose its child engine, and widening engine/agent's API
@@ -572,8 +572,7 @@ func TestRegisterParallelToolThreadsStore(t *testing.T) {
 }
 
 // TestSubagentModelRoutesChildToCheapModel is the end-to-end proof through the REAL
-// composition (app.Build → server.Service, the providerConstructor mock seam — see
-// docs/adr/0016-multi-provider.md §2): with --subagent-model configured, a turn that
+// composition (app.Build → server.Service, the providerConstructor mock seam): with --subagent-model configured, a turn that
 // delegates to the default Subagent explorer sends the CHILD's LLM request with the
 // cheap model while the PARENT's requests stay on the session model. All offline.
 func TestSubagentModelRoutesChildToCheapModel(t *testing.T) {

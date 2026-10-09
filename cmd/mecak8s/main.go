@@ -1,5 +1,5 @@
-// Command mecak8s is the storage-free, Kubernetes-native mecatl agent binary
-// (ADR 0048). See flags.go for the configuration surface and serve.go for the
+// Command mecak8s is the storage-free, Kubernetes-native mecatl agent binary.
+// See flags.go for the configuration surface and serve.go for the
 // shutdown contract. This file is the thin entry point: parse flags → build the
 // diagnostics sink → app.Build → serve → os.Exit.
 package main
@@ -79,7 +79,7 @@ func run() error {
 	ctx, stop := signalCtx()
 	defer stop()
 
-	// Observability (issue #343, ADR 0098): OPT-IN. With no --otlp-* / --metrics-addr
+	// Observability (issue #343): OPT-IN. With no --otlp-* / --metrics-addr
 	// flags this is a no-op (byte-identical default). The flush defer runs BEFORE
 	// built.Close() (LIFO), so the OTLP flush completes before the service tears
 	// down on the SIGTERM path.

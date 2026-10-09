@@ -91,7 +91,7 @@ func TestOpenAICodexCommandRootSurfaces(t *testing.T) {
 }
 
 func TestOutputEconomyFlagIsUnknownFlag(t *testing.T) {
-	// The --output-economy compatibility flag is DELETED (ADR 0041, superseded;
+	// The --output-economy compatibility flag is DELETED (a
 	// clean break): it now fails at flag-parse time with the standard unknown-flag
 	// error instead of parsing as a no-op.
 	_, err := parseFlags([]string{"--prompt", "hi", "--output-economy", "terse"})
@@ -356,7 +356,7 @@ func TestAppConfigMapping(t *testing.T) {
 		}
 	})
 
-	t.Run("subagent-model-router kill-switch (ADR 0042)", func(t *testing.T) {
+	t.Run("subagent-model-router kill-switch", func(t *testing.T) {
 		// Unset → router governed by the taxonomy (RouterDisabled false).
 		f, err := parseFlags([]string{"--prompt", "x"})
 		if err != nil {

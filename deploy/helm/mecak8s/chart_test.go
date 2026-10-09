@@ -159,8 +159,8 @@ func deploymentFromRender(t *testing.T, rendered string) *appsv1.Deployment {
 }
 
 // installIDEnvVar is the chart-provisioned product-metrics install id
-// (install-id-configmap.yaml). It is UNCONDITIONAL — mecak8s is storage-free
-// (ADR 0048), so the local-file mechanism the other binaries use would mint a
+// (install-id-configmap.yaml). It is UNCONDITIONAL — mecak8s is storage-free,
+// so the local-file mechanism the other binaries use would mint a
 // fresh id on every pod restart — which means every env-shape assertion below
 // is about the OTHER, opt-in variables. appEnv drops it so those assertions
 // keep saying exactly what they said before it existed.
@@ -292,7 +292,7 @@ func pdbFromRender(t *testing.T, rendered string) *policyv1.PodDisruptionBudget 
 	return nil
 }
 
-func TestADR_0294_TerminationGracePeriodIsConfigurableAndFitsDefaults(t *testing.T) {
+func TestMecak8sHelmChart_TerminationGracePeriodIsConfigurableAndFitsDefaults(t *testing.T) {
 	const (
 		defaultShutdownBudgetSeconds int64 = 43
 		minimumGracePeriodSeconds    int64 = defaultShutdownBudgetSeconds + 1
@@ -463,7 +463,7 @@ func TestMecak8sHelmChart_KindProfileAloneHasNoSecretDependency(t *testing.T) {
 	}
 }
 
-func TestADR_0305_HelmProtectedResourceProfile(t *testing.T) {
+func TestMecak8sHelmChart_ProtectedResourceProfile(t *testing.T) {
 	rendered, err := helm(t, "template", "profile", ".", "--set", "mockProvider=true", "--set", "redis.local.enabled=true", "--set", "oidc.enabled=true", "--set", "oidc.issuer=https://idp.example.com", "--set", "oidc.audience=mecatl", "--set", "oidc.resource=https://api.example.com/mcp", "--set", "oidc.clientID=mecatui", "--set", "oidc.scopes[0]=openid", "--set", "oidc.scopes[1]=profile")
 	if err != nil {
 		t.Fatalf("render protected-resource profile: %v\n%s", err, rendered)
@@ -625,7 +625,7 @@ func TestMecak8sHelmChart_EdgeFixtureRendersNoExternalBoundaryResources(t *testi
 	}
 }
 
-func TestADR_0294_HelmHasNoAffinityPolicySurface(t *testing.T) {
+func TestMecak8sHelmChart_HasNoAffinityPolicySurface(t *testing.T) {
 	schemaJSON, err := os.ReadFile("values.schema.json")
 	if err != nil {
 		t.Fatal(err)
@@ -973,7 +973,7 @@ func (c providerSecurityCase) name() string {
 	return fmt.Sprintf("service=%s/mock=%t/unsafe=%t/tls=%t/edge=%t/oidc=%t", c.serviceType, c.mock, c.unsafe, c.tls, c.edge, c.oidc)
 }
 
-// wantAccepted is the ADR 0278 gate: a mock provider or the explicit unsafe bypass is
+// wantAccepted is the provider-security gate: a mock provider or the explicit unsafe bypass is
 // always accepted; a secure real provider needs OIDC plus either in-pod TLS or an
 // upstream-TLS attestation on a ClusterIP-only h2c backend. The upstream attestation is
 // meaningless without a real provider, so mockProvider=true rejects it outright rather
@@ -1193,7 +1193,7 @@ func TestMecak8sHelmChart_SecureRedisModes(t *testing.T) {
 	}
 
 	if _, err := helm(t, append(base, "--set", "redis.clientCertKey=client.pem")...); err == nil {
-		t.Fatal("render accepted a removed mTLS value (ADR 0233 dropped client-certificate support)")
+		t.Fatal("render accepted a removed mTLS value (client-certificate support was removed)")
 	}
 	if _, err := helm(t, append(base, "--set", "redis.usernameKey=username")...); err == nil {
 		t.Fatal("render accepted a username without a password key")
@@ -1290,7 +1290,7 @@ func TestMecak8sHelmChart_LocalPlaintextIsExplicitAndExternalIsTLSOnly(t *testin
 }
 
 // The endpoint must carry an explicit numeric port: it becomes --redis-url, and
-// the TLS ServerName is derived from that host:port (ADR 0233).
+// the TLS ServerName is derived from that host:port.
 func TestMecak8sHelmChart_ExternalEndpointRequiresNumericPort(t *testing.T) {
 	for _, endpoint := range []string{"redis.example.internal", "redis.example.internal:tls"} {
 		t.Run(endpoint, func(t *testing.T) {
@@ -1787,7 +1787,7 @@ func TestMecak8sHelmChart_KindLiveProviderDisablesMock(t *testing.T) {
 }
 
 // TestMecak8sHelmChart_ProductMetricsInstallID pins the storage-free install-id
-// contract (ADR 0048): mecak8s keeps no local state, so a per-pod install-id
+// contract: mecak8s keeps no local state, so a per-pod install-id
 // file would mint a fresh, never-reused id on every restart. The chart instead
 // provisions ONE id per release in a ConfigMap and mounts it as an env var, so
 // both halves — the generated value and the reference to it — must render

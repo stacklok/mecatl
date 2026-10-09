@@ -10,9 +10,9 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
-// TestADR_0281_ManagedCommandWithoutTimeoutHasNoAbsoluteDeadline pins that a
+// TestManagedTemp_CommandWithoutTimeoutHasNoAbsoluteDeadline pins that a
 // managed lease remains live under the caller context until the command ends.
-func TestADR_0281_ManagedCommandWithoutTimeoutHasNoAbsoluteDeadline(t *testing.T) {
+func TestManagedTemp_CommandWithoutTimeoutHasNoAbsoluteDeadline(t *testing.T) {
 	runner := managedJobStreamer(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

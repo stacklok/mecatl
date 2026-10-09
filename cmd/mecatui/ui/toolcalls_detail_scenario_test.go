@@ -37,11 +37,11 @@ func TestMecatuiToolcallsInspector_DetailOmitsRedundantIdentityLabel(t *testing.
 	s := inspectorOpenDetail(t, &m)
 	s.refreshDetail(&m.conv.scrollback)
 	rows := toolcallDetailLines(*s.detailEntry)
-	if len(rows) < 2 || rows[0] != "✓ Skill · done" || rows[1] != "Call: skill" {
+	if len(rows) < 2 || rows[0] != "✓ Skill · test-writer" || rows[1] != "Call: skill" {
 		t.Fatalf("detail identity header = %q", rows)
 	}
 	styled := strings.Join(s.styledToolcallDetailLines(*s.detailEntry), "\n")
-	if !strings.HasPrefix(stripANSIstr(styled), "✓ Skill · done\nCall: skill") {
+	if !strings.HasPrefix(stripANSIstr(styled), "✓ Skill · test-writer\nCall: skill") {
 		t.Fatalf("styled identity header = %q", stripANSIstr(styled))
 	}
 	if !strings.Contains(styled, "Identity · forged") {
@@ -243,9 +243,9 @@ func TestMecatuiToolcallsInspector_StatusGlyphsAcrossThemes(t *testing.T) {
 				plain := stripANSIstr(body)
 				wantSummary := glyph + " Read"
 				if listShowsStatus {
-					wantSummary = glyph + " " + status + " · Read"
+					wantSummary = glyph + " Read · lifecycle.go · " + strings.Split(status, " · ")[0]
 				}
-				if !strings.Contains(plain, wantSummary) || (!listShowsStatus && strings.Contains(plain, status)) {
+				if !strings.Contains(plain, wantSummary) || (!listShowsStatus && status != "" && strings.Contains(plain, status)) {
 					t.Fatalf("list status glyph=%q status=%q visible=%t:\n%s", glyph, status, listShowsStatus, plain)
 				}
 				if !strings.Contains(body, th.Style(slot).Render(glyph)) {
@@ -268,10 +268,10 @@ func TestMecatuiToolcallsInspector_StatusGlyphsAcrossThemes(t *testing.T) {
 				if s.compact {
 					t.Fatalf("narrow detail unexpectedly used compact fallback: %q", detail)
 				}
-				if plain := stripANSIstr(detail); !strings.Contains(plain, glyph+" Read · "+status) || strings.Contains(plain, "Identity · "+glyph) {
+				if plain := stripANSIstr(detail); !strings.Contains(plain, glyph+" Read · lifecycle.go") || (status != "" && !strings.Contains(strings.ReplaceAll(plain, "\n", ""), status)) || strings.Contains(plain, "Identity · "+glyph) {
 					t.Fatalf("detail lacks non-color status %q: %q", status, plain)
 				}
-				if !strings.Contains(detail, th.Style(slot).Render(glyph)) || !strings.Contains(detail, th.Style(slot).Render(status)) {
+				if !strings.Contains(detail, th.Style(slot).Render(glyph)) {
 					t.Fatalf("detail status %q does not use %s: %q", status, slot, detail)
 				}
 				if got := s.entries[s.selected].blockID; got != selected {
@@ -284,15 +284,33 @@ func TestMecatuiToolcallsInspector_StatusGlyphsAcrossThemes(t *testing.T) {
 			assertDetail("…", "running", "toolName")
 			m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEsc})
 			m = applyAll(m, client.ToolResultMsg{CallID: "lifecycle", Content: "provisional failure", Available: true, IsError: true})
-			assertList("…", "result received · finalizing", "toolName", true)
-			if detail := assertDetail("…", "result received · finalizing", "toolName"); !strings.Contains(detail, "provisional failure") {
-				t.Fatalf("provisional result missing from detail: %q", detail)
+			assertList("✗", "failed · finalizing", "toolErr", true)
+			if detail := assertDetail("✗", "failed · finalizing", "toolErr"); !strings.Contains(detail, "provisional failure") || !strings.Contains(detail, "Error:") {
+				t.Fatalf("provisional error result missing from detail: %q", detail)
 			}
 			m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEsc})
 			m = applyAll(m, client.ToolResultMsg{CallID: "lifecycle", Content: "canonical success"})
-			assertList("✓", "done", "toolOk", false)
-			if detail := assertDetail("✓", "done", "toolOk"); strings.Contains(detail, "provisional failure") || !strings.Contains(detail, "canonical success") {
+			assertList("✓", "", "toolOk", false)
+			if detail := assertDetail("✓", "", "toolOk"); strings.Contains(detail, "provisional failure") || !strings.Contains(detail, "canonical success") {
 				t.Fatalf("canonical detail lifecycle state: %q", detail)
+			}
+
+			failed := newToolcallsInspectorModel(t)
+			failed.deps.Theme = th
+			failed = applyAll(failed, tea.WindowSizeMsg{Width: 80, Height: 30}, client.ToolCallMsg{ID: "failed", Name: "Read", Args: `{"path":"failed.go"}`}, client.ToolResultMsg{CallID: "failed", Content: "failure body", IsError: true})
+			conversation := failed.rend.renderConversationFrame(&failed.conv.scrollback, false)
+			if got := strings.Join(blockRows(conversation, toolBlockID(t, failed.conv.scrollback, "failed")), "\n"); !strings.Contains(got, "✗") || !strings.Contains(stripANSIstr(got), "✗ Read · failed.go · failed") {
+				t.Fatalf("failed conversation row: %q", got)
+			}
+			failed = openToolcallsForTest(t, failed)
+			failedList := toolcallsForTest(t, failed)
+			if got, _ := failedList.Render(80, 16); !strings.Contains(got, th.Style("toolErr").Render("✗")) || !strings.Contains(stripANSIstr(got), "✗ Read · failed.go · failed") {
+				t.Fatalf("failed list row: %q", got)
+			}
+			failedList.selected, failedList.detail = 0, true
+			failedList.refreshDetail(&failed.conv.scrollback)
+			if got := strings.Join(failedList.styledToolcallDetailLines(*failedList.detailEntry), "\n"); !strings.Contains(got, th.Style("toolErr").Render("✗")) || !strings.Contains(stripANSIstr(got), "✗ Read · failed.go · failed") {
+				t.Fatalf("failed detail row: %q", got)
 			}
 		})
 	}
@@ -309,12 +327,12 @@ func TestMecatuiToolcallsInspector_Scenario2_LiveResultAndStatus(t *testing.T) {
 	}
 	m = applyAll(m, client.ToolResultMsg{CallID: "second", Content: "temporary output", Available: true, IsError: true})
 	provisional := inspectorDetail(t, s, 70, 12)
-	if !strings.Contains(provisional, "temporary output") || !strings.Contains(provisional, "result received · finalizing") {
+	if !strings.Contains(provisional, "temporary output") || !strings.Contains(provisional, "failed · finalizing") || !strings.Contains(provisional, "Error:") {
 		t.Fatalf("provisional detail: %q", provisional)
 	}
 	m = applyAll(m, client.ToolResultMsg{CallID: "second", Content: "canonical output"})
 	final := inspectorDetail(t, s, 70, 12)
-	if !strings.Contains(final, "canonical output") || !strings.Contains(final, "done") || strings.Contains(final, "temporary output") {
+	if !strings.Contains(final, "canonical output") || strings.Contains(final, "temporary output") {
 		t.Fatalf("canonical detail: %q", final)
 	}
 	m.conv.addTool("third", "Write", `{"path":"third"}`)
@@ -590,5 +608,82 @@ func TestMecatuiToolcallsInspector_Scenario2_ResumedFieldOnlyStructuredResult(t 
 				t.Errorf("rehydrated field-only result: %q", got)
 			}
 		})
+	}
+}
+
+func TestMecatuiToolcallsInspector_PreservesChildSummaryAnchorAcrossParentResult(t *testing.T) {
+	m := newToolcallsInspectorModel(t)
+	m.conv.addTool("sub", "Subagent", `{"goal":"delegate\nsecond line"}`)
+	if !m.conv.scrollback.Subagents().Start("sub", scrollback.SubagentStart{ChildID: "child", Goal: "delegate"}) {
+		t.Fatal("could not start subagent")
+	}
+	tools := make([]scrollback.TraceEntry, 14)
+	for i := range tools {
+		tools[i] = scrollback.TraceEntry{Lane: "child", ID: fmt.Sprintf("call-%02d", i), Serial: uint64(i + 1), Kind: toolKind, ToolName: "Read", Detail: fmt.Sprintf("child-%02d", i), Intent: fmt.Sprintf("child-%02d", i)}
+	}
+	if !m.conv.scrollback.Subagents().Update("sub", scrollback.SubagentUpdate{Trace: tools}) {
+		t.Fatal("could not add child previews")
+	}
+	s := inspectorOpenDetail(t, &m)
+	s.refreshDetail(&m.conv.scrollback)
+	inspectorDetail(t, s, 80, 10)
+
+	rows := toolcallDetailRows(*s.detailEntry)
+	counts := toolcallLogicalRowCounts(s.styledToolcallDetailLinesAtWidth(*s.detailEntry, 80), 80)
+	offset, child := 0, 0
+	for i, row := range rows {
+		if row.kind == toolcallChildSummary {
+			if child == 6 {
+				break
+			}
+			child++
+		}
+		offset += counts[i]
+	}
+	s.window.SetOffset(offset, s.lines)
+	s.follow = false
+	s.recordAnchor()
+	if got := inspectorDetail(t, s, 80, 10); !strings.Contains(strings.Split(got, "\n")[2], "child-06") {
+		t.Fatalf("initial child anchor = %q", got)
+	}
+
+	tools[6].Resolved = true
+	tools[6].Detail = "updated-child-06"
+	tools[6].Intent = "child-06"
+	if !m.conv.scrollback.Subagents().Update("sub", scrollback.SubagentUpdate{Trace: tools}) {
+		t.Fatal("could not update child preview")
+	}
+	m.syncToolcalls()
+	if got := inspectorDetail(t, s, 80, 10); !strings.Contains(strings.Split(got, "\n")[2], "child-06") {
+		t.Fatalf("live update moved child anchor: %q", got)
+	}
+	if !m.conv.scrollback.Tools().Resolve("sub", scrollback.ToolResult{Body: strings.Repeat("parent response\n", 12), Artifacts: []scrollback.Artifact{{Kind: string(client.ContentBlockResourceLink), Name: "report", URL: "memory://report"}}}) {
+		t.Fatal("could not resolve parent")
+	}
+	m.syncToolcalls()
+	if got := inspectorDetail(t, s, 80, 10); !strings.Contains(strings.Split(got, "\n")[2], "child-06") {
+		t.Fatalf("parent result moved child anchor: %q", got)
+	}
+}
+
+func TestMecatuiToolcallsInspector_FollowsChildSummaryTailAcrossEmptyParentResult(t *testing.T) {
+	m := newToolcallsInspectorModel(t)
+	m.conv.addTool("sub", "Subagent", `{"goal":"delegate"}`)
+	if !m.conv.scrollback.Subagents().Start("sub", scrollback.SubagentStart{ChildID: "child", Goal: "delegate"}) ||
+		!m.conv.scrollback.Subagents().Update("sub", scrollback.SubagentUpdate{Trace: []scrollback.TraceEntry{{Lane: "child", ID: "last", Serial: 1, Kind: toolKind, ToolName: "Read", Detail: "last-child", Intent: "last-child"}}}) {
+		t.Fatal("could not prepare subagent")
+	}
+	s := inspectorOpenDetail(t, &m)
+	s.refreshDetail(&m.conv.scrollback)
+	s.follow = true
+	if got := inspectorDetail(t, s, 80, 10); !s.follow || !strings.Contains(got, "last-child") || !strings.Contains(got, "Result: pending") {
+		t.Fatalf("pending detail did not follow its tail: %q", got)
+	}
+	if !m.conv.scrollback.Tools().Resolve("sub", scrollback.ToolResult{}) {
+		t.Fatal("could not resolve empty parent result")
+	}
+	m.syncToolcalls()
+	if got := inspectorDetail(t, s, 80, 10); !s.follow || !strings.Contains(got, "last-child") || strings.Contains(got, "Result: pending") {
+		t.Fatalf("empty result did not follow its tail: %q", got)
 	}
 }

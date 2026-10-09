@@ -138,10 +138,10 @@ func TestSamplerNeverNil(t *testing.T) {
 // installs) — records a spread of turn durations through the real meter, then
 // Gathers the prometheus registry directly. It asserts the gathered
 // mecatl_turn_duration_seconds histogram family carries MULTIPLE explicit le=
-// buckets with at least one FINITE (non-+Inf) bound — the issue #158 fix (ADR 0045):
+// buckets with at least one FINITE (non-+Inf) bound — the issue #158 fix:
 // the classic text exposition now yields real le= ladders, so quantiles are
 // obtainable with zero scrape config. The superseded base-2 exponential view
-// (ADR 0018 §5) would have rendered a single le="+Inf" bucket here.
+// would have rendered a single le="+Inf" bucket here.
 func TestNewMeterProviderEmitsClassicLatencyBuckets(t *testing.T) {
 	res, err := newResource(t.Context(), OTLPConfig{})
 	if err != nil {

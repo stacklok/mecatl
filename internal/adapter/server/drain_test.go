@@ -80,7 +80,7 @@ func newStorageReadyTestService(t *testing.T, st port.SessionStore) *server.Serv
 }
 
 // TestDrainGateStartsFalse: a fresh Service accepts run-entries (the gate is
-// byte-identical to pre-ADR-0048 when Drain has not been called).
+// byte-identical to a build without it when Drain has not been called).
 func TestDrainGateStartsFalse(t *testing.T) {
 	svc := newDrainTestService(t)
 	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
@@ -352,7 +352,7 @@ func (s *drainPersistBarrierStore) arm(fail bool) (<-chan struct{}, chan struct{
 	return s.entered, s.release
 }
 
-func TestADR_0294_AwaitingPersistAndDrainLifecycleIsAtomic(t *testing.T) {
+func TestAwaitingPersistAndDrainLifecycleIsAtomic(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		fail      bool
@@ -531,7 +531,7 @@ func makeAwaitingSession(t *testing.T, id session.SessionID) (*session.Session, 
 	return sess, ask
 }
 
-func TestADR_0294_DrainStopsAdmissionBeforeOwnershipChange(t *testing.T) {
+func TestDrainStopsAdmissionBeforeOwnershipChange(t *testing.T) {
 	lease := &fakeLease{}
 	store := memstore.New()
 	svc := newGracefulDrainService(t, store, lease, mockllm.New(mockllm.TextTurn("unused")), port.NopDiagnostics{})
@@ -572,7 +572,7 @@ func TestADR_0294_DrainStopsAdmissionBeforeOwnershipChange(t *testing.T) {
 	}
 }
 
-func TestADR_0294_ShutdownPreservesAwaitingDurableEventProjection(t *testing.T) {
+func TestShutdownPreservesAwaitingDurableEventProjection(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		shutdown func(*server.Service) error
@@ -679,7 +679,7 @@ func TestADR_0294_ShutdownPreservesAwaitingDurableEventProjection(t *testing.T) 
 	}
 }
 
-func TestADR_0294_DrainPreservesAwaitingResumePoint(t *testing.T) {
+func TestDrainPreservesAwaitingResumePoint(t *testing.T) {
 	lease := &fakeLease{}
 	store := memstore.New()
 	svc := newGracefulDrainService(t, store, lease, mockllm.New(mockllm.TextTurn("done")), port.NopDiagnostics{})
@@ -774,7 +774,7 @@ func TestSessionAffinityAndHandoff_Scenario6_DrainCancelsJoinsAndDiagnosesPersis
 	}
 }
 
-func TestADR_0294_DrainSettlesReadyRunsWithoutMapOrderStarvation(t *testing.T) {
+func TestDrainSettlesReadyRunsWithoutMapOrderStarvation(t *testing.T) {
 	lease := &fakeLease{}
 	store := memstore.New()
 	svc := newGracefulDrainService(t, store, lease, blockingProvider{}, port.NopDiagnostics{})
@@ -827,7 +827,7 @@ func TestADR_0294_DrainSettlesReadyRunsWithoutMapOrderStarvation(t *testing.T) {
 	}
 }
 
-func TestADR_0294_DrainTimeoutRetainsLeaseForTTLTakeover(t *testing.T) {
+func TestDrainTimeoutRetainsLeaseForTTLTakeover(t *testing.T) {
 	lease := &fakeLease{}
 	store := memstore.New()
 	svc := newGracefulDrainService(t, store, lease, blockingProvider{}, port.NopDiagnostics{})

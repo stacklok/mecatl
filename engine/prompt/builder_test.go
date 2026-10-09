@@ -408,8 +408,7 @@ func TestEnvBlockGitStatusSubBlock(t *testing.T) {
 }
 
 // TestDefaultToneSafetyAndCorrectnessClauses pins the surviving default-tone
-// contract (ADR 0041 as rebalanced by ADR 0054, the prose-economy control surface
-// removed by the ADR superseding 0041) in the default StablePrefix. The
+// contract in the default StablePrefix. The
 // output-economy "terse" operator knob was REMOVED; these clauses — the
 // investigation-depth / minimum-change / safety / read-before-edit / trust-boundary
 // guidance baked into the always-on defaultTone — STAY. It asserts the load-bearing

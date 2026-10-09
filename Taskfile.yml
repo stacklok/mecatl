@@ -114,7 +114,7 @@ tasks:
   api:check:
     desc: |
       The api-compat gate — fail if the engine module's public API surface (the
-      seven core packages) drifts from the committed engine/api/*.txt snapshots.
+      eight core packages) drifts from the committed engine/api/*.txt snapshots.
       See engine/COMPATIBILITY.md. (Also runs under `task test` via ./...)
     cmds:
       - go test ./internal/apicheck
@@ -504,7 +504,7 @@ tasks:
           # journey: exact reattach plus lazy/no-fs allocation, multi-session
           # isolation, harness restart continuity, fail-closed daemon-state loss,
           # and direct-write versus isolated-child routing.
-          go test -count=1 -run '^Test(MicroVMDefaultPlacementUsesNormalCreateSessionAndExactReattach|MicroVMOperatorJourneyIsLazyIsolatedAndRestartExact)$' ./internal/app
+          go test -count=1 -run '^Test(MicroVMDefaultPlacementRetainsOneExactAttachmentUntilCloseSession|MicroVMOperatorJourneyIsLazyIsolatedAndRestartExact)$' ./internal/app
 
   test:
     desc: Run the complete offline test suite without the race detector
@@ -560,10 +560,9 @@ tasks:
   test:engine-standalone:
     desc: |
       Prove the engine module builds + tests with NO workspace and NO host-repo
-      deps (GOWORK=off): the importable core's tiny dependency closure
-      (doublestar + x/sync + goleak) is self-contained. This is the hygiene gate
-      that an external consumer's `go get github.com/stacklok/mecatl/engine`
-      experience depends on — see docs/adr/0036-engine-module.md.
+      deps (GOWORK=off): the importable core's small dependency closure is
+      self-contained. This is the hygiene gate that an external consumer's
+      `go get github.com/stacklok/mecatl/engine` experience depends on.
     cmds:
       - cd engine && GOWORK=off go build ./...
       - cd engine && GOWORK=off go test ./...
@@ -833,15 +832,15 @@ tasks:
       # The governance fuzzers live in the engine MODULE, so they run from engine/.
       - cd engine && go test ./governance/ -run='^$' -fuzz='^FuzzSplitCommands$' -fuzztime={{.FUZZTIME}}
       - cd engine && go test ./governance/ -run='^$' -fuzz='^FuzzCanonicalize$' -fuzztime={{.FUZZTIME}}
-      - cd engine && go test ./governance/ -run='^$' -fuzz='^FuzzReadOnlyBash$' -fuzztime={{.FUZZTIME}}
+      - cd engine && go test ./governance/ -run='^$' -fuzz='^FuzzReadOnlyShell$' -fuzztime={{.FUZZTIME}}
       - cd engine && go test ./governance/ -run='^$' -fuzz='^FuzzAuthorityOperationsAreMonotone$' -fuzztime={{.FUZZTIME}}
       - cd provider/openai && go test ./ -run='^$' -fuzz='^FuzzDecodeSSE$' -fuzztime={{.FUZZTIME}}
 
   bench:
     desc: |
       Run the hot-path testing.B microbenchmarks on the engine packages
-      (manual / CI target — NOT part of `task test`). This is Phase 1 of the
-      perf-regression roadmap (docs/adr/0019-perf-tracking.md): it fills the
+      (manual / CI target — NOT part of `task test`). This is the microbenchmark
+      half of perf-regression tracking (docs/perf-tracking.md): it fills the
       allocs/op baseline and is the source a `benchstat` comparison runs over.
       Capture two runs and diff them with benchstat
       (go install golang.org/x/perf/cmd/benchstat@latest), e.g.:
@@ -866,9 +865,9 @@ tasks:
   perf:scenarios:
     desc: |
       Run the OFFLINE, deterministic scenario benchmarks (manual / CI target —
-      NOT part of `task test`). This is Phase 2 of the perf-regression roadmap
-      (docs/adr/0019-perf-tracking.md): whole-loop runs through the real engine over
-      mockllm + memfs/memstore that catch the failure modes the Phase 1
+      NOT part of `task test`). This is the scenario half of perf-regression
+      tracking (docs/perf-tracking.md): whole-loop runs through the real engine over
+      mockllm + memfs/memstore that catch the failure modes the
       microbenchmarks miss — long-session allocation budget, goroutine hygiene
       under delegation, token/cache regressions, compaction churn — PLUS the
       mecatui scrollback render path.
@@ -916,7 +915,7 @@ tasks:
   pgo:collect:
     desc: |
       Collect a PROVISIONAL OFFLINE CPU profile for Profile-Guided Optimization
-      (Phase 4 of the perf-regression roadmap, docs/adr/0019-perf-tracking.md).
+      (docs/perf-tracking.md, "Profile-guided optimization").
       Manual target — NOT part of `task build`/`task test`.
 
       It runs the offline scenario + engine-agent benchmarks under CPU profiling
@@ -932,7 +931,7 @@ tasks:
       no real provider, SSE, or network coverage in it. It is a MECHANISM check
       and a local experiment, NOT the profile to commit as cmd/mecated/default.pgo.
       The production refresh path (curl mecated's loopback pprof endpoint, merge,
-      drop in cmd/mecated/default.pgo) is documented in perf-tracking.md Phase 4.
+      drop in cmd/mecated/default.pgo) is documented in perf-tracking.md "Profile-guided optimization".
 
       The merge is SAMPLE-WEIGHTED: -benchtime=Nx fixes the ITERATION count, not
       wall-time, and the whole-loop scenarios run ~100x longer per op than the
@@ -940,7 +939,7 @@ tasks:
       That is fine here — the scenarios are the more production-representative
       workload, and this is a throwaway provisional artifact, so balance is a
       non-goal. (The PRODUCTION path is different: a fixed `?seconds=N` on every
-      capture DOES equalize wall-time there — see perf-tracking.md Phase 4.)
+      capture DOES equalize wall-time there — see perf-tracking.md "Profile-guided optimization".)
     vars:
       PGOITERS: '{{.PGOITERS | default "200x"}}'
     cmds:
@@ -965,7 +964,7 @@ tasks:
           echo "  Trained on the mockllm path only: NO real provider / SSE /"
           echo "  network coverage. This is NOT the production profile."
           echo "  Do NOT commit it as cmd/mecated/default.pgo."
-          echo "  Production refresh path: docs/adr/0019-perf-tracking.md Phase 4."
+          echo "  Production refresh path: docs/perf-tracking.md, Profile-guided optimization."
           echo "============================================================"
         silent: true
 
@@ -1202,6 +1201,16 @@ tasks:
             --path contracts/proto/mecatl/v1/schedule.proto
         silent: true
 
+  docs:server-cli:
+    desc: Generate the server CLI reference from trusted help with operator environment overrides removed
+    cmds:
+      - python3 scripts/server-cli-reference.py
+
+  docs:server-cli:check:
+    desc: Check server CLI reference freshness without modifying its output
+    cmds:
+      - python3 scripts/server-cli-reference.py --check
+
   docs:check:
     desc: Gate instruction-file hygiene, executable operations examples, and doc link health with matlatl (strict — broken links/anchors, orphans, unreachable)
     cmds:
@@ -1213,17 +1222,18 @@ tasks:
     desc: Re-render & validate the modelith domain model (edit the .yaml, never the .md)
     cmds:
       # modelith renders docs/architecture/mecatl.modelith.md from its .yaml source
-      # and lints the model. Pinned to the SAME revision as the CI domain-model gate
-      # (.github/workflows/ci.yml); --check / completeness=error mirror CI exactly.
-      # (A private-module fetch needs GOPRIVATE=github.com/stacklok/* set.)
-      - go run github.com/stacklok/modelith/cmd/modelith@73429dd46a22b3c3491c4654edca391fc9bd63f2 render docs/architecture/mecatl.modelith.yaml
-      - go run github.com/stacklok/modelith/cmd/modelith@73429dd46a22b3c3491c4654edca391fc9bd63f2 lint --completeness error docs/architecture/mecatl.modelith.yaml
+      # and lints the model. Pinned to the release the CI domain-model gate runs
+      # (the stacklok/modelith action's default `version` in
+      # .github/workflows/ci.yml); completeness=error mirrors CI exactly.
+      - go run github.com/stacklok/modelith/cmd/modelith@v0.4.0 render docs/architecture/mecatl.modelith.yaml
+      - go run github.com/stacklok/modelith/cmd/modelith@v0.4.0 lint --completeness error docs/architecture/mecatl.modelith.yaml
 
   docs:
     desc: Refresh generated references and gate doc links (matlatl) — run before committing doc changes
     cmds:
       - task: docs:configref
       - task: docs:grpc-ref
+      - task: docs:server-cli
       - task: sdk:docs
       - task: docs:check
 

@@ -45,7 +45,6 @@ const (
 	ExecutionProviderService_ReplaceExecutor_FullMethodName          = "/mecatl.execution.v1.ExecutionProviderService/ReplaceExecutor"
 	ExecutionProviderService_RecoverEnvironment_FullMethodName       = "/mecatl.execution.v1.ExecutionProviderService/RecoverEnvironment"
 	ExecutionProviderService_DeleteRetiredEnvironment_FullMethodName = "/mecatl.execution.v1.ExecutionProviderService/DeleteRetiredEnvironment"
-	ExecutionProviderService_MigrateEnvironment_FullMethodName       = "/mecatl.execution.v1.ExecutionProviderService/MigrateEnvironment"
 	ExecutionProviderService_RevokeEnvironment_FullMethodName        = "/mecatl.execution.v1.ExecutionProviderService/RevokeEnvironment"
 	ExecutionProviderService_Files_FullMethodName                    = "/mecatl.execution.v1.ExecutionProviderService/Files"
 	ExecutionProviderService_StartCommand_FullMethodName             = "/mecatl.execution.v1.ExecutionProviderService/StartCommand"
@@ -76,7 +75,6 @@ type ExecutionProviderServiceClient interface {
 	ReplaceExecutor(ctx context.Context, in *ReplaceExecutorRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	RecoverEnvironment(ctx context.Context, in *RecoverEnvironmentRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	DeleteRetiredEnvironment(ctx context.Context, in *DeleteRetiredEnvironmentRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	MigrateEnvironment(ctx context.Context, in *MigrateEnvironmentRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	RevokeEnvironment(ctx context.Context, in *RevokeEnvironmentRequest, opts ...grpc.CallOption) (*RevokeEnvironmentResponse, error)
 	Files(ctx context.Context, in *FileRequest, opts ...grpc.CallOption) (*FileResponse, error)
 	StartCommand(ctx context.Context, in *CommandStartRequest, opts ...grpc.CallOption) (*CommandStartResponse, error)
@@ -282,16 +280,6 @@ func (c *executionProviderServiceClient) DeleteRetiredEnvironment(ctx context.Co
 	return out, nil
 }
 
-func (c *executionProviderServiceClient) MigrateEnvironment(ctx context.Context, in *MigrateEnvironmentRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(emptypb.Empty)
-	err := c.cc.Invoke(ctx, ExecutionProviderService_MigrateEnvironment_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *executionProviderServiceClient) RevokeEnvironment(ctx context.Context, in *RevokeEnvironmentRequest, opts ...grpc.CallOption) (*RevokeEnvironmentResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(RevokeEnvironmentResponse)
@@ -365,7 +353,6 @@ type ExecutionProviderServiceServer interface {
 	ReplaceExecutor(context.Context, *ReplaceExecutorRequest) (*emptypb.Empty, error)
 	RecoverEnvironment(context.Context, *RecoverEnvironmentRequest) (*emptypb.Empty, error)
 	DeleteRetiredEnvironment(context.Context, *DeleteRetiredEnvironmentRequest) (*emptypb.Empty, error)
-	MigrateEnvironment(context.Context, *MigrateEnvironmentRequest) (*emptypb.Empty, error)
 	RevokeEnvironment(context.Context, *RevokeEnvironmentRequest) (*RevokeEnvironmentResponse, error)
 	Files(context.Context, *FileRequest) (*FileResponse, error)
 	StartCommand(context.Context, *CommandStartRequest) (*CommandStartResponse, error)
@@ -437,9 +424,6 @@ func (UnimplementedExecutionProviderServiceServer) RecoverEnvironment(context.Co
 }
 func (UnimplementedExecutionProviderServiceServer) DeleteRetiredEnvironment(context.Context, *DeleteRetiredEnvironmentRequest) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DeleteRetiredEnvironment not implemented")
-}
-func (UnimplementedExecutionProviderServiceServer) MigrateEnvironment(context.Context, *MigrateEnvironmentRequest) (*emptypb.Empty, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method MigrateEnvironment not implemented")
 }
 func (UnimplementedExecutionProviderServiceServer) RevokeEnvironment(context.Context, *RevokeEnvironmentRequest) (*RevokeEnvironmentResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RevokeEnvironment not implemented")
@@ -820,24 +804,6 @@ func _ExecutionProviderService_DeleteRetiredEnvironment_Handler(srv interface{},
 	return interceptor(ctx, in, info, handler)
 }
 
-func _ExecutionProviderService_MigrateEnvironment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MigrateEnvironmentRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(ExecutionProviderServiceServer).MigrateEnvironment(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: ExecutionProviderService_MigrateEnvironment_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ExecutionProviderServiceServer).MigrateEnvironment(ctx, req.(*MigrateEnvironmentRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _ExecutionProviderService_RevokeEnvironment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(RevokeEnvironmentRequest)
 	if err := dec(in); err != nil {
@@ -1010,10 +976,6 @@ var ExecutionProviderService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteRetiredEnvironment",
 			Handler:    _ExecutionProviderService_DeleteRetiredEnvironment_Handler,
-		},
-		{
-			MethodName: "MigrateEnvironment",
-			Handler:    _ExecutionProviderService_MigrateEnvironment_Handler,
 		},
 		{
 			MethodName: "RevokeEnvironment",

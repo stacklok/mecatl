@@ -62,6 +62,7 @@ func manifest(generation uint64, enabled bool, cert, privateKey, clients string)
 			map[string]any{"uri": "spiffe://mecatl.test/client/intruder", "mayAttestOwner": true, "administrator": false},
 			map[string]any{"uri": "spiffe://mecatl.test/client/operations", "mayAttestOwner": true, "administrator": true, "administratorFor": []string{"spiffe://mecatl.test/client/mecak8s"}},
 			map[string]any{"uri": "spiffe://mecatl.test/client/wrong-scope", "mayAttestOwner": true, "administrator": true, "administratorFor": []string{"spiffe://mecatl.test/client/intruder"}},
+			map[string]any{"uri": "spiffe://mecatl.test/client/qualification", "mayAttestOwner": true, "administrator": true},
 		},
 	}
 }

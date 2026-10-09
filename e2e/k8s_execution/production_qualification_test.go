@@ -39,8 +39,17 @@ func requireProduction(t *testing.T) (string, string, context.Context, context.C
 
 func productionClient(t *testing.T, ctx context.Context, state, kubeconfig string) (*executionclient.Client, *forward) {
 	t.Helper()
+	return productionClientAs(t, ctx, state, kubeconfig, "mecak8s")
+}
+
+// productionClientAs connects with the named fixture client identity. Intents are
+// client-scoped, so a test that must hold a synthetic intent open uses an identity
+// other than mecak8s: the deployed mecak8s reconciler confirms its client's
+// pending deletes whose binding has no durable session.
+func productionClientAs(t *testing.T, ctx context.Context, state, kubeconfig, identity string) (*executionclient.Client, *forward) {
+	t.Helper()
 	f := portForward(t, ctx, kubeconfig, "service/mecatl-execution", 8443)
-	tlsConfig := loadTLS(t, filepath.Join(state, "pki"), "mecak8s", "mecatl-execution.execution-qualification.svc.cluster.local")
+	tlsConfig := loadTLS(t, filepath.Join(state, "pki"), identity, "mecatl-execution.execution-qualification.svc.cluster.local")
 	client, err := executionclient.New(f.addr, tlsConfig)
 	if err != nil {
 		t.Fatal(err)
@@ -742,6 +751,20 @@ func TestKindExecutionProductionReplicaLifecycle(t *testing.T) {
 	if first.SpecSchema != 2 || first.StatusSchema != 2 || first.PodUID == "" || first.PVCUID == "" {
 		t.Fatal("schema-v2 exact runtime identities were not persisted")
 	}
+	runKubectl(t, ctx, kubeconfig, "patch", "executionenvironment", attached.Environment.ID, "-n", namespace, "--type=merge", "--dry-run=server", "-p", `{"spec":{"schemaVersion":2}}`)
+	for _, tc := range []struct {
+		name, patch, want string
+	}{
+		{"old", `{"spec":{"schemaVersion":1}}`, "Unsupported value"},
+		{"omitted", `{"spec":{"schemaVersion":null}}`, "Required value"},
+	} {
+		t.Run("schema-version-"+tc.name, func(t *testing.T) {
+			out, err := command(ctx, kubeconfig, "patch", "executionenvironment", attached.Environment.ID, "-n", namespace, "--type=merge", "--dry-run=server", "-p", tc.patch).CombinedOutput()
+			if err == nil || !bytes.Contains(out, []byte("schemaVersion")) || !bytes.Contains(out, []byte(tc.want)) {
+				t.Fatalf("server dry-run schema rejection err=%v output=%s, want schemaVersion %q", err, out, tc.want)
+			}
+		})
+	}
 
 	type acquireResult struct {
 		claim executionenv.RunClaim
@@ -1235,7 +1258,7 @@ func retireSyntheticEnvironment(t *testing.T, ctx context.Context, client *execu
 func TestKindExecutionProductionPendingDeleteOutageRecovery(t *testing.T) {
 	state, kubeconfig, ctx, cancel := requireProduction(t)
 	defer cancel()
-	client, _ := productionClient(t, ctx, state, kubeconfig)
+	client, _ := productionClientAs(t, ctx, state, kubeconfig, "qualification")
 	owner, binding, attached := createProductionEnvironment(t, ctx, client, "pending-delete")
 	// Keep the client-side reference reconciler offline while proving that a
 	// pending deletion survives the provider's own outage. Otherwise it may
@@ -1257,7 +1280,7 @@ func TestKindExecutionProductionPendingDeleteOutageRecovery(t *testing.T) {
 	}
 	runKubectl(t, ctx, kubeconfig, "rollout", "restart", "deployment/mecatl-execution", "-n", namespace)
 	runKubectl(t, ctx, kubeconfig, "rollout", "status", "deployment/mecatl-execution", "-n", namespace, "--timeout=240s")
-	client, _ = productionClient(t, ctx, state, kubeconfig)
+	client, _ = productionClientAs(t, ctx, state, kubeconfig, "qualification")
 	intents, err := client.ListReferenceIntents(ctx, owner)
 	if err != nil {
 		t.Fatal(err)
@@ -1327,43 +1350,6 @@ func createSessionAfterProviderReload(t *testing.T, ctx context.Context, addr, t
 			t.Fatal("provider reload did not converge")
 		case <-time.After(2 * time.Second):
 		}
-	}
-}
-
-func runKindExecutionProductionLegacyProfileHardCut(t *testing.T) {
-	state, kubeconfig, ctx, cancel := requireProduction(t)
-	defer cancel()
-	client, _ := productionClient(t, ctx, state, kubeconfig)
-	owner, binding, attached := createProductionEnvironment(t, ctx, client, "hard-cut")
-	before := readExecutionStatus(t, ctx, kubeconfig, attached.Environment.ID)
-	pvcUID := before.PVCUID
-	if pvcUID == "" {
-		t.Fatal("missing PVC before hard-cut refusal")
-	}
-	var legacyCR map[string]any
-	if err := json.Unmarshal(runKubectl(t, ctx, kubeconfig, "get", "executionenvironment", attached.Environment.ID, "-n", namespace, "-o", "json"), &legacyCR); err != nil {
-		t.Fatal(err)
-	}
-	delete(legacyCR["spec"].(map[string]any), "templateRevision")
-	legacyBody, err := json.Marshal(legacyCR)
-	if err != nil {
-		t.Fatal(err)
-	}
-	attempt := command(ctx, kubeconfig, "replace", "--dry-run=server", "-n", namespace, "-f", "-")
-	attempt.Stdin = bytes.NewReader(legacyBody)
-	if output, err := attempt.CombinedOutput(); err == nil || !bytes.Contains(output, []byte("templateRevision")) {
-		t.Fatal("API server accepted a profile-shaped CR without a template revision")
-	}
-	// Legacy migration RPCs are hard-cut; neither refusal may touch a PVC.
-	legacy := executionenv.EnvironmentRef{ID: attached.Environment.ID, Revision: attached.Environment.Revision}
-	if err := client.MigrateEnvironment(ctx, legacy, owner, 1, before.PodUID, pvcUID, "legacy-hard-cut"); err == nil {
-		t.Fatal("legacy migration RPC unexpectedly accepted a template allocation")
-	}
-	if got := readExecutionStatus(t, ctx, kubeconfig, attached.Environment.ID); got.PVCUID != pvcUID || got.PodUID != before.PodUID {
-		t.Fatal("refused legacy migration modified retained runtime")
-	}
-	if got := waitReady(t, ctx, client, owner, binding, attached.Environment); got.Environment != attached.Environment {
-		t.Fatal("legacy refusal broke a current template allocation")
 	}
 }
 

@@ -17,7 +17,7 @@ import (
 // parameter.
 var contextType = reflect.TypeOf((*context.Context)(nil)).Elem()
 
-// AccessKind is one of the four classifications ADR 0212 decision 2 requires
+// AccessKind is one of the four classifications required
 // for every designated application object-touching boundary.
 type AccessKind int
 
@@ -37,8 +37,7 @@ const (
 	// never narrowed to "this caller's own rows". Don't read their entries'
 	// "caller-owned" kind as data-scoping; read the rationale text for what
 	// is actually decided. A future 5th AccessKind naming this sub-case
-	// explicitly would need its own ADR (per ADR 0212's closed 4-kind
-	// taxonomy) — not done here.
+	// explicitly would widen the closed 4-kind taxonomy — not done here.
 	KindCallerOwned AccessKind = iota
 	// KindDerived means the boundary carries no independent decision of its
 	// own: it operates on an identifier a caller can only obtain from an
@@ -49,7 +48,7 @@ const (
 	KindDerived
 	// KindSharedInfrastructure means the boundary is a classified, narrow,
 	// non-caller-identified operation — an internal system-principal root
-	// (ADR 0204 decision 7) or a process-wide catalog/config read that is,
+	// or a process-wide catalog/config read that is,
 	// by design, the same for every caller.
 	KindSharedInfrastructure
 	// KindExempt is an explicit, reviewed carve-out for a boundary that
@@ -74,8 +73,8 @@ func (k AccessKind) String() string {
 	}
 }
 
-// ClassificationEntry is one boundary's per-kind table row (ADR 0212 decision
-// 2). Rationale is MANDATORY: a shared-infrastructure/exempt entry that
+// ClassificationEntry is one boundary's per-kind table row. Rationale is
+// MANDATORY: a shared-infrastructure/exempt entry that
 // cannot state a concrete, reviewable reason is rejected by validate, so an
 // exemption can never become a silent caller-owned bypass (AC5.3).
 type ClassificationEntry struct {
@@ -140,7 +139,7 @@ type classificationReport struct {
 func (r classificationReport) Errors() []error {
 	var errs []error
 	for _, name := range r.Unclassified {
-		errs = append(errs, fmt.Errorf("%s: unclassified access boundary %q — add a ClassificationEntry (ADR 0212 decision 2)", r.Surface, name))
+		errs = append(errs, fmt.Errorf("%s: unclassified access boundary %q — add a ClassificationEntry", r.Surface, name))
 	}
 	for _, name := range r.Misclassified {
 		errs = append(errs, fmt.Errorf("%s: misclassified access boundary %q", r.Surface, name))
@@ -241,8 +240,8 @@ func requireCallerOwnedContext(surface string, t reflect.Type, table map[string]
 }
 
 // serviceAccessTable classifies every exported *Service method — the
-// application-facade, in-memory-registry, and event-relay boundaries ADR 0212
-// decision 2 names. See AccessKind's doc comment for what each kind means.
+// application-facade, in-memory-registry, and event-relay boundaries.
+// See AccessKind's doc comment for what each kind means.
 //
 // Adding an exported Service method requires an entry here or
 // TestInvariant_owned_access_is_classified fails, naming the method.
@@ -281,7 +280,7 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"CancelSessionCleanup":        {KindCallerOwned, "gates on management authority; matches the verified principal against the bounded job registry — the underlying cleanup scope is store-wide, never caller-owned"},
 	"SessionCleanupJob":           {KindCallerOwned, "gates on management authority and returns only a caller-bound sanitized job projection; the underlying cleanup data is store-wide, not the caller's own sessions"},
 	"StreamSessionEvents":         {KindCallerOwned, "event log/live stream resolves through the owning session's authorizeSession check"},
-	"WatchSessionEvents":          {KindCallerOwned, "durable replay-then-follow watch (ADR 0250); watchLog resolves ownership through the same GetSession check StreamSessionEvents uses, EAGERLY — before any envelope is yielded — because the durable log holds the whole transcript"},
+	"WatchSessionEvents":          {KindCallerOwned, "durable replay-then-follow watch; watchLog resolves ownership through the same GetSession check StreamSessionEvents uses, EAGERLY — before any envelope is yielded — because the durable log holds the whole transcript"},
 	"Subscribe":                   {KindCallerOwned, "authorizes via GetSession before registering a live subscriber (issue #368)"},
 
 	// --- caller-owned: live run verbs ---
@@ -427,7 +426,7 @@ var serviceAccessTable = map[string]ClassificationEntry{
 }
 
 // callerStoreAccessTable classifies memory.CallerStore's exported methods —
-// the "cache/index" boundary ADR 0212 decision 2 names (the local backing
+// the "cache/index" boundary (the local backing
 // store operations for caller-partitioned user-model and project memory. Every
 // method derives its namespace from the context-carried verified principal
 // (session.PrincipalFromContext), so all are caller-owned by construction: a
@@ -449,7 +448,7 @@ var callerStoreAccessTable = map[string]ClassificationEntry{
 }
 
 // systemAccessTable classifies each internal/syscaller.Root's explicit
-// shared-infrastructure scope (ADR 0212 decision 5): the NARROW operation set
+// shared-infrastructure scope: the NARROW operation set
 // that root's system principal may perform. A system principal is NEVER a
 // universal ownership bypass — every other caller-owned boundary (GetSession,
 // GetSchedule, …) denies it exactly like any other non-matching identity
@@ -510,8 +509,7 @@ func ClassifyCallerStoreBoundaries() []error {
 }
 
 // ClassifySystemBoundaries walks every registered internal/syscaller.Root
-// (the explicit shared-infrastructure system-principal scopes, ADR 0212
-// decision 5).
+// (the explicit shared-infrastructure system-principal scopes).
 func ClassifySystemBoundaries() []error {
 	table := make(map[string]ClassificationEntry, len(systemAccessTable))
 	for root, entry := range systemAccessTable {

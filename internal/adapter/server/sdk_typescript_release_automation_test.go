@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestADR_0328_SDKReleasePRAndTagAutomation(t *testing.T) {
+func TestSDKReleasePRAndTagAutomation(t *testing.T) {
 	t.Parallel()
 
 	root := sdkScenario11RepoRoot(t)

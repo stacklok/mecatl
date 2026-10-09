@@ -72,7 +72,7 @@ func TestInvariant_persisted_placement_reattaches_exactly(t *testing.T) {
 	}
 }
 
-func TestADR_0291_WorktreeSelectorIsScopedAndMatchedAgainstCurrentInventory(t *testing.T) {
+func TestWorktreeSelectorIsScopedAndMatchedAgainstCurrentInventory(t *testing.T) {
 	key := make([]byte, worktreeSelectorKeySize)
 	for i := range key {
 		key[i] = byte(i + 1)

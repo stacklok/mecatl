@@ -66,5 +66,6 @@
     "parser": {
       "tailwindDirectives": true
     }
-  }
+  },
+  "plugins": ["./lint/no-isolation-hazards.grit", "./lint/no-storage-spy.grit"]
 }

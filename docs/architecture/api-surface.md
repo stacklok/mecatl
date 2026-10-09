@@ -1,171 +1,222 @@
-# The API surface
+# API surface
 
-> Part of the [mecatl architecture guide](../architecture.md).
+> Part of the [Mecatl architecture guide](../architecture.md).
 
-**What this covers:** the gRPC `HarnessService`, HTTP/SSE mirror, and ACP (stdio) surfaces that expose the same domain `session.Event` stream; the engine-as-library stability contract; and session operations including `ForkSession` and manual compaction.
+Clients reach the agent loop through wire surfaces that all drive one surface-agnostic
+`server.Service` (`internal/adapter/server`). This chapter covers how they share it, how
+contracts are generated and versioned, what the event streams promise, and the session
+commands, scheduler, and clients built on top. For RPCs and routes, see the
+[gRPC](../../user-docs/reference/grpc-api.md) and
+[HTTP/SSE](../../user-docs/reference/http-sse-api.md) references.
 
-**Prerequisites:** [the agent loop](agent-loop.md) — the behavior the API drives and streams.
+## One service, several wires
 
-**Follow-on:** [observability](observability.md) and [deployment & hardening](deployment-and-hardening.md) — the persistence, telemetry, and operational seams the API surfaces depend on.
+| Surface | Transport | Adapter |
+| --- | --- | --- |
+| gRPC `HarnessService`, `ScheduleService` | HTTP/2, TCP or Unix socket | `grpc.go`, `grpc_schedule.go` |
+| HTTP/SSE | JSON request/response plus `text/event-stream` | `http.go` |
+| ACP (Agent Client Protocol) | JSON-RPC 2.0 over stdio, started by `mecated acp` | `internal/adapter/acp` |
 
-One `Service` (`service.go`) backs two surfaces, both relaying the same domain
-`session.Event` mapped to one proto `Event` by `toProto` (`mapper.go`). The
-service owns session lifecycle (`CreateSession`, `GetSession`), starts runs
-(`StartRun`), and registers/deregisters in-flight `*agent.Run` so approve/cancel
-reach the right run.
+`Service` owns everything that must not drift between wires: ownership checks, placement
+binding, the registry of in-flight `*agent.Run` values, durable event recording, and the
+mapping from domain errors to wire codes (`errorcodes.go`). Adapters only decode
+requests, call `Service`, and encode results. A rule added in one adapter but not the
+others is a bug; the transport-parity tests in the package exist to catch it.
 
-**gRPC (`harness.proto`, `grpc.go`)** — `HarnessService`:
-- `CreateSession(CreateSessionRequest) → CreateSessionResponse` — carries an
-  OPTIONAL per-session `provider_id` / `model_id` selector (multi-provider Phase 0; see [multi-provider](providers.md))
-  AND an OPTIONAL `profile` (enum-as-string: `""` = default, `"no-fs"`).
+The HTTP surface is a hand-written mirror, not a generated gateway, because the
+bidirectional `Converse` stream has no direct REST shape. A prompt opens one SSE response
+for the run, and controls (resolve an ask, cancel, steer) are separate unary requests
+that name the exact run id they target. A control aimed at a run that has already ended
+fails as stale instead of landing on its successor.
 
-  Placement is server-owned (ADR 0291).
-  Create has no workspace/cwd/placement-id/selector field: omitted profile binds the
-  trusted deployment default and `"no-fs"` binds explicit attenuation. Every session
-  receives a valid exact `EnvironmentRef{Kind,ID,Revision}` before persistence. Public
-  responses and inventories carry bounded `PlacementMetadata`, never that private ref
-  or a filesystem path. Run entry exactly reattaches the persisted ref with no
-  current-default fallback.
+ACP lets an editor such as Zed spawn Mecatl as a subprocess. The adapter speaks its own
+JSON, never `contracts/gen`, and is both a JSON-RPC server (`session/new`,
+`session/prompt`, and so on) and a client: it asks the editor to resolve permission asks
+with `session/request_permission`. When the editor advertises file capabilities, reads
+and writes go through the editor's buffers. The editor spawning Mecatl over stdio does
+not conflict with the no-stdio MCP rule, which is about Mecatl spawning processes.
 
-  The no-FS session always routes through the per-session engine factory. Its catalog is
-  default minus {Read, ListDir, Edit, Write, Copy, Move, Remove, Grep, Glob, Shell, ShellStatus, Parallel, SkillDraft};
-  WebFetch/WebSearch, memory, MCP, and file-less delegation remain. Its Workspace is the
-  honest `engine/adapter/nofs` implementation and its valid no-FS ref survives restart.
-- `GetSession(GetSessionRequest) → GetSessionResponse` — path-free snapshot with
-  bounded placement metadata; exact private refs remain storage-only.
-- `ClearSession` creates a distinct empty-history successor; `ForkSession` creates a
-  history-carrying successor. Both inherit the source's exact placement unless given a
-  fresh caller/source-scoped worktree selector from `ListWorktrees(session_id)`. The
-  server reauthorizes, exactly reattaches, serializes/leasing the source, resolves
-  placement/model changes, then publishes atomically. Failure leaves the source and
-  client binding unchanged. Selectors expire on restart and are accepted nowhere else.
-- `CompactSession(CompactSessionRequest) → CompactSessionResponse` applies one
-  configured compaction pass without creating a model turn. It accepts an owned
-  main chat only at an idle or terminal boundary, serializes with run entry, rejects
-  a live run or pending approval, and acquires the configured mutation lease. A
-  changed result is saved before the existing compaction notice/archive events are
-  appended; `compacted=false` is a successful no-op. The additive
-  `ServerCapabilities.manual_compaction` bit lets old servers degrade safely. See
-  `internal/adapter/server/service.go` (`CompactSession`) and
-  [context management](context-and-compaction.md).
-- `SetMode(SetModeRequest) → SetModeResponse` — changes an existing session's
-  permission posture through `Service.SetMode`; mid-turn changes are rejected by
-  the session aggregate as `InvalidArgument`, so clients that want "next prompt"
-  semantics defer and retry once idle. **`resolved_model` is fixed per TURN, not
-  per session**: when an operator has bound a `plan` model slot (ADR 0030
-  Layer 3, the opusplan pattern), a plan↔execute mode switch re-resolves the
-  effective model **between turns** at the run-entry seam (within the same
-  provider). The `SetMode` response still echoes the pre-rebuild model (the model
-  is fixed for the current turn); a client re-reads the new model from `GetSession`
-  (or the next run's echo) **after** the mode change. With no plan slot a mode flip
-  changes nothing.
-- `ListModels(ListModelsRequest) → ListModelsResponse` — the selectable-model
-  inventory: every AVAILABLE provider's catalog models projected to public metadata
-  (`ModelInfo{id, provider_id, display_name, image, reasoning, context_limit}`), no
-  secrets, (provider_id, id)-sorted. Gated by `ServerCapabilities.model_selection`
-  (true iff ≥1 provider is available). See [multi-provider](providers.md).
-- `Converse(stream ConverseRequest) → stream ConverseResponse)` — bidirectional.
-  The first frame **must** be `prompt` or `retry`; later frames may carry
-  `resume_approval`, `cancel`, `cancel_child`, `steer`, or `steer_cancel` controls.
-  A received second start frame is rejected with `InvalidArgument`. The server starts
-  the run, reads controls on a side goroutine (`readControl`), and relays `Event`s
-  until the terminal result closes the stream. A control still in transit at that
-  boundary may instead observe normal EOF.
-- The full service is wider than this core. Session lifecycle adds
-  `CloseSession`; the read-only inventories are `ListAgents`, `ListCommands`,
-  `ListSkills`, `GetSoul`, `GetUserModel`; MCP passthrough is
-  `ListMcpResources` / `ReadMcpResource` / `ListMcpPrompts` / `GetMcpPrompt` /
-  `ListMcpSources` / `ListToolHiveGroups`; and the team family is `CreateTeam`
-  / `SpawnTeammate` / `SendTeammateMessage` / `CancelTeammate` (cancel one
-  member of a running team) / `RunTeam` (a server-streamed
-  `TeamEvent` sequence) / `ListTeam` / `CleanupTeam`.
-  `CreateTeamRequest.max_team_tokens` carries the tighten-only team-wide token
-  budget ([parallelism](parallelism.md)).
+## Contracts and generation
 
-`ConverseResponse` wraps one `Event`. The proto `Event` mirrors `session.Event`
-one-for-one: string `type` plus `ToolCall`, `ToolResult`, `PermissionAsk`,
-`Result`, `Usage` submessages. `PermissionAsk.ask_id` is echoed back in
-`ResumeApproval.ask_id`. Required-field annotations use `buf.validate.field`;
-v1 enforces required checks in the Go server (protovalidate runtime is deferred).
+The public wire contracts live in `contracts/proto/mecatl/v1/` (`harness.proto`,
+`schedule.proto`, and `local_session_context.proto`, a privileged service registered only
+on local-client-trusted listeners). Two sibling trees serve operators rather than
+clients: `driver/v1` is the protocol remote stores implement, and `execution/v1` is the
+execution-provider protocol.
 
-**HTTP/SSE (`http.go`)** — the thin mirror, since grpc-gateway cannot map bidi:
+`task generate` runs `buf generate` twice: once into `contracts/gen/go` for the server
+and drivers, once into `sdk/typescript/src/gen` for the TypeScript SDK. CI regenerates
+and fails on any diff, so a proto change and its generated code always land together.
+Required-field annotations (`buf.validate`) document intent; the Go server enforces them.
 
-| HTTP | Maps to | Notes |
-|---|---|---|
-| `POST /v1/sessions` | `CreateSession` | JSON body → `session_id`; optional `provider_id`/`model_id` selector + `profile` (`"no-fs"`) |
-| `GET /v1/sessions/{id}` | `GetSession` | JSON snapshot |
-| `POST /v1/sessions/{id}/mode` | `SetMode` | change permission mode; mid-turn rejection is surfaced to the client |
-| `POST /v1/sessions/{id}/compact` | `CompactSession` | bodyless forced compaction at an idle/terminal boundary; `{"compacted":true}` when history changed, false for a no-op |
-| `POST /v1/sessions/{id}/clear` | `ClearSession` | empty-history successor; optional ephemeral `worktree_selector` |
-| `POST /v1/sessions/{id}/fork` | `ForkSession` | history-carrying successor; optional ephemeral worktree selector and model overrides |
-| `GET /v1/models` | `ListModels` | JSON selectable-model inventory (available providers only, secret-free) |
-| `POST /v1/sessions/{id}/prompt` | start a run | `text/event-stream`; each event is `data: <proto Event as JSON>` |
-| `POST /v1/sessions/{id}/controls/resolve-ask` | `Service.ResolveRunAsk` | resolves the paused ask on the exact `expected_run_id` (`deny` / `allow_once` / `allow_always`) |
-| `POST /v1/sessions/{id}/controls/cancel` | `Service.CancelRun` | cancels the exact `expected_run_id` run |
-| `POST /v1/sessions/{id}/cancel-child` | `Run.CancelChild` | cancels ONE child of the in-flight run |
-| `POST /v1/sessions/{id}/controls/steer` | `Service.SteerRun` | unary steer on the exact `expected_run_id` run; never promotes, a too-late or stale steer is `409 stale_run_control` |
-| `POST /v1/sessions/{id}/controls/cancel-steer` | `Service.CancelRunSteer` | retracts the pending steer bundle on the exact `expected_run_id` run |
-| `DELETE /v1/sessions/{id}` | `CloseSession` | frees the per-session engine slot |
-| `GET /v1/agents` · `/v1/skills` · `/v1/commands` · `/v1/soul` · `/v1/usermodel` | the inventory RPCs | read-only snapshots |
-| `GET /v1/mcp/resources` · `/v1/mcp/resources/read` · `/v1/mcp/prompts` · `POST /v1/mcp/prompts/get` · `GET /v1/mcp/sources` · `/v1/mcp/toolhive/groups` | MCP passthrough | mirrors the gRPC MCP family |
-| `POST /v1/teams` · `POST /v1/teams/{id}/members` · `POST /v1/teams/{id}/messages` · `POST /v1/teams/{id}/members/cancel` · `POST /v1/teams/{id}/run` · `GET /v1/teams/{id}` · `DELETE /v1/teams/{id}` | the team family | `/run` streams `TeamEvent`s over SSE; `/members/cancel` cancels one member of a running team |
+Compatibility is negotiated, not inferred from versions, because Mecatl ships from
+`main` as often as from tags. A client's first call, `GetCompatibilityInfo`, returns an
+API major (`features.go`) that changes only on a genuine break, plus capabilities and
+feature identifiers that announce every additive change. Feature identifiers, event
+types, stop reasons, and watch phases are open strings, so an older client passes an
+unknown value through instead of failing.
 
-Closing either stream cancels the run: the SSE handler watches
-`r.Context().Done()` and calls `run.Cancel()`; the gRPC relay cancels on a send
-error. `Run.Cancel` first arms the run's sticky `hardAbort` signal (a short
-grace timer, armed before the ctx cancel), so every guarded send — the loop's
-`emit`, the child registry's `emitOrAbort`, the team supervisor's member
-forward — gives up instead of parking forever behind a consumer that stopped
-draining (the explicit unwedge; a cancelled run with a *draining* consumer
-still delivers its in-flight events — the grace covers even a backlogged one).
-Both relays are drain-to-discard after the FIRST Send/Write error: they record
-the error, cancel the run, and keep ranging `run.Events()` (discarding, no
-further writes) until the channel closes — a busy run never wedges in its own
-emits behind a dead client.
+## Runs and the live stream
 
-**ACP (`internal/adapter/acp`)** — a THIRD wire surface alongside gRPC and
-HTTP/SSE: the Agent Client Protocol, JSON-RPC 2.0 over **stdio**, lets an ACP
-editor (Zed, and others) spawn mecatl as a subprocess (wired in `cmd/mecated`
-behind `--acp`) and drive the SAME surface-agnostic `server.Service`. It
-carries its own JSON — it never imports `contracts/gen` — projecting domain
-`session.Event`s onto `session/update` notifications and resolving permission
-asks via the outbound `session/request_permission` request (the adapter is
-both JSON-RPC server and client; the bidirectional codec lives in `conn.go`).
-Prompt content is **multimodal + capability-gated**: every block becomes text,
-a `session.Content` part, or a loud `codeInvalidParams` — never a silent drop —
-routed through the single `session.NewContent`/`ValidateMediaParts` choke
-point and gated on `Service.ProviderCapabilities()`. (This is the harness
-speaking an editor protocol delivered over its own stdin/stdout; the project's
-no-stdio rule is about MCP servers, which are never `os/exec`-spawned.) The
-design decisions behind this adapter — framing, the per-session client MCP
-mount, fs/\* delegation, and learned permissions — are recorded in
-ADR 0001 — the ACP adapter.
+A run's domain `session.Event` values become one proto `Event` through the pure `toProto`
+mapper (`mapper.go`), on gRPC and HTTP alike. The live relays (`Converse` and the prompt
+SSE stream) skip five log-only kinds: `approval`, `compaction_archive`, and
+`user_prompt`, because the client already holds its own verdicts and prompts, plus the
+internal `network_attempt` and `request_manifest`. All five are still recorded to the
+durable log.
 
-> **The wire is one surface; the engine library is another.** The proto/HTTP/ACP
-> surface above is the way a *client process* drives mecatl. An *embedding Go
-> consumer* instead imports the `engine/` module directly, whose STABLE public
-> surface is the exported identifiers of the **seven core packages** (`session`,
-> `governance`, `tool`, `prompt`, `port`, `team`, `agent`). That surface is
-> governed by [`engine/COMPATIBILITY.md`](../../engine/COMPATIBILITY.md) and the
-> `api-compat` freshness gate (`internal/apicheck`, `task api:check`), which fails
-> CI on any unflagged change to the committed `engine/api/*.txt` baselines (#114,
-> ADR 0037). See
-> [extensibility](extensibility.md) for the engine-as-library framing.
+The relay, not the engine, appends every event to the durable event log, whether or not
+the client is still connected, so the log records a run's tail after its client
+disappears ([observability](observability.md) covers the log).
 
-## Prerequisites
+When a client disconnects, the relay cancels the run but keeps draining and discarding
+its events, and `Run.Cancel` arms a short grace after which every guarded send in the
+loop gives up. A busy run therefore never blocks behind a dead consumer, while a slow one
+still receives the terminal result. Cancel leaves a run durably parked on an
+authorization handoff untouched, so its resume point survives.
 
-- [The agent loop behind the API](agent-loop.md)
+## Durable watch
 
-## Follow-on reading
+- `StreamSessionEvents` replays the whole durable log once and stops.
+- `StreamSessionLive` is a live, process-local subscription. Slow subscribers lose
+  events, and another replica sees nothing.
+- `WatchSessionEvents` is the durable replay-then-follow stream that reconnecting and
+  multi-replica clients use (`watch.go`).
 
-- [Observability & persistence](observability.md)
-- [Deployment & server hardening](deployment-and-hardening.md)
+A watch replays the log from an opaque cursor (empty means the start), sends one
+phase-only `live` frame at the replay-to-live boundary, then follows new appends. The
+boundary frame lets a client switch to a live view on an idle session without waiting
+for an event that may never come. A cursor from a recreated log or one that does not
+decode is rejected, never coerced to a nearby position, because resuming from almost the
+right place silently loses data.
+
+A `gap` frame marks a position where a durable append is known to have failed. It is a
+delivery fact, not a run event, so it never enters `session.Event`, and it is delivered
+even when the watch is filtered to one run.
+
+A watch never applies backpressure to a run. A consumer that overflows its bounded buffer
+past a short grace is terminated with `watch_lagging` rather than losing events, and
+resumes losslessly from its last cursor. A server whose log cannot position by cursor
+refuses the watch instead of degrading to a full replay.
+
+## Session commands and successors
+
+Discovery is scoped to a source session. `ListCommands` and `ListWorktrees` first
+authorize the owner and exactly reattach that session's placement
+(`placement_discovery.go`), so results reflect where the session actually runs. A no-FS
+session has no worktrees.
+
+A worktree entry carries display metadata and an opaque selector: an HMAC over caller,
+source session, and choice under one random per-process key (`worktree_selector.go`).
+Nothing is stored; matching recomputes selectors over the current inventory in constant
+time. A selector is useless to another caller or session, and a restart invalidates it.
+
+`ClearSession` and `ForkSession` (`placement_successor.go`) create a new session and keep
+the source as a stored conversation. Clear starts with empty history; Fork copies it,
+stripping provider-specific replay state when the fork changes provider. Both inherit the
+source's exact placement unless given a fresh selector, and each successor gets its own
+MCP broker attachment. Creation holds the source's mutation lease, and a failure leaves
+the source untouched, with one exception: clearing a running source cancels it first, so
+a later failure publishes no successor but the source stays cancelled.
+
+`SetMode` is rejected mid-turn, because changing posture would race permission checks
+already in flight; clients defer it to the next prompt. `CompactSession` likewise runs
+only at an idle or terminal boundary.
+
+## Scheduled tasks
+
+A schedule is a saved prompt that runs on a cron expression or once, unattended and at
+most once per due slot across replicas. It lives in the composition layer and reuses normal run
+entry; `engine/agent` knows nothing about it.
+
+- `port.ScheduleStore` (`engine/port/schedule.go`) is the ground truth. Its `Claim`
+  atomically advances the next fire time, which is the at-most-once fence. Store
+  adapters (`memschedulestore`, `adapters/jsonlstore`, `adapters/redisstore`, and a
+  remote gRPC driver) share the `scheduleconformance` suite.
+- The tick loop (`internal/adapter/scheduler`) runs only on the replica holding the
+  `__scheduler__` leader lease; standby replicas take over when it lapses. Each tick
+  finds due schedules, applies the misfire policy, then claims, fires, and records each.
+  Leadership is hygiene; `Claim` is the correctness guarantee.
+- Each fire creates a fresh `sched--` session owned by the schedule's captured owner,
+  with bounded limits. A schedule not marked mutating runs in plan mode. The fire
+  reattaches the exact placement persisted at creation, and fails before creating a
+  session if that placement has drifted (`internal/app/scheduler_fire.go`).
+
+The main failure mode is a crash between `Claim` and `RecordFire`. A recurring schedule
+heals on its next due slot; a one-shot is lost unless it opts into bounded retry, which
+starts each retry fresh. A fire whose predecessor is still running is skipped. Context
+carried from a previous fire enters the prompt as a fenced, untrusted preamble, never as
+history, because that fire may have been prompt-injected.
+
+The in-chat `Schedule` tool, `ScheduleService`, and the REST routes all go through
+`port.ScheduleManager`, so they share one registry and one validating create path.
+`schedule.*` events go to the fire session's durable log. A schedule created in chat
+records its origin session from the run context, never from model input; after each
+fire, a fenced result note is queued for that origin (`port.DeliveryQueue`) and drained
+as a new run or at its next turn boundary. Without a store directory the queue is
+in-memory, so notes can be lost on restart. Details are in
+[scheduled tasks](../../user-docs/features/sessions/scheduled-tasks.md).
+
+## Clients
+
+### TypeScript SDK
+
+`@stacklok-oss/mecatl-sdk` (`sdk/typescript/`) is an ESM package with its own pnpm
+lockfile, CI, and `sdk/typescript/v*` release tags; a maintainer approves each staged npm
+artifact before it becomes public. Its entry points split by runtime: `.` holds the
+transport-neutral core and browser HTTP/SSE client, `./node` and `./deno` add gRPC and
+local daemon ownership, and `./gen` exposes the generated types. Every transport feeds
+one `Client`/`Session`/`Run` layer: compatibility is checked before ordinary calls, a
+`Run` is consumed once, and controls carry the exact run id.
+
+Durable views (`Session.attach`, `Session.activity`) sit on `WatchSessionEvents`. Their
+checkpoints wrap the server cursor with the view's run binding and filter, so a run-bound
+checkpoint cannot widen to the whole session. On transport failure or lag they reconnect
+from the checkpoint with backoff; a gap or an expired cursor surfaces as a typed error,
+and the SDK never silently restarts from the beginning. Control acknowledgements are
+delivery facts, not idempotency proofs, so an application reconciles ambiguous outcomes
+from session state.
+
+`spawn()` starts a private `mecated` (Unix socket on Node and Bun, loopback TCP on Deno)
+and returns a client only after the daemon's ready document and a first compatibility
+call succeed; a lifetime pipe makes the daemon exit if its parent dies. Spawned Node and
+Bun clients can register callback tools, served from a loopback streaming-HTTP MCP host
+the session mounts as an ordinary MCP server. Usage is in the
+[TypeScript SDK guide](../../user-docs/building/typescript-sdk/index.md).
+
+### Mecatl Studio
+
+Mecatl Studio is the browser UI, a self-contained pnpm workspace in `apps/` with three
+packages: `web` (a Vite and React single-page app), `server` (a Hono backend for
+frontend, or BFF), and `contracts` (Zod schemas, OpenAPI, and the generated client,
+committed and drift-gated).
+
+The browser calls only the BFF's `/api/v1` product API and imports neither the SDK nor
+daemon types. The BFF holds the user's credential, serves app and API from one origin,
+and is the only part that talks to Mecatl. It depends on a released SDK version from
+npm, never the in-repo source, so a UI change that needs an unreleased SDK change waits.
+
+The BFF resolves exactly one runtime mode at startup: `external` (an existing gRPC
+listener), `spawn` (a local `mecated`), or `mock`. Login uses the issuer named in the
+target's protected-resource document, and session state lives in sealed cookies, so
+replicas scale horizontally on one shared secret. The container image refuses `spawn`
+and `mock` and requires an opt-in to run unauthenticated. Feature routes are gated on
+the daemon's advertised capabilities. Studio is early access; see
+[`apps/README.md`](../../apps/README.md) and the
+[Studio deployment guide](../../user-docs/operating/studio.md).
+
+## Engine as a library
+
+A Go program can embed the `engine/` module instead of calling a server. Its stable
+surface is the exported identifiers of the core packages listed in `arch.CorePackages`
+(`engine/arch/surface.go`), snapshotted in `engine/api/*.txt` and checked by
+`task api:check`. The rules are in [`engine/COMPATIBILITY.md`](../../engine/COMPATIBILITY.md)
+and [API stability](../../user-docs/building/go/api-stability.md).
 
 ## Related
 
-- [Hooks & guardrails](hooks-and-guardrails.md)
-- [Extensibility — MCP & tool meta-surfaces](extensibility.md)
-
----
-
-[← Architecture guide](../architecture.md)
+- [The agent loop](agent-loop.md)
+- [Observability](observability.md)
+- [Deployment and hardening](deployment-and-hardening.md)
+- [Governance](governance.md)
+- [Drive Mecatl over gRPC or HTTP](../../user-docs/building/grpc-http.md)

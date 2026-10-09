@@ -274,7 +274,7 @@ func TestPlanReviewActionBarModifiedChordDegrades(t *testing.T) {
 
 // TestPlanReviewActionBarDefaultBytesUnchanged is the byte-identical guard for
 // the DEFAULT approval chords: with no overrides the plan-review action bar
-// renders the historical word-embedded form ("[A]pprove & run" / "[W]
+// renders the default word-embedded form ("[A]pprove & run" / "[W]
 // auto-accept edits" / "[D] iterate") so the goldens and pre-#457 output stay
 // byte-for-byte.
 func TestPlanReviewActionBarDefaultBytesUnchanged(t *testing.T) {
@@ -297,7 +297,7 @@ func TestPlanReviewActionBarDefaultBytesUnchanged(t *testing.T) {
 // TestPermissionModalButtonsReflectKeyOverride proves the GENERIC permission
 // modal's button labels are honest about the LIVE approval chords (issue #457
 // SPEC/UX gap: they were hard-coded to the word-embedded form). With the DEFAULT
-// a/w/d chords the historical word-embedded form ("[A]llow"/"Al[w]ays"/
+// a/w/d chords the default word-embedded form ("[A]llow"/"Al[w]ays"/
 // "[D]eny" + the "al[w]ays allows …" footnote) renders byte-for-byte; under an
 // override the buttons degrade to an honest standalone form
 // ("[Y] allow"/"[Q] always allow"/"[N] deny") carrying the rebound chord and
@@ -327,7 +327,7 @@ func TestPermissionModalButtonsReflectKeyOverride(t *testing.T) {
 
 // TestPermissionModalButtonsDefaultBytesUnchanged is the byte-identical guard
 // for the DEFAULT approval chords: with no overrides the generic permission
-// modal renders the historical word-embedded form ("[A]llow"/"Al[w]ays"/
+// modal renders the default word-embedded form ("[A]llow"/"Al[w]ays"/
 // "[D]eny" + the "al[w]ays allows …" footnote) so the goldens and the pre-#457
 // output stay byte-for-byte.
 func TestPermissionModalButtonsDefaultBytesUnchanged(t *testing.T) {
@@ -364,7 +364,7 @@ func TestPermissionModalButtonsModifiedChordStandalone(t *testing.T) {
 }
 
 // TestApprovalMnemonic pins the footer approval-mnemonic helper: a bare lowercase
-// rune is upper-cased (the historical "A"/"W"/"D" from "a"/"w"/"d"), while a
+// rune is upper-cased (the "A"/"W"/"D" from "a"/"w"/"d"), while a
 // modified or multi-rune chord is returned verbatim (upper-casing only the first
 // letter of "ctrl+y" would mangle it).
 func TestApprovalMnemonic(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 	"unicode/utf8"
 )
 
-// maxDeploymentIDLen bounds --deployment-id (ADR 0248).
+// maxDeploymentIDLen bounds --deployment-id.
 //
 // The label rides every GetServerInfo response, which the SDK polls on its
 // connection-status heartbeat, so an unbounded string is a per-heartbeat cost on

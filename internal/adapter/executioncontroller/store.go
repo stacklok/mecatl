@@ -588,7 +588,7 @@ func requireCurrentSchema(o *unstructured.Unstructured) error {
 }
 
 func incompatibleSchemaError() error {
-	return &executionenv.Error{Code: executionenv.CodeNotReady, Message: "environment schema is incompatible; explicit migration is required"}
+	return &executionenv.Error{Code: executionenv.CodeNotReady, Message: "environment schema is incompatible; only schema version 2 is supported"}
 }
 
 func epochValue(o *unstructured.Unstructured) (uint64, bool) {

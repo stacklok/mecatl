@@ -27,7 +27,7 @@ import (
 	"github.com/stacklok/mecatl/internal/executionenv"
 )
 
-// Last in the serial production suite: rotation and migration share this
+// Last in the serial production suite: security rotation shares this
 // throwaway release. Always restore its current authority, never the initial one.
 func TestKindExecutionProductionHelmLifetime(t *testing.T) {
 	state, kubeconfig, ctx, cancel := requireProduction(t)

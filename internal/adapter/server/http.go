@@ -144,7 +144,7 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 	h.mux.HandleFunc("POST /v1/teams/{id}/run", h.runTeam)
 	h.mux.HandleFunc("GET /v1/teams/{id}", h.listTeam)
 	h.mux.HandleFunc("DELETE /v1/teams/{id}", h.cleanupTeam)
-	// Schedule routes (issue #232, Phase 2a): a peer REST surface over the same
+	// Schedule routes (issue #232): a peer REST surface over the same
 	// Service.CreateSchedule/... methods the gRPC ScheduleService delegates to.
 	h.mux.HandleFunc("POST /v1/schedules", h.createSchedule)
 	h.mux.HandleFunc("GET /v1/schedules", h.listSchedules)
@@ -233,14 +233,14 @@ func (h *HTTPHandler) listExecutionTemplates(w http.ResponseWriter, r *http.Requ
 type createSessionBody struct {
 	Mode   string    `json:"mode,omitempty"`
 	Limits *limitsIn `json:"limits,omitempty"`
-	// ProviderID / ModelID select a per-session provider+model (multi-provider
-	// Phase 0, S3). Empty both => the server default provider. ProviderID without
+	// ProviderID / ModelID select a per-session provider+model.
+	// Empty both => the server default provider. ProviderID without
 	// ModelID => the provider's default model; ModelID without ProviderID is a
 	// client error (a bare model on the default provider is ambiguous).
 	ProviderID string          `json:"provider_id,omitempty"`
 	ModelID    string          `json:"model_id,omitempty"`
 	Execution  json.RawMessage `json:"execution,omitempty"`
-	// ReasoningEffort sets the session's reasoning-effort tier (ADR 0055),
+	// ReasoningEffort sets the session's reasoning-effort tier,
 	// mirroring the proto field: "" / "auto" = unset (operator/provider default),
 	// else low/medium/high/xhigh/max. The server normalises + per-provider-clamps +
 	// capability-gates it; an unknown value falls back to the operator default with
@@ -251,7 +251,7 @@ type createSessionBody struct {
 	DebugTargetSessionID string   `json:"debug_target_session_id,omitempty"`
 	DebugMCPServers      []string `json:"debug_mcp_servers,omitempty"`
 	// MCPServers are CLIENT-PROVIDED streaming-HTTP MCP servers mounted for this
-	// session's lifetime, mirroring the proto field (issue #821, ADR 0237). Empty
+	// session's lifetime, mirroring the proto field (issue #821). Empty
 	// is byte-identical to today. Whether the field is accepted at all is a
 	// DEPLOYMENT policy: a deployment with any network-facing API listener refuses
 	// every non-empty value with a 501 "client_mcp_unsupported" problem. A stdio or
@@ -507,8 +507,7 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 	// ("unknown field \"mcpServers\""), which turns an otherwise baffling 400 into a
 	// self-diagnosing one. It describes the caller's own input, so it leaks nothing.
 	//
-	// It is a deliberate behaviour CHANGE: a request carrying a stray field used to
-	// succeed. The strictness matches decodeLearningJSON's existing posture on this
+	// A request carrying a stray field is rejected. The strictness matches decodeLearningJSON's existing posture on this
 	// same handler set.
 	const maxCreateBytes = 16 << 20
 	raw, readErr := io.ReadAll(io.LimitReader(r.Body, maxCreateBytes+1))
@@ -555,7 +554,7 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 	if len(body.DebugMCPServers) > 0 {
 		opts = append(opts, WithDebugMCP(body.DebugMCPServers))
 	}
-	// Client-provided MCP servers (issue #821, ADR 0237): the SAME Service seam the
+	// Client-provided MCP servers (issue #821): the SAME Service seam the
 	// gRPC handler calls, so both transports classify through one validator and
 	// read one deployment policy. No filtering or classification happens here.
 	grant, err := h.svc.ClientMCPFromWire(clientMCPFromJSON(body.MCPServers))
@@ -1082,7 +1081,7 @@ func (h *HTTPHandler) relayRunSSE(w http.ResponseWriter, r *http.Request, id ses
 	// wedge in its own sends behind a dead relay. The failure flag is sticky —
 	// no further write happens after the first error.
 	//
-	// The durable event-log Append (cloud-native Phase 3a) is DECOUPLED from the
+	// The durable event-log Append is DECOUPLED from the
 	// client write: it runs for EVERY observed event, BEFORE and independent of the
 	// drain-to-discard guard, so a disconnected client never stops the log (the
 	// whole point of a server-side durable log is to survive the client — it must
@@ -1326,7 +1325,7 @@ type cancelChildBody struct {
 
 // cancelChild handles POST /v1/sessions/{id}/cancel-child, cancelling ONE child
 // (a subagent) of the session's in-flight run while the run itself keeps
-// streaming. Mirrors /approve: 204 on success, 404 for an unknown session OR an
+// streaming. 204 on success, 404 for an unknown session OR an
 // unknown/already-finished child, 409 for a known-but-runless session.
 func (h *HTTPHandler) cancelChild(w http.ResponseWriter, r *http.Request) {
 	id := session.SessionID(r.PathValue("id"))
@@ -2039,9 +2038,9 @@ func (h *HTTPHandler) getMcpPrompt(w http.ResponseWriter, r *http.Request) {
 //
 // It reads the SAME Service.CompatibilityInfo projection the gRPC handler does,
 // so the two transports cannot disagree about what this server permits — the
-// transport parity the SDK's normalized surface depends on. See ADR 0248.
+// transport parity the SDK's normalized surface depends on.
 //
-// GET /v1/info is the sibling route for build identity (ADR 0245); the two are
+// GET /v1/info is the sibling route for build identity; the two are
 // deliberately separate resources rather than one overloaded document.
 func (h *HTTPHandler) getCompatibilityInfo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, h.svc.CompatibilityInfo(r.Context()))
@@ -2482,7 +2481,7 @@ func (h *HTTPHandler) listWorktrees(w http.ResponseWriter, r *http.Request) {
 }
 
 // listSessions handles GET /v1/sessions — the stored-session inventory picker
-// (issue #245 Phase 1). Read-only; loads no conversation content.
+// (issue #245). Read-only; loads no conversation content.
 func (h *HTTPHandler) listSessions(w http.ResponseWriter, r *http.Request) {
 	pageSize := 0
 	if raw := r.URL.Query().Get("page_size"); raw != "" {
@@ -2570,8 +2569,8 @@ func (h *HTTPHandler) getSessionCleanupJob(w http.ResponseWriter, r *http.Reques
 }
 
 // streamSessionEvents handles GET /v1/sessions/{id}/events — replays a session's
-// durable event log as a Server-Sent Events stream (issue #245 Phase 1; cloud-
-// native Phase 3a read-back). This is the READ path: it never calls appendEvent
+// durable event log as a Server-Sent Events stream (issue #245). This is
+// the READ path: it never calls appendEvent
 // and never starts a run.
 func (h *HTTPHandler) streamSessionEvents(w http.ResponseWriter, r *http.Request) {
 	id := session.SessionID(r.PathValue("id"))
@@ -2626,7 +2625,7 @@ func (h *HTTPHandler) streamSessionEvents(w http.ResponseWriter, r *http.Request
 }
 
 // watchSessionEvents handles GET /v1/sessions/{id}/watch — the DURABLE
-// replay-then-follow watch as a Server-Sent Events stream (issue #821, ADR 0250).
+// replay-then-follow watch as a Server-Sent Events stream (issue #821).
 //
 // It is a NEW route, deliberately beside GET /v1/sessions/{id}/events rather than
 // a widening of it. That route is a bounded replay that ends; this one replays,
@@ -2762,11 +2761,9 @@ func writeError(w http.ResponseWriter, code int, msg string) {
 
 // writeServiceError writes a service sentinel error as an RFC 9457 problem.
 //
-// It is a REGISTRY LOOKUP, not a switch. It used to be a 49-case
-// errors.Is chain maintained in parallel with toStatus in grpc.go; the two
-// agreed only by discipline, and a sentinel added to one and forgotten in the
-// other would have reported a different class per transport. Both now read
-// errorRegistry, so they cannot disagree. See ADR 0248.
+// It is a REGISTRY LOOKUP, not a switch. It and toStatus in grpc.go both read
+// errorRegistry, so the two transports cannot report a different class for the
+// same sentinel.
 func writeServiceError(w http.ResponseWriter, err error) {
 	writeProblem(w, classifyError(err), err.Error())
 }
