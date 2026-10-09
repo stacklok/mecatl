@@ -57,4 +57,42 @@ describe("public status banner", () => {
     expect(html).toContain("Mecatl instance is unavailable");
     expect(Object.keys(input.publicStatus).sort()).toEqual(["connection", "signInRequired"]);
   });
+
+  it("draws the band and its actions in the warning contrast tokens", () => {
+    const html = renderToStaticMarkup(
+      <AuthRecoveryContext.Provider
+        value={{
+          banner: base,
+          loginUrl: "/api/v1/auth/login?flow=popup",
+          phase: "ready",
+          popupIssue: "blocked",
+          retrySession: () => {},
+          startPopupLogin: () => {},
+        }}
+      >
+        <ConnectionStatusBanner />
+      </AuthRecoveryContext.Provider>,
+    );
+    const band = html.match(/<div class="([^"]+)" role="status"/)?.[1] ?? "";
+    expect(band.split(" ")).toEqual(
+      expect.arrayContaining(["bg-warning", "text-warning-foreground"]),
+    );
+    expect(band).toContain("min-h-11");
+    const actions = [...html.matchAll(/<(?:button|a)\b[^>]*class="([^"]+)"/g)].map(
+      ([, cls]) => cls ?? "",
+    );
+    expect(actions).toHaveLength(3);
+    for (const cls of actions) {
+      expect(cls.split(" ")).toEqual(
+        expect.arrayContaining([
+          "text-warning-foreground",
+          "focus-visible:ring-warning-foreground",
+          "focus-visible:ring-offset-warning",
+        ]),
+      );
+    }
+    expect(html).toContain("Sign in again");
+    expect(html).toContain("Retry sign-in");
+    expect(html).toContain("Open sign-in in a new tab");
+  });
 });
