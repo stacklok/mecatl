@@ -1,6 +1,6 @@
 module github.com/stacklok/mecatl/integration/microvm
 
-go 1.27.0
+go 1.27.2
 
 require (
 	github.com/stacklok/go-microvm v0.0.41
@@ -289,7 +289,7 @@ require (
 	golang.org/x/exp/event v0.0.0-20260824195058-e88cd73687aa // indirect
 	golang.org/x/exp/jsonrpc2 v0.0.0-20260908205506-85c1c2202aba // indirect
 	golang.org/x/mod v0.41.0 // indirect
-	golang.org/x/net v0.59.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
