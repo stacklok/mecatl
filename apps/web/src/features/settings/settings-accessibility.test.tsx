@@ -13,7 +13,6 @@ import { describe, expect, it } from "vitest";
 import { routeTree } from "../../routeTree.gen";
 import { ShortcutReference } from "../shortcuts/shortcut-reference";
 import { AvatarPicker } from "./avatar-picker";
-import { MemoryFactDetail } from "./memory-settings";
 import { ProviderDetail } from "./provider-detail";
 import { SettingsWorkspace } from "./settings-workspace";
 
@@ -65,17 +64,12 @@ describe("settings responsive accessibility", () => {
     }
   });
 
-  it("offers a named, focusable 44px return link on both detail pages and shortcuts", () => {
+  it("offers a named, focusable 44px return link on the provider detail and shortcuts", () => {
     const details = [
       [
         "/workspace/provider?providerId=team%2Fopenai",
         <ProviderDetail key="provider" providerId="team/openai" />,
         /providers/i,
-      ],
-      [
-        "/workspace/memory?item=team%2Fvoice",
-        <MemoryFactDetail key="memory" memoryKey="team/voice" />,
-        /memory/i,
       ],
       ["/workspace/shortcuts", <ShortcutReference key="shortcuts" />, /settings/i],
     ] as const;

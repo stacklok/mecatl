@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // @vitest-environment happy-dom
 
+import { client as apiClient } from "@mecatl-studio/contracts/client";
 import type {
   DecideMemoryConsolidationPlanResponse,
   GenerateMemoryConsolidationPlanResponse,
@@ -9,7 +10,7 @@ import { getRuntimeQueryKey } from "@mecatl-studio/contracts/query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   ConsolidateMemoryCard,
   describeMemoryConsolidationReceipt,
@@ -39,12 +40,12 @@ const BOTH_AVAILABLE: ManualDream = {
   user_model: { decide: true, generate: true },
 };
 
-const mutationState = vi.hoisted(() => ({
+const mutationState = {
   decideAnswers: [] as Array<() => unknown>,
   decideCalls: [] as Array<{ decision: string; planId: string }>,
   decideIndex: 0,
   generateCalls: [] as Array<{ target: string }>,
-}));
+};
 
 function plan(): GenerateMemoryConsolidationPlanResponse {
   return {
@@ -102,30 +103,62 @@ function stubDecide(...answers: Array<() => unknown>) {
   mutationState.decideIndex = 0;
 }
 
-vi.mock("@mecatl-studio/contracts/query", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@mecatl-studio/contracts/query")>()),
-  decideMemoryConsolidationPlanMutation: () => ({
-    mutationFn: async (variables: { body: { decision: string }; path: { planId: string } }) => {
-      mutationState.decideCalls.push({
-        decision: variables.body.decision,
-        planId: variables.path.planId,
-      });
-      const answers = mutationState.decideAnswers;
-      const answer = answers[Math.min(mutationState.decideIndex, answers.length - 1)];
-      mutationState.decideIndex += 1;
-      const result = answer?.();
-      if (result instanceof Error) throw result;
-      return result;
-    },
-  }),
-  generateMemoryConsolidationPlanMutation: () => ({
-    mutationFn: async (variables: { body: { target: string } }) => {
-      mutationState.generateCalls.push(variables.body);
-      return plan();
-    },
-  }),
-  listUserMemoryQueryKey: () => ["memory-test"],
-}));
+const initialApiConfig = apiClient.getConfig();
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    headers: { "content-type": status < 400 ? "application/json" : "application/problem+json" },
+    status,
+  });
+}
+
+/**
+ * Fakes the two consolidation calls the card makes. A decision answer that is
+ * a TypeError drops the connection; any other Error becomes the BFF's problem
+ * body with its `code` and `status`.
+ */
+const fakeFetch: typeof globalThis.fetch = async (input) => {
+  const request = input instanceof Request ? input : new Request(String(input));
+  const { pathname } = new URL(request.url);
+  if (pathname === "/api/v1/runtime") return json(runtime);
+  if (request.method !== "POST")
+    return json({ detail: `unexpected ${pathname}`, status: 404 }, 404);
+  const body = (await request.clone().json()) as { decision?: string; target?: string };
+  if (pathname === "/api/v1/user-memory/consolidation/plans") {
+    mutationState.generateCalls.push({ target: body.target ?? "" });
+    return json(plan(), 201);
+  }
+  const decision = /^\/api\/v1\/user-memory\/consolidation\/plans\/([^/]+)\/decisions$/.exec(
+    pathname,
+  );
+  if (decision) {
+    mutationState.decideCalls.push({
+      decision: body.decision ?? "",
+      planId: decodeURIComponent(decision[1] ?? ""),
+    });
+    const answers = mutationState.decideAnswers;
+    const answer = answers[Math.min(mutationState.decideIndex, answers.length - 1)];
+    mutationState.decideIndex += 1;
+    const result = answer?.();
+    if (result instanceof TypeError) throw result;
+    if (result instanceof Error) {
+      const { code, status } = result as Error & { code?: string; status?: number };
+      return json(
+        {
+          code: code ?? "",
+          detail: result.message,
+          instance: "",
+          status: status ?? 409,
+          title: "",
+          type: "about:blank",
+        },
+        status ?? 409,
+      );
+    }
+    return json(result);
+  }
+  return json({ detail: `unexpected ${pathname}`, status: 404 }, 404);
+};
 
 let runtime: { capabilities: { manualDream?: unknown }; connection: string };
 
@@ -148,6 +181,7 @@ function renderCard() {
     },
   });
   client.setQueryData(getRuntimeQueryKey(), runtime);
+  apiClient.setConfig({ baseUrl: window.location.origin, fetch: fakeFetch });
   return render(
     <QueryClientProvider client={client}>
       <ConsolidateMemoryCard />
@@ -181,7 +215,10 @@ beforeEach(() => {
   stubDecide(() => receipt());
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  apiClient.setConfig({ baseUrl: initialApiConfig.baseUrl, fetch: initialApiConfig.fetch });
+  cleanup();
+});
 
 describe("describeMemoryConsolidationReceipt", () => {
   const base = receipt({ applied: 2, conflicted: 1, planned: 4, skipped: 1 });

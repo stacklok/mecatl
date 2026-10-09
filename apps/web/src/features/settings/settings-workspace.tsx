@@ -23,12 +23,11 @@ import { Switch } from "../../components/ui/switch";
 import { modelPreferenceId, useDisabledModels } from "../../lib/model-preferences";
 import { pageTitleClass } from "../../lib/typography";
 import { LearningReview } from "../knowledge/learning-review";
-import { MemoryStores } from "../memory/memory-stores";
+import { MemorySettingsPage } from "../memory/memory-settings-page";
 import { AgentSettings } from "./agent-settings";
 import { IdentitySettings } from "./identity-settings";
 import { InterfaceSettings } from "./interface-settings";
 import { managementNotes } from "./management-notes";
-import { MemorySettings } from "./memory-settings";
 import { Note, SettingsCard } from "./settings-card";
 import {
   connectionMessage,
@@ -198,10 +197,7 @@ export function SettingsWorkspace({
             (runtimeState ? (
               <StateCard text={runtimeState} />
             ) : (
-              <>
-                {runtime.data && <MemoryStores capabilities={runtime.data.capabilities} />}
-                <MemorySettings />
-              </>
+              <MemorySettingsPage capabilities={runtime.data?.capabilities} />
             ))}
           {section === "learning" &&
             (runtimeState ? (

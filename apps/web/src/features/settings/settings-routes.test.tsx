@@ -12,7 +12,8 @@ import { describe, expect, it } from "vitest";
 import { stringSearchParams } from "../../lib/search-params";
 import { routeTree } from "../../routeTree.gen";
 import { authLoginUrl } from "../auth/auth-gate";
-import { MemoryFactDetail, MemorySettings } from "./memory-settings";
+import { MemoryFactDetail } from "../memory/memory-fact-detail";
+import { MemorySettingsPage } from "../memory/memory-settings-page";
 import { isSettingsSection, settingsGroups } from "./settings-sections";
 import { SettingsWorkspace } from "./settings-workspace";
 
@@ -124,6 +125,7 @@ describe("settings routes", () => {
           userModel: { decide: true, generate: true },
         },
       },
+      connection: "online",
     });
     queryClient.setQueryData(listUserMemoryQueryKey(), {
       items: [{ description: "A voice preference", key }],
@@ -162,7 +164,7 @@ describe("settings routes", () => {
     const list = renderToStaticMarkup(
       <QueryClientProvider client={queryClient}>
         <RouterContextProvider router={await load("/workspace/settings/memory")}>
-          <MemorySettings />
+          <MemorySettingsPage />
         </RouterContextProvider>
       </QueryClientProvider>,
     );
@@ -172,13 +174,13 @@ describe("settings routes", () => {
     const detail = renderToStaticMarkup(
       <QueryClientProvider client={queryClient}>
         <RouterContextProvider router={reloaded}>
-          <MemoryFactDetail memoryKey={key} />
+          <MemoryFactDetail memoryId={key} />
         </RouterContextProvider>
       </QueryClientProvider>,
     );
     expect(detail).toContain("Use a calm voice.");
-    expect(detail).toContain("Revision history (1)");
-    expect(detail).toContain("Use a short voice.");
+    expect(detail).toContain("1 bounded revision");
+    expect(detail).toContain("1 · active · —");
     expect(detail).toContain('href="/workspace/settings/memory"');
   });
 
