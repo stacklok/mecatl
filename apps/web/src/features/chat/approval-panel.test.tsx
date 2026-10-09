@@ -83,4 +83,17 @@ describe("ApprovalPanel tone", () => {
   ])("keeps %j warning", (tool) => {
     expect(tone(tool)).toBe("warning");
   });
+
+  // #2224: these read as warnings under the word-boundary regex.
+  it.each([
+    "DeleteFile",
+    "delete_file",
+    "RemoveBranch",
+    "removeBranch",
+    "drop_table",
+    "revokeToken",
+    "github__delete_branch",
+  ])("gives %j the destructive tone", (tool) => {
+    expect(tone(tool)).toBe("destructive");
+  });
 });
