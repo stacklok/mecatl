@@ -19,7 +19,9 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -420,6 +422,64 @@ func explicitIDProfiles(t *testing.T) *executioncontroller.Profiles {
 	return profiles
 }
 
+func TestReadyPublisherPreservesConcurrentReferenceUpdate(t *testing.T) {
+	gvr := executioncontroller.ExecutionEnvironmentGVR
+	env := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": gvr.GroupVersion().String(), "kind": "ExecutionEnvironment",
+		"metadata": map[string]any{"name": "env", "namespace": "ns"},
+	}}
+	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{gvr: "ExecutionEnvironmentList"}, env)
+	injected := false
+	client.PrependReactor("list", "executionenvironments", func(k8stesting.Action) (bool, runtime.Object, error) {
+		if injected {
+			return false, nil, nil
+		}
+		injected = true
+		stale, err := client.Tracker().List(gvr, gvr.GroupVersion().WithKind("ExecutionEnvironment"), "ns")
+		if err != nil {
+			return true, nil, err
+		}
+		current := env.DeepCopy()
+		if err := unstructured.SetNestedSlice(current.Object, []any{map[string]any{"bindingID": "winner", "state": "PendingCreate"}}, "status", "references"); err != nil {
+			return true, nil, err
+		}
+		if err := client.Tracker().Update(gvr, current, "ns"); err != nil {
+			return true, nil, err
+		}
+		return true, stale, nil
+	})
+	published := make(chan struct{}, 1)
+	client.PrependReactor("*", "executionenvironments", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if action.GetVerb() == "update" || action.GetVerb() == "patch" {
+			select {
+			case published <- struct{}{}:
+			default:
+			}
+		}
+		return false, nil, nil
+	})
+	stop, done := make(chan struct{}), make(chan struct{})
+	go func() { defer close(done); publishCreatedEnvironmentsReady(client, stop) }()
+	t.Cleanup(func() { close(stop); <-done })
+	select {
+	case <-published:
+	case <-time.After(5 * time.Second):
+		t.Fatal("readiness publisher did not update the environment")
+	}
+	current, err := client.Resource(gvr).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	refs, found, err := unstructured.NestedSlice(current.Object, "status", "references")
+	if err != nil || !found || len(refs) != 1 {
+		t.Fatalf("readiness publication lost the concurrent reference: %v, found=%v, err=%v", refs, found, err)
+	}
+	pod, _, _ := unstructured.NestedString(current.Object, "status", "pod", "name")
+	if pod != "executor" {
+		t.Fatalf("readiness publisher did not set the executor pod: %q", pod)
+	}
+}
+
 func publishCreatedEnvironmentsReady(client *dynamicfake.FakeDynamicClient, stop <-chan struct{}) {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
@@ -433,10 +493,9 @@ func publishCreatedEnvironmentsReady(client *dynamicfake.FakeDynamicClient, stop
 				continue
 			}
 			for i := range list.Items {
-				o := list.Items[i].DeepCopy()
-				_ = unstructured.SetNestedMap(o.Object, map[string]any{"name": "executor"}, "status", "pod")
-				_ = unstructured.SetNestedSlice(o.Object, []any{map[string]any{"type": "Ready", "status": "True"}}, "status", "conditions")
-				_, _ = client.Resource(executioncontroller.ExecutionEnvironmentGVR).Namespace("ns").UpdateStatus(context.Background(), o, metav1.UpdateOptions{})
+				// The fake does not enforce resourceVersion conflicts; a stale full status update can erase reference intents.
+				patch := []byte(`{"status":{"pod":{"name":"executor"},"conditions":[{"type":"Ready","status":"True"}]}}`)
+				_, _ = client.Resource(executioncontroller.ExecutionEnvironmentGVR).Namespace("ns").Patch(context.Background(), list.Items[i].GetName(), types.MergePatchType, patch, metav1.PatchOptions{}, "status")
 			}
 		}
 	}
