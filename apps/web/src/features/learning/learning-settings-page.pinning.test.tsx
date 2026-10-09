@@ -11,7 +11,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Toaster } from "@/components/ui/sonner";
 import { routeTree } from "@/routeTree.gen";
-import { LearningReview as Subject } from "./learning-review";
+import { LearningReview as Subject } from "./learning-settings-page";
 
 /**
  * Pins what Settings → Learning does today, through the rendered page and the
