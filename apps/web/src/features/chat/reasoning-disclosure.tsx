@@ -2,6 +2,7 @@
 
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useId } from "react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useDetailsOpen } from "./use-details-open";
 
 /**
@@ -44,9 +45,14 @@ export function ReasoningDisclosure({ streaming, text }: { text: string; streami
     return (
       <div className="mt-1 flex min-w-0 items-baseline gap-2 text-xs text-muted-foreground">
         <span className="shrink-0 animate-pulse font-medium">Reasoning…</span>
-        <span className="min-w-0 truncate text-muted-foreground/70" title={preview}>
-          {preview}
-        </span>
+        <Tooltip onlyWhenTruncated>
+          <TooltipTrigger asChild>
+            <span className="min-w-0 truncate text-muted-foreground/70">{preview}</span>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-[min(32rem,calc(100vw-2rem))] break-words">
+            {preview}
+          </TooltipContent>
+        </Tooltip>
       </div>
     );
   }
