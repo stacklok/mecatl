@@ -12,7 +12,6 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
-  ArrowRight,
   Brain,
   CalendarClock,
   Compass,
@@ -25,32 +24,34 @@ import {
 import {
   type CSSProperties,
   type KeyboardEvent,
+  type MouseEvent,
   useEffect,
-  useId,
   useMemo,
   useRef,
   useState,
 } from "react";
-import { Dialog, DialogClose, DialogContent, DialogTitle } from "../../components/ui/dialog";
-import { Kbd } from "../../components/ui/kbd";
-import { cn } from "../../lib/utils";
-import { useThreadSessionIds } from "../chat/thread-map";
-import { useShortcut, useShortcutSuppression } from "../shortcuts/shortcut-provider";
-import { keycaps, type ShortcutId } from "../shortcuts/shortcut-registry";
+import {
+  CommandDialog,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import { DialogClose } from "@/components/ui/dialog";
+import { useThreadSessionIds } from "@/features/chat/thread-map";
+import { useShortcut, useShortcutSuppression } from "@/features/shortcuts/shortcut-provider";
+import { keycaps, type ShortcutId } from "@/features/shortcuts/shortcut-registry";
+import { cn } from "@/lib/utils";
 import {
   buildGlobalSearchIndex,
+  createGlobalSearchProvider,
   type GlobalSearchItem,
   type GlobalSearchTarget,
   globalSearchPages,
   groupSearchResults,
-  searchGlobalIndex,
 } from "./search-index";
-import {
-  clampActiveIndex,
-  createSearchCompositionGuard,
-  moveActiveIndex,
-  shouldActivateResult,
-} from "./search-keyboard";
+import { createSearchCompositionGuard } from "./search-keyboard";
 
 /**
  * The only app-wide shortcuts that stay live while the palette is open: its
@@ -64,6 +65,13 @@ const paletteShortcuts: readonly ShortcutId[] = [
   "shortcuts.open",
   "shortcuts.open.mod",
 ];
+
+/**
+ * The keys cmdk's list handler acts on (its vim bindings are off). An input
+ * method editor keeps the ones it owns, and Home and End stay caret keys in
+ * the text field, so those never reach the list.
+ */
+const listKeys: ReadonlySet<string> = new Set(["ArrowDown", "ArrowUp", "End", "Enter", "Home"]);
 
 // Generated query functions read only queryKey[0]. React Query may use a
 // trailing account key for cache partitioning without changing the request.
@@ -114,7 +122,6 @@ function SearchPalette({
   const [checkingAuth, setCheckingAuth] = useState(false);
   const [staticHelpOnly, setStaticHelpOnly] = useState(false);
   const [query, setQuery] = useState("");
-  const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const invokingElement = useRef<HTMLElement | null>(null);
   const navigating = useRef(false);
@@ -123,13 +130,9 @@ function SearchPalette({
   const opening = useRef(false);
   const mounted = useRef(true);
   const composition = useRef(createSearchCompositionGuard());
-  const scrollActiveIntoView = useRef(false);
   const [visualViewport, setVisualViewport] = useState<{ height: number; top: number } | null>(
     null,
   );
-  const idPrefix = useId();
-  const listboxId = `${idPrefix}-results`;
-  const optionId = (index: number) => `${idPrefix}-option-${index}`;
   // Search is revalidated on every open, including at the HTTP cache layer.
   const sessionsOptions = listSessionsOptions({ cache: "no-store" });
   const schedulesOptions = listSchedulesOptions({ cache: "no-store" });
@@ -235,12 +238,13 @@ function SearchPalette({
       threadSessionIds,
     ],
   );
-  const results = useMemo(() => searchGlobalIndex(index, query), [index, query]);
+  const provider = useMemo(() => createGlobalSearchProvider(index), [index]);
+  const results = useMemo(
+    () => provider.query(query).map((result) => result.entry),
+    [provider, query],
+  );
   const groups = useMemo(() => groupSearchResults(results), [results]);
-  const flatResults = useMemo(() => groups.flatMap((group) => group.items), [groups]);
-  // Inventories load while the user types, so the stored index can outrun the list.
-  const highlighted = clampActiveIndex(activeIndex, flatResults.length);
-  const activeResult = flatResults[highlighted];
+  const resultCount = results.length;
   const loading =
     canSearchInventory &&
     inventories.some((inventory) => inventory.isPending || inventory.isFetching);
@@ -281,7 +285,6 @@ function SearchPalette({
     if (!accessExpired) return;
     setOpen(false);
     setQuery("");
-    setActiveIndex(0);
     // A 401 may arrive after other inventories succeeded. Drop every scoped
     // result before a fresh identity check can reopen this palette.
     for (const queryKey of accountKeys.current)
@@ -332,7 +335,6 @@ function SearchPalette({
   function closeSearch() {
     setOpen(false);
     setQuery("");
-    setActiveIndex(0);
   }
 
   function focusNavigatedRoute() {
@@ -374,14 +376,6 @@ function SearchPalette({
     void navigateFromSearch(() => navigate({ to: "/workspace/shortcuts" }));
   });
 
-  useEffect(() => {
-    if (!scrollActiveIntoView.current) return;
-    scrollActiveIntoView.current = false;
-    document.getElementById(`${idPrefix}-option-${highlighted}`)?.scrollIntoView({
-      block: "nearest",
-    });
-  }, [highlighted, idPrefix]);
-
   async function choose(target: GlobalSearchTarget) {
     await navigateFromSearch(async () => {
       if (target.kind === "chat") {
@@ -422,24 +416,18 @@ function SearchPalette({
       key: event.key,
       keyCode: event.keyCode,
     };
-    // Keys an input method editor consumes (candidate navigation, commit) are its own.
-    if (composition.current.ownsKeyDown(keyState)) return;
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      event.preventDefault();
-      const next = moveActiveIndex(
-        highlighted,
-        event.key === "ArrowDown" ? 1 : -1,
-        flatResults.length,
-      );
-      scrollActiveIntoView.current = next !== highlighted;
-      setActiveIndex(next);
-    } else if (activeResult && shouldActivateResult(keyState, true)) {
-      event.preventDefault();
-      void choose(activeResult.target);
+    // The guard tracks every keydown. Keys an input method editor consumes
+    // (candidate navigation, commit) are its own, so they stop here, before
+    // cmdk's list handler on the palette root. Home and End move the caret.
+    const imeOwned = composition.current.ownsKeyDown(keyState);
+    if ((imeOwned || event.key === "Home" || event.key === "End") && listKeys.has(event.key)) {
+      event.stopPropagation();
     }
   }
 
-  let resultIndex = -1;
+  const inputLabel = canSearchInventory
+    ? "Search chats, schedules, skills, and memory"
+    : "Search help and pages";
 
   return (
     <>
@@ -447,35 +435,31 @@ function SearchPalette({
         aria-keyshortcuts="Control+K Meta+K"
         aria-label="Search"
         disabled={checkingAuth}
-        className="flex size-11 items-center justify-center gap-2 rounded-full border border-nav-search-border px-2.5 text-nav-search-text transition-colors hover:border-nav-search-text hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-nav-search-text min-[500px]:w-full min-[900px]:justify-start min-[900px]:px-3"
+        className={cn(
+          "@container flex size-11 shrink-0 items-center justify-center gap-2 rounded-md border border-border bg-background px-0 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          // Icon-only on narrow screens; a search field from 500px up. The
+          // label and keycap appear once the field is wide enough for them.
+          "min-[500px]:w-full min-[500px]:justify-start min-[500px]:px-3",
+        )}
         onClick={(event) => void openSearch(event.currentTarget)}
         type="button"
       >
-        <Search aria-hidden="true" className="size-[17px]" />
-        <span className="hidden text-xs min-[900px]:inline">Search</span>
-        <span className="hidden items-center gap-0.5 min-[1100px]:flex">
-          {keycaps("mod+k", mac).map((keycap) => (
-            <Kbd key={keycap} size="sm">
-              {keycap}
-            </Kbd>
-          ))}
+        <Search aria-hidden="true" className="size-4 shrink-0" />
+        <span className="hidden min-w-0 flex-1 truncate text-left text-sm @min-[6.5rem]:inline">
+          Search…
         </span>
+        <kbd className="pointer-events-none hidden shrink-0 select-none items-center gap-0.5 rounded border border-border bg-muted px-1.5 font-mono text-[0.65rem] font-medium text-muted-foreground @min-[10.5rem]:inline-flex">
+          {keycaps("mod+k", mac).map((keycap) => (
+            <span key={keycap}>{keycap}</span>
+          ))}
+        </kbd>
       </button>
 
-      <Dialog
-        onOpenChange={(nextOpen) => {
-          if (!nextOpen) closeSearch();
-        }}
-        open={paletteOpen}
-      >
-        <DialogContent
-          aria-describedby={undefined}
-          className="top-[max(4rem,12dvh)] flex max-h-[min(36rem,calc(100dvh-4rem))] max-w-[min(42rem,calc(100%-1.5rem))] translate-y-0 flex-col gap-0 overflow-hidden rounded-2xl bg-popover p-0 text-popover-foreground shadow-2xl max-[499px]:top-[var(--search-viewport-top,0px)] max-[499px]:left-0 max-[499px]:h-[var(--search-viewport-height,100dvh)] max-[499px]:max-h-none max-[499px]:max-w-none max-[499px]:translate-x-0 max-[499px]:rounded-none max-[499px]:border-0 max-[499px]:pt-[env(safe-area-inset-top)] max-[499px]:pb-[env(safe-area-inset-bottom)] sm:max-w-[min(42rem,calc(100%-1.5rem))]"
-          onOpenAutoFocus={(event) => {
-            event.preventDefault();
-            inputRef.current?.focus();
-          }}
-          onCloseAutoFocus={(event) => {
+      <CommandDialog
+        className="top-[max(4rem,12dvh)] max-h-[min(36rem,calc(100dvh-4rem))] translate-y-0 bg-popover text-popover-foreground max-[499px]:top-[var(--search-viewport-top,0px)] max-[499px]:left-0 max-[499px]:h-[var(--search-viewport-height,100dvh)] max-[499px]:max-h-none max-[499px]:w-full max-[499px]:max-w-none max-[499px]:translate-x-0 max-[499px]:rounded-none max-[499px]:border-0 max-[499px]:pt-[env(safe-area-inset-top)] max-[499px]:pb-[env(safe-area-inset-bottom)] max-[499px]:[&>[data-slot=command]]:h-full"
+        commandProps={{ label: inputLabel, vimBindings: false }}
+        contentProps={{
+          onCloseAutoFocus: (event) => {
             event.preventDefault();
             if (navigating.current) {
               dialogClosed.current = true;
@@ -483,126 +467,102 @@ function SearchPalette({
             } else if (invokingElement.current?.isConnected) {
               invokingElement.current.focus({ preventScroll: true });
             }
-          }}
-          showCloseButton={false}
-          style={viewportStyle}
-        >
-          <DialogTitle className="sr-only">Search Mecatl</DialogTitle>
-          <div className="flex items-center gap-3 border-b px-4">
-            {loading ? (
+          },
+          onOpenAutoFocus: (event) => {
+            event.preventDefault();
+            inputRef.current?.focus();
+          },
+          style: viewportStyle,
+        }}
+        description={null}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) closeSearch();
+        }}
+        open={paletteOpen}
+        // Studio's ranked index already filters; cmdk's fuzzy filter is off.
+        shouldFilter={false}
+        showCloseButton={false}
+        title="Search Mecatl"
+      >
+        <CommandInput
+          aria-label={inputLabel}
+          className="text-base sm:text-sm"
+          icon={
+            loading ? (
               <LoaderCircle
                 aria-label="Loading searchable items"
-                className="size-5 shrink-0 animate-spin text-muted-foreground"
+                className="size-4 shrink-0 animate-spin opacity-50"
               />
-            ) : (
-              <Search aria-hidden="true" className="size-5 shrink-0 text-muted-foreground" />
-            )}
-            <input
-              aria-activedescendant={activeResult ? optionId(highlighted) : undefined}
-              aria-autocomplete="list"
-              aria-controls={listboxId}
-              aria-expanded={true}
-              aria-label={
-                canSearchInventory
-                  ? "Search chats, schedules, skills, and memory"
-                  : "Search help and pages"
-              }
-              autoComplete="off"
-              className="h-14 min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-muted-foreground"
-              onChange={(event) => {
-                setQuery(event.target.value);
-                setActiveIndex(0);
-              }}
-              onKeyDown={onInputKeyDown}
-              onKeyUp={(event) => composition.current.keyUp(event)}
-              onCompositionStart={() => composition.current.start()}
-              onCompositionEnd={() => composition.current.end()}
-              onPointerDownCapture={() => composition.current.pointerChoice()}
-              onTouchStartCapture={() => composition.current.pointerChoice()}
-              placeholder={
-                canSearchInventory
-                  ? "Search chats, schedules, skills, and memory…"
-                  : "Search help and pages…"
-              }
-              ref={inputRef}
-              role="combobox"
-              spellCheck={false}
-              type="text"
-              value={query}
-            />
+            ) : undefined
+          }
+          onCompositionEnd={() => composition.current.end()}
+          onCompositionStart={() => composition.current.start()}
+          onKeyDown={onInputKeyDown}
+          onKeyUp={(event) => composition.current.keyUp(event)}
+          onPointerDownCapture={() => composition.current.pointerChoice()}
+          onTouchStartCapture={() => composition.current.pointerChoice()}
+          onValueChange={setQuery}
+          placeholder={
+            canSearchInventory
+              ? "Search chats, schedules, skills, and memory…"
+              : "Search help and pages…"
+          }
+          ref={inputRef}
+          trailing={
             <DialogClose
               aria-label="Close search"
-              className="flex size-11 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="-mr-2 flex size-11 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground"
             >
               <X aria-hidden="true" className="size-4" />
             </DialogClose>
-          </div>
+          }
+          value={query}
+        />
 
-          <div className="min-h-0 flex-1 overflow-y-auto p-2 max-[499px]:max-h-none">
-            {!query.trim() ? (
+        <CommandList
+          className="max-[499px]:max-h-none max-[499px]:min-h-0 max-[499px]:flex-1"
+          label="Search results"
+        >
+          {!query.trim() ? (
+            <CommandEmpty>
               <SearchPrompt
                 inventoryAuthorized={canSearchInventory}
                 sessionCheckFailed={staticHelpOnly}
               />
-            ) : flatResults.length === 0 && !loading ? (
-              <p className="px-4 py-12 text-center text-sm text-muted-foreground">
-                No results for “{query.trim()}”
-              </p>
-            ) : null}
-            <div aria-label="Search results" id={listboxId} role="listbox">
-              {groups.map((group) => {
-                const headingId = `${idPrefix}-group-${group.section}`;
-                return (
-                  // biome-ignore lint/a11y/useSemanticElements: a listbox groups its options with role="group"; <fieldset> is a form control grouping and not a valid listbox child
-                  <div
-                    aria-labelledby={headingId}
-                    className="mb-1 last:mb-0"
-                    key={group.section}
-                    role="group"
-                  >
-                    <p
-                      aria-hidden="true"
-                      className="px-3 pt-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground"
-                      id={headingId}
-                    >
-                      {group.section}
-                    </p>
-                    {group.items.map((result) => {
-                      resultIndex += 1;
-                      const optionIndex = resultIndex;
-                      return (
-                        <SearchResult
-                          active={optionIndex === highlighted}
-                          id={optionId(optionIndex)}
-                          item={result}
-                          key={result.id}
-                          onChoose={() => void choose(result.target)}
-                          onHover={() => setActiveIndex(optionIndex)}
-                        />
-                      );
-                    })}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+            </CommandEmpty>
+          ) : resultCount === 0 && !loading ? (
+            <CommandEmpty className="text-muted-foreground">
+              No results for “{query.trim()}”
+            </CommandEmpty>
+          ) : null}
+          {groups.map((group) => (
+            <CommandGroup heading={group.section} key={group.section}>
+              {group.items.map((result) => (
+                <SearchResultItem
+                  item={result}
+                  key={result.id}
+                  onChoose={() => void choose(result.target)}
+                />
+              ))}
+            </CommandGroup>
+          ))}
+        </CommandList>
 
-          <div className="flex min-h-9 items-center justify-between gap-3 border-t px-4 py-2 text-[11px] text-muted-foreground">
-            <span aria-live="polite">
-              {!canSearchInventory
-                ? "Workspace inventories unavailable; search help and pages"
-                : partialError
-                  ? "Some inventories could not be searched"
-                  : loading
-                    ? "Loading searchable inventories"
-                    : query.trim() && !loading
-                      ? `${flatResults.length} result${flatResults.length === 1 ? "" : "s"}`
-                      : "Results stay in this browser"}
-            </span>
-            <span className="hidden sm:inline">↑↓ select · Enter open · Esc close</span>
-          </div>
-        </DialogContent>
-      </Dialog>
+        <div className="flex min-h-9 shrink-0 items-center justify-between gap-3 border-t px-3 py-2 text-xs text-muted-foreground">
+          <span aria-live="polite">
+            {!canSearchInventory
+              ? "Workspace inventories unavailable; search help and pages"
+              : partialError
+                ? "Some inventories could not be searched"
+                : loading
+                  ? "Loading searchable inventories"
+                  : query.trim() && !loading
+                    ? `${resultCount} result${resultCount === 1 ? "" : "s"}`
+                    : "Results stay in this browser"}
+          </span>
+          <span className="hidden sm:inline">↑↓ select · Enter open · Esc close</span>
+        </div>
+      </CommandDialog>
     </>
   );
 }
@@ -615,8 +575,8 @@ function SearchPrompt({
   sessionCheckFailed: boolean;
 }) {
   return (
-    <div className="px-4 py-10 text-center">
-      <p className="text-sm font-medium">
+    <div className="px-4">
+      <p className="font-medium">
         {inventoryAuthorized ? "Find anything in your workspace" : "Search help and pages"}
       </p>
       <p className="mt-1 text-xs leading-5 text-muted-foreground">
@@ -630,60 +590,40 @@ function SearchPrompt({
   );
 }
 
+const resultIcons = {
+  chat: MessageCircle,
+  memory: Brain,
+  page: Compass,
+  schedule: CalendarClock,
+  settingsSection: Compass,
+  skill: GraduationCap,
+} as const satisfies Record<GlobalSearchTarget["kind"], unknown>;
+
 /**
- * One listbox option. Focus stays in the combobox input (the
- * `aria-activedescendant` pattern), so options are not tab stops; a pointer
- * press is kept from stealing focus from the input.
+ * One result row. Focus stays in the combobox input (cmdk's
+ * `aria-activedescendant` pattern), so a pointer press never takes it, and a
+ * touch that scrolled the list is a scroll, not a choice.
  */
-function SearchResult({
-  active,
-  id,
-  item,
-  onChoose,
-  onHover,
-}: {
-  active: boolean;
-  id: string;
-  item: GlobalSearchItem;
-  onChoose: () => void;
-  onHover: () => void;
-}) {
+function SearchResultItem({ item, onChoose }: { item: GlobalSearchItem; onChoose: () => void }) {
   const touchStart = useRef<{ moved: boolean; x: number; y: number } | null>(null);
-  const Icon =
-    item.target.kind === "chat"
-      ? MessageCircle
-      : item.target.kind === "schedule"
-        ? CalendarClock
-        : item.target.kind === "memory"
-          ? Brain
-          : item.target.kind === "page" || item.target.kind === "settingsSection"
-            ? Compass
-            : GraduationCap;
+  const Icon = resultIcons[item.target.kind];
   return (
-    // biome-ignore lint/a11y/useKeyWithClickEvents: keyboard activation belongs to the combobox input (aria-activedescendant); options never hold focus
-    <div
-      aria-selected={active}
-      className={cn(
-        "group flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-3 text-left",
-        active ? "bg-accent text-accent-foreground" : "hover:bg-accent/60",
-      )}
-      id={id}
-      onClick={(event) => {
-        if (touchStart.current?.moved) {
-          event.preventDefault();
-          touchStart.current = null;
-          return;
-        }
+    <CommandItem
+      onClickCapture={(event: MouseEvent<HTMLDivElement>) => {
+        const scrolled = touchStart.current?.moved;
         touchStart.current = null;
-        onChoose();
+        if (!scrolled) return;
+        // Capture runs before cmdk's own click handler on this row.
+        event.preventDefault();
+        event.stopPropagation();
       }}
       onMouseDown={(event) => event.preventDefault()}
-      onMouseMove={active ? undefined : onHover}
       onPointerDown={(event) => {
         // A touch scroll may suppress its click, leaving the movement flag
         // behind. A new mouse/pen press is a separate choice, not that scroll.
         if (event.pointerType !== "touch") touchStart.current = null;
       }}
+      onSelect={onChoose}
       onTouchCancel={() => {
         touchStart.current = null;
       }}
@@ -699,27 +639,15 @@ function SearchResult({
         const touch = event.touches[0];
         if (touch) touchStart.current = { moved: false, x: touch.clientX, y: touch.clientY };
       }}
-      role="option"
-      tabIndex={-1}
+      value={item.id}
     >
-      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-background text-muted-foreground">
-        <Icon aria-hidden="true" className="size-4" />
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium">{item.title}</span>
+      <Icon aria-hidden="true" className="size-4 shrink-0" />
+      <div className="flex min-w-0 flex-col">
+        <span className="truncate text-sm">{item.title}</span>
         {item.description && (
-          <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-            {item.description}
-          </span>
+          <span className="truncate text-xs text-muted-foreground">{item.description}</span>
         )}
-      </span>
-      <ArrowRight
-        aria-hidden="true"
-        className={cn(
-          "size-4 shrink-0 text-muted-foreground transition-opacity",
-          active ? "opacity-100" : "opacity-0 group-hover:opacity-100",
-        )}
-      />
-    </div>
+      </div>
+    </CommandItem>
   );
 }
