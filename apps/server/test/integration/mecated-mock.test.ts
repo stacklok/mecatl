@@ -219,6 +219,15 @@ describe.skipIf(!available)("Studio BFF against a spawned mecated --mock", () =>
     expect(missing).toMatchObject({ body: { code: "not_found" }, status: 404 });
 
     const runtime = await json("/api/v1/runtime");
+    const page = await json("/api/v1/learning-proposals?status=staged&limit=1");
+    expect(page.status).toBe(200);
+    expect(typeof page.body.nextCursor).toBe("string");
+    const absentProposal = await json("/api/v1/learning-proposals/does-not-exist");
+    expect(absentProposal).toMatchObject(
+      (runtime.body.capabilities as { learningProposals?: boolean }).learningProposals
+        ? { body: { code: "not_found" }, status: 404 }
+        : { body: { code: "learning_proposals_unsupported" }, status: 501 },
+    );
     type Dream = { generate: boolean };
     const manualDream = (
       runtime.body.capabilities as { manualDream?: { projectMemory?: Dream; userModel?: Dream } }

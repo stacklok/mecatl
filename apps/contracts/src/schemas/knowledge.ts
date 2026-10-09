@@ -122,9 +122,35 @@ export const learningProposalSchema = z.object({
   version: z.string(),
 });
 
+/**
+ * One source the daemon recorded for a proposal: the chat it came from, the
+ * message or event within it, and the digest of what was read. `available` and
+ * `preview` come from the daemon's ownership- and digest-checked re-read, so
+ * only the single-proposal read carries them; `preview` is the daemon's bounded,
+ * redacted excerpt and is plain text.
+ */
+export const learningEvidenceSchema = z.object({
+  availability: z.string(),
+  available: z.boolean(),
+  digest: z.string(),
+  eventSeq: z.string(),
+  locator: z.string(),
+  ordinal: z.number().int(),
+  preview: z.string(),
+  sessionId: z.string(),
+  toolCallId: z.string(),
+});
+
+/** One proposal re-read by id, with each evidence source's current availability. */
+export const learningProposalDetailSchema = learningProposalSchema.extend({
+  evidence: z.array(learningEvidenceSchema),
+});
+
 export const learningProposalsResponseSchema = z.object({
   complete: z.boolean(),
   items: z.array(learningProposalSchema),
+  /** The cursor for the next page; empty on the last page. */
+  nextCursor: z.string(),
   reason: z.string(),
   supported: z.boolean(),
 });
@@ -247,6 +273,8 @@ export type LearnedSkillDiffResponse = z.infer<typeof learnedSkillDiffResponseSc
 export type LearnedSkillActionResponse = z.infer<typeof learnedSkillActionResponseSchema>;
 export type LearnedSkillResponse = z.infer<typeof learnedSkillSchema>;
 export type LearnedSkillsResponse = z.infer<typeof learnedSkillsResponseSchema>;
+export type LearningEvidenceResponse = z.infer<typeof learningEvidenceSchema>;
+export type LearningProposalDetailResponse = z.infer<typeof learningProposalDetailSchema>;
 export type LearningProposalResponse = z.infer<typeof learningProposalSchema>;
 export type LearningProposalsResponse = z.infer<typeof learningProposalsResponseSchema>;
 export type MemoryConsolidationPlanResponse = z.infer<typeof memoryConsolidationPlanSchema>;

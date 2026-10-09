@@ -10,6 +10,8 @@ import type {
   LearnedSkillDiffResponse,
   LearnedSkillResponse,
   LearnedSkillsResponse,
+  LearningEvidenceResponse,
+  LearningProposalDetailResponse,
   LearningProposalResponse,
   LearningProposalsResponse,
   MemoryConsolidationPlanResponse,
@@ -20,11 +22,12 @@ import type {
   UndoLearningPromotionRequest,
   UserMemoryResponse,
 } from "@mecatl-studio/contracts";
-import type { Client } from "@stacklok-oss/mecatl-sdk";
+import { type Client, MecatlError } from "@stacklok-oss/mecatl-sdk";
 import type {
   DreamParticipant,
   DreamReviewPlan,
   LearnedSkillVersion,
+  LearningEvidenceRef,
   LearningProposal,
   UserModelRevision,
 } from "@stacklok-oss/mecatl-sdk/gen";
@@ -74,6 +77,7 @@ export interface KnowledgeService {
     toVersion: string,
   ): Promise<LearnedSkillDiffResponse>;
   getLearnedSkill(id: string, ownerAgent: string, version: string): Promise<LearnedSkillResponse>;
+  getLearningProposal(id: string): Promise<LearningProposalDetailResponse>;
   getMemory(key: string): Promise<MemoryDetailResponse>;
   generateMemoryConsolidationPlan(
     target: MemoryConsolidationTarget,
@@ -81,7 +85,13 @@ export interface KnowledgeService {
   listConfiguredSkills(): Promise<ConfiguredSkillsResponse>;
   listLearnedSkills(): Promise<LearnedSkillsResponse>;
   listLearnedSkillChanges(): Promise<LearnedSkillChangesResponse>;
-  listLearningProposals(status: string): Promise<LearningProposalsResponse>;
+  /** One page of proposals in `status`; `cursor` continues after a page, and a `limit` of 0
+   *  takes the BFF's default page size. */
+  listLearningProposals(
+    status: string,
+    cursor?: string,
+    limit?: number,
+  ): Promise<LearningProposalsResponse>;
   listMemory(): Promise<UserMemoryResponse>;
   reflectSession(sessionId: string): Promise<ReflectionReceiptResponse>;
   undoLearningPromotion(
@@ -89,6 +99,9 @@ export interface KnowledgeService {
     request: UndoLearningPromotionRequest,
   ): Promise<LearningProposalResponse>;
 }
+
+/** The page size when the browser names none; the daemon caps a page at 200. */
+const defaultProposalPageSize = 100;
 
 export function createMecatlKnowledgeService(
   client: Client,
@@ -180,6 +193,30 @@ export function createMecatlKnowledgeService(
         version,
       });
       return learnedSkillFromSdk(response.skill);
+    },
+
+    async getLearningProposal(id) {
+      let response: Awaited<ReturnType<Client["learningProposals"]["get"]>>;
+      try {
+        response = await client.learningProposals.get({
+          $typeName: "mecatl.v1.GetLearningProposalRequest",
+          id,
+          project: "",
+        });
+      } catch (error) {
+        // The daemon reports a missing proposal with its generic not-found
+        // sentinel, whose stable code is `session_not_found`; name it for what it is.
+        if (
+          error instanceof MecatlError &&
+          (error.code === "session_not_found" || error.code === "not_found")
+        )
+          throw new KnowledgeNotFoundError(`No learning proposal with id ${id}`);
+        throw error;
+      }
+      return {
+        ...learningProposalFromSdk(response.proposal),
+        evidence: response.proposal?.evidence.map(learningEvidenceFromSdk) ?? [],
+      };
     },
 
     async getMemory(key) {
@@ -275,25 +312,27 @@ export function createMecatlKnowledgeService(
       };
     },
 
-    async listLearningProposals(status) {
+    async listLearningProposals(status, cursor = "", limit = 0) {
       if (!getCapabilities().learningProposals) {
         return {
           complete: true,
           items: [],
+          nextCursor: "",
           reason: "Learning proposals are not enabled on this Mecatl deployment.",
           supported: false,
         };
       }
       const response = await client.learningProposals.list({
         $typeName: "mecatl.v1.ListLearningProposalsRequest",
-        cursor: "",
-        limit: 100,
+        cursor,
+        limit: limit || defaultProposalPageSize,
         project: "",
         status,
       });
       return {
         complete: !response.nextCursor,
         items: response.proposals.map(learningProposalFromSdk),
+        nextCursor: response.nextCursor,
         reason: "",
         supported: true,
       };
@@ -383,6 +422,25 @@ function learningProposalFromSdk(proposal: LearningProposal | undefined): Learni
     updatedAt: timestampToIso(proposal.updatedAt),
     value: proposal.value,
     version: proposal.version,
+  };
+}
+
+/**
+ * The daemon re-reads each source when one proposal is fetched, so `available`
+ * and `preview` are meaningful only here. The preview is the daemon's bounded,
+ * redacted excerpt; Studio passes it through as plain text.
+ */
+function learningEvidenceFromSdk(evidence: LearningEvidenceRef): LearningEvidenceResponse {
+  return {
+    availability: evidence.availability,
+    available: evidence.available,
+    digest: evidence.digest,
+    eventSeq: evidence.eventSeq.toString(),
+    locator: evidence.locator,
+    ordinal: evidence.ordinal,
+    preview: evidence.preview,
+    sessionId: evidence.sessionId,
+    toolCallId: evidence.toolCallId,
   };
 }
 
