@@ -436,13 +436,9 @@ type config struct {
 	websearchQueryParam string
 
 	// WebSearch backend ladder (issue #26): web search is ON by default (Exa
-	// anonymous). searxngURL/braveAPIKey/exaAPIKey are read from SEARXNG_URL/
-	// BRAVE_API_KEY/EXA_API_KEY (secrets/URLs, never flag values) and SWITCH the
-	// backend; websearchMode is the raw --websearch value ("off" → websearchOff),
-	// the kill switch mirroring --guardrails.
+	// anonymous). SearXNG selects a different backend; Exa and Brave keys
+	// are resolved by the shared provider credential lifecycle.
 	searxngURL    string
-	braveAPIKey   string
-	exaAPIKey     string
 	websearchMode string // raw --websearch value ("off" → websearchOff)
 	websearchOff  bool
 
@@ -1307,8 +1303,6 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		WebSearchAuthHeader: cfg.websearchAuthHeader,
 		WebSearchQueryParam: cfg.websearchQueryParam,
 		SearXNGURL:          cfg.searxngURL,
-		BraveAPIKey:         cfg.braveAPIKey,
-		ExaAPIKey:           cfg.exaAPIKey,
 		WebSearchOff:        cfg.websearchOff,
 		ForkPreservedCap:    cfg.forkPreservedCap,
 		EnableTeams:         cfg.enableTeams,
@@ -1985,12 +1979,9 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	// WebSearch (issue #26): the search backend's API key is a SECRET, read from the
 	// environment (never a flag value), mirroring the provider keys' custody rule.
 	cfg.websearchAPIKey = os.Getenv("WEBSEARCH_API_KEY")
-	// WebSearch backend ladder (issue #26): the SearXNG URL and the Brave/Exa keys
-	// are secrets/URLs read from the environment, never flag values. Web search is ON
-	// by default (Exa anonymous) — these only SWITCH the backend.
+	// WebSearch backend ladder (issue #26): SearXNG selects its backend;
+	// Brave and Exa credentials use the shared provider credential lifecycle.
 	cfg.searxngURL = os.Getenv("SEARXNG_URL")
-	cfg.braveAPIKey = os.Getenv("BRAVE_API_KEY")
-	cfg.exaAPIKey = os.Getenv("EXA_API_KEY")
 	// An auth token from the environment is honored when the flag is unset, so a
 	// secret need not appear in the process argv.
 	if cfg.authToken == "" {

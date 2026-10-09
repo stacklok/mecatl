@@ -60,6 +60,38 @@ func TestLogListenerPostureClassifiesCallerAuthentication(t *testing.T) {
 	}
 }
 
+func TestSearchCommandRootProjection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auth.yaml")
+	if err := os.WriteFile(path, []byte("providers:\n  exa:\n    api_key: daemon-exa-key\n  brave:\n    api_key: daemon-brave-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("EXA_API_KEY", "")
+	t.Setenv("BRAVE_API_KEY", "")
+	cfg, err := parseFlags([]string{"--api-key-file", path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.providerCredentials.Any() {
+		t.Fatal("search keys must not count as LLM provider credentials")
+	}
+	out := appConfig(cfg, nil, nil, nil, nil, nil)
+	if out.ExaAPIKey != "daemon-exa-key" || out.BraveAPIKey != "daemon-brave-key" {
+		t.Fatal("daemon did not project file-backed search credentials")
+	}
+	profile, _, err := out.ProviderCredentialLoader.Load(nil)
+	if err != nil || profile.ExaAPIKey != out.ExaAPIKey || profile.BraveAPIKey != out.BraveAPIKey {
+		t.Fatalf("daemon credential loader search keys = exa=%q brave=%q err=%v", profile.ExaAPIKey, profile.BraveAPIKey, err)
+	}
+	t.Setenv("BRAVE_API_KEY", "env-brave-key")
+	cfg, err = parseFlags([]string{"--api-key-file", path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := appConfig(cfg, nil, nil, nil, nil, nil).BraveAPIKey; got != "env-brave-key" {
+		t.Fatalf("daemon did not give BRAVE_API_KEY precedence: %q", got)
+	}
+}
+
 func TestOpenAICodexCommandRootReusesResolvedSnapshot(t *testing.T) {
 	for _, envName := range []string{"OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENCODE_API_KEY"} {
 		t.Setenv(envName, "")
