@@ -286794,6 +286794,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791501553053,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "jakub@stacklok.com",
+            "name": "Jakub Hrozek",
+            "username": "jhrozek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f98c23a78be5e18775895c66a4a6808f2f08633e",
+          "message": "feat(broker): define credential continuity contract (#2217)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-09T08:54:06+02:00",
+          "tree_id": "266a4d838e3ac417120b50020d9aac18939ad064",
+          "url": "https://github.com/stacklok/mecatl/commit/f98c23a78be5e18775895c66a4a6808f2f08633e"
+        },
+        "date": 1791529605985,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -415621,6 +415655,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791529603272,
+  "lastUpdate": 1791529606693,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
