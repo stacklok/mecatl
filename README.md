@@ -8,3 +8,4 @@ The `studio-alignment-2228/` folder holds the before/after composites for the St
 - `studio-alignment-2223/`: before/after composites for #2223 (memory fact detail Proposal row).
 - `studio-alignment-2224/`: before/after composites for #2224 (destructive approval classification).
 - `studio-alignment-1855/`: before/after composites for #1855 (Settings > Learning).
+- `studio-alignment-2231/`: before/after composites for #2231 (chat Stop on phones).
