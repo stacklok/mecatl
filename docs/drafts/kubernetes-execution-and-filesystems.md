@@ -174,23 +174,28 @@ The agent loop sends file requests through its `Workspace` adapter to a service 
 for a file, and `Edit` asks the service to update it. The loop does not mount the filesystem.
 
 Programs inside the executor expect normal filesystem access. A trusted mount client exposes the same stored files,
-not a separate copy to synchronize. This could be a FUSE client speaking to a service, or a native filesystem client
-with a service frontend for the loop. In the latter case the backend or integration must enforce authorization across
-both routes; a lock at the frontend alone cannot protect native mount writes.
+not a separate copy to synchronize. Both file-tool requests and shell filesystem operations must participate in the
+same authorization and consistency model, with no route around the enforced restrictions. A trusted FUSE client can
+translate shell filesystem operations into requests to the same service used by file tools. Alternatively, a native
+filesystem client can be used when the filesystem server or a trusted integration enforces the required scopes and
+coordinates both access paths. An API frontend over an unrestricted mount is insufficient: frontend-only authorization
+and locking do not cover native mount writes. FUSE itself does not supply these guarantees; client caching, writeback,
+and grant expiry still need defined behavior.
 
 ```text
 Agent file tools -> Workspace adapter -> API ---+
                                                +--> Filesystem service -> Storage
-Executor programs -> FUSE client ------> API ---+
+Executor programs -> FUSE client ------> API ---+    (scope checks and operation coordination)
 ```
 
 The diagram illustrates a shared-service implementation, not a requirement to build a complete storage protocol.
 An API frontend over a mature filesystem can reuse its existing clients. Any distinct mount route still needs common
 enforcement. Mecatl's current Redis filesystem would need more functionality to serve programs.
 
-The component view below illustrates the native-client variant: the independent file service and executor mount
-reach the same filesystem backend. The trusted mount client's placement depends on the runtime and storage driver.
-Command-request arrows omit the execution-provider transport.
+The component view below illustrates the native-client variant: both routes reach a filesystem backend or trusted
+integration responsible for scope enforcement and operation coordination. That responsibility does not require a
+separate service, but must cover both routes. The trusted mount client's placement depends on the runtime and storage
+driver. Command-request arrows omit the execution-provider transport.
 
 ```mermaid
 flowchart LR
@@ -205,7 +210,7 @@ flowchart LR
         programs["Shell / Git / builds"] --> mount["Workspace mount"]
     end
     client["Trusted mount client — placement varies"]
-    backend["Shared filesystem backend"]
+    backend["Filesystem backend / trusted integration<br/>Scope enforcement and operation coordination"]
     storage[("Persistent storage")]
 
     workspace -->|"File RPC"| api
