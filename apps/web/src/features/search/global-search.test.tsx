@@ -796,6 +796,11 @@ describe("GlobalSearch", () => {
     expect(input?.hasAttribute("aria-activedescendant")).toBe(false);
     expect(document.querySelector('[aria-live="polite"]')?.textContent).toBe("0 results");
     expect(document.body.textContent).toContain("No results for");
+    // The empty state keeps the palette's own centred, padded, small-text slot.
+    const empty = document.querySelector('[data-slot="command-empty"]');
+    expect(empty?.className).toContain("py-6");
+    expect(empty?.className).toContain("text-center");
+    expect(empty?.className).toContain("text-sm");
   });
 
   it("leaves IME candidate keys alone through the committing Enter", async () => {

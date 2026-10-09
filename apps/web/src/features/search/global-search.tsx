@@ -531,8 +531,9 @@ function SearchPalette({
               />
             </CommandEmpty>
           ) : resultCount === 0 && !loading ? (
-            <CommandEmpty className="text-muted-foreground">
-              No results for “{query.trim()}”
+            <CommandEmpty>
+              {/* CommandEmpty owns the slot's spacing (its className is not merged). */}
+              <span className="text-muted-foreground">No results for “{query.trim()}”</span>
             </CommandEmpty>
           ) : null}
           {groups.map((group) => (

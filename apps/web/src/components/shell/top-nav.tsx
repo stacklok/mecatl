@@ -77,8 +77,9 @@ export function TopNav() {
 
         {/* GlobalSearch owns its trigger, dialog, and the Cmd/Ctrl-K shortcut.
             Its trigger is styled for a light surface, so restyle it (and its
-            keycap) from here for the dark gradient band. */}
-        <div className="flex min-w-11 shrink-0 justify-end min-[500px]:max-w-[214px] min-[500px]:flex-1 min-[500px]:shrink [&_kbd]:rounded-full [&_kbd]:border-transparent [&_kbd]:bg-nav-kbd-bg [&_kbd]:text-brand-foreground [&>button]:min-h-11 [&>button]:min-w-11 [&>button]:rounded-full [&>button]:border-nav-search-border [&>button]:bg-transparent [&>button]:text-nav-search-text [&>button]:hover:bg-white/10 [&>button]:hover:text-white [&>button]:focus-visible:ring-nav-search-text">
+            keycap) from here for the dark gradient band. Signed out, it renders
+            nothing, and `empty:hidden` keeps the nav flush right. */}
+        <div className="flex min-w-11 shrink-0 justify-end empty:hidden min-[500px]:max-w-[214px] min-[500px]:flex-1 min-[500px]:shrink [&_kbd]:rounded-full [&_kbd]:border-transparent [&_kbd]:bg-nav-kbd-bg [&_kbd]:text-brand-foreground [&>button]:min-h-11 [&>button]:min-w-11 [&>button]:rounded-full [&>button]:border-nav-search-border [&>button]:bg-transparent [&>button]:text-nav-search-text [&>button]:hover:bg-white/10 [&>button]:hover:text-white [&>button]:focus-visible:ring-nav-search-text">
           <GlobalSearch />
         </div>
       </div>
