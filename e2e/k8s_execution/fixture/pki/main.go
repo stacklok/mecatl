@@ -50,7 +50,7 @@ func main() {
 			map[string]any{"uri": "spiffe://mecatl.test/client/operations", "mayAttestOwner": true, "administrator": true, "administratorFor": []string{"spiffe://mecatl.test/client/mecak8s"}},
 			map[string]any{"uri": "spiffe://mecatl.test/client/wrong-scope", "mayAttestOwner": true, "administrator": true, "administratorFor": []string{"spiffe://mecatl.test/client/intruder"}},
 			// qualification owns synthetic intents the in-cluster mecak8s reconciler must never see.
-			map[string]any{"uri": "spiffe://mecatl.test/client/qualification", "mayAttestOwner": true, "administrator": true},
+			map[string]any{"uri": "spiffe://mecatl.test/client/qualification", "mayAttestOwner": true, "administrator": true, "executionTemplates": []string{"go"}},
 		},
 	})
 	must(err)

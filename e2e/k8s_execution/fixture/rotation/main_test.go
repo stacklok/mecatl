@@ -71,6 +71,18 @@ func TestForwardRestoreTrustBundleSupportsFixtureClient(t *testing.T) {
 		if len(manifest.Clients) == 0 || manifest.Clients[0].URI != "spiffe://mecatl.test/client/mecak8s" || !slices.Contains(manifest.Clients[0].ExecutionTemplates, "operator-utility") {
 			t.Errorf("%s lost the operator-utility template grant", tc.file)
 		}
+		foundQualification := false
+		for _, client := range manifest.Clients {
+			if client.URI == "spiffe://mecatl.test/client/qualification" {
+				foundQualification = true
+				if !slices.Equal(client.ExecutionTemplates, []string{"go"}) {
+					t.Errorf("%s must preserve exactly the qualification go template grant", tc.file)
+				}
+			}
+		}
+		if !foundQualification {
+			t.Errorf("%s lost the qualification client", tc.file)
+		}
 	}
 
 	clientKey, err := rsa.GenerateKey(rand.Reader, 2048)
