@@ -4,8 +4,7 @@ import type { UserMemoryResponse } from "@mecatl-studio/contracts";
 import { listUserMemoryOptions } from "@mecatl-studio/contracts/query";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useState } from "react";
-import { SortableHead, type SortDirection } from "../../components/ui/sortable-head";
+import { SortableHead, type SortDir, useTableSort } from "@/components/sortable-head";
 import { Table, TableBody, TableCell, TableHeader, TableRow } from "../../components/ui/table";
 import { Note, SettingsCard } from "../settings/settings-card";
 
@@ -21,10 +20,7 @@ const NO_DESCRIPTION = "No description recorded.";
  */
 export function FactsAboutYou() {
   const query = useQuery(listUserMemoryOptions());
-  const [sort, setSort] = useState<{ direction: SortDirection; key: FactSortKey }>({
-    direction: "asc",
-    key: "name",
-  });
+  const sort = useTableSort<FactSortKey>("name");
 
   let body: React.ReactNode;
   if (query.isPending) {
@@ -36,13 +32,7 @@ export function FactsAboutYou() {
   } else if (query.data.items.length === 0) {
     body = <Note>The agent hasn&rsquo;t remembered anything about you yet.</Note>;
   } else {
-    const rows = sortFacts(query.data.items, sort.key, sort.direction);
-    const toggle = (key: FactSortKey) =>
-      setSort((current) => ({
-        direction: current.key === key && current.direction === "asc" ? "desc" : "asc",
-        key,
-      }));
-    const direction = (key: FactSortKey) => (sort.key === key ? sort.direction : undefined);
+    const rows = sortFacts(query.data.items, sort.key, sort.dir);
     body = (
       <div className="space-y-3">
         <p className="text-xs text-muted-foreground" data-testid="memory-footprint">
@@ -54,16 +44,11 @@ export function FactsAboutYou() {
               <TableRow className="hover:bg-transparent">
                 <SortableHead
                   className="w-[280px] px-4 lg:w-[320px]"
-                  direction={direction("name")}
                   label="Name"
-                  onSort={() => toggle("name")}
+                  sort={sort}
+                  sortKey="name"
                 />
-                <SortableHead
-                  className="px-4"
-                  direction={direction("remembers")}
-                  label="Remembers"
-                  onSort={() => toggle("remembers")}
-                />
+                <SortableHead className="px-4" label="Remembers" sort={sort} sortKey="remembers" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -103,7 +88,7 @@ function footprint(count: number) {
   return `${count} ${count === 1 ? "fact" : "facts"} remembered`;
 }
 
-function sortFacts(items: MemoryEntry[], key: FactSortKey, direction: SortDirection) {
+function sortFacts(items: MemoryEntry[], key: FactSortKey, direction: SortDir) {
   const byName = (a: MemoryEntry, b: MemoryEntry) => a.key.localeCompare(b.key);
   const primary = (a: MemoryEntry, b: MemoryEntry) =>
     key === "remembers" ? (a.description || "").localeCompare(b.description || "") : byName(a, b);
