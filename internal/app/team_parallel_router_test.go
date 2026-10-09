@@ -358,6 +358,7 @@ func testTeamBareModelSelectorUsesContextualProvider(t *testing.T, noFS bool, se
 		ModelAliasTargets:     ModelAliases{childDefault: {ProviderID: childProvider, Model: "child-default-model"}, "contextual": {Model: selectedModel}},
 		EnableTeams:           true,
 		AllowAllTools:         true,
+		GuardrailsDisabled:    true,
 		ContextWindowOverride: 128000,
 		envDetector: fakeEnv(map[string]string{
 			"OPENAI_API_KEY":     "test-key",

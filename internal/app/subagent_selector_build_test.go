@@ -28,9 +28,10 @@ func TestBuildWritableSubagentCrossProviderSelection(t *testing.T) {
 		childReq []port.LLMRequest
 	)
 	built, err := buildIsolated(t, ctx, Config{
-		Workspace:     workspace,
-		NoSoul:        true,
-		AllowAllTools: true,
+		Workspace:          workspace,
+		NoSoul:             true,
+		AllowAllTools:      true,
+		GuardrailsDisabled: true,
 		envDetector: fakeEnv(map[string]string{
 			"OPENAI_API_KEY":     "sk-test",
 			"OPENROUTER_API_KEY": "sk-test",
