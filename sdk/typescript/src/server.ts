@@ -291,16 +291,31 @@ export function createServer(operations: ServerOperations): Server {
   return {
     executionTemplates: async (options) => {
       const compatibility = await operations.compatibility(options, false);
-      if (!compatibility.features.has(ServerFeature.ExecutionTemplates) || !compatibility.capabilities.executionTemplates) {
-        throw new UnsupportedFeatureError(ServerFeature.ExecutionTemplates, { transport: operations.transportKind });
+      if (
+        !compatibility.features.has(ServerFeature.ExecutionTemplates) ||
+        !compatibility.capabilities.executionTemplates
+      ) {
+        throw new UnsupportedFeatureError(ServerFeature.ExecutionTemplates, {
+          transport: operations.transportKind,
+        });
       }
-      const result = await operations.unary(HarnessService.method.listExecutionTemplates, {}, options);
-      if (result.items.length > 64) throw protocol("ListExecutionTemplates exceeded inventory bound", operations.transportKind);
-      return { inventoryRevision: result.inventoryRevision, items: result.items.map((item) => ({
-        template: { id: item.template?.id ?? "", revision: item.template?.revision ?? "" },
-        name: item.name, description: item.description, displayToken: item.displayToken,
-        extensions: { ...item.extensions },
-      })) };
+      const result = await operations.unary(
+        HarnessService.method.listExecutionTemplates,
+        {},
+        options,
+      );
+      if (result.items.length > 64)
+        throw protocol("ListExecutionTemplates exceeded inventory bound", operations.transportKind);
+      return {
+        inventoryRevision: result.inventoryRevision,
+        items: result.items.map((item) => ({
+          template: { id: item.template?.id ?? "", revision: item.template?.revision ?? "" },
+          name: item.name,
+          description: item.description,
+          displayToken: item.displayToken,
+          extensions: { ...item.extensions },
+        })),
+      };
     },
     compatibility: (options) => operations.compatibility(options, true),
     info: async (options = {}, requestOptions) => {

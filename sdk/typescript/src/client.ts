@@ -1177,20 +1177,40 @@ class ClientImpl implements Client {
           const compatibility = await this.#compatibility(requestOptions, false);
           if (request.execution !== undefined) {
             if (!compatibility.features.has(ServerFeature.ExecutionTemplates)) {
-              throw new UnsupportedFeatureError(ServerFeature.ExecutionTemplates, { transport: this.#transportKind });
+              throw new UnsupportedFeatureError(ServerFeature.ExecutionTemplates, {
+                transport: this.#transportKind,
+              });
             }
             const keys = request.execution === null ? [] : Object.keys(request.execution);
             if (keys.length !== 1 || (keys[0] !== "none" && keys[0] !== "template")) {
-              throw new InvalidStateError("execution must select exactly one variant", { transport: "local" });
+              throw new InvalidStateError("execution must select exactly one variant", {
+                transport: "local",
+              });
             }
-            if (keys[0] === "none" && (!('none' in request.execution) || request.execution.none === null || typeof request.execution.none !== "object" || Array.isArray(request.execution.none) || Object.keys(request.execution.none).length !== 0)) {
+            if (
+              keys[0] === "none" &&
+              (!("none" in request.execution) ||
+                request.execution.none === null ||
+                typeof request.execution.none !== "object" ||
+                Array.isArray(request.execution.none) ||
+                Object.keys(request.execution.none).length !== 0)
+            ) {
               throw new InvalidStateError("execution.none must be empty", { transport: "local" });
             }
-            if (keys[0] === "template" && (!('template' in request.execution) || !request.execution.template?.id?.trim() || !request.execution.template?.revision?.trim())) {
-              throw new InvalidStateError("execution.template requires id and revision", { transport: "local" });
+            if (
+              keys[0] === "template" &&
+              (!("template" in request.execution) ||
+                !request.execution.template?.id?.trim() ||
+                !request.execution.template?.revision?.trim())
+            ) {
+              throw new InvalidStateError("execution.template requires id and revision", {
+                transport: "local",
+              });
             }
             if (keys[0] === "template" && !compatibility.capabilities.executionTemplates) {
-              throw new UnsupportedFeatureError(ServerFeature.ExecutionTemplates, { transport: this.#transportKind });
+              throw new UnsupportedFeatureError(ServerFeature.ExecutionTemplates, {
+                transport: this.#transportKind,
+              });
             }
           }
           const response = await this.#unary(

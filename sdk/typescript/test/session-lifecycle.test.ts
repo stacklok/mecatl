@@ -10,9 +10,9 @@ import {
   SESSION_ID_HEADER_NAME,
   ServerError,
   ServerFeature,
-  UnsupportedFeatureError,
   SessionMode,
   TransportError,
+  UnsupportedFeatureError,
 } from "../src/index.js";
 
 function bytes(value: string): number[] {
@@ -40,18 +40,40 @@ describe("session lifecycle", () => {
     const choices: unknown[] = [];
     const transport = createRouterTransport((router) => {
       router.service(HarnessService, {
-        getCompatibilityInfo: () => ({apiMajor: 1, features: ["execution_templates"], capabilities: {executionTemplates: true}}),
-        createSession: (request) => { choices.push(request.execution); return {sessionId: "created"}; },
-        listExecutionTemplates: () => ({items: [{template: {id: "safe", revision: "v1-revision"}, name: "Safe"}], inventoryRevision: "inventory"}),
+        getCompatibilityInfo: () => ({
+          apiMajor: 1,
+          features: ["execution_templates"],
+          capabilities: { executionTemplates: true },
+        }),
+        createSession: (request) => {
+          choices.push(request.execution);
+          return { sessionId: "created" };
+        },
+        listExecutionTemplates: () => ({
+          items: [{ template: { id: "safe", revision: "v1-revision" }, name: "Safe" }],
+          inventoryRevision: "inventory",
+        }),
       });
     });
-    const client = connect({transport});
+    const client = connect({ transport });
     expect((await client.server.executionTemplates()).items[0]?.template.id).toBe("safe");
     await client.sessions.create({});
-    await client.sessions.create({execution: {none: {}}});
-    await client.sessions.create({execution: {template: {id: "safe", revision: "v1-revision"}}});
-    expect(choices).toEqual([undefined, expect.objectContaining({none: expect.anything()}), expect.objectContaining({template: expect.objectContaining({id: "safe", revision: "v1-revision"})})]);
-    await expect(client.sessions.create({execution: {none: {}, template: {id: "safe", revision: "v1-revision"}}} as never)).rejects.toBeInstanceOf(InvalidStateError);
+    await client.sessions.create({ execution: { none: {} } });
+    await client.sessions.create({
+      execution: { template: { id: "safe", revision: "v1-revision" } },
+    });
+    expect(choices).toEqual([
+      undefined,
+      expect.objectContaining({ none: expect.anything() }),
+      expect.objectContaining({
+        template: expect.objectContaining({ id: "safe", revision: "v1-revision" }),
+      }),
+    ]);
+    await expect(
+      client.sessions.create({
+        execution: { none: {}, template: { id: "safe", revision: "v1-revision" } },
+      } as never),
+    ).rejects.toBeInstanceOf(InvalidStateError);
     expect(choices).toHaveLength(3);
     await client.close();
   });
@@ -59,23 +81,36 @@ describe("session lifecycle", () => {
   it("never sends explicit execution selection to an old server", async () => {
     for (const compatibility of [
       { apiMajor: 1, features: ["legacy_feature"], capabilities: { executionTemplates: false } },
-      { apiMajor: 1, features: [ServerFeature.ExecutionTemplates], capabilities: { executionTemplates: false } },
+      {
+        apiMajor: 1,
+        features: [ServerFeature.ExecutionTemplates],
+        capabilities: { executionTemplates: false },
+      },
     ]) {
       let created = 0;
       const transport = createRouterTransport((router) => {
         router.service(HarnessService, {
           getCompatibilityInfo: () => compatibility,
-          createSession: () => { created++; return { sessionId: "created" }; },
+          createSession: () => {
+            created++;
+            return { sessionId: "created" };
+          },
         });
       });
       const client = connect({ transport });
       if (!compatibility.features.includes(ServerFeature.ExecutionTemplates)) {
-        await expect(client.sessions.create({ execution: { none: {} } })).rejects.toBeInstanceOf(UnsupportedFeatureError);
+        await expect(client.sessions.create({ execution: { none: {} } })).rejects.toBeInstanceOf(
+          UnsupportedFeatureError,
+        );
       } else {
         await client.sessions.create({ execution: { none: {} } });
       }
-      await expect(client.sessions.create({ execution: { template: { id: "go", revision: "v1-rev" } } })).rejects.toBeInstanceOf(UnsupportedFeatureError);
-      expect(created).toBe(compatibility.features.includes(ServerFeature.ExecutionTemplates) ? 1 : 0);
+      await expect(
+        client.sessions.create({ execution: { template: { id: "go", revision: "v1-rev" } } }),
+      ).rejects.toBeInstanceOf(UnsupportedFeatureError);
+      expect(created).toBe(
+        compatibility.features.includes(ServerFeature.ExecutionTemplates) ? 1 : 0,
+      );
       await client.close();
     }
   });
