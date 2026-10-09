@@ -50,6 +50,7 @@ type Finding struct{ Member, Body string }
 // TeamCardSnapshot is the detached payload of a specialized Team tool card.
 type TeamCardSnapshot struct {
 	Call      ToolCall
+	Hooks     []HookSnapshot // detached from conversation-owned hook records
 	Resolved  bool
 	Result    ToolResult
 	available bool // provisional result awaiting canonical confirmation

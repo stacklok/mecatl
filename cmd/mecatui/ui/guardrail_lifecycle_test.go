@@ -297,14 +297,14 @@ func TestGuardrailSessionReadyInvalidatesPendingDetails(t *testing.T) {
 				m = applyAll(m, old)
 				if approval {
 					s := approvalSurfaceOf(t, m)
-					if s.ask.unavailable || s.ask.detail.Concern != "" {
+					if s.ask.review.snapshot().Detail.State == scrollback.HookDetailUnavailable || s.ask.review.snapshot().Detail.Concern != "" {
 						t.Fatal("old reply affected new prompt")
 					}
 				}
 				m = applyAll(m, current)
 				if approval {
 					s := approvalSurfaceOf(t, m)
-					if s.ask.unavailable != failed || (!failed && s.ask.detail.Concern == "") {
+					if s.ask.review.snapshot().Detail.State == scrollback.HookDetailUnavailable != failed || (!failed && s.ask.review.snapshot().Detail.Concern == "") {
 						t.Fatal("current prompt detail not applied")
 					}
 				} else if text := lastNotice(m); !strings.Contains(text, "Test explanation") && !strings.Contains(text, "unavailable or expired") {
@@ -368,7 +368,7 @@ func TestGuardrailQueuedFailureStaysWithPromotedPrompt(t *testing.T) {
 	m = applyAll(m, head, failure)
 	s := approvalSurfaceOf(t, m)
 	body, _ := s.permissionModalBodyParts(100, 80)
-	if s.ask.unavailable || !s.queue[0].unavailable || strings.Contains(stripANSIstr(body), "unavailable or expired") {
+	if s.ask.review.snapshot().Detail.State == scrollback.HookDetailUnavailable || s.queue[0].review.snapshot().Detail.State != scrollback.HookDetailUnavailable || strings.Contains(stripANSIstr(body), "unavailable or expired") {
 		t.Fatal("queued error leaked into head prompt")
 	}
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter}, queued, head)
@@ -376,7 +376,7 @@ func TestGuardrailQueuedFailureStaysWithPromotedPrompt(t *testing.T) {
 	m = applyAll(m, head)
 	s = approvalSurfaceOf(t, m)
 	body, _ = s.permissionModalBodyParts(100, 80)
-	if s.ask.guardrail.ReviewID != "queued" || !s.ask.unavailable || s.ask.detail.Concern != "" || !strings.Contains(stripANSIstr(body), "unavailable or expired") {
+	if s.ask.guardrail.ReviewID != "queued" || s.ask.review.snapshot().Detail.State != scrollback.HookDetailUnavailable || s.ask.review.snapshot().Detail.Concern != "" || !strings.Contains(stripANSIstr(body), "unavailable or expired") {
 		t.Fatalf("promoted prompt changed by stale reply: %q", body)
 	}
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter})

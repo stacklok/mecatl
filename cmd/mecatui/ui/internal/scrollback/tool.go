@@ -34,6 +34,7 @@ type ToolResult struct {
 // projection when the result has not arrived yet. Failed classifies that projection.
 type ToolCardSnapshot struct {
 	Call               ToolCall
+	Hooks              []HookSnapshot // detached from conversation-owned hook records
 	Resolved, Finished bool
 	Failed             bool
 	Result             ToolResult

@@ -263,6 +263,7 @@ func (s *sessionsState) applyReplayEvent(msg tea.Msg) {
 	case client.HookMsg:
 		c.addGuardrailHook(msg, s.debug)
 	case client.ResultMsg:
+		c.clearPendingHooks()
 		if msg.Stop == stopError && msg.Error != "" {
 			if msg.Permanent {
 				c.addPermanentError(msg.Error)
@@ -280,6 +281,8 @@ func (s *sessionsState) applyReplayEventSecondary(msg tea.Msg) {
 	switch msg := msg.(type) {
 	case client.ApprovalMsg:
 		c.addNotice(approvalNotice(msg))
+	case client.StreamErrMsg, client.StreamClosedMsg:
+		c.clearPendingHooks()
 	case client.CompactionArchiveMsg:
 		c.addNotice(compactionArchiveNotice(msg))
 	case client.ModelRetryMsg, client.CompactionMsg, client.NoProgressMsg:

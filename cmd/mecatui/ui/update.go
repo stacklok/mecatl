@@ -19,6 +19,7 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/welcome"
 )
 
@@ -458,6 +459,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // overlays accrue (each helper returns handled=false for a non-matching msg, so
 // at most one consumes).
 func (m Model) dispatchNonInputMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if detail, ok := msg.(client.GuardrailReviewDetailMsg); ok {
+		m.applyApprovalDetail(detail)
+		m.applyGuardrailDetail(detail)
+		m.refreshView()
+		return m, nil
+	}
 	if mm, cmd, handled := m.updatePendingApproval(msg); handled {
 		return mm, cmd
 	}
@@ -1375,21 +1382,22 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) applyHookMsg(msg client.HookMsg) (tea.Model, tea.Cmd) {
-	if msg.Guardrail != nil && msg.Guardrail.ReviewID != "" {
+	r, outcome := m.conv.addGuardrailHook(msg, m.deps.Debug)
+	m.syncToolcalls()
+	if outcome.Status != scrollback.HookDuplicate && outcome.Status != scrollback.HookConflict && msg.Guardrail != nil && msg.Guardrail.ReviewID != "" {
 		if s := approvalSurfaceFor(&m); s != nil {
-			if review := s.applyGuardrailHook(msg); review != nil {
-				review.hook = msg
+			if review := s.applyGuardrailHook(hookSnapshot(msg)); review != nil {
+				review.handoffToApproval(&m.conv)
 				return m.afterEvent()
 			}
 		}
 	}
-	r := m.conv.addGuardrailHook(msg, m.deps.Debug)
 	var detailCmd tea.Cmd
 	// Benign reviews are retained (hidden by default), so they fetch live detail
 	// too; ExpandConversation or hook_notices.show_benign reveals it with the summary.
 	if r != nil && msg.Guardrail.Disposition != "ask_action" && r.needsFinalDetail && m.deps.Guardrails != nil && msg.Guardrail.ReviewID != "" {
 		m.guardrailDetailRequest++
-		r.beginDetailRequest(m.guardrailDetailRequest)
+		r.beginDetailRequest(&m.conv, m.guardrailDetailRequest)
 		r.show(&m.conv, guardrailPresentationText(r, m.deps.Debug))
 		detailCmd = client.GetGuardrailReviewDetailCmd(m.deps.Ctx, m.deps.Guardrails, m.sessionID, msg.Guardrail.ReviewID, r.requestID)
 	}
@@ -4207,6 +4215,7 @@ func (Model) refreshCmd() tea.Cmd { return tea.ClearScreen }
 // endRun tears down the current run: clears the stream/channel/cancel, returns to
 // idle, and re-focuses input. The stop reason updates the status line.
 func (m Model) endRun(stop string) Model {
+	m.conv.clearPendingHooks()
 	m.settlePendingApproval()
 	m.admissionSubmission = nil
 	if m.cancelRun != nil {

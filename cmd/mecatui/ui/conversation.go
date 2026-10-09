@@ -369,6 +369,8 @@ type conversation struct {
 	// scrollback is the authoritative logical conversation document.
 	scrollback       scrollback.Conversation
 	guardrailReviews map[string]*guardrailPresentation
+	pendingHooks     map[scrollback.HookID]string
+	pendingHookOrder []scrollback.HookID
 	// subagentFleet preserves first-seen order; fleetIndex maps ChildID → its slot so
 	// repeated tool/end events for a child update the same lane in O(1).
 	subagentFleet []subagentLane
@@ -489,13 +491,39 @@ func (c *conversation) addTurnStat(text string) {
 
 func (c *conversation) addTool(id, name, args string) {
 	c.scrollback.Tools().Add(scrollback.ToolCall{ID: id, Name: name, Arguments: args})
+	c.attachPendingHooks(id)
+}
+
+func (c *conversation) attachPendingHooks(id string) {
+	remaining := c.pendingHookOrder[:0]
+	for _, hookID := range c.pendingHookOrder {
+		callID, pending := c.pendingHooks[hookID]
+		if !pending {
+			continue
+		}
+		if callID == id && c.scrollback.AttachHook(callID, hookID) {
+			delete(c.pendingHooks, hookID)
+		} else {
+			remaining = append(remaining, hookID)
+		}
+	}
+	c.pendingHookOrder = remaining
+}
+
+func (c *conversation) clearPendingHooks() {
+	c.pendingHooks = nil
+	c.pendingHookOrder = nil
 }
 
 // reconcileUnresolvedTool updates the snapshot card for a replayed call. Recovery
 // scopes callers to unresolved calls from the adopted transcript, so reused IDs in
 // later turns still append normally.
 func (c *conversation) reconcileUnresolvedTool(id, name, args string) bool {
-	return c.scrollback.Tools().ReconcileUnresolved(scrollback.ToolCall{ID: id, Name: name, Arguments: args})
+	if !c.scrollback.Tools().ReconcileUnresolved(scrollback.ToolCall{ID: id, Name: name, Arguments: args}) {
+		return false
+	}
+	c.attachPendingHooks(id)
+	return true
 }
 
 // resolveTool marks the tool block matching callID as resolved with its result.
