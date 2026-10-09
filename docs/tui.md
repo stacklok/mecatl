@@ -60,6 +60,15 @@ and its [migration guidance](drafts/surface-migration-plan.md) when adding or
 converting an overlay. A closed surface must not receive late results or leak
 keyboard and wheel events into the conversation.
 
+Text selection in whatever replaces the conversation is root-owned, not a surface
+concern. `currentBodyOwner` in `cmd/mecatui/ui/selection.go` mirrors `renderBody`'s
+precedence, and the parent captures each owner's rendered text into `bodyFrame` for
+drag selection, highlighting, copy, and `esc`-clears-first. Register a new overlay
+there as well as in `renderBody`. A change to owner identity, rendered text, or
+geometry invalidates a stale selection, and clickable regions keep priority over
+text selection. While an owner is visible, the hidden conversation selection is
+never copied or changed, and middle-click paste is suppressed.
+
 Selectable inventories use `presentListRow` for the cursor marker, status cells,
 and selected-row styling. Let the surface own item semantics and activation.
 Tool-call status uses `…` with `toolName`, `✓` with `toolOk`, and `✗` with

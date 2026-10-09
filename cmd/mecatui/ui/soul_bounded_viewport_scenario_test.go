@@ -35,7 +35,7 @@ func TestMecatuiSoulBoundedViewport_Scenario1_WidthCapAndFrameAccounting(t *test
 		m := soulScenario(t, "soul body")
 		m.width = width
 		m.vp.SetWidth(width)
-		out := m.renderModalSurface()
+		out := m.renderModalSurface(bodyOwner{kind: bodyOwnerModal, modal: m.modal})
 		frame := m.deps.Theme.Style("askCard").GetHorizontalFrameSize()
 		s := soulActive(m)
 		if s.viewport == nil || s.bodyWidth != min(width, 128)-frame {
