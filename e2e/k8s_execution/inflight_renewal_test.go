@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -15,12 +16,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/internal/adapter/executionclient"
-	"github.com/stacklok/mecatl/internal/executionenv"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/stacklok/mecatl/internal/adapter/executionclient"
+	"github.com/stacklok/mecatl/internal/executionenv"
 )
 
 func inflightHandshake(endpoint string, files executionclient.TLSFiles) (string, error) {
@@ -28,12 +30,29 @@ func inflightHandshake(endpoint string, files executionclient.TLSFiles) (string,
 	if err != nil {
 		return "", err
 	}
+	return inflightTLSHandshake(endpoint, cfg)
+}
+
+func inflightTLSHandshake(endpoint string, cfg *tls.Config) (string, error) {
+	cfg.NextProtos = []string{"h2"}
 	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}, "tcp", endpoint, cfg)
 	if err != nil {
 		return "", err
 	}
 	defer conn.Close()
-	return conn.ConnectionState().PeerCertificates[0].SerialNumber.String(), nil
+	serial := conn.ConnectionState().PeerCertificates[0].SerialNumber.String()
+	// A rejected ALPN handshake or closing over unread HTTP/2 settings can
+	// reset TCP and tear down the shared kubectl tunnel, including active RPCs.
+	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return "", err
+	}
+	if err := conn.CloseWrite(); err != nil {
+		return "", err
+	}
+	if _, err := io.Copy(io.Discard, conn); err != nil {
+		return "", err
+	}
+	return serial, nil
 }
 
 func inflightIssuedHandshake(endpoint string, ca []byte, pair tls.Certificate) (string, error) {
@@ -41,12 +60,7 @@ func inflightIssuedHandshake(endpoint string, ca []byte, pair tls.Certificate) (
 	if !pool.AppendCertsFromPEM(ca) {
 		return "", fmt.Errorf("invalid fixture public trust")
 	}
-	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}, "tcp", endpoint, &tls.Config{MinVersion: tls.VersionTLS13, ServerName: "mecatl-execution.execution-qualification.svc.cluster.local", RootCAs: pool, Certificates: []tls.Certificate{pair}})
-	if err != nil {
-		return "", err
-	}
-	defer conn.Close()
-	return conn.ConnectionState().PeerCertificates[0].SerialNumber.String(), nil
+	return inflightTLSHandshake(endpoint, &tls.Config{MinVersion: tls.VersionTLS13, ServerName: "mecatl-execution.execution-qualification.svc.cluster.local", RootCAs: pool, Certificates: []tls.Certificate{pair}})
 }
 
 // Exercise an active provider lease across cert-manager's scheduled leaf rotation.
