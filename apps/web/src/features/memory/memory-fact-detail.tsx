@@ -11,6 +11,7 @@ import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { PageShell } from "../../components/shell/page-shell";
 import { Button } from "../../components/ui/button";
+import { errorMessage } from "../../lib/error-message";
 import { pageTitleClass } from "../../lib/typography";
 import { formatRelativeTime } from "../chat/latest-chat";
 
@@ -257,9 +258,4 @@ function FactRow({
 
 function isNotFound(error: unknown) {
   return typeof error === "object" && error !== null && "status" in error && error.status === 404;
-}
-
-function errorMessage(error: unknown) {
-  if (typeof error === "object" && error !== null && "detail" in error) return String(error.detail);
-  return error instanceof Error ? error.message : "The request could not be completed.";
 }

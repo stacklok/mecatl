@@ -29,7 +29,7 @@ describe("copyToClipboard", () => {
     installClipboard(undefined);
     await expect(copyToClipboard("session-1", "Session ID")).resolves.toBe(false);
     expect(toast.error).toHaveBeenCalledWith(
-      "Clipboard unavailable — select the ID and copy it manually",
+      "Clipboard unavailable — select the text and copy it manually",
     );
     expect(toast.success).not.toHaveBeenCalled();
   });

@@ -14,7 +14,7 @@ export type ClipboardFailure = "unavailable" | "blocked";
 export function clipboardFailureMessage(reason: ClipboardFailure): string {
   switch (reason) {
     case "unavailable":
-      return "Clipboard unavailable — select the ID and copy it manually";
+      return "Clipboard unavailable — select the text and copy it manually";
     case "blocked":
       return "Couldn't copy — clipboard blocked";
   }

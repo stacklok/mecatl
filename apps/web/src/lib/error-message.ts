@@ -6,7 +6,7 @@
  * abort, a thrown string).
  *
  * Consolidates the identical copies that used to live in the chat, knowledge,
- * schedules, and memory settings features. A caller whose fallback sentence
+ * schedules, and memory features. A caller whose fallback sentence
  * differs (storage settings, the schedule form) keeps its own reader.
  */
 export function errorMessage(error: unknown): string {

@@ -33,7 +33,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../components/ui/select";
-import { errorMessage } from "../knowledge/format";
+import { errorMessage } from "../../lib/error-message";
 import { SettingsCard } from "../settings/settings-card";
 
 /**

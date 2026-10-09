@@ -131,10 +131,12 @@ describe("describeCron", () => {
     expect(describeCron("0 12 1 * *")).toBe("Monthly on the 1st at 12:00 PM");
     expect(describeCron("5 7 22 * *")).toBe("Monthly on the 22nd at 7:05 AM");
     expect(describeCron("0 9 13 * *")).toBe("Monthly on the 13th at 9:00 AM");
+    expect(describeCron("59 23 28 * *")).toBe("Monthly on the 28th at 11:59 PM");
   });
 
   it("keeps the interval shapes", () => {
     expect(describeCron("*/5 * * * *")).toBe("Every 5 minutes");
+    expect(describeCron("*/15 * * * *")).toBe("Every 15 minutes");
     expect(describeCron("0 */2 * * *")).toBe("Every 2 hours");
   });
 
