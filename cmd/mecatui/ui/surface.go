@@ -53,13 +53,12 @@ type surface interface {
 	// surface down.
 	HandleKey(msg tea.KeyPressMsg) (cmd tea.Cmd, handled bool, closed bool)
 
-	// HandleMsg consumes or passes messages other than keys and wheel events:
-	// RPC results, timers, notices, and non-wheel pointer events. The Model routes
-	// non-key/wheel messages through the open modal BEFORE its own generic reducer,
-	// so the surface owns its RPC-backed state and can be created dynamically
-	// at Open with no pre-declared Model field. The surface consumes (handled),
-	// kills (closed), or passes (handled=false); on closed the Model tears the
-	// surface down, exactly as the HandleKey closed path.
+	// HandleMsg consumes or passes asynchronous messages and parent-translated
+	// surface hits. The Model routes RPC results, timers, and notices through the
+	// open modal before its own generic reducer, so the surface owns its RPC-backed
+	// state and can be created dynamically at Open with no pre-declared Model field.
+	// The surface consumes (handled), kills (closed), or passes (handled=false); on
+	// closed the Model tears the surface down, exactly as the HandleKey closed path.
 	HandleMsg(msg tea.Msg) (cmd tea.Cmd, handled bool, closed bool)
 
 	// HandleWheel returns handled=true when the surface handled the event. The

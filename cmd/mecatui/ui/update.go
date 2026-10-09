@@ -4219,16 +4219,20 @@ func (m Model) onMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// onMouseMsg fans the four mouse message types out to their handlers. It is one
-// switch case in update() (keeping update()'s cyclomatic complexity bounded) that
-// re-discriminates the concrete mouse type here, where the dispatch logically
-// belongs.
+// onMouseMsg fans the four mouse message types out to their handlers. An open
+// modal owns left clicks, motion, release, and wheel input; right-click copy and
+// middle-click paste retain their root-owned behavior. It is one switch case in
+// update() (keeping update()'s cyclomatic complexity bounded) that re-discriminates
+// the concrete mouse type here, where the dispatch logically belongs.
 func (m Model) onMouseMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.modal != nil {
-		if _, wheel := msg.(tea.MouseWheelMsg); !wheel {
-			if mm, cmd, handled := m.dispatchSurfaceMsg(msg); handled {
-				return mm, cmd
-			}
+		switch msg := msg.(type) {
+		case tea.MouseWheelMsg:
+			return m.onMouseWheel(msg)
+		case tea.MouseClickMsg:
+			return m.onMousePress(msg.Mouse())
+		case tea.MouseMotionMsg, tea.MouseReleaseMsg:
+			return m, nil
 		}
 	}
 	if m.agentsInv.view != agentsInvNone {

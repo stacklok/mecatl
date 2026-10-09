@@ -96,13 +96,7 @@ func (s *helpState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 	return nil, true, false
 }
 
-func (*helpState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
-	switch msg.(type) {
-	case tea.MouseClickMsg, tea.MouseMotionMsg, tea.MouseReleaseMsg:
-		return nil, true, false
-	}
-	return nil, false, false
-}
+func (*helpState) HandleMsg(tea.Msg) (tea.Cmd, bool, bool) { return nil, false, false }
 
 func (s *helpState) HandleWheel(msg tea.MouseWheelMsg) (tea.Cmd, bool) {
 	switch msg.Button {

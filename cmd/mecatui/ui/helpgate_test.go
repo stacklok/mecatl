@@ -600,10 +600,9 @@ func TestHelpShowsNoIndicatorWhenContentFits(t *testing.T) {
 	}
 }
 
-// TestHelpSwallowsNonWheelMouseWhileOpen pins that clicks, motion, and releases
-// are consumed by the visible overlay, like the wheel, and cannot reach the hidden
-// prompt or conversation.
-func TestHelpSwallowsNonWheelMouseWhileOpen(t *testing.T) {
+// TestModalSwallowsNonWheelMouseWhileOpen pins the uniform modal pointer policy:
+// left-click, motion, and release events cannot reach hidden conversation or prompt state.
+func TestModalSwallowsNonWheelMouseWhileOpen(t *testing.T) {
 	m := applyAll(helpModel(t, allOnCaps()), tea.WindowSizeMsg{Width: 100, Height: 24})
 	m.prompt.Rewrite("hidden draft")
 	m.prompt.SelectAll()
@@ -617,8 +616,6 @@ func TestHelpSwallowsNonWheelMouseWhileOpen(t *testing.T) {
 	for name, msg := range map[string]tea.Msg{
 		"left click in the prompt": tea.MouseClickMsg{Button: tea.MouseLeft, X: input.x0 + 1, Y: input.y0},
 		"left click in the card":   tea.MouseClickMsg{Button: tea.MouseLeft, X: 50, Y: 8},
-		"right click":              tea.MouseClickMsg{Button: tea.MouseRight, X: 50, Y: 8},
-		"middle click":             tea.MouseClickMsg{Button: tea.MouseMiddle, X: 50, Y: 8},
 		"motion":                   tea.MouseMotionMsg{Button: tea.MouseLeft, X: 40, Y: 8},
 		"release":                  tea.MouseReleaseMsg{Button: tea.MouseLeft, X: 40, Y: 8},
 	} {
