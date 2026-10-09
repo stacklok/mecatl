@@ -719,6 +719,17 @@ func ModeFromString(s string) mecatlv1.PermissionMode {
 	}
 }
 
+// RequestModeFromString maps the mode a client REQUESTS for a new session. It is
+// ModeFromString except that an empty mode means "no preference" and goes out
+// UNSPECIFIED, so the server applies its own configured default mode
+// instead of receiving an explicit DEFAULT.
+func RequestModeFromString(s string) mecatlv1.PermissionMode {
+	if s == "" {
+		return mecatlv1.PermissionMode_PERMISSION_MODE_UNSPECIFIED
+	}
+	return ModeFromString(s)
+}
+
 // ModeString maps the proto enum to the CLI/UI spelling. Unknown/unspecified values
 // degrade to "default", matching the server boundary.
 func ModeString(m mecatlv1.PermissionMode) string {
@@ -729,18 +740,6 @@ func ModeString(m mecatlv1.PermissionMode) string {
 		return "accept-edits"
 	case mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT, mecatlv1.PermissionMode_PERMISSION_MODE_UNSPECIFIED:
 		return ModeDefaultString
-	default:
-		return ModeDefaultString
-	}
-}
-
-// NextMode returns the next mode in the TUI's cycle order.
-func NextMode(mode string) string {
-	switch ModeString(ModeFromString(mode)) {
-	case ModeDefaultString:
-		return modePlanString
-	case modePlanString:
-		return "accept-edits"
 	default:
 		return ModeDefaultString
 	}

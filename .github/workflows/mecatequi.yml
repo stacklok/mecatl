@@ -2,7 +2,7 @@
 # mecatequi — the LIVE workflow for THIS repo (mecatl). Private repo, internal posture.
 #
 # To run it: label an issue `mecatequi`, OR comment `@mecatequi` on an issue. The agent
-# runs a single-shot mecatequi pass over the issue text (untrusted, posture:auto) against
+# runs a single-shot mecatequi pass over the issue text (untrusted, permission-mode auto) against
 # OpenRouter, and the publish job opens a PR (or posts an honest comment) with the result.
 #
 # Unlike .github/workflows/mecatequi-example.yml (the inert template), this file is REAL:
@@ -221,7 +221,9 @@ jobs:
         with:
           prompt-file: ${{ steps.prompt.outputs.prompt-file }}
           untrusted: "true"
-          posture: "auto"
+          permission-mode: "auto"
+          # No guardrails-model: the action passes --guardrails off, a deliberate
+          # unsupervised choice for this private, split-privilege CI run.
           # Use `model` (per-session passthrough), NOT `default-model`: a deployment
           # default is validated against the embedded models.dev catalog at startup, and
           # claude-sonnet-4.6 is newer than that snapshot (it would fail "not catalogued").

@@ -89,6 +89,20 @@
     },
     "maxRunTokens": {"type": ["integer", "null"], "minimum": 1},
     "maxTeamTokens": {"type": ["integer", "null"], "minimum": 1},
+    "guardrails": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model"],
+      "properties": {
+        "model": {
+          "type": "string",
+          "anyOf": [
+            {"const": ""},
+            {"pattern": "^\\S(?:.*\\S)?$"}
+          ]
+        }
+      }
+    },
     "telemetry": {
       "type": "object",
       "additionalProperties": false,

@@ -68,6 +68,7 @@ func TestRoutableDefRoutesToClassifiedModelE2E(t *testing.T) {
 		RouterCategories:      routerTaxonomyCategories(),
 		RouterDefaultCategory: "small",
 		AllowAllTools:         true,
+		GuardrailsDisabled:    true,
 		envDetector:           fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-x"}),
 		liveModelHTTPClient:   offlineHTTPClient(),
 		providerConstructor: func(_ Config, _, _, _ string) port.LLMProvider {
@@ -137,6 +138,7 @@ func TestPinnedInheritDefDoesNotRouteE2E(t *testing.T) {
 		RouterCategories:      routerTaxonomyCategories(), // router ON, but the pinned def must not route
 		RouterDefaultCategory: "small",
 		AllowAllTools:         true,
+		GuardrailsDisabled:    true,
 		envDetector:           fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-x"}),
 		liveModelHTTPClient:   offlineHTTPClient(),
 		providerConstructor: func(_ Config, _, _, _ string) port.LLMProvider {
@@ -209,6 +211,7 @@ func TestRoutableDefHallucinatedCategoryFailSoftE2E(t *testing.T) {
 		RouterCategories:      routerTaxonomyCategories(),
 		RouterDefaultCategory: "small",
 		AllowAllTools:         true,
+		GuardrailsDisabled:    true,
 		Diagnostics:           diag,
 		envDetector:           fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-x"}),
 		liveModelHTTPClient:   offlineHTTPClient(),

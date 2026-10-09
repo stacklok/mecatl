@@ -184,13 +184,7 @@ func (m Model) statusLineInput(now time.Time) customization.Input {
 		workspace.Path = m.statusContextRoot
 	}
 	state, activity, approval := "idle", "", "none"
-	mode := m.activeMode
-	if mode == "" {
-		mode = m.deps.Mode
-	}
-	if m.pendingMode != "" {
-		mode = m.pendingMode + " pending"
-	}
+	mode := m.headerMode()
 	handle := client.SessionHandle(m.sessionID)
 	switch m.phase {
 	case phaseConnecting:

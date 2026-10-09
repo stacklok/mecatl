@@ -236,6 +236,12 @@ type config struct {
 	// lets CLI out-rank the operator-global settings.yaml posture: key.
 	posture        string
 	postureFlagSet bool
+	// permissionMode is the raw --permission-mode token, validated at
+	// parse time. Empty (the default) leaves the deprecated --posture default
+	// "auto" in force, so an unconfigured pod keeps posture auto with the default
+	// session mode and operator YAML can still override it.
+	permissionMode        string
+	permissionModeFlagSet bool
 
 	// Reasoning-effort tier: operator-tier reasoning-effort default ("" =
 	// unset, the provider's own default applies). reasoningEffortFlagSet records an
@@ -438,7 +444,7 @@ func parseFlags(argv []string) (config, error) {
 	fs.BoolVar(&cfg.headless, "headless", true, "Run without an interactive permission approver. Child permission requests are denied unless --subagent-ask-reviewer handles them")
 
 	// Headless ask reviewer (issue #31).
-	fs.StringVar(&cfg.subagentAskReviewer, "subagent-ask-reviewer", "", "Model ID or alias for reviewing child permission requests in headless mode. Empty disables the reviewer")
+	fs.StringVar(&cfg.subagentAskReviewer, "subagent-ask-reviewer", "", "Model ID or alias for reviewing child permission requests in headless mode. Empty leaves the reviewer off, except that the auto and yolo permission modes turn it on by default (ask-reviewer model slot, else the session model); off disables it explicitly")
 	fs.IntVar(&cfg.subagentAskReviewerMaxDenies, "subagent-ask-reviewer-max-denies", agent.DefaultAskReviewMaxDenies, "Consecutive non-allow outcomes that disable the reviewer for the run. Values less than or equal to zero use the default")
 	fs.StringVar(&cfg.subagentAskReviewerPolicyFile, "subagent-ask-reviewer-policy", "", "Path to a trusted policy rubric for --subagent-ask-reviewer. Replaces the built-in rubric; an unreadable file prevents startup")
 
@@ -451,7 +457,8 @@ func parseFlags(argv []string) (config, error) {
 	fs.StringVar(&cfg.subagentModel, "subagent-model", "", "Default model for child agents without their own model. Empty inherits --model")
 
 	// Posture: DEFAULT "auto" (the recommended UNATTENDED single-tenant tier).
-	fs.StringVar(&cfg.posture, "posture", "auto", "Permission posture: strict prompts for mutations; trusted honors project allow rules; auto allows tools by default and relaxes main shell substitutions while child injection defenses remain enabled; yolo also runs child command substitutions automatically. Deny rules and configured ask rules still apply. auto and yolo require MECATL_SANDBOX when running as root")
+	fs.StringVar(&cfg.permissionMode, "permission-mode", "", permissionModeHelp)
+	fs.StringVar(&cfg.posture, "posture", "auto", "DEPRECATED: use --permission-mode. Permission posture: strict prompts for mutations; trusted honors project allow rules; auto allows tools by default and relaxes main shell substitutions while child injection defenses remain enabled; yolo also runs child command substitutions automatically. Deny rules and configured ask rules still apply. auto and yolo require MECATL_SANDBOX when running as root")
 
 	// Reasoning-effort tier: operator-tier only; help text verbatim from mecated.
 	fs.StringVar(&cfg.reasoningEffort, "reasoning-effort", "",
@@ -488,7 +495,7 @@ func parseFlags(argv []string) (config, error) {
 	fs.Var(&cfg.permissionConfigs, "permission-config", "Trusted permission YAML file. Repeatable")
 	fs.BoolVar(&cfg.permissionsConventional, "permissions-conventional", true, "Discover project and user permission settings for each session")
 	fs.BoolVar(&cfg.importClaudePermissions, "import-claude-permissions", false, "Import compatible Claude Code permission settings")
-	fs.BoolVar(&cfg.trustProject, "trust-project", false, "Honor a discovered project's allow rules. Deny and ask rules are always honored; equivalent to --posture=trusted")
+	fs.BoolVar(&cfg.trustProject, "trust-project", false, "Honor a discovered project's allow rules. Deny and ask rules are always honored; raises the posture to at least trusted and combines with --permission-mode")
 
 	// Fan-out / teams toggles.
 	fs.BoolVar(&cfg.enableParallel, "enable-parallel", false, "Enable the Parallel tool for isolated child branches")
@@ -540,6 +547,8 @@ func parseFlags(argv []string) (config, error) {
 		switch fl.Name {
 		case "posture":
 			cfg.postureFlagSet = true
+		case "permission-mode":
+			cfg.permissionModeFlagSet = true
 		case "shell":
 			cfg.shellFlagSet = true
 		case "reasoning-effort":
@@ -557,6 +566,9 @@ func parseFlags(argv []string) (config, error) {
 			cfg.defaultProviderFlagSet = true
 		}
 	})
+	if err := validatePermissionModeFlags(cfg); err != nil {
+		return config{}, err
+	}
 	resolvedShell, err := cliconfig.ResolveCommandRunnerConfig(cfg.shell, cfg.shellFlagSet, cfg.permissionsConventional, cfg.permissionConfigs)
 	if err != nil {
 		return config{}, fmt.Errorf("command runner configuration: %w", err)
@@ -796,6 +808,10 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		PermissionConfigs:        cfg.permissionConfigs,
 		Posture:                  app.ParsePosture(cfg.posture),
 		PostureFlagSet:           cfg.postureFlagSet,
+		// Permission mode: an explicit token out-ranks the deprecated
+		// --posture (default auto) in app.Build's foldPermissionMode.
+		PermissionMode:        cfg.permissionMode,
+		PermissionModeFlagSet: cfg.permissionModeFlagSet,
 		// Reasoning-effort tier: operator-tier only; reasoningEffortFlagSet
 		// lets CLI out-rank the operator-global settings.yaml reasoning-effort: key
 		// (folded by foldOperatorReasoningEffort in app.Build, like posture).

@@ -587,10 +587,10 @@ data into the model or dedicated session debugger.
 
 ### Client controls and posture
 
-The embedded server accepts `--yolo` with the same allow-all semantics,
-root-user refusal, and `MECATL_SANDBOX`/`IS_SANDBOX` environment checks as
-`mecated`. Connect mode rejects `--yolo` because the external server owns its
-posture. See
+The embedded server accepts `--permission-mode` with the same modes, checker
+requirement, root-user refusal, and `MECATL_SANDBOX`/`IS_SANDBOX` environment
+checks as `mecated`. Connect mode accepts only `plan`, `default`, and
+`accept-edits` because the external server owns its posture. See
 [Permissions and posture](/features/security-and-execution/permissions-and-posture.md).
 
 Client built-in commands remain available when workspace command expansion is

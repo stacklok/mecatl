@@ -47,12 +47,13 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 	t.Run("operator auto flows to composed posture", func(t *testing.T) {
 		diag := slogdiagBuffer(t)
 		built, err := buildIsolated(t, context.Background(), Config{
-			Workspace:         t.TempDir(),
-			Model:             "mock",
-			UseMock:           true,
-			NoSoul:            true,
-			PermissionConfigs: []string{writeOperatorPostureFile(t, "auto")},
-			Diagnostics:       diag.diag,
+			Workspace:          t.TempDir(),
+			Model:              "mock",
+			UseMock:            true,
+			NoSoul:             true,
+			PermissionConfigs:  []string{writeOperatorPostureFile(t, "auto")},
+			GuardrailsDisabled: true,
+			Diagnostics:        diag.diag,
 		})
 		if err != nil {
 			t.Fatalf("Build: %v", err)
@@ -82,6 +83,7 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 			NoSoul:                  true,
 			PermissionsConventional: true,
 			permConfigEnv:           &env,
+			GuardrailsDisabled:      true,
 			Diagnostics:             port.NopDiagnostics{},
 		})
 		if err != nil {
@@ -98,14 +100,15 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 	t.Run("operator auto headless withholds ingestion (fail-safe)", func(t *testing.T) {
 		diag := slogdiagBuffer(t)
 		built, err := buildIsolated(t, context.Background(), Config{
-			Workspace:         t.TempDir(),
-			Model:             "mock",
-			UseMock:           true,
-			NoSoul:            true,
-			Headless:          true,
-			Shell:             "/bin/sh", // a configured shell so the UNTRUSTED cause (not the empty-shell cause) is operative for the shell-DISABLED fact
-			PermissionConfigs: []string{writeOperatorPostureFile(t, "auto")},
-			Diagnostics:       diag.diag,
+			Workspace:          t.TempDir(),
+			Model:              "mock",
+			UseMock:            true,
+			NoSoul:             true,
+			Headless:           true,
+			Shell:              "/bin/sh", // a configured shell so the UNTRUSTED cause (not the empty-shell cause) is operative for the shell-DISABLED fact
+			PermissionConfigs:  []string{writeOperatorPostureFile(t, "auto")},
+			GuardrailsDisabled: true,
+			Diagnostics:        diag.diag,
 		})
 		if err != nil {
 			t.Fatalf("Build: %v", err)
@@ -141,14 +144,15 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 	t.Run("operator auto interactive grants ingestion (dev default)", func(t *testing.T) {
 		diag := slogdiagBuffer(t)
 		built, err := buildIsolated(t, context.Background(), Config{
-			Workspace:         t.TempDir(),
-			Model:             "mock",
-			UseMock:           true,
-			NoSoul:            true,
-			Headless:          false,
-			Shell:             "/bin/sh", // a configured shell so the untrusted-shell-DISABLED fact would fire if the gate tripped (it must NOT here)
-			PermissionConfigs: []string{writeOperatorPostureFile(t, "auto")},
-			Diagnostics:       diag.diag,
+			Workspace:          t.TempDir(),
+			Model:              "mock",
+			UseMock:            true,
+			NoSoul:             true,
+			Headless:           false,
+			Shell:              "/bin/sh", // a configured shell so the untrusted-shell-DISABLED fact would fire if the gate tripped (it must NOT here)
+			PermissionConfigs:  []string{writeOperatorPostureFile(t, "auto")},
+			GuardrailsDisabled: true,
+			Diagnostics:        diag.diag,
 		})
 		if err != nil {
 			t.Fatalf("Build: %v", err)
@@ -206,13 +210,14 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 
 	t.Run("operator yolo on a privileged Config is refused", func(t *testing.T) {
 		built, err := buildIsolated(t, context.Background(), Config{
-			Workspace:         t.TempDir(),
-			Model:             "mock",
-			UseMock:           true,
-			NoSoul:            true,
-			PermissionConfigs: []string{writeOperatorPostureFile(t, "yolo")},
-			Privileged:        true, // root && !sandbox, as the cmd would compute
-			Diagnostics:       port.NopDiagnostics{},
+			Workspace:          t.TempDir(),
+			Model:              "mock",
+			UseMock:            true,
+			NoSoul:             true,
+			PermissionConfigs:  []string{writeOperatorPostureFile(t, "yolo")},
+			GuardrailsDisabled: true,
+			Privileged:         true, // root && !sandbox, as the cmd would compute
+			Diagnostics:        port.NopDiagnostics{},
 		})
 		if err == nil {
 			built.Close()

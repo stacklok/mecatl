@@ -165,6 +165,13 @@ type Config struct {
 	// keeps the CLI/default). The composition layer parses the string; permconfig only
 	// reads the scalar.
 	Posture string `yaml:"posture"`
+	// PermissionMode is the OPERATOR-TIER named permission-mode token
+	// (plan/default/accept-edits/trusted/trusted-accept-edits/auto/yolo). It sets
+	// the posture and the default session mode together and supersedes the
+	// deprecated posture: key. Like Posture it is honoured ONLY from the
+	// user-global + CLI tiers; a project-tier occurrence is IGNORED with a WARN.
+	// Empty = absent. The composition layer parses the token.
+	PermissionMode string `yaml:"permissionMode"`
 	// Models holds operator-tier model bindings. Project-tier models: blocks are
 	// ignored with a warning before nested schema decoding. The TOP `models:` mapping
 	// is parsed STRICTLY (an unknown key like `slotz:` errors), the inner slots/aliases

@@ -111,7 +111,12 @@ spec:
             {{- end }}
             - {{ printf "--session-lease-k8s-namespace=%s" .Release.Namespace | quote }}
             - --headless=true
-            - --posture=auto
+            - --permission-mode=auto
+            {{- if .Values.guardrails.model }}
+            - {{ printf "--guardrails-model=%s" .Values.guardrails.model | quote }}
+            {{- else }}
+            - --guardrails=off
+            {{- end }}
             {{- if .Values.logging.level }}
             - {{ printf "--log-level=%s" .Values.logging.level | quote }}
             {{- end }}

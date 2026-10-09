@@ -2305,6 +2305,12 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return mm, nil
 	}
 
+	// A blocked permission mode holds the prompt before paste or any phase key
+	// can edit or send it.
+	if mm, handled := m.onModeBlockedKey(msg); handled {
+		return mm, nil
+	}
+
 	// ctrl+v reads the OS clipboard into the prompt (image → staged attachment,
 	// text → inserted). It is handled here — before the phase switch — for the two
 	// input-accepting phases (idle + running, both keep the textarea focused for
@@ -2319,7 +2325,7 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// for idle + running so the key never feeds the textarea. It also avoids relying
 	// on macOS Option being configured as Meta.
 	if m.deps.DebugTarget == "" && key.Matches(msg, m.keys.ModeSwitch) && (m.phase == phaseIdle || m.phase == phaseRunning) {
-		return m.switchMode(client.NextMode(m.desiredMode()))
+		return m.cycleMode()
 	}
 
 	return m.dispatchPhaseKey(msg)
@@ -2393,7 +2399,7 @@ func (m Model) onHelpKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // helpScrollGeometry derives the same complete rendered lines and window used by
 // renderHelpOverlay, keeping key navigation and height-bounded rendering aligned.
 func (m Model) helpScrollGeometry() (total, window int) {
-	lines := helpRenderedLines(helpBody(m.deps.Theme, m.caps, m.helpKeyMarkings()))
+	lines := helpRenderedLines(m.helpBody())
 	return len(lines), helpWindowHeight(m.deps.Theme, m.vp.Height(), len(lines))
 }
 
@@ -2660,21 +2666,52 @@ func (m Model) desiredMode() string {
 	if m.activeMode != "" {
 		return m.activeMode
 	}
+	if m.deps.ModeServerDefault {
+		// No session mode known yet and none requested: let the server's default apply.
+		return ""
+	}
 	return client.ModeString(client.ModeFromString(m.deps.Mode))
 }
 
-func (m Model) switchMode(mode string) (tea.Model, tea.Cmd) {
-	mode = client.ModeString(client.ModeFromString(mode))
+// initialActiveMode seeds the model's active mode. Under ModeServerDefault it is
+// unknown until the server reports the created session's mode.
+func initialActiveMode(deps Deps) string {
+	if deps.ModeServerDefault {
+		return ""
+	}
+	return client.ModeString(client.ModeFromString(deps.Mode))
+}
+
+// createdSessionMode is the mode a freshly created session is in. An explicit
+// request is what the server applied; an unspecified request (ModeServerDefault)
+// is read back from the server, because CreateSessionResponse carries no mode. A
+// failed read-back reports "" so the header keeps its fallback rather than guess.
+func createdSessionMode(deps Deps, id, requested string) string {
+	if requested != "" || deps.Session == nil {
+		return requested
+	}
+	snap, err := deps.Session.GetSession(deps.Ctx, id)
+	if err != nil {
+		return ""
+	}
+	return snap.Mode
+}
+
+// switchMode applies a permission mode's session half to this session.
+func (m Model) switchMode(e PermissionModeEntry) (tea.Model, tea.Cmd) {
+	mode := client.ModeString(client.ModeFromString(e.SessionMode))
 	if m.sessionID == "" {
 		m.statusMsg = m.deps.Theme.Style("warning").Render("no active session — mode switch unavailable")
 		return m, nil
 	}
 	if mode == m.activeMode && m.pendingMode == "" {
-		m.statusMsg = m.deps.Theme.Style("muted").Render("mode already " + mode)
+		// The session is already in this half (e.g. trusted after default under
+		// a trusted posture): the landing needs no server round trip.
+		m.statusMsg = m.deps.Theme.Style("success").Render("mode " + m.modeLabel(e))
 		return m, nil
 	}
 	m.pendingMode = mode
-	m.statusMsg = m.deps.Theme.Style("muted").Render("switching mode to " + mode + "…")
+	m.statusMsg = m.deps.Theme.Style("muted").Render("switching mode to " + m.modeLabel(e) + "…")
 	return m, client.SetModeCmd(m.deps.Ctx, m.deps.Session, m.sessionID, mode)
 }
 
@@ -2697,7 +2734,11 @@ func (m Model) onModeChanged(msg client.ModeChangedMsg) tea.Model {
 	}
 	m.activeMode = mode
 	m.pendingMode = ""
-	m.statusMsg = m.deps.Theme.Style("success").Render("mode " + mode)
+	label := mode
+	if m.modeCursor.session == mode {
+		label = m.modeLabel(permissionModeEntry(m.modeCursor.token))
+	}
+	m.statusMsg = m.deps.Theme.Style("success").Render("mode " + label)
 	return m
 }
 
@@ -2964,7 +3005,7 @@ func normalizePastedNewlines(content string) string {
 // primary-selection paste trigger (onMousePress), so the two paths can never
 // drift apart.
 func (m Model) pasteGateOpen() bool {
-	if m.showHelp || m.phase == phaseAwaitingApproval ||
+	if m.showHelp || m.phase == phaseAwaitingApproval || m.modeBlocked() ||
 		m.modal != nil || m.team.view != teamNone || m.agentsInv.view != agentsInvNone || m.dream.view != dreamClosed {
 		return false
 	}
@@ -4949,6 +4990,11 @@ func (m Model) popAndSubmit() (tea.Model, tea.Cmd) {
 	m.pendingPromptMedia = m.queuedMedia
 	m.queuedMedia = client.MediaResult{}
 	m.prompt.Rewrite(merged)
+	if m.modeBlocked() {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("queued prompt held: " + m.modeBlockedStatus())
+		m.queuePaused = "mode"
+		return m, nil
+	}
 	if m.pendingMode != "" {
 		submit := firstKey(m.keys.Submit, "enter")
 		m.statusMsg = m.deps.Theme.Style("warning").Render("mode " + m.pendingMode + " will apply before the queued prompt — press " + submit + " to continue")
@@ -5069,7 +5115,7 @@ func (m Model) createSessionCmd() tea.Cmd {
 	return func() tea.Msg {
 		id, caps, resolved, err := deps.Session.CreateSession(deps.Ctx, sel, m.desiredMode())
 		if err == nil {
-			return client.SessionReadyMsg{SessionID: id, Capabilities: caps, ResolvedModel: resolved, Mode: m.desiredMode()}
+			return client.SessionReadyMsg{SessionID: id, Capabilities: caps, ResolvedModel: resolved, Mode: createdSessionMode(deps, id, m.desiredMode())}
 		}
 		if sel.IsZero() || !client.IsInvalidArgument(err) {
 			reason, _ := client.AuthFailure(err, deps.BearerBacked)
@@ -5086,7 +5132,7 @@ func (m Model) createSessionCmd() tea.Cmd {
 			return client.ConnectErrMsg{Err: err}
 		}
 		return connectFallbackMsg{
-			ready:    client.SessionReadyMsg{SessionID: id, Capabilities: caps, ResolvedModel: resolved, Mode: m.desiredMode()},
+			ready:    client.SessionReadyMsg{SessionID: id, Capabilities: caps, ResolvedModel: resolved, Mode: createdSessionMode(deps, id, m.desiredMode())},
 			rejected: sel,
 			err:      err,
 		}

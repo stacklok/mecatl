@@ -69,7 +69,8 @@ To retain sessions across restarts and authenticate local clients:
 export MECATL_AUTH_TOKEN="<SERVER_BEARER_TOKEN>"
 mecated serve \
   --store-dir ~/.local/share/mecatl/sessions \
-  --posture auto
+  --permission-mode auto \
+  --guardrails-model <MODEL>
 ```
 
 `--log-level` accepts `debug`, `info` (default), `warn`, or `error`. Startup
@@ -78,10 +79,11 @@ logs the binary version with `msg="mecated starting"`.
 `--store-dir` enables local JSONL persistence. The path and its ancestors must
 be physical directories, not symlinks. On macOS, use `/private/...` instead of a
 path through the `/var` symlink. `--auth-token` requires the token on every
-request and can also read `MECATL_AUTH_TOKEN`. `--posture auto` permits
+request and can also read `MECATL_AUTH_TOKEN`. `--permission-mode auto` permits
 unattended calls within configured permission rules while retaining child
-prompt-injection protections. Configured Ask and Deny rules still apply; project
-trust is a separate grant.
+prompt-injection protections. It refuses to start without a guardrails checker
+unless you pass `--guardrails off`. Configured Ask and Deny rules still apply;
+project trust is a separate grant.
 
 Before binding a non-loopback address, add TLS and caller authentication. See
 [Secure and expose mecated](/operating/mecated/secure-and-expose.md).

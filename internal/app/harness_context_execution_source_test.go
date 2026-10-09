@@ -169,7 +169,7 @@ func TestRepositoryForkCarriesSnapshotsAcrossNewWorkspaceBindings(t *testing.T) 
 	var requests []port.LLMRequest
 	cfg := harnessExecutionConfig(t, provider, &requests)
 	cfg.Workspace = root
-	cfg.AllowAllTools = true
+	cfg.AllowAllTools, cfg.GuardrailsDisabled = true, true
 	cfg.HarnessInstructionSources = nil
 	cfg.HarnessCommandSources = nil
 	registerRepositorySources(&cfg)
@@ -337,6 +337,7 @@ func testExecutionSourceScheduledRestart(t *testing.T) {
 	var requests []port.LLMRequest
 	cfg := harnessExecutionConfig(t, provider, &requests)
 	cfg.StoreDir, cfg.AllowAllTools, cfg.OwnershipEnforced = storeDir, true, true
+	cfg.GuardrailsDisabled = true
 	original := cfg.HarnessInstructionSources[0].Bind
 	var unpublished []session.SessionID
 	var resumed atomic.Int32

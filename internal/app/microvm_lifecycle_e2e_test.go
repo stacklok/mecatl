@@ -638,7 +638,7 @@ func TestMicroVMOperatorJourneyIsLazyIsolatedAndRestartExact(t *testing.T) {
 	config := func(provider *mockllm.Provider) Config {
 		configured, err := ConfigureExecution(Config{
 			Workspace: hostSource, StoreDir: storeDir, UseMock: true, MockProvider: provider,
-			Shell: "/bin/sh", AllowAllTools: true, TrustProject: true, PermissionConfigs: []string{settings},
+			Shell: "/bin/sh", AllowAllTools: true, GuardrailsDisabled: true, TrustProject: true, PermissionConfigs: []string{settings},
 			MicroVMReadyRequest: func(microvmmanager.GuestEgressSelection) (microvmmanager.ReadyRequest, error) {
 				return microvmmanager.ReadyRequest{}, nil
 			},
@@ -815,7 +815,7 @@ func TestMicroVMScheduledPlacementSurvivesFiresRestartAndDeletion(t *testing.T) 
 		}
 		built, err := Build(ctx, Config{
 			Workspace: workspace, StoreDir: storeDir, UseMock: true, MockProvider: llm,
-			Shell: "/bin/sh", AllowAllTools: true, TrustProject: true,
+			Shell: "/bin/sh", AllowAllTools: true, GuardrailsDisabled: true, TrustProject: true,
 			PlacementProvider: provider, PlacementScope: scope,
 			EnvironmentForkers: map[session.EnvironmentKind]tool.EnvironmentForker{session.EnvironmentKind("microvm"): provider},
 			EnvironmentMergers: map[session.EnvironmentKind]tool.EnvironmentMerger{session.EnvironmentKind("microvm"): provider},

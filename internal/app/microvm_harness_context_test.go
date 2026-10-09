@@ -427,7 +427,7 @@ func TestMicroVMSuccessorRetainsPlacementAndContext(t *testing.T) {
 			if !selected {
 				cfg.PermissionConfigs = nil
 			}
-			cfg.Shell, cfg.AllowAllTools = "/bin/sh", true
+			cfg.Shell, cfg.AllowAllTools, cfg.GuardrailsDisabled = "/bin/sh", true, true
 			var requests []port.LLMRequest
 			cfg.MockProvider = mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(r port.LLMRequest) { requests = append(requests, r) })},
 				mockllm.ToolCallTurn(session.NewToolCall("still-attached", "Shell", json.RawMessage(`{"command":"test -f AGENTS.md"}`))), mockllm.TextTurn("successor"))
@@ -565,7 +565,7 @@ func TestMicroVMRepositorySelectionDoesNotGrantProjectAdmission(t *testing.T) {
 	daemon := startPlacementTestDaemon(t)
 	cfg := microVMHarnessConfig(t, daemon, "repository")
 	cfg.TrustProject = false
-	cfg.Posture, cfg.PostureFlagSet = PostureAuto, true
+	cfg.Posture, cfg.PostureFlagSet, cfg.GuardrailsDisabled = PostureAuto, true, true
 	built, err := buildIsolated(t, t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -598,7 +598,7 @@ func TestMicroVMRequiredRepositorySourceFailsForNoFS(t *testing.T) {
 func TestMicroVMSelectedContextFreshnessAndReadEvidence(t *testing.T) {
 	daemon := startPlacementTestDaemon(t)
 	cfg := microVMHarnessConfig(t, daemon, "repository")
-	cfg.AllowAllTools = true
+	cfg.AllowAllTools, cfg.GuardrailsDisabled = true, true
 	diag := newCapturingDiagnostics()
 	cfg.Diagnostics = diag
 	var requests []port.LLMRequest
