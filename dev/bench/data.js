@@ -319790,6 +319790,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791569641781,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f50dd931785cef45dc013d2e40fd8d50c2eaa606",
+          "message": "feat(mecatui): modernize Dream modal surface and interaction (#2178)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-09T11:45:05-07:00",
+          "tree_id": "7a9b25ce493a8d3e6167379b183bbd5518073d8b",
+          "url": "https://github.com/stacklok/mecatl/commit/f50dd931785cef45dc013d2e40fd8d50c2eaa606"
+        },
+        "date": 1791572247297,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3271,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 70,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -418210,6 +418249,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791572244101,
+  "lastUpdate": 1791572248081,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
