@@ -25,9 +25,9 @@ required.
 
 After a successful shell write and close, a fresh file-tool read should see the change without waiting for command
 completion. After a file-tool Edit completes, a fresh shell read should see it. Files should survive executor Pod loss
-and remain accessible without an executor. Keeping mounts out of the agent-loop Pod is a preference, not a requirement.
-The alternatives below compare loop access through a service interface with loop access through a mount; the executor
-uses an ordinary filesystem mount in both.
+and remain accessible without an executor; option 3 explicitly trades off this independent availability. Keeping mounts
+out of the agent-loop Pod is a preference, not a requirement. The alternatives below compare loop access through a
+service interface with loop access through a mount; the executor uses an ordinary filesystem mount in all three.
 
 ## Context, files, and commands are different
 
@@ -116,9 +116,11 @@ writable mappings, cache behavior, and delayed writes remain qualification point
 single transaction; job-start/end snapshots cannot meet live two-way visibility. [inotify][inotify] is not a reliable
 cross-host change feed.
 
-Completed, closed files must remain available to an independent file client after **executor Pod** loss, with no
-executor running. An interrupted write may be incomplete, but unrelated completed files remain retained. If the
-filesystem client runs inside that Pod, its loss is part of the same failure and cannot be excluded from this guarantee.
+Completed, closed files should remain available to an independent file client after **executor Pod** loss, with no
+executor running. Options 1 and 2 must meet this independent-availability requirement; option 3 retains files but
+requires a replacement executor to mount and serve them. An interrupted write may be incomplete, but unrelated
+completed files remain retained. If the filesystem client runs inside that Pod, its loss is part of the same failure
+and cannot be excluded from durability qualification.
 Separate filesystem-client, node, and storage-cluster failures need their own documented durability guarantees.
 Qualify close and `fsync` behavior at the actual client placement, including writeback errors and server failures;
 no candidate integration is claimed to meet these guarantees without qualification.
@@ -161,9 +163,10 @@ requirements, not guarantees of the current provider.
 ## Filesystem integration proposals
 
 File tools and shell commands should work on the same files. A change made through either
-must be visible to the other. The difference is how the agent loop and executor reach those files. Either option can
+must be visible to the other. The difference is how the agent loop and executor reach those files. All three options can
 use the runtime selected by the Kubernetes installation; filesystem design should not require a particular isolation
-technology. The diagrams show file-access paths, not every runtime component.
+technology. The text diagrams show file-access paths; the Mermaid diagrams show component placement. Common identity,
+permission, and lifecycle services are omitted. Boxes indicate placement, not proven security isolation.
 
 ### Option 1: The agent uses an API; the executor mounts the filesystem
 
@@ -184,6 +187,34 @@ Executor programs -> FUSE client ------> API ---+
 The diagram illustrates a shared-service implementation, not a requirement to build a complete storage protocol.
 An API frontend over a mature filesystem can reuse its existing clients. Any distinct mount route still needs common
 enforcement. Mecatl's current Redis filesystem would need more functionality to serve programs.
+
+The component view below illustrates the native-client variant: the independent file service and executor mount
+reach the same filesystem backend. The trusted mount client's placement depends on the runtime and storage driver.
+Command-request arrows omit the execution-provider transport.
+
+```mermaid
+flowchart LR
+    subgraph loop["Agent-loop Pod — no filesystem mount"]
+        files["Read / Edit / Grep"] --> workspace["Workspace adapter"]
+        shell["Shell tool"] --> runner["CommandRunner adapter"]
+    end
+    subgraph service["Independent filesystem service"]
+        api["Filesystem API"] --> access["Backend access"]
+    end
+    subgraph executor["Executor Pod — untrusted programs"]
+        programs["Shell / Git / builds"] --> mount["Workspace mount"]
+    end
+    client["Trusted mount client — placement varies"]
+    backend["Shared filesystem backend"]
+    storage[("Persistent storage")]
+
+    workspace -->|"File RPC"| api
+    runner -->|"Command request"| programs
+    mount --> client
+    client --> backend
+    access --> backend
+    backend --> storage
+```
 
 Each API request can carry the acting agent's identity and permitted operations and files. The service must verify
 that identity and check the requested action; using RPC does not provide those checks automatically. Access through
@@ -215,9 +246,28 @@ Agent file tools -> Workspace adapter -> Mount ---+
 Executor programs --------------------> Mount ---+
 ```
 
+```mermaid
+flowchart LR
+    subgraph loop["Agent-loop Pod"]
+        files["Read / Edit / Grep"] --> workspace["Workspace adapter"]
+        workspace --> loopmount["Workspace mount"]
+        shell["Shell tool"] --> runner["CommandRunner adapter"]
+    end
+    subgraph executor["Executor Pod — untrusted programs"]
+        programs["Shell / Git / builds"] --> execmount["Workspace mount"]
+    end
+    backend["Shared filesystem backend"]
+    storage[("Persistent storage")]
+
+    runner -->|"Command request via execution provider"| programs
+    loopmount -->|"Filesystem client"| backend
+    execmount -->|"Filesystem client"| backend
+    backend --> storage
+```
+
 This reuses an existing filesystem and its clients instead of building a new filesystem API and custom FUSE client.
-The choice between these proposals is whether the loop uses a service interface or a mounted filesystem.
-Option 2 requires a mount in the agent-loop Pod, unlike option 1 and the mount-free preference described above.
+The choice between options 1 and 2 is whether the loop uses a service interface or a mounted filesystem.
+Option 2 requires a mount in the agent-loop Pod, unlike options 1 and 3 and the mount-free preference described above.
 A filesystem that enforces agent scopes natively need not put every write through a separate gateway; neither option
 assumes that mounts bypass enforcement.
 
@@ -226,18 +276,88 @@ permissions to a restricted view for file tools and shell, without unintentional
 in one process with one Unix ID are not separately authorized by directory or mount names. NFS has identity controls,
 but still needs this mapping.
 
-#### Deploying shared storage on Kubernetes
+### Option 3: The executor Pod also serves the filesystem API
 
-##### Can the loop and executor access the same storage?
+The external loop sends file operations through its `Workspace` adapter and `Shell` requests through its
+`CommandRunner` to the executor's API endpoint. File handlers and shell programs use the same mounted persistent tree.
+Sharing an endpoint does not require sharing a process or container. The mount can use FUSE, a native filesystem
+client, or PVC-backed storage; FUSE is optional. This resembles the existing provider's shared mount, but changes the
+security boundary: the trusted provider authorizes externally and invokes a credential-free helper through Pod exec,
+whereas this proposal puts a listening API service in the Pod. It is not an implemented daemon or integration.
 
-The loop and executor may run on different nodes. The chosen filesystem and Kubernetes storage driver must support
-access from both, and both mounts must reach the same files.
+```text
+External agent loop                         Executor Pod
+                                            +---------------------------------------+
+File tools -> Workspace adapter ----------> | API -> File operations ---+           |
+                                            |                           +-> Mount --+--> Persistent storage
+Shell ------> CommandRunner --------------> | API -> Shell programs ----+           |
+                                            +---------------------------------------+
+```
+
+```mermaid
+flowchart LR
+    subgraph loop["Agent-loop Pod — no filesystem mount"]
+        files["Read / Edit / Grep"] --> workspace["Workspace adapter"]
+        shell["Shell tool"] --> runner["CommandRunner adapter"]
+    end
+    subgraph executor["Executor Pod — shared availability and attack surface"]
+        api["Filesystem and command API"]
+        fileops["File operations"]
+        programs["Shell / Git / builds — untrusted"]
+        mount["Workspace mount"]
+        api --> fileops
+        api -->|"Start / supervise"| programs
+        fileops --> mount
+        programs --> mount
+    end
+    storage[("Persistent storage — retained outside Pod lifecycle")]
+
+    workspace -->|"File RPC"| api
+    runner -->|"Command RPC"| api
+    mount -->|"Storage client / volume attachment"| storage
+```
+
+The shared mount keeps the loop mount-free and gives one endpoint a place to coordinate request scheduling and
+process-lifecycle concurrency policy. A mutex around API handlers alone cannot catch arbitrary shell writes.
+Serializing all file access for the whole shell lifetime would block the live reads required above. Allowing live
+reads while deferring file-tool mutations during shell execution is one possible policy, not a settled design.
+
+One tradeoff is coupling file access to executor availability and scaling. Files survive Pod loss, but this
+route cannot serve them until a replacement mounts and serves the tree. Keeping file access available requires a
+running Pod even when no `Shell` command is active. Typically, each isolated execution environment gets a Pod; the
+environment may be per user, per session, or per workspace, rather than inherently one Pod per user. A multi-user
+executor is possible but makes isolation harder. In contrast, option 1's shared API can serve multiple users and scale
+independently of executor compute with appropriate tenant isolation and backend support; availability and scaling
+still depend on that deployment.
+
+Hosting a persistent filesystem API beside untrusted shell programs increases the executor's attack surface: its
+listener, request handling, authentication, and endpoint credentials if TLS terminates there. It need not require root,
+added Linux capabilities, or weaker seccomp, but trust separation is harder even with a restricted container profile.
+The shell can attack the API; containers in one Pod share networking, and ordinary NetworkPolicy does not isolate
+containers within it. Separate sidecar mounts, UIDs, and process restrictions can mitigate this risk, but do not
+automatically make the sidecar a trustworthy boundary.
+
+Escalation depends on authority the API has beyond the shell's limited view: broader paths or write permissions,
+cross-agent views, or backing-storage or mount-control credentials. Access to the same authorized bytes alone is not
+an escalation, though attacks can still compromise response integrity or availability.
+
+A bounded variant would treat the guest API as an environment-local helper with no greater filesystem
+authority than the shell. Trusted authentication and authorization, grant issuance, broad credentials, mount control,
+and authoritative withdrawal would remain outside the executor. API checks alone cannot constrain native shell
+filesystem access; both routes still need scope enforcement. These are proposed constraints, not implemented guarantees.
+
+### Deploying shared storage on Kubernetes
+
+#### Can the loop and executor access the same storage?
+
+For option 2, the loop and executor may run on different nodes. The chosen filesystem and Kubernetes storage driver
+must support access from both, and both mounts must reach the same files.
 
 A persistent volume claim (PVC) requests storage, but does not make it shareable across nodes. The current provider
 uses `ReadWriteOnce`, which allows read-write mounts on one node. Multiple Pods on that node may use it. Cross-node
 access needs a backend and driver that support it, commonly exposed through `ReadWriteMany`.
 
-##### How do we limit access for each agent?
+#### How do we limit access for each agent?
 
 Kubernetes mounts volumes into Pods. Mecatl must decide which files and operations each agent may access.
 
@@ -249,7 +369,7 @@ agent permissions either.
 We could use separate volumes or restricted views of shared storage. In either case, access must follow the agent's
 verified permissions, not merely a supplied directory name.
 
-##### Does each new session require a Pod restart?
+#### Does each new session require a Pod restart?
 
 Not necessarily. If the agent-loop Pod already mounts a shared filesystem, Mecatl can assign a directory to a new
 session without changing the Pod's volumes.
@@ -264,7 +384,8 @@ container is not automatically visible in another.
 
 ## Filesystem candidates
 
-These candidates can support either integration option and must meet the filesystem requirements above.
+These candidates can support any of the three integration options and must meet the filesystem requirements above,
+with option 3's explicit independent-availability tradeoff.
 
 Source review baseline: 2026-10-07. The implementation links below identify reviewed commits or releases; general
 manuals may change independently. These are existing capabilities and proposed integration points, not tested Mecatl
@@ -289,17 +410,19 @@ stops executor Pods.
 
 ## Alternatives: adopting an upstream execution platform
 
-The question is whether each platform can connect ordinary programs to the **same live, retained files** that our
-`Workspace` API serves independently. All four candidates can keep Mecatl's loop outside the executor. Pod recreation
-is normal; a replacement starts fresh against the same authorized workspace. Process resumption is not required.
+The evaluations primarily cover options 1 and 2: connecting ordinary programs to the **same live, retained files**
+that our `Workspace` serves independently of executor compute. Executor-hosted guest file APIs could instead serve
+option 3, with its availability tradeoff and the same storage and scope requirements. All four candidates can keep
+Mecatl's loop outside the executor. Pod recreation is normal; a replacement starts fresh against the same authorized
+workspace. Process resumption is not required.
 
 ### Shared integration work
 
-For the API option, a trusted file service could reuse `osfs` over a mounted NFS, CephFS, or JuiceFS filesystem. The
+For option 1, a trusted file service could reuse `osfs` over a mounted NFS, CephFS, or JuiceFS filesystem. The
 executor mounts the same files through the platform's storage support. The mounted-loop option uses that filesystem
 directly instead of a service. Neither requires copying files between commands or building a new filesystem protocol.
 
-Both options need a recorded storage identity and verified agent scopes: for example, read-only inputs and writable
+All three options need a recorded storage identity and verified agent scopes: for example, read-only inputs and writable
 outputs. File-tool checks alone cannot restrict shell writes. Mount credentials stay in trusted infrastructure, and
 the chosen backend or mount broker must enforce withdrawal; read-only mount flags alone do not provide grant expiry.
 Keep the existing Edit semantics described above, not stronger atomicity against shell writers.
@@ -333,7 +456,7 @@ reusable Pod specifications; claims request sandboxes, optionally from a pool st
   and `deleteOnSandboxTermination=false`; Mecatl must still check the recorded PVC identity.
 - **Pros:** Its [mount construction][opensandbox-mounts] supports read-only inputs and writable outputs from one PVC.
   Direct [BatchSandbox templates][batchsandbox-template] also support our own helper and ordinary Kubernetes volumes.
-- **Limits:** The guest file API requires a running sandbox, so it cannot replace the independent Workspace route.
+- **Limits:** The guest file API requires a running sandbox, so it fits option 3 rather than the independent Workspace route.
   Warm-pool and FastSandbox routes restrict dynamic volume attachment; use template mode for this proposal.
 - **Work:** Map approved storage views to volume requests and connect current-agent authorization to command access.
   If adopting the server, adapt our command runner to its [injected execd service][opensandbox-bootstrap]; that helper
