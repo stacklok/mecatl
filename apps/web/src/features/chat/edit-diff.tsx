@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useId, useState } from "react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Button } from "../../components/ui/button";
 import { diffLines } from "../../lib/line-diff";
 import { cn } from "../../lib/utils";
@@ -266,9 +267,14 @@ function DiffHeader({ path, note }: { path: string; note: string }) {
       data-testid="diff-header"
       className="flex min-w-0 items-baseline gap-2 border-b border-border/60 px-3 py-1.5 font-mono text-xs"
     >
-      <span className="min-w-0 truncate text-foreground" title={path}>
-        {path}
-      </span>{" "}
+      <Tooltip onlyWhenTruncated>
+        <TooltipTrigger asChild>
+          <span className="min-w-0 truncate text-foreground">{path}</span>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-[min(32rem,calc(100vw-2rem))] break-words font-mono">
+          {path}
+        </TooltipContent>
+      </Tooltip>{" "}
       <span className="shrink-0 text-muted-foreground">{note}</span>
     </p>
   );

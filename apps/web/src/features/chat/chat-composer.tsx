@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Button } from "../../components/ui/button";
 import {
   Dialog,
@@ -353,9 +354,14 @@ export function ChatComposer({
                     src={imageSource(image)}
                   />
                 </button>
-                <span className="min-w-0 truncate text-xs" title={image.name}>
-                  {image.name}
-                </span>
+                <Tooltip onlyWhenTruncated>
+                  <TooltipTrigger asChild>
+                    <span className="min-w-0 truncate text-xs">{image.name}</span>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-[min(32rem,calc(100vw-2rem))] break-words">
+                    {image.name}
+                  </TooltipContent>
+                </Tooltip>
                 <button
                   aria-label={`Remove ${image.name}`}
                   className="absolute right-1 top-1 rounded-full p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
