@@ -12,7 +12,7 @@ import (
 )
 
 func canonicalPrivateRoot(root string) (string, error) {
-	// #nosec G703 -- root is the caller-selected storage authority; Lstat rejects a symlink before any credential access.
+	// #nosec G703 -- inspect the operator-selected storage root to reject a final-component symlink before canonicalization.
 	info, err := os.Lstat(root)
 	if err == nil && info.Mode()&os.ModeSymlink != 0 {
 		return "", unavailable("validate credential root", errors.New("unsafe path component"))
@@ -24,7 +24,7 @@ func canonicalPrivateRoot(root string) (string, error) {
 	var missing []string
 	ancestor := root
 	for {
-		// #nosec G703 -- inspect only ancestors of the supplied storage authority to canonicalize it; no credential identity contributes path components.
+		// #nosec G703 -- probe ancestors of the operator-selected storage root to resolve its existing physical prefix; ancestor symlinks are intentionally supported.
 		if _, err := os.Lstat(ancestor); err == nil {
 			break
 		} else if !errors.Is(err, os.ErrNotExist) {
@@ -74,11 +74,11 @@ func ensurePrivateRoot(root string, syncDir func(*os.File) error) error {
 	rel := root[len(current):]
 	for _, component := range splitPath(rel) {
 		current = filepath.Join(current, component)
-		// #nosec G703 -- walk the canonical storage authority itself, validating each component as a non-symlink directory below.
+		// #nosec G703 -- inspect canonical components of the operator-selected storage root for directory/symlink validation before opening the rooted store.
 		info, err := os.Lstat(current)
 		if errors.Is(err, os.ErrNotExist) {
 			created := false
-			// #nosec G703 -- create the caller-selected canonical storage authority, not a credential-derived relative path.
+			// #nosec G703 -- create canonical operator-selected storage-root components, not credential- or request-derived names.
 			if err := os.Mkdir(current, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
 				return unavailable("create credential root", err)
 			} else if err == nil {
@@ -89,7 +89,7 @@ func ensurePrivateRoot(root string, syncDir func(*os.File) error) error {
 					return unavailable("sync credential root parent", err)
 				}
 			}
-			// #nosec G703 -- revalidate the newly created authority component before admitting it.
+			// #nosec G703 -- re-inspect the same operator-selected root component after create/EEXIST for directory/symlink validation.
 			info, err = os.Lstat(current)
 		}
 		if err != nil {
@@ -99,7 +99,7 @@ func ensurePrivateRoot(root string, syncDir func(*os.File) error) error {
 			return unavailable("validate credential root", errors.New("unsafe path component"))
 		}
 	}
-	// #nosec G703 -- validate ownership, mode, and type of the canonical storage authority, not a path within another authority.
+	// #nosec G703 -- inspect the canonical operator-selected storage root to validate private permissions and ownership.
 	info, err := os.Lstat(root)
 	if err != nil {
 		return unavailable("inspect credential root", err)
@@ -210,7 +210,7 @@ func currentEUID(uid uint32) bool {
 }
 
 func syncContainingDirectory(path string, syncDir func(*os.File) error) error {
-	// #nosec G703 -- sync the parent of a newly created storage authority component; no credential identity contributes to this path.
+	// #nosec G703 -- ensurePrivateRoot supplies a newly created operator-selected root component; open its parent only for directory sync, not content reads.
 	dir, err := os.Open(filepath.Dir(path))
 	if err != nil {
 		return err

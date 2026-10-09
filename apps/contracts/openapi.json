@@ -9353,9 +9353,29 @@
     "/api/v1/user-memory/consolidation/plans": {
       "post": {
         "operationId": "generateMemoryConsolidationPlan",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "target": {
+                    "type": "string",
+                    "enum": [
+                      "user_model",
+                      "project_memory"
+                    ],
+                    "default": "user_model"
+                  }
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "201": {
-            "description": "A bounded daemon-curated user-memory consolidation plan.",
+            "description": "A bounded daemon-curated consolidation plan for the requested memory store.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9460,7 +9480,8 @@
                     "target": {
                       "type": "string",
                       "enum": [
-                        "user_model"
+                        "user_model",
+                        "project_memory"
                       ]
                     }
                   },
@@ -9666,7 +9687,8 @@
                     "target": {
                       "type": "string",
                       "enum": [
-                        "user_model"
+                        "user_model",
+                        "project_memory"
                       ]
                     }
                   },

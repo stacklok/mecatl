@@ -12,7 +12,8 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it } from "vitest";
 import { routeTree } from "../../routeTree.gen";
-import { MemoryFactDetail, MemorySettings } from "./memory-settings";
+import { MemoryFactDetail } from "../memory/memory-fact-detail";
+import { MemorySettingsPage } from "../memory/memory-settings-page";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -39,7 +40,7 @@ describe("memory navigation", () => {
       root.render(
         <QueryClientProvider client={queryClient}>
           <RouterContextProvider router={router}>
-            <MemorySettings />
+            <MemorySettingsPage />
           </RouterContextProvider>
         </QueryClientProvider>,
       );
@@ -59,6 +60,14 @@ describe("memory navigation", () => {
   it("returns from a fact to the Memory list without a document navigation", async () => {
     const key = "team/voice";
     const queryClient = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
+    queryClient.setQueryData(getRuntimeQueryKey(), { capabilities: {}, connection: "online" });
+    queryClient.setQueryData(listUserMemoryQueryKey(), {
+      items: [{ description: "A voice preference", key }],
+      reason: "",
+      sha256: "abc",
+      sizeBytes: "42",
+      supported: true,
+    });
     queryClient.setQueryData(getUserMemoryQueryKey({ path: { memoryKey: key } }), {
       current: {
         description: "A voice preference",
@@ -85,13 +94,14 @@ describe("memory navigation", () => {
       root.render(
         <QueryClientProvider client={queryClient}>
           <RouterContextProvider router={router}>
-            <MemoryFactDetail memoryKey={key} />
+            <MemoryFactDetail memoryId={key} />
           </RouterContextProvider>
         </QueryClientProvider>,
       );
     });
+    expect(host.textContent).toContain("Use a calm voice.");
     const link = host.querySelector<HTMLAnchorElement>('a[href="/workspace/settings/memory"]');
-    expect(link).not.toBeNull();
+    expect(link?.textContent).toBe("‹Back");
     const click = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
     await act(async () => link?.dispatchEvent(click));
     expect(click.defaultPrevented).toBe(true);

@@ -28,6 +28,53 @@ function sdkSkill(over: Record<string, unknown> = {}) {
   };
 }
 
+const allConsolidation = {
+  project_memory: { decide: true, generate: true, unavailableReason: "" },
+  user_model: { decide: true, generate: true, unavailableReason: "" },
+};
+
+const allCapabilities = {
+  learnedSkills: true,
+  learningProposals: true,
+  memoryConsolidation: allConsolidation,
+  reflection: true,
+  skills: true,
+  userModel: true,
+};
+
+function sdkDreamPlan(target: string) {
+  return {
+    expiresAt: { nanos: 0, seconds: 1_700_000_000n },
+    id: "plan-1",
+    operations: [
+      {
+        exactDuplicateEligible: true,
+        kind: "merge",
+        reason: "duplicates",
+        replacement: { description: "Merged", value: "Uses vim" },
+        sources: [{ description: "Older", key: "editor_2", value: "vim" }],
+        survivor: { description: "Editor", key: "editor", value: "Uses vim" },
+      },
+    ],
+    plannedOperationCount: 1,
+    plannedSourceCount: 2,
+    target,
+  };
+}
+
+function sdkDreamReceipt(target: string) {
+  return {
+    appliedSourceCount: 1,
+    conflictedSourceCount: 1,
+    disposition: "applied",
+    failedSourceCount: 0,
+    id: "plan-1",
+    plannedSourceCount: 2,
+    skippedSourceCount: 0,
+    target,
+  };
+}
+
 describe("Mecatl knowledge adapter", () => {
   it("derives the knowledge capability set from the live runtime snapshot", async () => {
     const snapshot = sampleSnapshot();
@@ -36,6 +83,11 @@ describe("Mecatl knowledge adapter", () => {
       learnedSkills: true,
       learningProposals: false,
       manualDream: {
+        projectMemory: {
+          decide: false,
+          generate: false,
+          unavailableReason: "target store is unavailable",
+        },
         userModel: { decide: true, generate: false, unavailableReason: "needs a model" },
       },
       reflection: true,
@@ -46,7 +98,14 @@ describe("Mecatl knowledge adapter", () => {
     expect(live).toEqual({
       learnedSkills: true,
       learningProposals: false,
-      memoryConsolidation: { decide: true, generate: false, unavailableReason: "needs a model" },
+      memoryConsolidation: {
+        project_memory: {
+          decide: false,
+          generate: false,
+          unavailableReason: "target store is unavailable",
+        },
+        user_model: { decide: true, generate: false, unavailableReason: "needs a model" },
+      },
       reflection: true,
       skills: false,
       userModel: true,
@@ -62,7 +121,18 @@ describe("Mecatl knowledge adapter", () => {
     expect(pending).toMatchObject({
       learnedSkills: false,
       learningProposals: false,
-      memoryConsolidation: { decide: false, generate: false },
+      memoryConsolidation: {
+        project_memory: {
+          decide: false,
+          generate: false,
+          unavailableReason: "Memory consolidation is not enabled on this deployment.",
+        },
+        user_model: {
+          decide: false,
+          generate: false,
+          unavailableReason: "Memory consolidation is not enabled on this deployment.",
+        },
+      },
       reflection: false,
       skills: false,
       userModel: false,
@@ -107,7 +177,7 @@ describe("Mecatl knowledge adapter", () => {
     const service = createMecatlKnowledgeService({ learnedSkills } as unknown as Client, {
       learnedSkills: true,
       learningProposals: true,
-      memoryConsolidation: { decide: true, generate: true, unavailableReason: "" },
+      memoryConsolidation: allConsolidation,
       reflection: true,
       skills: true,
       userModel: true,
@@ -204,7 +274,7 @@ describe("Mecatl knowledge adapter", () => {
         {
           learnedSkills: true,
           learningProposals: true,
-          memoryConsolidation: { decide: true, generate: true, unavailableReason: "" },
+          memoryConsolidation: allConsolidation,
           reflection: true,
           skills: true,
           userModel: true,
@@ -230,7 +300,7 @@ describe("Mecatl knowledge adapter", () => {
       {
         learnedSkills: true,
         learningProposals: true,
-        memoryConsolidation: { decide: true, generate: true, unavailableReason: "" },
+        memoryConsolidation: allConsolidation,
         reflection: true,
         skills: true,
         userModel: true,
@@ -253,5 +323,65 @@ describe("Mecatl knowledge adapter", () => {
       status: 409,
     });
     expect(activate).toHaveBeenCalledTimes(1);
+  });
+
+  it("generates a consolidation plan for either target and keeps the daemon's target", async () => {
+    for (const target of ["user_model", "project_memory"] as const) {
+      const generate = vi.fn().mockResolvedValue({ plan: sdkDreamPlan(target) });
+      const service = createMecatlKnowledgeService(
+        { dreamPlans: { generate } } as unknown as Client,
+        allCapabilities,
+      );
+      const plan = await service.generateMemoryConsolidationPlan(target);
+      expect(generate).toHaveBeenCalledWith({
+        $typeName: "mecatl.v1.GenerateDreamPlanRequest",
+        target,
+      });
+      expect(plan).toMatchObject({
+        expiresAt: "2023-11-14T22:13:20.000Z",
+        id: "plan-1",
+        operations: [{ sources: [{ key: "editor_2" }], survivor: { key: "editor" } }],
+        plannedOperationCount: 1,
+        plannedSourceCount: 2,
+        target,
+      });
+    }
+  });
+
+  it("maps decision receipts for either target and rejects an unknown target", async () => {
+    for (const target of ["user_model", "project_memory"] as const) {
+      const decide = vi.fn().mockResolvedValue({ receipt: sdkDreamReceipt(target) });
+      const service = createMecatlKnowledgeService(
+        { dreamPlans: { decide } } as unknown as Client,
+        allCapabilities,
+      );
+      await expect(
+        service.decideMemoryConsolidationPlan("plan-1", { decision: "apply" }),
+      ).resolves.toEqual({
+        applied: 1,
+        conflicted: 1,
+        disposition: "applied",
+        failed: 0,
+        id: "plan-1",
+        planned: 2,
+        skipped: 0,
+        target,
+      });
+    }
+    const service = createMecatlKnowledgeService(
+      {
+        dreamPlans: {
+          decide: vi.fn().mockResolvedValue({ receipt: sdkDreamReceipt("team_memory") }),
+          generate: vi.fn().mockResolvedValue({ plan: sdkDreamPlan("team_memory") }),
+        },
+      } as unknown as Client,
+      allCapabilities,
+    );
+    await expect(
+      service.decideMemoryConsolidationPlan("plan-1", { decision: "dismiss" }),
+    ).rejects.toThrow("memory consolidation receipt for another target");
+    await expect(service.generateMemoryConsolidationPlan("user_model")).rejects.toThrow(
+      "memory consolidation plan for another target",
+    );
   });
 });

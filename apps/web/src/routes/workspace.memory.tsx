@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createFileRoute, redirect } from "@tanstack/react-router";
-import { MemoryFactDetail } from "../features/settings/memory-settings";
+import { MemoryFactDetail } from "../features/memory/memory-fact-detail";
 
 export const Route = createFileRoute("/workspace/memory")({
   beforeLoad: ({ search }) => {
@@ -23,5 +23,5 @@ export const Route = createFileRoute("/workspace/memory")({
 function MemoryDetailPage() {
   const { item } = Route.useSearch();
   if (!item) return null;
-  return <MemoryFactDetail memoryKey={item} />;
+  return <MemoryFactDetail memoryId={item} />;
 }

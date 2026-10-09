@@ -9,7 +9,10 @@ const knowledge: KnowledgeService = {
   capabilities: {
     learnedSkills: true,
     learningProposals: true,
-    memoryConsolidation: { decide: true, generate: true, unavailableReason: "" },
+    memoryConsolidation: {
+      project_memory: { decide: true, generate: true, unavailableReason: "" },
+      user_model: { decide: true, generate: true, unavailableReason: "" },
+    },
     reflection: true,
     skills: true,
     userModel: true,
@@ -59,7 +62,7 @@ const knowledge: KnowledgeService = {
       target: "user_model",
     };
   },
-  async generateMemoryConsolidationPlan() {
+  async generateMemoryConsolidationPlan(target) {
     return {
       expiresAt: null,
       id: "plan-1",
@@ -79,7 +82,7 @@ const knowledge: KnowledgeService = {
       ],
       plannedOperationCount: 1,
       plannedSourceCount: 2,
-      target: "user_model",
+      target,
     };
   },
   async getLearnedSkill(id, ownerAgent, version) {
@@ -360,6 +363,126 @@ describe("knowledge routes", () => {
     expect(decided.status).toBe(200);
     expect(await decided.json()).toMatchObject({ applied: 2, disposition: "apply" });
   });
+
+  it("passes the requested consolidation target to the service, defaulting to user_model", async () => {
+    const targets: string[] = [];
+    const recording = csrfApp({
+      knowledge: {
+        ...knowledge,
+        async generateMemoryConsolidationPlan(target) {
+          targets.push(target);
+          return knowledge.generateMemoryConsolidationPlan(target);
+        },
+      },
+    });
+    const json = { "Content-Type": "application/json" };
+    const project = await recording.request("/api/v1/user-memory/consolidation/plans", {
+      body: JSON.stringify({ target: "project_memory" }),
+      headers: json,
+      method: "POST",
+    });
+    expect(project.status).toBe(201);
+    expect(await project.json()).toMatchObject({ id: "plan-1", target: "project_memory" });
+
+    const bodiless = await recording.request("/api/v1/user-memory/consolidation/plans", {
+      method: "POST",
+    });
+    expect(bodiless.status).toBe(201);
+    expect(await bodiless.json()).toMatchObject({ target: "user_model" });
+
+    const emptyBody = await recording.request("/api/v1/user-memory/consolidation/plans", {
+      body: "{}",
+      headers: json,
+      method: "POST",
+    });
+    expect(emptyBody.status).toBe(201);
+    expect(targets).toEqual(["project_memory", "user_model", "user_model"]);
+
+    const unknown = await recording.request("/api/v1/user-memory/consolidation/plans", {
+      body: JSON.stringify({ target: "team_memory" }),
+      headers: json,
+      method: "POST",
+    });
+    expect(unknown.status).toBe(400);
+    expect(targets).toHaveLength(3);
+  });
+
+  it("gates plan generation on the requested target's own capability", async () => {
+    let generated = 0;
+    const userOnly = csrfApp({
+      knowledge: {
+        ...knowledge,
+        capabilities: {
+          ...knowledge.capabilities,
+          memoryConsolidation: {
+            project_memory: {
+              decide: false,
+              generate: false,
+              unavailableReason: "target store is unavailable",
+            },
+            user_model: { decide: true, generate: true, unavailableReason: "" },
+          },
+        },
+        async generateMemoryConsolidationPlan(target) {
+          generated += 1;
+          return knowledge.generateMemoryConsolidationPlan(target);
+        },
+      },
+    });
+    const json = { "Content-Type": "application/json" };
+    const project = await userOnly.request("/api/v1/user-memory/consolidation/plans", {
+      body: JSON.stringify({ target: "project_memory" }),
+      headers: json,
+      method: "POST",
+    });
+    expect(project.status).toBe(501);
+    await expect(project.json()).resolves.toMatchObject({
+      code: "memory_consolidation_unsupported",
+      detail: "target store is unavailable",
+    });
+    expect(generated).toBe(0);
+    const user = await userOnly.request("/api/v1/user-memory/consolidation/plans", {
+      body: JSON.stringify({ target: "user_model" }),
+      headers: json,
+      method: "POST",
+    });
+    expect(user.status).toBe(201);
+    expect(generated).toBe(1);
+  });
+
+  it("admits a decision when any target can decide, since the plan id carries no target", async () => {
+    const projectOnly = csrfApp({
+      knowledge: {
+        ...knowledge,
+        capabilities: {
+          ...knowledge.capabilities,
+          memoryConsolidation: {
+            project_memory: { decide: true, generate: true, unavailableReason: "" },
+            user_model: { decide: false, generate: false, unavailableReason: "Dreaming is off" },
+          },
+        },
+        async decideMemoryConsolidationPlan(planId, request) {
+          return {
+            ...(await knowledge.decideMemoryConsolidationPlan(planId, request)),
+            target: "project_memory",
+          };
+        },
+      },
+    });
+    const decided = await projectOnly.request(
+      "/api/v1/user-memory/consolidation/plans/plan-1/decisions",
+      {
+        body: JSON.stringify({ decision: "dismiss" }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      },
+    );
+    expect(decided.status).toBe(200);
+    expect(await decided.json()).toMatchObject({
+      disposition: "dismiss",
+      target: "project_memory",
+    });
+  });
   it("capability-disables each knowledge surface with its own 501 code", async () => {
     const off = csrfApp({
       knowledge: {
@@ -368,9 +491,8 @@ describe("knowledge routes", () => {
           learnedSkills: false,
           learningProposals: false,
           memoryConsolidation: {
-            decide: false,
-            generate: false,
-            unavailableReason: "Dreaming is off",
+            project_memory: { decide: false, generate: false, unavailableReason: "No project" },
+            user_model: { decide: false, generate: false, unavailableReason: "Dreaming is off" },
           },
           reflection: false,
           skills: false,

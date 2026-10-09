@@ -212,7 +212,14 @@ export const undoLearningPromotion = <ThrowOnError extends boolean = false>(opti
 
 export const reflectSession = <ThrowOnError extends boolean = false>(options: Options<ReflectSessionData, ThrowOnError>): RequestResult<ReflectSessionResponses, ReflectSessionErrors, ThrowOnError> => (options.client ?? client).post<ReflectSessionResponses, ReflectSessionErrors, ThrowOnError>({ url: '/api/v1/sessions/{sessionId}/reflection', ...options });
 
-export const generateMemoryConsolidationPlan = <ThrowOnError extends boolean = false>(options?: Options<GenerateMemoryConsolidationPlanData, ThrowOnError>): RequestResult<GenerateMemoryConsolidationPlanResponses, GenerateMemoryConsolidationPlanErrors, ThrowOnError> => (options?.client ?? client).post<GenerateMemoryConsolidationPlanResponses, GenerateMemoryConsolidationPlanErrors, ThrowOnError>({ url: '/api/v1/user-memory/consolidation/plans', ...options });
+export const generateMemoryConsolidationPlan = <ThrowOnError extends boolean = false>(options?: Options<GenerateMemoryConsolidationPlanData, ThrowOnError>): RequestResult<GenerateMemoryConsolidationPlanResponses, GenerateMemoryConsolidationPlanErrors, ThrowOnError> => (options?.client ?? client).post<GenerateMemoryConsolidationPlanResponses, GenerateMemoryConsolidationPlanErrors, ThrowOnError>({
+    url: '/api/v1/user-memory/consolidation/plans',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options?.headers
+    }
+});
 
 export const decideMemoryConsolidationPlan = <ThrowOnError extends boolean = false>(options: Options<DecideMemoryConsolidationPlanData, ThrowOnError>): RequestResult<DecideMemoryConsolidationPlanResponses, DecideMemoryConsolidationPlanErrors, ThrowOnError> => (options.client ?? client).post<DecideMemoryConsolidationPlanResponses, DecideMemoryConsolidationPlanErrors, ThrowOnError>({
     url: '/api/v1/user-memory/consolidation/plans/{planId}/decisions',

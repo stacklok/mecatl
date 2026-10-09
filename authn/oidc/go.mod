@@ -3,6 +3,7 @@ module github.com/stacklok/mecatl/authn/oidc
 go 1.27.2
 
 require (
+	github.com/lestrrat-go/jwx/v4 v4.5.0
 	github.com/stacklok/mecatl/engine v0.14.0
 	github.com/stacklok/toolhive-core v0.0.51
 )
@@ -15,7 +16,6 @@ require (
 	github.com/lestrrat-go/blackmagic v1.0.4 // indirect
 	github.com/lestrrat-go/httpcc v1.0.1 // indirect
 	github.com/lestrrat-go/httprc/v3 v3.0.6 // indirect
-	github.com/lestrrat-go/jwx/v4 v4.5.0 // indirect
 	github.com/lestrrat-go/option/v2 v2.0.0 // indirect
 	github.com/lestrrat-go/option/v3 v3.0.0-alpha1 // indirect
 	github.com/power-devops/perfstat v0.0.0-20260805114148-88456608a4f6 // indirect

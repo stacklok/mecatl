@@ -329,15 +329,14 @@
   }
 }
 
-@layer utilities {
-  .text-page-title {
-    font-family: var(--font-serif);
-    font-size: 34px;
-    line-height: 42px;
-    font-weight: 300;
-    letter-spacing: -0.85px;
-    color: var(--title);
-  }
+/* A registered utility, so a page's own size/leading overrides (text-[44px]) sort after it. */
+@utility text-page-title {
+  font-family: var(--font-serif);
+  font-size: 34px;
+  line-height: 42px;
+  font-weight: 300;
+  letter-spacing: -0.85px;
+  color: var(--title);
 }
 
 @media (max-width: 499px) {

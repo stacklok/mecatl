@@ -14,6 +14,7 @@ import type {
   LearningProposalsResponse,
   MemoryConsolidationPlanResponse,
   MemoryConsolidationReceiptResponse,
+  MemoryConsolidationTarget,
   MemoryDetailResponse,
   ReflectionReceiptResponse,
   UndoLearningPromotionRequest,
@@ -28,14 +29,17 @@ import type {
   UserModelRevision,
 } from "@stacklok-oss/mecatl-sdk/gen";
 
+/** What the agent allows for one consolidation target. */
+export interface MemoryConsolidationCapability {
+  decide: boolean;
+  generate: boolean;
+  unavailableReason: string;
+}
+
 export interface KnowledgeCapabilities {
   learnedSkills: boolean;
   learningProposals: boolean;
-  memoryConsolidation: {
-    decide: boolean;
-    generate: boolean;
-    unavailableReason: string;
-  };
+  memoryConsolidation: Record<MemoryConsolidationTarget, MemoryConsolidationCapability>;
   reflection: boolean;
   skills: boolean;
   userModel: boolean;
@@ -71,7 +75,9 @@ export interface KnowledgeService {
   ): Promise<LearnedSkillDiffResponse>;
   getLearnedSkill(id: string, ownerAgent: string, version: string): Promise<LearnedSkillResponse>;
   getMemory(key: string): Promise<MemoryDetailResponse>;
-  generateMemoryConsolidationPlan(): Promise<MemoryConsolidationPlanResponse>;
+  generateMemoryConsolidationPlan(
+    target: MemoryConsolidationTarget,
+  ): Promise<MemoryConsolidationPlanResponse>;
   listConfiguredSkills(): Promise<ConfiguredSkillsResponse>;
   listLearnedSkills(): Promise<LearnedSkillsResponse>;
   listLearnedSkillChanges(): Promise<LearnedSkillChangesResponse>;
@@ -141,8 +147,6 @@ export function createMecatlKnowledgeService(
       });
       const receipt = response.receipt;
       if (!receipt) throw new Error("Mecatl returned no memory consolidation receipt");
-      if (receipt.target !== "user_model")
-        throw new Error("Mecatl returned a memory consolidation receipt for another target");
       return {
         applied: receipt.appliedSourceCount,
         conflicted: receipt.conflictedSourceCount,
@@ -151,7 +155,7 @@ export function createMecatlKnowledgeService(
         id: receipt.id,
         planned: receipt.plannedSourceCount,
         skipped: receipt.skippedSourceCount,
-        target: "user_model",
+        target: memoryConsolidationTargetFromSdk(receipt.target, "receipt"),
       };
     },
 
@@ -192,10 +196,10 @@ export function createMecatlKnowledgeService(
       };
     },
 
-    async generateMemoryConsolidationPlan() {
+    async generateMemoryConsolidationPlan(target) {
       const response = await client.dreamPlans.generate({
         $typeName: "mecatl.v1.GenerateDreamPlanRequest",
-        target: "user_model",
+        target,
       });
       return memoryConsolidationPlanFromSdk(response.plan);
     },
@@ -386,8 +390,7 @@ function memoryConsolidationPlanFromSdk(
   plan: DreamReviewPlan | undefined,
 ): MemoryConsolidationPlanResponse {
   if (!plan?.id) throw new Error("Mecatl returned no memory consolidation plan");
-  if (plan.target !== "user_model")
-    throw new Error("Mecatl returned a memory consolidation plan for another target");
+  const target = memoryConsolidationTargetFromSdk(plan.target, "plan");
   return {
     expiresAt: timestampToIso(plan.expiresAt),
     id: plan.id,
@@ -404,8 +407,20 @@ function memoryConsolidationPlanFromSdk(
     })),
     plannedOperationCount: plan.plannedOperationCount,
     plannedSourceCount: plan.plannedSourceCount,
-    target: "user_model",
+    target,
   };
+}
+
+/**
+ * The SDK's target is a free-form string; narrow it to the contract's enum so
+ * an unknown target fails loudly instead of mislabeling the plan or receipt.
+ */
+function memoryConsolidationTargetFromSdk(
+  target: string,
+  kind: "plan" | "receipt",
+): MemoryConsolidationTarget {
+  if (target === "user_model" || target === "project_memory") return target;
+  throw new Error(`Mecatl returned a memory consolidation ${kind} for another target`);
 }
 
 function memoryParticipantFromSdk(participant: DreamParticipant | undefined) {

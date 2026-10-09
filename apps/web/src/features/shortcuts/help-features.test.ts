@@ -67,7 +67,7 @@ describe("deriveHelpFeatures", () => {
     expect(userModel.find((row) => row.id === "memory")?.enabled).toBe(true);
   });
 
-  it("reads memory consolidation off the exact gate the Consolidate button uses", () => {
+  it("reads memory consolidation off whether any target can generate a plan", () => {
     const off = deriveHelpFeatures(allOff);
     expect(off.find((row) => row.id === "manual_dream")?.enabled).toBe(false);
 
@@ -82,5 +82,14 @@ describe("deriveHelpFeatures", () => {
       manualDream: { userModel: { decide: true, generate: true } },
     });
     expect(generateReady.find((row) => row.id === "manual_dream")?.enabled).toBe(true);
+
+    const projectOnly = deriveHelpFeatures({
+      ...allOff,
+      manualDream: {
+        projectMemory: { decide: true, generate: true },
+        userModel: { decide: false, generate: false },
+      },
+    });
+    expect(projectOnly.find((row) => row.id === "manual_dream")?.enabled).toBe(true);
   });
 });
