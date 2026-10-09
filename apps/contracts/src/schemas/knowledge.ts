@@ -218,6 +218,7 @@ export const memoryRevisionSchema = z.object({
   description: z.string(),
   key: z.string(),
   origin: z.string(),
+  sourceProposalId: z.string(),
   sourceSessionId: z.string(),
   status: z.string(),
   updatedAt: z.string().nullable(),
