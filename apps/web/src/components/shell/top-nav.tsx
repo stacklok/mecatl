@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Link, useRouterState } from "@tanstack/react-router";
-import { GlobalSearch } from "../../features/search/global-search";
-import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { GlobalSearch } from "@/features/search/global-search";
 import { navItems } from "./nav-items";
 
 /**
@@ -10,6 +10,13 @@ import { navItems } from "./nav-items";
  * pills, and global search — no connection/theme/auth status chips (those
  * live in Settings or a conditional banner instead), matching Studio's
  * "the top nav carries no status chips" rule.
+ *
+ * From 500px the layout and spacing follow the prototype's
+ * `components/shell/top-nav.tsx`: the search trigger becomes a field up to
+ * 214px wide. Studio keeps every target at least 44px with offset focus
+ * rings, so the field shrinks instead of the nav scrolling sideways when the
+ * row is tight, and phones keep Studio's tighter gaps: six 44px targets at
+ * the 18px mobile root size leave no room for the prototype's 12px gaps.
  */
 export function TopNav() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
@@ -28,8 +35,11 @@ export function TopNav() {
         />
       </Link>
 
-      <div className="flex min-w-0 items-center gap-1 min-[500px]:gap-3 min-[900px]:gap-5">
-        <nav aria-label="Main navigation" className="flex min-w-0 items-center gap-0.5">
+      <div className="flex min-w-0 flex-1 items-center justify-end gap-1 min-[500px]:gap-5">
+        <nav
+          aria-label="Main navigation"
+          className="flex shrink-0 items-center gap-0.5 min-[500px]:gap-1"
+        >
           {navItems.map((item) => {
             const active = pathname === item.to || pathname.startsWith(`${item.to}/`);
             const Icon = item.icon;
@@ -65,7 +75,10 @@ export function TopNav() {
           })}
         </nav>
 
-        <div className="shrink-0 [&_kbd]:rounded-full [&_kbd]:border-transparent [&_kbd]:bg-nav-kbd-bg [&_kbd]:text-brand-foreground [&>button]:min-h-11 [&>button]:min-w-11 [&>button]:rounded-full [&>button]:border-nav-search-border [&>button]:bg-transparent [&>button]:text-nav-search-text [&>button]:hover:bg-white/10 [&>button]:hover:text-white [&>button]:focus-visible:ring-nav-search-text min-[900px]:[&>button]:w-[214px]">
+        {/* GlobalSearch owns its trigger, dialog, and the Cmd/Ctrl-K shortcut.
+            Its trigger is styled for a light surface, so restyle it (and its
+            keycap) from here for the dark gradient band. */}
+        <div className="flex min-w-11 shrink-0 justify-end min-[500px]:max-w-[214px] min-[500px]:flex-1 min-[500px]:shrink [&_kbd]:rounded-full [&_kbd]:border-transparent [&_kbd]:bg-nav-kbd-bg [&_kbd]:text-brand-foreground [&>button]:min-h-11 [&>button]:min-w-11 [&>button]:rounded-full [&>button]:border-nav-search-border [&>button]:bg-transparent [&>button]:text-nav-search-text [&>button]:hover:bg-white/10 [&>button]:hover:text-white [&>button]:focus-visible:ring-nav-search-text">
           <GlobalSearch />
         </div>
       </div>
