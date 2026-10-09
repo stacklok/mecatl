@@ -44,7 +44,7 @@ Also for contributors:
 - [User-docs authoring contract](../user-docs/_README.md) and
   [style guide](../user-docs/_STYLE.md), for public documentation.
 
-- The [Kubernetes execution and filesystems proposal](drafts/kubernetes-execution-and-filesystems.md) describes unimplemented options for live workspace and shell access across separate Pods.
+- The [Kubernetes execution and filesystems proposal](drafts/kubernetes-execution-and-filesystems.md) selects capability-based placement behind a shared API, with shared file workers and dedicated executors; it is not implemented.
 
 ## Operators
 
