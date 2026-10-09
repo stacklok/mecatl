@@ -65,16 +65,19 @@ guardrails are enabled.
 
 ### Configure web search
 
-`WebSearch` is enabled by default. `SEARXNG_URL` selects a self-hosted SearXNG
-`/search` endpoint, and otherwise `BRAVE_API_KEY` or
-`providers.brave.api_key` in the operator-owned `auth.yaml` selects Brave Search.
-`BRAVE_API_KEY` overrides the file entry. If neither backend is selected, Mecatl
-uses Exa's public MCP endpoint anonymously; set `EXA_API_KEY` or
-`providers.exa.api_key` in `auth.yaml` to use Exa's authenticated/paid tier, with
-the environment variable overriding the file entry. Exa and Brave are search
-credentials, not model providers: neither satisfies the requirement for an LLM
-credential. SearXNG takes priority over Brave, and Brave takes priority over Exa.
-SearXNG must enable JSON output because Mecatl requests `format=json`.
+`WebSearch` is enabled by default. Mecatl selects the first available backend:
+
+1. `SEARXNG_URL` selects a self-hosted SearXNG `/search` endpoint.
+2. `BRAVE_API_KEY` or `providers.brave.api_key` in the operator-owned `auth.yaml`
+   selects Brave Search. The environment variable takes precedence.
+3. Otherwise, Mecatl uses Exa's public MCP endpoint. Set `EXA_API_KEY` or
+   `providers.exa.api_key` in `auth.yaml` to use Exa's authenticated paid tier.
+   The environment variable takes precedence; with neither Exa credential set,
+   Exa runs anonymously.
+
+Exa and Brave are search credentials, not model providers. They do not satisfy
+Mecatl's requirement for an LLM credential. SearXNG must enable JSON output
+because Mecatl requests `format=json`.
 
 For another HTTP JSON service, set `--websearch-url` and `WEBSEARCH_API_KEY`.
 Results must contain `title`, `url`, and one of `snippet`, `content`, or
