@@ -4,7 +4,6 @@ import type { SessionUsageResponse } from "@mecatl-studio/contracts";
 import { describe, expect, it } from "vitest";
 import {
   cacheHitRate,
-  formatDurationMs,
   formatPercent,
   formatTokens,
   formatTurnStat,
@@ -28,14 +27,6 @@ describe("formatTokens", () => {
     expect(formatTokens("42")).toBe("42");
     expect(formatTokens("1200")).toBe("1.2k");
     expect(formatTokens("3450000")).toBe("3.5M");
-  });
-});
-
-describe("formatDurationMs", () => {
-  it("shows sub-second durations in ms and larger ones in seconds", () => {
-    expect(formatDurationMs(480)).toBe("480ms");
-    expect(formatDurationMs(4100)).toBe("4.1s");
-    expect(formatDurationMs(4000)).toBe("4s");
   });
 });
 

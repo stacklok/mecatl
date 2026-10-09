@@ -92,6 +92,8 @@ import {
 import { Input } from "../../components/ui/input";
 import { captureSseFailure, protectedRequestsPaused } from "../../lib/api-client";
 import { notifyRunCompletion } from "../../lib/browser-notifications";
+import { copyToClipboard } from "../../lib/clipboard";
+import { errorMessage } from "../../lib/error-message";
 import { modelPreferenceId, useDisabledModels } from "../../lib/model-preferences";
 import {
   defaultAgentName,
@@ -127,7 +129,6 @@ import {
   approvalKey,
   type ChatMessage,
   enqueueApproval,
-  errorMessage,
   failureFromResult,
   messageOwnsApproval,
   payloadImages,
@@ -2531,7 +2532,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   });
   useShortcut("chat.copyId", () => {
     if (sessionId && selectedSession?.capabilities.copyId)
-      void navigator.clipboard.writeText(sessionId);
+      void copyToClipboard(sessionId, "Session ID");
   });
   useShortcut("chat.fork", () => {
     if (selectedSession && isProvenChatSession(selectedSession)) void forkStandaloneChat();
@@ -2796,7 +2797,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                     {showSteerTrace ? "Hide developer steer trace" : "Show developer steer trace"}
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onSelect={() => void navigator.clipboard.writeText(sessionId)}>
+                  <DropdownMenuItem onSelect={() => void copyToClipboard(sessionId, "Session ID")}>
                     <Copy aria-hidden="true" />
                     Copy session ID
                   </DropdownMenuItem>
@@ -3264,7 +3265,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         >
           <Button
             onClick={() => {
-              void navigator.clipboard.writeText(selectionAction.text);
+              void copyToClipboard(selectionAction.text, "Selection");
               setSelectionAction(undefined);
             }}
             size="sm"

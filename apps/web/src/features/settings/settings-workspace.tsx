@@ -20,6 +20,7 @@ import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Switch } from "../../components/ui/switch";
+import { writeClipboardText } from "../../lib/clipboard";
 import { modelPreferenceId, useDisabledModels } from "../../lib/model-preferences";
 import { pageTitleClass } from "../../lib/typography";
 import { LearningReview } from "../knowledge/learning-review";
@@ -526,12 +527,10 @@ function AboutAgent({
         <Button
           className="min-h-11"
           onClick={async () => {
-            try {
-              await navigator.clipboard.writeText(supportSummary(runtime, settings));
-              setCopyStatus("Support summary copied.");
-            } catch {
-              setCopyStatus("Could not copy the support summary.");
-            }
+            const outcome = await writeClipboardText(supportSummary(runtime, settings));
+            setCopyStatus(
+              outcome.ok ? "Support summary copied." : "Could not copy the support summary.",
+            );
           }}
           size="sm"
           type="button"

@@ -18,6 +18,7 @@ import {
 } from "@tanstack/react-router";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { toast } from "sonner";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearUserScopedStorage } from "../../lib/account-storage";
 import { setRequestRecoveryState } from "../../lib/api-client";
@@ -381,6 +382,16 @@ describe("session inspection", () => {
     expect(bff.calls("/api/v1/sessions/child/transcript")).toHaveLength(2);
     expect(await within(transcript).findByText("Saved transcript could not be read.")).toBeTruthy();
     expect(screen.queryByRole("textbox", { name: "Message Mecatl", hidden: true })).toBeNull();
+  });
+
+  it("copies the session ID with a confirmation toast", async () => {
+    const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    const success = vi.spyOn(toast, "success").mockReturnValue(0);
+    await mount(new Bff());
+    const details = await screen.findByRole("dialog", { name: "Session details" });
+    fireEvent.click(within(details).getByRole("button", { name: "Copy session ID" }));
+    await waitFor(() => expect(success).toHaveBeenCalledWith("Session ID copied"));
+    expect(writeText).toHaveBeenCalledWith("child");
   });
 
   it("explains unavailable inspection and debug capabilities", async () => {

@@ -1,13 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import {
-  builderToCron,
-  type CronBuilderShape,
-  cronToBuilder,
-  describeCron,
-  ordinal,
-} from "./cron-builder";
+import { builderToCron, type CronBuilderShape, cronToBuilder } from "./cron-builder";
 
 describe("builderToCron", () => {
   it("derives each repeat shape", () => {
@@ -231,37 +225,5 @@ describe("round-trips", () => {
       if (parsed.repeat === "custom") throw new Error(`unexpected custom for ${cron}`);
       expect(builderToCron({ ...parsed, repeat: parsed.repeat })).toBe(cron);
     }
-  });
-});
-
-describe("ordinal", () => {
-  it("suffixes 1st/2nd/3rd/nth, with the 11-13 exception", () => {
-    expect(ordinal(1)).toBe("1st");
-    expect(ordinal(2)).toBe("2nd");
-    expect(ordinal(3)).toBe("3rd");
-    expect(ordinal(4)).toBe("4th");
-    expect(ordinal(11)).toBe("11th");
-    expect(ordinal(12)).toBe("12th");
-    expect(ordinal(13)).toBe("13th");
-    expect(ordinal(21)).toBe("21st");
-    expect(ordinal(28)).toBe("28th");
-  });
-});
-
-describe("describeCron", () => {
-  it("describes the builder's own shapes in plain English", () => {
-    expect(describeCron("0 9 * * *")).toBe("Daily at 9:00 AM");
-    expect(describeCron("30 17 * * 1-5")).toBe("Weekdays at 5:30 PM");
-    expect(describeCron("15 8 * * 5")).toBe("Weekly on Friday at 8:15 AM");
-    expect(describeCron("59 23 28 * *")).toBe("Monthly on the 28th at 11:59 PM");
-    expect(describeCron("*/15 * * * *")).toBe("Every 15 minutes");
-    expect(describeCron("*/1 * * * *")).toBe("Every minute");
-    expect(describeCron("0 */2 * * *")).toBe("Every 2 hours");
-    expect(describeCron("0 * * * *")).toBe("Every hour");
-  });
-
-  it("falls back to the raw expression for anything it doesn't recognise", () => {
-    expect(describeCron("0 9 * * 1,3,5")).toBe("0 9 * * 1,3,5");
-    expect(describeCron("@daily")).toBe("@daily");
   });
 });

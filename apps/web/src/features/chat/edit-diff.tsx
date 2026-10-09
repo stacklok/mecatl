@@ -2,6 +2,7 @@
 
 import { useId, useState } from "react";
 import { Button } from "../../components/ui/button";
+import { diffLines } from "../../lib/line-diff";
 import { cn } from "../../lib/utils";
 
 /**
@@ -34,102 +35,9 @@ export interface LineDiff {
 /** Rows shown before the "Show all N lines" toggle. */
 export const DIFF_LINE_CAP = 40;
 
-type LineDiffOp = { type: "same" | "add" | "del"; text: string };
-
-/**
- * Inputs whose combined line count exceeds this make `diffLines` return
- * `null`: the O(n·m) alignment is not worth running on a multi-thousand
- * line rewrite, and the caller falls back to a coarse removed/added split.
- */
-export const LINE_DIFF_MAX_LINES = 2000;
-
 /** Splits on "\n"; the empty text has NO lines (a deletion, not one blank line). */
 function splitLines(text: string): string[] {
   return text === "" ? [] : text.split("\n");
-}
-
-/**
- * Line-level diff of `before` → `after` (longest common subsequence).
- * Returns the ordered ops (`same` lines interleaved with `del`/`add` runs),
- * or `null` when the inputs together exceed `LINE_DIFF_MAX_LINES`.
- */
-function diffLines(before: string, after: string): LineDiffOp[] | null {
-  const a = splitLines(before);
-  const b = splitLines(after);
-  if (a.length + b.length > LINE_DIFF_MAX_LINES) return null;
-
-  // Trim the common prefix and suffix first: most edits touch a small window
-  // of a large block, and the DP table only needs to cover that window.
-  let start = 0;
-  while (start < a.length && start < b.length && a[start] === b[start]) {
-    start += 1;
-  }
-  let endA = a.length;
-  let endB = b.length;
-  while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) {
-    endA -= 1;
-    endB -= 1;
-  }
-
-  const ops: LineDiffOp[] = [];
-  for (let i = 0; i < start; i += 1) ops.push({ type: "same", text: a[i] as string });
-  ops.push(...lcsOps(a.slice(start, endA), b.slice(start, endB)));
-  for (let i = endA; i < a.length; i += 1) {
-    ops.push({ type: "same", text: a[i] as string });
-  }
-  return ops;
-}
-
-/** Classic LCS table over the trimmed middle, walked back into ops. */
-function lcsOps(a: string[], b: string[]): LineDiffOp[] {
-  const n = a.length;
-  const m = b.length;
-  if (n === 0) return b.map((text) => ({ type: "add", text }));
-  if (m === 0) return a.map((text) => ({ type: "del", text }));
-
-  // table[i][j] = LCS length of a[i..] and b[j..], stored flat.
-  const width = m + 1;
-  const table = new Uint16Array((n + 1) * width);
-  for (let i = n - 1; i >= 0; i -= 1) {
-    for (let j = m - 1; j >= 0; j -= 1) {
-      const cur = i * width + j;
-      const right = i * width + j + 1;
-      const down = (i + 1) * width + j;
-      const diag = (i + 1) * width + j + 1;
-      table[cur] =
-        a[i] === b[j]
-          ? (table[diag] as number) + 1
-          : Math.max(table[down] as number, table[right] as number);
-    }
-  }
-
-  const ops: LineDiffOp[] = [];
-  let i = 0;
-  let j = 0;
-  while (i < n && j < m) {
-    const down = (i + 1) * width + j;
-    const right = i * width + j + 1;
-    if (a[i] === b[j]) {
-      ops.push({ type: "same", text: a[i] as string });
-      i += 1;
-      j += 1;
-    } else if ((table[down] as number) >= (table[right] as number)) {
-      ops.push({ type: "del", text: a[i] as string });
-      i += 1;
-    } else {
-      ops.push({ type: "add", text: b[j] as string });
-      j += 1;
-    }
-  }
-  while (i < n) {
-    ops.push({ type: "del", text: a[i] as string });
-    i += 1;
-  }
-  while (j < m) {
-    ops.push({ type: "add", text: b[j] as string });
-    j += 1;
-  }
-  return ops;
 }
 
 /**

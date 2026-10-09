@@ -12,6 +12,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../../components/ui/dialog";
+import { copyToClipboard } from "../../lib/clipboard";
 
 export type InspectionView = "details" | "transcript" | "soul" | "worktrees";
 
@@ -261,7 +262,7 @@ export function SessionInspection({
               )}
               {session.capabilities.copyId ? (
                 <Button
-                  onClick={() => void navigator.clipboard.writeText(session.id)}
+                  onClick={() => void copyToClipboard(session.id, "Session ID")}
                   size="sm"
                   variant="outline"
                 >
