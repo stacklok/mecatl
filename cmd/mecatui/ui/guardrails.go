@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -21,32 +22,46 @@ func (m Model) runGuardrails() (tea.Model, tea.Cmd) {
 
 type guardrailPresentation struct {
 	blockID          scrollback.BlockID
-	hook             client.HookMsg
+	hookID           scrollback.HookID
+	readHook         func(scrollback.HookID) (scrollback.HookSnapshot, bool)
 	needsFinalDetail bool
 	approvalResolved bool
-	guardrailDetailState
+	requestID        uint64
+}
+
+func (r *guardrailPresentation) snapshot() scrollback.HookSnapshot {
+	if r == nil || r.readHook == nil {
+		return scrollback.HookSnapshot{}
+	}
+	hook, _ := r.readHook(r.hookID)
+	return hook
+}
+
+func (r *guardrailPresentation) revise(c *conversation, change func(*scrollback.HookSnapshot)) {
+	hook, ok := c.scrollback.Hook(r.hookID)
+	if !ok {
+		return
+	}
+	change(&hook)
+	c.scrollback.ReviseHook(r.hookID, hook)
 }
 
 type guardrailDetailState struct {
-	requestID   uint64
-	detail      client.GuardrailReviewDetail
-	unavailable bool
-	// mismatched marks a response for the requested review that names another
-	// review; it fails visible without displaying the mismatched text.
-	mismatched bool
+	requestID uint64
 }
 
-func (d *guardrailDetailState) applyDetail(msg client.GuardrailReviewDetailMsg, sessionID, reviewID string) bool {
+func (d *guardrailDetailState) applyDetail(msg client.GuardrailReviewDetailMsg, sessionID, reviewID string) (scrollback.HookLiveDetail, bool) {
 	if msg.SessionID != sessionID || msg.ReviewID != reviewID || d.requestID == 0 || d.requestID != msg.RequestID {
-		return false
+		return scrollback.HookLiveDetail{}, false
 	}
 	d.requestID = 0
-	d.mismatched = msg.Err == nil && msg.Detail.ReviewID != msg.ReviewID
-	d.unavailable = msg.Err != nil || d.mismatched
-	if !d.unavailable {
-		d.detail = msg.Detail
+	if msg.Err != nil {
+		return scrollback.HookLiveDetail{State: scrollback.HookDetailUnavailable}, true
 	}
-	return true
+	if msg.Detail.ReviewID != msg.ReviewID {
+		return scrollback.HookLiveDetail{State: scrollback.HookDetailMismatched}, true
+	}
+	return scrollback.HookLiveDetail{Concern: terminaltext.Sanitize(msg.Detail.Concern), SourceDisplay: terminaltext.Sanitize(msg.Detail.SourceDisplay)}, true
 }
 
 // showBenignGuardrails reports whether known-benign review notices render while
@@ -70,15 +85,31 @@ func (c *conversation) guardrailReview(id string) *guardrailPresentation {
 		c.guardrailReviews = make(map[string]*guardrailPresentation)
 	}
 	if c.guardrailReviews[id] == nil {
-		c.guardrailReviews[id] = &guardrailPresentation{needsFinalDetail: true}
+		hookID := c.scrollback.EnsureHookReview(id)
+		c.guardrailReviews[id] = &guardrailPresentation{hookID: hookID, readHook: c.scrollback.Hook, needsFinalDetail: true}
 	}
 	return c.guardrailReviews[id]
+}
+
+func (c *conversation) guardrailReviewForAsk(id, askID, parentID string) *guardrailPresentation {
+	if !isChildAsk(askID, parentID) || id == "" {
+		return c.guardrailReview(id)
+	}
+	key := guardrailReviewSessionID(askID, parentID) + "\x00" + id
+	if c.guardrailReviews == nil {
+		c.guardrailReviews = make(map[string]*guardrailPresentation)
+	}
+	if c.guardrailReviews[key] == nil {
+		hookID := c.scrollback.RecordHook(scrollback.HookSnapshot{Review: &scrollback.HookReview{ReviewID: id}})
+		c.guardrailReviews[key] = &guardrailPresentation{hookID: hookID, readHook: c.scrollback.Hook, needsFinalDetail: true}
+	}
+	return c.guardrailReviews[key]
 }
 
 // show retains every review notice; a known-benign review is classified so the
 // renderer hides it unless details are expanded or benign notices are shown.
 func (r *guardrailPresentation) show(c *conversation, text string) {
-	benign := routineGuardrail(r.hook.Guardrail) && !r.mismatched
+	benign := routineHookReview(r.snapshot().Review) && r.snapshot().Detail.State != scrollback.HookDetailMismatched
 	if r.blockID == 0 {
 		r.blockID = c.scrollback.Notices().AddGuardrailNotice(text, benign)
 	} else {
@@ -93,50 +124,105 @@ func (r *guardrailPresentation) handoffToApproval(c *conversation) {
 	r.approvalResolved = false
 }
 
-func (r *guardrailPresentation) resolveApproval(c *conversation, detail guardrailDetailState, text string, debug bool) string {
-	r.guardrailDetailState = detail
+func (r *guardrailPresentation) resolveApproval(c *conversation, text string, debug bool) string {
 	r.requestID = 0 // The closed ask's token must not become a receipt token.
 	r.approvalResolved = true
-	// Only missing prompt detail permits one fresh request after a nonroutine final hook.
-	r.needsFinalDetail = r.detail.Concern == "" && r.detail.SourceDisplay == ""
-	if r.hook.Guardrail != nil {
-		text += ". " + guardrailReviewReason(r.hook.Guardrail)
+	hook := r.snapshot()
+	r.needsFinalDetail = hook.Detail.Concern == "" && hook.Detail.SourceDisplay == ""
+	if hook.Review != nil && hook.Review.Inspection != "" {
+		text += ". " + hookReviewReason(hook.Review)
 	}
-	text += guardrailDetailText(r, debug)
+	detailText := guardrailDetailText(r, debug)
+	r.revise(c, func(h *scrollback.HookSnapshot) {
+		h.Detail.Receipt = terminaltext.Sanitize(text)
+		if h.Detail.State == "" {
+			h.Detail.State = scrollback.HookDetailReceipt
+		}
+	})
+	text += detailText
 	r.show(c, text)
 	return text
 }
 
-func (r *guardrailPresentation) beginDetailRequest(requestID uint64) {
+func (r *guardrailPresentation) beginDetailRequest(c *conversation, requestID uint64) {
 	r.requestID = requestID
 	r.needsFinalDetail = false
-	r.unavailable = false
-	r.mismatched = false
+	r.revise(c, func(h *scrollback.HookSnapshot) {
+		h.Detail.State = ""
+		if h.Detail.Receipt != "" {
+			h.Detail.State = scrollback.HookDetailReceipt
+		}
+	})
 }
 
 // Live and replay share the visibility policy. A live approval takes ownership
 // of its review's explanation when the permission request arrives.
-func (c *conversation) addGuardrailHook(msg client.HookMsg, debug bool) *guardrailPresentation {
+func (c *conversation) addGuardrailHook(msg client.HookMsg, debug bool) (*guardrailPresentation, scrollback.HookRecordOutcome) {
+	hook := hookSnapshot(msg)
+	outcome := c.scrollback.Tools().RecordHookEvent(hook)
+	if outcome.Attachment == scrollback.HookPending {
+		if c.pendingHooks == nil {
+			c.pendingHooks = make(map[scrollback.HookID]string)
+		}
+		if _, exists := c.pendingHooks[outcome.ID]; !exists {
+			c.pendingHookOrder = append(c.pendingHookOrder, outcome.ID)
+		}
+		c.pendingHooks[outcome.ID] = hook.CallID
+	} else {
+		delete(c.pendingHooks, outcome.ID)
+		c.pendingHookOrder = slices.DeleteFunc(c.pendingHookOrder, func(id scrollback.HookID) bool { return id == outcome.ID })
+	}
+	if outcome.Status == scrollback.HookDuplicate {
+		return nil, outcome
+	}
 	if msg.Guardrail == nil {
-		c.addHook(msg.Text, msg.Phase, msg.Tool, string(msg.Decision))
-		return nil
+		recorded, _ := c.scrollback.Hook(outcome.ID)
+		c.addHook(recorded.Text, recorded.Phase, recorded.Tool, recorded.Decision)
+		return nil, outcome
+	}
+	if outcome.Status == scrollback.HookConflict {
+		r := &guardrailPresentation{hookID: outcome.ID, readHook: c.scrollback.Hook}
+		text := "⚠ Conflicting guardrail hook: " + guardrailPresentationText(r, debug)
+		if recorded, ok := c.scrollback.Hook(outcome.ID); ok && recorded.Text != "" {
+			text += " " + recorded.Text
+		}
+		c.scrollback.Notices().AddGuardrailNotice(text, false)
+		return nil, outcome
 	}
 	r := c.guardrailReview(msg.Guardrail.ReviewID)
-	// A replayed pending-action hook must not undo an answer, and a routine final
-	// outcome must not replace or hide the visible approval receipt. Other final
-	// outcomes, including checker outages after releasing a result, still update it.
-	if r.approvalResolved && (msg.Guardrail.Disposition == "ask_action" || routineGuardrail(msg.Guardrail)) {
-		return nil
+	if r.hookID == 0 {
+		r.hookID, r.readHook = outcome.ID, c.scrollback.Hook
 	}
-	r.hook = msg
+	// A replayed pending-action hook must not undo an answer, and a routine final
+	// outcome must not replace or hide the visible approval receipt.
+	if r.approvalResolved && (msg.Guardrail.Disposition == "ask_action" || routineGuardrail(msg.Guardrail)) {
+		return nil, outcome
+	}
 	r.show(c, guardrailPresentationText(r, debug))
-	return r
+	return r, outcome
+}
+
+func hookSnapshot(msg client.HookMsg) scrollback.HookSnapshot {
+	hook := scrollback.HookSnapshot{CallID: msg.CallID, RunID: msg.RunID, Seq: msg.Seq, Phase: terminaltext.Sanitize(msg.Phase), Tool: terminaltext.Sanitize(msg.Tool), Decision: string(msg.Decision), Text: terminaltext.Sanitize(msg.Text)}
+	if v := msg.Guardrail; v != nil {
+		hook.Review = &scrollback.HookReview{
+			ReviewID: v.ReviewID, Job: v.Job, Assessment: v.Assessment, Inspection: v.Inspection, Disposition: v.Disposition, ReasonCode: v.ReasonCode,
+			RuleID: v.RuleID, RuleOrigin: v.RuleOrigin, CheckerProviderID: terminaltext.Sanitize(v.CheckerProviderID), CheckerModelID: terminaltext.Sanitize(v.CheckerModelID),
+			ConcernRefs: append([]string(nil), v.ConcernRefs...), SourceRefs: append([]string(nil), v.SourceRefs...),
+		}
+	}
+	return hook
+}
+
+func routineHookReview(review *scrollback.HookReview) bool {
+	return review != nil && review.ReviewID != "" && (review.Job == "action" || review.Job == "inbound") && review.Inspection == "complete" && review.Assessment == "acceptable" && (review.Disposition == "execute" || review.Disposition == "release_result")
 }
 
 func guardrailPresentationText(r *guardrailPresentation, debug bool) string {
-	text := guardrailHookText(r.hook)
-	if routineGuardrail(r.hook.Guardrail) {
-		text = "Guardrail check passed: " + terminaltext.Sanitize(r.hook.Tool) + "."
+	hook := r.snapshot()
+	text := hookText(hook)
+	if routineHookReview(hook.Review) {
+		text = "Guardrail check passed: " + hook.Tool + "."
 	} else {
 		text = "⚠ " + text
 	}
@@ -144,25 +230,27 @@ func guardrailPresentationText(r *guardrailPresentation, debug bool) string {
 }
 
 func guardrailDetailText(r *guardrailPresentation, debug bool) string {
+	hook := r.snapshot()
+	detail := hook.Detail
 	text := ""
-	if r.mismatched {
+	if detail.State == scrollback.HookDetailMismatched {
 		text += " Detailed explanation unavailable: response identity mismatch."
-	} else if r.unavailable {
+	} else if detail.State == scrollback.HookDetailUnavailable {
 		text += " Detailed explanation unavailable or expired."
-	} else if r.detail.Concern != "" {
-		text += " " + terminaltext.Sanitize(r.detail.Concern)
+	} else if detail.Concern != "" {
+		text += " " + detail.Concern
 	}
-	if r.detail.SourceDisplay != "" {
-		text += " Source: " + terminaltext.Sanitize(r.detail.SourceDisplay)
+	if detail.SourceDisplay != "" {
+		text += " Source: " + detail.SourceDisplay
 	}
-	if debug && r.hook.Guardrail != nil {
-		review := r.hook.Guardrail
-		text += terminaltext.Sanitize(fmt.Sprintf(" [%s · %s · %s · %s · %s · checker %s/%s]", r.hook.Phase, review.Job, review.Inspection, review.Assessment, review.Disposition, review.CheckerProviderID, review.CheckerModelID))
+	if debug && hook.Review != nil {
+		review := hook.Review
+		text += terminaltext.Sanitize(fmt.Sprintf(" [%s · %s · %s · %s · %s · checker %s/%s]", hook.Phase, review.Job, review.Inspection, review.Assessment, review.Disposition, review.CheckerProviderID, review.CheckerModelID))
 	}
 	return text
 }
 
-func guardrailReviewReason(review *client.GuardrailReview) string {
+func hookReviewReason(review *scrollback.HookReview) string {
 	why := "The review status is unknown; do not assume the check passed."
 	switch {
 	case review.Inspection == "operational_failure":
@@ -178,10 +266,12 @@ func guardrailReviewReason(review *client.GuardrailReview) string {
 	return why
 }
 
-func guardrailHookText(msg client.HookMsg) string {
-	review := msg.Guardrail
+func guardrailHookText(msg client.HookMsg) string { return hookText(hookSnapshot(msg)) }
+
+func hookText(hook scrollback.HookSnapshot) string {
+	review := hook.Review
 	if review == nil {
-		return msg.Text
+		return hook.Text
 	}
 	outcome := "The outcome is unknown. Check /guardrails before continuing."
 	switch review.Disposition {
@@ -199,14 +289,27 @@ func guardrailHookText(msg client.HookMsg) string {
 	case "pass_advisory", "continue_warning":
 		outcome = "Work continued with a warning. Review the explanation before relying on the result."
 	}
-	return "Guardrail: " + terminaltext.Sanitize(msg.Tool) + ". " + outcome + " " + guardrailReviewReason(review)
+	return "Guardrail: " + hook.Tool + ". " + outcome + " " + hookReviewReason(review)
 }
 
 func (m *Model) applyGuardrailDetail(msg client.GuardrailReviewDetailMsg) {
 	r := m.conv.guardrailReviews[msg.ReviewID]
-	if r == nil || !r.applyDetail(msg, m.sessionID, msg.ReviewID) {
+	if r == nil {
 		return
 	}
+	state := guardrailDetailState{requestID: r.requestID}
+	detail, ok := state.applyDetail(msg, m.sessionID, msg.ReviewID)
+	if !ok {
+		return
+	}
+	r.requestID = 0
+	r.revise(&m.conv, func(h *scrollback.HookSnapshot) {
+		detail.Receipt = h.Detail.Receipt
+		if detail.Receipt != "" && detail.State == "" {
+			detail.State = scrollback.HookDetailReceipt
+		}
+		h.Detail = detail
+	})
 	r.show(&m.conv, guardrailPresentationText(r, m.deps.Debug))
 }
 

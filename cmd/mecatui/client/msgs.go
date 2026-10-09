@@ -150,10 +150,12 @@ type MCPAuthorizationMsg struct {
 
 // PermissionAskMsg opens the approval modal; AskID is the exact correlation key
 // echoed back in ResumeApproval. RunID is the opaque exact-run identity used by
-// out-of-band run controls.
+// out-of-band run controls. CallID is presentation metadata only; for a surfaced
+// child ask it remains scoped to that child and does not prove a root attachment.
 type PermissionAskMsg struct {
 	RunID         string
 	AskID         string
+	CallID        string
 	Tool          string
 	Args          string // raw JSON
 	Reason        string
@@ -197,12 +199,16 @@ const (
 
 // HookMsg is an inline hook notice. Beyond the human-readable Text it carries the
 // structured Phase (lifecycle point, e.g. "PreToolUse"), the related Tool (for
-// per-tool phases), and the Decision (info/blocked/modified/advisory) so the ui can
-// render it distinctly from a compaction notice and colour a blocked or advisory hook.
+// per-tool phases), the exact CallID, and the event's RunID/Seq identity. Decision
+// (info/blocked/modified/advisory) lets the ui render it distinctly from a compaction
+// notice and colour a blocked or advisory hook.
 type HookMsg struct {
 	Text      string
 	Phase     string
 	Tool      string
+	CallID    string
+	RunID     string
+	Seq       int64
 	Decision  HookDecision
 	Guardrail *GuardrailReview
 }
@@ -1267,7 +1273,7 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 
 func permissionAskMsg(ev *mecatlv1.Event) PermissionAskMsg {
 	a := ev.GetAsk()
-	msg := PermissionAskMsg{RunID: ev.GetRunId(), AskID: a.GetAskId(), Tool: a.GetTool(), Args: a.GetArgs(), Reason: a.GetReason(), ExpectedRunID: ev.GetRunId()}
+	msg := PermissionAskMsg{RunID: ev.GetRunId(), AskID: a.GetAskId(), CallID: a.GetCallId(), Tool: a.GetTool(), Args: a.GetArgs(), Reason: a.GetReason(), ExpectedRunID: ev.GetRunId()}
 	if scope := a.GetGuardrail(); scope != nil {
 		kind := string(SessionKindUnknown)
 		switch scope.GetKind() {
@@ -1283,7 +1289,7 @@ func permissionAskMsg(ev *mecatlv1.Event) PermissionAskMsg {
 
 func hookMsg(ev *mecatlv1.Event) HookMsg {
 	h := ev.GetHook()
-	msg := HookMsg{Text: ev.GetText(), Phase: h.GetPhase(), Tool: h.GetTool(), Decision: hookDecisionFrom(h.GetDecision())}
+	msg := HookMsg{Text: ev.GetText(), Phase: h.GetPhase(), Tool: h.GetTool(), CallID: h.GetCallId(), RunID: ev.GetRunId(), Seq: ev.GetSeq(), Decision: hookDecisionFrom(h.GetDecision())}
 	if review := h.GetGuardrail(); review != nil {
 		machine := &GuardrailReview{ReviewID: review.GetReviewId(), Job: guardrailJob(review.GetJob()), Assessment: guardrailAssessment(review.GetAssessment()), Inspection: guardrailInspection(review.GetInspection()), Disposition: guardrailDisposition(review.GetDisposition()), ReasonCode: review.GetReasonCode(), RuleID: review.GetRuleId(), RuleOrigin: review.GetRuleOrigin(), CheckerProviderID: review.GetCheckerProviderId(), CheckerModelID: review.GetCheckerModelId()}
 		for _, ref := range review.GetConcerns() {

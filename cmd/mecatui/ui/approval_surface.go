@@ -15,6 +15,7 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 const guardrailResultRelease = "result_release"
@@ -144,18 +145,6 @@ func (s *approvalSurface) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 		}
 		return nil, true, false
 	}
-	if detail, ok := msg.(client.GuardrailReviewDetailMsg); ok {
-		if s.applyReviewDetail(&s.ask, detail) {
-			s.argsVPReady = false
-			return nil, true, false
-		}
-		for i := range s.queue {
-			if s.applyReviewDetail(&s.queue[i], detail) {
-				return nil, true, false
-			}
-		}
-		return nil, false, false
-	}
 	hit, ok := msg.(surfaceHitMsg)
 	if !ok {
 		return nil, false, false
@@ -168,26 +157,19 @@ func (s *approvalSurface) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 	return nil, true, false
 }
 
-func (s *approvalSurface) applyGuardrailHook(msg client.HookMsg) *guardrailPresentation {
+func (s *approvalSurface) applyGuardrailHook(hook scrollback.HookSnapshot) *guardrailPresentation {
 	asks := []*pendingAsk{&s.ask}
 	for i := range s.queue {
 		asks = append(asks, &s.queue[i])
 	}
 	for _, ask := range asks {
-		if msg.Guardrail.ReviewID != "" && ask.guardrail != nil && ask.guardrail.ReviewID == msg.Guardrail.ReviewID {
-			ask.Reason = guardrailHookText(msg)
+		if hook.Review != nil && hook.Review.ReviewID != "" && ask.guardrail != nil && !isChildAsk(ask.AskID, s.sessionID) && ask.guardrail.ReviewID == hook.Review.ReviewID && ask.review != nil {
+			ask.Reason = hookText(ask.review.snapshot())
 			s.argsVPReady = false
 			return ask.review
 		}
 	}
 	return nil
-}
-
-func (s *approvalSurface) applyReviewDetail(ask *pendingAsk, msg client.GuardrailReviewDetailMsg) bool {
-	if ask.guardrail == nil {
-		return false
-	}
-	return ask.applyDetail(msg, guardrailReviewSessionID(ask.AskID, s.sessionID), ask.guardrail.ReviewID)
 }
 
 func (s *approvalSurface) HandleWheel(msg tea.MouseWheelMsg) (tea.Cmd, bool) {
@@ -919,14 +901,15 @@ func writeGuardrailApprovalDetail(b *strings.Builder, th theme.Theme, ask pendin
 		b.WriteString(th.Style("muted").Render(wrapApprovalReason(text, contentWidth)) + "\n")
 	}
 	write(guardrailApprovalDescription(ask.guardrail))
-	if ask.unavailable {
+	detail := ask.review.snapshot().Detail
+	if detail.State == scrollback.HookDetailUnavailable || detail.State == scrollback.HookDetailMismatched {
 		write("Detailed explanation unavailable or expired. Review the available information before proceeding.")
 	}
-	if ask.detail.Concern != "" {
-		write("Explanation: " + ask.detail.Concern)
+	if detail.Concern != "" {
+		write("Explanation: " + detail.Concern)
 	}
-	if ask.detail.SourceDisplay != "" {
-		write("Source: " + ask.detail.SourceDisplay)
+	if detail.SourceDisplay != "" {
+		write("Source: " + detail.SourceDisplay)
 	}
 }
 

@@ -7,7 +7,31 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
+
+func (m *Model) applyApprovalDetail(msg client.GuardrailReviewDetailMsg) {
+	s := approvalSurfaceFor(m)
+	if s == nil {
+		return
+	}
+	asks := []*pendingAsk{&s.ask}
+	for i := range s.queue {
+		asks = append(asks, &s.queue[i])
+	}
+	for _, ask := range asks {
+		if ask.guardrail == nil || ask.review == nil {
+			continue
+		}
+		detail, ok := ask.applyDetail(msg, guardrailReviewSessionID(ask.AskID, s.sessionID), ask.guardrail.ReviewID)
+		if !ok {
+			continue
+		}
+		ask.review.revise(&m.conv, func(h *scrollback.HookSnapshot) { h.Detail = detail })
+		s.argsVPReady = false
+		return
+	}
+}
 
 // approvalFooterProjection is the narrow approval state footer needs. It is
 // derived once per footer frame from the active surface.
@@ -164,7 +188,7 @@ func (m *Model) addApprovalNotice(ask pendingAsk, text string) string {
 		m.conv.addNotice(text)
 		return text
 	}
-	return ask.review.resolveApproval(&m.conv, ask.guardrailDetailState, text, m.deps.Debug)
+	return ask.review.resolveApproval(&m.conv, text, m.deps.Debug)
 }
 
 func (m Model) finishApprovalIntent(advance approvalAdvance, resume phase, cmd tea.Cmd) (tea.Model, tea.Cmd, bool) {
@@ -241,15 +265,15 @@ func (m Model) applyPermissionAsk(msg client.PermissionAskMsg) (tea.Model, tea.C
 	}
 	var review *guardrailPresentation
 	if msg.Guardrail != nil {
-		review = m.conv.guardrailReview(msg.Guardrail.ReviewID)
+		review = m.conv.guardrailReviewForAsk(msg.Guardrail.ReviewID, msg.AskID, m.sessionID)
 		review.handoffToApproval(&m.conv)
 		if !m.deps.Debug {
 			msg.Reason = "The safety review needs your decision before this action can run."
 			if msg.Guardrail.Kind == guardrailResultRelease {
 				msg.Reason = "The tool has already run. Its result is withheld from the model pending your decision."
 			}
-			if review.hook.Guardrail != nil {
-				msg.Reason = guardrailHookText(review.hook)
+			if review.snapshot().Review != nil && review.snapshot().Tool != "" {
+				msg.Reason = hookText(review.snapshot())
 			}
 		}
 	}

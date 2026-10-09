@@ -219,12 +219,12 @@ func TestGuardrailApprovalOwnsExplanationAndQueuedReplies(t *testing.T) {
 	bad.Err = errors.New("wrong child failure")
 	m = applyAll(m, bad)
 	s := approvalSurfaceOf(t, m)
-	if s.ask.unavailable || s.queue[0].unavailable {
+	if s.ask.review.snapshot().Detail.State == scrollback.HookDetailUnavailable || s.queue[0].review.snapshot().Detail.State == scrollback.HookDetailUnavailable {
 		t.Fatal("wrong-session failure affected approval")
 	}
 	m = applyAll(m, resultReply, actionReply, actionReply)
 	s = approvalSurfaceOf(t, m)
-	if s.ask.detail.ReviewID != "action" || s.queue[0].detail.ReviewID != "result" {
+	if s.ask.review.snapshot().Review.ReviewID != "action" || s.queue[0].review.snapshot().Review.ReviewID != "result" {
 		t.Fatal("queued detail lost or sent to wrong approval")
 	}
 	body, _ := s.permissionModalBodyParts(100, 80)
@@ -247,7 +247,7 @@ func TestGuardrailApprovalOwnsExplanationAndQueuedReplies(t *testing.T) {
 	late.Err = errors.New("late failure")
 	m = applyAll(m, late)
 	s = approvalSurfaceOf(t, m)
-	if s.ask.guardrail.ReviewID != "result" || s.ask.unavailable {
+	if s.ask.guardrail.ReviewID != "result" || s.ask.review.snapshot().Detail.State == scrollback.HookDetailUnavailable {
 		t.Fatal("resolved prompt failure affected successor")
 	}
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -269,14 +269,14 @@ func TestGuardrailApprovalDetailFailureCorrelation(t *testing.T) {
 	wrong = reply
 	wrong.RequestID++
 	m = applyAll(m, wrong)
-	if approvalSurfaceOf(t, m).ask.unavailable {
+	if approvalSurfaceOf(t, m).ask.review.snapshot().Detail.State == scrollback.HookDetailUnavailable {
 		t.Fatal("uncorrelated error changed prompt")
 	}
 	m = applyAll(m, reply)
 	s := approvalSurfaceOf(t, m)
 	body, _ := s.permissionModalBodyParts(100, 80)
 	body = stripANSIstr(body)
-	if !s.ask.unavailable || !strings.Contains(body, "unavailable or expired") || !strings.Contains(body, "withheld from the model") || strings.Contains(body, "private outage detail") || strings.Contains(body, "Concern:") {
+	if s.ask.review.snapshot().Detail.State != scrollback.HookDetailUnavailable || !strings.Contains(body, "unavailable or expired") || !strings.Contains(body, "withheld from the model") || strings.Contains(body, "private outage detail") || strings.Contains(body, "Concern:") {
 		t.Fatalf("failure prompt = %q", body)
 	}
 
@@ -298,11 +298,11 @@ func TestGuardrailApprovalDetailFailureCorrelation(t *testing.T) {
 	reply.Err = nil
 	reply.Detail = client.GuardrailReviewDetail{ReviewID: "result", Concern: "stale"}
 	m = applyAll(m, reply)
-	if s = approvalSurfaceOf(t, m); s.ask.unavailable || s.ask.detail.Concern != "" {
+	if s = approvalSurfaceOf(t, m); s.ask.review.snapshot().Detail.State == scrollback.HookDetailUnavailable || s.ask.review.snapshot().Detail.Concern != "" {
 		t.Fatal("previous prompt changed reopened approval")
 	}
 	m = applyAll(m, fresh)
-	if !approvalSurfaceOf(t, m).ask.unavailable {
+	if approvalSurfaceOf(t, m).ask.review.snapshot().Detail.State != scrollback.HookDetailUnavailable {
 		t.Fatal("current prompt error not applied")
 	}
 }

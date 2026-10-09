@@ -112,16 +112,19 @@ func clonePayload(in PayloadSnapshot) PayloadSnapshot {
 	case ToolCardSnapshot:
 		payload.Call = cloneCall(payload.Call)
 		payload.Result = cloneResult(payload.Result)
+		payload.Hooks = cloneHooks(payload.Hooks)
 		return payload
 	case SubagentCardSnapshot:
 		payload.Call = cloneCall(payload.Call)
 		payload.Result = cloneResult(payload.Result)
+		payload.Hooks = cloneHooks(payload.Hooks)
 		payload.Start = cloneSubagentStart(payload.Start)
 		payload.Update = cloneSubagentUpdate(payload.Update)
 		return payload
 	case TeamCardSnapshot:
 		payload.Call = cloneCall(payload.Call)
 		payload.Result = cloneResult(payload.Result)
+		payload.Hooks = cloneHooks(payload.Hooks)
 		payload.Update = cloneTeamUpdate(payload.Update)
 		return payload
 	case NoticeCardSnapshot:

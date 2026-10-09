@@ -115,6 +115,54 @@ func TestRoutingDecisionProjectionPreservesOptionalPresence(t *testing.T) {
 	}
 }
 
+func TestHookAndPermissionAskCorrelationIdentity(t *testing.T) {
+	callID := "call:/opaque?=value"
+	childCallID := "child-call:/opaque?=value"
+	for _, tc := range []struct {
+		name string
+		ev   *mecatlv1.Event
+		want tea.Msg
+	}{
+		{
+			name: "hook preserves call and event identity",
+			ev: &mecatlv1.Event{Type: "hook", RunId: "root-run", Seq: 42, Text: "checked", Hook: &mecatlv1.Hook{
+				CallId: callID,
+			}},
+			want: HookMsg{Text: "checked", CallID: callID, RunID: "root-run", Seq: 42, Decision: HookInfo},
+		},
+		{
+			name: "older server hook omits correlation identity",
+			ev:   &mecatlv1.Event{Type: "hook", Text: "checked", Hook: &mecatlv1.Hook{}},
+			want: HookMsg{Text: "checked", Decision: HookInfo},
+		},
+		{
+			name: "permission ask preserves call identity",
+			ev: &mecatlv1.Event{Type: "permission.ask", RunId: "root-run", Ask: &mecatlv1.PermissionAsk{
+				AskId: "ask-1", CallId: &callID,
+			}},
+			want: PermissionAskMsg{RunID: "root-run", ExpectedRunID: "root-run", AskID: "ask-1", CallID: callID},
+		},
+		{
+			name: "older server permission ask omits call identity",
+			ev:   &mecatlv1.Event{Type: "permission.ask", Ask: &mecatlv1.PermissionAsk{AskId: "ask-1"}},
+			want: PermissionAskMsg{AskID: "ask-1"},
+		},
+		{
+			name: "surfaced child ask retains child call identity",
+			ev: &mecatlv1.Event{Type: "permission.ask", RunId: "child-run", Ask: &mecatlv1.PermissionAsk{
+				AskId: "child-ask", CallId: &childCallID,
+			}},
+			want: PermissionAskMsg{RunID: "child-run", ExpectedRunID: "child-run", AskID: "child-ask", CallID: childCallID},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := EventToMsg(tc.ev); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("EventToMsg() = %#v, want %#v", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestEventToMsg covers the mapper over every documented event type, asserting
 // both the msg variant and a representative carried field. This is the single
 // translation point between proto and the ui model, so it gets exhaustive

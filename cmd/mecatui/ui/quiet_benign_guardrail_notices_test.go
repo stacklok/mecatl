@@ -330,8 +330,8 @@ func TestQuietBenignGuardrailNotices_Scenario2_ApprovalDetailAlwaysVisible(t *te
 	before := m.conv.scrollback.Len()
 	m = applyAll(m, unrelated)
 	s := approvalSurfaceOf(t, m)
-	if s.ask.detail.Concern != "" || m.conv.scrollback.Len() != before || !benignGuardrailAt(&m.conv, 0) {
-		t.Fatalf("unrelated response was not ignored by approval and retained on its benign notice: ask=%+v cards=%+v", s.ask.detail, m.conv.testBlocks())
+	if s.ask.review.snapshot().Detail.Concern != "" || m.conv.scrollback.Len() != before || !benignGuardrailAt(&m.conv, 0) {
+		t.Fatalf("unrelated response was not ignored by approval and retained on its benign notice: ask=%+v cards=%+v", s.ask.review.snapshot().Detail, m.conv.testBlocks())
 	}
 	if strings.Contains(frameText(&m), "unrelated benign detail") {
 		t.Fatal("unrelated benign conversation detail became visible")
@@ -341,8 +341,8 @@ func TestQuietBenignGuardrailNotices_Scenario2_ApprovalDetailAlwaysVisible(t *te
 	if guardrails.calls != 2 {
 		t.Fatalf("detail calls = %d, want 2", guardrails.calls)
 	}
-	if s = approvalSurfaceOf(t, m); s.ask.detail.Concern != "matching approval detail" {
-		t.Fatalf("matching approval detail not consumed: %+v", s.ask.detail)
+	if s = approvalSurfaceOf(t, m); s.ask.review.snapshot().Detail.Concern != "matching approval detail" {
+		t.Fatalf("matching approval detail not consumed: %+v", s.ask.review.snapshot().Detail)
 	}
 	if got := stripANSIstr(m.View().Content); !strings.Contains(got, "matching approval detail") {
 		t.Fatalf("matching approval detail not visible: %q", got)

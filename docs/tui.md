@@ -153,6 +153,14 @@ session mode; the server posture badge is separate, and its high-risk variant us
 a fixed, contrast-checked danger style rather than a theme color.
 
 Durable facts go in scrollback; advisories and transient activity go in the footer.
+The scrollback conversation owns hook evidence and live guardrail explanations.
+Tool, Subagent, and Team snapshots expose detached hook records attached by an
+exact call ID that identifies one retained root card. Notices and approval
+explanations read the same record; unknown or conflicting identities remain
+standalone. Replay restores machine review fields. The explanation and receipt
+fields on hook records are live-only; historical approval receipts replay as
+standalone notices. Hook attachments are data for these snapshots; compact cards and `/toolcalls` retain their existing presentation.
+
 A failed action needs visible feedback, never a silent reset or an optimistic
 success claim, and a notice never shows raw transport or credential material.
 

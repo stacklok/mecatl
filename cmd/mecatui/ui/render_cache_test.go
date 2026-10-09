@@ -274,7 +274,10 @@ var oracleSteps = []struct {
 // method fails TestConversationMutatorsCoveredByOracle until it is either added
 // as an oracle step or consciously listed here.
 var oracleNonMutators = map[string]string{
+	"attachPendingHooks":    "attachment driven by addTool and reconcileUnresolvedTool",
+	"clearPendingHooks":     "drops only pending association candidates at run end; no rendered change",
 	"guardrailReview":       "lazy accessor, driven via addGuardrailHook and detail update steps",
+	"guardrailReviewForAsk": "lazy accessor, driven via approval tests",
 	"subagentCard":          "typed snapshot lookup",
 	"teamCard":              "typed snapshot lookup",
 	"latestPendingToolName": "pure read",

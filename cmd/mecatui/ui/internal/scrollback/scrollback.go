@@ -67,17 +67,24 @@ type card struct {
 	id       BlockID
 	revision uint64
 	payload  PayloadSnapshot
+	hookRefs []HookID
 }
 
 // Conversation is an ordered, mutable logical conversation document. It owns its
 // cards, tool-call index, and changed-files appendix; use its component facades
 // to append or transition cards, and snapshots to observe them.
 type Conversation struct {
-	cards    []card
-	nextID   BlockID
-	calls    map[string]int
-	appendix *AppendixSnapshot
-	seen     map[string]struct{}
+	cards         []card
+	nextID        BlockID
+	calls         map[string]int
+	appendix      *AppendixSnapshot
+	seen          map[string]struct{}
+	nextHookID    HookID
+	hooks         map[HookID]HookSnapshot
+	hookEvents    map[hookEventKey]hookEvent
+	hookConflicts map[hookEventKey][]hookEvent
+	hookReviews   map[string]HookID
+	hookBindings  map[HookID]BlockID
 }
 
 // ToolCallMetadata is the compact tool-card projection used by inventories. It
@@ -151,7 +158,22 @@ func (c *Conversation) Len() int { return len(c.cards) }
 // it cannot mutate the Conversation.
 func (c *Conversation) SnapshotAt(i int) BlockSnapshot {
 	card := c.cards[i]
-	return BlockSnapshot{ID: card.id, Revision: card.revision, Payload: clonePayload(card.payload)}
+	payload := clonePayload(card.payload)
+	if len(card.hookRefs) != 0 {
+		hooks := c.attachedHooks(card.hookRefs)
+		switch p := payload.(type) {
+		case ToolCardSnapshot:
+			p.Hooks = hooks
+			payload = p
+		case SubagentCardSnapshot:
+			p.Hooks = hooks
+			payload = p
+		case TeamCardSnapshot:
+			p.Hooks = hooks
+			payload = p
+		}
+	}
+	return BlockSnapshot{ID: card.id, Revision: card.revision, Payload: payload}
 }
 
 // MetadataAt returns the cache identity for a card without allocating or
