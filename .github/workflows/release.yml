@@ -1067,7 +1067,7 @@ jobs:
         with: {persist-credentials: false, fetch-depth: 1, ref: "${{ needs.guard.outputs.commit }}"}
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
-          version: v0.30.1
+          version: v0.38.0
       - name: Validate immutable base inputs
         run: sh .github/scripts/validate-execution-base-images.sh
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
@@ -1122,7 +1122,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false, fetch-depth: 1, ref: "${{ needs.guard.outputs.commit }}"}
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
-        with: {version: v3.18.4}
+        with: {version: v3.22.0}
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with: {registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}"}
@@ -1460,7 +1460,7 @@ jobs:
 
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
-          version: v3.18.4
+          version: v3.22.0
 
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
@@ -1749,7 +1749,7 @@ jobs:
       # and the ci.yml validation step.
       - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
-          version: "v2.16.0"
+          version: "v2.18.2"
           # No --parallelism cap. A cap of 2 was tried and REGRESSED the job into
           # a 30-minute timeout: the runner has 4 CPUs, so the default is already
           # 4, and halving it left the build on target 7 of 8 at the deadline.
