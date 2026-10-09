@@ -259,12 +259,10 @@ type Runtime struct {
 	bindingPrefix    string
 	closed           bool
 	drainSessions    []*logicalSession
-	// process is set only when this Runtime is owned by a bundled ToolHive
-	// Process (NewToolHiveProcess). It lets an Attachment reach the pre-prompt
-	// authenticated-discovery primitives without widening the neutral contract.
-	// nil for a plain Compile-based Runtime, which never supports workspace
-	// enrollment.
-	process *Process
+	// Bundled capabilities are supplied by composition; plain runtimes have none.
+	enrollment  *enrollmentConfig
+	discovery   authenticatedDiscoverer
+	publication publicationGate
 }
 
 var _ contract.Service = (*Runtime)(nil)

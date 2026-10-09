@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +14,39 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/mcpbroker"
 )
+
+func TestValidLogicalSessionID(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{name: "empty"},
+		{name: "ordinary", value: "broker-session-123", want: true},
+		{name: "spaces and separators", value: "broker session/123", want: true},
+		{name: "unicode", value: "会話-123", want: true},
+		{name: "byte limit", value: strings.Repeat("a", mcpbroker.MaxLogicalSessionIDBytes), want: true},
+		{name: "over byte limit", value: strings.Repeat("a", mcpbroker.MaxLogicalSessionIDBytes+1)},
+		{name: "unicode byte limit", value: strings.Repeat("é", mcpbroker.MaxLogicalSessionIDBytes/2), want: true},
+		{name: "unicode over byte limit", value: strings.Repeat("é", mcpbroker.MaxLogicalSessionIDBytes/2+1)},
+		{name: "invalid UTF-8", value: "session\xff"},
+		{name: "truncated UTF-8", value: "session\xc3"},
+		{name: "DEL", value: "session\x7f"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := mcpbroker.ValidLogicalSessionID(session.SessionID(tc.value)); got != tc.want {
+				t.Fatalf("ValidLogicalSessionID(%q) = %v, want %v", tc.value, got, tc.want)
+			}
+		})
+	}
+	for control := rune(0); control < 0x20; control++ {
+		t.Run(fmt.Sprintf("control-%02x", control), func(t *testing.T) {
+			if mcpbroker.ValidLogicalSessionID(session.SessionID("session" + string(control))) {
+				t.Fatal("C0 control character accepted")
+			}
+		})
+	}
+}
 
 type fakeService struct {
 	mu             sync.Mutex

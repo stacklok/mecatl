@@ -53,25 +53,47 @@ type Process struct {
 	Runtime  *Runtime
 	Handlers HandlerBundle
 
-	ctx             context.Context
-	cancel          context.CancelFunc
-	lifecycleMu     sync.Mutex
-	closed          bool
-	construction    toolHiveConstruction
-	discovery       *authenticatedDiscovery
-	protectedTarget *oauthRoute
-	// occupied is the immutable model-visible name set outside this Process's
-	// broker catalogue (core/global tools), captured once at construction so a
-	// later workspace-enrollment freeze can reuse it without re-deriving it.
-	occupied           []string
+	ctx                context.Context
+	cancel             context.CancelFunc
+	lifecycleMu        sync.Mutex
+	closed             bool
+	construction       toolHiveConstruction
+	discovery          *authenticatedDiscovery
+	protectedTarget    *oauthRoute
 	queryAuthenticated func(context.Context, oauth2.TokenSource, string) (AuthenticatedCapabilities, error)
 	resources          []ownedResource
 	closeOnce          sync.Once
 	closeErr           error
-	// diag receives per-backend authenticated-discovery outcomes during
-	// workspace-enrollment catalogue freeze. Always non-nil (defaults to
-	// port.NopDiagnostics{} in newToolHiveProcess).
-	diag port.Diagnostics
+}
+
+// processPublicationGate is bound once to the exact runtime it owns. It never
+// holds a runtime/session lock while waiting for process lifecycle admission.
+type processPublicationGate struct {
+	process *Process
+	runtime *Runtime
+}
+
+func (g processPublicationGate) WhileOpen(commit func() error) error {
+	p := g.process
+	p.lifecycleMu.Lock()
+	defer p.lifecycleMu.Unlock()
+	if p.closed || p.Runtime != g.runtime || (p.ctx != nil && p.ctx.Err() != nil) {
+		return ErrAuthenticatedDiscovery
+	}
+	return commit()
+}
+
+func (p *Process) configureRuntime(occupied []string) {
+	connectors := make([]configuredConnector, len(p.construction.backends))
+	for i, backend := range p.construction.backends {
+		_, protected := p.construction.providerByBackend[backend.ID]
+		connectors[i] = configuredConnector{id: backend.ID, name: connectorDisplayName(backend.Name), protected: protected}
+	}
+	p.Runtime.configureEnrollment(enrollmentConfig{
+		backends: p.construction.protectedBackends, occupied: occupied,
+		connectors: connectors, target: p.protectedTarget,
+	}, p, processPublicationGate{process: p, runtime: p.Runtime})
+	p.protectedTarget = p.Runtime.enrollment.target
 }
 
 type toolHiveProcessOptions struct {
@@ -126,7 +148,7 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		return nil, err
 	}
 	// Static protected declarations are visible before enrollment so a first call
-	// can initiate the ToolHive-owned bundle authorization. catalogueInputs
+	// can initiate the ToolHive-owned bundle authorization. Catalogue freezing
 	// filters these oauth routes when it builds the enrolled replacement.
 	routes = append(routes, staticRoutes...)
 	sortRoutes(routes)
@@ -162,8 +184,9 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 	}
 
 	processCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	process := &Process{Runtime: runtime, ctx: processCtx, cancel: cancel, construction: construction, protectedTarget: protectedTarget, occupied: append([]string(nil), config.Occupied...), diag: diag}
-	runtime.process = process
+	process := &Process{Runtime: runtime, ctx: processCtx, cancel: cancel, construction: construction, protectedTarget: protectedTarget}
+	process.configureRuntime(config.Occupied)
+	protectedTarget = process.protectedTarget
 	process.resources = append(process.resources, ownedResource{name: "process-context", close: func() error { cancel(); return nil }})
 	rollback := func(cause error) (*Process, error) {
 		process.rollback()
@@ -538,6 +561,12 @@ func hasProtected(profiles []ToolHiveProfile) bool {
 }
 
 func (p *Process) rollback() {
+	p.lifecycleMu.Lock()
+	p.closed = true
+	p.lifecycleMu.Unlock()
+	if p.cancel != nil {
+		p.cancel()
+	}
 	// closeAndDrain blocks (bounded by closeDrainTimeout) until every in-flight
 	// attachment operation has actually returned, so closeResources below can
 	// never tear down the vMCP/authserver resources those operations still
@@ -563,17 +592,6 @@ func (p *Process) closeResources() error {
 // to decide whether to advertise the enrollment capability.
 func (p *Process) WorkspaceEnrollmentRequired() bool {
 	return p != nil && len(p.construction.protectedBackends) > 0
-}
-
-// diagnostics returns p's Diagnostics sink, defaulting to port.NopDiagnostics{}
-// for a nil Process or a Process built without going through
-// newToolHiveProcess (e.g. a test fixture constructing &Process{} directly) —
-// every caller of this accessor stays nil-safe regardless of construction path.
-func (p *Process) diagnostics() port.Diagnostics {
-	if p == nil || p.diag == nil {
-		return port.NopDiagnostics{}
-	}
-	return p.diag
 }
 
 // Close first cancels process-owned work, then drains the neutral Runtime

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"slices"
 	"sort"
 	"time"
@@ -91,12 +92,15 @@ type credentialCustody struct {
 	client redis.UniversalClient
 	keys   *credentialKeyRing
 	rows   upstreamTokenRowReader
-	tokens *upstreamtoken.InProcessService
+	tokens upstreamtoken.Service
 	clock  port.Clock
 }
 
-func newCredentialCustody(client redis.UniversalClient, keys *credentialKeyRing, tokens *upstreamtoken.InProcessService, clock port.Clock, rows upstreamTokenRowReader) (*credentialCustody, error) {
+func newCredentialCustody(client redis.UniversalClient, keys *credentialKeyRing, tokens upstreamtoken.Service, clock port.Clock, rows upstreamTokenRowReader) (*credentialCustody, error) {
 	if client == nil || keys == nil || tokens == nil || clock == nil || rows == nil {
+		return nil, errCustodyUnavailable
+	}
+	if value := reflect.ValueOf(tokens); value.Kind() == reflect.Pointer && value.IsNil() {
 		return nil, errCustodyUnavailable
 	}
 	return &credentialCustody{client: client, keys: keys, rows: rows, tokens: tokens, clock: clock}, nil

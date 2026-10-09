@@ -15,6 +15,44 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
+type fixedCredentialService struct{ calls int }
+
+func (s *fixedCredentialService) GetValidTokens(context.Context, string, string) (*upstreamtoken.UpstreamCredential, error) {
+	s.calls++
+	return &upstreamtoken.UpstreamCredential{AccessToken: "usable-credential"}, nil
+}
+
+func TestCredentialCustodyUsesTokenServiceCapability(t *testing.T) {
+	f := newFixture(t)
+	service := &fixedCredentialService{}
+	core, err := newCredentialCustody(f.client, testCredentialKeyRing(t), service, f.clock, f.inner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staged, err := core.Stage(t.Context(), f.request, "tsid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertion := custodyAssertion{custodyRequest: f.request, Recovery: staged.Recovery}
+	if err := core.Commit(t.Context(), assertion); err != nil {
+		t.Fatal(err)
+	}
+	credential, err := core.Resolve(t.Context(), assertion, "provider")
+	if err != nil || credential == nil || credential.AccessToken != "usable-credential" || service.calls != 2 {
+		t.Fatalf("token-service capability was not used: calls=%d err=%v", service.calls, err)
+	}
+}
+
+func TestCredentialCustodyRejectsNilTokenService(t *testing.T) {
+	f := newFixture(t)
+	for _, service := range []upstreamtoken.Service{nil, (*upstreamtoken.InProcessService)(nil), (*fixedCredentialService)(nil)} {
+		core, err := newCredentialCustody(f.client, testCredentialKeyRing(t), service, f.clock, f.inner)
+		if core != nil || !errors.Is(err, errCustodyUnavailable) {
+			t.Fatalf("nil token service accepted: %v", err)
+		}
+	}
+}
+
 type custodyTestClock struct{ now time.Time }
 
 func (c custodyTestClock) Now() time.Time { return c.now }

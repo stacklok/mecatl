@@ -149,6 +149,50 @@ func TestProcessCloseCancelsInFlightAuthenticatedDiscovery(t *testing.T) {
 	}
 }
 
+func TestNativeProcessCloseCancelsCatalogueDiscovery(t *testing.T) {
+	queries := &blockingDiscoveryQueries{started: make(chan struct{})}
+	process := discoveryProcess(queries, identityMiddleware("opaque-broker", "provider-private", "upstream-private"), "provider-private")
+	runtime := testAnonymousRuntime(t)
+	process.Runtime = runtime
+	process.construction.protectedBackends = []string{"private"}
+	process.configureRuntime(nil)
+	t.Cleanup(func() { _ = process.Close() })
+	attachment := testAttachment(t, runtime)
+	before := attachment.catalogue
+	result := make(chan error, 1)
+	go func() {
+		_, err := attachment.FreezeAuthenticatedCatalogue(context.Background(), testEnrollmentRef(), staticTokenSource("opaque-broker"))
+		result <- err
+	}()
+	select {
+	case <-queries.started:
+	case <-time.After(time.Second):
+		t.Fatal("catalogue did not reach the native authenticated discovery boundary")
+	}
+	if err := process.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-result:
+		if !errors.Is(err, ErrAuthenticatedDiscovery) || attachment.catalogue != before {
+			t.Fatalf("shutdown did not cancel discovery before publication: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("native process cancellation did not release catalogue discovery")
+	}
+	if process.ctx.Err() == nil {
+		t.Fatal("process context was not cancelled")
+	}
+	called := false
+	if err := runtime.publication.WhileOpen(func() error { called = true; return nil }); !errors.Is(err, ErrAuthenticatedDiscovery) || called {
+		t.Fatalf("closed native process admitted publication: called=%v err=%v", called, err)
+	}
+	credential := &countingTokenSource{token: &oauth2.Token{AccessToken: "opaque-broker", TokenType: "Bearer"}}
+	if _, err := process.QueryAuthenticatedCapabilities(t.Context(), credential, "private"); !errors.Is(err, ErrAuthenticatedDiscovery) || credential.calls.Load() != 0 {
+		t.Fatal("closed native process reached credential use or discovery")
+	}
+}
+
 type countingTokenSource struct {
 	token *oauth2.Token
 	calls atomic.Int32

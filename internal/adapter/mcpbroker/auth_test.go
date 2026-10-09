@@ -119,27 +119,53 @@ func callback(t *testing.T, runtime *Runtime, code, state string) *httptest.Resp
 	return recorder
 }
 
+func TestProcessCloseRejectsOAuthCallback(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("callback after close reached the token endpoint")
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(server.Close)
+	harness := newProtectedHarness(t, server)
+	diag := &recordingBrokerDiagnostics{}
+	harness.runtime.diag = diag
+	process := &Process{Runtime: harness.runtime, construction: toolHiveConstruction{protectedBackends: []string{"github"}}, protectedTarget: harness.runtime.catalogue.routes[0].oauth}
+	process.configureRuntime(nil)
+	attachment, _ := attach(t, harness.runtime, "callback-after-close")
+	_, state := requestProtected(t, attachment, session.NewToolCall("closed-call", "mcp__github__create", json.RawMessage(`{}`)))
+	if err := process.Close(); err != nil {
+		t.Fatal(err)
+	}
+	const code = "closed-code-canary"
+	response := callback(t, harness.runtime, code, state)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("callback after close returned %d, want %d", response.Code, http.StatusBadRequest)
+	}
+	if strings.Contains(response.Body.String(), state) || strings.Contains(response.Body.String(), code) || strings.Contains(diag.String(), state) || strings.Contains(diag.String(), code) {
+		t.Fatal("callback after close exposed request credentials")
+	}
+}
+
 func TestLazyAuthorizationDoesNotDiscoverUndeclaredTools(t *testing.T) {
 	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Fatal("requesting lazy authorization must not contact discovery or token endpoints")
 	}))
 	t.Cleanup(tokenServer.Close)
 	harness := newProtectedHarness(t, tokenServer)
-	attachment, _ := attach(t, harness.runtime, "lazy-static-session")
-	before := toolNames(attachment.Tools())
-	wrapped := toolByName(t, attachment, "mcp__github__create")
-	protected, ok := wrapped.(*protectedSessionTool)
-	if !ok {
-		t.Fatal("static protected tool lacks protected wrapper")
-	}
 	queries := &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{"github": {
 		Backend: "github", Tools: []ToolDefinition{{Backend: "github", Name: "mcp__github__undeclared", Description: "live", Schema: json.RawMessage(`{"type":"object"}`)}},
 	}}}
-	harness.runtime.process = &Process{
+	process := &Process{
 		Runtime:            harness.runtime,
 		construction:       toolHiveConstruction{protectedBackends: []string{"github"}},
-		protectedTarget:    protected.route.oauth,
+		protectedTarget:    harness.runtime.catalogue.routes[0].oauth,
 		queryAuthenticated: queries.query,
+	}
+	process.configureRuntime(nil)
+	attachment, _ := attach(t, harness.runtime, "lazy-static-session")
+	before := toolNames(attachment.Tools())
+	wrapped := toolByName(t, attachment, "mcp__github__create")
+	if _, ok := wrapped.(*protectedSessionTool); !ok {
+		t.Fatal("static protected tool lacks protected wrapper")
 	}
 	requester, ok := wrapped.(tool.AuthorizationRequester)
 	if !ok {
@@ -178,8 +204,6 @@ func TestLazyGrantReplacesDeclaredMetadata(t *testing.T) {
 	slack.backend = "slack"
 	slack.spec = tool.ToolSpec{Name: "mcp__slack__list", Description: "static slack", Schema: json.RawMessage(`{"type":"object"}`)}
 	harness.runtime.catalogue.routes = append(harness.runtime.catalogue.routes, absent, slack)
-	attachment, _ := attach(t, harness.runtime, "lazy-refresh")
-	protected := toolByName(t, attachment, "mcp__github__create").(*protectedSessionTool)
 	queries := &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{
 		"github": {
 			Backend: "github", Tools: []ToolDefinition{
@@ -193,7 +217,10 @@ func TestLazyGrantReplacesDeclaredMetadata(t *testing.T) {
 			},
 		},
 	}}
-	harness.runtime.process = &Process{Runtime: harness.runtime, construction: toolHiveConstruction{protectedBackends: []string{"github", "slack"}}, protectedTarget: protected.route.oauth, queryAuthenticated: queries.query}
+	process := &Process{Runtime: harness.runtime, construction: toolHiveConstruction{protectedBackends: []string{"github", "slack"}}, protectedTarget: harness.runtime.catalogue.routes[0].oauth, queryAuthenticated: queries.query}
+	process.configureRuntime(nil)
+	attachment, _ := attach(t, harness.runtime, "lazy-refresh")
+	protected := toolByName(t, attachment, "mcp__github__create").(*protectedSessionTool)
 	authorization, state := requestProtected(t, attachment, session.NewToolCall("lazy-refresh", protected.Spec().Name, json.RawMessage(`{}`)))
 	if got := callback(t, harness.runtime, "code", state).Code; got != http.StatusOK {
 		t.Fatalf("callback status = %d", got)
@@ -244,16 +271,16 @@ func TestLazyGrantRefreshFailureIsAtomic(t *testing.T) {
 	slack.backend = "slack"
 	slack.spec.Name = "mcp__slack__list"
 	harness.runtime.catalogue.routes = append(harness.runtime.catalogue.routes, slack)
-	attachment, _ := attach(t, harness.runtime, "lazy-refresh-failure")
-	protected := toolByName(t, attachment, "mcp__github__create").(*protectedSessionTool)
 	queries := &orderedCapabilityQueries{
 		responses: map[string]AuthenticatedCapabilities{"github": {
 			Backend: "github", Tools: []ToolDefinition{{Backend: "github", Name: "mcp__github__create", Description: "live", Schema: json.RawMessage(`{"type":"object"}`)}},
 		}},
 		fail: "slack",
 	}
-	process := &Process{Runtime: harness.runtime, construction: toolHiveConstruction{protectedBackends: []string{"github", "slack"}}, protectedTarget: protected.route.oauth, queryAuthenticated: queries.query}
-	harness.runtime.process = process
+	process := &Process{Runtime: harness.runtime, construction: toolHiveConstruction{protectedBackends: []string{"github", "slack"}}, protectedTarget: harness.runtime.catalogue.routes[0].oauth, queryAuthenticated: queries.query}
+	process.configureRuntime(nil)
+	attachment, _ := attach(t, harness.runtime, "lazy-refresh-failure")
+	protected := toolByName(t, attachment, "mcp__github__create").(*protectedSessionTool)
 	type staticMetadata struct {
 		name, description, schema string
 		readOnly                  bool
@@ -315,18 +342,10 @@ func TestLazyGrantRefreshFailureIsAtomic(t *testing.T) {
 	<-started
 	closeDone := make(chan error, 1)
 	go func() { closeDone <- process.Close() }()
-	deadline := time.Now().Add(time.Second)
-	for {
-		process.lifecycleMu.Lock()
-		closed := process.closed
-		process.lifecycleMu.Unlock()
-		if closed {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("process close did not enter lifecycle race")
-		}
-		time.Sleep(time.Millisecond)
+	select {
+	case <-attachment.logical.operationCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("process close did not cancel the logical operation")
 	}
 	close(release)
 	if err := <-refreshDone; err == nil {
@@ -353,8 +372,6 @@ func TestLazyGrantRefreshRejectsInvalidUndeclaredMetadata(t *testing.T) {
 	defer tokenServer.Close()
 	harness := newProtectedHarness(t, tokenServer)
 	harness.runtime.catalogue.routes[0].broker = true
-	attachment, _ := attach(t, harness.runtime, "lazy-refresh-invalid-undeclared")
-	protected := toolByName(t, attachment, "mcp__github__create").(*protectedSessionTool)
 	queries := &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{
 		"github": {
 			Backend: "github", Tools: []ToolDefinition{
@@ -367,7 +384,10 @@ func TestLazyGrantRefreshRejectsInvalidUndeclaredMetadata(t *testing.T) {
 			},
 		},
 	}}
-	harness.runtime.process = &Process{Runtime: harness.runtime, construction: toolHiveConstruction{protectedBackends: []string{"github"}}, protectedTarget: protected.route.oauth, queryAuthenticated: queries.query}
+	process := &Process{Runtime: harness.runtime, construction: toolHiveConstruction{protectedBackends: []string{"github"}}, protectedTarget: harness.runtime.catalogue.routes[0].oauth, queryAuthenticated: queries.query}
+	process.configureRuntime(nil)
+	attachment, _ := attach(t, harness.runtime, "lazy-refresh-invalid-undeclared")
+	protected := toolByName(t, attachment, "mcp__github__create").(*protectedSessionTool)
 	authorization, state := requestProtected(t, attachment, session.NewToolCall("lazy-refresh-invalid-undeclared", protected.Spec().Name, json.RawMessage(`{}`)))
 	if got := callback(t, harness.runtime, "code", state).Code; got != http.StatusOK {
 		t.Fatalf("callback status = %d", got)
@@ -395,14 +415,15 @@ func TestLazyGrantRefreshRetryReusesPublishedSnapshot(t *testing.T) {
 	defer tokenServer.Close()
 	harness := newProtectedHarness(t, tokenServer)
 	harness.runtime.catalogue.routes[0].broker = true
-	attachment, _ := attach(t, harness.runtime, "lazy-refresh-retry")
-	protected := toolByName(t, attachment, "mcp__github__create").(*protectedSessionTool)
 	queries := &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{
 		"github": {Backend: "github", Tools: []ToolDefinition{
 			{Backend: "github", Name: "mcp__github__create", Description: "live", Schema: json.RawMessage(`{"type":"object"}`)},
 		}},
 	}}
-	harness.runtime.process = &Process{Runtime: harness.runtime, construction: toolHiveConstruction{protectedBackends: []string{"github"}}, protectedTarget: protected.route.oauth, queryAuthenticated: queries.query}
+	process := &Process{Runtime: harness.runtime, construction: toolHiveConstruction{protectedBackends: []string{"github"}}, protectedTarget: harness.runtime.catalogue.routes[0].oauth, queryAuthenticated: queries.query}
+	process.configureRuntime(nil)
+	attachment, _ := attach(t, harness.runtime, "lazy-refresh-retry")
+	protected := toolByName(t, attachment, "mcp__github__create").(*protectedSessionTool)
 	authorization, state := requestProtected(t, attachment, session.NewToolCall("lazy-refresh-retry", protected.Spec().Name, json.RawMessage(`{}`)))
 	if got := callback(t, harness.runtime, "code", state).Code; got != http.StatusOK {
 		t.Fatalf("callback status = %d", got)

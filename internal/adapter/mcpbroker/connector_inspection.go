@@ -2,6 +2,7 @@ package mcpbroker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -22,14 +23,11 @@ func (r *Runtime) InspectConnectors(ctx context.Context, id session.SessionID, b
 	if err := ctx.Err(); err != nil {
 		return contract.ConnectorInventory{}, err
 	}
-	p := r.process
-	if p == nil {
+	config := r.enrollment
+	if config == nil || r.publication == nil {
 		return contract.ConnectorInventory{}, contract.ErrStateUnavailable
 	}
-	p.lifecycleMu.Lock()
-	defer p.lifecycleMu.Unlock()
-	construction := &p.construction
-	count := len(construction.backends)
+	count := len(config.connectors)
 	if count > math.MaxUint32 {
 		return contract.ConnectorInventory{}, ErrInvalidCatalogue
 	}
@@ -39,52 +37,57 @@ func (r *Runtime) InspectConnectors(ctx context.Context, id session.SessionID, b
 		TotalConnectors: uint32(count), Truncated: count > maxConnectorRows,
 	}
 	for i := range out.Connectors {
-		out.Connectors[i] = contract.ConnectorStatus{Name: connectorDisplayName(construction.backends[i].Name), CatalogueState: contract.CatalogueUnknown}
+		out.Connectors[i] = contract.ConnectorStatus{Name: config.connectors[i].name, CatalogueState: contract.CatalogueUnknown}
 	}
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	logical := r.sessions[id]
-	if p.closed || r.closed || logical == nil {
-		return out, nil
-	}
-	logical.mu.RLock()
-	defer logical.mu.RUnlock()
-	expected := session.ExternalBinding(r.bindingPrefix + "." + fmt.Sprint(logical.ref.generation))
-	if logical.deleted || logical.provisional || binding != expected {
-		return out, nil
-	}
-	out.Availability = contract.AvailabilityAvailable
-	out.EnrollmentState = r.connectorEnrollmentState(logical)
-	routes := r.catalogue.routes
-	if logical.completedEnrollment != nil {
-		routes = logical.completedEnrollment.routes
-	}
-	counts := make(map[string]uint32)
-	for _, route := range routes {
-		counts[route.backend]++
-	}
-	for i := range out.Connectors {
-		backend := construction.backends[i].ID
-		row := &out.Connectors[i]
-		row.ToolCount = counts[backend]
-		_, protected := construction.providerByBackend[backend]
-		switch {
-		case !protected || logical.completedEnrollment != nil:
-			row.CatalogueState = contract.CatalogueDiscovered
-		case row.ToolCount > 0:
-			row.CatalogueState = contract.CatalogueDeclared
-		default:
-			row.CatalogueState = contract.CatalogueHidden
+	err := r.publication.WhileOpen(func() error {
+		r.mu.RLock()
+		defer r.mu.RUnlock()
+		logical := r.sessions[id]
+		if r.closed || logical == nil {
+			return nil
 		}
+		logical.mu.RLock()
+		defer logical.mu.RUnlock()
+		expected := session.ExternalBinding(r.bindingPrefix + "." + fmt.Sprint(logical.ref.generation))
+		if logical.deleted || logical.provisional || binding != expected {
+			return nil
+		}
+		out.Availability = contract.AvailabilityAvailable
+		out.EnrollmentState = r.connectorEnrollmentState(logical)
+		routes := r.catalogue.routes
+		if logical.completedEnrollment != nil {
+			routes = logical.completedEnrollment.routes
+		}
+		counts := make(map[string]uint32)
+		for _, route := range routes {
+			counts[route.backend]++
+		}
+		for i := range out.Connectors {
+			connector := config.connectors[i]
+			row := &out.Connectors[i]
+			row.ToolCount = counts[connector.id]
+			switch {
+			case !connector.protected || logical.completedEnrollment != nil:
+				row.CatalogueState = contract.CatalogueDiscovered
+			case row.ToolCount > 0:
+				row.CatalogueState = contract.CatalogueDeclared
+			default:
+				row.CatalogueState = contract.CatalogueHidden
+			}
+		}
+		return nil
+	})
+	if errors.Is(err, ErrAuthenticatedDiscovery) {
+		return out, nil
 	}
-	return out, nil
+	return out, err
 }
 
 // The caller holds the logical read lock. In particular this is not
 // expireLocked or ObserveWorkspaceEnrollment: even expired/granted transactions
 // remain untouched until their existing control path settles or discovers them.
 func (r *Runtime) connectorEnrollmentState(logical *logicalSession) contract.EnrollmentState {
-	if len(r.process.construction.protectedBackends) == 0 {
+	if len(r.enrollment.backends) == 0 {
 		return contract.EnrollmentNotRequired
 	}
 	if logical.completedEnrollment != nil {

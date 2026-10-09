@@ -368,7 +368,7 @@ func (t *protectedSessionTool) RequestAuthorization(ctx context.Context, call se
 	}
 	logical := t.attachment.logical
 	hash := callHash(call)
-	bundle := t.route.broker && t.attachment.runtime.process != nil && t.route.oauth == t.attachment.runtime.process.protectedTarget
+	bundle := t.route.broker && t.attachment.runtime.enrollment != nil && t.route.oauth == t.attachment.runtime.enrollment.target
 
 	logical.mu.Lock()
 	if result, found, resolved, err := existingAuthorizationLocked(logical, t.route.backend, hash, bundle); resolved {
@@ -427,7 +427,7 @@ func (t *protectedSessionTool) RequestAuthorization(ctx context.Context, call se
 		expiresAt: t.attachment.runtime.oauth.now().Add(t.attachment.runtime.oauth.ttl), status: session.AuthorizationPending,
 	}
 	if bundle {
-		transaction.bundleBackends = append([]string(nil), t.attachment.runtime.process.construction.protectedBackends...)
+		transaction.bundleBackends = append([]string(nil), t.attachment.runtime.enrollment.backends...)
 	}
 	logical.authorizations[transaction.identity] = transaction
 	if !t.attachment.runtime.registerCallbackState(state, logical, transaction) {

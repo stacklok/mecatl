@@ -150,12 +150,12 @@ func TestAuthenticatedCatalogueFreezeDiagnosticsAreEnrichedAndRedacted(t *testin
 	secret := "untrusted-tool-and-schema-must-not-log"
 	diag := &recordingBrokerDiagnostics{}
 	runtime := testAnonymousRuntime(t)
-	attachment := testAttachment(t, runtime)
-	process := testCatalogueProcess(runtime, &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{
+	testCatalogueProcess(runtime, &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{
 		"configured-secret": {Backend: "configured-secret", Tools: []ToolDefinition{{Backend: "configured-secret", Name: "mcp__configured-secret__" + secret, Description: secret, Schema: json.RawMessage(`{"secret":"` + secret + `"}`)}}},
-	}}, "configured-secret")
-	process.diag = diag.With("component", "mcpbroker")
-	if _, err := attachment.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), process, staticTokenSource("broker-token"), nil); err != nil {
+	}}, nil, "configured-secret")
+	runtime.diag = diag.With("component", "mcpbroker")
+	attachment := testAttachment(t, runtime)
+	if _, err := attachment.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), staticTokenSource("broker-token")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -172,10 +172,10 @@ func TestAuthenticatedCatalogueFreezeDiagnosticsAreEnrichedAndRedacted(t *testin
 	}
 
 	failedRuntime := testAnonymousRuntime(t)
+	testCatalogueProcess(failedRuntime, &orderedCapabilityQueries{fail: "configured-secret"}, nil, "configured-secret")
+	failedRuntime.diag = diag.With("component", "mcpbroker")
 	failedAttachment := testAttachment(t, failedRuntime)
-	failedProcess := testCatalogueProcess(failedRuntime, &orderedCapabilityQueries{fail: "configured-secret"}, "configured-secret")
-	failedProcess.diag = diag.With("component", "mcpbroker")
-	if _, err := failedAttachment.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), failedProcess, staticTokenSource("broker-token"), nil); err == nil {
+	if _, err := failedAttachment.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), staticTokenSource("broker-token")); err == nil {
 		t.Fatal("FreezeAuthenticatedCatalogue unexpectedly succeeded")
 	}
 	if logs = diag.String(); !strings.Contains(logs, "reasondiscovery_failed") {
