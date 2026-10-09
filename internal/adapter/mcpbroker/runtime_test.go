@@ -34,6 +34,60 @@ func discoveredTools() []ToolDefinition {
 	}
 }
 
+func TestRuntimeSessionIDBoundaryMatchesCustody(t *testing.T) {
+	runtime := testAnonymousRuntime(t)
+	f := newFixture(t)
+	for _, tc := range []struct {
+		name  string
+		id    session.SessionID
+		valid bool
+	}{
+		{name: "empty"},
+		{name: "ordinary", id: "ordinary-session", valid: true},
+		{name: "byte limit", id: session.SessionID(strings.Repeat("a", contract.MaxLogicalSessionIDBytes)), valid: true},
+		{name: "over byte limit", id: session.SessionID(strings.Repeat("a", contract.MaxLogicalSessionIDBytes+1))},
+		{name: "unicode byte limit", id: session.SessionID(strings.Repeat("é", contract.MaxLogicalSessionIDBytes/2)), valid: true},
+		{name: "unicode over byte limit", id: session.SessionID(strings.Repeat("é", contract.MaxLogicalSessionIDBytes/2+1))},
+		{name: "invalid UTF-8", id: "session\xff"},
+		{name: "control", id: "session\n"},
+		{name: "DEL", id: "session\x7f"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			guard := f.request.Guard
+			guard.SessionID = tc.id
+			if valid := validateGuard(guard) == nil; valid != tc.valid {
+				t.Fatalf("custody validation = %v, want %v", valid, tc.valid)
+			}
+			beforeCount, beforeGeneration := len(runtime.sessions), runtime.nextGeneration
+			attachment, outcome, err := runtime.AttachSession(t.Context(), tc.id)
+			if tc.valid {
+				if err != nil || attachment == nil || outcome != contract.AttachCreated {
+					t.Fatalf("valid session admission failed: %v", err)
+				}
+				if _, err := attachment.Close(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrInvalidCatalogue) || attachment != nil || outcome != "" {
+				t.Fatalf("invalid session admission = %v, %v", outcome, err)
+			}
+			if tc.id == "" && !strings.Contains(err.Error(), "session ID is required") {
+				t.Fatal("empty session error changed")
+			}
+			if _, err := runtime.DeleteSession(t.Context(), tc.id); !errors.Is(err, ErrInvalidCatalogue) {
+				t.Fatalf("invalid session deletion = %v", err)
+			}
+			if _, err := runtime.InspectConnectors(t.Context(), tc.id, "binding"); !errors.Is(err, ErrInvalidCatalogue) {
+				t.Fatalf("invalid session inspection = %v", err)
+			}
+			if len(runtime.sessions) != beforeCount || runtime.nextGeneration != beforeGeneration {
+				t.Fatal("invalid identifier changed registry state")
+			}
+		})
+	}
+}
+
 func TestCompileProducesStableNeutralCatalogue(t *testing.T) {
 	discovered := discoveredTools()
 	catalogue, err := Compile(anonymousConfig(), discovered, []string{"Read"})

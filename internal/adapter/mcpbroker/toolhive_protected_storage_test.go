@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -83,6 +84,45 @@ func TestProtectedStorageFailureBeforeTransferClosesClient(t *testing.T) {
 	}
 	if client.closeCalls != 1 {
 		t.Fatalf("failed startup close calls = %d, want 1", client.closeCalls)
+	}
+}
+
+func TestProtectedStorageRunnerFailureClosesTransferredClientExactlyOnce(t *testing.T) {
+	var client *countingRedisClient
+	cfg := protectedStorageTestConfig(t, func(ProtectedRedisClientConfig) (redis.UniversalClient, error) {
+		client = &countingRedisClient{UniversalClient: newMiniRedis(t)}
+		return client, nil
+	})
+	protected, err := buildProtectedToolHiveStorage(t.Context(), cfg, cfg.Redis.Client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = protected.Close() })
+	if protected.keys == nil || protected.healthTimeout != cfg.Redis.HealthTimeout {
+		t.Fatal("construction did not retain the key ring and health budget for custody integration")
+	}
+	auth, err := runner.NewEmbeddedAuthServerWithStorage(t.Context(), &authserver.RunConfig{
+		SchemaVersion: "v1", Issuer: "https://broker.example", AllowedAudiences: []string{"https://broker.example"},
+		HMACSecretFiles: []string{filepath.Join(t.TempDir(), "missing-hmac")},
+	}, protected.storage)
+	if auth != nil {
+		_ = auth.Close()
+		t.Fatal("runner accepted a missing HMAC file")
+	}
+	if err == nil || !strings.Contains(err.Error(), "failed to load HMAC secrets") {
+		t.Fatalf("runner did not fail after accepting storage ownership: %v", err)
+	}
+	if client.closeCalls != 1 {
+		t.Fatalf("runner failure close calls = %d, want 1", client.closeCalls)
+	}
+	if err := protected.Health(t.Context()); err == nil {
+		t.Fatal("runner failure left the transferred client open")
+	}
+	if err := protected.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if client.closeCalls != 1 {
+		t.Fatalf("parent cleanup closed the transferred client again: %d", client.closeCalls)
 	}
 }
 

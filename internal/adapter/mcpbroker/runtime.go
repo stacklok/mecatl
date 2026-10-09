@@ -334,6 +334,9 @@ func (r *Runtime) AttachSession(ctx context.Context, id session.SessionID) (cont
 	if id == "" {
 		return nil, "", fmt.Errorf("%w: session ID is required", ErrInvalidCatalogue)
 	}
+	if !contract.ValidLogicalSessionID(id) {
+		return nil, "", fmt.Errorf("%w: invalid session ID", ErrInvalidCatalogue)
+	}
 	r.mu.Lock()
 	if r.closed {
 		r.mu.Unlock()
@@ -365,15 +368,7 @@ func (r *Runtime) AttachSession(ctx context.Context, id session.SessionID) (cont
 	r.mu.Unlock()
 
 	attachment := &Attachment{runtime: r, logical: logical, creator: outcome == contract.AttachCreated}
-	tools := make([]tool.Tool, len(r.catalogue.routes))
-	for i, route := range r.catalogue.routes {
-		base := &sessionTool{attachment: attachment, route: route}
-		if route.oauth != nil {
-			tools[i] = &protectedSessionTool{sessionTool: base}
-		} else {
-			tools[i] = base
-		}
-	}
+	tools := attachmentTools(attachment, r.catalogue.routes)
 	attachment.catalogue = newAttachmentCatalogue(r.catalogue.routes, tools, nil)
 	logical.mu.RLock()
 	completed := logical.completedEnrollment
@@ -392,6 +387,9 @@ func (r *Runtime) AttachSession(ctx context.Context, id session.SessionID) (cont
 func (r *Runtime) DeleteSession(ctx context.Context, id session.SessionID) (contract.DeleteOutcome, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
+	}
+	if !contract.ValidLogicalSessionID(id) {
+		return "", fmt.Errorf("%w: invalid session ID", ErrInvalidCatalogue)
 	}
 	r.mu.Lock()
 	if r.closed {

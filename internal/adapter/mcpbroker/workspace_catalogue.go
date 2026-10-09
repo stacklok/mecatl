@@ -36,6 +36,19 @@ func cloneRoutes(routes []route) []route {
 	return out
 }
 
+func attachmentTools(a *Attachment, routes []route) []tool.Tool {
+	tools := make([]tool.Tool, len(routes))
+	for i, route := range routes {
+		base := &sessionTool{attachment: a, route: route}
+		if route.oauth != nil {
+			tools[i] = &protectedSessionTool{sessionTool: base}
+		} else {
+			tools[i] = base
+		}
+	}
+	return tools
+}
+
 func (a *Attachment) installCompletedEnrollment(completed *completedWorkspaceEnrollment) (contract.WorkspaceCatalogue, error) {
 	if completed == nil {
 		return nil, ErrAuthenticatedDiscovery
@@ -55,15 +68,7 @@ func (a *Attachment) installCompletedEnrollment(completed *completedWorkspaceEnr
 		return a.catalogue.frozen, nil
 	}
 	routes := cloneRoutes(completed.routes)
-	tools := make([]tool.Tool, 0, len(routes))
-	for _, route := range routes {
-		base := &sessionTool{attachment: a, route: route}
-		if route.oauth != nil {
-			tools = append(tools, &protectedSessionTool{sessionTool: base})
-		} else {
-			tools = append(tools, base)
-		}
-	}
+	tools := attachmentTools(a, routes)
 	frozen, err := contract.NewWorkspaceCatalogue(completed.ref, tools)
 	if err != nil {
 		return nil, fmt.Errorf("%w: materialize completed catalogue", ErrInvalidCatalogue)
@@ -178,15 +183,7 @@ func (a *Attachment) buildRefreshedCatalogue(ctx context.Context, logical *logic
 	}
 	allRoutes = append(allRoutes, stagedRoutes...)
 	sortRoutes(allRoutes)
-	allTools := make([]tool.Tool, 0, len(allRoutes))
-	for _, route := range allRoutes {
-		base := &sessionTool{attachment: a, route: route}
-		if route.oauth != nil {
-			allTools = append(allTools, &protectedSessionTool{sessionTool: base})
-		} else {
-			allTools = append(allTools, base)
-		}
-	}
+	allTools := attachmentTools(a, allRoutes)
 	return newAttachmentCatalogue(allRoutes, allTools, nil), nil
 }
 
@@ -345,15 +342,7 @@ func (a *Attachment) freezeAuthenticatedCatalogue(ctx context.Context, ref contr
 	allRoutes := make([]route, 0, len(anonymous)+len(stagedRoutes))
 	allRoutes = append(allRoutes, anonymous...)
 	allRoutes = append(allRoutes, stagedRoutes...)
-	allTools := make([]tool.Tool, 0, len(allRoutes))
-	for _, route := range allRoutes {
-		base := &sessionTool{attachment: a, route: route}
-		if route.oauth != nil {
-			allTools = append(allTools, &protectedSessionTool{sessionTool: base})
-		} else {
-			allTools = append(allTools, base)
-		}
-	}
+	allTools := attachmentTools(a, allRoutes)
 	frozen, err := contract.NewWorkspaceCatalogue(ref, allTools)
 	if err != nil {
 		runtime.diag.Log(ctx, port.LevelWarn, "mcp broker authenticated catalogue freeze", "event", diagnosticEventAuthenticatedCatalogueFreeze, "reason", diagnosticReasonMaterializeFailed)

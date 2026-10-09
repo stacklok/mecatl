@@ -23,6 +23,116 @@ func (s *fixedCredentialService) GetValidTokens(context.Context, string, string)
 	return &upstreamtoken.UpstreamCredential{AccessToken: "usable-credential"}, nil
 }
 
+func TestCredentialCustodyEncryptedLifecycleAcrossRestart(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	const tokenSession = "encrypted-token-session"
+	native := storage.NewRedisStorageWithClient(f.client, toolHiveAuthStoragePrefix)
+	decorated, err := credentialstore.New(native, testCredentialKeyRing(t), toolHiveAuthStoragePrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokens := &storage.UpstreamTokens{ProviderID: "provider", AccessToken: "encrypted-access-canary", RefreshToken: "encrypted-refresh-canary", ExpiresAt: f.clock.Now().Add(time.Hour), SessionExpiresAt: f.clock.Now().Add(time.Hour)}
+	if err := decorated.StoreUpstreamTokens(ctx, tokenSession, "provider", tokens); err != nil {
+		t.Fatal(err)
+	}
+	rawTokens, err := native.GetUpstreamTokens(ctx, tokenSession, "provider")
+	if err != nil || rawTokens == nil || rawTokens.AccessToken == tokens.AccessToken || rawTokens.RefreshToken == tokens.RefreshToken {
+		t.Fatalf("native token fields were not encrypted: %v", err)
+	}
+	core, err := newCredentialCustody(f.client, testCredentialKeyRing(t), upstreamtoken.NewInProcessService(decorated, nil), f.clock, decorated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staged, err := core.Stage(ctx, f.request, tokenSession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertion := custodyAssertion{custodyRequest: f.request, Recovery: staged.Recovery}
+	checkRecord := func(state custodyState, revision uint64) {
+		t.Helper()
+		record, raw, err := core.readRecord(ctx, assertion.Recovery)
+		if err != nil || record.State != state || record.Revision != revision {
+			t.Fatalf("record state/revision = %s/%d, want %s/%d: %v", record.State, record.Revision, state, revision, err)
+		}
+		if strings.Contains(raw, tokenSession) {
+			t.Fatal("custody persisted a plaintext token-session reference")
+		}
+		wantTSID := tokenSession
+		if state == custodyTombstoned {
+			wantTSID = ""
+		}
+		if record.TSID != wantTSID {
+			t.Fatal("custody token-session reference does not match its lifecycle")
+		}
+		if got, err := core.matchedState(ctx, assertion); err != nil || got != state {
+			t.Fatalf("matched state = %s: %v", got, err)
+		}
+	}
+	checkRecord(custodyStaged, 1)
+	if _, err := core.Load(ctx, assertion); !errors.Is(err, errCustodyUnavailable) {
+		t.Fatalf("staged Load = %v", err)
+	}
+	if _, err := core.LoadCurrent(ctx, assertion.Recovery, assertion.Guard); !errors.Is(err, errCustodyUnavailable) {
+		t.Fatalf("staged LoadCurrent = %v", err)
+	}
+	if _, err := core.Resolve(ctx, assertion, "provider"); !errors.Is(err, errCustodyUnavailable) {
+		t.Fatalf("staged Resolve = %v", err)
+	}
+	if err := core.Commit(ctx, assertion); err != nil {
+		t.Fatal(err)
+	}
+	checkRecord(custodyCurrent, 2)
+
+	// Reconstruct every reader over the same durable backing data, not live handles.
+	restartedNative := storage.NewRedisStorageWithClient(f.client, toolHiveAuthStoragePrefix)
+	restartedStore, err := credentialstore.New(restartedNative, testCredentialKeyRing(t), toolHiveAuthStoragePrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core, err = newCredentialCustody(f.client, testCredentialKeyRing(t), upstreamtoken.NewInProcessService(restartedStore, nil), f.clock, restartedStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkRecord(custodyCurrent, 2)
+	if record, err := core.Load(ctx, assertion); err != nil || record.TSID != tokenSession {
+		t.Fatalf("restarted Load = %v", err)
+	}
+	if record, err := core.LoadCurrent(ctx, assertion.Recovery, assertion.Guard); err != nil || record.TSID != tokenSession {
+		t.Fatalf("restarted LoadCurrent = %v", err)
+	}
+	if credential, err := core.Resolve(ctx, assertion, "provider"); err != nil || credential == nil || credential.AccessToken != tokens.AccessToken {
+		t.Fatalf("restarted Resolve did not open the stored credential: %v", err)
+	}
+	stale := assertion
+	stale.Guard.WorkloadPartition[0] ^= 0x80
+	if _, err := core.matchedState(ctx, stale); !errors.Is(err, errCustodyUnavailable) {
+		t.Fatalf("stale matchedState = %v", err)
+	}
+	if _, err := core.LoadCurrent(ctx, stale.Recovery, stale.Guard); !errors.Is(err, errCustodyUnavailable) {
+		t.Fatalf("stale LoadCurrent = %v", err)
+	}
+	if err := core.Commit(ctx, assertion); err != nil {
+		t.Fatal(err)
+	}
+	checkRecord(custodyCurrent, 2)
+	for range 2 {
+		if err := core.Tombstone(ctx, f.request, assertion.Recovery); err != nil {
+			t.Fatal(err)
+		}
+		checkRecord(custodyTombstoned, 3)
+	}
+	if _, err := core.Load(ctx, assertion); !errors.Is(err, errCustodyTombstoned) {
+		t.Fatalf("tombstoned Load = %v", err)
+	}
+	if _, err := core.LoadCurrent(ctx, assertion.Recovery, assertion.Guard); !errors.Is(err, errCustodyUnavailable) {
+		t.Fatalf("tombstoned LoadCurrent = %v", err)
+	}
+	if _, err := core.Resolve(ctx, assertion, "provider"); !errors.Is(err, errCustodyTombstoned) {
+		t.Fatalf("tombstoned Resolve = %v", err)
+	}
+}
+
 func TestCredentialCustodyUsesTokenServiceCapability(t *testing.T) {
 	f := newFixture(t)
 	service := &fixedCredentialService{}

@@ -2428,6 +2428,9 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 	if !opts.idSet {
 		finalID = s.cfg.NewID()
 	}
+	if s.cfg.MCPBroker != nil && !brokercontract.ValidLogicalSessionID(finalID) {
+		return nil, fmt.Errorf("%w: session id is not admissible for broker", ErrInvalidArgument)
+	}
 	creatediag.Session(ctx, string(finalID))
 	probeDone := creatediag.Begin(ctx, "session_id_probe")
 	var existingCreate *session.Session

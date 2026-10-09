@@ -23,6 +23,9 @@ func (r *Runtime) InspectConnectors(ctx context.Context, id session.SessionID, b
 	if err := ctx.Err(); err != nil {
 		return contract.ConnectorInventory{}, err
 	}
+	if !contract.ValidLogicalSessionID(id) {
+		return contract.ConnectorInventory{}, fmt.Errorf("%w: invalid session ID", ErrInvalidCatalogue)
+	}
 	config := r.enrollment
 	if config == nil || r.publication == nil {
 		return contract.ConnectorInventory{}, contract.ErrStateUnavailable

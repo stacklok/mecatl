@@ -8,7 +8,6 @@ import (
 	"errors"
 	"reflect"
 	"slices"
-	"sort"
 	"time"
 	"unicode/utf8"
 
@@ -427,8 +426,8 @@ func sameGuard(a, b custodyGuard) bool {
 	return a.SessionID == b.SessionID && a.Incarnation == b.Incarnation && a.OwnerPartition == b.OwnerPartition && a.WorkloadPartition == b.WorkloadPartition && a.ProfileDigest == b.ProfileDigest && slices.Equal(a.Providers, b.Providers)
 }
 func containsProvider(providers []string, provider string) bool {
-	index := sort.SearchStrings(providers, provider)
-	return index < len(providers) && providers[index] == provider
+	_, found := slices.BinarySearch(providers, provider)
+	return found
 }
 func newRecoveryID() (recoveryID, error) {
 	var raw [32]byte

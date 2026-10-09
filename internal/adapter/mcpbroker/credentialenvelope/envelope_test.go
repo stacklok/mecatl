@@ -18,6 +18,35 @@ func TestCredentialEnvelope_MigrationVector(t *testing.T) {
 	}
 }
 
+func TestCredentialEnvelope_KeyIDsRoundTrip(t *testing.T) {
+	key := bytes.Repeat([]byte{0x42}, KeyBytes)
+	for _, id := range []string{"key-2026", "key_2026", "Key0123", strings.Repeat("a", 128)} {
+		t.Run(id, func(t *testing.T) {
+			ring, err := NewKeyRing(id, map[string][]byte{id: key})
+			if err != nil {
+				t.Fatal(err)
+			}
+			aad := AAD("session", "provider", "access")
+			value := sealCredentialForTest(t, ring, aad, "key-id-canary")
+			if got, err := ring.Open(aad, value); err != nil || got != "key-id-canary" {
+				t.Fatalf("accepted key ID did not round trip: %v", err)
+			}
+		})
+	}
+}
+
+func TestCredentialEnvelope_RejectsDottedKeyIDs(t *testing.T) {
+	key := bytes.Repeat([]byte{0x42}, KeyBytes)
+	for _, active := range []string{"key.2026", "key-valid"} {
+		t.Run(active, func(t *testing.T) {
+			keys := map[string][]byte{"key.2026": key, "key-valid": key}
+			if ring, err := NewKeyRing(active, keys); !errors.Is(err, ErrUnavailable) || ring != nil {
+				t.Fatal("accepted a dotted active or inactive key ID")
+			}
+		})
+	}
+}
+
 func TestCredentialEnvelope_RoundTripsWithPerSealSalt(t *testing.T) {
 	ring := testCredentialKeyRing(t)
 	aad := AAD("session", "provider", "access-token")

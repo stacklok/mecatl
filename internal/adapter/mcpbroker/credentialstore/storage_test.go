@@ -447,6 +447,160 @@ var encryptedStorageTestBackends = map[string]func(*testing.T) storage.Storage{
 	},
 }
 
+type authoritativeDCRUpdateStorage struct {
+	storage.Storage
+	storage.DCRCredentialStore
+	update func(context.Context, *storage.DCRCredentials) (*storage.DCRCredentials, error)
+}
+
+func (s *authoritativeDCRUpdateStorage) UpdateDCRCredentialsIfPresent(ctx context.Context, creds *storage.DCRCredentials) (*storage.DCRCredentials, error) {
+	return s.update(ctx, creds)
+}
+
+func TestEncryptedAuthStorage_DCRUpdateReturnsAuthoritativeValue(t *testing.T) {
+	for name, makeStorage := range encryptedStorageTestBackends {
+		t.Run(name, func(t *testing.T) {
+			inner := makeStorage(t)
+			interposed := &authoritativeDCRUpdateStorage{Storage: inner, DCRCredentialStore: inner.(storage.DCRCredentialStore)}
+			decorated, err := New(interposed, testCredentialKeyRing(t), testNamespace)
+			if err != nil {
+				t.Fatal(err)
+			}
+			creds := storage.DCRCredentials{
+				Key:      storage.DCRKey{Issuer: "issuer", UpstreamID: "provider", RedirectURI: "https://broker/callback", ScopesHash: "scope"},
+				ClientID: "client", ClientSecret: "initial-secret", RegistrationAccessToken: "initial-registration",
+				AuthorizationEndpoint: "https://issuer/authorize", TokenEndpoint: "https://issuer/token",
+			}
+			if _, err := decorated.StoreDCRCredentialsIfAbsent(t.Context(), &creds); err != nil {
+				t.Fatal(err)
+			}
+			submitted := creds
+			submitted.ClientSecret, submitted.RegistrationAccessToken = "submitted-secret", "submitted-registration"
+			authoritative := creds
+			authoritative.ClientSecret, authoritative.RegistrationAccessToken = "backend-secret", "backend-registration"
+			sealed, err := decorated.sealDCR(creds.Key, &authoritative)
+			if err != nil {
+				t.Fatal(err)
+			}
+			called := false
+			interposed.update = func(ctx context.Context, input *storage.DCRCredentials) (*storage.DCRCredentials, error) {
+				called = true
+				if input.Key != creds.Key || !strings.HasPrefix(input.ClientSecret, "mecatl.v1.") || !strings.HasPrefix(input.RegistrationAccessToken, "mecatl.v1.") {
+					t.Fatal("update sent an invalid key or plaintext to the backend")
+				}
+				// The backend persists and returns its authoritative representation.
+				return interposed.DCRCredentialStore.UpdateDCRCredentialsIfPresent(ctx, sealed)
+			}
+			input := submitted
+			got, err := decorated.UpdateDCRCredentialsIfPresent(t.Context(), &input)
+			if !called || err != nil || !reflect.DeepEqual(got, &authoritative) || !reflect.DeepEqual(input, submitted) {
+				t.Fatalf("update did not return the backend value without mutating input: %v", err)
+			}
+			stored, err := decorated.GetDCRCredentials(t.Context(), creds.Key)
+			if err != nil || !reflect.DeepEqual(stored, &authoritative) {
+				t.Fatalf("authoritative return did not match the durable value: %v", err)
+			}
+		})
+	}
+}
+
+func TestEncryptedAuthStorage_RedisDCRUpdateTTLAndPresence(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	native := storage.NewRedisStorageWithClient(client, "test:dcr-ttl:")
+	t.Cleanup(func() { _ = native.Close() })
+	decorated, err := New(native, testCredentialKeyRing(t), testNamespace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := t.Context()
+	now := time.Unix(time.Now().Unix(), 0)
+	creds := storage.DCRCredentials{
+		Key:      storage.DCRKey{Issuer: "issuer", UpstreamID: "provider", RedirectURI: "https://broker/callback", ScopesHash: "scope"},
+		ClientID: "client", ClientSecret: "ttl-secret", RegistrationAccessToken: "ttl-registration",
+		AuthorizationEndpoint: "https://issuer/authorize", TokenEndpoint: "https://issuer/token",
+		ClientSecretExpiresAt: now.Add(time.Hour),
+	}
+	if _, err := decorated.StoreDCRCredentialsIfAbsent(ctx, &creds); err != nil {
+		t.Fatal(err)
+	}
+	keys := server.Keys()
+	if len(keys) != 1 {
+		t.Fatalf("native DCR store created %d keys, want 1", len(keys))
+	}
+	key := keys[0]
+	for _, tc := range []struct {
+		name   string
+		expiry time.Time
+		minTTL time.Duration
+		maxTTL time.Duration
+	}{
+		{name: "extend", expiry: now.Add(2 * time.Hour), minTTL: 119 * time.Minute, maxTTL: 2 * time.Hour},
+		{name: "shorten", expiry: now.Add(30 * time.Minute), minTTL: 29 * time.Minute, maxTTL: 30 * time.Minute},
+		{name: "clear"},
+		{name: "expired but physically present", expiry: now.Add(-time.Hour), minTTL: time.Nanosecond, maxTTL: time.Second},
+		{name: "rewrite expired row", expiry: now.Add(time.Hour), minTTL: 59 * time.Minute, maxTTL: time.Hour},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			creds.ClientSecretExpiresAt = tc.expiry
+			input := creds
+			got, err := decorated.UpdateDCRCredentialsIfPresent(ctx, &creds)
+			if err != nil || !reflect.DeepEqual(got, &input) || !reflect.DeepEqual(creds, input) {
+				t.Fatalf("native DCR update changed its input or authoritative return: %v", err)
+			}
+			if ttl := server.TTL(key); ttl < tc.minTTL || ttl > tc.maxTTL {
+				t.Fatalf("native TTL = %v, want [%v,%v]", ttl, tc.minTTL, tc.maxTTL)
+			}
+			stored, err := decorated.GetDCRCredentials(ctx, creds.Key)
+			if err != nil || !reflect.DeepEqual(stored, &input) {
+				t.Fatalf("native physical-presence read = %v", err)
+			}
+		})
+	}
+	server.FastForward(2 * time.Hour)
+	if _, err := decorated.GetDCRCredentials(ctx, creds.Key); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("evicted DCR Get = %v", err)
+	}
+	if _, err := decorated.UpdateDCRCredentialsIfPresent(ctx, &creds); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("evicted DCR Update = %v", err)
+	}
+	if server.Exists(key) {
+		t.Fatal("update recreated an evicted DCR row")
+	}
+}
+
+func TestEncryptedAuthStorage_RejectsCrossSessionCiphertext(t *testing.T) {
+	for name, makeStorage := range encryptedStorageTestBackends {
+		t.Run(name, func(t *testing.T) {
+			inner := makeStorage(t)
+			decorated, err := New(inner, testCredentialKeyRing(t), testNamespace)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tokens := &storage.UpstreamTokens{ProviderID: "provider", AccessToken: "session-access", RefreshToken: "session-refresh", IDToken: "session-id", UpstreamSubject: "session-subject"}
+			if err := decorated.StoreUpstreamTokens(t.Context(), "original-session", "provider", tokens); err != nil {
+				t.Fatal(err)
+			}
+			raw, err := inner.GetUpstreamTokens(t.Context(), "original-session", "provider")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := inner.StoreUpstreamTokens(t.Context(), "other-session", "provider", raw); err != nil {
+				t.Fatal(err)
+			}
+			if got, err := decorated.GetUpstreamTokens(t.Context(), "other-session", "provider"); got != nil || !errors.Is(err, credentialenvelope.ErrUnavailable) {
+				t.Fatalf("cross-session ciphertext opened: %v", err)
+			}
+			if got, err := decorated.GetAllUpstreamTokens(t.Context(), "other-session"); got != nil || !errors.Is(err, credentialenvelope.ErrUnavailable) {
+				t.Fatalf("bulk read accepted cross-session ciphertext: %v", err)
+			}
+			if got, err := decorated.GetUpstreamTokens(t.Context(), "original-session", "provider"); err != nil || !reflect.DeepEqual(got, tokens) {
+				t.Fatalf("relocation affected the original row: %v", err)
+			}
+		})
+	}
+}
+
 func TestEncryptedAuthStorage_NativeRoundTripAndDCRUpdate(t *testing.T) {
 	for name, makeStorage := range encryptedStorageTestBackends {
 		t.Run(name, func(t *testing.T) {
