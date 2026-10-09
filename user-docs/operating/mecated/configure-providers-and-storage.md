@@ -17,14 +17,15 @@ and enroll its credentials. Run setup under the OS account that will run
 `mecated`; the daemon never opens a browser. Remote client login authenticates
 the client to the service and leaves server provider setup with its operator.
 
-### Provider credential file
+### Model and search credential file
 
-Supply API keys through `OPENAI_API_KEY`, `OPENROUTER_API_KEY`,
-`ANTHROPIC_API_KEY`, or `OPENCODE_API_KEY`, or use an operator-owned
-`auth.yaml`:
+Set model-provider API keys with `OPENAI_API_KEY`, `OPENROUTER_API_KEY`,
+`ANTHROPIC_API_KEY`, or `OPENCODE_API_KEY`. To keep model and search credentials
+in one operator-owned file, use `auth.yaml`:
 
 ```yaml
 providers:
+  # Model providers: select and authenticate language models.
   anthropic:
     api_key: <ANTHROPIC_API_KEY>
   openai:
@@ -33,6 +34,8 @@ providers:
     api_key: <OPENROUTER_API_KEY>
   opencode:
     api_key: <OPENCODE_API_KEY>
+
+  # Search providers: configure WebSearch only.
   exa:
     api_key: <EXA_API_KEY>
   brave:
@@ -40,9 +43,10 @@ providers:
 ```
 
 A matching API-key environment variable takes precedence over the file entry.
-The optional Exa and Brave entries configure `WebSearch` for `mecated` and
-embedded `mecatui`; they do not configure LLM providers. For search backend
-selection and anonymous Exa behavior, see [Configure web search](/features/sessions/tools.md#configure-web-search).
+The `exa` and `brave` entries configure `WebSearch` for `mecated` and embedded
+`mecatui`; they do not configure or satisfy the requirement for an LLM provider.
+For search backend selection and anonymous Exa behavior, see
+[Configure web search](/features/sessions/tools.md#configure-web-search).
 The default path is `$XDG_CONFIG_HOME/mecatl/auth.yaml`, normally
 `~/.config/mecatl/auth.yaml`. `--api-key-file <PATH>` selects another file;
 `credential_store.api_key.file` in operator settings can also select the path.
