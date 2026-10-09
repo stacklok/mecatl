@@ -117,44 +117,51 @@ func TestGuardrailCanonicalAskBeforeAndAfterHook(t *testing.T) {
 }
 
 func TestOlderGuardrailSourceRemainsVisibleConflict(t *testing.T) {
-	m := guardrailTestModel(t, nil, false)
-	m = applyAll(m, client.ToolCallMsg{ID: "call", Name: "Read"})
-	newer := guardrailTestHook("review", "complete", "unresolved", "withhold_result")
-	newer.CallID, newer.RunID, newer.Seq = "call", "run", 12
-	m = applyAll(m, newer)
-	older := guardrailTestHook("review", "operational_failure", "unresolved", "ask_action")
-	older.CallID, older.RunID, older.Seq = "call", "run", 11
-	older.Text = "older conflicting evidence"
-	m = applyAll(m, older)
-	if got := m.conv.guardrailReview("review").snapshot(); got.Seq != 12 || got.Review.Disposition != "withhold_result" {
-		t.Fatalf("older source changed canonical review: %+v", got)
-	}
-	frame := frameText(&m)
-	if !strings.Contains(frame, "older conflicting evidence") {
-		t.Fatalf("older conflict was not visible: %q", frame)
-	}
-	m = applyAll(m, older)
-	if got := strings.Count(frameText(&m), "older conflicting evidence"); got != 1 {
-		t.Fatalf("older conflict replay added notice: %d", got)
+	for _, width := range []int{40, 80, 100, 120} {
+		m := guardrailTestModel(t, nil, false)
+		m = applyAll(m, tea.WindowSizeMsg{Width: width, Height: 30})
+		m = applyAll(m, client.ToolCallMsg{ID: "call", Name: "Read"})
+		newer := guardrailTestHook("review", "complete", "unresolved", "withhold_result")
+		newer.CallID, newer.RunID, newer.Seq = "call", "run", 12
+		m = applyAll(m, newer)
+		older := guardrailTestHook("review", "operational_failure", "unresolved", "ask_action")
+		older.CallID, older.RunID, older.Seq = "call", "run", 11
+		older.Text = "older conflicting evidence"
+		m = applyAll(m, older)
+		if got := m.conv.guardrailReview("review").snapshot(); got.Seq != 12 || got.Review.Disposition != "withhold_result" {
+			t.Fatalf("older source changed canonical review: %+v", got)
+		}
+		frame := strings.Join(strings.Fields(frameText(&m)), " ")
+		if !strings.Contains(frame, "older conflicting evidence") {
+			t.Fatalf("older conflict was not visible: %q", frame)
+		}
+		m = applyAll(m, older)
+		if got := strings.Count(strings.Join(strings.Fields(frameText(&m)), " "), "older conflicting evidence"); got != 1 {
+			t.Fatalf("older conflict replay added notice: %d", got)
+		}
 	}
 }
 
 func TestUnidentifiedGuardrailCannotChangeActiveApproval(t *testing.T) {
-	m := guardrailTestModel(t, nil, false)
-	m = applyAll(m, client.ToolCallMsg{ID: "call", Name: "Read"}, client.PermissionAskMsg{AskID: "session:1:call", Tool: "Read", Guardrail: &client.GuardrailApprovalScope{ReviewID: "review", Kind: "action"}})
-	newer := guardrailTestHook("review", "complete", "unresolved", "withhold_result")
-	newer.CallID, newer.RunID, newer.Seq = "call", "run", 12
-	m = applyAll(m, newer)
-	s := approvalSurfaceOf(t, m)
-	reason := s.ask.Reason
-	unknown := guardrailTestHook("review", "operational_failure", "unresolved", "ask_action")
-	unknown.CallID, unknown.Text = "call", "unidentified conflicting evidence"
-	m = applyAll(m, unknown)
-	if got := s.ask.review.snapshot(); got.Seq != 12 || got.Review.Disposition != "withhold_result" || s.ask.Reason != reason {
-		t.Fatalf("unidentified source changed approval: %+v", got)
-	}
-	if !strings.Contains(frameText(&m), "unidentified conflicting evidence") {
-		t.Fatal("unidentified source evidence was hidden")
+	for _, width := range []int{40, 80, 100, 120} {
+		m := guardrailTestModel(t, nil, false)
+		m = applyAll(m, tea.WindowSizeMsg{Width: width, Height: 30})
+		m = applyAll(m, client.ToolCallMsg{ID: "call", Name: "Read"}, client.PermissionAskMsg{AskID: "session:1:call", Tool: "Read", Guardrail: &client.GuardrailApprovalScope{ReviewID: "review", Kind: "action"}})
+		newer := guardrailTestHook("review", "complete", "unresolved", "withhold_result")
+		newer.CallID, newer.RunID, newer.Seq = "call", "run", 12
+		m = applyAll(m, newer)
+		s := approvalSurfaceOf(t, m)
+		reason := s.ask.Reason
+		unknown := guardrailTestHook("review", "operational_failure", "unresolved", "ask_action")
+		unknown.CallID, unknown.Text = "call", "unidentified conflicting evidence"
+		m = applyAll(m, unknown)
+		if got := s.ask.review.snapshot(); got.Seq != 12 || got.Review.Disposition != "withhold_result" || s.ask.Reason != reason {
+			t.Fatalf("unidentified source changed approval: %+v", got)
+		}
+		frame := strings.Join(strings.Fields(frameText(&m)), " ")
+		if !strings.Contains(frame, "unidentified conflicting evidence") {
+			t.Fatalf("width=%d unidentified source evidence was hidden: %q", width, frame)
+		}
 	}
 }
 
