@@ -23,7 +23,7 @@ import { Switch } from "../../components/ui/switch";
 import { writeClipboardText } from "../../lib/clipboard";
 import { modelPreferenceId, useDisabledModels } from "../../lib/model-preferences";
 import { pageTitleClass } from "../../lib/typography";
-import { LearningReview } from "../knowledge/learning-review";
+import { LearningReview } from "../learning/learning-settings-page";
 import { MemorySettingsPage } from "../memory/memory-settings-page";
 import { AgentSettings } from "./agent-settings";
 import { IdentitySettings } from "./identity-settings";

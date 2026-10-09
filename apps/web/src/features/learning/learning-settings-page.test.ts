@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { reflectionSummary } from "./learning-review";
+import { reflectionSummary } from "./learning-settings-page";
 
 describe("reflection summary", () => {
   it("summarizes materialized reflection counts", () => {
