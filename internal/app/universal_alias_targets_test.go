@@ -167,6 +167,7 @@ func TestADR_0369_Scenario1_UniversalAliasTargets(t *testing.T) {
 			ModelAliasTargets:     cfg.ModelAliasTargets,
 			EnableParallel:        true,
 			AllowAllTools:         true,
+			GuardrailsDisabled:    true,
 			ContextWindowOverride: 128000,
 			envDetector: fakeEnv(map[string]string{
 				"OPENAI_API_KEY":     "test-key",
@@ -308,6 +309,7 @@ func TestADR_0369_Scenario1_SettingsScalarRouterUsesDefaultProvider(t *testing.T
 		NoSoul:                true,
 		PermissionConfigs:     []string{settings},
 		AllowAllTools:         true,
+		GuardrailsDisabled:    true,
 		ContextWindowOverride: 128000,
 		envDetector:           fakeEnv(map[string]string{"OPENAI_API_KEY": "test-key", "OPENROUTER_API_KEY": "test-key"}),
 		liveModelHTTPClient:   offlineHTTPClient(),
@@ -372,6 +374,7 @@ func TestADR_0369_Scenario1_NamedAutomaticRouterPairAliasTarget(t *testing.T) {
 		RouterCategories:      []permconfig.RouterCategory{{Name: "deep", Description: "deep specialist work", Model: "pair-route"}},
 		RouterDefaultCategory: "deep",
 		AllowAllTools:         true,
+		GuardrailsDisabled:    true,
 		envDetector:           fakeEnv(map[string]string{"OPENAI_API_KEY": "test-key", "OPENROUTER_API_KEY": "test-key"}),
 		liveModelHTTPClient:   offlineHTTPClient(),
 		providerConstructor: func(_ Config, id, _, _ string) port.LLMProvider {
