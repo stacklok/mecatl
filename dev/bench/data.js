@@ -317805,6 +317805,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791501556420,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "jakub@stacklok.com",
+            "name": "Jakub Hrozek",
+            "username": "jhrozek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f98c23a78be5e18775895c66a4a6808f2f08633e",
+          "message": "feat(broker): define credential continuity contract (#2217)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-09T08:54:06+02:00",
+          "tree_id": "266a4d838e3ac417120b50020d9aac18939ad064",
+          "url": "https://github.com/stacklok/mecatl/commit/f98c23a78be5e18775895c66a4a6808f2f08633e"
+        },
+        "date": 1791529609255,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3276.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 76,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -415655,6 +415694,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791529606693,
+  "lastUpdate": 1791529609809,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
