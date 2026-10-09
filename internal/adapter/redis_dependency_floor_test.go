@@ -51,8 +51,8 @@ func TestRedisFollowCapacity_Scenario1_Go127DependencyFloor(t *testing.T) {
 		for scanner.Scan() {
 			if strings.HasPrefix(scanner.Text(), "go ") {
 				found = true
-				if directive := scanner.Text(); directive != "go 1.27" && directive != "go 1.27.0" {
-					t.Errorf("%s declares %q, want Go 1.27", strings.TrimPrefix(manifest, root+string(filepath.Separator)), directive)
+				if directive := scanner.Text(); directive != "go 1.27.2" {
+					t.Errorf("%s declares %q, want Go 1.27.2", strings.TrimPrefix(manifest, root+string(filepath.Separator)), directive)
 				}
 				break
 			}
@@ -97,11 +97,11 @@ func TestRedisFollowCapacity_Scenario4_Go127SourceBuildSurfaces(t *testing.T) {
 	root := filepath.Clean(filepath.Join(filepath.Dir(source), "..", ".."))
 	for name, want := range map[string]string{
 		"AGENTS.md":    "in Go 1.27",
-		"Taskfile.yml": "go            >= 1.27",
-		"user-docs/_partials/release-archives-and-source.mdx":         "requires Go 1.27 or later",
-		"user-docs/building/go/demo.md":                               "**Go 1.27 or newer**",
-		"user-docs/building/go/first-agent.md":                        "Go 1.27 or newer",
-		"sdk/typescript/examples/slack-bot/docker/mecated.Dockerfile": "FROM golang:1.27-bookworm AS build",
+		"Taskfile.yml": "go            >= 1.27.2",
+		"user-docs/_partials/release-archives-and-source.mdx":         "requires Go 1.27.2 or later",
+		"user-docs/building/go/demo.md":                               "**Go 1.27.2 or newer**",
+		"user-docs/building/go/first-agent.md":                        "Go 1.27.2 or newer",
+		"sdk/typescript/examples/slack-bot/docker/mecated.Dockerfile": "FROM golang:1.27.2-bookworm AS build",
 	} {
 		body, err := os.ReadFile(filepath.Join(root, name))
 		if err != nil {

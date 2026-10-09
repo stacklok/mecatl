@@ -89,11 +89,11 @@ load_image() {
 provider_tag=$(build_ko ./cmd/mecatl-execution-provider ko.local/mecatl-execution-provider)
 agent_tag=$(build_ko ./cmd/mecak8s ko.local/mecak8s)
 if [ "$runtime" = podman ]; then
-  podman image exists docker.io/library/golang:1.27 || podman pull docker.io/library/golang:1.27 >/dev/null
-  go_digest=$(podman image inspect docker.io/library/golang:1.27 --format '{{.Digest}}')
+  podman image exists docker.io/library/golang:1.27.2 || podman pull docker.io/library/golang:1.27.2 >/dev/null
+  go_digest=$(podman image inspect docker.io/library/golang:1.27.2 --format '{{.Digest}}')
 else
-  docker image inspect docker.io/library/golang:1.27 >/dev/null 2>&1 || docker pull docker.io/library/golang:1.27 >/dev/null
-  go_ref=$(docker image inspect docker.io/library/golang:1.27 --format '{{index .RepoDigests 0}}')
+  docker image inspect docker.io/library/golang:1.27.2 >/dev/null 2>&1 || docker pull docker.io/library/golang:1.27.2 >/dev/null
+  go_ref=$(docker image inspect docker.io/library/golang:1.27.2 --format '{{index .RepoDigests 0}}')
   go_digest=${go_ref#*@}
 fi
 go_image="docker.io/library/golang@${go_digest}"

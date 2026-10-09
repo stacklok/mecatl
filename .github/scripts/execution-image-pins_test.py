@@ -85,7 +85,7 @@ print(os.environ["MANIFEST"])
                 run({path: content.replace(default, f"{default}\nARG\t{name}=example.invalid/image:latest")})
         assert not (fixture / "sourced").exists()
         run({paths[1]: originals[paths[1]].replace(expected[0],
-             f"docker.io/library/golang:1.27@sha256:{digest}")})
+             f"docker.io/library/golang:1.27.2@sha256:{digest}")})
         for index, image in enumerate(expected, 1):
             run(FAIL_IMAGE=image, registry_calls=index)
         for bad in ("not json", "{}", '{"manifests":[]}',
