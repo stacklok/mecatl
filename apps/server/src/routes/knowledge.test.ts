@@ -6,6 +6,8 @@ import { createApp } from "../app";
 import { KnowledgeNotFoundError, type KnowledgeService } from "../mecatl/knowledge";
 import { csrfHeaders } from "../testing/fakes";
 
+const listCalls: Array<{ cursor?: string; limit?: number; status: string }> = [];
+
 const knowledge: KnowledgeService = {
   capabilities: {
     learnedSkills: true,
@@ -157,10 +159,30 @@ const knowledge: KnowledgeService = {
       ],
     };
   },
-  async listLearningProposals() {
+  async getLearningProposal(id) {
     return {
-      complete: true,
+      ...proposal(id, "v1", "staged"),
+      evidence: [
+        {
+          availability: "available",
+          available: true,
+          digest: "sha256:abc",
+          eventSeq: "0",
+          locator: "message",
+          ordinal: 3,
+          preview: "Please keep answers short.",
+          sessionId: "session-1",
+          toolCallId: "",
+        },
+      ],
+    };
+  },
+  async listLearningProposals(status, cursor, limit) {
+    listCalls.push({ cursor, limit, status });
+    return {
+      complete: Boolean(cursor),
       items: [proposal("proposal-1", "v1", "staged")],
+      nextCursor: cursor ? "" : "proposal-1",
       reason: "",
       supported: true,
     };
@@ -367,6 +389,41 @@ describe("knowledge routes", () => {
     expect(await reflection.json()).toMatchObject({ reflectionId: "reflection-1", staged: 1 });
   });
 
+  it("pages the proposal queue with the daemon's cursor and an optional bounded limit", async () => {
+    listCalls.length = 0;
+    const first = await app.request("/api/v1/learning-proposals?status=staged&limit=50");
+    expect(first.status).toBe(200);
+    expect(await first.json()).toMatchObject({ complete: false, nextCursor: "proposal-1" });
+    const next = await app.request(
+      "/api/v1/learning-proposals?status=staged&limit=50&cursor=proposal-1",
+    );
+    expect(await next.json()).toMatchObject({ complete: true, nextCursor: "" });
+    await app.request("/api/v1/learning-proposals");
+    expect(listCalls).toEqual([
+      { cursor: "", limit: 50, status: "staged" },
+      { cursor: "proposal-1", limit: 50, status: "staged" },
+      { cursor: "", limit: 0, status: "" },
+    ]);
+
+    for (const limit of ["0", "201", "ten"]) {
+      const refused = await app.request(`/api/v1/learning-proposals?limit=${limit}`);
+      expect(refused.status, limit).toBe(400);
+    }
+    expect(listCalls).toHaveLength(3);
+  });
+
+  it("re-reads one proposal with its evidence", async () => {
+    const response = await app.request("/api/v1/learning-proposals/proposal-1");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      evidence: [
+        { available: true, preview: "Please keep answers short.", sessionId: "session-1" },
+      ],
+      id: "proposal-1",
+      version: "v1",
+    });
+  });
+
   it("generates and decides daemon-curated memory consolidation plans", async () => {
     const generated = await app.request("/api/v1/user-memory/consolidation/plans", {
       method: "POST",
@@ -563,6 +620,7 @@ describe("knowledge routes", () => {
         { body: JSON.stringify({ expectedVersion: "1" }), headers: json, method: "POST" },
         "learning_proposals_unsupported",
       ],
+      ["/api/v1/learning-proposals/proposal-1", undefined, "learning_proposals_unsupported"],
       ["/api/v1/sessions/session-1/reflection", { method: "POST" }, "reflection_unsupported"],
       [
         "/api/v1/user-memory/consolidation/plans",
@@ -616,6 +674,7 @@ describe("knowledge routes", () => {
         },
       ],
       ["/api/v1/learning-proposals?status=staged", undefined],
+      ["/api/v1/learning-proposals/proposal-1", undefined],
       [
         "/api/v1/learning-proposals/proposal-1/decisions",
         {

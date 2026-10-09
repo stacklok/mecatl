@@ -12,6 +12,7 @@ import {
   learnedSkillDiffResponseSchema,
   learnedSkillSchema,
   learnedSkillsResponseSchema,
+  learningProposalDetailSchema,
   learningProposalSchema,
   learningProposalsResponseSchema,
   memoryConsolidationPlanSchema,
@@ -56,7 +57,12 @@ const memoryConsolidationPlanParameters = z.object({
     .min(1)
     .openapi({ param: { in: "path", name: "planId" } }),
 });
-const learningProposalQuery = z.object({ status: z.string().optional() });
+const learningProposalQuery = z.object({
+  cursor: z.string().optional(),
+  // The daemon refuses a page larger than 200; an absent limit takes the BFF's default.
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  status: z.string().optional(),
+});
 const learnedSkillLocatorQuery = z.object({
   ownerAgent: z.string().min(1),
   version: z.string().min(1),
@@ -194,6 +200,25 @@ const listLearningProposalsRoute = createRoute({
       description: "The daemon-curated learning proposal review queue.",
     },
     500: errorResponse,
+    503: errorResponse,
+  },
+});
+
+const getLearningProposalRoute = createRoute({
+  method: "get",
+  operationId: "getLearningProposal",
+  path: "/api/v1/learning-proposals/{proposalId}",
+  request: { params: learningProposalParameters },
+  responses: {
+    200: {
+      content: { "application/json": { schema: learningProposalDetailSchema } },
+      description:
+        "One learning proposal, re-read with each evidence source's current availability.",
+    },
+    404: errorResponse,
+    409: errorResponse,
+    500: errorResponse,
+    501: errorResponse,
     503: errorResponse,
   },
 });
@@ -390,10 +415,35 @@ export function registerKnowledgeRoutes(
   });
   app.openapi(listLearningProposalsRoute, async (context) => {
     if (!knowledge) return unavailable(context);
+    const query = context.req.valid("query");
     return context.json(
-      await knowledge.listLearningProposals(context.req.valid("query").status ?? ""),
+      await knowledge.listLearningProposals(
+        query.status ?? "",
+        query.cursor ?? "",
+        query.limit ?? 0,
+      ),
       200,
     );
+  });
+  app.openapi(getLearningProposalRoute, async (context) => {
+    if (!knowledge) return unavailable(context);
+    if (!knowledge.capabilities.learningProposals)
+      return unsupported(
+        context,
+        "learning_proposals_unsupported",
+        "Learning proposals are not enabled on this deployment.",
+      );
+    try {
+      return context.json(
+        await knowledge.getLearningProposal(context.req.valid("param").proposalId),
+        200,
+      );
+    } catch (error) {
+      if (error instanceof KnowledgeNotFoundError) {
+        return problem(context, 404, "not_found", "Not found", error.message);
+      }
+      throw error;
+    }
   });
   app.openapi(decideLearningProposalRoute, async (context) => {
     if (!knowledge) return unavailable(context);

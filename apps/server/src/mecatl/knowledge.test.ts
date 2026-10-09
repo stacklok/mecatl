@@ -28,6 +28,52 @@ function sdkSkill(over: Record<string, unknown> = {}) {
   };
 }
 
+function sdkProposal() {
+  return {
+    body: "",
+    createdAt: { nanos: 0, seconds: 1_700_000_000n },
+    decisions: [],
+    description: "How the user likes answers",
+    evidence: [
+      {
+        availability: "available",
+        available: true,
+        digest: "sha256:aaa",
+        eventSeq: 0n,
+        locator: "message",
+        ordinal: 3,
+        preview: "Please keep answers short.",
+        sessionId: "session-1",
+        toolCallId: "",
+      },
+      {
+        availability: "evidence changed",
+        available: false,
+        digest: "sha256:bbb",
+        eventSeq: 9_007_199_254_740_993n,
+        locator: "event",
+        ordinal: 0,
+        preview: "",
+        sessionId: "session-2",
+        toolCallId: "call-1",
+      },
+    ],
+    id: "proposal-1",
+    key: "communication",
+    kind: "fact",
+    learnedSkillId: "",
+    projectScoped: false,
+    promotionAvailable: true,
+    promotionUnavailableReason: "",
+    status: "staged",
+    title: "",
+    triggers: ["explicit"],
+    updatedAt: { nanos: 0, seconds: 1_700_000_000n },
+    value: "Keep answers concise.",
+    version: "v1",
+  };
+}
+
 const allConsolidation = {
   project_memory: { decide: true, generate: true, unavailableReason: "" },
   user_model: { decide: true, generate: true, unavailableReason: "" },
@@ -396,6 +442,112 @@ describe("Mecatl knowledge adapter", () => {
       $typeName: "mecatl.v1.GetUserModelRequest",
       key: "communication",
     });
+  });
+
+  it("pages learning proposals with the daemon's cursor and keeps list items evidence-free", async () => {
+    const list = vi.fn().mockResolvedValue({
+      nextCursor: "proposal-2",
+      proposals: [sdkProposal()],
+    });
+    const service = createMecatlKnowledgeService(
+      { learningProposals: { list } } as unknown as Client,
+      allCapabilities,
+    );
+    const page = await service.listLearningProposals("staged", "proposal-0", 50);
+    expect(list).toHaveBeenCalledWith(
+      expect.objectContaining({ cursor: "proposal-0", limit: 50, project: "", status: "staged" }),
+    );
+    expect(page).toMatchObject({ complete: false, nextCursor: "proposal-2", supported: true });
+    // The list projection is not re-verified by the daemon, so it carries only the count.
+    expect(page.items[0]).toMatchObject({ evidenceCount: 2, id: "proposal-1", version: "v1" });
+    expect(page.items[0]).not.toHaveProperty("evidence");
+
+    list.mockResolvedValue({ nextCursor: "", proposals: [] });
+    await expect(service.listLearningProposals("promoted")).resolves.toMatchObject({
+      complete: true,
+      nextCursor: "",
+    });
+    expect(list).toHaveBeenLastCalledWith(
+      expect.objectContaining({ cursor: "", limit: 100, status: "promoted" }),
+    );
+  });
+
+  it("re-reads one learning proposal with each source's checked availability", async () => {
+    const get = vi.fn().mockResolvedValue({ proposal: sdkProposal() });
+    const service = createMecatlKnowledgeService(
+      { learningProposals: { get } } as unknown as Client,
+      allCapabilities,
+    );
+    await expect(service.getLearningProposal("proposal-1")).resolves.toMatchObject({
+      evidence: [
+        {
+          availability: "available",
+          available: true,
+          digest: "sha256:aaa",
+          eventSeq: "0",
+          locator: "message",
+          ordinal: 3,
+          preview: "Please keep answers short.",
+          sessionId: "session-1",
+          toolCallId: "",
+        },
+        {
+          availability: "evidence changed",
+          available: false,
+          eventSeq: "9007199254740993",
+          locator: "event",
+          preview: "",
+          sessionId: "session-2",
+        },
+      ],
+      evidenceCount: 2,
+      id: "proposal-1",
+    });
+    expect(get).toHaveBeenCalledWith(expect.objectContaining({ id: "proposal-1", project: "" }));
+  });
+
+  it("answers 404 not_found for a proposal the daemon cannot find", async () => {
+    // The daemon's generic not-found sentinel carries `session_not_found`, even for a proposal.
+    for (const code of ["session_not_found", "not_found"] as const) {
+      const get = vi.fn().mockRejectedValue(
+        new MecatlError('server: not found: proposal "gone"', {
+          code,
+          status: 5,
+          transport: "grpc",
+        }),
+      );
+      const service = createMecatlKnowledgeService(
+        { learningProposals: { get } } as unknown as Client,
+        allCapabilities,
+      );
+      const response = await createApp({ knowledge: service }).request(
+        "/api/v1/learning-proposals/gone",
+      );
+      expect(response.status, code).toBe(404);
+      await expect(response.json()).resolves.toMatchObject({
+        code: "not_found",
+        detail: "No learning proposal with id gone",
+      });
+    }
+  });
+
+  it("keeps a refused proposal re-read's daemon code", async () => {
+    const get = vi.fn().mockRejectedValue(
+      new MecatlError("server: failed precondition: proposal manifest is unavailable", {
+        code: "failed_precondition",
+        status: 9,
+        transport: "grpc",
+      }),
+    );
+    const service = createMecatlKnowledgeService(
+      { learningProposals: { get } } as unknown as Client,
+      allCapabilities,
+    );
+    const response = await createApp({ knowledge: service }).request(
+      "/api/v1/learning-proposals/proposal-1",
+    );
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ code: "failed_precondition" });
   });
 
   it("generates a consolidation plan for either target and keeps the daemon's target", async () => {
