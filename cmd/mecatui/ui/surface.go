@@ -7,10 +7,9 @@ package ui
 // touches this file for the interface and its own file for the state/behaviour;
 // the Model-side routing (view/update/builtins/selection) is the thin registration
 // point. The structural gate (surface_arch_test.go) confines surface/soul
-// vocabulary to surface.go + the surface's own file. The deps are held ON THE
-// SURFACE STATE (set at Open, with only presentation refreshed before Render):
-// a surface non-Render method with a deps param is archived-past design
-// (see docs/drafts/surface-migration-plan.md).
+// vocabulary to surface.go + the surface's own file. Dependencies are held on the
+// surface state at Open; a surface non-Render method with a deps parameter is
+// archived-past design.
 
 import (
 	"context"

@@ -292,8 +292,7 @@ func TestModelHasNoDreamTombstones(t *testing.T) {
 // asserts it carries ONLY the ambient base fields (theme/keys/marks/caps/ctx)
 // plus the Model-owned reference hit allocator, and NONE of the archived deps-per-call wideners (width/lifecycle/nextEpoch/
 // focusInput — surface-SPECIFIC collaborators live as fields on the surface's
-// own state struct, set next to deps in the same Open literal, per
-// docs/drafts/surface-migration-plan.md §4 decision 8). ctx is ambient: any
+// own state struct, set next to deps in the same Open literal). ctx is ambient: any
 // modal that talks to the server needs the parent context, so it belongs in
 // the shared base, not on each surface. This is the anti-regression guard for
 // the deps-on-state redesign: a deps-per-call widening fails here the moment a

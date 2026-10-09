@@ -61,10 +61,16 @@ undisplayed preparation invalidate both hits and placement metrics. A surface
 captures its presentation and operating dependencies when it opens. Introduce
 dynamic theme or keybinding updates only with a deliberate UI-wide design that
 covers every affected component.
-Follow the [`surface` contract](../cmd/mecatui/ui/surface.go) and its
-[migration guidance](drafts/surface-migration-plan.md) when adding or converting
-an overlay. A closed surface must not receive late results or leak keyboard and
-wheel events into the conversation.
+Follow the [`surface` contract](../cmd/mecatui/ui/surface.go) when adding or
+converting an overlay. A closed surface must not receive late results or leak
+keyboard and wheel events into the conversation.
+
+Keep surface-specific state, transitions, asynchronous result validation, and view
+caches on the surface. The parent owns modal lifetime, placement, frame-scoped
+pointer mapping, and effects that change root-owned state. A surface that needs a
+root-owned effect emits a narrow intent; it does not require the parent to inspect
+its concrete type. Correlate asynchronous results with the surface instance and
+its active request, then discard results the open surface does not own.
 
 The `ui` package is large, so keep its internal components narrow and their
 contracts explicit. Prefer a shared contract when all comparable components use
