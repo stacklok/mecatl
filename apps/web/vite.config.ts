@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
@@ -7,6 +8,13 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   plugins: [tanstackRouter({ target: "react" }), react(), tailwindcss()],
+  // `@/` is `src/`, matching the prototype, so ported files keep their imports.
+  // Keep in step with `paths` in tsconfig.json.
+  resolve: {
+    alias: {
+      "@": fileURLToPath(new URL("./src", import.meta.url)),
+    },
+  },
   // Pin the transform to this package's tsconfig. The workspace `contracts`
   // sources are bundled from their own directory, and per-file tsconfig
   // discovery would otherwise pick up that package's tsconfig instead.
