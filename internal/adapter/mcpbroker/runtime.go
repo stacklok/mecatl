@@ -336,6 +336,9 @@ func (r *Runtime) AttachSession(ctx context.Context, id session.SessionID) (cont
 	if id == "" {
 		return nil, "", fmt.Errorf("%w: session ID is required", ErrInvalidCatalogue)
 	}
+	if !contract.ValidLogicalSessionID(id) {
+		return nil, "", fmt.Errorf("%w: invalid session ID", ErrInvalidCatalogue)
+	}
 	r.mu.Lock()
 	if r.closed {
 		r.mu.Unlock()
@@ -394,6 +397,11 @@ func (r *Runtime) AttachSession(ctx context.Context, id session.SessionID) (cont
 func (r *Runtime) DeleteSession(ctx context.Context, id session.SessionID) (contract.DeleteOutcome, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
+	}
+	if !contract.ValidLogicalSessionID(id) {
+		// No logical state can exist under an inadmissible ID, so deletion stays
+		// idempotent for sessions persisted before the broker enforced the rule.
+		return contract.DeleteNotFound, nil
 	}
 	r.mu.Lock()
 	if r.closed {
