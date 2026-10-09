@@ -905,8 +905,12 @@ describe("GlobalSearch", () => {
     const input = await searchFor("help");
     const options = [...document.querySelectorAll<HTMLElement>('[role="option"]')];
     expect(options.length).toBeGreaterThan(1);
+    // cmdk follows the pointer through pointermove, which a mouse hover
+    // fires just before mousemove.
     await act(async () =>
-      options[1]?.dispatchEvent(new MouseEvent("mousemove", { bubbles: true })),
+      options[1]?.dispatchEvent(
+        new PointerEvent("pointermove", { bubbles: true, pointerType: "mouse" }),
+      ),
     );
     expect(input?.getAttribute("aria-activedescendant")).toBe(options[1]?.id);
     expect(navigations).toEqual([]);
