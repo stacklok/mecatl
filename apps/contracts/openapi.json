@@ -10103,6 +10103,9 @@
                         "origin": {
                           "type": "string"
                         },
+                        "sourceProposalId": {
+                          "type": "string"
+                        },
                         "sourceSessionId": {
                           "type": "string"
                         },
@@ -10127,6 +10130,7 @@
                         "description",
                         "key",
                         "origin",
+                        "sourceProposalId",
                         "sourceSessionId",
                         "status",
                         "updatedAt",
@@ -10147,6 +10151,9 @@
                             "type": "string"
                           },
                           "origin": {
+                            "type": "string"
+                          },
+                          "sourceProposalId": {
                             "type": "string"
                           },
                           "sourceSessionId": {
@@ -10173,6 +10180,7 @@
                           "description",
                           "key",
                           "origin",
+                          "sourceProposalId",
                           "sourceSessionId",
                           "status",
                           "updatedAt",

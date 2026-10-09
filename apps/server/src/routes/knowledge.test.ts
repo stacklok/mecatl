@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { memoryDetailResponseSchema } from "@mecatl-studio/contracts";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app";
 import { KnowledgeNotFoundError, type KnowledgeService } from "../mecatl/knowledge";
@@ -107,6 +108,7 @@ const knowledge: KnowledgeService = {
         description: "Prefers concise answers",
         key,
         origin: "conversation",
+        sourceProposalId: "proposal-7",
         sourceSessionId: "session-1",
         status: "active",
         updatedAt: null,
@@ -257,6 +259,26 @@ describe("knowledge routes", () => {
     const notFound = await missing.request("/api/v1/user-memory/nope");
     expect(notFound.status).toBe(404);
     await expect(notFound.json()).resolves.toMatchObject({ code: "not_found" });
+  });
+
+  it("serves the proposal that wrote a memory revision, an empty string when none did", async () => {
+    const response = await app.request("/api/v1/user-memory/communication");
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toMatchObject({ current: { sourceProposalId: "proposal-7" } });
+    expect(memoryDetailResponseSchema.parse(body)).toEqual(body);
+
+    const revision = body.current;
+    expect(
+      memoryDetailResponseSchema.safeParse({
+        ...body,
+        current: { ...revision, sourceProposalId: "" },
+      }).success,
+    ).toBe(true);
+    const { sourceProposalId: _omitted, ...withoutProposal } = revision;
+    expect(
+      memoryDetailResponseSchema.safeParse({ ...body, current: withoutProposal }).success,
+    ).toBe(false);
   });
 
   it("passes a percent-encoded slash in a memory key through to the exact lookup", async () => {

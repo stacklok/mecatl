@@ -3330,6 +3330,7 @@ export type GetUserMemoryResponses = {
             description: string;
             key: string;
             origin: string;
+            sourceProposalId: string;
             sourceSessionId: string;
             status: string;
             updatedAt: string;
@@ -3341,6 +3342,7 @@ export type GetUserMemoryResponses = {
             description: string;
             key: string;
             origin: string;
+            sourceProposalId: string;
             sourceSessionId: string;
             status: string;
             updatedAt: string;

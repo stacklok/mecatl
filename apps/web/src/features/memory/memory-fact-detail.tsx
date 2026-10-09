@@ -179,6 +179,20 @@ function RevisionRows({ revision }: { revision: MemoryRevision }) {
           </Link>
         </FactRow>
       )}
+      {revision.sourceProposalId && (
+        <FactRow label="Proposal" mono>
+          {/* DECISION: no route addresses one proposal, so the link opens the
+              Learning settings section, as in the prototype. */}
+          <Link
+            className="hover:underline"
+            params={{ section: "learning" }}
+            search={{ item: undefined }}
+            to="/workspace/settings/$section"
+          >
+            {revision.sourceProposalId}
+          </Link>
+        </FactRow>
+      )}
       {revision.updatedAt && (
         <FactRow label="Updated">
           <time dateTime={revision.updatedAt} title={revision.updatedAt}>

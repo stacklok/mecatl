@@ -75,6 +75,7 @@ function detail(overrides: Partial<MemoryDetailResponse["current"]> = {}): Memor
       description: "The operator prefers tabs.",
       key: "prefers-tabs",
       origin: "reflection",
+      sourceProposalId: "",
       sourceSessionId: "",
       status: "active",
       updatedAt: UPDATED_AT,
@@ -88,6 +89,7 @@ function detail(overrides: Partial<MemoryDetailResponse["current"]> = {}): Memor
         description: "",
         key: "prefers-tabs",
         origin: "",
+        sourceProposalId: "",
         sourceSessionId: "",
         status: "superseded",
         updatedAt: "2025-12-20T00:00:00.000Z",
@@ -99,6 +101,7 @@ function detail(overrides: Partial<MemoryDetailResponse["current"]> = {}): Memor
         description: "",
         key: "prefers-tabs",
         origin: "",
+        sourceProposalId: "",
         sourceSessionId: "",
         status: "superseded",
         updatedAt: PRIOR_AT,
@@ -196,6 +199,34 @@ describe("MemoryFactDetail", () => {
     expect(screen.getByRole("link", { name: "session-fixture-1" }).getAttribute("href")).toBe(
       "/workspace/chat?sessionId=session-fixture-1",
     );
+  });
+
+  it("links the proposal that wrote the fact to the Learning settings section", async () => {
+    state.detail = detail({ sourceProposalId: "proposal-7", sourceSessionId: "session-fixture-1" });
+    await renderDetail();
+    await screen.findByText("Tabs, width 4");
+
+    const proposal = within(factValue("Proposal")).getByRole("link", { name: "proposal-7" });
+    expect(proposal.getAttribute("href")).toBe("/workspace/settings/learning");
+    expect(factValue("Proposal").className).toContain("font-mono");
+    expect(factLabels()).toEqual([
+      "Key",
+      "Status",
+      "Version",
+      "Writer",
+      "Origin",
+      "Source session",
+      "Proposal",
+      "Updated",
+    ]);
+  });
+
+  it("has no Proposal row when no proposal wrote the fact", async () => {
+    await renderDetail();
+    await screen.findByText("Tabs, width 4");
+
+    expect(screen.queryByText("Proposal", { selector: "span" })).toBeNull();
+    expect(factLabels()).not.toContain("Proposal");
   });
 
   it("orders the Details rows key first and the update time last", async () => {
