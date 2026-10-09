@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"charm.land/bubbles/v2/key"
-	"charm.land/lipgloss/v2"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
@@ -50,36 +50,77 @@ const (
 	helpMaxCardWidth      = 128
 )
 
-// renderHelpOverlay draws the "?" keys-&-features overlay centred over the
-// conversation region. Its root-owned viewport wraps the live help lines to the
-// card's inner width before windowing them.
-func renderHelpOverlay(th theme.Theme, caps client.Capabilities, width, height int, viewport *bounded.Viewport, hk helpKeys) string {
-	lines := strings.Split(helpBody(th, caps, hk), "\n")
-	if height <= 0 {
-		return centerCard(th, strings.Join(lines, "\n"), width, height)
-	}
-	frame := helpViewportView(th, lines, width, height, viewport, hk)
+// helpState owns the Help overlay's wrapped viewport and frame geometry.
+type helpState struct {
+	deps     surfaceDeps
+	viewport bounded.Viewport
+	lines    []string
+	// view cache: refreshed by Render before each input event.
+	total, window int
+	compact       bool
+}
+
+func (*helpState) modalMaxOuterWidth(available int) int { return helpCardWidth(available) }
+func (s *helpState) modalFrame() bool                   { return !s.compact }
+
+func (s *helpState) Render(width, height int) (string, []ClickableRegion) {
+	// Retain the card's former one-row empty-content allowance.
+	frame := helpViewportView(s.lines, width, height-1, &s.viewport, s.deps.marks)
+	s.total, s.window, s.compact = frame.total, frame.window, frame.compact
 	if len(frame.view.Rows) == 0 {
-		return ""
+		return "", nil
 	}
-	if frame.compact {
-		// A card with its chrome and scroll indicator cannot fit this viewport. Keep
-		// the overlay usable as one scrollable row rather than overflowing the
-		// conversation region.
-		return frame.view.Rows[0]
+	if s.compact {
+		return frame.view.Rows[0], nil
 	}
 	body := strings.Join(frame.view.Rows, "\n")
 	if frame.total > frame.window {
-		for _, indicator := range helpIndicatorRows(hk, frame.view.Above, frame.view.Above+len(frame.view.Rows), frame.total, helpBodyWidth(th, width)) {
-			body += "\n" + th.Style("muted").Render(indicator)
+		for _, indicator := range helpIndicatorRows(s.deps.marks, frame.view.Above, frame.view.Above+len(frame.view.Rows), frame.total, width) {
+			body += "\n" + s.deps.theme.Style("muted").Render(indicator)
 		}
 	}
-	card := th.Style("askCard").Width(helpCardWidth(width)).Render(body)
-	if width <= 0 {
-		return card
-	}
-	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, card)
+	return body, nil
 }
+
+func (s *helpState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
+	switch {
+	case key.Matches(msg, s.deps.keys.Help), key.Matches(msg, s.deps.keys.Close):
+		return nil, true, true
+	case key.Matches(msg, s.deps.keys.ScrollD):
+		s.viewport.Move(bounded.PageDown, s.total)
+	case key.Matches(msg, s.deps.keys.ScrollU):
+		s.viewport.Move(bounded.PageUp, s.total)
+	case key.Matches(msg, s.deps.keys.Down):
+		s.viewport.Move(bounded.LineDown, s.total)
+	case key.Matches(msg, s.deps.keys.Up):
+		s.viewport.Move(bounded.LineUp, s.total)
+	case key.Matches(msg, s.deps.keys.ScrollBottom):
+		s.viewport.Move(bounded.End, s.total)
+	case key.Matches(msg, s.deps.keys.ScrollTop):
+		s.viewport.Move(bounded.Top, s.total)
+	}
+	return nil, true, false
+}
+
+func (*helpState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
+	switch msg.(type) {
+	case tea.MouseClickMsg, tea.MouseMotionMsg, tea.MouseReleaseMsg:
+		return nil, true, false
+	}
+	return nil, false, false
+}
+
+func (s *helpState) HandleWheel(msg tea.MouseWheelMsg) (tea.Cmd, bool) {
+	switch msg.Button {
+	case tea.MouseWheelUp:
+		s.viewport.Move(bounded.LineUp, s.total)
+	case tea.MouseWheelDown:
+		s.viewport.Move(bounded.LineDown, s.total)
+	}
+	return nil, true
+}
+
+func (*helpState) Close() {}
 
 // helpFrame is one frame's viewport projection plus the wrapped-row total and the
 // body window it was configured with. compact means the normal card cannot fit.
@@ -89,31 +130,28 @@ type helpFrame struct {
 	compact       bool
 }
 
-// helpViewportView configures the caller-owned help viewport for one frame. It
-// measures the wrapped content with every available body row on a throwaway
-// viewport, then reserves rows for Help's own navigation indicator (sized for its
-// widest possible digits) only when the content overflows. When no body row would
-// remain, it falls back to a single-row window.
-func helpViewportView(th theme.Theme, lines []string, width, height int, viewport *bounded.Viewport, hk helpKeys) helpFrame {
-	bodyWidth := helpBodyWidth(th, width)
-	bodyHeight := height - lipgloss.Height(th.Style("askCard").Render(""))
+// helpViewportView configures the surface-owned help viewport for one frame of
+// card-content geometry. It reserves rows for the wrapped navigation indicator
+// when the content overflows, or falls back to one unframed row.
+func helpViewportView(lines []string, width, height int, viewport *bounded.Viewport, hk helpKeys) helpFrame {
+	width = max(1, width)
 	window := 1
-	compact := bodyHeight < 1
+	compact := height < 1
 	if !compact {
 		var measure bounded.Viewport
-		measure.SetGeometry(bodyWidth, bodyHeight, 0, bounded.Wrap)
+		measure.SetGeometry(width, height, 0, bounded.Wrap)
 		measured := measure.View(lines)
 		total := measured.Above + len(measured.Rows) + measured.Below
-		window = bodyHeight
+		window = height
 		if total > window {
-			window = bodyHeight - len(helpIndicatorRows(hk, total-1, total, total, bodyWidth))
+			window = height - len(helpIndicatorRows(hk, total-1, total, total, width))
 			compact = window < 1
 		}
 	}
 	if compact {
 		window = 1
 	}
-	viewport.SetGeometry(bodyWidth, window, 0, bounded.Wrap)
+	viewport.SetGeometry(width, window, 0, bounded.Wrap)
 	view := viewport.View(lines)
 	return helpFrame{view: view, total: view.Above + len(view.Rows) + view.Below, window: window, compact: compact}
 }

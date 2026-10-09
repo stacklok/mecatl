@@ -184,7 +184,7 @@ func TestSelectableMatchesAllBodyOwners(t *testing.T) {
 		{"awaiting approval", func(m *Model) { m.phase = phaseAwaitingApproval }, false},
 		{"replay", func(m *Model) { m.phase = phaseReplay }, false},
 		{"session details", func(m *Model) { m.sessionDetailsOpen = true }, false},
-		{"help", func(m *Model) { m.showHelp = true }, false},
+		{"help", func(m *Model) { mm, _ := m.runHelp(); *m = mm.(Model) }, false},
 		{"team", func(m *Model) { m.team.view = teamRoster }, false},
 		{"agents inventory", func(m *Model) { m.agentsInv.view = agentsInvPanel }, false},
 		{"modal surface", func(m *Model) { m.modal = &bodyOwnerTestSurface{} }, false},

@@ -119,8 +119,8 @@ type skillsResultMsg struct {
 	result    client.SkillsMsg
 }
 
-func (*skillsState) modalMaxOuterWidth() int { return skillsMaxOuterWidth }
-func (s *skillsState) modalFrame() bool      { return !s.compact }
+func (*skillsState) modalMaxOuterWidth(int) int { return skillsMaxOuterWidth }
+func (s *skillsState) modalFrame() bool         { return !s.compact }
 
 // Render measures and renders unframed content from one parent-provided offer.
 func (s *skillsState) Render(width, height int) (string, []ClickableRegion) {

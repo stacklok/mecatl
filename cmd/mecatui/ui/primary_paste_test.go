@@ -146,13 +146,14 @@ func TestMiddleClickGatedUnderOverlay(t *testing.T) {
 	cb := &fakeClipboard{primary: "should not appear"}
 	m, _ := newClipboardModel(t, client.Capabilities{}, cb)
 
-	m.showHelp = true
+	mm, _ := m.runHelp()
+	m = mm.(Model)
 	mm, cmd := pressMiddle(m)
 	if cmd != nil {
 		t.Error("middle-click under the help overlay returned a command, want nil")
 	}
-	m = mm
-	m.showHelp = false
+	m = mm.(Model)
+	m.closeModal()
 	m.phase = phaseAwaitingApproval
 	_, cmd = pressMiddle(m)
 	if cmd != nil {
@@ -202,7 +203,7 @@ func TestMiddleClickDoesNotAdvanceClickCount(t *testing.T) {
 // the permission-approval modal (the same pair TestMiddleClickGatedUnderOverlay
 // pins at PRESS time).
 var gateClosers = map[string]func(m *Model){
-	"help overlay":   func(m *Model) { m.showHelp = true },
+	"help overlay":   func(m *Model) { mm, _ := m.runHelp(); *m = mm.(Model) },
 	"approval modal": func(m *Model) { m.phase = phaseAwaitingApproval },
 }
 

@@ -59,7 +59,7 @@ func helpModel(t *testing.T, caps client.Capabilities, tweak ...func(*Deps)) Mod
 	m.conv.addUser("hello")
 	m.refreshView()
 	m = applyAll(m, qmark())
-	if !m.showHelp {
+	if m.modal == nil {
 		t.Fatal("help overlay did not open on '?' with empty input")
 	}
 	return m
@@ -484,7 +484,7 @@ func TestHelpKeyOverrideEndToEnd(t *testing.T) {
 	m.conv.addUser("hello")
 	m.refreshView()
 	m = applyAll(m, qmark())
-	if !m.showHelp {
+	if m.modal == nil {
 		t.Fatal("help overlay did not open on '?' with empty input")
 	}
 

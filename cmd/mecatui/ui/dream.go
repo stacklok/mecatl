@@ -55,8 +55,8 @@ type dreamResultMsg struct {
 	result    client.DreamMsg
 }
 
-func (*dreamState) modalMaxOuterWidth() int { return 128 }
-func (s *dreamState) modalFrame() bool      { return !s.compact }
+func (*dreamState) modalMaxOuterWidth(int) int { return 128 }
+func (s *dreamState) modalFrame() bool         { return !s.compact }
 
 func (m Model) openDream() (tea.Model, tea.Cmd) {
 	if m.phase != phaseIdle || m.modal != nil || m.deps.Dream == nil || m.caps.ManualDream == nil {

@@ -53,9 +53,9 @@ type surface interface {
 	// surface down.
 	HandleKey(msg tea.KeyPressMsg) (cmd tea.Cmd, handled bool, closed bool)
 
-	// HandleMsg consumes or passes a NON-input message: an RPC result
-	// (client.SoulMsg), a timer tick, a status notice. The Model routes every
-	// non-key/wheel Msg through the open modal BEFORE its own generic reducer,
+	// HandleMsg consumes or passes messages other than keys and wheel events:
+	// RPC results, timers, notices, and non-wheel pointer events. The Model routes
+	// non-key/wheel messages through the open modal BEFORE its own generic reducer,
 	// so the surface owns its RPC-backed state and can be created dynamically
 	// at Open with no pre-declared Model field. The surface consumes (handled),
 	// kills (closed), or passes (handled=false); on closed the Model tears the
@@ -91,7 +91,7 @@ type modalPlacementSource interface {
 // modalMaxOuterWidthSource caps a parent-framed card without moving framing or
 // centering responsibility into the surface.
 type modalMaxOuterWidthSource interface {
-	modalMaxOuterWidth() int
+	modalMaxOuterWidth(available int) int
 }
 
 // modalFrameSource lets a surface select an unframed compact rendering after it
@@ -212,8 +212,8 @@ func (m *Model) renderModalSurface() string {
 
 	style := m.deps.Theme.Style("askCard")
 	outerW := bodyW
-	if source, ok := m.modal.(modalMaxOuterWidthSource); ok && source.modalMaxOuterWidth() > 0 {
-		outerW = min(outerW, source.modalMaxOuterWidth())
+	if source, ok := m.modal.(modalMaxOuterWidthSource); ok && source.modalMaxOuterWidth(bodyW) > 0 {
+		outerW = min(outerW, source.modalMaxOuterWidth(bodyW))
 	}
 	contentW := max(0, outerW-style.GetHorizontalFrameSize())
 	contentH := max(0, bodyH-style.GetVerticalFrameSize())

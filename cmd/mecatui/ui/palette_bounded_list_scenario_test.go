@@ -355,7 +355,7 @@ func TestMecatuiSlashPaletteBoundedList_Scenario1_PreservesInteractionOwnership(
 	builtin.palette.list.SetCursor(1) // /help
 	dispatched, _ := builtin.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	builtin = dispatched.(Model)
-	if !builtin.showHelp {
+	if builtin.modal == nil {
 		t.Fatal("eligible built-in was not dispatched from the palette")
 	}
 

@@ -1075,7 +1075,8 @@ func TestEscClearsSelectionThenRestoresSemantics(t *testing.T) {
 // starts NO selection (Req 8).
 func TestSelectionBlockedUnderOverlay(t *testing.T) {
 	m, _ := selModel(t)
-	m.showHelp = true // help owns the body
+	mm, _ := m.runHelp()
+	m = mm.(Model) // help owns the body
 	top := convTopRow(m)
 
 	m, _ = pressMouse(m, tea.MouseLeft, 0, top)
@@ -1395,7 +1396,7 @@ func TestOpeningOverlayClearsSelection(t *testing.T) {
 
 	// "?" on an empty prompt opens help.
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: '?'})
-	if !m.showHelp {
+	if m.modal == nil {
 		t.Fatal("precondition: ? should open help")
 	}
 	if m.sel.active {
@@ -2087,7 +2088,7 @@ func TestSelectableGateBlocksAndClears(t *testing.T) {
 		{"modelsOverlay", func(m *Model) { m.modal = &modelsState{view: modelsPanel} }},
 		{"worktreesOverlay", func(m *Model) { m.worktrees.view = worktreesPanel }},
 		{"soulOverlay", func(m *Model) { m.modal = &soulState{view: soulPanel} }},
-		{"help", func(m *Model) { m.showHelp = true }},
+		{"help", func(m *Model) { mm, _ := m.runHelp(); *m = mm.(Model) }},
 		{"awaitingApproval", func(m *Model) { m.phase = phaseAwaitingApproval }},
 		{"fatal", func(m *Model) { m.phase = phaseFatal }},
 	}
@@ -2516,7 +2517,7 @@ func TestTripleClickEmptyLineNoCopy(t *testing.T) {
 // start NO selection AND leave clickCount==0 (Req 9, count is AFTER the gate).
 func TestMultiClickInertUnderOverlay(t *testing.T) {
 	cases := []nonSelectableCase{
-		{"help", func(m *Model) { m.showHelp = true }},
+		{"help", func(m *Model) { mm, _ := m.runHelp(); *m = mm.(Model) }},
 		{"noMouse", func(m *Model) { m.deps.NoMouse = true }},
 		{"noAltScreen", func(m *Model) { m.deps.NoAltScreen = true }},
 	}

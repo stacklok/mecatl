@@ -51,9 +51,9 @@ func (m Model) openUserModel() (tea.Model, tea.Cmd) {
 	return m, client.GetUserModelCmdTagged(m.deps.Ctx, m.deps.UserModel, s.generation)
 }
 
-func (*userModelState) modalMaxOuterWidth() int { return 128 }
-func (s *userModelState) modalFrame() bool      { return !s.compact }
-func (*userModelState) Close()                  {}
+func (*userModelState) modalMaxOuterWidth(int) int { return 128 }
+func (s *userModelState) modalFrame() bool         { return !s.compact }
+func (*userModelState) Close()                     {}
 
 func (s *userModelState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 	if key.Matches(msg, s.deps.keys.Close) {

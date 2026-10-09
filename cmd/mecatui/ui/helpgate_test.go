@@ -15,6 +15,14 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
+func helpSurface(m Model) *helpState { return m.modal.(*helpState) }
+
+func helpGeometry(m Model) (int, int) {
+	m.renderBody()
+	s := helpSurface(m)
+	return s.total, s.window
+}
+
 // TestHelpOpensOnlyOnEmptyInput pins the "?"-is-printable gotcha: "?" opens the
 // help overlay only when the prompt input is empty; with text in the input, "?"
 // types into the textarea instead.
@@ -23,7 +31,7 @@ func TestHelpOpensOnlyOnEmptyInput(t *testing.T) {
 
 	// Empty input: "?" opens help and blurs the textarea.
 	m = applyAll(m, qmark())
-	if !m.showHelp {
+	if m.modal == nil {
 		t.Fatal("'?' on empty input should open help")
 	}
 	if m.prompt.Focused() {
@@ -32,7 +40,7 @@ func TestHelpOpensOnlyOnEmptyInput(t *testing.T) {
 
 	// "?" again closes it and refocuses.
 	m = applyAll(m, qmark())
-	if m.showHelp {
+	if m.modal != nil {
 		t.Fatal("'?' should close the open help overlay")
 	}
 	if !m.prompt.Focused() {
@@ -43,7 +51,7 @@ func TestHelpOpensOnlyOnEmptyInput(t *testing.T) {
 	// the textarea.
 	m = typeRune(t, m, 'h')
 	m = applyAll(m, qmark())
-	if m.showHelp {
+	if m.modal != nil {
 		t.Fatal("'?' on a non-empty input must NOT open help")
 	}
 	if !strings.Contains(m.prompt.Value(), "?") {
@@ -55,11 +63,11 @@ func TestHelpOpensOnlyOnEmptyInput(t *testing.T) {
 func TestHelpEscCloses(t *testing.T) {
 	m := zeroStateModel(t, embeddedCaps())
 	m = applyAll(m, qmark())
-	if !m.showHelp {
+	if m.modal == nil {
 		t.Fatal("help should be open")
 	}
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEscape})
-	if m.showHelp {
+	if m.modal != nil {
 		t.Fatal("esc should close the help overlay")
 	}
 }
@@ -73,7 +81,7 @@ func TestHelpDoesNotOpenOverAnotherOverlay(t *testing.T) {
 		t.Fatal("MCP overlay should be open")
 	}
 	m = applyAll(m, qmark())
-	if m.showHelp {
+	if _, ok := m.modal.(*helpState); ok {
 		t.Fatal("'?' must not open help while another overlay owns the keyboard")
 	}
 }
@@ -87,7 +95,7 @@ func TestHelpSwallowsOtherKeysWhileOpen(t *testing.T) {
 	if mcpActive(m) != nil {
 		t.Fatal("ctrl+o should be swallowed while help is up")
 	}
-	if !m.showHelp {
+	if m.modal == nil {
 		t.Fatal("help should still be open after a swallowed key")
 	}
 }
@@ -96,8 +104,8 @@ func TestHelpPreservesGlobalLifecycleKeys(t *testing.T) {
 	t.Run("quit", func(t *testing.T) {
 		m := helpModel(t, allOnCaps())
 		m, _ = pressKey(m, ctrlC())
-		if !m.quitArmed || !m.showHelp {
-			t.Fatalf("ctrl+c should arm quit without closing help: armed=%t help=%t", m.quitArmed, m.showHelp)
+		if !m.quitArmed || m.modal == nil {
+			t.Fatalf("ctrl+c should arm quit without closing help: armed=%t help=%t", m.quitArmed, m.modal != nil)
 		}
 		_, cmd := pressKey(m, ctrlC())
 		if !isQuitCmd(cmd) {
@@ -107,8 +115,8 @@ func TestHelpPreservesGlobalLifecycleKeys(t *testing.T) {
 	t.Run("quitD", func(t *testing.T) {
 		m := helpModel(t, allOnCaps())
 		m, _ = pressKey(m, ctrlD())
-		if !m.quitDArmed || !m.showHelp {
-			t.Fatalf("ctrl+d should arm quit without closing help: armed=%t help=%t", m.quitDArmed, m.showHelp)
+		if !m.quitDArmed || m.modal == nil {
+			t.Fatalf("ctrl+d should arm quit without closing help: armed=%t help=%t", m.quitDArmed, m.modal != nil)
 		}
 		_, cmd := pressKey(m, ctrlD())
 		if !isQuitCmd(cmd) {
@@ -180,7 +188,7 @@ func TestHelpFitsAvailableWidth(t *testing.T) {
 func TestHelpWrapsNarrowBodyAndNavigatesWrappedRows(t *testing.T) {
 	m := helpModel(t, allOnCaps())
 	m = applyAll(m, tea.WindowSizeMsg{Width: 40, Height: 24})
-	total, window := m.helpScrollGeometry()
+	total, window := helpGeometry(m)
 	if total <= window {
 		t.Fatalf("precondition: wrapped help should overflow (total=%d window=%d)", total, window)
 	}
@@ -191,14 +199,14 @@ func TestHelpWrapsNarrowBodyAndNavigatesWrappedRows(t *testing.T) {
 	}
 
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyDown})
-	if m.helpViewport.Offset() != 1 {
-		t.Fatalf("down should advance one wrapped row, got offset %d", m.helpViewport.Offset())
+	if helpSurface(m).viewport.Offset() != 1 {
+		t.Fatalf("down should advance one wrapped row, got offset %d", helpSurface(m).viewport.Offset())
 	}
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnd})
-	if want := maxScrollOffset(total, window); m.helpViewport.Offset() != want {
-		t.Fatalf("end offset = %d, want %d", m.helpViewport.Offset(), want)
+	if want := maxScrollOffset(total, window); helpSurface(m).viewport.Offset() != want {
+		t.Fatalf("end offset = %d, want %d", helpSurface(m).viewport.Offset(), want)
 	}
-	view := m.helpViewport.View(strings.Split(helpBody(m.deps.Theme, m.caps, m.helpKeyMarkings()), "\n"))
+	view := helpSurface(m).viewport.View(strings.Split(helpBody(m.deps.Theme, m.caps, m.helpKeyMarkings()), "\n"))
 	if view.Below != 0 {
 		t.Fatalf("end should reveal the final wrapped row, with %d rows still below", view.Below)
 	}
@@ -235,24 +243,24 @@ func TestHelpWheelOwnershipAndPhysicalRowBrowsing(t *testing.T) {
 
 	updated, _ := m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown, X: 1, Y: 1})
 	m = updated.(Model)
-	if got := m.helpViewport.Offset(); got != 1 {
+	if got := helpSurface(m).viewport.Offset(); got != 1 {
 		t.Fatalf("wheel down offset = %d, want one physical row", got)
 	}
 	assertHiddenUnchanged(beforeConversation, beforePrompt, beforeFocused, beforePromptSelection)
 
 	updated, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp, X: 1, Y: 1})
 	m = updated.(Model)
-	if got := m.helpViewport.Offset(); got != 0 {
+	if got := helpSurface(m).viewport.Offset(); got != 0 {
 		t.Fatalf("wheel at top offset = %d, want consumed endpoint 0", got)
 	}
 	assertHiddenUnchanged(beforeConversation, beforePrompt, beforeFocused, beforePromptSelection)
 
-	total, _ := m.helpScrollGeometry()
-	m.helpViewport.Move(bounded.End, total)
-	atEnd := m.helpViewport.Offset()
+	total, _ := helpGeometry(m)
+	helpSurface(m).viewport.Move(bounded.End, total)
+	atEnd := helpSurface(m).viewport.Offset()
 	updated, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown, X: 1, Y: 1})
 	m = updated.(Model)
-	if got := m.helpViewport.Offset(); got != atEnd {
+	if got := helpSurface(m).viewport.Offset(); got != atEnd {
 		t.Fatalf("wheel at end offset = %d, want consumed endpoint %d", got, atEnd)
 	}
 	assertHiddenUnchanged(beforeConversation, beforePrompt, beforeFocused, beforePromptSelection)
@@ -265,14 +273,14 @@ func TestHelpWheelOwnershipAndPhysicalRowBrowsing(t *testing.T) {
 	assertHiddenUnchanged(beforeConversation, beforePrompt, beforeFocused, beforePromptSelection)
 
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 1000})
-	if total, window := m.helpScrollGeometry(); total > window {
+	if total, window := helpGeometry(m); total > window {
 		t.Fatalf("precondition: tall Help viewport should not overflow (total=%d window=%d)", total, window)
 	}
 	beforeConversation = m.vp.YOffset()
 	beforePrompt, beforeFocused, beforePromptSelection = m.prompt.Value(), m.prompt.Focused(), m.prompt.HasSelection()
 	updated, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown, X: 1, Y: 1})
 	m = updated.(Model)
-	if got := m.helpViewport.Offset(); got != 0 {
+	if got := helpSurface(m).viewport.Offset(); got != 0 {
 		t.Fatalf("wheel without overflow offset = %d, want consumed endpoint 0", got)
 	}
 	assertHiddenUnchanged(beforeConversation, beforePrompt, beforeFocused, beforePromptSelection)
@@ -281,39 +289,40 @@ func TestHelpWheelOwnershipAndPhysicalRowBrowsing(t *testing.T) {
 func TestHelpScrollNavigationAndReset(t *testing.T) {
 	m := helpModel(t, allOnCaps())
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 24})
-	total, window := m.helpScrollGeometry()
+	total, window := helpGeometry(m)
 	if maxScrollOffset(total, window) == 0 {
 		t.Fatalf("precondition: help should overflow at this height (total=%d window=%d)", total, window)
 	}
 
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyDown})
-	if m.helpViewport.Offset() != 1 {
-		t.Fatalf("down moved help scroll to %d, want 1", m.helpViewport.Offset())
+	if helpSurface(m).viewport.Offset() != 1 {
+		t.Fatalf("down moved help scroll to %d, want 1", helpSurface(m).viewport.Offset())
 	}
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyPgDown})
-	if m.helpViewport.Offset() != clampScroll(1+window, total, window) {
-		t.Fatalf("pgdown moved help scroll to %d, want page movement", m.helpViewport.Offset())
+	if helpSurface(m).viewport.Offset() != clampScroll(1+window, total, window) {
+		t.Fatalf("pgdown moved help scroll to %d, want page movement", helpSurface(m).viewport.Offset())
 	}
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyPgUp})
-	if m.helpViewport.Offset() != 1 {
-		t.Fatalf("pgup moved help scroll to %d, want 1", m.helpViewport.Offset())
+	if helpSurface(m).viewport.Offset() != 1 {
+		t.Fatalf("pgup moved help scroll to %d, want 1", helpSurface(m).viewport.Offset())
 	}
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnd})
-	if want := maxScrollOffset(total, window); m.helpViewport.Offset() != want {
-		t.Fatalf("end moved help scroll to %d, want %d", m.helpViewport.Offset(), want)
+	if want := maxScrollOffset(total, window); helpSurface(m).viewport.Offset() != want {
+		t.Fatalf("end moved help scroll to %d, want %d", helpSurface(m).viewport.Offset(), want)
 	}
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyHome})
-	if m.helpViewport.Offset() != 0 {
-		t.Fatalf("home moved help scroll to %d, want 0", m.helpViewport.Offset())
+	if helpSurface(m).viewport.Offset() != 0 {
+		t.Fatalf("home moved help scroll to %d, want 0", helpSurface(m).viewport.Offset())
 	}
 
+	previous := helpSurface(m)
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnd}, qmark())
-	if m.showHelp || m.helpViewport.Offset() != 0 {
-		t.Fatalf("closing help should reset offset: open=%t offset=%d", m.showHelp, m.helpViewport.Offset())
+	if m.modal != nil || previous == m.modal || previous.viewport.Offset() == 0 {
+		t.Fatal("closing help should release the scrolled surface")
 	}
 	m = applyAll(m, qmark())
-	if !m.showHelp || m.helpViewport.Offset() != 0 {
-		t.Fatalf("opening help should reset offset: open=%t offset=%d", m.showHelp, m.helpViewport.Offset())
+	if m.modal == nil || helpSurface(m) == previous || helpSurface(m).viewport.Offset() != 0 {
+		t.Fatal("opening help should start with a fresh viewport")
 	}
 }
 
@@ -346,9 +355,9 @@ func TestHelpRenderingIsHeightBoundedAndShowsScrollGuidance(t *testing.T) {
 
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyF7, Mod: tea.ModCtrl})
 	body := stripANSIstr(m.renderBody())
-	total, window := m.helpScrollGeometry()
-	if m.helpViewport.Offset() != maxScrollOffset(total, window) {
-		t.Fatalf("end scroll offset = %d, want %d", m.helpViewport.Offset(), maxScrollOffset(total, window))
+	total, window := helpGeometry(m)
+	if helpSurface(m).viewport.Offset() != maxScrollOffset(total, window) {
+		t.Fatalf("end scroll offset = %d, want %d", helpSurface(m).viewport.Offset(), maxScrollOffset(total, window))
 	}
 	if start, end, rows := helpIndicatorRange(t, compactHelpText(body)); start <= 1 || end != rows {
 		t.Fatalf("end-scrolled indicator should move past row 1 and finish on the last row, got %d–%d of %d:\n%s", start, end, rows, body)
@@ -373,7 +382,7 @@ func TestHelpNavigationRespectsKeyOverrides(t *testing.T) {
 		}
 	})
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 24})
-	total, window := m.helpScrollGeometry()
+	total, window := helpGeometry(m)
 	maxScroll := maxScrollOffset(total, window)
 	if maxScroll == 0 {
 		t.Fatalf("precondition: help should overflow at this height (total=%d window=%d)", total, window)
@@ -381,54 +390,102 @@ func TestHelpNavigationRespectsKeyOverrides(t *testing.T) {
 	press := func(ch rune) { m = applyAll(m, tea.KeyPressMsg{Code: ch, Text: string(ch)}) }
 
 	press('j')
-	if m.helpViewport.Offset() != 1 {
-		t.Fatalf("overridden Down moved help scroll to %d, want 1", m.helpViewport.Offset())
+	if helpSurface(m).viewport.Offset() != 1 {
+		t.Fatalf("overridden Down moved help scroll to %d, want 1", helpSurface(m).viewport.Offset())
 	}
 	press('d')
-	if want := clampScroll(1+window, total, window); m.helpViewport.Offset() != want {
-		t.Fatalf("overridden ScrollD moved help scroll to %d, want %d", m.helpViewport.Offset(), want)
+	if want := clampScroll(1+window, total, window); helpSurface(m).viewport.Offset() != want {
+		t.Fatalf("overridden ScrollD moved help scroll to %d, want %d", helpSurface(m).viewport.Offset(), want)
 	}
 	press('u')
-	if m.helpViewport.Offset() != 1 {
-		t.Fatalf("overridden ScrollU moved help scroll to %d, want 1", m.helpViewport.Offset())
+	if helpSurface(m).viewport.Offset() != 1 {
+		t.Fatalf("overridden ScrollU moved help scroll to %d, want 1", helpSurface(m).viewport.Offset())
 	}
 	press('t')
-	if m.helpViewport.Offset() != 0 {
-		t.Fatalf("overridden ScrollTop moved help scroll to %d, want 0", m.helpViewport.Offset())
+	if helpSurface(m).viewport.Offset() != 0 {
+		t.Fatalf("overridden ScrollTop moved help scroll to %d, want 0", helpSurface(m).viewport.Offset())
 	}
 	press('b')
-	if m.helpViewport.Offset() != maxScroll {
-		t.Fatalf("overridden ScrollBottom moved help scroll to %d, want %d", m.helpViewport.Offset(), maxScroll)
+	if helpSurface(m).viewport.Offset() != maxScroll {
+		t.Fatalf("overridden ScrollBottom moved help scroll to %d, want %d", helpSurface(m).viewport.Offset(), maxScroll)
 	}
 	press('k')
-	if m.helpViewport.Offset() != maxScroll-1 {
-		t.Fatalf("overridden Up moved help scroll to %d, want %d", m.helpViewport.Offset(), maxScroll-1)
+	if helpSurface(m).viewport.Offset() != maxScroll-1 {
+		t.Fatalf("overridden Up moved help scroll to %d, want %d", helpSurface(m).viewport.Offset(), maxScroll-1)
 	}
 	press('c')
-	if m.showHelp || m.helpViewport.Offset() != 0 {
-		t.Fatalf("overridden Close should close and reset help: open=%t offset=%d", m.showHelp, m.helpViewport.Offset())
+	if m.modal != nil {
+		t.Fatal("overridden Close should release help")
 	}
 }
 
 func TestHelpScrollClampsAfterResizeWithoutFollowingEnd(t *testing.T) {
 	m := helpModel(t, allOnCaps())
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 24}, tea.KeyPressMsg{Code: tea.KeyEnd})
-	before := m.helpViewport.Offset()
+	before := helpSurface(m).viewport.Offset()
 
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 32})
-	total, window := m.helpScrollGeometry()
+	total, window := helpGeometry(m)
 	want := clampScroll(before, total, window)
-	if m.helpViewport.Offset() != want {
-		t.Fatalf("resize left stale offset %d, want clamped %d", m.helpViewport.Offset(), want)
+	if helpSurface(m).viewport.Offset() != want {
+		t.Fatalf("resize left stale offset %d, want clamped %d", helpSurface(m).viewport.Offset(), want)
 	}
 
 	m = helpModel(t, allOnCaps())
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 32}, tea.KeyPressMsg{Code: tea.KeyEnd})
-	before = m.helpViewport.Offset()
+	before = helpSurface(m).viewport.Offset()
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 24})
-	total, window = m.helpScrollGeometry()
-	if m.helpViewport.Offset() != before || m.helpViewport.Offset() == maxScrollOffset(total, window) {
-		t.Fatalf("smaller viewport should retain the prior offset, not follow End: got=%d before=%d end=%d", m.helpViewport.Offset(), before, maxScrollOffset(total, window))
+	total, window = helpGeometry(m)
+	if helpSurface(m).viewport.Offset() != before || helpSurface(m).viewport.Offset() == maxScrollOffset(total, window) {
+		t.Fatalf("smaller viewport should retain the prior offset, not follow End: got=%d before=%d end=%d", helpSurface(m).viewport.Offset(), before, maxScrollOffset(total, window))
+	}
+}
+
+func TestHelpRetainsScrollAcrossWideNarrowResize(t *testing.T) {
+	m := applyAll(helpModel(t, allOnCaps()), tea.WindowSizeMsg{Width: 160, Height: 24})
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnd})
+	before := helpSurface(m).viewport.Offset()
+	if before == 0 {
+		t.Fatal("precondition: wide Help must overflow")
+	}
+	for _, width := range []int{32, 160, 32} {
+		m = applyAll(m, tea.WindowSizeMsg{Width: width, Height: 24})
+		total, window := helpGeometry(m)
+		want := clampScroll(before, total, window)
+		if got := helpSurface(m).viewport.Offset(); got != want {
+			t.Fatalf("width %d: offset %d, want retained/clamped %d", width, got, want)
+		}
+		m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyDown})
+		if got := helpSurface(m).viewport.Offset(); got != clampScroll(want+1, total, window) {
+			t.Fatalf("width %d: down moved to %d from %d", width, got, want)
+		}
+		before = helpSurface(m).viewport.Offset()
+	}
+}
+
+func TestHelpNarrowWrappedIndicatorUsesCapturedOverrides(t *testing.T) {
+	m := helpModel(t, allOnCaps(), func(deps *Deps) {
+		deps.KeyOverrides = map[string][]string{
+			"Close": {"ctrl+f1"}, "Up": {"ctrl+f2"}, "Down": {"ctrl+f3"},
+			"ScrollU": {"ctrl+f4"}, "ScrollD": {"ctrl+f5"},
+			"ScrollTop": {"ctrl+f6"}, "ScrollBottom": {"ctrl+f7"},
+		}
+	})
+	m = applyAll(m, tea.WindowSizeMsg{Width: 32, Height: 24})
+	body := m.renderBody()
+	if total, window := helpGeometry(m); total <= window {
+		t.Fatal("precondition: narrow help must overflow")
+	}
+	compact := compactHelpText(body)
+	start, end, total := helpIndicatorRange(t, compact)
+	rows := helpIndicatorRows(helpSurface(m).deps.marks, start-1, end, total, helpBodyWidth(m.deps.Theme, m.width))
+	if len(rows) < 2 || !strings.Contains(compact, compactHelpText(strings.Join(rows, "\n"))) {
+		t.Fatalf("expected the complete wrapped indicator in narrow Help:\n%s", body)
+	}
+	for _, marking := range []string{"ctrl+f1or?close", "ctrl+f2/ctrl+f3scroll", "ctrl+f4/ctrl+f5page", "ctrl+f6", "ctrl+f7jump"} {
+		if !strings.Contains(compact, marking) {
+			t.Fatalf("wrapped indicator missing %q:\n%s", marking, body)
+		}
 	}
 }
 
@@ -485,60 +542,47 @@ func helpIndicatorRange(t *testing.T, compact string) (start, end, total int) {
 // fit the offered height at the top, middle, and end offsets.
 func TestHelpStaysWithinOfferedHeightAcrossNarrowShortGeometry(t *testing.T) {
 	m := helpModel(t, allOnCaps())
-	th, hk := m.deps.Theme, m.helpKeyMarkings()
-	lines := strings.Split(helpBody(th, m.caps, hk), "\n")
 	for _, width := range []int{8, 12, 20, 26, 33, 40, 45, 69} {
 		for _, height := range []int{1, 3, 5, 6, 8, 10, 12, 14, 24} {
-			viewport := new(bounded.Viewport)
+			m = applyAll(m, tea.WindowSizeMsg{Width: width, Height: height})
 			for _, position := range []string{"top", "middle", "end"} {
-				total := helpViewportView(th, lines, width, height, viewport, hk).total
+				m.renderBody()
+				s := helpSurface(m)
 				switch position {
 				case "top":
-					viewport.Reset()
+					s.viewport.Reset()
 				case "middle":
-					viewport.SetOffset(total/2, total)
+					s.viewport.SetOffset(s.total/2, s.total)
 				case "end":
-					viewport.Move(bounded.End, total)
+					s.viewport.Move(bounded.End, s.total)
 				}
-				out := renderHelpOverlay(th, m.caps, width, height, viewport, hk)
-				if got := lipgloss.Height(out); got > height {
-					t.Fatalf("width=%d height=%d at %s: help is %d rows, exceeds offered height", width, height, position, got)
+				out := m.renderBody()
+				if got := lipgloss.Height(out); got > m.vp.Height() {
+					t.Fatalf("width=%d height=%d at %s: help is %d rows, exceeds offered height %d", width, height, position, got, m.vp.Height())
 				}
 			}
 		}
 	}
 }
 
-func TestHelpCompactFallbackAndBareCard(t *testing.T) {
+func TestHelpCompactFallback(t *testing.T) {
 	m := helpModel(t, allOnCaps())
-	th, hk := m.deps.Theme, m.helpKeyMarkings()
-	chrome := lipgloss.Height(th.Style("askCard").Render(""))
-
-	for _, height := range []int{1, chrome} {
-		out := renderHelpOverlay(th, m.caps, 100, height, new(bounded.Viewport), hk)
-		if lipgloss.Height(out) != 1 || strings.Contains(stripANSIstr(out), "┏") {
-			t.Fatalf("height %d should render one unframed row, got:\n%s", height, out)
+	for _, height := range []int{3, 5} {
+		m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: height})
+		body := m.renderBody()
+		if strings.Contains(stripANSIstr(body), "┏") {
+			t.Fatalf("height %d should use unframed Help, got:\n%s", height, body)
 		}
 	}
-
-	// A body window starved by the wrapped indicator takes the same fallback
-	// instead of overflowing the card.
-	starved := renderHelpOverlay(th, m.caps, 20, chrome+3, new(bounded.Viewport), hk)
-	if lipgloss.Height(starved) != 1 {
-		t.Fatalf("a starved body window should fall back to one row, got %d rows:\n%s", lipgloss.Height(starved), starved)
-	}
-
-	for _, size := range [][2]int{{100, 0}, {0, 0}, {0, 24}} {
-		out := stripANSIstr(renderHelpOverlay(th, m.caps, size[0], size[1], new(bounded.Viewport), hk))
-		if size[1] <= 0 && !strings.Contains(out, "┏") {
-			t.Fatalf("nonpositive geometry %v should keep the bare card, got:\n%s", size, out)
-		}
+	m = applyAll(m, tea.WindowSizeMsg{Width: 20, Height: 9})
+	if !helpSurface(m).compact {
+		t.Fatal("indicator-starved Help should use compact fallback")
 	}
 }
 
 func TestHelpShowsNoIndicatorWhenContentFits(t *testing.T) {
 	m := applyAll(helpModel(t, allOnCaps()), tea.WindowSizeMsg{Width: 100, Height: 1000})
-	if total, window := m.helpScrollGeometry(); total > window {
+	if total, window := helpGeometry(m); total > window {
 		t.Fatalf("precondition: tall Help should not overflow (total=%d window=%d)", total, window)
 	}
 	if body := compactHelpText(m.renderBody()); helpIndicatorPattern.MatchString(body) {
@@ -557,7 +601,7 @@ func TestHelpSwallowsNonWheelMouseWhileOpen(t *testing.T) {
 	if !ok {
 		t.Fatal("precondition: prompt region should be known at this size")
 	}
-	beforeOffset, beforeYOffset := m.helpViewport.Offset(), m.vp.YOffset()
+	beforeOffset, beforeYOffset := helpSurface(m).viewport.Offset(), m.vp.YOffset()
 	beforeValue, beforeFocused, beforeSelection := m.prompt.Value(), m.prompt.Focused(), m.prompt.HasSelection()
 
 	for name, msg := range map[string]tea.Msg{
@@ -568,13 +612,16 @@ func TestHelpSwallowsNonWheelMouseWhileOpen(t *testing.T) {
 		"motion":                   tea.MouseMotionMsg{Button: tea.MouseLeft, X: 40, Y: 8},
 		"release":                  tea.MouseReleaseMsg{Button: tea.MouseLeft, X: 40, Y: 8},
 	} {
-		updated, _ := m.Update(msg)
+		updated, cmd := m.Update(msg)
+		if cmd != nil {
+			t.Fatalf("%s returned a hidden interaction command", name)
+		}
 		m = updated.(Model)
 		switch {
-		case !m.showHelp:
+		case m.modal == nil:
 			t.Fatalf("%s closed help", name)
-		case m.helpViewport.Offset() != beforeOffset:
-			t.Fatalf("%s moved help offset to %d, want %d", name, m.helpViewport.Offset(), beforeOffset)
+		case helpSurface(m).viewport.Offset() != beforeOffset:
+			t.Fatalf("%s moved help offset to %d, want %d", name, helpSurface(m).viewport.Offset(), beforeOffset)
 		case m.vp.YOffset() != beforeYOffset || m.sel.active:
 			t.Fatalf("%s reached the hidden conversation", name)
 		case m.prompt.Value() != beforeValue || m.prompt.Focused() != beforeFocused || m.prompt.HasSelection() != beforeSelection:

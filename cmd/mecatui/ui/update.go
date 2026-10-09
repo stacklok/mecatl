@@ -2043,11 +2043,6 @@ func (m Model) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	// lipgloss.Height of the rendered regions in chrome().
 	m.relayout()
 	m.configureAgentsInvViewport()
-	if m.showHelp {
-		// Re-apply geometry so a retained offset is clamped to the new layout
-		// without pinning an earlier End position to the new bottom.
-		m.helpScrollGeometry()
-	}
 	m.clampAgentsDetailScroll()
 	if widthChanged && m.vp.Height() == viewportHeight {
 		m.refreshView()
@@ -2256,12 +2251,6 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return mm, cmd
 	}
 
-	// Help owns the remaining keys while open: its documented navigation and close
-	// controls act on the overlay and every ordinary key is swallowed.
-	if m.showHelp {
-		return m.onHelpKey(msg)
-	}
-
 	// Disarm whichever quit guards are armed: any non-ctrl+c key disarms the Quit
 	// guard and any non-ctrl+d key disarms the QuitD guard (each guard's window spans
 	// only its own consecutive presses). The two guards are INDEPENDENT — neither key
@@ -2366,65 +2355,10 @@ func (m Model) onPendingApprovalRecoveryKey(msg tea.KeyPressMsg) (tea.Model, tea
 	return m, tea.Quit, true
 }
 
-// onHelpKey handles the help overlay's complete keyboard contract. It runs before
-// phase routing, so navigation never reaches the conversation and every other key
-// remains swallowed.
-func (m Model) onHelpKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch {
-	case key.Matches(msg, m.keys.Help), key.Matches(msg, m.keys.Close):
-		m.showHelp = false
-		m.helpViewport.Reset()
-		_ = m.prompt.Focus()
-	case key.Matches(msg, m.keys.ScrollD):
-		m.moveHelp(bounded.PageDown)
-	case key.Matches(msg, m.keys.ScrollU):
-		m.moveHelp(bounded.PageUp)
-	case key.Matches(msg, m.keys.Down):
-		m.moveHelp(bounded.LineDown)
-	case key.Matches(msg, m.keys.Up):
-		m.moveHelp(bounded.LineUp)
-	case key.Matches(msg, m.keys.ScrollBottom):
-		m.moveHelp(bounded.End)
-	case key.Matches(msg, m.keys.ScrollTop):
-		m.moveHelp(bounded.Top)
-	}
-	return m, nil
-}
-
-// onHelpWheel keeps physical scrolling owned by the visible Help overlay. The
-// event is consumed at endpoints and in compact or non-overflow geometry because
-// moveHelp always runs against the current layout.
-func (m Model) onHelpWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
-	switch msg.Button {
-	case tea.MouseWheelUp:
-		m.moveHelp(bounded.LineUp)
-	case tea.MouseWheelDown:
-		m.moveHelp(bounded.LineDown)
-	}
-	return m, nil
-}
-
-// moveHelp applies one movement to Help's viewport after re-applying the current
-// geometry, so the move clamps against the same rows renderHelpOverlay draws.
-func (m *Model) moveHelp(move bounded.Move) {
-	total, _ := m.helpScrollGeometry()
-	m.helpViewport.Move(move, total)
-}
-
-// helpScrollGeometry configures the pointer-owned Help viewport for the current
-// layout and returns the wrapped row total and body window. It mutates the
-// viewport (geometry and offset clamp) on purpose: render, keys, wheel and resize
-// all go through helpViewportView, so they cannot disagree about the rows.
-func (m *Model) helpScrollGeometry() (total, window int) {
-	lines := strings.Split(helpBody(m.deps.Theme, m.caps, m.helpKeyMarkings()), "\n")
-	frame := helpViewportView(m.deps.Theme, lines, m.width, m.vp.Height(), m.helpViewport, m.helpKeyMarkings())
-	return frame.total, frame.window
-}
-
 // selection owner is active.
 func (m Model) clearAnySelection(msg tea.KeyPressMsg) (Model, bool) {
 	if !key.Matches(msg, m.keys.Cancel) || (!m.sel.active && !m.prompt.HasSelection()) ||
-		m.showHelp || m.modal != nil || m.team.view != teamNone || m.agentsInv.view != agentsInvNone ||
+		m.modal != nil || m.team.view != teamNone || m.agentsInv.view != agentsInvNone ||
 		m.reflections.view != reflectionsNone ||
 		m.effort.view != effortNone || m.worktrees.view != worktreesNone {
 		return m, false
@@ -2988,7 +2922,7 @@ func normalizePastedNewlines(content string) string {
 // primary-selection paste trigger (onMousePress), so the two paths can never
 // drift apart.
 func (m Model) pasteGateOpen() bool {
-	if m.showHelp || m.phase == phaseAwaitingApproval ||
+	if m.phase == phaseAwaitingApproval ||
 		m.modal != nil || m.team.view != teamNone || m.agentsInv.view != agentsInvNone {
 		return false
 	}
@@ -3344,7 +3278,7 @@ func (m Model) onIdleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.editBackQueue()
 	case key.Matches(msg, m.keys.Help) && strings.TrimSpace(m.prompt.Value()) == "":
 		// "?" is printable: open help only on an empty prompt so "?" in prose still
-		// inserts literally. The overlay claims the keyboard via the m.showHelp gate
+		// inserts literally. The overlay claims the keyboard through modal routing
 		// in onKey; blur the input while it is up.
 		return m.runHelp()
 	case key.Matches(msg, m.keys.MCPPanel):
@@ -4288,11 +4222,12 @@ func (m Model) onMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 // re-discriminates the concrete mouse type here, where the dispatch logically
 // belongs.
 func (m Model) onMouseMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if m.showHelp {
-		if wheel, ok := msg.(tea.MouseWheelMsg); ok {
-			return m.onHelpWheel(wheel)
+	if m.modal != nil {
+		if _, wheel := msg.(tea.MouseWheelMsg); !wheel {
+			if mm, cmd, handled := m.dispatchSurfaceMsg(msg); handled {
+				return mm, cmd
+			}
 		}
-		return m, nil
 	}
 	if m.agentsInv.view != agentsInvNone {
 		if wheel, ok := msg.(tea.MouseWheelMsg); ok {

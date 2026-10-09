@@ -685,7 +685,7 @@ func TestHelpBuiltinProgram(t *testing.T) {
 	// Final-model assertion (deterministic): the overlay opened then closed, so the
 	// final frame no longer shows the help body.
 	fm := tm.FinalModel(t).(Model)
-	if fm.showHelp {
+	if fm.modal != nil {
 		t.Error("/help overlay should be closed after esc")
 	}
 	// The overlay's distinctive body row (not shared with the zero-state card) is
