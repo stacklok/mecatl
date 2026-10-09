@@ -2971,6 +2971,8 @@ func (m Model) onRunningKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// into the textarea for editing. It is distinct from Escape, which cancels
 		// the running turn without changing the queue.
 		return m.editBackQueue()
+	case key.Matches(msg, m.keys.Help) && strings.TrimSpace(m.prompt.Value()) == "":
+		return m.runHelp()
 	case key.Matches(msg, m.keys.Agents):
 		// f6 opens the unified agents overlay MID-RUN (Gap B): the deep view is
 		// most useful while agents stream. openAgents permits phaseRunning, reads the

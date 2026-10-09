@@ -59,6 +59,16 @@ func TestHelpOpensOnlyOnEmptyInput(t *testing.T) {
 	}
 }
 
+func TestHelpOpensWhileRunning(t *testing.T) {
+	m := zeroStateModel(t, embeddedCaps())
+	m.phase = phaseRunning
+
+	m = applyAll(m, qmark())
+	if _, ok := m.modal.(*helpState); !ok {
+		t.Fatalf("'?' should open Help while running, modal=%T", m.modal)
+	}
+}
+
 // TestHelpEscCloses asserts esc also closes the overlay.
 func TestHelpEscCloses(t *testing.T) {
 	m := zeroStateModel(t, embeddedCaps())

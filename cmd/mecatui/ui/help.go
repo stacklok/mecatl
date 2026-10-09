@@ -182,12 +182,13 @@ func helpScrollIndicator(hk helpKeys, start, end, total int) string {
 // hk carries the LIVE key markings from the model's keyMap, so a rebinding
 // propagates here.
 func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
-	muted := th.Style("muted")
+	heading := th.Style("toolName")
+	body := th.Style("toolArgs")
 	var b strings.Builder
 
 	b.WriteString(th.Style("askTitle").Render("Help") + "\n\n")
 
-	b.WriteString(muted.Render("Prompting") + "\n")
+	b.WriteString(heading.Render("Prompting") + "\n")
 	writeHelpRows(&b, th, []helpRow{
 		{key: hk.submit, action: "send prompt"},
 		{key: hk.newlineFirst, action: "insert newline" + hk.newlineAlso},
@@ -204,7 +205,7 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 		{key: hk.cancel, action: "cancel the current run"},
 	})
 
-	b.WriteString("\n" + muted.Render("While a run is active") + "\n")
+	b.WriteString("\n" + heading.Render("While a run is active") + "\n")
 	streamingSubmit := "queue a follow-up to send after this run"
 	if caps.Steer {
 		streamingSubmit = "guide the running agent at its next step; built-in commands still run here"
@@ -215,7 +216,7 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 		{key: hk.cancel, action: "cancel the current run"},
 	})
 
-	b.WriteString("\n" + muted.Render("Permission request") + "\n")
+	b.WriteString("\n" + heading.Render("Permission request") + "\n")
 	writeHelpRows(&b, th, []helpRow{
 		{key: hk.allow, action: "allow once"},
 		{key: hk.allowAlways, action: "always allow for this session (main agent only)"},
@@ -225,7 +226,7 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 		{key: hk.rawArgs, action: "show raw arguments in the full view"},
 	})
 
-	b.WriteString("\n" + muted.Render("Inspect and manage") + "\n")
+	b.WriteString("\n" + heading.Render("Inspect and manage") + "\n")
 	inspectRows := []helpRow{
 		{key: hk.mcpPanel, action: "open MCP servers and tools", available: caps.MCP, gated: true},
 		{key: hk.resources, action: "browse MCP resources", available: caps.MCP, gated: true},
@@ -246,7 +247,7 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 	)
 	writeHelpRows(&b, th, inspectRows)
 
-	b.WriteString("\n" + muted.Render("Conversation and navigation") + "\n")
+	b.WriteString("\n" + heading.Render("Conversation and navigation") + "\n")
 	writeHelpRows(&b, th, []helpRow{
 		{key: hk.selectAll, action: "select all prompt text"},
 		{key: hk.copySelection, action: "copy selected prompt or conversation text"},
@@ -259,7 +260,7 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 		{key: "middle-click", action: "paste the primary selection (X11/Wayland)"},
 	})
 
-	b.WriteString("\n" + muted.Render("Exit and suspend") + "\n")
+	b.WriteString("\n" + heading.Render("Exit and suspend") + "\n")
 	writeHelpRows(&b, th, []helpRow{
 		{key: "/quit", action: "quit immediately (alias: /exit; cancels an active run)"},
 		{key: hk.suspend, action: "suspend to the shell; the run continues, and fg resumes the TUI"},
@@ -273,55 +274,55 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 	// inventory IS browsable via /skills — so the copy is caps-aware: it points at
 	// /skills when enabled, and keeps the "run automatically, not browsable" framing
 	// when skills are off (nothing to browse).
-	b.WriteString("\n" + muted.Render("Features") + "\n")
+	b.WriteString("\n" + heading.Render("Features") + "\n")
 	if caps.Skills {
-		writeHelpMutedLines(&b, th,
+		writeHelpBodyLines(&b, th,
 			"The agent loads skills when needed. Type /skills to browse available skills.")
 	} else {
-		writeHelpMutedLines(&b, th,
+		writeHelpBodyLines(&b, th,
 			"This server does not provide a skills inventory.")
 	}
 	// Agent definitions, when served, are browsable via /agents (the inventory the
 	// Subagent tool routes delegations to). Distinct from caps.Teams / f6, which is
 	// the live overlay of a team that has actually run.
 	if caps.Agents {
-		b.WriteString(muted.Render("Type /agents to browse the agent-definition inventory.") + "\n")
+		b.WriteString(body.Render("Type /agents to browse the agent-definition inventory.") + "\n")
 	}
 	if caps.SlashCommands {
-		b.WriteString(muted.Render("Type / to browse slash commands.") + "\n")
+		b.WriteString(body.Render("Type / to browse slash commands.") + "\n")
 	}
 	if caps.Memory {
-		b.WriteString(muted.Render("Cross-session memory is enabled.") + "\n")
+		b.WriteString(body.Render("Cross-session memory is enabled.") + "\n")
 	}
 	switch {
 	case caps.Image && caps.Audio:
-		b.WriteString(muted.Render("Type @ to attach a file — images and audio go to the model as media.") + "\n")
+		b.WriteString(body.Render("Type @ to attach a file — images and audio go to the model as media.") + "\n")
 	case caps.Image:
-		b.WriteString(muted.Render("Type @ to attach a file — images go to the model as media.") + "\n")
+		b.WriteString(body.Render("Type @ to attach a file — images go to the model as media.") + "\n")
 	case caps.Audio:
-		b.WriteString(muted.Render("Type @ to attach a file — audio goes to the model as media.") + "\n")
+		b.WriteString(body.Render("Type @ to attach a file — audio goes to the model as media.") + "\n")
 	default:
-		b.WriteString(muted.Render("This model accepts text only; attached files are inserted as text.") + "\n")
+		b.WriteString(body.Render("This model accepts text only; attached files are inserted as text.") + "\n")
 	}
 
 	// Usage legend: decode the footer/turn-stat token arrows AND the cache percentage,
 	// so "↑1.2K ↓340 ⊕1.2K · cache 88%" is self-explanatory — the input/output/cache-write
 	// glyphs, plus the share of input tokens served from cache (the number behind a
 	// surprisingly large prompt).
-	b.WriteString("\n" + muted.Render("Usage") + "\n")
-	b.WriteString(muted.Render("↑ input · ↓ output · ⊕ cache write · cache N% input served from cache") + "\n")
+	b.WriteString("\n" + heading.Render("Usage") + "\n")
+	b.WriteString(body.Render("↑ input · ↓ output · ⊕ cache write · cache N% input served from cache") + "\n")
 
 	// The navigation and close affordances use the LIVE bindings, so a keymap
 	// override never leaves an unusable scrollable overlay.
-	b.WriteString("\n" + muted.Render(hk.close+" close · "+hk.navUp+"/"+hk.navDown+" scroll · "+hk.scroll+" page · "+hk.jump+" jump"))
+	b.WriteString("\n" + body.Render(hk.close+" close · "+hk.navUp+"/"+hk.navDown+" scroll · "+hk.scroll+" page · "+hk.jump+" jump"))
 	return b.String()
 }
 
-// writeHelpMutedLines renders each line independently so helpRenderedLines can
+// writeHelpBodyLines renders each line independently so helpRenderedLines can
 // safely window the ANSI output without severing a style sequence.
-func writeHelpMutedLines(b *strings.Builder, th theme.Theme, lines ...string) {
+func writeHelpBodyLines(b *strings.Builder, th theme.Theme, lines ...string) {
 	for _, line := range lines {
-		b.WriteString(th.Style("muted").Render(line) + "\n")
+		b.WriteString(th.Style("toolArgs").Render(line) + "\n")
 	}
 }
 
