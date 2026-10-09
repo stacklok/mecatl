@@ -246,7 +246,7 @@ func newKeyringProvider(root string, backend keyringBackend) (*KeyringProvider, 
 		return nil, fmt.Errorf("clientauth: canonicalize store root: %w", err)
 	}
 	root = filepath.Clean(root)
-	// #nosec G302 -- the key lock and credential store require an owner-only root.
+	// #nosec G302 G703 -- Intentionally set the caller-selected, symlink-resolved credential storage root to owner-only mode; credential identities do not select this path.
 	if err := os.Chmod(root, 0700); err != nil {
 		return nil, fmt.Errorf("clientauth: protect store root: %w", err)
 	}
