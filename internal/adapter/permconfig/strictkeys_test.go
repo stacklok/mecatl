@@ -30,6 +30,7 @@ func TestStrictFieldsMatchYAMLTags(t *testing.T) {
 		{"ExecutionSection", (&ExecutionSection{}).strictFields(), ExecutionSection{}},
 		{"ExecutionMicroVMSection", (&ExecutionMicroVMSection{}).strictFields(), ExecutionMicroVMSection{}},
 		{"ExecutionGuestEgressSection", (&ExecutionGuestEgressSection{}).strictFields(), ExecutionGuestEgressSection{}},
+		{"WebSearchSection", (&WebSearchSection{}).strictFields(), WebSearchSection{}},
 		{"MCPSection", (&MCPSection{}).strictFields(), MCPSection{}},
 		{"MCPServerProfile", (&MCPServerProfile{}).strictFields(), MCPServerProfile{}},
 		{"MCPAuthProfile", (&MCPAuthProfile{}).strictFields(), MCPAuthProfile{}},

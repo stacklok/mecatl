@@ -379,6 +379,7 @@ func TestSubtreeTiersAreAsPinned(t *testing.T) {
 		"temporary_storage":      configgen.TierOperator, // operator-only: project cannot redirect command storage or cleanup
 		"storage_management":     configgen.TierOperator, // operator-only: project cannot grant process-wide management
 		"execution":              configgen.TierOperator, // operator-only: project cannot choose host execution placement or guest egress
+		"websearch":              configgen.TierOperator, // operator-only: project cannot configure outbound search
 		"steer":                  configgen.TierOperator, // operator-only: a project cannot flip the mid-run steer surface (issue #512)
 		"models":                 configgen.TierOperator, // operator-only: projects cannot select model/provider policy
 		"openrouter":             configgen.TierOperator, // operator-only: a project cannot steer the OpenRouter downstream provider (issue #480)

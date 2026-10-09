@@ -121,28 +121,37 @@ type httpResult struct {
 	Source        string `json:"source"`
 }
 
-// NewHTTPProvider constructs an HTTPProvider from cfg, applying defaults. It returns
-// an error if BaseURL is empty (a misconfigured adapter must fail loudly, not pass
-// silently — the composition root only builds this when the operator set the URL).
+// NewHTTPProvider constructs an HTTPProvider from cfg, applying defaults. A
+// configured endpoint must be an absolute http(s) URL without a query string,
+// userinfo, or fragment; invalid endpoints fail construction before any request is
+// sent.
 func NewHTTPProvider(cfg HTTPConfig) (*HTTPProvider, error) {
 	trimmed := strings.TrimSpace(cfg.BaseURL)
 	if trimmed == "" {
 		return nil, fmt.Errorf("search: HTTP provider requires a non-empty BaseURL")
 	}
-	// A configured-but-malformed URL must fail construction loudly (the operator
-	// set a broken endpoint), so composition can route it to backend-down rather
-	// than silently building a provider every Search would error on. We require an
-	// absolute http/https URL with a host.
+	// Parse errors can contain the raw URL (including credentials). Never wrap
+	// them or quote rejected input in construction errors.
 	u, err := url.Parse(trimmed)
 	if err != nil {
-		return nil, fmt.Errorf("search: HTTP provider BaseURL %q is not a valid URL: %w", trimmed, err)
+		return nil, fmt.Errorf("search: HTTP provider BaseURL is not a valid URL")
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return nil, fmt.Errorf("search: HTTP provider BaseURL %q must be an http(s) URL (got scheme %q)", trimmed, u.Scheme)
+		return nil, fmt.Errorf("search: HTTP provider BaseURL must be an http(s) URL")
 	}
-	if u.Host == "" {
-		return nil, fmt.Errorf("search: HTTP provider BaseURL %q must include a host", trimmed)
+	if u.Hostname() == "" {
+		return nil, fmt.Errorf("search: HTTP provider BaseURL must include a host")
 	}
+	if u.RawQuery != "" {
+		return nil, fmt.Errorf("search: HTTP provider BaseURL must not contain a query string")
+	}
+	if u.User != nil {
+		return nil, fmt.Errorf("search: HTTP provider BaseURL must not contain userinfo")
+	}
+	if u.Fragment != "" || strings.Contains(trimmed, "#") {
+		return nil, fmt.Errorf("search: HTTP provider BaseURL must not contain a fragment")
+	}
+	cfg.BaseURL = trimmed
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = defaultTimeout
 	}

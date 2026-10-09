@@ -227,6 +227,9 @@ type Config struct {
 	// credential references, or egress policy. Values are metadata only; parsing
 	// never reads an environment variable, opens a credential store, or performs I/O.
 	MCP *MCPSection `yaml:"mcp"`
+	// WebSearch holds strict operator-only HTTP web-search settings. Project values
+	// are ignored before nested decoding, so they cannot affect other project rules.
+	WebSearch *WebSearchSection `yaml:"websearch"`
 	// Retention is the strict, versioned operator-only automatic session cleanup policy.
 	// Project-tier values are ignored; explicit CLI flags remain the highest precedence.
 	Retention *RetentionSection `yaml:"retention"`
@@ -247,6 +250,36 @@ type Config struct {
 	// read exclusively from the user-global settings.yaml; project-tier and explicit
 	// CLI configuration values are ignored by the Resolver.
 	TemporaryStorage *TemporaryStorageSection `yaml:"temporary_storage"`
+}
+
+// WebSearchSection configures the operator-owned HTTP web-search adapter.
+type WebSearchSection struct {
+	// Enabled controls whether web search is available. Nil leaves the runtime default unchanged.
+	Enabled *bool `yaml:"enabled"`
+	// URL is the generic JSON search endpoint.
+	URL string `yaml:"url"`
+	// AuthHeader is the optional request header that carries the search credential.
+	AuthHeader string `yaml:"auth_header"`
+	// QueryParam is the query-string parameter that carries the search text.
+	QueryParam string `yaml:"query_param"`
+	// SearxngURL is an optional SearXNG search endpoint.
+	SearxngURL string `yaml:"searxng_url"`
+}
+
+// UnmarshalYAML strictly decodes web-search settings so misspelled keys cannot
+// silently alter outbound-search configuration.
+func (s *WebSearchSection) UnmarshalYAML(node ast.Node) error {
+	return decodeStrictMapping(node, "websearch", s.strictFields())
+}
+
+func (s *WebSearchSection) strictFields() map[string]any {
+	return map[string]any{
+		"enabled":     newPermconfigNodePointer(&s.Enabled),
+		"url":         &s.URL,
+		"auth_header": &s.AuthHeader,
+		"query_param": &s.QueryParam,
+		"searxng_url": &s.SearxngURL,
+	}
 }
 
 // SystemPromptSection is the strict operator-only standard prompt policy. It

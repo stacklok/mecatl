@@ -40,13 +40,16 @@ providers:
     api_key: <EXA_API_KEY>
   brave:
     api_key: <BRAVE_API_KEY>
+  websearch:
+    api_key: <WEBSEARCH_API_KEY>
 ```
 
 A matching API-key environment variable takes precedence over the file entry.
-The `exa` and `brave` entries configure `WebSearch` for `mecated` and embedded
-`mecatui`; they do not configure or satisfy the requirement for an LLM provider.
-For search backend selection and anonymous Exa behavior, see
-[Configure web search](/features/sessions/tools.md#configure-web-search).
+The `exa` and `brave` entries select `WebSearch` backends for `mecated` and
+embedded `mecatui`. The `websearch` entry supplies the optional credential for
+a generic HTTP search endpoint. None of these entries configures or satisfies
+the requirement for an LLM provider. For backend selection and operator
+settings, see [Configure web search](/features/sessions/tools.md#configure-web-search).
 The default path is `$XDG_CONFIG_HOME/mecatl/auth.yaml`, normally
 `~/.config/mecatl/auth.yaml`. `--api-key-file <PATH>` selects another file;
 `credential_store.api_key.file` in operator settings can also select the path.

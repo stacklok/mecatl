@@ -427,11 +427,9 @@ type config struct {
 
 	// WebSearch (issue #26): the vendor-neutral HTTP JSON search backend behind the
 	// always-present WebSearch tool. websearchURL is the search endpoint (empty =>
-	// the tool reports "not configured"); the API key is read from WEBSEARCH_API_KEY
-	// (a secret, never a flag value); websearchAuthHeader/websearchQueryParam tune
-	// the request shape for a generic JSON endpoint.
+	// the tool reports "not configured"); websearchAuthHeader/websearchQueryParam
+	// tune the request shape for a generic JSON endpoint.
 	websearchURL        string
-	websearchAPIKey     string
 	websearchAuthHeader string
 	websearchQueryParam string
 
@@ -1290,24 +1288,25 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		// and cost knobs are operator-tier YAML only (the `guardrails:` subtree of the
 		// user-global settings.yaml), folded onto Config by foldOperatorGuardrails — a
 		// flag cannot express a rule list.
-		GuardrailsModel:     cfg.guardrailsModel,
-		GuardrailsDisabled:  cfg.guardrailsOff,
-		ModelAliases:        cliconfig.ScalarModelAliases(cfg.modelAliases, cfg.modelAliasProviders),
-		ModelAliasTargets:   cliconfig.ModelAliasTargets(cfg.modelAliases, cfg.modelAliasProviders),
-		ModelSlots:          cfg.modelSlots.AsMap(),
-		CommandsDir:         cfg.commandsDir,
-		EnableCommands:      cfg.enableCommands,
-		EnableParallel:      cfg.enableParallel,
-		WebSearchURL:        cfg.websearchURL,
-		WebSearchAPIKey:     cfg.websearchAPIKey,
-		WebSearchAuthHeader: cfg.websearchAuthHeader,
-		WebSearchQueryParam: cfg.websearchQueryParam,
-		SearXNGURL:          cfg.searxngURL,
-		WebSearchOff:        cfg.websearchOff,
-		ForkPreservedCap:    cfg.forkPreservedCap,
-		EnableTeams:         cfg.enableTeams,
-		MCPServers:          cfg.mcpServers.Servers(),
-		MCPProfileLoader:    cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv),
+		GuardrailsModel:            cfg.guardrailsModel,
+		GuardrailsDisabled:         cfg.guardrailsOff,
+		ModelAliases:               cliconfig.ScalarModelAliases(cfg.modelAliases, cfg.modelAliasProviders),
+		ModelAliasTargets:          cliconfig.ModelAliasTargets(cfg.modelAliases, cfg.modelAliasProviders),
+		ModelSlots:                 cfg.modelSlots.AsMap(),
+		CommandsDir:                cfg.commandsDir,
+		EnableCommands:             cfg.enableCommands,
+		EnableParallel:             cfg.enableParallel,
+		WebSearchURL:               cfg.websearchURL,
+		WebSearchAuthHeader:        cfg.websearchAuthHeader,
+		WebSearchQueryParam:        cfg.websearchQueryParam,
+		WebSearchAuthHeaderFlagSet: cfg.cliExplicit["websearch-auth-header"],
+		WebSearchQueryParamFlagSet: cfg.cliExplicit["websearch-query-param"],
+		SearXNGURL:                 cfg.searxngURL,
+		WebSearchOff:               cfg.websearchOff,
+		ForkPreservedCap:           cfg.forkPreservedCap,
+		EnableTeams:                cfg.enableTeams,
+		MCPServers:                 cfg.mcpServers.Servers(),
+		MCPProfileLoader:           cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv),
 		// Route mcp.mode through the canonical authority resolver. Broker stays
 		// opt-in so an omitted mode and an empty MCP configuration retain the
 		// existing global/no-broker behavior.
@@ -1975,12 +1974,8 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	// "OpenAI key implies the real provider" flip moved there too (off the resolved
 	// key). The registry still auto-detects the keys via its envDetector; reading them
 	// in the cmd layer makes credential custody explicit.
-	//
-	// WebSearch (issue #26): the search backend's API key is a SECRET, read from the
-	// environment (never a flag value), mirroring the provider keys' custody rule.
-	cfg.websearchAPIKey = os.Getenv("WEBSEARCH_API_KEY")
 	// WebSearch backend ladder (issue #26): SearXNG selects its backend;
-	// Brave and Exa credentials use the shared provider credential lifecycle.
+	// Brave, Exa, and the generic URL credentials use the shared provider credential lifecycle.
 	cfg.searxngURL = os.Getenv("SEARXNG_URL")
 	// An auth token from the environment is honored when the flag is unset, so a
 	// secret need not appear in the process argv.

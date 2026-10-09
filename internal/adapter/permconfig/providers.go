@@ -23,7 +23,7 @@ const (
 var providerIDPattern = regexp.MustCompile(`^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 
 var reservedProviderIDs = map[string]struct{}{
-	"anthropic": {}, "mock": {}, "model-router": {}, "openai": {}, "openai-codex": {}, "openrouter": {}, "openrouter-anthropic": {}, "opencode": {}, "toolhive": {}, "toolhive-anthropic": {},
+	"anthropic": {}, "mock": {}, "model-router": {}, "openai": {}, "openai-codex": {}, "openrouter": {}, "openrouter-anthropic": {}, "opencode": {}, "toolhive": {}, "toolhive-anthropic": {}, "websearch": {},
 }
 
 var builtinOverrideIDs = map[string]struct{}{

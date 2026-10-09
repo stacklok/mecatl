@@ -264,6 +264,12 @@ func TestEmbeddedCredentialStartup(t *testing.T) {
 			configKey:  func(cfg app.Config) string { return cfg.BraveAPIKey },
 			diagnostic: "WebSearch ENABLED with Brave backend",
 		},
+		{
+			name:       "generic web search",
+			provider:   "websearch",
+			configKey:  func(cfg app.Config) string { return cfg.WebSearchAPIKey },
+			diagnostic: "WebSearch ENABLED with Exa backend",
+		},
 	}
 
 	for _, tt := range tests {
@@ -276,6 +282,7 @@ func TestEmbeddedCredentialStartup(t *testing.T) {
 			}
 			t.Setenv("EXA_API_KEY", "")
 			t.Setenv("BRAVE_API_KEY", "")
+			t.Setenv("WEBSEARCH_API_KEY", "")
 			started := false
 			logPath := filepath.Join(t.TempDir(), "mecatui.log")
 			err := runWithOptions([]string{"mecatui", "--mock", "--diagnostics-log=" + logPath, "--no-store", "--no-memory", "--no-soul", "--no-skills", "--no-commands", "--user-model-dir=" + t.TempDir(), "--workspace=" + t.TempDir()}, runOptions{

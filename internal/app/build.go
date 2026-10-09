@@ -885,25 +885,31 @@ type Config struct {
 
 	// WebSearch (issue #26): web search is ON by default (Exa anonymous tier) behind
 	// the always-present WebSearch core tool — see the backend ladder fields below.
-	// WebSearchURL is the EXPLICIT-override endpoint (e.g. a SearXNG /search URL or
-	// a generic JSON search API) that wins over the env tiers and the Exa default.
+	// WebSearchURL is the generic JSON search endpoint, supplied explicitly or
+	// folded from operator settings. The explicit endpoint wins over settings.
 	// WebSearchAPIKey is an OPTIONAL credential sent in
 	// WebSearchAuthHeader (default "Authorization" as a Bearer token) — NEVER in the
 	// query string. WebSearchQueryParam overrides the URL query parameter the search
-	// string is placed in (default "q"). The cmd layer reads the key from a
-	// secret/env source, never a flag value. The adapter carries its OWN per-call
-	// timeout and concurrency limiter (egress is bounded in the adapter, never the
+	// string is placed in (default "q"). Credentials come from the shared
+	// provider credential lifecycle, never from a flag value. The adapter carries
+	// its own per-call timeout and concurrency limiter (egress is bounded in the adapter, never the
 	// dispatcher).
-	WebSearchURL        string
-	WebSearchAPIKey     string
-	WebSearchAuthHeader string
-	WebSearchQueryParam string
+	WebSearchURL                  string
+	WebSearchAPIKey               string
+	WebSearchAuthHeader           string
+	WebSearchQueryParam           string
+	WebSearchAuthHeaderFlagSet    bool
+	WebSearchQueryParamFlagSet    bool
+	webSearchURLFromSettings      bool
+	searxngURLFromSettings        bool
+	webSearchDisabledFromSettings bool
 
 	// WebSearch backend ladder (issue #26): web search is ON by default via the Exa
 	// anonymous tier (no key, no config). The precedence is, first match wins:
-	// WebSearchOff (kill switch) > WebSearchURL (explicit override) > SearXNGURL >
-	// BraveAPIKey > Exa anonymous default. SearXNGURL is read from SEARXNG_URL;
-	// BraveAPIKey and ExaAPIKey come from the shared provider credential lifecycle
+	// WebSearchOff > explicit URL > operator enabled:false > operator URL >
+	// operator SearXNG URL > legacy SEARXNG_URL > BraveAPIKey > Exa default.
+	// The operator settings are folded before the shared backend is built.
+	// Brave and Exa credentials come from the shared provider lifecycle
 	// (BRAVE_API_KEY/EXA_API_KEY or auth.yaml), never flag values.
 	SearXNGURL   string
 	BraveAPIKey  string
@@ -1478,6 +1484,7 @@ type providerCredentialFileSetter interface {
 type ProviderCredentials struct {
 	ExaAPIKey             string
 	BraveAPIKey           string
+	WebSearchAPIKey       string
 	OpenAIKey             string
 	OpenRouterKey         string
 	AnthropicKey          string
@@ -1683,6 +1690,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// the child deps builders (the workspace-PINNED child resolver) consume the
 	// SAME instance — one discovery pass, one cache, no per-consumer drift.
 	cfg.permResolver = buildPermResolver(cfg)
+	cfg = foldOperatorWebSearch(cfg)
 	if resolver, ok := cfg.permResolver.(*permconfig.Resolver); ok {
 		if section := resolver.OperatorHarnessContext(); section != nil && section.ProjectInstructionMaxBytes != nil {
 			cfg.ProjectInstructionMaxBytes = *section.ProjectInstructionMaxBytes
@@ -1832,6 +1840,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		cfg.CustomProviderAPIKeys = credentials.CustomProviderAPIKeys
 		cfg.ExaAPIKey = credentials.ExaAPIKey
 		cfg.BraveAPIKey = credentials.BraveAPIKey
+		cfg.WebSearchAPIKey = credentials.WebSearchAPIKey
 		cfg.OpenAIKey = credentials.OpenAIKey
 		cfg.OpenRouterKey = credentials.OpenRouterKey
 		cfg.AnthropicKey = credentials.AnthropicKey
@@ -5981,10 +5990,8 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 		forkReaper:           forkReaper,
 		autoMerger:           autoMerger,
 		modelInventory:       reg.discovery,
-		// WebSearch provider (issue #26): resolved ONCE here via the backend ladder
-		// (kill switch > --websearch-url > SEARXNG_URL > BRAVE_API_KEY > Exa default)
-		// and threaded onto the assets so every per-session catalog reuses the SAME
-		// provider.
+		// WebSearch provider: resolved ONCE from the folded operator settings,
+		// explicit inputs and credential snapshot, then shared by every catalog.
 		searchProvider:           buildSearchProvider(ctx, cfg),
 		reflectionLifecycle:      reflectionLifecycle,
 		reflectionCoordinator:    reflectionCoordinator,
@@ -6569,8 +6576,8 @@ const braveSearchEndpoint = "https://api.search.brave.com/res/v1/web/search"
 // line per branch and NEVER a key/secret in any log line (CWE-200):
 //
 //  1. WebSearchOff (kill switch)      → refsearch.Unavailable (tool reports disabled)
-//  2. WebSearchURL set (explicit)     → HTTP adapter (wins over env)
-//  3. SearXNGURL set                  → HTTP adapter against the SearXNG URL
+//  2. WebSearchURL set (explicit or operator settings) → generic HTTP adapter
+//  3. SearXNGURL set (operator settings or legacy env) → SearXNG HTTP adapter
 //  4. BraveAPIKey set                 → HTTP adapter against the Brave endpoint
 //  5. default                         → Exa anonymous (zero-config, no key)
 //
@@ -6578,13 +6585,17 @@ const braveSearchEndpoint = "https://api.search.brave.com/res/v1/web/search"
 // NOT degrade to the kill-switch "disabled" sentinel — the operator INTENDED a
 // backend, it is just unusable, which is backend-down semantics. It fails soft to
 // refsearch.BackendDown (the tool reports the backend is down, naming the upgrade
-// path) with a WARN (the harness still boots). Only the kill switch (WebSearchOff)
-// resolves to refsearch.Unavailable / the "disabled by operator" message.
+// path) with a WARN (the harness still boots). Only an intentional operator disable
+// (the kill switch or settings.yaml enabled:false) resolves to refsearch.Unavailable.
 func buildSearchProvider(ctx context.Context, cfg Config) tool.SearchProvider {
 	switch {
 	case cfg.WebSearchOff:
-		cfg.diag().Log(ctx, port.LevelInfo, "WebSearch DISABLED by operator (--websearch=off); the tool reports it is disabled")
-		return refsearch.Unavailable{}
+		cfg.diag().Log(ctx, port.LevelInfo, "WebSearch DISABLED by operator; the tool reports it is disabled")
+		reason := ""
+		if cfg.webSearchDisabledFromSettings {
+			reason = "the operator set websearch.enabled: false in settings.yaml"
+		}
+		return refsearch.Unavailable{Reason: reason}
 
 	case strings.TrimSpace(cfg.WebSearchURL) != "":
 		provider, err := refsearch.NewHTTPProvider(refsearch.HTTPConfig{
@@ -6594,19 +6605,35 @@ func buildSearchProvider(ctx context.Context, cfg Config) tool.SearchProvider {
 			QueryParam: cfg.WebSearchQueryParam,
 		})
 		if err != nil {
-			cfg.diag().Log(ctx, port.LevelWarn, "WebSearch backend misconfigured; the tool reports the backend is down (NOT disabled)", "err", err)
+			if cfg.webSearchURLFromSettings {
+				cfg.diag().Log(ctx, port.LevelWarn, "WebSearch operator HTTP backend misconfigured; the tool reports the backend is down (NOT disabled)")
+			} else {
+				cfg.diag().Log(ctx, port.LevelWarn, "WebSearch backend misconfigured; the tool reports the backend is down (NOT disabled)")
+			}
 			return refsearch.BackendDown{}
 		}
-		cfg.diag().Log(ctx, port.LevelInfo, "WebSearch ENABLED with explicit HTTP backend (--websearch-url; wins over env/default)", "endpoint", cfg.WebSearchURL)
+		if cfg.webSearchURLFromSettings {
+			cfg.diag().Log(ctx, port.LevelInfo, "WebSearch ENABLED with operator HTTP backend (settings.yaml)", "endpoint", cfg.WebSearchURL)
+		} else {
+			cfg.diag().Log(ctx, port.LevelInfo, "WebSearch ENABLED with explicit HTTP backend (--websearch-url; wins over env/default)", "endpoint", cfg.WebSearchURL)
+		}
 		return provider
 
 	case strings.TrimSpace(cfg.SearXNGURL) != "":
 		provider, err := refsearch.NewHTTPProvider(refsearch.HTTPConfig{BaseURL: cfg.SearXNGURL})
 		if err != nil {
-			cfg.diag().Log(ctx, port.LevelWarn, "WebSearch SearXNG backend misconfigured; the tool reports the backend is down (NOT disabled)", "err", err)
+			if cfg.searxngURLFromSettings {
+				cfg.diag().Log(ctx, port.LevelWarn, "WebSearch operator SearXNG backend misconfigured; the tool reports the backend is down (NOT disabled)")
+			} else {
+				cfg.diag().Log(ctx, port.LevelWarn, "WebSearch SearXNG backend misconfigured; the tool reports the backend is down (NOT disabled)")
+			}
 			return refsearch.BackendDown{}
 		}
-		cfg.diag().Log(ctx, port.LevelInfo, "WebSearch ENABLED with SearXNG backend (SEARXNG_URL)", "endpoint", cfg.SearXNGURL)
+		if cfg.searxngURLFromSettings {
+			cfg.diag().Log(ctx, port.LevelInfo, "WebSearch ENABLED with SearXNG backend (settings.yaml)", "endpoint", cfg.SearXNGURL)
+		} else {
+			cfg.diag().Log(ctx, port.LevelInfo, "WebSearch ENABLED with SearXNG backend (SEARXNG_URL)", "endpoint", cfg.SearXNGURL)
+		}
 		return provider
 
 	case strings.TrimSpace(cfg.BraveAPIKey) != "":
@@ -9187,6 +9214,42 @@ func promptConfig(cfg Config, gitStatus string) prompt.Config {
 		pc.Role = prompt.DefaultRole() + "\n\n" + d
 	}
 	return pc
+}
+
+// foldOperatorWebSearch applies operator settings before the shared search backend
+// is constructed. A nonempty explicit URL outranks settings.enabled; an empty
+// URL does not. CLI request-shape flags win independently on the generic tier.
+func foldOperatorWebSearch(cfg Config) Config {
+	res, ok := cfg.permResolver.(*permconfig.Resolver)
+	if !ok || res == nil || cfg.WebSearchOff {
+		return cfg
+	}
+	settings := res.OperatorWebSearch()
+	if settings == nil {
+		return cfg
+	}
+	if strings.TrimSpace(cfg.WebSearchURL) == "" {
+		if settings.Enabled != nil && !*settings.Enabled {
+			cfg.WebSearchOff = true
+			cfg.webSearchDisabledFromSettings = true
+			return cfg
+		}
+		if strings.TrimSpace(settings.URL) != "" {
+			cfg.WebSearchURL = settings.URL
+			cfg.webSearchURLFromSettings = true
+		}
+	}
+	if !cfg.WebSearchAuthHeaderFlagSet && cfg.WebSearchAuthHeader == "" {
+		cfg.WebSearchAuthHeader = settings.AuthHeader
+	}
+	if !cfg.WebSearchQueryParamFlagSet && cfg.WebSearchQueryParam == "" {
+		cfg.WebSearchQueryParam = settings.QueryParam
+	}
+	if strings.TrimSpace(settings.SearxngURL) != "" {
+		cfg.SearXNGURL = settings.SearxngURL
+		cfg.searxngURLFromSettings = true
+	}
+	return cfg
 }
 
 // foldOperatorCommitCoauthor carries the already-resolved OPERATOR-TIER

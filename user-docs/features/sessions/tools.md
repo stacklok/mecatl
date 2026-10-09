@@ -65,29 +65,66 @@ guardrails are enabled.
 
 ### Configure web search
 
-`WebSearch` is enabled by default. Mecatl selects the first available backend:
+`WebSearch` is enabled by default. Operators can select a backend in their
+user-global `$XDG_CONFIG_HOME/mecatl/settings.yaml`. The `websearch` block is
+strict and operator-only, so project settings cannot configure it:
 
-1. `SEARXNG_URL` selects a self-hosted SearXNG `/search` endpoint.
-2. `BRAVE_API_KEY` or `providers.brave.api_key` in the operator-owned `auth.yaml`
-   selects Brave Search. The environment variable takes precedence.
-3. Otherwise, Mecatl uses Exa's public MCP endpoint. Set `EXA_API_KEY` or
-   `providers.exa.api_key` in `auth.yaml` to use Exa's authenticated paid tier.
-   The environment variable takes precedence; with neither Exa credential set,
-   Exa runs anonymously.
+```yaml title="settings.yaml"
+websearch:
+  url: https://search.example.com/api/search
+  auth_header: X-API-Key
+  query_param: query
+```
+
+`url` selects a generic HTTP JSON endpoint. `auth_header` names the header for
+its optional credential, and `query_param` replaces the default `q` parameter.
+With the default `Authorization` header, Mecatl sends the credential as a
+Bearer token. Results must contain `title`, `url`, and one of `snippet`,
+`content`, or `description`. Endpoints must be absolute HTTP(S) URLs without a
+query string, userinfo, or fragment.
+
+Set `providers.websearch.api_key` in the operator-owned `auth.yaml`, or set
+`WEBSEARCH_API_KEY` in the process environment, to provide that credential.
+`WEBSEARCH_API_KEY` takes precedence over the file entry. The credential never
+appears in the query string. See [Configure mecated providers and
+storage](/operating/mecated/configure-providers-and-storage.md#model-and-search-credential-file)
+for the credential-file path and ownership requirements.
+
+Use `searxng_url` instead of `url` to select a self-hosted SearXNG `/search`
+endpoint. SearXNG must enable JSON output because Mecatl requests
+`format=json`.
+
+For `mecated`, the first matching item in this order selects the backend:
+
+1. `--websearch=off` disables outbound search.
+2. A nonempty `--websearch-url` selects the generic HTTP endpoint.
+3. `websearch.enabled: false` disables outbound search when no explicit URL is
+   set.
+4. `websearch.url` selects the generic HTTP endpoint.
+5. `websearch.searxng_url` selects SearXNG.
+6. `SEARXNG_URL` selects SearXNG.
+7. `BRAVE_API_KEY` or `providers.brave.api_key` selects Brave Search.
+8. Exa is the default. `EXA_API_KEY` or `providers.exa.api_key` selects its
+   authenticated paid tier; otherwise, Exa runs anonymously.
+
+For API keys, the matching environment variable takes precedence over
+`auth.yaml`. `--websearch-auth-header` and `--websearch-query-param` override
+the generic endpoint's corresponding `settings.yaml` values. The generated
+[server CLI reference](/reference/server-cli.md#mecated-serve) lists the
+`mecated` flags, and the [configuration
+reference](/reference/configuration.md#websearch) lists every `websearch`
+field.
+
+Bare `mecatui` uses its embedded server's operator `settings.yaml` and
+`auth.yaml`, including `websearch.url` and `websearch.searxng_url`. It does not
+read `SEARXNG_URL` or accept the `mecated` web-search flags. `mecatui connect`
+uses the remote server's web-search configuration.
 
 Exa and Brave are search credentials, not model providers. They do not satisfy
-Mecatl's requirement for an LLM credential. SearXNG must enable JSON output
-because Mecatl requests `format=json`.
-
-For another HTTP JSON service, set `--websearch-url` and `WEBSEARCH_API_KEY`.
-Results must contain `title`, `url`, and one of `snippet`, `content`, or
-`description`. Use `--websearch-auth-header` for a raw-key header or
-`--websearch-query-param` to replace the default `q` parameter.
-
-Set `--websearch=off` to disable outbound search. Queries are sent verbatim,
-results are marked as untrusted, redirects are refused, and calls have timeout
-and concurrency limits. Use permissions or guardrails for additional
-exfiltration controls.
+Mecatl's requirement for an LLM credential. Queries are sent verbatim, results
+are marked as untrusted, redirects are refused, and calls have timeout and
+concurrency limits. Use permissions or guardrails for additional exfiltration
+controls.
 
 :::note[Shell is mutating]
 
