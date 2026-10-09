@@ -54,8 +54,8 @@ type helpState struct {
 	compact       bool
 }
 
-func (*helpState) modalMaxOuterWidth(available int) int { return helpCardWidth(available) }
-func (s *helpState) modalFrame() bool                   { return !s.compact }
+func (*helpState) modalMaxOuterWidth() int { return helpMaxCardWidth }
+func (s *helpState) modalFrame() bool      { return !s.compact }
 
 func (s *helpState) Render(width, height int) (string, []ClickableRegion) {
 	// Retain the card's former one-row empty-content allowance.

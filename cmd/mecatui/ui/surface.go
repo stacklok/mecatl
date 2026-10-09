@@ -91,7 +91,7 @@ type modalPlacementSource interface {
 // modalMaxOuterWidthSource caps a parent-framed card without moving framing or
 // centering responsibility into the surface.
 type modalMaxOuterWidthSource interface {
-	modalMaxOuterWidth(available int) int
+	modalMaxOuterWidth() int
 }
 
 // modalFrameSource lets a surface select an unframed compact rendering after it
@@ -212,8 +212,8 @@ func (m *Model) renderModalSurface() string {
 
 	style := m.deps.Theme.Style("askCard")
 	outerW := bodyW
-	if source, ok := m.modal.(modalMaxOuterWidthSource); ok && source.modalMaxOuterWidth(bodyW) > 0 {
-		outerW = min(outerW, source.modalMaxOuterWidth(bodyW))
+	if source, ok := m.modal.(modalMaxOuterWidthSource); ok {
+		outerW = min(outerW, source.modalMaxOuterWidth())
 	}
 	contentW := max(0, outerW-style.GetHorizontalFrameSize())
 	contentH := max(0, bodyH-style.GetVerticalFrameSize())

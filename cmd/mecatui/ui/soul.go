@@ -56,8 +56,8 @@ type soulState struct {
 	compact   bool
 }
 
-func (*soulState) modalMaxOuterWidth(int) int { return 128 }
-func (s *soulState) modalFrame() bool         { return !s.compact }
+func (*soulState) modalMaxOuterWidth() int { return 128 }
+func (s *soulState) modalFrame() bool      { return !s.compact }
 
 // Render receives the parent's measured askCard content offer.
 func (s *soulState) Render(width, height int) (string, []ClickableRegion) {
