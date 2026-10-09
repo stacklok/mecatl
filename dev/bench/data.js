@@ -288942,6 +288942,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791572243357,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ecda8fe88b448dd2860852b6a1ed7a0af14676da",
+          "message": "fix(test): isolate command XDG storage (#2238)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-09T11:49:54-07:00",
+          "tree_id": "57d1f6e1642f2bda83209a5d0e563af6bf6ccfa6",
+          "url": "https://github.com/stacklok/mecatl/commit/ecda8fe88b448dd2860852b6a1ed7a0af14676da"
+        },
+        "date": 1791572975648,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -418687,6 +418721,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791572972768,
+  "lastUpdate": 1791572976570,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
