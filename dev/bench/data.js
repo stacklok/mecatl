@@ -287510,6 +287510,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791530308127,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "peppescg@gmail.com",
+            "name": "Giuseppe Scuglia",
+            "username": "peppescg"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "aa1979c1d0d3542fb095d1dbcacc8caa4f8b936b",
+          "message": "feat(studio): align memory settings and fact detail with the prototype (#2222)\n\nCo-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-10-09T10:33:46+02:00",
+          "tree_id": "ccdb1b00ae15c4e64c878ae63c49f6609b5cd33b",
+          "url": "https://github.com/stacklok/mecatl/commit/aa1979c1d0d3542fb095d1dbcacc8caa4f8b936b"
+        },
+        "date": 1791535587885,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -416643,6 +416677,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791535584953,
+  "lastUpdate": 1791535588583,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
