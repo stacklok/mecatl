@@ -4,10 +4,9 @@ import { ShieldAlert } from "lucide-react";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { cn } from "../../lib/utils";
+import { isDestructiveToolName } from "./destructive-tool";
 import { parseDiffArgs, ToolDiff } from "./edit-diff";
 import { useActiveEscapeAsk } from "./escape-hint-context";
-
-const destructiveTool = /\b(delete|remove|drop|revoke|destroy|purge|rm)\b/iu;
 
 export interface ApprovalRequest {
   args: string;
@@ -37,7 +36,7 @@ export function ApprovalPanel({
   uncertain?: boolean;
   total?: number;
 }) {
-  const destructive = destructiveTool.test(approval.tool);
+  const destructive = isDestructiveToolName(approval.tool);
   const escapeHint = useActiveEscapeAsk(approval) && !disabled;
   const hasArgs = approval.args.trim().length > 0;
   const showDiff =
