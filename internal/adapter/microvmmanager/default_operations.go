@@ -721,6 +721,9 @@ func processStartIdentity(pid int) (string, error) {
 	if runtime.GOOS == "darwin" {
 		output, err := scrubbedCommand(exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "lstart=")).Output()
 		if err != nil {
+			if probeErr := syscall.Kill(pid, 0); errors.Is(probeErr, syscall.ESRCH) {
+				return "", fs.ErrNotExist
+			}
 			return "", err
 		}
 		identity := strings.Join(strings.Fields(string(output)), " ")
