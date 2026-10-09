@@ -288584,6 +288584,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791569638392,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f50dd931785cef45dc013d2e40fd8d50c2eaa606",
+          "message": "feat(mecatui): modernize Dream modal surface and interaction (#2178)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-09T11:45:05-07:00",
+          "tree_id": "7a9b25ce493a8d3e6167379b183bbd5518073d8b",
+          "url": "https://github.com/stacklok/mecatl/commit/f50dd931785cef45dc013d2e40fd8d50c2eaa606"
+        },
+        "date": 1791572243357,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -418176,6 +418210,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791572240486,
+  "lastUpdate": 1791572244101,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
