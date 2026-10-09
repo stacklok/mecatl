@@ -15,3 +15,4 @@ rely on them for how Mecatl works.
 | [mecak8s-vmcp-delegation-contract.md](mecak8s-vmcp-delegation-contract.md) | Jakub Hrozek | Work record of the mecak8s and vMCP token-delegation contract qualification. | **2026-11-06** |
 | [contextual-guardrails-capacity.md](contextual-guardrails-capacity.md) | Juan Antonio Osorio | Work record of capacity calibration evidence for contextual guardrails. | **2026-11-06** |
 | [surface-migration-plan.md](surface-migration-plan.md) | Joe Beda | Template for moving `mecatui` overlays onto the `surface` interface; partly implemented. | **2026-11-06** |
+| [kubernetes-execution-and-filesystems.md](kubernetes-execution-and-filesystems.md) | Juan Antonio Osorio | Proposal for live shared files and shell access across separate Kubernetes Pods. | **2026-11-06** |
