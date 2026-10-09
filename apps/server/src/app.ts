@@ -364,15 +364,20 @@ export function knowledgeCapabilities(runtime: MecatlRuntime): KnowledgeCapabili
   } catch {
     capabilities = undefined;
   }
-  const dream = capabilities?.manualDream?.userModel;
+  const consolidation = (
+    dream: { decide: boolean; generate: boolean; unavailableReason?: string } | undefined,
+  ) => ({
+    decide: dream?.decide ?? false,
+    generate: dream?.generate ?? false,
+    unavailableReason:
+      dream?.unavailableReason ?? "Memory consolidation is not enabled on this deployment.",
+  });
   return {
     learnedSkills: capabilities?.learnedSkills ?? false,
     learningProposals: capabilities?.learningProposals ?? false,
     memoryConsolidation: {
-      decide: dream?.decide ?? false,
-      generate: dream?.generate ?? false,
-      unavailableReason:
-        dream?.unavailableReason ?? "Memory consolidation is not enabled on this deployment.",
+      project_memory: consolidation(capabilities?.manualDream?.projectMemory),
+      user_model: consolidation(capabilities?.manualDream?.userModel),
     },
     reflection: capabilities?.reflection ?? false,
     skills: capabilities?.skills ?? false,

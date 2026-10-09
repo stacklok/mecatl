@@ -2959,7 +2959,9 @@ export type ReflectSessionResponses = {
 export type ReflectSessionResponse = ReflectSessionResponses[keyof ReflectSessionResponses];
 
 export type GenerateMemoryConsolidationPlanData = {
-    body?: never;
+    body?: {
+        target?: 'user_model' | 'project_memory';
+    };
     path?: never;
     query?: never;
     url: '/api/v1/user-memory/consolidation/plans';
@@ -3005,7 +3007,7 @@ export type GenerateMemoryConsolidationPlanError = GenerateMemoryConsolidationPl
 
 export type GenerateMemoryConsolidationPlanResponses = {
     /**
-     * A bounded daemon-curated user-memory consolidation plan.
+     * A bounded daemon-curated consolidation plan for the requested memory store.
      */
     201: {
         expiresAt: string;
@@ -3031,7 +3033,7 @@ export type GenerateMemoryConsolidationPlanResponses = {
         }>;
         plannedOperationCount: number;
         plannedSourceCount: number;
-        target: 'user_model';
+        target: 'user_model' | 'project_memory';
     };
 };
 
@@ -3131,7 +3133,7 @@ export type DecideMemoryConsolidationPlanResponses = {
         id: string;
         planned: number;
         skipped: number;
-        target: 'user_model';
+        target: 'user_model' | 'project_memory';
     };
 };
 

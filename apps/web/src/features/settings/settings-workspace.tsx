@@ -12,16 +12,7 @@ import {
 } from "@mecatl-studio/contracts/query";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import {
-  BookOpen,
-  BrainCircuit,
-  Copy,
-  ExternalLink,
-  Keyboard,
-  LifeBuoy,
-  type LucideIcon,
-  Search,
-} from "lucide-react";
+import { BookOpen, Copy, ExternalLink, Keyboard, LifeBuoy, Search } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 import { AuthControl } from "../../components/shell/auth-control";
 import { PageShell } from "../../components/shell/page-shell";
@@ -32,11 +23,11 @@ import { Switch } from "../../components/ui/switch";
 import { modelPreferenceId, useDisabledModels } from "../../lib/model-preferences";
 import { pageTitleClass } from "../../lib/typography";
 import { LearningReview } from "../knowledge/learning-review";
+import { MemorySettingsPage } from "../memory/memory-settings-page";
 import { AgentSettings } from "./agent-settings";
 import { IdentitySettings } from "./identity-settings";
 import { InterfaceSettings } from "./interface-settings";
 import { managementNotes } from "./management-notes";
-import { MemorySettings } from "./memory-settings";
 import { Note, SettingsCard } from "./settings-card";
 import {
   connectionMessage,
@@ -206,16 +197,7 @@ export function SettingsWorkspace({
             (runtimeState ? (
               <StateCard text={runtimeState} />
             ) : (
-              <>
-                <Section icon={BrainCircuit} title="Memory">
-                  <SourceNote source="authenticated user-memory BFF reads" owner="personal facts" />
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    Memory store configuration is managed by this deployment. Approved consolidation
-                    plans can be generated and applied below.
-                  </p>
-                </Section>
-                <MemorySettings />
-              </>
+              <MemorySettingsPage capabilities={runtime.data?.capabilities} />
             ))}
           {section === "learning" &&
             (runtimeState ? (
@@ -629,42 +611,12 @@ function DiagnosticsSettings({
   );
 }
 
-function Section({
-  children,
-  icon: Icon,
-  title,
-}: {
-  children: ReactNode;
-  icon: LucideIcon;
-  title: string;
-}) {
-  return (
-    <section className="rounded-2xl border bg-card p-5 sm:p-6">
-      <div className="flex items-center gap-3">
-        <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand-ink">
-          <Icon className="size-5" />
-        </span>
-        <h2 className="text-lg font-semibold">{title}</h2>
-      </div>
-      <div className="mt-5">{children}</div>
-    </section>
-  );
-}
-
 function Fact({ children, label }: { children: ReactNode; label: string }) {
   return (
     <div className="rounded-lg border bg-background p-3">
       <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</dt>
       <dd className="mt-2 break-words text-sm">{children}</dd>
     </div>
-  );
-}
-
-function SourceNote({ source, owner }: { source: string; owner: string }) {
-  return (
-    <p className="text-xs text-muted-foreground">
-      Source: {source}. Owner: {owner}.
-    </p>
   );
 }
 

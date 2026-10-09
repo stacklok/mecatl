@@ -151,6 +151,12 @@ export const reflectionReceiptSchema = z.object({
   staged: z.number().int().nonnegative(),
 });
 
+/**
+ * The two memory stores a consolidation plan can target: facts about the
+ * operator (`user_model`) and the per-project store (`project_memory`).
+ */
+export const memoryConsolidationTargetSchema = z.enum(["user_model", "project_memory"]);
+
 export const memoryConsolidationParticipantSchema = z.object({
   description: z.string(),
   key: z.string(),
@@ -172,7 +178,12 @@ export const memoryConsolidationPlanSchema = z.object({
   operations: z.array(memoryConsolidationOperationSchema),
   plannedOperationCount: z.number().int().nonnegative(),
   plannedSourceCount: z.number().int().nonnegative(),
-  target: z.literal("user_model"),
+  target: memoryConsolidationTargetSchema,
+});
+
+/** Omitting the body, or its target, consolidates `user_model` as before. */
+export const generateMemoryConsolidationPlanRequestSchema = z.object({
+  target: memoryConsolidationTargetSchema.default("user_model"),
 });
 
 export const decideMemoryConsolidationPlanRequestSchema = z.object({
@@ -187,7 +198,7 @@ export const memoryConsolidationReceiptSchema = z.object({
   id: z.string(),
   planned: z.number().int().nonnegative(),
   skipped: z.number().int().nonnegative(),
-  target: z.literal("user_model"),
+  target: memoryConsolidationTargetSchema,
 });
 
 export const memoryEntrySchema = z.object({
@@ -226,6 +237,9 @@ export type DecideLearningProposalRequest = z.infer<typeof decideLearningProposa
 export type DecideMemoryConsolidationPlanRequest = z.infer<
   typeof decideMemoryConsolidationPlanRequestSchema
 >;
+export type GenerateMemoryConsolidationPlanRequest = z.infer<
+  typeof generateMemoryConsolidationPlanRequestSchema
+>;
 export type LearnedSkillActionRequest = z.infer<typeof learnedSkillActionRequestSchema>;
 export type LearnedSkillChangesResponse = z.infer<typeof learnedSkillChangesResponseSchema>;
 export type LearnedSkillDiffResponse = z.infer<typeof learnedSkillDiffResponseSchema>;
@@ -236,6 +250,7 @@ export type LearningProposalResponse = z.infer<typeof learningProposalSchema>;
 export type LearningProposalsResponse = z.infer<typeof learningProposalsResponseSchema>;
 export type MemoryConsolidationPlanResponse = z.infer<typeof memoryConsolidationPlanSchema>;
 export type MemoryConsolidationReceiptResponse = z.infer<typeof memoryConsolidationReceiptSchema>;
+export type MemoryConsolidationTarget = z.infer<typeof memoryConsolidationTargetSchema>;
 export type MemoryDetailResponse = z.infer<typeof memoryDetailResponseSchema>;
 export type ReflectionReceiptResponse = z.infer<typeof reflectionReceiptSchema>;
 export type UndoLearningPromotionRequest = z.infer<typeof undoLearningPromotionRequestSchema>;

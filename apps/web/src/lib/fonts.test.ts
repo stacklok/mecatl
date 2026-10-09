@@ -19,8 +19,8 @@ describe("Studio typography", () => {
     expect(css).toMatch(/--font-sans:\s*"Inter Variable"/);
     expect(css).toMatch(/--font-serif:\s*"Merriweather"/);
     expect(css).toMatch(/body\s*\{[^}]*font-family:\s*var\(--font-sans\)/s);
-    expect(css).toMatch(/\.text-page-title\s*\{[^}]*font-family:\s*var\(--font-serif\)/s);
-    expect(css).toMatch(/\.text-page-title\s*\{[^}]*font-weight:\s*300/s);
+    expect(css).toMatch(/@utility text-page-title\s*\{[^}]*font-family:\s*var\(--font-serif\)/s);
+    expect(css).toMatch(/@utility text-page-title\s*\{[^}]*font-weight:\s*300/s);
 
     const { pageTitleClass } = await import("./typography");
     expect(pageTitleClass()).toContain("text-page-title");

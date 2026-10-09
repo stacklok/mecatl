@@ -45,9 +45,11 @@ const HELP_FEATURES: readonly HelpFeatureSpec[] = [
     label: "Memory",
   },
   {
-    // Mirrors the exact gate `memory-consolidation.tsx` uses to render its
-    // "Consolidate" button — only the user-model target is wired here.
-    enabled: (caps) => caps.manualDream?.userModel?.generate === true,
+    // Mirrors `consolidate-memory-card.tsx`: consolidation is on demand when
+    // the agent can generate a plan for at least one memory target.
+    enabled: (caps) =>
+      caps.manualDream?.userModel?.generate === true ||
+      caps.manualDream?.projectMemory?.generate === true,
     hint: "Consolidate memory on demand under Settings → Memory",
     id: "manual_dream",
     label: "Memory consolidation",

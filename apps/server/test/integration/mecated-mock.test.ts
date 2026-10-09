@@ -219,22 +219,41 @@ describe.skipIf(!available)("Studio BFF against a spawned mecated --mock", () =>
     expect(missing).toMatchObject({ body: { code: "not_found" }, status: 404 });
 
     const runtime = await json("/api/v1/runtime");
-    const dream = (
-      runtime.body.capabilities as { manualDream?: { userModel?: { generate: boolean } } }
-    ).manualDream?.userModel;
-    const plan = await json("/api/v1/user-memory/consolidation/plans", {
-      headers: csrf,
-      method: "POST",
-    });
-    if (dream?.generate) {
-      expect(plan.status).toBe(201);
-      expect(plan.body).toMatchObject({ target: "user_model" });
-      expect(typeof plan.body.id).toBe("string");
-    } else {
-      expect(plan).toMatchObject({
-        body: { code: "memory_consolidation_unsupported" },
-        status: 501,
+    type Dream = { generate: boolean };
+    const manualDream = (
+      runtime.body.capabilities as { manualDream?: { projectMemory?: Dream; userModel?: Dream } }
+    ).manualDream;
+    const cases = [
+      // No body at all: the BFF keeps consolidating the user model by default.
+      { dream: manualDream?.userModel, init: {}, target: "user_model" },
+      {
+        dream: manualDream?.userModel,
+        init: { body: JSON.stringify({ target: "user_model" }) },
+        target: "user_model",
+      },
+      {
+        dream: manualDream?.projectMemory,
+        init: { body: JSON.stringify({ target: "project_memory" }) },
+        target: "project_memory",
+      },
+    ];
+    for (const { dream, init, target } of cases) {
+      const { "Content-Type": _contentType, ...bodiless } = csrf;
+      const plan = await json("/api/v1/user-memory/consolidation/plans", {
+        headers: "body" in init ? csrf : bodiless,
+        method: "POST",
+        ...init,
       });
+      if (dream?.generate) {
+        expect(plan.status, target).toBe(201);
+        expect(plan.body, target).toMatchObject({ target });
+        expect(typeof plan.body.id, target).toBe("string");
+      } else {
+        expect(plan, target).toMatchObject({
+          body: { code: "memory_consolidation_unsupported" },
+          status: 501,
+        });
+      }
     }
   });
 

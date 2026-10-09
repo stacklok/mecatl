@@ -5,6 +5,7 @@ import {
   configuredSkillsResponseSchema,
   decideLearningProposalRequestSchema,
   decideMemoryConsolidationPlanRequestSchema,
+  generateMemoryConsolidationPlanRequestSchema,
   learnedSkillActionRequestSchema,
   learnedSkillActionResponseSchema,
   learnedSkillChangesResponseSchema,
@@ -263,10 +264,16 @@ const generateMemoryConsolidationPlanRoute = createRoute({
   method: "post",
   operationId: "generateMemoryConsolidationPlan",
   path: "/api/v1/user-memory/consolidation/plans",
+  request: {
+    body: {
+      content: { "application/json": { schema: generateMemoryConsolidationPlanRequestSchema } },
+      required: false,
+    },
+  },
   responses: {
     201: {
       content: { "application/json": { schema: memoryConsolidationPlanSchema } },
-      description: "A bounded daemon-curated user-memory consolidation plan.",
+      description: "A bounded daemon-curated consolidation plan for the requested memory store.",
     },
     500: errorResponse,
     501: errorResponse,
@@ -432,21 +439,23 @@ export function registerKnowledgeRoutes(
   });
   app.openapi(generateMemoryConsolidationPlanRoute, async (context) => {
     if (!knowledge) return unavailable(context);
-    if (!knowledge.capabilities.memoryConsolidation.generate)
-      return unsupported(
-        context,
-        "memory_consolidation_unsupported",
-        knowledge.capabilities.memoryConsolidation.unavailableReason,
-      );
-    return context.json(await knowledge.generateMemoryConsolidationPlan(), 201);
+    // An absent body (older clients) consolidates the user model, as before.
+    const target = context.req.valid("json")?.target ?? "user_model";
+    const capability = knowledge.capabilities.memoryConsolidation[target];
+    if (!capability.generate)
+      return unsupported(context, "memory_consolidation_unsupported", capability.unavailableReason);
+    return context.json(await knowledge.generateMemoryConsolidationPlan(target), 201);
   });
   app.openapi(decideMemoryConsolidationPlanRoute, async (context) => {
     if (!knowledge) return unavailable(context);
-    if (!knowledge.capabilities.memoryConsolidation.decide)
+    // The plan id carries no target, so any target that can decide admits the
+    // request; the daemon still enforces each plan's own decision authority.
+    const consolidation = knowledge.capabilities.memoryConsolidation;
+    if (!consolidation.user_model.decide && !consolidation.project_memory.decide)
       return unsupported(
         context,
         "memory_consolidation_decision_unsupported",
-        knowledge.capabilities.memoryConsolidation.unavailableReason,
+        consolidation.user_model.unavailableReason,
       );
     return context.json(
       await knowledge.decideMemoryConsolidationPlan(
