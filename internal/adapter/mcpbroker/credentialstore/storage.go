@@ -1,4 +1,5 @@
-package mcpbroker
+// Package credentialstore encrypts credential fields above native ToolHive storage.
+package credentialstore
 
 import (
 	"context"
@@ -6,39 +7,43 @@ import (
 	"sync"
 
 	"github.com/stacklok/toolhive/pkg/authserver/storage"
+
+	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/credentialenvelope"
 )
 
-// encryptedAuthStorage decorates ToolHive's typed storage.Storage and its
+// Storage decorates ToolHive's typed storage.Storage and its
 // separate DCRCredentialStore seam. It leaves Redis key construction, indexes,
 // expiry, and CAS ownership with ToolHive while sealing only the scoped fields.
-type encryptedAuthStorage struct {
+type Storage struct {
 	storage.Storage
 	dcr       storage.DCRCredentialStore
-	keys      *credentialKeyRing
+	keys      *credentialenvelope.KeyRing
+	namespace string
 	closeOnce sync.Once
 	closeErr  error
 }
 
 var (
-	_ storage.Storage            = (*encryptedAuthStorage)(nil)
-	_ storage.DCRCredentialStore = (*encryptedAuthStorage)(nil)
+	_ storage.Storage            = (*Storage)(nil)
+	_ storage.DCRCredentialStore = (*Storage)(nil)
 )
 
-func newEncryptedAuthStorage(inner storage.Storage, keys *credentialKeyRing) (*encryptedAuthStorage, error) {
-	if inner == nil || keys == nil {
-		return nil, errCredentialEnvelope
+// New decorates native storage using namespace as the persisted AAD binding.
+func New(inner storage.Storage, keys *credentialenvelope.KeyRing, namespace string) (*Storage, error) {
+	if inner == nil || keys == nil || namespace == "" {
+		return nil, credentialenvelope.ErrUnavailable
 	}
 	dcr, ok := inner.(storage.DCRCredentialStore)
 	if !ok || dcr == nil {
-		return nil, errCredentialEnvelope
+		return nil, credentialenvelope.ErrUnavailable
 	}
-	return &encryptedAuthStorage{Storage: inner, dcr: dcr, keys: keys}, nil
+	return &Storage{Storage: inner, dcr: dcr, keys: keys, namespace: namespace}, nil
 }
 
 // Close closes the native store exactly once. No Unwrap method is provided:
 // ToolHive must continue to see this decorator as the DCR store and must not
 // reach raw Redis for legacy migration.
-func (s *encryptedAuthStorage) Close() error {
+func (s *Storage) Close() error {
 	if s == nil {
 		return nil
 	}
@@ -46,7 +51,7 @@ func (s *encryptedAuthStorage) Close() error {
 	return s.closeErr
 }
 
-func (s *encryptedAuthStorage) StoreUpstreamTokens(ctx context.Context, sessionID, provider string, tokens *storage.UpstreamTokens) error {
+func (s *Storage) StoreUpstreamTokens(ctx context.Context, sessionID, provider string, tokens *storage.UpstreamTokens) error {
 	if tokens == nil {
 		return s.Storage.StoreUpstreamTokens(ctx, sessionID, provider, nil)
 	}
@@ -57,7 +62,7 @@ func (s *encryptedAuthStorage) StoreUpstreamTokens(ctx context.Context, sessionI
 	return s.Storage.StoreUpstreamTokens(ctx, sessionID, provider, sealed)
 }
 
-func (s *encryptedAuthStorage) GetUpstreamTokens(ctx context.Context, sessionID, provider string) (*storage.UpstreamTokens, error) {
+func (s *Storage) GetUpstreamTokens(ctx context.Context, sessionID, provider string) (*storage.UpstreamTokens, error) {
 	raw, err := s.Storage.GetUpstreamTokens(ctx, sessionID, provider)
 	if err != nil && !errors.Is(err, storage.ErrExpired) {
 		return nil, err
@@ -72,7 +77,7 @@ func (s *encryptedAuthStorage) GetUpstreamTokens(ctx context.Context, sessionID,
 	return plain, err
 }
 
-func (s *encryptedAuthStorage) GetAllUpstreamTokens(ctx context.Context, sessionID string) (map[string]*storage.UpstreamTokens, error) {
+func (s *Storage) GetAllUpstreamTokens(ctx context.Context, sessionID string) (map[string]*storage.UpstreamTokens, error) {
 	raw, err := s.Storage.GetAllUpstreamTokens(ctx, sessionID)
 	if err != nil {
 		return nil, err
@@ -92,7 +97,7 @@ func (s *encryptedAuthStorage) GetAllUpstreamTokens(ctx context.Context, session
 	return out, nil
 }
 
-func (s *encryptedAuthStorage) CompareAndSwapUpstreamTokens(ctx context.Context, sessionID, provider, expectedRefresh string, tokens *storage.UpstreamTokens) error {
+func (s *Storage) CompareAndSwapUpstreamTokens(ctx context.Context, sessionID, provider, expectedRefresh string, tokens *storage.UpstreamTokens) error {
 	raw, err := s.Storage.GetUpstreamTokens(ctx, sessionID, provider)
 	if err != nil && !errors.Is(err, storage.ErrExpired) {
 		return err
@@ -120,11 +125,11 @@ func (s *encryptedAuthStorage) CompareAndSwapUpstreamTokens(ctx context.Context,
 
 // GetLatestUpstreamTokensForUser cannot open session-bound ciphertext: the native
 // lookup returns a row without the originating session ID required for its AAD.
-func (*encryptedAuthStorage) GetLatestUpstreamTokensForUser(context.Context, string, string) (*storage.UpstreamTokens, error) {
-	return nil, errCredentialEnvelope
+func (*Storage) GetLatestUpstreamTokensForUser(context.Context, string, string) (*storage.UpstreamTokens, error) {
+	return nil, credentialenvelope.ErrUnavailable
 }
 
-func (s *encryptedAuthStorage) GetDCRCredentials(ctx context.Context, key storage.DCRKey) (*storage.DCRCredentials, error) {
+func (s *Storage) GetDCRCredentials(ctx context.Context, key storage.DCRKey) (*storage.DCRCredentials, error) {
 	raw, err := s.dcr.GetDCRCredentials(ctx, key)
 	if err != nil {
 		return nil, err
@@ -132,9 +137,9 @@ func (s *encryptedAuthStorage) GetDCRCredentials(ctx context.Context, key storag
 	return s.openDCR(key, raw)
 }
 
-func (s *encryptedAuthStorage) StoreDCRCredentialsIfAbsent(ctx context.Context, creds *storage.DCRCredentials) (*storage.DCRCredentials, error) {
+func (s *Storage) StoreDCRCredentialsIfAbsent(ctx context.Context, creds *storage.DCRCredentials) (*storage.DCRCredentials, error) {
 	if creds == nil {
-		return nil, errCredentialEnvelope
+		return nil, credentialenvelope.ErrUnavailable
 	}
 	sealed, err := s.sealDCR(creds.Key, creds)
 	if err != nil {
@@ -147,9 +152,9 @@ func (s *encryptedAuthStorage) StoreDCRCredentialsIfAbsent(ctx context.Context, 
 	return s.openDCR(creds.Key, raw)
 }
 
-func (s *encryptedAuthStorage) UpdateDCRCredentialsIfPresent(ctx context.Context, creds *storage.DCRCredentials) (*storage.DCRCredentials, error) {
+func (s *Storage) UpdateDCRCredentialsIfPresent(ctx context.Context, creds *storage.DCRCredentials) (*storage.DCRCredentials, error) {
 	if creds == nil {
-		return nil, errCredentialEnvelope
+		return nil, credentialenvelope.ErrUnavailable
 	}
 	sealed, err := s.sealDCR(creds.Key, creds)
 	if err != nil {
@@ -162,9 +167,9 @@ func (s *encryptedAuthStorage) UpdateDCRCredentialsIfPresent(ctx context.Context
 	return s.openDCR(creds.Key, raw)
 }
 
-func (s *encryptedAuthStorage) sealTokens(sessionID, provider string, in *storage.UpstreamTokens) (*storage.UpstreamTokens, error) {
+func (s *Storage) sealTokens(sessionID, provider string, in *storage.UpstreamTokens) (*storage.UpstreamTokens, error) {
 	if in == nil || sessionID == "" || provider == "" || in.ProviderID != provider {
-		return nil, errCredentialEnvelope
+		return nil, credentialenvelope.ErrUnavailable
 	}
 	out := *in
 	var err error
@@ -183,9 +188,9 @@ func (s *encryptedAuthStorage) sealTokens(sessionID, provider string, in *storag
 	return &out, nil
 }
 
-func (s *encryptedAuthStorage) openTokens(sessionID, provider string, in *storage.UpstreamTokens) (*storage.UpstreamTokens, error) {
+func (s *Storage) openTokens(sessionID, provider string, in *storage.UpstreamTokens) (*storage.UpstreamTokens, error) {
 	if in == nil || sessionID == "" || provider == "" || in.ProviderID != provider {
-		return nil, errCredentialEnvelope
+		return nil, credentialenvelope.ErrUnavailable
 	}
 	out := *in
 	var err error
@@ -204,9 +209,9 @@ func (s *encryptedAuthStorage) openTokens(sessionID, provider string, in *storag
 	return &out, nil
 }
 
-func (s *encryptedAuthStorage) sealDCR(key storage.DCRKey, in *storage.DCRCredentials) (*storage.DCRCredentials, error) {
+func (s *Storage) sealDCR(key storage.DCRKey, in *storage.DCRCredentials) (*storage.DCRCredentials, error) {
 	if in == nil || in.Key != key {
-		return nil, errCredentialEnvelope
+		return nil, credentialenvelope.ErrUnavailable
 	}
 	out := *in
 	var err error
@@ -219,9 +224,9 @@ func (s *encryptedAuthStorage) sealDCR(key storage.DCRKey, in *storage.DCRCreden
 	return &out, nil
 }
 
-func (s *encryptedAuthStorage) openDCR(key storage.DCRKey, in *storage.DCRCredentials) (*storage.DCRCredentials, error) {
+func (s *Storage) openDCR(key storage.DCRKey, in *storage.DCRCredentials) (*storage.DCRCredentials, error) {
 	if in == nil || in.Key != key {
-		return nil, errCredentialEnvelope
+		return nil, credentialenvelope.ErrUnavailable
 	}
 	out := *in
 	var err error
@@ -234,30 +239,30 @@ func (s *encryptedAuthStorage) openDCR(key storage.DCRKey, in *storage.DCRCreden
 	return &out, nil
 }
 
-func (s *encryptedAuthStorage) sealUpstreamField(sessionID, provider, field, value string) (string, error) {
+func (s *Storage) sealUpstreamField(sessionID, provider, field, value string) (string, error) {
 	if value == "" {
 		return "", nil
 	}
-	return s.keys.seal(credentialAAD(credentialAADNamespace, "upstream", sessionID, provider, field), value)
+	return s.keys.Seal(credentialenvelope.AAD(s.namespace, "upstream", sessionID, provider, field), value)
 }
 
-func (s *encryptedAuthStorage) openUpstreamField(sessionID, provider, field, value string) (string, error) {
+func (s *Storage) openUpstreamField(sessionID, provider, field, value string) (string, error) {
 	if value == "" {
 		return "", nil
 	}
-	return s.keys.open(credentialAAD(credentialAADNamespace, "upstream", sessionID, provider, field), value)
+	return s.keys.Open(credentialenvelope.AAD(s.namespace, "upstream", sessionID, provider, field), value)
 }
 
-func (s *encryptedAuthStorage) sealDCRField(key storage.DCRKey, field, value string) (string, error) {
+func (s *Storage) sealDCRField(key storage.DCRKey, field, value string) (string, error) {
 	if value == "" {
 		return "", nil
 	}
-	return s.keys.seal(credentialAAD(credentialAADNamespace, "dcr", key.Issuer, key.UpstreamID, key.RedirectURI, key.ScopesHash, field), value)
+	return s.keys.Seal(credentialenvelope.AAD(s.namespace, "dcr", key.Issuer, key.UpstreamID, key.RedirectURI, key.ScopesHash, field), value)
 }
 
-func (s *encryptedAuthStorage) openDCRField(key storage.DCRKey, field, value string) (string, error) {
+func (s *Storage) openDCRField(key storage.DCRKey, field, value string) (string, error) {
 	if value == "" {
 		return "", nil
 	}
-	return s.keys.open(credentialAAD(credentialAADNamespace, "dcr", key.Issuer, key.UpstreamID, key.RedirectURI, key.ScopesHash, field), value)
+	return s.keys.Open(credentialenvelope.AAD(s.namespace, "dcr", key.Issuer, key.UpstreamID, key.RedirectURI, key.ScopesHash, field), value)
 }

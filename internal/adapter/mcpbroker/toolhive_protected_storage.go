@@ -12,9 +12,12 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"github.com/stacklok/toolhive/pkg/authserver/storage"
+
+	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/credentialenvelope"
+	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/credentialstore"
 )
 
-const maxProtectedKEKBytes = credentialKeyBytes
+const maxProtectedKEKBytes = credentialenvelope.KeyBytes
 
 // ProtectedStorageConfig configures encrypted ToolHive credential storage.
 type ProtectedStorageConfig struct {
@@ -56,8 +59,8 @@ type ProtectedEncryptionKey struct{ ID, File string }
 
 type protectedToolHiveStorage struct {
 	client        redis.UniversalClient
-	storage       *encryptedAuthStorage
-	keys          *credentialKeyRing
+	storage       *credentialstore.Storage
+	keys          *credentialenvelope.KeyRing
 	healthTimeout time.Duration
 	closeOnce     sync.Once
 	closeErr      error
@@ -70,23 +73,23 @@ func newProtectedToolHiveStorage(ctx context.Context, cfg ProtectedStorageConfig
 func buildProtectedToolHiveStorage(ctx context.Context, cfg ProtectedStorageConfig, makeClient RedisClientFactory) (*protectedToolHiveStorage, error) {
 	clientConfig := cfg.Redis.ClientConfig
 	if makeClient == nil {
-		return nil, errCredentialEnvelope
+		return nil, credentialenvelope.ErrUnavailable
 	}
 	if !clientConfig.TLS || clientConfig.AllowPlaintext || cfg.Redis.HealthTimeout <= 0 || cfg.Redis.HealthTimeout > 30*time.Second || len(cfg.Encryption.Keys) == 0 {
-		return nil, errCredentialEnvelope
+		return nil, credentialenvelope.ErrUnavailable
 	}
 	keys := make(map[string][]byte, len(cfg.Encryption.Keys))
 	for _, item := range cfg.Encryption.Keys {
 		if _, exists := keys[item.ID]; exists || item.ID == "" {
-			return nil, errCredentialEnvelope
+			return nil, credentialenvelope.ErrUnavailable
 		}
 		body, err := readProtectedKEK(item.File)
 		if err != nil {
-			return nil, errCredentialEnvelope
+			return nil, credentialenvelope.ErrUnavailable
 		}
 		keys[item.ID] = body
 	}
-	ring, err := newCredentialKeyRing(cfg.Encryption.ActiveID, keys)
+	ring, err := credentialenvelope.NewKeyRing(cfg.Encryption.ActiveID, keys)
 	if err != nil {
 		return nil, err
 	}
@@ -95,10 +98,10 @@ func buildProtectedToolHiveStorage(ctx context.Context, cfg ProtectedStorageConf
 		return nil, errors.New("protected storage unavailable")
 	}
 	inner := storage.NewRedisStorageWithClient(client, toolHiveAuthStoragePrefix)
-	decorated, err := newEncryptedAuthStorage(inner, ring)
+	decorated, err := credentialstore.New(inner, ring, toolHiveAuthStoragePrefix)
 	if err != nil {
 		_ = client.Close()
-		return nil, errCredentialEnvelope
+		return nil, credentialenvelope.ErrUnavailable
 	}
 	out := &protectedToolHiveStorage{client: client, storage: decorated, keys: ring, healthTimeout: cfg.Redis.HealthTimeout}
 	healthCtx, cancel := context.WithTimeout(ctx, cfg.Redis.HealthTimeout)
@@ -112,7 +115,7 @@ func buildProtectedToolHiveStorage(ctx context.Context, cfg ProtectedStorageConf
 
 func (s *protectedToolHiveStorage) Health(ctx context.Context) error {
 	if s == nil || s.client == nil {
-		return errCredentialEnvelope
+		return credentialenvelope.ErrUnavailable
 	}
 	return s.client.Ping(ctx).Err()
 }
@@ -132,25 +135,25 @@ func (s *protectedToolHiveStorage) Close() error {
 
 func readProtectedKEK(path string) ([]byte, error) {
 	if path == "" || !filepath.IsAbs(path) {
-		return nil, errCredentialEnvelope
+		return nil, credentialenvelope.ErrUnavailable
 	}
 	root, err := os.OpenRoot(filepath.Dir(path))
 	if err != nil {
-		return nil, errCredentialEnvelope
+		return nil, credentialenvelope.ErrUnavailable
 	}
 	defer func() { _ = root.Close() }()
 	f, err := root.OpenFile(filepath.Base(path), os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		return nil, errCredentialEnvelope
+		return nil, credentialenvelope.ErrUnavailable
 	}
 	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil || !info.Mode().IsRegular() || info.Size() != maxProtectedKEKBytes {
-		return nil, errCredentialEnvelope
+		return nil, credentialenvelope.ErrUnavailable
 	}
 	body, err := io.ReadAll(io.LimitReader(f, maxProtectedKEKBytes+1))
 	if err != nil || len(body) != maxProtectedKEKBytes {
-		return nil, errCredentialEnvelope
+		return nil, credentialenvelope.ErrUnavailable
 	}
 	return body, nil
 }

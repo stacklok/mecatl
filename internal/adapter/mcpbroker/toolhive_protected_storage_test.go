@@ -15,6 +15,9 @@ import (
 	"github.com/stacklok/toolhive/pkg/authserver"
 	"github.com/stacklok/toolhive/pkg/authserver/runner"
 	"github.com/stacklok/toolhive/pkg/authserver/storage"
+
+	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/credentialenvelope"
+	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/credentialstore"
 )
 
 func newMiniRedis(t *testing.T) redis.UniversalClient {
@@ -47,7 +50,7 @@ func (c *countingRedisClient) Ping(ctx context.Context) *redis.StatusCmd {
 func protectedStorageTestConfig(t *testing.T, factory RedisClientFactory) ProtectedStorageConfig {
 	t.Helper()
 	key := filepath.Join(t.TempDir(), "kek")
-	if err := os.WriteFile(key, bytes.Repeat([]byte{0x42}, credentialKeyBytes), 0o600); err != nil {
+	if err := os.WriteFile(key, bytes.Repeat([]byte{0x42}, credentialenvelope.KeyBytes), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return ProtectedStorageConfig{Redis: ProtectedRedisConfig{
@@ -115,7 +118,7 @@ func TestProtectedStorageProjectedSecretReads(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(root, "kek")
-	want := bytes.Repeat([]byte{0xa5}, credentialKeyBytes)
+	want := bytes.Repeat([]byte{0xa5}, credentialenvelope.KeyBytes)
 	if err := os.WriteFile(filepath.Join(projected, "kek"), want, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +163,7 @@ func TestProtectedStorageProjectedSecretReads(t *testing.T) {
 
 func TestEncryptedAuthStorageIsNotUnwrappable(t *testing.T) {
 	inner := storage.NewMemoryStorage()
-	decorated, err := newEncryptedAuthStorage(inner, testCredentialKeyRing(t))
+	decorated, err := credentialstore.New(inner, testCredentialKeyRing(t), toolHiveAuthStoragePrefix)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,4 +1,5 @@
-package mcpbroker
+// Package credentialenvelope implements the persisted credential envelope format.
+package credentialenvelope
 
 import (
 	"bytes"
@@ -13,38 +14,40 @@ import (
 	"strings"
 )
 
-//nolint:gosec // Stable Redis namespace, not credential material.
-const credentialAADNamespace = "mecatl:authserver:"
-
 const (
 	credentialEnvelopeVersion = "v1"
 	credentialEnvelopeAlg     = "a256gcm"
-	credentialKeyBytes        = 32
-	credentialSaltBytes       = 32
-	credentialNonceBytes      = 12
-	maxCredentialEnvelope     = 1 << 20
+	// KeyBytes is the required size of each envelope key.
+	KeyBytes             = 32
+	credentialSaltBytes  = 32
+	credentialNonceBytes = 12
+	// MaxEnvelopeBytes bounds untrusted persisted envelopes.
+	MaxEnvelopeBytes = 1 << 20
 )
 
-var errCredentialEnvelope = errors.New("mcpbroker: credential envelope unavailable")
+// ErrUnavailable identifies rejected key material or an unreadable envelope.
+var ErrUnavailable = errors.New("mcpbroker: credential envelope unavailable")
 
-type credentialKeyRing struct {
+// KeyRing is an immutable set of envelope keys with one active write key.
+type KeyRing struct {
 	activeID string
 	keys     map[string][]byte
 }
 
-func newCredentialKeyRing(activeID string, keys map[string][]byte) (*credentialKeyRing, error) {
+// NewKeyRing copies and validates the key material.
+func NewKeyRing(activeID string, keys map[string][]byte) (*KeyRing, error) {
 	if !validCredentialKeyID(activeID) || len(keys) == 0 {
-		return nil, errCredentialEnvelope
+		return nil, ErrUnavailable
 	}
-	out := &credentialKeyRing{activeID: activeID, keys: make(map[string][]byte, len(keys))}
+	out := &KeyRing{activeID: activeID, keys: make(map[string][]byte, len(keys))}
 	for id, key := range keys {
-		if !validCredentialKeyID(id) || len(key) != credentialKeyBytes {
-			return nil, errCredentialEnvelope
+		if !validCredentialKeyID(id) || len(key) != KeyBytes {
+			return nil, ErrUnavailable
 		}
 		out.keys[id] = bytes.Clone(key)
 	}
 	if _, ok := out.keys[activeID]; !ok {
-		return nil, errCredentialEnvelope
+		return nil, ErrUnavailable
 	}
 	return out, nil
 }
@@ -61,9 +64,9 @@ func validCredentialKeyID(id string) bool {
 	return true
 }
 
-// credentialAAD is canonical length-delimited framing, so distinct logical rows
+// AAD is canonical length-delimited framing, so distinct logical rows
 // cannot produce the same binding value.
-func credentialAAD(parts ...string) []byte {
+func AAD(parts ...string) []byte {
 	var b strings.Builder
 	for _, part := range parts {
 		fmt.Fprintf(&b, "%d:", len(part))
@@ -72,77 +75,78 @@ func credentialAAD(parts ...string) []byte {
 	return []byte(b.String())
 }
 
-func (k *credentialKeyRing) seal(aad []byte, plaintext string) (string, error) {
-	if k == nil || plaintext == "" || len(plaintext) > maxCredentialEnvelope {
-		return "", errCredentialEnvelope
+// Seal encrypts a nonempty value using a fresh per-envelope salt and nonce.
+func (k *KeyRing) Seal(aad []byte, plaintext string) (string, error) {
+	if k == nil || plaintext == "" || len(plaintext) > MaxEnvelopeBytes {
+		return "", ErrUnavailable
 	}
 	kek := k.keys[k.activeID]
-	if len(kek) != credentialKeyBytes {
-		return "", errCredentialEnvelope
+	if len(kek) != KeyBytes {
+		return "", ErrUnavailable
 	}
 	salt := make([]byte, credentialSaltBytes)
 	payloadNonce := make([]byte, credentialNonceBytes)
 	if _, err := rand.Read(salt); err != nil {
-		return "", errCredentialEnvelope
+		return "", ErrUnavailable
 	}
 	if _, err := rand.Read(payloadNonce); err != nil {
-		return "", errCredentialEnvelope
+		return "", ErrUnavailable
 	}
-	meta := credentialAAD("mecatl-toolhive-credential", credentialEnvelopeVersion, credentialEnvelopeAlg, k.activeID)
-	key, err := hkdf.Key(sha256.New, kek, salt, string(meta), credentialKeyBytes)
+	meta := AAD("mecatl-toolhive-credential", credentialEnvelopeVersion, credentialEnvelopeAlg, k.activeID)
+	key, err := hkdf.Key(sha256.New, kek, salt, string(meta), KeyBytes)
 	if err != nil {
-		return "", errCredentialEnvelope
+		return "", ErrUnavailable
 	}
 	defer clear(key)
 	payload, err := sealGCM(key, payloadNonce, aadWith(aad, meta), []byte(plaintext))
 	if err != nil {
-		return "", errCredentialEnvelope
+		return "", ErrUnavailable
 	}
 	out := strings.Join([]string{"mecatl", credentialEnvelopeVersion, credentialEnvelopeAlg, k.activeID,
 		base64.RawURLEncoding.EncodeToString(salt), base64.RawURLEncoding.EncodeToString(payloadNonce),
 		base64.RawURLEncoding.EncodeToString(payload)}, ".")
-	if len(out) > maxCredentialEnvelope {
-		return "", errCredentialEnvelope
+	if len(out) > MaxEnvelopeBytes {
+		return "", ErrUnavailable
 	}
 	return out, nil
 }
 
-// open validates every untrusted envelope segment before decrypting it.
+// Open validates every untrusted envelope segment before decrypting it.
 //
 //nolint:gocyclo // Strict envelope parsing deliberately fails at each malformed component.
-func (k *credentialKeyRing) open(aad []byte, value string) (string, error) {
-	if k == nil || value == "" || len(value) > maxCredentialEnvelope {
-		return "", errCredentialEnvelope
+func (k *KeyRing) Open(aad []byte, value string) (string, error) {
+	if k == nil || value == "" || len(value) > MaxEnvelopeBytes {
+		return "", ErrUnavailable
 	}
 	p := strings.Split(value, ".")
 	if len(p) != 7 || p[0] != "mecatl" || p[1] != credentialEnvelopeVersion || p[2] != credentialEnvelopeAlg || !validCredentialKeyID(p[3]) {
-		return "", errCredentialEnvelope
+		return "", ErrUnavailable
 	}
 	kek, ok := k.keys[p[3]]
-	if !ok || len(kek) != credentialKeyBytes {
-		return "", errCredentialEnvelope
+	if !ok || len(kek) != KeyBytes {
+		return "", ErrUnavailable
 	}
 	salt, err := decodeCredentialPart(p[4], credentialSaltBytes)
 	if err != nil || len(salt) != credentialSaltBytes {
-		return "", errCredentialEnvelope
+		return "", ErrUnavailable
 	}
 	payloadNonce, err := decodeCredentialPart(p[5], credentialNonceBytes)
 	if err != nil || len(payloadNonce) != credentialNonceBytes {
-		return "", errCredentialEnvelope
+		return "", ErrUnavailable
 	}
-	payload, err := decodeCredentialPart(p[6], maxCredentialEnvelope)
+	payload, err := decodeCredentialPart(p[6], MaxEnvelopeBytes)
 	if err != nil || len(payload) < aes.BlockSize {
-		return "", errCredentialEnvelope
+		return "", ErrUnavailable
 	}
-	meta := credentialAAD("mecatl-toolhive-credential", credentialEnvelopeVersion, credentialEnvelopeAlg, p[3])
-	key, err := hkdf.Key(sha256.New, kek, salt, string(meta), credentialKeyBytes)
+	meta := AAD("mecatl-toolhive-credential", credentialEnvelopeVersion, credentialEnvelopeAlg, p[3])
+	key, err := hkdf.Key(sha256.New, kek, salt, string(meta), KeyBytes)
 	if err != nil {
-		return "", errCredentialEnvelope
+		return "", ErrUnavailable
 	}
 	defer clear(key)
 	plain, err := openGCM(key, payloadNonce, aadWith(aad, meta), payload)
-	if err != nil || len(plain) == 0 || len(plain) > maxCredentialEnvelope {
-		return "", errCredentialEnvelope
+	if err != nil || len(plain) == 0 || len(plain) > MaxEnvelopeBytes {
+		return "", ErrUnavailable
 	}
 	return string(plain), nil
 }
@@ -175,11 +179,11 @@ func openGCM(key, nonce, aad, cipherText []byte) ([]byte, error) {
 
 func decodeCredentialPart(value string, maximum int) ([]byte, error) {
 	if value == "" || len(value) > base64.RawURLEncoding.EncodedLen(maximum) {
-		return nil, errCredentialEnvelope
+		return nil, ErrUnavailable
 	}
 	out, err := base64.RawURLEncoding.DecodeString(value)
 	if err != nil || len(out) > maximum {
-		return nil, errCredentialEnvelope
+		return nil, ErrUnavailable
 	}
 	return out, nil
 }

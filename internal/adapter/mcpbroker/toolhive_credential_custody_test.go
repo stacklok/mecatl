@@ -13,6 +13,7 @@ import (
 	"github.com/stacklok/toolhive/pkg/authserver/storage"
 
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/credentialstore"
 )
 
 type fixedCredentialService struct{ calls int }
@@ -391,7 +392,7 @@ func (r refreshPersistor) RefreshAndStore(ctx context.Context, sessionID string,
 
 func TestToolHiveCredentialCustody_ResolveRefreshesThroughEncryptedStorage(t *testing.T) {
 	f, assertion := committedFixture(t)
-	decorated, err := newEncryptedAuthStorage(f.inner, testCredentialKeyRing(t))
+	decorated, err := credentialstore.New(f.inner, testCredentialKeyRing(t), toolHiveAuthStoragePrefix)
 	if err != nil {
 		t.Fatal(err)
 	}

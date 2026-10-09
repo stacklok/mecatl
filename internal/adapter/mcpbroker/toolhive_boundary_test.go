@@ -19,7 +19,7 @@ func TestToolHiveImportsStayBehindApprovedAdapterLeaves(t *testing.T) {
 		"internal/adapter/mcpbroker/authenticated_discovery.go":     true,
 		"internal/adapter/mcpbroker/toolhive_construction.go":       true,
 		"internal/adapter/mcpbroker/toolhive_credential_custody.go": true,
-		"internal/adapter/mcpbroker/toolhive_encrypted_storage.go":  true,
+		"internal/adapter/mcpbroker/credentialstore/storage.go":     true,
 		"internal/adapter/mcpbroker/toolhive_process.go":            true,
 		"internal/adapter/mcpbroker/toolhive_protected_storage.go":  true,
 		"internal/adapter/toolhivellm/tokensource.go":               true,

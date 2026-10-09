@@ -1,4 +1,4 @@
-package mcpbroker
+package credentialenvelope
 
 import (
 	"bytes"
@@ -8,9 +8,19 @@ import (
 	"testing"
 )
 
+// This fixture was sealed by the pre-extraction implementation using the
+// synthetic test key; opening it pins the persisted format and row/field AAD.
+func TestCredentialEnvelope_MigrationVector(t *testing.T) {
+	const ciphertext = "mecatl.v1.a256gcm.key-a.2I8xQ-Q7qJygTFodc-oXXTohkN8ucMo1BBnUO4z85n8.JsQTJPNrRQUJkPzL.Txh7bDMZ80ZHcN5KDzoH1ByHO-dXWVrzaYCWjwsq0iU"
+	aad := AAD("mecatl:authserver:", "upstream", "migration-session", "provider", "access")
+	if got, err := testCredentialKeyRing(t).Open(aad, ciphertext); err != nil || got != "migration-canary" {
+		t.Fatalf("pre-extraction ciphertext open = %q, %v", got, err)
+	}
+}
+
 func TestCredentialEnvelope_RoundTripsWithPerSealSalt(t *testing.T) {
 	ring := testCredentialKeyRing(t)
-	aad := credentialAAD("session", "provider", "access-token")
+	aad := AAD("session", "provider", "access-token")
 	value := sealCredentialForTest(t, ring, aad, "credential-canary")
 	parts := strings.Split(value, ".")
 	if len(parts) != 7 {
@@ -23,7 +33,7 @@ func TestCredentialEnvelope_RoundTripsWithPerSealSalt(t *testing.T) {
 	if err != nil || len(salt) != credentialSaltBytes {
 		t.Fatalf("salt length = %d, decode error = %v", len(salt), err)
 	}
-	got, err := ring.open(aad, value)
+	got, err := ring.Open(aad, value)
 	if err != nil || got != "credential-canary" {
 		t.Fatalf("open = %q, %v", got, err)
 	}
@@ -31,7 +41,7 @@ func TestCredentialEnvelope_RoundTripsWithPerSealSalt(t *testing.T) {
 
 func TestCredentialEnvelope_TamperedCiphertextFailsClosed(t *testing.T) {
 	ring := testCredentialKeyRing(t)
-	aad := credentialAAD("session", "provider", "refresh-token")
+	aad := AAD("session", "provider", "refresh-token")
 	parts := strings.Split(sealCredentialForTest(t, ring, aad, "refresh-canary"), ".")
 	payload, err := base64.RawURLEncoding.DecodeString(parts[6])
 	if err != nil {
@@ -39,14 +49,14 @@ func TestCredentialEnvelope_TamperedCiphertextFailsClosed(t *testing.T) {
 	}
 	payload[0] ^= 0x80
 	parts[6] = base64.RawURLEncoding.EncodeToString(payload)
-	if got, err := ring.open(aad, strings.Join(parts, ".")); !errors.Is(err, errCredentialEnvelope) || got != "" {
+	if got, err := ring.Open(aad, strings.Join(parts, ".")); !errors.Is(err, ErrUnavailable) || got != "" {
 		t.Fatalf("tampered envelope open = %q, %v", got, err)
 	}
 }
 
 func TestCredentialEnvelope_UnknownOrRetiredKeyIDFailsClosed(t *testing.T) {
 	ring := testCredentialKeyRing(t)
-	aad := credentialAAD("session", "provider", "id-token")
+	aad := AAD("session", "provider", "id-token")
 	sealed := strings.Split(sealCredentialForTest(t, ring, aad, "id-token-canary"), ".")
 
 	for name, mutate := range map[string]func([]string){
@@ -57,24 +67,24 @@ func TestCredentialEnvelope_UnknownOrRetiredKeyIDFailsClosed(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			parts := append([]string(nil), sealed...)
 			mutate(parts)
-			if got, err := ring.open(aad, strings.Join(parts, ".")); !errors.Is(err, errCredentialEnvelope) || got != "" {
+			if got, err := ring.Open(aad, strings.Join(parts, ".")); !errors.Is(err, ErrUnavailable) || got != "" {
 				t.Fatalf("open = %q, %v", got, err)
 			}
 		})
 	}
 
-	retired, err := newCredentialKeyRing("key-b", map[string][]byte{"key-b": bytes.Repeat([]byte("b"), credentialKeyBytes)})
+	retired, err := NewKeyRing("key-b", map[string][]byte{"key-b": bytes.Repeat([]byte("b"), KeyBytes)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := retired.open(aad, strings.Join(sealed, ".")); !errors.Is(err, errCredentialEnvelope) || got != "" {
+	if got, err := retired.Open(aad, strings.Join(sealed, ".")); !errors.Is(err, ErrUnavailable) || got != "" {
 		t.Fatalf("retired key open = %q, %v", got, err)
 	}
 }
 
 func TestCredentialEnvelope_MalformedSegmentsRejectedBeforeDecrypt(t *testing.T) {
 	ring := testCredentialKeyRing(t)
-	aad := credentialAAD("session", "provider", "subject")
+	aad := AAD("session", "provider", "subject")
 	sealed := strings.Split(sealCredentialForTest(t, ring, aad, "subject-canary"), ".")
 
 	shortPayload := make([]byte, 15)
@@ -93,33 +103,33 @@ func TestCredentialEnvelope_MalformedSegmentsRejectedBeforeDecrypt(t *testing.T)
 		"overlong nonce":     func(parts []string) { parts[5] = base64.RawURLEncoding.EncodeToString(longNonce) },
 		"non-base64 payload": func(parts []string) { parts[6] = "%%%" },
 		"truncated payload":  func(parts []string) { parts[6] = base64.RawURLEncoding.EncodeToString(shortPayload) },
-		"oversized envelope": func(parts []string) { parts[6] = strings.Repeat("A", maxCredentialEnvelope) },
+		"oversized envelope": func(parts []string) { parts[6] = strings.Repeat("A", MaxEnvelopeBytes) },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
 			parts := append([]string(nil), sealed...)
 			mutate(parts)
-			if got, err := ring.open(aad, strings.Join(parts, ".")); !errors.Is(err, errCredentialEnvelope) || got != "" {
+			if got, err := ring.Open(aad, strings.Join(parts, ".")); !errors.Is(err, ErrUnavailable) || got != "" {
 				t.Fatalf("open = %q, %v", got, err)
 			}
 		})
 	}
-	if got, err := ring.open(aad, strings.Repeat("x", maxCredentialEnvelope+1)); !errors.Is(err, errCredentialEnvelope) || got != "" {
+	if got, err := ring.Open(aad, strings.Repeat("x", MaxEnvelopeBytes+1)); !errors.Is(err, ErrUnavailable) || got != "" {
 		t.Fatalf("over-limit envelope open = %q, %v", got, err)
 	}
 }
 
 func TestCredentialEnvelope_AADMismatchFailsClosed(t *testing.T) {
 	ring := testCredentialKeyRing(t)
-	value := sealCredentialForTest(t, ring, credentialAAD("session", "provider", "access-token"), "access-canary")
-	if got, err := ring.open(credentialAAD("session", "provider", "refresh-token"), value); !errors.Is(err, errCredentialEnvelope) || got != "" {
+	value := sealCredentialForTest(t, ring, AAD("session", "provider", "access-token"), "access-canary")
+	if got, err := ring.Open(AAD("session", "provider", "refresh-token"), value); !errors.Is(err, ErrUnavailable) || got != "" {
 		t.Fatalf("AAD mismatch open = %q, %v", got, err)
 	}
 }
 
 func TestCredentialEnvelope_SaltIsBoundIntoKeyDerivation(t *testing.T) {
 	ring := testCredentialKeyRing(t)
-	aad := credentialAAD("session", "provider", "access-token")
+	aad := AAD("session", "provider", "access-token")
 	parts := strings.Split(sealCredentialForTest(t, ring, aad, "access-canary"), ".")
 	salt, err := base64.RawURLEncoding.DecodeString(parts[4])
 	if err != nil {
@@ -127,26 +137,26 @@ func TestCredentialEnvelope_SaltIsBoundIntoKeyDerivation(t *testing.T) {
 	}
 	salt[0] ^= 0x01
 	parts[4] = base64.RawURLEncoding.EncodeToString(salt)
-	if got, err := ring.open(aad, strings.Join(parts, ".")); !errors.Is(err, errCredentialEnvelope) || got != "" {
+	if got, err := ring.Open(aad, strings.Join(parts, ".")); !errors.Is(err, ErrUnavailable) || got != "" {
 		t.Fatalf("salt-tampered open = %q, %v", got, err)
 	}
 }
 
 func TestCredentialEnvelope_RetiredButPresentKeyStillOpensAfterRotation(t *testing.T) {
-	keyA := bytes.Repeat([]byte("a"), credentialKeyBytes)
-	keyB := bytes.Repeat([]byte("b"), credentialKeyBytes)
-	oldRing, err := newCredentialKeyRing("key-a", map[string][]byte{"key-a": keyA})
+	keyA := bytes.Repeat([]byte("a"), KeyBytes)
+	keyB := bytes.Repeat([]byte("b"), KeyBytes)
+	oldRing, err := NewKeyRing("key-a", map[string][]byte{"key-a": keyA})
 	if err != nil {
 		t.Fatal(err)
 	}
-	aad := credentialAAD("session", "provider", "access-token")
+	aad := AAD("session", "provider", "access-token")
 	oldEnvelope := sealCredentialForTest(t, oldRing, aad, "access-canary")
 
-	rotatedRing, err := newCredentialKeyRing("key-b", map[string][]byte{"key-a": keyA, "key-b": keyB})
+	rotatedRing, err := NewKeyRing("key-b", map[string][]byte{"key-a": keyA, "key-b": keyB})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := rotatedRing.open(aad, oldEnvelope); err != nil || got != "access-canary" {
+	if got, err := rotatedRing.Open(aad, oldEnvelope); err != nil || got != "access-canary" {
 		t.Fatalf("open with retained key = %q, %v", got, err)
 	}
 	newParts := strings.Split(sealCredentialForTest(t, rotatedRing, aad, "new-access-canary"), ".")
@@ -155,18 +165,18 @@ func TestCredentialEnvelope_RetiredButPresentKeyStillOpensAfterRotation(t *testi
 	}
 }
 
-func testCredentialKeyRing(t *testing.T) *credentialKeyRing {
+func testCredentialKeyRing(t *testing.T) *KeyRing {
 	t.Helper()
-	ring, err := newCredentialKeyRing("key-a", map[string][]byte{"key-a": []byte(strings.Repeat("k", 32))})
+	ring, err := NewKeyRing("key-a", map[string][]byte{"key-a": []byte(strings.Repeat("k", 32))})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return ring
 }
 
-func sealCredentialForTest(t *testing.T, ring *credentialKeyRing, aad []byte, plaintext string) string {
+func sealCredentialForTest(t *testing.T, ring *KeyRing, aad []byte, plaintext string) string {
 	t.Helper()
-	value, err := ring.seal(aad, plaintext)
+	value, err := ring.Seal(aad, plaintext)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,4 +1,4 @@
-package mcpbroker
+package credentialstore
 
 import (
 	"context"
@@ -16,11 +16,60 @@ import (
 	"github.com/stacklok/toolhive/pkg/authserver"
 	"github.com/stacklok/toolhive/pkg/authserver/runner"
 	"github.com/stacklok/toolhive/pkg/authserver/storage"
+
+	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/credentialenvelope"
 )
+
+//nolint:gosec // Persisted test namespace, not credential material.
+const testNamespace = "mecatl:authserver:"
+
+func testCredentialKeyRing(t *testing.T) *credentialenvelope.KeyRing {
+	t.Helper()
+	ring, err := credentialenvelope.NewKeyRing("key-a", map[string][]byte{"key-a": []byte(strings.Repeat("k", credentialenvelope.KeyBytes))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ring
+}
+
+func TestNamespaceBinding(t *testing.T) {
+	inner := storage.NewMemoryStorage()
+	t.Cleanup(func() { _ = inner.Close() })
+	ring := testCredentialKeyRing(t)
+	if _, err := New(inner, ring, ""); !errors.Is(err, credentialenvelope.ErrUnavailable) {
+		t.Fatalf("missing namespace = %v", err)
+	}
+	original, err := New(inner, ring, testNamespace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := New(inner, ring, "other:authserver:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := t.Context()
+	if err := original.StoreUpstreamTokens(ctx, "session", "provider", &storage.UpstreamTokens{ProviderID: "provider", AccessToken: "namespace-canary"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := other.GetUpstreamTokens(ctx, "session", "provider"); !errors.Is(err, credentialenvelope.ErrUnavailable) {
+		t.Fatalf("upstream ciphertext opened in a different namespace: %v", err)
+	}
+	creds := &storage.DCRCredentials{
+		Key:      storage.DCRKey{Issuer: "issuer", UpstreamID: "provider", RedirectURI: "https://broker/callback", ScopesHash: "scope"},
+		ClientID: "client", ClientSecret: "namespace-secret", RegistrationAccessToken: "namespace-registration",
+		AuthorizationEndpoint: "https://issuer/authorize", TokenEndpoint: "https://issuer/token",
+	}
+	if _, err := original.StoreDCRCredentialsIfAbsent(ctx, creds); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := other.GetDCRCredentials(ctx, creds.Key); !errors.Is(err, credentialenvelope.ErrUnavailable) {
+		t.Fatalf("DCR ciphertext opened in a different namespace: %v", err)
+	}
+}
 
 func TestEncryptedAuthStorage_EncryptsAndBindsFields(t *testing.T) {
 	inner := storage.NewMemoryStorage()
-	decorated, err := newEncryptedAuthStorage(inner, testCredentialKeyRing(t))
+	decorated, err := New(inner, testCredentialKeyRing(t), testNamespace)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,14 +112,14 @@ func TestEncryptedAuthStorage_EncryptsAndBindsFields(t *testing.T) {
 	if _, err := decorated.GetUpstreamTokens(ctx, "tsid", "plain"); err == nil {
 		t.Fatal("plaintext protected field accepted")
 	}
-	if _, err := decorated.GetLatestUpstreamTokensForUser(ctx, "user", "provider"); !errors.Is(err, errCredentialEnvelope) {
+	if _, err := decorated.GetLatestUpstreamTokensForUser(ctx, "user", "provider"); !errors.Is(err, credentialenvelope.ErrUnavailable) {
 		t.Fatalf("latest lookup = %v", err)
 	}
 }
 
 func TestEncryptedAuthStorage_NilAndCASSemantics(t *testing.T) {
 	inner := storage.NewMemoryStorage()
-	decorated, err := newEncryptedAuthStorage(inner, testCredentialKeyRing(t))
+	decorated, err := New(inner, testCredentialKeyRing(t), testNamespace)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,12 +164,12 @@ func TestEncryptedAuthStorage_NilAndCASSemantics(t *testing.T) {
 
 func TestEncryptedAuthStorage_DCRAndKeyOverlap(t *testing.T) {
 	ctx := t.Context()
-	oldRing, err := newCredentialKeyRing("old", map[string][]byte{"old": []byte(strings.Repeat("a", 32))})
+	oldRing, err := credentialenvelope.NewKeyRing("old", map[string][]byte{"old": []byte(strings.Repeat("a", 32))})
 	if err != nil {
 		t.Fatal(err)
 	}
 	inner := storage.NewMemoryStorage()
-	oldStore, err := newEncryptedAuthStorage(inner, oldRing)
+	oldStore, err := New(inner, oldRing, testNamespace)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,11 +181,11 @@ func TestEncryptedAuthStorage_DCRAndKeyOverlap(t *testing.T) {
 	if _, err := oldStore.StoreDCRCredentialsIfAbsent(ctx, creds); err != nil {
 		t.Fatal(err)
 	}
-	newRing, err := newCredentialKeyRing("new", map[string][]byte{"old": []byte(strings.Repeat("a", 32)), "new": []byte(strings.Repeat("b", 32))})
+	newRing, err := credentialenvelope.NewKeyRing("new", map[string][]byte{"old": []byte(strings.Repeat("a", 32)), "new": []byte(strings.Repeat("b", 32))})
 	if err != nil {
 		t.Fatal(err)
 	}
-	newStore, err := newEncryptedAuthStorage(inner, newRing)
+	newStore, err := New(inner, newRing, testNamespace)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +215,7 @@ func TestEncryptedAuthStorage_DCRAndKeyOverlap(t *testing.T) {
 
 func TestEncryptedAuthStorage_ExpiredAndDCRWinner(t *testing.T) {
 	inner := storage.NewMemoryStorage()
-	decorated, err := newEncryptedAuthStorage(inner, testCredentialKeyRing(t))
+	decorated, err := New(inner, testCredentialKeyRing(t), testNamespace)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,9 +245,9 @@ func TestEncryptedAuthStorage_DCRCanaryAndActiveRotation(t *testing.T) {
 	ctx := t.Context()
 	oldKey := []byte(strings.Repeat("a", 32))
 	newKey := []byte(strings.Repeat("b", 32))
-	oldRing, _ := newCredentialKeyRing("old", map[string][]byte{"old": oldKey})
+	oldRing, _ := credentialenvelope.NewKeyRing("old", map[string][]byte{"old": oldKey})
 	inner := storage.NewMemoryStorage()
-	oldStore, _ := newEncryptedAuthStorage(inner, oldRing)
+	oldStore, _ := New(inner, oldRing, testNamespace)
 	key := storage.DCRKey{Issuer: "issuer", UpstreamID: "provider", RedirectURI: "https://broker/callback", ScopesHash: "scope"}
 	creds := &storage.DCRCredentials{Key: key, ProviderName: "provider", ClientID: "id", ClientSecret: "client-secret-canary", RegistrationAccessToken: "registration-token-canary", AuthorizationEndpoint: "https://issuer/auth", TokenEndpoint: "https://issuer/token"}
 	if _, err := oldStore.StoreDCRCredentialsIfAbsent(ctx, creds); err != nil {
@@ -208,8 +257,8 @@ func TestEncryptedAuthStorage_DCRCanaryAndActiveRotation(t *testing.T) {
 	if err != nil || strings.Contains(raw.ClientSecret, "client-secret-canary") || strings.Contains(raw.RegistrationAccessToken, "registration-token-canary") {
 		t.Fatalf("raw DCR = %#v, %v", raw, err)
 	}
-	rotated, _ := newCredentialKeyRing("new", map[string][]byte{"old": oldKey, "new": newKey})
-	newStore, _ := newEncryptedAuthStorage(inner, rotated)
+	rotated, _ := credentialenvelope.NewKeyRing("new", map[string][]byte{"old": oldKey, "new": newKey})
+	newStore, _ := New(inner, rotated, testNamespace)
 	if err := newStore.StoreUpstreamTokens(ctx, "rotated", "provider", &storage.UpstreamTokens{ProviderID: "provider", AccessToken: "new-access"}); err != nil {
 		t.Fatal(err)
 	}
@@ -217,8 +266,8 @@ func TestEncryptedAuthStorage_DCRCanaryAndActiveRotation(t *testing.T) {
 	if err != nil || !strings.Contains(row.AccessToken, ".new.") {
 		t.Fatalf("active key row = %#v, %v", row, err)
 	}
-	retired, _ := newCredentialKeyRing("new", map[string][]byte{"new": newKey})
-	retiredStore, _ := newEncryptedAuthStorage(inner, retired)
+	retired, _ := credentialenvelope.NewKeyRing("new", map[string][]byte{"new": newKey})
+	retiredStore, _ := New(inner, retired, testNamespace)
 	if _, err := retiredStore.GetDCRCredentials(ctx, key); err == nil {
 		t.Fatal("retired ring decrypted old DCR row")
 	}
@@ -245,14 +294,14 @@ func TestEncryptedAuthStorage_RealRefresherPersistenceOutcomes(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
 		body        string
-		setup       func(*refreshFaultStorage, *encryptedAuthStorage)
+		setup       func(*refreshFaultStorage, *Storage)
 		want        string
 		wantErr     bool
 		wantDeletes int
 	}{
 		{
 			name: "non_rotating persistence failure remains usable", body: `{"access_token":"fresh-nonrotating","token_type":"Bearer","expires_in":3600}`,
-			setup: func(f *refreshFaultStorage, _ *encryptedAuthStorage) {
+			setup: func(f *refreshFaultStorage, _ *Storage) {
 				f.compare = func(context.Context, string, string, string, *storage.UpstreamTokens) error {
 					return errors.New("persist failed")
 				}
@@ -261,7 +310,7 @@ func TestEncryptedAuthStorage_RealRefresherPersistenceOutcomes(t *testing.T) {
 		},
 		{
 			name: "rotating persistence failure deletes stale row", body: `{"access_token":"fresh-rotating","refresh_token":"new-refresh","token_type":"Bearer","expires_in":3600}`,
-			setup: func(f *refreshFaultStorage, _ *encryptedAuthStorage) {
+			setup: func(f *refreshFaultStorage, _ *Storage) {
 				f.compare = func(context.Context, string, string, string, *storage.UpstreamTokens) error {
 					return errors.New("persist failed")
 				}
@@ -270,7 +319,7 @@ func TestEncryptedAuthStorage_RealRefresherPersistenceOutcomes(t *testing.T) {
 		},
 		{
 			name: "conflict returns valid winner", body: `{"access_token":"loser","refresh_token":"loser-refresh","token_type":"Bearer","expires_in":3600}`,
-			setup: func(f *refreshFaultStorage, encrypted *encryptedAuthStorage) {
+			setup: func(f *refreshFaultStorage, encrypted *Storage) {
 				installed := false
 				f.compare = func(ctx context.Context, sessionID, provider, _ string, _ *storage.UpstreamTokens) error {
 					if !installed {
@@ -310,7 +359,7 @@ func TestEncryptedAuthStorage_RealRefresherPersistenceOutcomes(t *testing.T) {
 	}
 }
 
-func newRealRefresherFixture(t *testing.T, response string) (*upstreamtoken.InProcessService, *refreshFaultStorage, *encryptedAuthStorage, *storage.MemoryStorage) {
+func newRealRefresherFixture(t *testing.T, response string) (*upstreamtoken.InProcessService, *refreshFaultStorage, *Storage, *storage.MemoryStorage) {
 	t.Helper()
 	token := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/token" {
@@ -323,7 +372,7 @@ func newRealRefresherFixture(t *testing.T, response string) (*upstreamtoken.InPr
 	t.Cleanup(token.Close)
 	inner := storage.NewMemoryStorage()
 	fault := &refreshFaultStorage{MemoryStorage: inner}
-	encrypted, err := newEncryptedAuthStorage(fault, testCredentialKeyRing(t))
+	encrypted, err := New(fault, testCredentialKeyRing(t), testNamespace)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -402,7 +451,7 @@ func TestEncryptedAuthStorage_NativeRoundTripAndDCRUpdate(t *testing.T) {
 	for name, makeStorage := range encryptedStorageTestBackends {
 		t.Run(name, func(t *testing.T) {
 			inner := makeStorage(t)
-			decorated, err := newEncryptedAuthStorage(inner, testCredentialKeyRing(t))
+			decorated, err := New(inner, testCredentialKeyRing(t), testNamespace)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -504,7 +553,7 @@ func TestEncryptedAuthStorage_NativeNilMissingAndExpiredCAS(t *testing.T) {
 	for name, makeStorage := range encryptedStorageTestBackends {
 		t.Run(name, func(t *testing.T) {
 			inner := makeStorage(t)
-			decorated, err := newEncryptedAuthStorage(inner, testCredentialKeyRing(t))
+			decorated, err := New(inner, testCredentialKeyRing(t), testNamespace)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -566,7 +615,7 @@ func TestEncryptedAuthStorage_NativeCASRejectsInterveningWriter(t *testing.T) {
 				t.Run(refresh, func(t *testing.T) {
 					inner := makeStorage(t)
 					interposed := &interveningCASStorage{Storage: inner, DCRCredentialStore: inner.(storage.DCRCredentialStore)}
-					decorated, err := newEncryptedAuthStorage(interposed, testCredentialKeyRing(t))
+					decorated, err := New(interposed, testCredentialKeyRing(t), testNamespace)
 					if err != nil {
 						t.Fatal(err)
 					}

@@ -18,6 +18,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/credentialenvelope"
 	contract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
@@ -90,13 +91,13 @@ type stagedCustody struct {
 
 type credentialCustody struct {
 	client redis.UniversalClient
-	keys   *credentialKeyRing
+	keys   *credentialenvelope.KeyRing
 	rows   upstreamTokenRowReader
 	tokens upstreamtoken.Service
 	clock  port.Clock
 }
 
-func newCredentialCustody(client redis.UniversalClient, keys *credentialKeyRing, tokens upstreamtoken.Service, clock port.Clock, rows upstreamTokenRowReader) (*credentialCustody, error) {
+func newCredentialCustody(client redis.UniversalClient, keys *credentialenvelope.KeyRing, tokens upstreamtoken.Service, clock port.Clock, rows upstreamTokenRowReader) (*credentialCustody, error) {
 	if client == nil || keys == nil || tokens == nil || clock == nil || rows == nil {
 		return nil, errCustodyUnavailable
 	}
@@ -349,7 +350,7 @@ func (c *credentialCustody) sealRecord(record custodyRecord) (string, error) {
 	if err != nil || len(plain) > maxCustodyPlaintext {
 		return "", errCustodyUnavailable
 	}
-	return c.keys.seal(credentialAAD(credentialAADNamespace, "custody", string(record.ID), "record"), string(plain))
+	return c.keys.Seal(credentialenvelope.AAD(toolHiveAuthStoragePrefix, "custody", string(record.ID), "record"), string(plain))
 }
 func (c *credentialCustody) readRecord(ctx context.Context, ref recoveryID) (custodyRecord, string, error) {
 	if !validRecoveryID(ref) {
@@ -362,10 +363,10 @@ func (c *credentialCustody) readRecord(ctx context.Context, ref recoveryID) (cus
 	if err != nil {
 		return custodyRecord{}, "", custodyError(ctx, err)
 	}
-	if len(raw) > maxCredentialEnvelope {
+	if len(raw) > credentialenvelope.MaxEnvelopeBytes {
 		return custodyRecord{}, "", errCustodyUnavailable
 	}
-	plain, err := c.keys.open(credentialAAD(credentialAADNamespace, "custody", string(ref), "record"), raw)
+	plain, err := c.keys.Open(credentialenvelope.AAD(toolHiveAuthStoragePrefix, "custody", string(ref), "record"), raw)
 	if err != nil || len(plain) > maxCustodyPlaintext {
 		return custodyRecord{}, "", errCustodyUnavailable
 	}
