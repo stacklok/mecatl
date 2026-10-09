@@ -1476,6 +1476,7 @@ type providerCredentialFileSetter interface {
 // ProviderCredentials is the immutable credential snapshot returned by a
 // ProviderCredentialLoader.
 type ProviderCredentials struct {
+	ExaAPIKey             string
 	OpenAIKey             string
 	OpenRouterKey         string
 	AnthropicKey          string
@@ -1828,6 +1829,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			return nil, err
 		}
 		cfg.CustomProviderAPIKeys = credentials.CustomProviderAPIKeys
+		cfg.ExaAPIKey = credentials.ExaAPIKey
 		cfg.OpenAIKey = credentials.OpenAIKey
 		cfg.OpenRouterKey = credentials.OpenRouterKey
 		cfg.AnthropicKey = credentials.AnthropicKey
@@ -6622,8 +6624,12 @@ func buildSearchProvider(ctx context.Context, cfg Config) tool.SearchProvider {
 
 	default:
 		provider := refsearch.NewExaProvider(refsearch.ExaConfig{APIKey: cfg.ExaAPIKey})
-		// NEVER log the key — only the fixed base endpoint + the paid-tier boolean.
-		cfg.diag().Log(ctx, port.LevelInfo, "WebSearch ENABLED (Exa anonymous default; set SEARXNG_URL/BRAVE_API_KEY to switch backends, or --websearch=off to disable)", "endpoint", provider.BaseEndpoint(), "paid_tier", provider.PaidTier())
+		// Never log the paid-tier request URL (it contains the key).
+		mode := "anonymous"
+		if provider.PaidTier() {
+			mode = "authenticated/paid"
+		}
+		cfg.diag().Log(ctx, port.LevelInfo, "WebSearch ENABLED with Exa backend", "endpoint", provider.BaseEndpoint(), "mode", mode)
 		return provider
 	}
 }

@@ -33,10 +33,14 @@ providers:
     api_key: <OPENROUTER_API_KEY>
   opencode:
     api_key: <OPENCODE_API_KEY>
+  exa:
+    api_key: <EXA_API_KEY>
 ```
 
 A matching API-key environment variable takes precedence over the file entry.
-The default path is `$XDG_CONFIG_HOME/mecatl/auth.yaml`, normally
+The optional Exa entry authenticates `WebSearch` (paid tier) for `mecated` and
+embedded `mecatui`; without it or `EXA_API_KEY`, Exa search stays anonymous.
+It does not configure an LLM provider. The default path is `$XDG_CONFIG_HOME/mecatl/auth.yaml`, normally
 `~/.config/mecatl/auth.yaml`. `--api-key-file <PATH>` selects another file;
 `credential_store.api_key.file` in operator settings can also select the path.
 

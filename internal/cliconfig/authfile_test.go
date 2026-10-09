@@ -52,6 +52,57 @@ func clearProviderEnv(t *testing.T) {
 	t.Setenv(envOpenRouterKey, "")
 	t.Setenv(envAnthropicKey, "")
 	t.Setenv(envOpenCodeKey, "")
+	t.Setenv(envExaKey, "")
+}
+
+func TestExaCredentialLifecycle(t *testing.T) {
+	clearProviderEnv(t)
+	writeAuthFile(t, "providers:\n  exa:\n    api_key: file-exa-key\n")
+	pf := RegisterProviderFlags(flag.NewFlagSet("exa", flag.ContinueOnError), ProviderFlagHelp{})
+	keys := pf.Resolve()
+	if keys.Exa != "file-exa-key" || keys.Any() || keys.AuthFileWarning != "" {
+		t.Fatalf("file-backed Exa credential not resolved independently of LLMs: key=%q any=%v warning=%q", keys.Exa, keys.Any(), keys.AuthFileWarning)
+	}
+	var cfg app.Config
+	pf.ApplyResolved(&cfg, keys)
+	if cfg.ExaAPIKey != keys.Exa {
+		t.Fatal("Exa credential missing from app config")
+	}
+	profile, _, err := NewProviderCredentialResolver(pf, keys).Load(nil)
+	if err != nil || profile.ExaAPIKey != keys.Exa {
+		t.Fatalf("credential loader Exa key = %q, err = %v", profile.ExaAPIKey, err)
+	}
+	t.Setenv(envExaKey, "env-exa-key")
+	if got := pf.Resolve().Exa; got != "env-exa-key" {
+		t.Fatal("environment Exa key did not override file")
+	}
+	clearProviderEnv(t)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	keys = pf.Resolve()
+	if keys.Exa != "" || keys.Any() || keys.AuthFileWarning != "" {
+		t.Fatalf("missing Exa credential should retain anonymous mode: key=%q any=%v warning=%q", keys.Exa, keys.Any(), keys.AuthFileWarning)
+	}
+}
+
+func TestExaConfiguredCredentialStorePath(t *testing.T) {
+	clearProviderEnv(t)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	path := filepath.Join(t.TempDir(), "operator-auth.yaml")
+	if err := os.WriteFile(path, []byte("providers:\n  exa:\n    api_key: configured-exa-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pf := RegisterProviderFlags(flag.NewFlagSet("exa", flag.ContinueOnError), ProviderFlagHelp{})
+	loader := NewProviderCredentialResolver(pf, pf.Resolve())
+	loader.SetAPIKeyFile(path)
+	profile, _, err := loader.Load(nil)
+	if err != nil || profile.ExaAPIKey != "configured-exa-key" {
+		t.Fatalf("credential_store.api_key.file Exa key = %q, err = %v", profile.ExaAPIKey, err)
+	}
+	t.Setenv(envExaKey, "env-exa-key")
+	profile, _, err = loader.Load(nil)
+	if err != nil || profile.ExaAPIKey != "env-exa-key" {
+		t.Fatalf("configured path env precedence: key = %q, err = %v", profile.ExaAPIKey, err)
+	}
 }
 
 // TestRegisterProviderFlagsRegistersAuthFile proves --api-key-file is registered

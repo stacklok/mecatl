@@ -70,8 +70,8 @@ func TestBuildSearchProviderPrecedence(t *testing.T) {
 		if exa.PaidTier() {
 			t.Fatal("no EXA_API_KEY => anonymous (not paid) tier")
 		}
-		if !strings.Contains(d.all(), "Exa anonymous default") {
-			t.Fatalf("expected the Exa-default INFO line; got:\n%s", d.all())
+		if !strings.Contains(d.all(), "mode anonymous") {
+			t.Fatalf("expected anonymous mode; got:\n%s", d.all())
 		}
 	})
 
@@ -85,8 +85,8 @@ func TestBuildSearchProviderPrecedence(t *testing.T) {
 		if !exa.PaidTier() {
 			t.Fatal("EXA_API_KEY set => paid tier")
 		}
-		if strings.Contains(d.all(), exaKey) {
-			t.Fatalf("EXA key leaked into diagnostics:\n%s", d.all())
+		if !strings.Contains(d.all(), "mode authenticated/paid") || strings.Contains(d.all(), exaKey) || strings.Contains(d.all(), "exaApiKey=") {
+			t.Fatalf("Exa paid-mode diagnostics missing or leaked key/request URL:\n%s", d.all())
 		}
 	})
 

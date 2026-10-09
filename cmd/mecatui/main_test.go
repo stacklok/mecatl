@@ -245,6 +245,40 @@ func TestEmbeddedConfigBuildAcceptsBrokerAuthority(t *testing.T) {
 	t.Cleanup(built.Close)
 }
 
+func TestEmbeddedExaCredentialStartup(t *testing.T) {
+	writeIsolatedExecutionSettings(t, app.PlacementHostLocal)
+	path := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "mecatl", "auth.yaml")
+	const key = "embedded-exa-key"
+	if err := os.WriteFile(path, []byte("providers:\n  exa:\n    api_key: "+key+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("EXA_API_KEY", "")
+	started := false
+	logPath := filepath.Join(t.TempDir(), "mecatui.log")
+	err := runWithOptions([]string{"mecatui", "--mock", "--diagnostics-log=" + logPath, "--no-store", "--no-memory", "--no-soul", "--no-skills", "--no-commands", "--user-model-dir=" + t.TempDir(), "--workspace=" + t.TempDir()}, runOptions{
+		beforeEmbeddedStart: func(cfg app.Config) error {
+			if cfg.ExaAPIKey != key {
+				t.Fatalf("embedded Exa key not projected: %q", cfg.ExaAPIKey)
+			}
+			return nil
+		},
+		runProgram: func(_ context.Context, model ui.Model) (tea.Model, error) {
+			started = true
+			return model, nil
+		},
+	})
+	if err != nil || !started {
+		t.Fatalf("embedded startup: started=%v err=%v", started, err)
+	}
+	log, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(log, []byte("mode=authenticated/paid")) || bytes.Contains(log, []byte(key)) || bytes.Contains(log, []byte("exaApiKey=")) {
+		t.Fatal("embedded Exa mode diagnostic missing or leaked secret")
+	}
+}
+
 func TestConventionalAuthFileIsIsolated(t *testing.T) {
 	authPath := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "mecatl", "auth.yaml")
 	if _, err := os.Stat(authPath); !errors.Is(err, os.ErrNotExist) {

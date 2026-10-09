@@ -304,7 +304,8 @@ func (p *ExaProvider) post(ctx context.Context, payload jsonRPCRequest, sessionI
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint, bytes.NewReader(buf))
 	if err != nil {
-		return nil, nil, fmt.Errorf("search: build %s request: %w", payload.Method, err)
+		// Request/transport errors can embed the URL, including ?exaApiKey=.
+		return nil, nil, fmt.Errorf("search: build exa %s request: %w", payload.Method, tool.ErrSearchBackendDown)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
@@ -315,7 +316,7 @@ func (p *ExaProvider) post(ctx context.Context, payload jsonRPCRequest, sessionI
 	resp, err := p.client.Do(req)
 	if err != nil {
 		// Transport error (unreachable, DNS, TLS, ctx) → backend-down degradation.
-		return nil, nil, fmt.Errorf("search: exa %s request failed: %w: %v", payload.Method, tool.ErrSearchBackendDown, err)
+		return nil, nil, fmt.Errorf("search: exa %s request failed: %w", payload.Method, tool.ErrSearchBackendDown)
 	}
 	body, rerr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	_ = resp.Body.Close()
@@ -347,7 +348,7 @@ func parseJSONRPC(body []byte, contentType string) (jsonRPCResponse, error) {
 		return jsonRPCResponse{}, fmt.Errorf("search: parse exa JSON-RPC: %w: %v", tool.ErrSearchBackendDown, err)
 	}
 	if resp.Error != nil {
-		return jsonRPCResponse{}, fmt.Errorf("search: exa JSON-RPC error %d %q: %w", resp.Error.Code, resp.Error.Message, tool.ErrSearchBackendDown)
+		return jsonRPCResponse{}, fmt.Errorf("search: exa JSON-RPC error %d: %w", resp.Error.Code, tool.ErrSearchBackendDown)
 	}
 	return resp, nil
 }

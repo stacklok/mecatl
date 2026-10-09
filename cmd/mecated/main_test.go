@@ -60,6 +60,29 @@ func TestLogListenerPostureClassifiesCallerAuthentication(t *testing.T) {
 	}
 }
 
+func TestExaCommandRootProjection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auth.yaml")
+	if err := os.WriteFile(path, []byte("providers:\n  exa:\n    api_key: daemon-exa-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("EXA_API_KEY", "")
+	cfg, err := parseFlags([]string{"--api-key-file", path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.providerCredentials.Any() {
+		t.Fatal("Exa search key must not count as an LLM provider credential")
+	}
+	out := appConfig(cfg, nil, nil, nil, nil, nil)
+	if out.ExaAPIKey != "daemon-exa-key" {
+		t.Fatal("daemon did not project file-backed Exa credential")
+	}
+	profile, _, err := out.ProviderCredentialLoader.Load(nil)
+	if err != nil || profile.ExaAPIKey != out.ExaAPIKey {
+		t.Fatalf("daemon credential loader Exa key = %q, err = %v", profile.ExaAPIKey, err)
+	}
+}
+
 func TestOpenAICodexCommandRootReusesResolvedSnapshot(t *testing.T) {
 	for _, envName := range []string{"OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENCODE_API_KEY"} {
 		t.Setenv(envName, "")
