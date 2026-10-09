@@ -289300,6 +289300,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791572975648,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8c86c07a01435f200b8caad728c9c4a70f6bc449",
+          "message": "fix(search): support Exa and Brave keys from auth.yaml (#2234)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-09T14:29:45-07:00",
+          "tree_id": "300cb9c5e60fc3eeab35d92362c86ac48223e5b8",
+          "url": "https://github.com/stacklok/mecatl/commit/8c86c07a01435f200b8caad728c9c4a70f6bc449"
+        },
+        "date": 1791582059519,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -419198,6 +419232,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791582056810,
+  "lastUpdate": 1791582060390,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
