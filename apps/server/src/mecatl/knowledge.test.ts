@@ -75,6 +75,22 @@ function sdkDreamReceipt(target: string) {
   };
 }
 
+function sdkRevision(over: Record<string, unknown> = {}) {
+  return {
+    description: "Prefers concise answers",
+    key: "communication",
+    origin: "reflection",
+    sourceProposalId: "proposal-7",
+    sourceSessionId: "session-1",
+    status: "active",
+    updatedAt: { nanos: 0, seconds: 1_700_000_000n },
+    value: "Keep explanations short.",
+    version: "3",
+    writer: "mecatl",
+    ...over,
+  };
+}
+
 describe("Mecatl knowledge adapter", () => {
   it("derives the knowledge capability set from the live runtime snapshot", async () => {
     const snapshot = sampleSnapshot();
@@ -323,6 +339,61 @@ describe("Mecatl knowledge adapter", () => {
       status: 409,
     });
     expect(activate).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps a memory revision's provenance for the current value and its history", async () => {
+    const get = vi.fn().mockResolvedValue({
+      detail: {
+        current: sdkRevision(),
+        history: [
+          sdkRevision({
+            origin: "",
+            sourceProposalId: "",
+            sourceSessionId: "",
+            status: "superseded",
+            updatedAt: undefined,
+            version: "2",
+            writer: "",
+          }),
+        ],
+        historyAvailable: true,
+      },
+    });
+    const service = createMecatlKnowledgeService(
+      { userModel: { get } } as unknown as Client,
+      allCapabilities,
+    );
+    await expect(service.getMemory("communication")).resolves.toEqual({
+      current: {
+        description: "Prefers concise answers",
+        key: "communication",
+        origin: "reflection",
+        sourceSessionId: "session-1",
+        status: "active",
+        updatedAt: "2023-11-14T22:13:20.000Z",
+        value: "Keep explanations short.",
+        version: "3",
+        writer: "mecatl",
+      },
+      history: [
+        {
+          description: "Prefers concise answers",
+          key: "communication",
+          origin: "",
+          sourceSessionId: "",
+          status: "superseded",
+          updatedAt: null,
+          value: "Keep explanations short.",
+          version: "2",
+          writer: "",
+        },
+      ],
+      historyAvailable: true,
+    });
+    expect(get).toHaveBeenCalledWith({
+      $typeName: "mecatl.v1.GetUserModelRequest",
+      key: "communication",
+    });
   });
 
   it("generates a consolidation plan for either target and keeps the daemon's target", async () => {

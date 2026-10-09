@@ -138,6 +138,13 @@ function factValue(label: string): HTMLElement {
   return value;
 }
 
+/** The labels of the Details rows, top to bottom. */
+function factLabels(): string[] {
+  const group = screen.getByRole("heading", { level: 2, name: "Details" }).nextElementSibling;
+  if (!(group instanceof HTMLElement)) throw new Error("Details has no row group");
+  return Array.from(group.children, (row) => row.firstElementChild?.textContent ?? "");
+}
+
 beforeEach(() => {
   state.connection = "online";
   state.listPending = false;
@@ -189,6 +196,22 @@ describe("MemoryFactDetail", () => {
     expect(screen.getByRole("link", { name: "session-fixture-1" }).getAttribute("href")).toBe(
       "/workspace/chat?sessionId=session-fixture-1",
     );
+  });
+
+  it("orders the Details rows key first and the update time last", async () => {
+    state.detail = detail({ sourceSessionId: "session-fixture-1" });
+    await renderDetail();
+    await screen.findByText("Tabs, width 4");
+
+    expect(factLabels()).toEqual([
+      "Key",
+      "Status",
+      "Version",
+      "Writer",
+      "Origin",
+      "Source session",
+      "Updated",
+    ]);
   });
 
   it("lists the bounded revisions newest-first as version · status · date", async () => {
