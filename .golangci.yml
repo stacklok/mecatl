@@ -765,8 +765,11 @@ linters:
               desc: 'agent (application loop) must not import os (CLAUDE.md layering rule); side effects belong in adapters/composition'
         # --- authn/oidc opt-in caller-identity module ---------------------------
         # Production verification depends only on stdlib, the narrow engine
-        # principal projection, and ToolHive's authn implementation. Tests are
-        # exempt per the repository convention for local fixtures.
+        # principal projection, and ToolHive's authn and networking packages (the
+        # latter builds the readiness probe's client with the same private-address,
+        # CA, and timeout policy authn applies to JWKS; jwx's jwk package parses
+        # the key set the same way authn does for that probe). Tests are exempt per the
+        # repository convention for local fixtures.
         authn-oidc:
           list-mode: strict
           files:
@@ -777,6 +780,8 @@ linters:
             - github.com/stacklok/mecatl/engine/session
             - github.com/stacklok/mecatl/authn/oidc/scopedhttps
             - github.com/stacklok/toolhive-core/authn
+            - github.com/stacklok/toolhive-core/networking
+            - github.com/lestrrat-go/jwx/v4/jwk
           deny:
             - pkg: os
               desc: 'the OIDC adapter must not touch the host OS or import the root module'
