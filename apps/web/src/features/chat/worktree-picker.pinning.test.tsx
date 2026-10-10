@@ -31,7 +31,9 @@ const worktrees: SessionWorktreesResponse = {
 } as SessionWorktreesResponse;
 
 function isChecked(radio: HTMLElement): boolean {
-  return radio.getAttribute("aria-checked") === "true" || (radio as HTMLInputElement).checked;
+  return (
+    radio.getAttribute("aria-checked") === "true" || (radio as HTMLInputElement).checked === true
+  );
 }
 
 function picker(props: Partial<Parameters<typeof WorktreePickerView>[0]> = {}) {

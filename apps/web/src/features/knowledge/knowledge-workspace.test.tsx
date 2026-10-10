@@ -87,7 +87,7 @@ it("lists skills by humanized name and re-sorts from the header", async () => {
 
 it("hides the Learned pill when the daemon has no learned-skill inventory", async () => {
   const container = await render({ capabilities: { learnedSkills: false, skills: true } });
-  const pills = [...container.querySelectorAll("button[aria-pressed]")].map((b) => b.textContent);
+  const pills = [...container.querySelectorAll("button[aria-checked]")].map((b) => b.textContent);
   expect(pills).toEqual(["All"]);
 });
 

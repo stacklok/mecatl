@@ -441,7 +441,11 @@ describe("transcript, soul, and worktree view pins", () => {
     });
     await waitFor(() => expect(bff.worktreeCalls).toBe(2));
     expect(within(picker).getByRole("alert").textContent).toMatch(/selection is stale/i);
-    expect(within(picker).getByRole("radio", { name: /Feature/ })).toHaveProperty("checked", false);
+    expect(
+      within(picker)
+        .getByRole("radio", { name: /Feature/ })
+        .getAttribute("aria-checked"),
+    ).toBe("false");
   });
 });
 

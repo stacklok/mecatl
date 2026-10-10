@@ -54,6 +54,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Note, SettingsCard } from "@/features/settings/settings-card";
 import { errorMessage } from "@/lib/error-message";
 import { cn } from "@/lib/utils";
@@ -243,28 +244,29 @@ function ProposalQueueCard() {
         <div className="flex flex-wrap items-center justify-between gap-2">
           {/* Four 44px pills do not fit one phone row at the 18px root size, so on phones
               they share the row in equal columns instead of scrolling sideways. */}
-          <div className="inline-flex max-w-full items-center gap-0.5 rounded-full bg-muted p-1 max-[499px]:grid max-[499px]:w-full max-[499px]:grid-cols-4">
+          <ToggleGroup
+            aria-label="Suggestion status"
+            className="inline-flex max-w-full items-center gap-0.5 rounded-full bg-muted p-1 max-[499px]:grid max-[499px]:w-full max-[499px]:grid-cols-4"
+            onValueChange={(next) => {
+              // Choosing the selected pill again clears a single toggle group; the filter stays.
+              if (!next) return;
+              setFilter(next as ProposalFilterValue);
+              setNotice(undefined);
+              setError(undefined);
+            }}
+            type="single"
+            value={filter}
+          >
             {PROPOSAL_FILTERS.map((item) => (
-              <button
-                aria-pressed={filter === item.value}
-                className={cn(
-                  "min-h-11 shrink-0 rounded-full px-3.5 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-brand max-[499px]:px-1",
-                  filter === item.value
-                    ? "bg-background font-medium text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
+              <ToggleGroupItem
+                className="h-auto min-h-11 min-w-0 shrink-0 whitespace-normal rounded-full px-3.5 font-normal text-muted-foreground hover:bg-transparent hover:text-foreground focus-visible:outline-2 focus-visible:outline-brand data-[state=on]:bg-background data-[state=on]:font-medium data-[state=on]:text-foreground data-[state=on]:shadow-sm max-[499px]:px-1"
                 key={item.value}
-                onClick={() => {
-                  setFilter(item.value);
-                  setNotice(undefined);
-                  setError(undefined);
-                }}
-                type="button"
+                value={item.value}
               >
                 {item.label}
-              </button>
+              </ToggleGroupItem>
             ))}
-          </div>
+          </ToggleGroup>
           <Button
             aria-label="Refresh suggestions"
             className="ml-auto min-h-11 min-w-11"
