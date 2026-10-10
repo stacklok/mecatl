@@ -4,7 +4,7 @@ go 1.27.2
 
 require (
 	github.com/stacklok/go-microvm v0.0.41
-	github.com/stacklok/mecatl v0.0.0
+	github.com/stacklok/mecatl v0.0.47
 	github.com/stacklok/mecatl/engine v0.15.1-0.20260929125653-6142f5252a09
 	github.com/stacklok/mecatl/environment/microvm v0.0.0
 	go.uber.org/goleak v1.3.0
@@ -203,7 +203,7 @@ require (
 	github.com/sigstore/protobuf-specs v0.5.2 // indirect
 	github.com/sigstore/rekor v1.5.4 // indirect
 	github.com/sigstore/rekor-tiles/v2 v2.3.0 // indirect
-	github.com/sigstore/sigstore v1.10.10 // indirect
+	github.com/sigstore/sigstore v1.11.0 // indirect
 	github.com/sigstore/sigstore-go v1.3.0 // indirect
 	github.com/sigstore/timestamp-authority/v2 v2.1.3 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
@@ -213,7 +213,7 @@ require (
 	github.com/spf13/cobra v1.10.2 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/spf13/viper v1.21.0 // indirect
-	github.com/spiffe/go-spiffe/v2 v2.8.1 // indirect
+	github.com/spiffe/go-spiffe/v2 v2.8.2 // indirect
 	github.com/stacklok/mecatl/adapters v0.1.1 // indirect
 	github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver v0.1.0 // indirect
 	github.com/stacklok/mecatl/internal/adaptersupport v0.1.0 // indirect
@@ -221,7 +221,7 @@ require (
 	github.com/stacklok/mecatl/provider/openai v0.0.0-00010101000000-000000000000 // indirect
 	github.com/stacklok/mecatl/provider/openaichat v0.0.0-00010101000000-000000000000 // indirect
 	github.com/stacklok/mecatl/provider/ssefilter v0.1.0 // indirect
-	github.com/stacklok/toolhive v0.50.0 // indirect
+	github.com/stacklok/toolhive v0.51.4 // indirect
 	github.com/stacklok/toolhive-core v0.0.51 // indirect
 	github.com/stacklok/toolhive-core/redisconn v0.0.2 // indirect
 	github.com/stacklok/typesafe-go v0.1.0 // indirect
@@ -315,13 +315,13 @@ require (
 	k8s.io/kube-openapi v0.0.0-20260721132016-d427ff9ee9ad // indirect
 	k8s.io/streaming v0.37.1 // indirect
 	k8s.io/utils v0.0.0-20260707023825-cf1189d6abe3 // indirect
-	modernc.org/libc v1.75.6 // indirect
+	modernc.org/libc v1.75.7 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
-	modernc.org/sqlite v1.58.0 // indirect
+	modernc.org/sqlite v1.59.0 // indirect
 	mvdan.cc/sh/v3 v3.14.1 // indirect
 	oras.land/oras-go/v2 v2.6.2 // indirect
-	sigs.k8s.io/controller-runtime v0.25.0 // indirect
+	sigs.k8s.io/controller-runtime v0.25.1 // indirect
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.2 // indirect
