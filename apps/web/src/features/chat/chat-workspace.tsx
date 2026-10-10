@@ -115,6 +115,7 @@ import {
   useUserDisplayName,
 } from "../../lib/profile-preferences";
 import { useIsMobile } from "../../lib/use-mobile";
+import { cn } from "../../lib/utils";
 import { useAuthRecovery } from "../auth/auth-recovery-context";
 import { useShortcut, useShortcutSuppression } from "../shortcuts/shortcut-provider";
 import { ApprovalDetailContext } from "./approval-detail-context";
@@ -2942,7 +2943,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
               variant="ghost"
             >
               <ListTodo aria-hidden="true" />
-              <span className="hidden sm:inline">Activity</span>
+              <span className="hidden @min-[38.5rem]/chat-header:inline">Activity</span>
             </Button>
             {!(isMobile && sessionId) && (
               <Button
@@ -2952,7 +2953,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                 variant="ghost"
               >
                 <NotebookPen aria-hidden="true" />
-                <span className="hidden sm:inline">Canvas</span>
+                <span className="hidden @min-[38.5rem]/chat-header:inline">Canvas</span>
               </Button>
             )}
             {sessionId && (
@@ -3225,13 +3226,22 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
               ref={transcriptScroll}
             >
               <div
-                className="mx-auto flex min-h-full max-w-3xl flex-col pt-2 pb-6 pl-4 pr-12 sm:pl-6"
+                className={cn(
+                  "mx-auto flex min-h-full max-w-3xl flex-col pt-2 pb-6 pl-4 sm:pl-6",
+                  // The right gutter keeps messages clear of the minimap; the empty state
+                  // has no minimap, so it centres like the prototype's.
+                  !(transcript.isPending && sessionId && !isRunning) &&
+                    messages.length === 0 &&
+                    approvals.length === 0
+                    ? "pr-4 sm:pr-6"
+                    : "pr-12",
+                )}
                 ref={observeTranscriptContent}
               >
                 {transcript.isPending && sessionId && !isRunning ? (
                   <p className="m-auto text-sm text-muted-foreground">Loading conversation…</p>
                 ) : messages.length === 0 && approvals.length === 0 ? (
-                  <div className="m-auto flex flex-col items-center">
+                  <div className="m-auto flex w-full flex-col items-center">
                     <DraftGreeting
                       onPickSeed={(seed) => {
                         setSeedRequiresConfirmation(false);

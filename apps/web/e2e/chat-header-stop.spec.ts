@@ -169,3 +169,35 @@ test("the running chat header keeps its desktop layout", async ({ offlineBff, pa
   await expect(page.getByRole("menuitem", { name: "Inspect session" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Open local canvas" })).toHaveCount(0);
 });
+
+test("the running chat header fits from 500px, beside the chat list too", async ({
+  offlineBff,
+  page,
+}) => {
+  runningSession(offlineBff);
+  await page.setViewportSize({ height: 800, width: 1280 });
+  await page.goto(`/workspace/chat?sessionId=${sessionId}`);
+  const header = page.locator("header").filter({ has: page.getByRole("button", { name: "Stop" }) });
+  const stop = header.getByRole("button", { exact: true, name: "Stop" });
+  await expect(stop).toBeVisible();
+  // From 760px the chat list sits beside the chat, so the header is narrower than the viewport;
+  // the Activity and Canvas labels follow the header's own width, not the viewport's.
+  for (const width of [500, 560, 639, 640, 760, 820, 900]) {
+    await page.setViewportSize({ height: 800, width });
+    await expect(stop).toBeVisible();
+    const fit = await header.evaluate((element) => ({
+      client: element.clientWidth,
+      right: element.getBoundingClientRect().right,
+      scroll: element.scrollWidth,
+    }));
+    expect(fit.scroll, `the header's content fits it at ${width}px`).toBeLessThanOrEqual(
+      fit.client,
+    );
+    const box = await stop.boundingBox();
+    expect(box, `Stop has a box at ${width}px`).not.toBeNull();
+    if (!box) continue;
+    expect(box.x + box.width, `Stop ends inside the header at ${width}px`).toBeLessThanOrEqual(
+      fit.right,
+    );
+  }
+});

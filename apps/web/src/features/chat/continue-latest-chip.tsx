@@ -21,9 +21,9 @@ export function ContinueLatestChip({
   const when = formatRelativeTime(latest.updatedAt);
 
   return (
-    <div className="mt-3 flex justify-center">
+    <div className="mt-3 flex max-w-full justify-center">
       <button
-        className={`${chipClass} inline-flex items-center gap-2`}
+        className={`${chipClass} inline-flex max-w-full items-center gap-2`}
         onClick={() => onContinue(latest.id)}
         title="Continue the most recent chat"
         type="button"
