@@ -319,30 +319,47 @@ fork it, including messages after the one you selected. The selected message
 anchors the thread in the source transcript. Each occurrence has its own
 thread, even when two messages have the same text.
 
-Select an image or tool result in the transcript to inspect its preview in the
-same side panel. Select **Canvas** in the chat header to edit Markdown notes and
-switch between **Edit** and **Preview**. On a phone, an open chat has it under
-**Chat options > Open local canvas** instead. Canvas notes stay in this browser for
+Select an image or tool result in the transcript, or an attached file in the
+composer, to inspect its preview in the same side panel. A code file shows
+numbered lines. Select **Canvas** in the chat header to edit Markdown notes and
+switch between **Edit** and **Preview**; the canvas toolbar also has **Copy
+canvas** and **Clear canvas**. On a phone, an open chat has it under **Chat
+options > Open local canvas** instead. Canvas notes stay in this browser for
 your account and the selected chat. Opening or previewing them does not send
 their text to Mecatl.
+
+**Chat options > Copy** has **Select conversation**, which selects only the
+transcript, **Copy conversation**, which copies each message under its
+author's name, and **Copy session ID**. On a phone these appear in the menu
+itself.
 
 ### Inspect a session
 
 Open **Chat options > Inspect session** to see its kind, state, model, usage,
 and available placement details. **View transcript** shows the saved messages
-in order and identifies an incomplete transcript. **Inspect soul** shows the
-resolved soul for your connection; it is shared across the sessions on that
-connection. Studio explains when any inspection view is unavailable.
+in order, with a line for each turn's tool calls, and identifies an incomplete
+transcript. **Inspect soul** shows the resolved soul for your connection, with
+its source, trust, and size; it is shared across the sessions on that
+connection. Each view links to the others, and **Chat options** also opens
+**View transcript**, **Soul**, and **Switch worktree…** directly. Studio
+explains when any inspection view is unavailable.
 
-The session list has a separate **Inspect-only sessions** group. Opening one
-shows **Session details** and, when permitted, its saved transcript. It has no
-chat composer or run controls. **Copy session ID** appears when permitted.
+Each chat in the session list has an options menu: **Copy session ID**,
+**View transcript**, **Fork chat**, **Move to folder**, **Rename**, and
+**Delete**. A debug chat also offers **Copy debug target ID**. Viewing another
+chat's transcript or forking it from the list does not leave the open chat.
+
+The session list has a separate **Inspect-only sessions** group, which labels
+each session's kind and marks it **Read-only**. Opening one shows **Session
+details** and, when permitted, its saved transcript. It has no chat composer or
+run controls. **Copy session ID** appears when permitted.
 
 For a chat with eligible worktrees, select **Choose worktree**, choose a listed
 worktree, and confirm **Fork in selected worktree** or **Clear in selected
 worktree**. Studio opens the new session after the operation; the source chat
 keeps its placement. If the choice has become unavailable, Studio refreshes
-the list so you can choose again. **Debug with AI** first asks you to confirm
+the list so you can choose again. **Debug with AI** works on the open chat and
+first asks you to confirm
 that stored transcript and event evidence will be sent to the model in a separate
 diagnostic chat. The inspected session remains read-only to that debugger.
 
