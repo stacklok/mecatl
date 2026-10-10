@@ -290,6 +290,33 @@ describe("fleet status chip", () => {
     expect(open).toHaveBeenCalledWith("parallel", expect.any(HTMLButtonElement));
   });
 
+  it("counts a child whose outcome is unknown apart from the done ones", () => {
+    const unfollowed = fleetWith({
+      subagents: [
+        { ...base, childId: "a", family: "subagent", key: "a", state: "unknown", trace },
+        { ...base, childId: "b", family: "subagent", key: "b", state: "finished", trace },
+      ],
+      teams: [
+        {
+          ...base,
+          family: "team",
+          findings: [],
+          key: "t",
+          members: [],
+          state: "unknown",
+          tasks: [],
+          teamId: "team-a",
+        },
+      ],
+    });
+    expect(
+      fleetSegments(unfollowed).map(({ compact, label, running }) => ({ compact, label, running })),
+    ).toEqual([
+      { compact: "0◐ 1✓ 1?", label: "0 running · 1 done · 1 unknown", running: false },
+      { compact: "0◐ 0✓ 1?", label: "0 running · 0 done · 1 unknown", running: false },
+    ]);
+  });
+
   it("lets the activity panel open on the requested family", () => {
     render(<SessionActivityContent family="team" fleet={fleet} onFocusChange={() => {}} />);
     expect(screen.getByRole("tab", { selected: true }).getAttribute("aria-label")).toBe(

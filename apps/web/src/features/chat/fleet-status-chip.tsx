@@ -9,7 +9,10 @@ import type { DelegationFleet, DelegationState } from "./delegation-fleet";
 type Family = DelegationFocus["family"];
 
 export interface FleetSegment {
-  /** The short form a narrow header shows: `N◐ M✓`, or `k/N` for a live team. */
+  /**
+   * The short form a narrow header shows: `N◐ M✓` (with `U?` when some
+   * outcomes are unknown), or `k/N` for a live team.
+   */
   compact: string;
   family: Family;
   label: string;
@@ -17,20 +20,27 @@ export interface FleetSegment {
   running: boolean;
 }
 
-function tally(states: DelegationState[]) {
-  const running = states.filter((state) => state === "running").length;
-  return { done: states.length - running, running };
+interface Tally {
+  done: number;
+  running: number;
+  /** Children Studio stopped following before they reported an outcome. */
+  unknown: number;
+}
+
+function tally(states: DelegationState[]): Tally {
+  const count = (wanted: DelegationState) => states.filter((state) => state === wanted).length;
+  return { done: count("finished"), running: count("running"), unknown: count("unknown") };
 }
 
 function countSegment(
   family: Family,
   name: string,
-  { done, running }: { done: number; running: number },
+  { done, running, unknown }: Tally,
 ): FleetSegment {
   return {
-    compact: `${running}◐ ${done}✓`,
+    compact: `${running}◐ ${done}✓${unknown > 0 ? ` ${unknown}?` : ""}`,
     family,
-    label: `${running} running · ${done} done`,
+    label: `${running} running · ${done} done${unknown > 0 ? ` · ${unknown} unknown` : ""}`,
     name,
     running: running > 0,
   };
