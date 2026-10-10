@@ -214,6 +214,24 @@ describe("settings responsive accessibility", () => {
     ).toBe(true);
   });
 
+  it("keeps each identity field's visible label inside its accessible name", () => {
+    // WCAG 2.5.3 (Label in Name): speech users say the words they see.
+    for (const section of ["profile", "agent"] as const) {
+      const page = render(
+        `/workspace/settings/${section}`,
+        <SettingsWorkspace section={section} />,
+      );
+      const inputs = page.querySelectorAll<HTMLInputElement>("input[type=text], input:not([type])");
+      expect(inputs.length, section).toBeGreaterThan(0);
+      for (const input of inputs) {
+        const visible = page.querySelector(`label[for="${input.id}"]`)?.textContent?.trim();
+        expect(visible, section).toBeTruthy();
+        const name = input.getAttribute("aria-label") ?? visible;
+        expect(name?.toLowerCase(), section).toContain(visible?.toLowerCase());
+      }
+    }
+  });
+
   it("exposes a 44px picture removal target without hover on mobile", () => {
     const host = document.createElement("div");
     host.innerHTML = renderToStaticMarkup(

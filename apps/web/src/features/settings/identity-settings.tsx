@@ -18,7 +18,7 @@ export function IdentitySettings() {
       <IdentityField
         description="Shown on your messages."
         htmlFor="user-display-name"
-        label="Your name"
+        label="Your display name"
       >
         <Input
           aria-label="Your display name"
