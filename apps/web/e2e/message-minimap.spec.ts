@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { expect, test } from "./fixtures";
+import { expect, type OfflineBff, test } from "./fixtures";
 
 const capabilities = {
   copyId: true,
@@ -19,10 +19,8 @@ const capabilities = {
   viewTranscriptReason: "",
 };
 
-test("an early minimap marker reaches its own row without moving the page", async ({
-  offlineBff,
-  page,
-}, testInfo) => {
+/** A 60-message chat whose rows each fill a transcript row. */
+function serveLongChat(offlineBff: OfflineBff) {
   offlineBff.json("GET", "/api/v1/auth/session", {
     account: "opaque-a",
     mode: "oidc",
@@ -84,6 +82,13 @@ test("an early minimap marker reaches its own row without moving the page", asyn
     body: "",
     contentType: "text/event-stream",
   }));
+}
+
+test("an early minimap marker reaches its own row without moving the page", async ({
+  offlineBff,
+  page,
+}, testInfo) => {
+  serveLongChat(offlineBff);
 
   await page.goto("/workspace/chat?sessionId=long-chat");
   const transcript = page.getByRole("region", { name: "Conversation transcript" });
@@ -161,5 +166,32 @@ test("an early minimap marker reaches its own row without moving the page", asyn
   for (const width of [320, 500, 1280]) {
     await page.setViewportSize({ width, height: 800 });
     await page.screenshot({ path: testInfo.outputPath(`minimap-dark-${width}.png`) });
+  }
+});
+
+test("a message row's actions are touch-size on a coarse pointer", async ({
+  offlineBff,
+  page,
+}, testInfo) => {
+  serveLongChat(offlineBff);
+  await page.goto("/workspace/chat?sessionId=long-chat");
+  const transcript = page.getByRole("region", { name: "Conversation transcript" });
+  const row = transcript.getByRole("article").last();
+  await expect(row).toContainText("Recorded message 60");
+  const coarse = testInfo.project.name === "chromium-mobile";
+  const actions = row.getByRole("button", { name: /^(Copy to clipboard|Reply in side thread)$/ });
+  await expect(actions).toHaveCount(2);
+  for (const action of await actions.all()) {
+    if (!coarse) await row.hover();
+    const box = await action.boundingBox();
+    expect(box).not.toBeNull();
+    if (coarse) {
+      expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
+      expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+    } else {
+      // A mouse keeps the prototype's compact 24px actions.
+      expect(box?.width).toBe(24);
+      expect(box?.height).toBe(24);
+    }
   }
 });

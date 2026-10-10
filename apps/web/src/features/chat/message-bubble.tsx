@@ -55,12 +55,13 @@ export function MessageAvatar({
 }
 
 const actionClass =
-  "flex size-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-brand disabled:opacity-50";
+  "flex size-6 items-center justify-center rounded text-muted-foreground pointer-coarse:size-11 transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-brand disabled:opacity-50";
 
 /**
  * The row's actions: copy the turn, and open or start its side thread. With
  * a pointer that can hover they show on hover or keyboard focus; on touch
- * they stay visible, since there is no hover to reveal them.
+ * they stay visible, since there is no hover to reveal them, and grow to a
+ * finger-size target.
  */
 export function MessageActions({
   onCopy,
