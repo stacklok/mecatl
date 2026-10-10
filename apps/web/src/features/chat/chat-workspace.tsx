@@ -87,7 +87,9 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
@@ -2769,6 +2771,29 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     if (contentPreview?.kind === "approval" && !detailApproval) setContentPreview(undefined);
   }, [contentPreview, detailApproval]);
 
+  const copyItems = sessionId ? (
+    <>
+      <TranscriptMenuItems
+        agentName={agentName}
+        messages={messages}
+        onSelectTranscript={() => {
+          const content = transcriptContent.current;
+          if (content) selectElementContents(content);
+        }}
+        userName={userName}
+      />
+      {selectedSession ? (
+        <CopySessionIdMenuItem session={selectedSession} />
+      ) : (
+        <DropdownMenuItem onSelect={() => void copyToClipboard(sessionId, "Session ID")}>
+          <Copy aria-hidden="true" />
+          Copy session ID
+        </DropdownMenuItem>
+      )}
+      {selectedSession && <CopyDebugTargetMenuItem session={selectedSession} />}
+    </>
+  ) : null;
+
   return (
     <div className="relative flex h-full min-w-0" data-chat-surface="workspace" ref={workspaceRoot}>
       <SessionSidebar
@@ -3027,34 +3052,23 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                       </DropdownMenuItem>
                     )}
                   <DropdownMenuSeparator />
-                  <DropdownMenuSub>
-                    <DropdownMenuSubTrigger>
-                      <Copy aria-hidden="true" />
-                      Copy
-                    </DropdownMenuSubTrigger>
-                    <DropdownMenuSubContent className="w-52">
-                      <TranscriptMenuItems
-                        agentName={agentName}
-                        messages={messages}
-                        onSelectTranscript={() => {
-                          const content = transcriptContent.current;
-                          if (content) selectElementContents(content);
-                        }}
-                        userName={userName}
-                      />
-                      {selectedSession ? (
-                        <CopySessionIdMenuItem session={selectedSession} />
-                      ) : (
-                        <DropdownMenuItem
-                          onSelect={() => void copyToClipboard(sessionId, "Session ID")}
-                        >
-                          <Copy aria-hidden="true" />
-                          Copy session ID
-                        </DropdownMenuItem>
-                      )}
-                      {selectedSession && <CopyDebugTargetMenuItem session={selectedSession} />}
-                    </DropdownMenuSubContent>
-                  </DropdownMenuSub>
+                  {isMobile ? (
+                    // A submenu has no room beside the menu on a phone, so its items sit inline.
+                    <DropdownMenuGroup aria-label="Copy">
+                      <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">
+                        Copy
+                      </DropdownMenuLabel>
+                      {copyItems}
+                    </DropdownMenuGroup>
+                  ) : (
+                    <DropdownMenuSub>
+                      <DropdownMenuSubTrigger>
+                        <Copy aria-hidden="true" />
+                        Copy
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent className="w-52">{copyItems}</DropdownMenuSubContent>
+                    </DropdownMenuSub>
+                  )}
                   {selectedSession?.capabilities.viewTranscript &&
                     selectedSession.capabilities.inspect &&
                     runtime.data?.connection === "online" && (

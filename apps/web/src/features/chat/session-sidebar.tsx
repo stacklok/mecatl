@@ -25,7 +25,9 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
@@ -36,6 +38,7 @@ import { Input } from "../../components/ui/input";
 import { formatRelativeTime } from "../../lib/formatters";
 import { maxPanelWidth, minPanelWidth, usePanelWidth } from "../../lib/panel-width";
 import { capabilityReasonLabel, sessionKindLabel } from "../../lib/session-kinds";
+import { useIsMobile } from "../../lib/use-mobile";
 import { cn } from "../../lib/utils";
 import { type ChatFolder, type ChatFolderState, groupSessions } from "./chat-folders";
 import { CopyDebugTargetMenuItem, CopySessionIdMenuItem } from "./session-copy-menu-items";
@@ -281,6 +284,28 @@ function SessionRow({
   const current = folders.assignments[session.id];
   const canRename = session.capabilities.rename && !renaming;
   const canDelete = session.capabilities.delete && !deleting;
+  const isMobile = useIsMobile();
+  const folderItems = (
+    <>
+      {folders.folders.map((folder) => (
+        <DropdownMenuCheckboxItem
+          checked={current === folder.id}
+          key={folder.id}
+          onSelect={() => onMoveToFolder(folder.id)}
+        >
+          <span className="truncate">{folder.name}</span>
+        </DropdownMenuCheckboxItem>
+      ))}
+      <DropdownMenuCheckboxItem checked={!current} onSelect={() => onMoveToFolder()}>
+        No folder
+      </DropdownMenuCheckboxItem>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem onSelect={onCreateFolder}>
+        <Plus aria-hidden="true" />
+        New folder…
+      </DropdownMenuItem>
+    </>
+  );
 
   if (editing) {
     return (
@@ -357,31 +382,24 @@ function SessionRow({
             <ViewTranscriptMenuItem onSelect={onViewTranscript} session={session} />
           )}
           {onFork && <ForkChatMenuItem onSelect={onFork} session={session} />}
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger>
-              <FolderInput aria-hidden="true" />
-              Move to folder
-            </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent className="w-52">
-              {folders.folders.map((folder) => (
-                <DropdownMenuCheckboxItem
-                  checked={current === folder.id}
-                  key={folder.id}
-                  onSelect={() => onMoveToFolder(folder.id)}
-                >
-                  <span className="truncate">{folder.name}</span>
-                </DropdownMenuCheckboxItem>
-              ))}
-              <DropdownMenuCheckboxItem checked={!current} onSelect={() => onMoveToFolder()}>
-                No folder
-              </DropdownMenuCheckboxItem>
+          {isMobile ? (
+            // A submenu has no room beside the menu on a phone, so the folders sit inline.
+            <DropdownMenuGroup aria-label="Move to folder">
               <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={onCreateFolder}>
-                <Plus aria-hidden="true" />
-                New folder…
-              </DropdownMenuItem>
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
+              <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">
+                Move to folder
+              </DropdownMenuLabel>
+              {folderItems}
+            </DropdownMenuGroup>
+          ) : (
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <FolderInput aria-hidden="true" />
+                Move to folder
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="w-52">{folderItems}</DropdownMenuSubContent>
+            </DropdownMenuSub>
+          )}
           <DropdownMenuSeparator />
           <DropdownMenuItem
             aria-description={

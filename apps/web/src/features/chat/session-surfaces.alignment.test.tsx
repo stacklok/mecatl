@@ -316,6 +316,24 @@ describe("chat options entries", () => {
     );
   });
 
+  it("lists the copy actions inline on a phone, where a submenu has no room", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      addEventListener: () => {},
+      matches: query.includes("max-width"),
+      media: query,
+      removeEventListener: () => {},
+    }));
+    await mount(new Bff());
+    const user = userEvent.setup();
+    await screen.findByText("Saved answer");
+    await user.click(screen.getByRole("button", { name: "Chat options" }));
+    const group = screen.getByRole("group", { name: "Copy" });
+    for (const name of ["Select conversation", "Copy conversation", "Copy session ID"]) {
+      expect(within(group).getByRole("menuitem", { name })).toBeTruthy();
+    }
+    expect(screen.queryByRole("menuitem", { name: "Copy" })).toBeNull();
+  });
+
   it("compacts from the chat options when the daemon allows it", async () => {
     const bff = new Bff();
     bff.manualCompaction = true;
