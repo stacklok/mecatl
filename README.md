@@ -14,3 +14,4 @@ The `studio-alignment-2228/` folder holds the before/after composites for the St
 - `studio-alignment-2206b/`: before/after/prototype composites for #2206 part (b) (settings sections, About, starter prompts).
 - `studio-alignment-2207b/`: before/after/prototype composites for #2207 part (b) (chat composer).
 - `studio-alignment-2207c/`: before/after/prototype composites for #2207 part (c) (transcript and delegation).
+- `studio-alignment-2207d/`: before/after/prototype composites for #2207 part (d) (session dialogs, menus, side panels).
