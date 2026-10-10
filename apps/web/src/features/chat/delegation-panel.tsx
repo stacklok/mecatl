@@ -101,7 +101,7 @@ export function SessionActivityContent({
           tablist so its family focus and keyboard rules stay as they are. */}
       <div
         aria-label="Activity families"
-        className="grid h-9 min-w-0 grid-cols-3 items-center rounded-lg bg-muted p-[3px] text-muted-foreground"
+        className="grid min-h-9 min-w-0 grid-cols-3 items-stretch rounded-lg bg-muted p-[3px] text-muted-foreground"
         role="tablist"
       >
         {families.map((item) => (
@@ -109,7 +109,7 @@ export function SessionActivityContent({
             aria-label={`${familyLabels[item]} (${entries(fleet, item).length})`}
             aria-controls={`${id}-panel`}
             aria-selected={family === item}
-            className="flex h-[calc(100%-1px)] min-w-0 items-center justify-center gap-1 rounded-md px-1 text-xs font-medium whitespace-nowrap text-foreground transition-[color,box-shadow] focus-visible:outline-1 focus-visible:outline-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[active=true]:bg-background data-[active=true]:shadow-sm dark:text-muted-foreground dark:data-[active=true]:bg-card dark:data-[active=true]:text-foreground"
+            className="flex min-w-0 flex-wrap items-center justify-center gap-x-1 rounded-md px-1 py-1 text-xs font-medium leading-4 text-foreground transition-[color,box-shadow] focus-visible:outline-1 focus-visible:outline-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[active=true]:bg-background data-[active=true]:shadow-sm dark:text-muted-foreground dark:data-[active=true]:bg-card dark:data-[active=true]:text-foreground"
             data-active={family === item}
             id={`${id}-${item}`}
             key={item}
@@ -122,7 +122,7 @@ export function SessionActivityContent({
             tabIndex={family === item ? 0 : -1}
             type="button"
           >
-            <span className="min-w-0 truncate">{familyLabels[item]}</span>
+            <span className="whitespace-nowrap">{familyLabels[item]}</span>
             <span className="tabular-nums text-muted-foreground">
               ({entries(fleet, item).length})
             </span>
@@ -244,7 +244,7 @@ function RosterButton({
     <button
       aria-pressed={selected}
       className={cn(
-        "flex min-w-0 max-w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-xs text-foreground/90 transition-colors hover:bg-secondary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[selected=true]:bg-secondary",
+        "flex w-full min-w-0 max-w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-xs text-foreground/90 transition-colors hover:bg-secondary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[selected=true]:bg-secondary",
         (state === "Failed" || state.startsWith("Stopped")) && "text-destructive",
       )}
       data-selected={selected}

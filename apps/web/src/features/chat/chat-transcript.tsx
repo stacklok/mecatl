@@ -243,6 +243,7 @@ function TranscriptRow({
             threadOpen={Boolean(threadSessionId)}
           />
         }
+        author={<h3 className={messageAuthorClass}>{label}</h3>}
         avatar={
           <MessageAvatar
             avatarUrl={user ? userAvatar : agentAvatar}
@@ -251,7 +252,6 @@ function TranscriptRow({
           />
         }
       >
-        <h3 className={messageAuthorClass}>{label}</h3>
         {message.reasoning && (
           <ReasoningDisclosure streaming={streaming} text={message.reasoning} />
         )}

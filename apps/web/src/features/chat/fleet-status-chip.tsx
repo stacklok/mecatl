@@ -81,8 +81,12 @@ const icons: Record<Family, typeof Bot> = { parallel: GitFork, subagent: Bot, te
 /**
  * The prototype's aggregate glance at every subagent, parallel group, and
  * team this chat ran: one ghost segment per family, each opening the
- * activity panel on that family. In a narrow header the label gives way to
- * the compact glyph form.
+ * activity panel on that family. Studio's header also carries Activity,
+ * Canvas, the run badge, and Stop, so the chip reads the chat header's
+ * width (the `chat-header` container): the label shows only in a wide
+ * header, the compact glyph form below that, and the chat hides the chip
+ * in a narrow header so the title keeps its room. The label stays the
+ * segment's accessible name.
  */
 export function FleetStatusChip({
   className,
@@ -118,8 +122,12 @@ export function FleetStatusChip({
                   className="size-1.5 shrink-0 animate-pulse rounded-full bg-brand"
                 />
               )}
-              <span className="hidden whitespace-nowrap md:inline">{segment.label}</span>
-              <span className="whitespace-nowrap md:hidden">{segment.compact}</span>
+              <span className="hidden whitespace-nowrap @min-[72rem]/chat-header:inline">
+                {segment.label}
+              </span>
+              <span className="whitespace-nowrap tabular-nums @min-[72rem]/chat-header:hidden">
+                {segment.compact}
+              </span>
             </Button>
           </li>
         );
