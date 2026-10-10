@@ -4,9 +4,12 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { resolveComposerAction } from "@/features/chat/chat-composer";
 import {
+  describeShortcut,
   keycaps,
   matchesShortcut,
+  type ShortcutDefinition,
   type ShortcutId,
   shortcutAllowedByScopes,
   shortcutGroups,
@@ -233,7 +236,7 @@ describe("registry pin", () => {
       {
         combo: "esc",
         description: "Act on the top chat layer (see Escape order below)",
-        group: "General",
+        group: "Conversation",
         id: "close.esc",
         whileTyping: true,
       },
@@ -303,7 +306,7 @@ describe("registry pin", () => {
       {
         combo: "mod+shift+g",
         description: "Expand or collapse details — tool rows, reasoning, raw errors",
-        group: "Chats",
+        group: "Conversation",
         id: "chat.expandDetails",
         whileTyping: true,
       },
@@ -322,6 +325,20 @@ describe("registry pin", () => {
         whileTyping: false,
       },
     ]);
+  });
+
+  it("lists the reference groups in page order", () => {
+    expect(shortcutGroups).toEqual(["General", "Chats", "Conversation", "Composer"]);
+  });
+
+  it("flags only component-owned rows as fixed and only Escape as locked", () => {
+    const definitions: readonly ShortcutDefinition[] = shortcutRegistry;
+    expect(definitions.filter((shortcut) => shortcut.fixed).map((shortcut) => shortcut.id)).toEqual(
+      ["close.esc", "composer.send", "composer.newline"],
+    );
+    expect(
+      definitions.filter((shortcut) => shortcut.locked).map((shortcut) => shortcut.id),
+    ).toEqual(["close.esc"]);
   });
 
   it("pins the keycaps each shortcut renders on Mac and elsewhere", () => {
@@ -392,5 +409,58 @@ describe("registry pin", () => {
       "shortcuts.open",
       "shortcuts.open.mod",
     ]);
+    const definitions: readonly ShortcutDefinition[] = shortcutRegistry;
+    expect([...registered].sort()).toEqual(
+      definitions
+        .filter((shortcut) => !shortcut.fixed)
+        .map((shortcut) => shortcut.id)
+        .sort(),
+    );
+  });
+});
+
+describe("describeShortcut", () => {
+  const byId = new Map<string, ShortcutDefinition>(shortcutRegistry.map((s) => [s.id, s]));
+  const send = byId.get("composer.send") as ShortcutDefinition;
+  const newline = byId.get("composer.newline") as ShortcutDefinition;
+
+  it("leaves every other row's description untouched for both preferences", () => {
+    for (const shortcut of shortcutRegistry) {
+      if (shortcut.id === "composer.send" || shortcut.id === "composer.newline") continue;
+      expect(describeShortcut(shortcut, "queue")).toBe(shortcut.description);
+      expect(describeShortcut(shortcut, "steer")).toBe(shortcut.description);
+    }
+  });
+
+  it("phrases Enter and Shift+Enter for the queue preference", () => {
+    expect(describeShortcut(send, "queue")).toBe(
+      "Send message — while the agent is replying: queue the message",
+    );
+    expect(describeShortcut(newline, "queue")).toBe(
+      "Insert a new line — while the agent is replying: steer the agent",
+    );
+  });
+
+  it("phrases Enter and Shift+Enter for the steer preference", () => {
+    expect(describeShortcut(send, "steer")).toBe(
+      "Send message — while the agent is replying: steer the agent",
+    );
+    expect(describeShortcut(newline, "steer")).toBe(
+      "Insert a new line — while the agent is replying: queue the message",
+    );
+  });
+
+  it("agrees with what the composer does while the agent is replying", () => {
+    for (const behavior of ["queue", "steer"] as const) {
+      const enter = resolveComposerAction({ behavior, shift: false, working: true });
+      const shiftEnter = resolveComposerAction({ behavior, shift: true, working: true });
+      const phrase = { queue: "queue the message", steer: "steer the agent" } as const;
+      expect(describeShortcut(send, behavior).endsWith(phrase[enter as "queue" | "steer"])).toBe(
+        true,
+      );
+      expect(
+        describeShortcut(newline, behavior).endsWith(phrase[shiftEnter as "queue" | "steer"]),
+      ).toBe(true);
+    }
   });
 });

@@ -3,17 +3,21 @@
 import { getRuntimeOptions } from "@mecatl-studio/contracts/query";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Keyboard } from "lucide-react";
-import { PageShell } from "../../components/shell/page-shell";
-import { Kbd } from "../../components/ui/kbd";
-import { pageTitleClass } from "../../lib/typography";
+import { PageShell } from "@/components/shell/page-shell";
+import { Kbd } from "@/components/ui/kbd";
 import {
   freshDeploymentQuery,
   useBrowserOnline,
   useRefreshOnEntry,
-} from "../settings/settings-connection";
+} from "@/features/settings/settings-connection";
+import { useEnterSendBehavior } from "@/lib/profile-preferences";
+import { pageTitleClass } from "@/lib/typography";
 import { deriveHelpFeatures } from "./help-features";
-import { keycaps, shortcutGroups, shortcutRegistry } from "./shortcut-registry";
+import { describeShortcut, keycaps, shortcutGroups, shortcutRegistry } from "./shortcut-registry";
+
+const CARD_CLASS = "rounded-xl border bg-card p-5";
+const CARD_HEADING_CLASS =
+  "mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground";
 
 const USAGE_LEGEND: ReadonlyArray<{ label: string; note: string }> = [
   { label: "input", note: "Tokens the model read this turn." },
@@ -35,6 +39,7 @@ const USAGE_LEGEND: ReadonlyArray<{ label: string; note: string }> = [
 
 export function ShortcutReference() {
   const mac = navigator.platform.includes("Mac");
+  const enterBehavior = useEnterSendBehavior().value;
   const browserOnline = useBrowserOnline();
   const runtime = useQuery({
     ...getRuntimeOptions(),
@@ -57,54 +62,35 @@ export function ShortcutReference() {
       : undefined;
 
   return (
-    <PageShell className="max-w-4xl">
+    <PageShell className="max-w-3xl space-y-6">
       <Link
-        className="inline-flex min-h-11 items-center rounded-lg text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-brand"
+        className="-mb-2 inline-flex min-h-11 items-center rounded-lg text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-brand"
         params={{ section: "about" }}
         search={{ item: undefined }}
         to="/workspace/settings/$section"
       >
         ← Settings
       </Link>
-      <div className="flex items-start gap-4">
-        <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand-ink">
-          <Keyboard aria-hidden="true" className="size-5" />
-        </span>
-        <div>
-          <h1 className={pageTitleClass()}>Keyboard shortcuts</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Work faster without leaving the keyboard. Shortcuts without a modifier pause while you
-            type in an input or editor.
-          </p>
-        </div>
+      <div className="space-y-1">
+        <h1 className={pageTitleClass()}>Keyboard shortcuts</h1>
+        <p className="text-sm text-muted-foreground">
+          Work faster with the keyboard, and see which features the connected agent enables.
+          Shortcuts without a modifier pause while you type in an input or editor.
+        </p>
       </div>
 
-      <section className="mt-5 rounded-2xl border bg-card p-5">
-        <h2 className="text-sm font-semibold">Escape in a chat</h2>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Each press handles one layer. Escape first closes an open dialog or menu and returns focus
-          to its trigger. With no overlay, it clears a text selection, denies the pending tool ask
-          or iterates a plan review, closes a side panel, then stops a live run. With none of those
-          active, press Escape twice within half a second to clear an unsent draft. Release the key
-          between presses. A pending authorization panel closes without deciding a permission ask.
-        </p>
-        <p className="mt-2 text-sm text-muted-foreground">
-          A focused verdict button uses Enter or Space. Its action does not send the composer.
-        </p>
-      </section>
-
-      <div className="mt-8 grid gap-5 md:grid-cols-2">
+      <div className="grid gap-6 sm:grid-cols-2">
         {shortcutGroups.map((group) => (
-          <section className="rounded-2xl border bg-card p-5" key={group}>
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              {group}
-            </h2>
-            <ul className="mt-3 divide-y">
+          <section aria-label={group} className={CARD_CLASS} key={group}>
+            <h2 className={CARD_HEADING_CLASS}>{group}</h2>
+            <ul className="space-y-2.5">
               {shortcutRegistry
                 .filter((shortcut) => shortcut.group === group)
                 .map((shortcut) => (
-                  <li className="flex items-center justify-between gap-4 py-3" key={shortcut.id}>
-                    <span className="text-sm">{shortcut.description}</span>
+                  <li className="flex items-center justify-between gap-4" key={shortcut.id}>
+                    <span className="text-sm text-foreground">
+                      {describeShortcut(shortcut, enterBehavior)}
+                    </span>
                     <span className="flex shrink-0 items-center gap-1">
                       {keycaps(shortcut.combo, mac).map((keycap) => (
                         <Kbd key={`${shortcut.id}-${keycap}`}>{keycap}</Kbd>
@@ -117,40 +103,64 @@ export function ShortcutReference() {
         ))}
       </div>
 
-      <section className="mt-5 rounded-2xl border bg-card p-5">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <section aria-labelledby="escape-order" className={CARD_CLASS}>
+        <h2 className={CARD_HEADING_CLASS} id="escape-order">
+          Escape in a chat
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          Each press handles one layer. Escape first closes an open dialog or menu and returns focus
+          to its trigger. With no overlay, it clears a text selection, denies the pending tool ask
+          or iterates a plan review, closes a side panel, then stops a live run. With none of those
+          active, press Escape twice within half a second to clear an unsent draft. Release the key
+          between presses. A pending authorization panel closes without deciding a permission ask.
+        </p>
+        <p className="mt-2 text-sm text-muted-foreground">
+          A focused verdict button uses Enter or Space. Its action does not send the composer.
+        </p>
+      </section>
+
+      <section aria-labelledby="agent-features" className={CARD_CLASS}>
+        <h2 className={CARD_HEADING_CLASS} id="agent-features">
           Features on this agent
         </h2>
         {browserOnline && (runtimeValidating || runtime.isFetching || runtime.isPending) ? (
-          <p className="mt-3 text-sm text-muted-foreground">Checking what's turned on…</p>
+          <p className="text-sm text-muted-foreground" role="status">
+            Checking what's turned on…
+          </p>
         ) : runtime.error || !features ? (
-          <p className="mt-3 text-sm text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             Connect to an agent to see which features are turned on.
           </p>
         ) : features.length === 0 ? (
-          <p className="mt-3 text-sm text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             No help features are enabled on this agent.
           </p>
         ) : (
-          <ul className="mt-3 grid gap-x-8 gap-y-2.5 sm:grid-cols-2">
-            {features.map((row) => (
-              <li key={row.id}>
-                <p className="text-sm font-medium">{row.label}</p>
-                <p className="text-xs text-muted-foreground">{row.hint}</p>
-              </li>
-            ))}
-          </ul>
+          <>
+            <ul className="grid gap-x-8 gap-y-2.5 sm:grid-cols-2">
+              {features.map((row) => (
+                <li className="space-y-0.5" data-feature={row.id} key={row.id}>
+                  <p className="text-sm font-medium">{row.label}</p>
+                  <p className="text-xs text-muted-foreground">{row.hint}</p>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-4 text-xs text-muted-foreground">
+              Rows describe the deployment as a whole; the open chat&rsquo;s model may still decline
+              images the deployment allows.
+            </p>
+          </>
         )}
       </section>
 
-      <section className="mt-5 rounded-2xl border bg-card p-5">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <section aria-labelledby="usage-legend" className={CARD_CLASS}>
+        <h2 className={CARD_HEADING_CLASS} id="usage-legend">
           Reading the numbers
         </h2>
-        <ul className="mt-3 space-y-2">
+        <ul className="space-y-2">
           {USAGE_LEGEND.map((entry) => (
             <li className="flex items-baseline gap-3" key={entry.label}>
-              <span className="w-24 shrink-0 text-sm font-medium tabular-nums">{entry.label}</span>
+              <span className="w-32 shrink-0 text-sm font-medium tabular-nums">{entry.label}</span>
               <span className="text-sm text-muted-foreground">{entry.note}</span>
             </li>
           ))}

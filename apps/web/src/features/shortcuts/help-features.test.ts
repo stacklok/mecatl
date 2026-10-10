@@ -48,6 +48,7 @@ describe("deriveHelpFeatures", () => {
       "manual_compaction",
       "scheduling",
       "model_selection",
+      "image",
     ]);
   });
 
@@ -90,5 +91,12 @@ describe("deriveHelpFeatures", () => {
       },
     });
     expect(projectOnly.find((row) => row.id === "manual_dream")?.enabled).toBe(true);
+  });
+
+  it("reads image attachments off the deployment's image capability", () => {
+    expect(deriveHelpFeatures(allOff).find((row) => row.id === "image")?.enabled).toBe(false);
+    const on = deriveHelpFeatures({ ...allOff, image: true }).find((row) => row.id === "image");
+    expect(on?.enabled).toBe(true);
+    expect(on?.label).toBe("Image attachments");
   });
 });
