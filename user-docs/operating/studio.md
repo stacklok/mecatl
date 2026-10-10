@@ -200,6 +200,11 @@ the arguments support one. Open **Raw arguments** to inspect the arguments,
 then choose **Allow once**, **Always allow**, or **Deny**. If the arguments are
 unavailable, only **Deny** is enabled.
 
+The card is red when a word in the tool name is delete, remove, drop, revoke,
+destroy, purge, or rm, in any naming style, such as `delete_file` or
+`RemoveBranch`. Otherwise it's amber. The color comes from the tool name only,
+so review the arguments of every request.
+
 A **Plan review** card shows the proposed plan and any accompanying note. Choose
 **Approve & run**, **Auto-accept edits**, or **Iterate**. **Iterate** rejects the
 plan and keeps the chat in plan mode. The connected server must support exact
