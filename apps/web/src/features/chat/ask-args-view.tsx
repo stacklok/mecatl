@@ -88,7 +88,25 @@ export function AskArgsView({
             rawArgs={args}
           />
         ) : parsed.kind === "shell" ? (
-          <pre className={PRE_CLASS}>{parsed.command}</pre>
+          <>
+            <pre className={PRE_CLASS}>{parsed.command}</pre>
+            {(parsed.timeoutMs !== undefined || parsed.tempScope !== undefined) && (
+              <dl className="flex flex-wrap gap-x-4 gap-y-1 border-t px-3 py-1.5 text-xs">
+                {parsed.timeoutMs !== undefined && (
+                  <div className="flex gap-1">
+                    <dt className="text-muted-foreground">Timeout</dt>
+                    <dd className="font-mono">{parsed.timeoutMs} ms</dd>
+                  </div>
+                )}
+                {parsed.tempScope !== undefined && (
+                  <div className="flex gap-1">
+                    <dt className="text-muted-foreground">Temporary storage</dt>
+                    <dd className="font-mono">{parsed.tempScope}</dd>
+                  </div>
+                )}
+              </dl>
+            )}
+          </>
         ) : parsed.kind === "json" ? (
           <pre className={PRE_CLASS}>{parsed.pretty}</pre>
         ) : (

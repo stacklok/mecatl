@@ -5,6 +5,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Button } from "../../components/ui/button";
 import { diffLines } from "../../lib/line-diff";
 import { cn } from "../../lib/utils";
+import { hasExactArgNames } from "./tool-arg-names";
 
 /**
  * The inline Edit/Write view of a tool call, ported from Mecatl Studio's
@@ -107,29 +108,48 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-/** Parses a tool call's raw `args` JSON string into a plain object, or null. */
-function parseJsonRecord(rawArgs: string | undefined): Record<string, unknown> | null {
+/**
+ * Parses a tool call's raw `args` JSON string into a plain object, or null.
+ * The object must name only `fields`, each once: see `hasExactArgNames`.
+ */
+function parseJsonRecord(
+  rawArgs: string | undefined,
+  fields: ReadonlySet<string>,
+): Record<string, unknown> | null {
   if (!rawArgs || rawArgs.trim() === "") return null;
   try {
     const parsed = JSON.parse(rawArgs);
-    return isRecord(parsed) ? parsed : null;
+    return isRecord(parsed) && hasExactArgNames(rawArgs, fields) ? parsed : null;
   } catch {
     return null;
   }
 }
 
+/** The json tags of the engine's `editArgs` and `writeArgs` structs. */
+const EDIT_FIELDS: ReadonlySet<string> = new Set([
+  "path",
+  "old_string",
+  "new_string",
+  "replace_all",
+]);
+const WRITE_FIELDS: ReadonlySet<string> = new Set(["path", "content"]);
+
 /**
  * An Edit call's args (`path`, `old_string`, `new_string`, `replace_all` —
  * the engine's `engine/adapter/fstools/edit.go` ToolSpec), or null when the
- * args are missing/malformed.
+ * args are missing/malformed or name anything else.
  */
 export function parseEditArgs(rawArgs: string | undefined): EditArgs | null {
-  const parsed = parseJsonRecord(rawArgs);
+  const parsed = parseJsonRecord(rawArgs, EDIT_FIELDS);
   if (!parsed) return null;
   const path = optionalString(parsed.path);
   const oldString = optionalString(parsed.old_string);
   const newString = optionalString(parsed.new_string);
   if (path === undefined || oldString === undefined || newString === undefined) return null;
+  // The engine refuses a replace_all that is not a boolean (null reads as false).
+  const replaceAll = parsed.replace_all;
+  if (replaceAll !== undefined && replaceAll !== null && typeof replaceAll !== "boolean")
+    return null;
   return {
     kind: "edit",
     path,
@@ -141,10 +161,10 @@ export function parseEditArgs(rawArgs: string | undefined): EditArgs | null {
 
 /**
  * A Write call's args (`path`, `content` — `engine/adapter/fstools/write.go`),
- * or null when the args are missing/malformed.
+ * or null when the args are missing/malformed or name anything else.
  */
 export function parseWriteArgs(rawArgs: string | undefined): WriteArgs | null {
-  const parsed = parseJsonRecord(rawArgs);
+  const parsed = parseJsonRecord(rawArgs, WRITE_FIELDS);
   if (!parsed) return null;
   const path = optionalString(parsed.path);
   const content = optionalString(parsed.content);
