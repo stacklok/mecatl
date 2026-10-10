@@ -433,6 +433,55 @@ describe("composer pills", () => {
     });
   });
 
+  it("blocks the phone sheet's open Mode view and Execution picker once their controls are disabled", async () => {
+    const user = userEvent.setup();
+    const onConfigurationChange = vi.fn();
+    const props = {
+      configuration,
+      models,
+      onConfigurationChange,
+      onSend: vi.fn().mockResolvedValue(true),
+    };
+    const view = render(<ChatComposer {...props} />);
+    await user.click(screen.getByRole("button", { name: "Composer options" }));
+    let sheet = screen.getByRole("dialog", { name: "Composer options" });
+    await user.click(within(sheet).getByRole("button", { name: /^Mode\s/ }));
+    // A run starts while the Mode view is open.
+    view.rerender(<ChatComposer {...props} working />);
+    const plan = within(sheet).getByRole<HTMLButtonElement>("button", { name: /^Plan/ });
+    expect(plan.disabled).toBe(true);
+    fireEvent.click(plan);
+    await user.click(within(sheet).getByRole("button", { name: "Back from Mode" }));
+
+    view.rerender(<ChatComposer {...props} />);
+    // The Execution picker sits inline in the sheet's main view.
+    view.rerender(<ChatComposer {...props} working />);
+    sheet = screen.getByRole("dialog", { name: "Composer options" });
+    const execution = within(sheet).getByLabelText<HTMLSelectElement>("Execution");
+    expect(execution.disabled).toBe(true);
+    await user.selectOptions(execution, "none");
+    expect(onConfigurationChange).not.toHaveBeenCalled();
+  });
+
+  it("blocks a live chat's open Mode view once its controls are busy", async () => {
+    const user = userEvent.setup();
+    const onLiveModeChange = vi.fn();
+    const props = {
+      liveMode: "default" as const,
+      onLiveModeChange,
+      onSend: vi.fn().mockResolvedValue(true),
+    };
+    const view = render(<ChatComposer {...props} />);
+    await user.click(screen.getByRole("button", { name: "Composer options" }));
+    const sheet = screen.getByRole("dialog", { name: "Composer options" });
+    await user.click(within(sheet).getByRole("button", { name: /^Mode\s/ }));
+    view.rerender(<ChatComposer {...props} liveControlsDisabled />);
+    const plan = within(sheet).getByRole<HTMLButtonElement>("button", { name: /^Plan/ });
+    expect(plan.disabled).toBe(true);
+    fireEvent.click(plan);
+    expect(onLiveModeChange).not.toHaveBeenCalled();
+  });
+
   it("tints a draft's frame by its mode", () => {
     const view = render(
       <ChatComposer

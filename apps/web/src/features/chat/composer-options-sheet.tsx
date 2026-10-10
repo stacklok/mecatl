@@ -183,6 +183,7 @@ export function ComposerOptionsSheet({
           )}
           {view === "mode" && mode && (
             <OptionView
+              disabled={mode.disabled}
               items={MODE_OPTIONS}
               onBack={() => setView("main")}
               onSelect={(value) => {
@@ -268,13 +269,16 @@ function BackButton({ label, onBack }: { label: string; onBack: () => void }) {
   );
 }
 
+/** One setting's choices. `disabled` follows the setting's pill, so a run or a pending change that starts while the view is open blocks it. */
 function OptionView<V extends string>({
+  disabled,
   items,
   onBack,
   onSelect,
   title,
   value,
 }: {
+  disabled: boolean;
   items: ComposerOption<V>[];
   onBack: () => void;
   onSelect: (value: V) => void;
@@ -288,6 +292,7 @@ function OptionView<V extends string>({
         <button
           aria-pressed={option.value === value}
           className={rowClass}
+          disabled={disabled}
           key={option.value}
           onClick={() => onSelect(option.value)}
           type="button"
