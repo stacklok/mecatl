@@ -127,6 +127,32 @@ test("search palette opens a result from the keyboard and restores focus", async
   await expect(dialog).toHaveCount(0);
 });
 
+test("search palette closes on Enter at its close control without opening a result", async ({
+  offlineBff,
+  page,
+}) => {
+  workspace(offlineBff);
+  await page.goto("/workspace/chat");
+  const trigger = page.getByRole("button", { name: "Search", exact: true });
+  await trigger.click();
+  const dialog = page.getByRole("dialog", { name: "Search Mecatl" });
+  const input = dialog.getByRole("combobox", {
+    name: "Search chats, schedules, skills, and memory",
+  });
+  await input.fill("release");
+  // The memory result is highlighted, so a leaked Enter would open Settings > Memory.
+  await input.press("ArrowDown");
+  await expect
+    .poll(() => activeOptionName(page))
+    .toEqual({ highlighted: true, text: "release-stylePrefers short release notes" });
+  const close = dialog.getByRole("button", { name: "Close search" });
+  await close.focus();
+  await close.press("Enter");
+  await expect(dialog).toHaveCount(0);
+  await expect(page).toHaveURL(/\/workspace\/chat$/);
+  await expect(trigger).toBeFocused();
+});
+
 test("search palette fits the viewport and keeps its close control reachable", async ({
   offlineBff,
   page,

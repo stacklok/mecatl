@@ -159,4 +159,36 @@ describe("Command", () => {
       "true",
     );
   });
+
+  it("lets Enter activate a trailing control instead of choosing the highlighted item", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <Command label="Commands">
+        <CommandInput
+          placeholder="Type a command"
+          trailing={
+            <button onClick={onClose} type="button">
+              Close
+            </button>
+          }
+        />
+        <CommandList>
+          <CommandItem onSelect={onSelect} value="chat">
+            Chat
+          </CommandItem>
+        </CommandList>
+      </Command>,
+    );
+    expect(screen.getByRole("option", { name: "Chat" }).getAttribute("aria-selected")).toBe("true");
+    screen.getByRole("button", { name: "Close" }).focus();
+    await user.keyboard("{Enter}");
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onSelect).not.toHaveBeenCalled();
+    // Enter in the field still chooses the highlighted item.
+    await user.click(screen.getByPlaceholderText("Type a command"));
+    await user.keyboard("{Enter}");
+    expect(onSelect).toHaveBeenCalledWith("chat");
+  });
 });

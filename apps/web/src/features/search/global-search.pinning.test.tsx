@@ -11,6 +11,7 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
+import userEvent from "@testing-library/user-event";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -318,6 +319,23 @@ describe("GlobalSearch behaviour pins", () => {
     await act(async () => keydown(combobox() as HTMLInputElement, "Escape"));
     await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
     await vi.waitFor(() => expect(document.activeElement).toBe(behind));
+  });
+
+  it("closes on Enter at the close control without opening the highlighted result", async () => {
+    const router = await mount();
+    const user = userEvent.setup();
+    trigger()?.focus();
+    await openAndSearch("report");
+    // A result is highlighted, so cmdk's root Enter handler would choose it.
+    expect(activeOption()).toBe(options()[0]);
+    const close = document.querySelector<HTMLButtonElement>('button[aria-label="Close search"]');
+    close?.focus();
+    expect(document.activeElement).toBe(close);
+    await user.keyboard("{Enter}");
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+    expect(router.state.location.pathname).toBe("/");
+    expect(router.state.location.search).toEqual({});
+    await vi.waitFor(() => expect(document.activeElement).toBe(trigger()));
   });
 
   it.each([

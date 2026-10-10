@@ -107,7 +107,23 @@ function CommandInput({
         ref={setRefs}
         {...props}
       />
-      {trailing}
+      {trailing !== undefined && (
+        // cmdk's root keydown handler takes Enter to choose the highlighted
+        // item and prevents its default, so Enter on a trailing control (a
+        // close button) would open a result instead of activating the control.
+        // Keep Enter here; every other key, including Tab, Escape, and app
+        // shortcuts, still bubbles. `contents` leaves the flex layout unchanged.
+        // biome-ignore lint/a11y/noStaticElementInteractions: a layout-free boundary that only stops Enter from reaching cmdk; the controls inside stay the interactive elements
+        <div
+          className="contents"
+          data-slot="command-input-trailing"
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.stopPropagation();
+          }}
+        >
+          {trailing}
+        </div>
+      )}
     </div>
   );
 }
