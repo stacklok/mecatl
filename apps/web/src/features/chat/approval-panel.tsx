@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { ShieldAlert } from "lucide-react";
-import { Badge } from "../../components/ui/badge";
-import { Button } from "../../components/ui/button";
-import { cn } from "../../lib/utils";
+import { Fullscreen, ShieldAlert } from "lucide-react";
+import { useRef } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { useOpenApprovalDetail } from "./approval-detail-context";
+import { ApprovalVerdictBar } from "./approval-verdict-bar";
+import { AskArgsView } from "./ask-args-view";
 import { isDestructiveToolName } from "./destructive-tool";
-import { parseDiffArgs, ToolDiff } from "./edit-diff";
 import { useActiveEscapeAsk } from "./escape-hint-context";
 
 export interface ApprovalRequest {
@@ -21,6 +24,13 @@ export interface ApprovalRequest {
 
 export type ApprovalVerdict = "allow_once" | "allow_always" | "deny";
 
+/**
+ * One pending `permission.ask`, inline in the transcript, in the prototype's
+ * card: warning-toned, or destructive-toned when `isDestructiveToolName` reads
+ * the tool as data-destroying. The card never holds verdict state: `disabled`
+ * and `uncertain` come from the surface's verdict ledger, and every verdict,
+ * clicked or typed, goes through `onRespond`, which checks the ledger again.
+ */
 export function ApprovalPanel({
   approval,
   disabled,
@@ -36,76 +46,80 @@ export function ApprovalPanel({
   uncertain?: boolean;
   total?: number;
 }) {
+  const card = useRef<HTMLElement>(null);
   const destructive = isDestructiveToolName(approval.tool);
-  const escapeHint = useActiveEscapeAsk(approval) && !disabled;
+  const active = useActiveEscapeAsk(approval) && !disabled && !uncertain;
+  const openDetail = useOpenApprovalDetail();
   const hasArgs = approval.args.trim().length > 0;
-  const showDiff =
-    hasArgs &&
-    approval.args.length <= 65_536 &&
-    parseDiffArgs(approval.tool, approval.args) !== null;
 
   return (
     <section
       aria-label={`Permission required: ${approval.tool || "Tool"}`}
       className={cn(
-        "my-2 min-w-0 rounded-xl border p-4",
+        "my-3 min-w-0 rounded-xl border p-4",
         destructive ? "border-destructive/40 bg-destructive/5" : "border-warning/40 bg-warning/5",
       )}
+      ref={card}
     >
-      <div className="flex items-center gap-2">
-        <ShieldAlert
-          aria-hidden="true"
-          className={cn("size-4", destructive ? "text-destructive" : "text-warning")}
-        />
-        <span className="text-sm font-semibold">Permission required</span>
-        {total > 1 && (
-          <Badge variant="outline">
-            {position} of {total}
+      <div className="flex min-w-0 items-start gap-2">
+        {/* Wraps instead of truncating: the tool name is what the reader approves. */}
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+          <ShieldAlert
+            aria-hidden="true"
+            className={cn("size-4 shrink-0", destructive ? "text-destructive" : "text-warning")}
+          />
+          <span
+            className={cn(
+              "text-sm font-semibold",
+              destructive ? "text-destructive" : "text-warning",
+            )}
+          >
+            Permission required
+          </span>
+          {total > 1 && (
+            <Badge className="tabular-nums" variant="outline">
+              {position} of {total}
+            </Badge>
+          )}
+          <Badge className="max-w-full font-mono" variant={destructive ? "destructive" : "warning"}>
+            <span className="truncate">{approval.tool || "Tool"}</span>
           </Badge>
+        </div>
+        {openDetail && (
+          <Button
+            aria-label="Open in detail panel"
+            className="-my-1 size-7 shrink-0 text-muted-foreground"
+            onClick={() => openDetail(approval)}
+            size="icon"
+            title="Open in detail panel"
+            type="button"
+            variant="ghost"
+          >
+            <Fullscreen aria-hidden="true" className="size-3.5" />
+          </Button>
         )}
-        <Badge className="font-mono" variant={destructive ? "destructive" : "warning"}>
-          {approval.tool || "Tool"}
-        </Badge>
       </div>
       {approval.reason && <p className="mt-2 text-sm">{approval.reason}</p>}
-      {!hasArgs && (
-        <p className="mt-2 text-sm" role="status">
-          Arguments unavailable
-        </p>
+      {destructive && (
+        <p className="mt-2 text-xs text-destructive">This action modifies or deletes data.</p>
       )}
-      {showDiff && (
-        <ToolDiff bounded className="mt-3" name={approval.tool} rawArgs={approval.args} />
-      )}
-      {hasArgs && (
-        <details className="my-3 text-xs">
-          <summary className="cursor-pointer">Raw arguments</summary>
-          <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-lg border bg-background p-3 font-mono">
-            {approval.args}
-          </pre>
-        </details>
-      )}
+      <AskArgsView args={approval.args} className="mt-3" tool={approval.tool} />
       {uncertain && (
-        <p className="mb-3 text-sm" role="status">
+        <p className="mt-3 text-sm" role="status">
           This verdict's outcome is uncertain. Refresh activity before deciding again.
         </p>
       )}
-      <div className="flex flex-wrap gap-2">
-        <Button disabled={disabled || !hasArgs} onClick={() => onRespond("allow_once")} size="sm">
-          Allow once
-        </Button>
-        <Button
-          disabled={disabled || !hasArgs}
-          onClick={() => onRespond("allow_always")}
-          size="sm"
-          variant="outline"
-        >
-          Always allow
-        </Button>
-        <Button disabled={disabled} onClick={() => onRespond("deny")} size="sm" variant="ghost">
-          Deny
-        </Button>
+      <div className="mt-3">
+        <ApprovalVerdictBar
+          allowAvailable={hasArgs}
+          destructive={destructive}
+          disabled={disabled}
+          onRespond={onRespond}
+          scope={card}
+          shortcuts={active}
+        />
       </div>
-      {escapeHint && <p className="mt-2 text-xs text-muted-foreground">Esc to Deny</p>}
+      {active && <p className="mt-2 text-xs text-muted-foreground">Esc to Deny</p>}
     </section>
   );
 }
