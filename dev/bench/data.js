@@ -290016,6 +290016,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791597264348,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "github@daniel-kantor.com",
+            "name": "Dániel Kántor",
+            "username": "kantord"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c6d7338888b94935b67535a0bd37902dd944ff71",
+          "message": "spike(mecatui): migrate help browser to the reusable scroll system (#2042)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>\nCo-authored-by: Joe Beda <joe@stacklok.com>",
+          "timestamp": "2026-10-09T19:19:47-07:00",
+          "tree_id": "1cbb51dc838e19f28bf06d3c7c01fb5b342fcad3",
+          "url": "https://github.com/stacklok/mecatl/commit/c6d7338888b94935b67535a0bd37902dd944ff71"
+        },
+        "date": 1791599465966,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -420220,6 +420254,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791599463350,
+  "lastUpdate": 1791599466709,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
