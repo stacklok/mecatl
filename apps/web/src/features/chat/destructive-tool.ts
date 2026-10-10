@@ -11,14 +11,16 @@ const destructiveVerbs: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Splits a tool name into lowercase tokens. Segments are runs of ASCII letters and
- * digits, so `_` (including MCP's `server__tool`), `-`, `.`, `/`, `:`, and spaces all
+ * Splits a tool name into lowercase tokens. The name is NFKC-normalized first, so
+ * compatibility letters such as ſ (U+017F), the Kelvin sign (U+212A), and fullwidth
+ * letters read as their ASCII forms. Segments are runs of ASCII letters and digits,
+ * so `_` (including MCP's `server__tool`), `-`, `.`, `/`, `:`, and spaces all
  * separate them. Each segment is kept whole and also split at case boundaries
  * (`removeBranch`, `DeleteFile`, `HTTPDelete`, `v2Delete`).
  */
 export function toolNameTokens(name: string): string[] {
   const tokens: string[] = [];
-  for (const segment of name.split(/[^A-Za-z0-9]+/u)) {
+  for (const segment of name.normalize("NFKC").split(/[^A-Za-z0-9]+/u)) {
     if (segment === "") continue;
     tokens.push(segment.toLowerCase());
     const words = segment.split(/(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])/u);

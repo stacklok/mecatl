@@ -49,6 +49,14 @@ describe("isDestructiveToolName", () => {
     "db.dropTable",
     "storage/purge_bucket",
     "k8s:deletePod",
+    // The word-boundary regex case-folds these compatibility letters: ſ (U+017F) to s
+    // and K (U+212A) to k.
+    "de\u017Ftroy",
+    "revo\u212Ae",
+    "DE\u017FTROY_VM",
+    "revo\u212Ae_token",
+    // Fullwidth letters normalize to ASCII.
+    "\uFF44\uFF45\uFF4C\uFF45\uFF54\uFF45",
   ])("classifies %j as destructive", (name) => {
     expect(isDestructiveToolName(name)).toBe(true);
   });
@@ -88,7 +96,8 @@ describe("isDestructiveToolName", () => {
 
   it("classifies everything the word-boundary regex classified as destructive", () => {
     // Exhaustive over every name of up to three pieces drawn from verbs in several
-    // casings, ordinary words, separators, digits, and a non-ASCII letter.
+    // casings, ordinary words, separators, digits, a non-ASCII letter, and the two
+    // compatibility letters the regex case-folds into verbs (ſ and the Kelvin sign).
     const pieces = [
       "delete",
       "Delete",
@@ -114,6 +123,12 @@ describe("isDestructiveToolName", () => {
       "ed",
       "con",
       "down",
+      "\u017F",
+      "\u212A",
+      "de",
+      "troy",
+      "revo",
+      "e",
     ];
     let names = [""];
     let checked = 0;
@@ -127,7 +142,7 @@ describe("isDestructiveToolName", () => {
         if (!isDestructiveToolName(name)) throw new Error(`regressed: ${JSON.stringify(name)}`);
       }
     }
-    expect(checked).toBe(24 + 24 ** 2 + 24 ** 3);
+    expect(checked).toBe(pieces.length + pieces.length ** 2 + pieces.length ** 3);
     expect(legacyDestructive).toBeGreaterThan(1_000);
   });
 });
