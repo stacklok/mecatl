@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import type { SearchProvider } from "./search-types";
+
 interface SearchSession {
   id: string;
   modelId: string;
@@ -179,6 +181,17 @@ export function searchGlobalIndex(
     .sort((left, right) => left.relevance - right.relevance || left.order - right.order)
     .slice(0, limit)
     .map((match) => match.item);
+}
+
+/**
+ * A `SearchProvider` over Studio's ranked in-memory index. Unlike the
+ * prototype's insertion-order static provider, results keep
+ * `searchGlobalIndex`'s relevance order and an empty query has no results.
+ */
+export function createGlobalSearchProvider(items: readonly GlobalSearchItem[]): SearchProvider {
+  return {
+    query: (q) => searchGlobalIndex(items, q).map((entry) => ({ entry })),
+  };
 }
 
 /**

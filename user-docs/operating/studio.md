@@ -107,7 +107,9 @@ Studio explains settings ownership in the settings pages: personal choices stay
 in the browser, while deployment-managed provider, model, posture, and storage
 facts are read-only. Appearance controls explain theme and palette choices.
 Delegated-activity panels explain their observed history and incomplete replay.
-**About** identifies the Studio image, installed SDK, and connected daemon
+If the deployment reports degraded session storage, a notice above the
+navigation says that some chats may be missing; **Settings > Storage** shows the
+details. **About** identifies the Studio image, installed SDK, and connected daemon
 builds. Ask users for **Copy support summary** when diagnosing a deployment
 issue.
 
@@ -117,6 +119,11 @@ Open your Studio URL over HTTPS in a browser that offers app installation, then
 choose the browser's **Install app** command. On a local workstation, the
 loopback URL in the Compose setup also qualifies. Launch the installed Studio
 from your app list; it opens Chats at `/workspace/chat`.
+
+Where the browser supports sharing to installed apps, Studio appears as a share
+target. Shared text opens a new chat with the text in the composer, as a
+`?prompt=` link does, and never sends it. Studio receives only the shared text;
+a title or link that the sharing app sends separately is not included.
 
 The installed window loads Studio from its origin and needs a connection to the
 BFF and Mecatl deployment for agent actions. A loaded window reports an
