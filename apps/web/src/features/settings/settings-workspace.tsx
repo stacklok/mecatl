@@ -23,7 +23,7 @@ import { Switch } from "../../components/ui/switch";
 import { writeClipboardText } from "../../lib/clipboard";
 import { modelPreferenceId, useDisabledModels } from "../../lib/model-preferences";
 import { pageTitleClass } from "../../lib/typography";
-import { LearningReview } from "../knowledge/learning-review";
+import { LearningSettingsPage } from "../learning/learning-settings-page";
 import { MemorySettingsPage } from "../memory/memory-settings-page";
 import { AgentSettings } from "./agent-settings";
 import { IdentitySettings } from "./identity-settings";
@@ -201,19 +201,7 @@ export function SettingsWorkspace({
               <MemorySettingsPage capabilities={runtime.data?.capabilities} />
             ))}
           {section === "learning" &&
-            (runtimeState ? (
-              <StateCard text={runtimeState} />
-            ) : (
-              <>
-                <SettingsCard title="Learning settings">
-                  <Note>
-                    You can review proposals below. Learning configuration is managed by this
-                    deployment and is read-only here.
-                  </Note>
-                </SettingsCard>
-                <LearningReview />
-              </>
-            ))}
+            (runtimeState ? <StateCard text={runtimeState} /> : <LearningSettingsPage />)}
           {section === "storage" &&
             (runtimeState ? <StateCard text={runtimeState} /> : <StorageSettings />)}
           {section === "permissions" && (

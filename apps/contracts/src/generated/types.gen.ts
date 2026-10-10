@@ -2634,6 +2634,8 @@ export type ListLearningProposalsData = {
     body?: never;
     path?: never;
     query?: {
+        cursor?: string;
+        limit?: number;
         status?: string;
     };
     url: '/api/v1/learning-proposals';
@@ -2697,12 +2699,126 @@ export type ListLearningProposalsResponses = {
             value: string;
             version: string;
         }>;
+        nextCursor: string;
         reason: string;
         supported: boolean;
     };
 };
 
 export type ListLearningProposalsResponse = ListLearningProposalsResponses[keyof ListLearningProposalsResponses];
+
+export type GetLearningProposalData = {
+    body?: never;
+    path: {
+        proposalId: string;
+    };
+    query?: never;
+    url: '/api/v1/learning-proposals/{proposalId}';
+};
+
+export type GetLearningProposalErrors = {
+    /**
+     * The request could not be completed.
+     */
+    404: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    409: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    500: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    501: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type GetLearningProposalError = GetLearningProposalErrors[keyof GetLearningProposalErrors];
+
+export type GetLearningProposalResponses = {
+    /**
+     * One learning proposal, re-read with each evidence source's current availability.
+     */
+    200: {
+        body: string;
+        createdAt: string;
+        decisions: Array<{
+            actor: string;
+            at: string;
+            kind: string;
+            reason: string;
+        }>;
+        description: string;
+        evidenceCount: number;
+        id: string;
+        key: string;
+        kind: string;
+        learnedSkillId: string;
+        projectScoped: boolean;
+        promotionAvailable: boolean;
+        promotionUnavailableReason: string;
+        status: string;
+        title: string;
+        triggers: Array<string>;
+        updatedAt: string;
+        value: string;
+        version: string;
+        evidence: Array<{
+            availability: string;
+            available: boolean;
+            digest: string;
+            eventSeq: string;
+            locator: string;
+            ordinal: number;
+            preview: string;
+            sessionId: string;
+            toolCallId: string;
+        }>;
+    };
+};
+
+export type GetLearningProposalResponse = GetLearningProposalResponses[keyof GetLearningProposalResponses];
 
 export type DecideLearningProposalData = {
     body: {

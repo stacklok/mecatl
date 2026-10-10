@@ -12,7 +12,7 @@ import {
   getRuntimeQueryKey,
   getRuntimeSettingsQueryKey,
   getStorageHealthQueryKey,
-  listLearningProposalsQueryKey,
+  listLearningProposalsInfiniteQueryKey,
   listUserMemoryQueryKey,
 } from "@mecatl-studio/contracts/query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -331,7 +331,8 @@ describe("settings facts", () => {
     expect(agent).toContain("deployment");
     expect(agent).not.toContain("Change agent behavior");
 
-    client.setQueryData(listLearningProposalsQueryKey({ query: { status: "staged" } }), {
+    // The queue pages through an infinite query; seed its first page.
+    const firstPage = {
       complete: true,
       items: [
         {
@@ -355,13 +356,22 @@ describe("settings facts", () => {
           version: "1",
         },
       ],
+      nextCursor: "",
       reason: "",
       supported: true,
-    });
+    };
+    client.setQueryData(
+      listLearningProposalsInfiniteQueryKey({ query: { limit: 50, status: "staged" } }),
+      { pageParams: [""], pages: [firstPage] },
+    );
     const learning = await renderSection("learning", client);
     expect(learning).toContain("Learning configuration is managed by this deployment");
-    expect(learning).toContain("Approve");
-    expect(learning).toContain("Reject");
+    // The filter pills read "Approved" and "Rejected", so match the row's buttons exactly.
+    const buttons = [
+      ...new DOMParser().parseFromString(learning, "text/html").querySelectorAll("button"),
+    ].map((button) => button.textContent);
+    expect(buttons).toContain("Approve");
+    expect(buttons).toContain("Reject");
   });
 
   it("titles every section with a plain card heading and no implementation line", async () => {
@@ -387,7 +397,7 @@ describe("settings facts", () => {
       appearance: ["Appearance"],
       diagnostics: ["Diagnostics"],
       labs: ["Labs"],
-      learning: ["Learning settings"],
+      learning: ["Learning", "Suggestions", "Learn from a chat"],
       "mcp-tools": ["MCP tools"],
       models: ["Models"],
       permissions: ["Permissions"],
