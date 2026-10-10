@@ -223,7 +223,9 @@ Use **Attach files**, or drop files on the composer, to add attachments. If the
 selected model supports images, you can add up to 16 images to one message. Each
 image can be at most 10 MiB, with a combined limit of 20 MiB. Text files of up
 to 256 KiB each, and 512 KiB together, are added to the message text, each
-between `--- attached file: <name> ---` and `--- end of <name> ---` lines.
+between `--- attached file: <name> ---` and `--- end of <name> ---` lines. When
+an attached file has three or more dashes in a row, these lines use one more
+dash than the longest such run, so file text can't end its block early.
 Studio refuses binary and audio files.
 You can select the microphone button to dictate in a browser that supports
 speech recognition on a secure origin. Review or edit the recognized text before

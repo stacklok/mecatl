@@ -140,11 +140,27 @@ export function sanitizeAttachmentName(name: string): string {
 const encoder = new TextEncoder();
 
 /**
+ * The dashes that open and close every block in one message: one more than
+ * the longest run of dashes in any attached text, and at least three. No
+ * file's content can then hold a line that closes its block or opens a new one.
+ */
+function attachmentFence(files: readonly { text: string }[]): string {
+  let longest = 2;
+  for (const file of files) {
+    for (const run of file.text.match(/-+/g) ?? []) longest = Math.max(longest, run.length);
+  }
+  return "-".repeat(longest + 1);
+}
+
+/**
  * Appends each text attachment to the prompt as a delimited block:
  *
  *     --- attached file: <name> ---
  *     <text>
  *     --- end of <name> ---
+ *
+ * The fence grows past any run of dashes in the attached text (see
+ * `attachmentFence`), so file content cannot forge a delimiter.
  *
  * Throws (user-facing message) when the inlined text exceeds the per-message
  * total. The prompt itself is never counted or altered — this is why text
@@ -159,6 +175,7 @@ export function inlineTextAttachments(
   if (files.length === 0) return prompt;
   let total = 0;
   let out = prompt;
+  const fence = attachmentFence(files);
   for (const file of files) {
     total += encoder.encode(file.text).byteLength;
     if (total > MAX_INLINE_TEXT_TOTAL_BYTES) {
@@ -167,7 +184,7 @@ export function inlineTextAttachments(
       );
     }
     const name = sanitizeAttachmentName(file.name);
-    const block = `--- attached file: ${name} ---\n${file.text}\n--- end of ${name} ---`;
+    const block = `${fence} attached file: ${name} ${fence}\n${file.text}\n${fence} end of ${name} ${fence}`;
     out = out ? `${out}\n\n${block}` : block;
   }
   return out;

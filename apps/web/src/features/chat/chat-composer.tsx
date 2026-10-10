@@ -364,22 +364,20 @@ export function ChatComposer({
   }
 
   async function addTextFiles(files: File[]): Promise<string[]> {
-    const results = await Promise.allSettled(
-      files.map(async (file) => ({ file, text: await readTextAttachment(file) })),
-    );
     let total = textFiles.reduce((sum, file) => sum + file.size, 0);
     const errors: string[] = [];
     const accepted: StagedTextFile[] = [];
-    for (const result of results) {
-      if (result.status === "rejected") {
-        errors.push(
-          result.reason instanceof Error ? result.reason.message : "A file could not be read.",
-        );
-        continue;
-      }
-      const { file, text } = result.value;
+    // One at a time, checking the total first, so a large selection is never read in full.
+    for (const file of files) {
       if (total + file.size > MAX_INLINE_TEXT_TOTAL_BYTES) {
         errors.push(`${file.name}: adding this would exceed the 512 KiB total for attached text.`);
+        continue;
+      }
+      let text: string;
+      try {
+        text = await readTextAttachment(file);
+      } catch (error) {
+        errors.push(error instanceof Error ? error.message : "A file could not be read.");
         continue;
       }
       total += file.size;

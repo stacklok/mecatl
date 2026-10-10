@@ -261,6 +261,29 @@ describe("text file attachments", () => {
     expect(composerInput().value).toBe("with notes");
   });
 
+  it("refuses a file that would pass the text total before reading it", async () => {
+    const user = userEvent.setup();
+    render(<ChatComposer onSend={vi.fn().mockResolvedValue(true)} />);
+    const chunk = "x".repeat(200 * 1024);
+    const files = ["a.txt", "b.txt", "c.txt"].map(
+      (name) => new File([chunk], name, { type: "text/plain" }),
+    );
+    const reads = files.map((file) => vi.spyOn(file, "text"));
+    await user.upload(screen.getByLabelText("Choose files to attach"), files);
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toBe(
+        "c.txt: adding this would exceed the 512 KiB total for attached text.",
+      ),
+    );
+    const attachments = screen.getByRole("list", { name: "Attachments" });
+    expect(within(attachments).getByText("a.txt")).toBeTruthy();
+    expect(within(attachments).getByText("b.txt")).toBeTruthy();
+    expect(within(attachments).queryByText("c.txt")).toBeNull();
+    expect(reads[0]).toHaveBeenCalledTimes(1);
+    expect(reads[1]).toHaveBeenCalledTimes(1);
+    expect(reads[2]).not.toHaveBeenCalled();
+  });
+
   it("attaches files dropped on the composer", async () => {
     render(<ChatComposer onSend={vi.fn().mockResolvedValue(true)} />);
     const box = composerInput().closest("form")?.firstElementChild?.firstElementChild;
