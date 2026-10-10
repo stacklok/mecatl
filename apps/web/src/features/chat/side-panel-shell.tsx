@@ -130,7 +130,7 @@ export function SidePanelShell({
         {/* The header sits on the chat header's seam: 64px beside the chat, 56px as a phone's sheet. */}
         <header
           className={cn(
-            "flex h-14 shrink-0 items-center gap-3 border-b px-4",
+            "@container/panel-header flex h-14 shrink-0 items-center gap-3 border-b px-4",
             !maximized && "min-[760px]:h-16",
           )}
         >
@@ -144,7 +144,10 @@ export function SidePanelShell({
           </h2>
           {actions}
           {escapeHint && (
-            <span className="shrink-0 text-xs text-muted-foreground">Esc to Close</span>
+            // A narrow panel keeps its title; the hint returns once there is room.
+            <span className="shrink-0 text-xs text-muted-foreground @max-[22rem]/panel-header:hidden">
+              Esc to Close
+            </span>
           )}
           <div className="flex shrink-0 items-center gap-1">
             {maximizable && (
