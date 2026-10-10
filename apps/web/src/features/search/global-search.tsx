@@ -486,13 +486,16 @@ function SearchPalette({
       >
         <CommandInput
           aria-label={inputLabel}
-          className="text-base sm:text-sm"
+          className="text-base min-[500px]:text-sm"
           icon={
             loading ? (
-              <LoaderCircle
-                aria-label="Loading searchable items"
-                className="size-4 shrink-0 animate-spin opacity-50"
-              />
+              <>
+                <LoaderCircle
+                  aria-hidden="true"
+                  className="size-4 shrink-0 animate-spin opacity-50"
+                />
+                <span className="sr-only">Loading searchable items</span>
+              </>
             ) : undefined
           }
           onCompositionEnd={() => composition.current.end()}
@@ -561,7 +564,7 @@ function SearchPalette({
                     ? `${resultCount} result${resultCount === 1 ? "" : "s"}`
                     : "Results stay in this browser"}
           </span>
-          <span className="hidden sm:inline">↑↓ select · Enter open · Esc close</span>
+          <span className="hidden min-[500px]:inline">↑↓ select · Enter open · Esc close</span>
         </div>
       </CommandDialog>
     </>

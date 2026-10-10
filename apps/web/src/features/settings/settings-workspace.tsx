@@ -507,7 +507,10 @@ function ModelInventory({
         </FactList>
         {settings.modelsSupported && settings.models.length > 0 && (
           <div className="relative max-w-sm">
-            <Search className="pointer-events-none absolute left-3 top-3.5 size-4 text-muted-foreground" />
+            <Search
+              aria-hidden="true"
+              className="pointer-events-none absolute left-3 top-3.5 size-4 text-muted-foreground"
+            />
             <Input
               aria-label="Filter models"
               className="min-h-11 pl-9"

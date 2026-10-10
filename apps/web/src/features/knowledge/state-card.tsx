@@ -17,9 +17,13 @@ export function StateCard({
   return (
     <div
       className={`flex min-h-60 flex-col items-center justify-center rounded-xl border border-dashed p-8 text-center ${error ? "border-destructive/40 text-destructive" : ""}`}
+      role={error ? "alert" : "status"}
     >
       {icon && (
-        <span className="flex size-11 items-center justify-center rounded-full bg-muted text-muted-foreground">
+        <span
+          aria-hidden="true"
+          className="flex size-11 items-center justify-center rounded-full bg-muted text-muted-foreground"
+        >
           <Icon className="size-5" />
         </span>
       )}

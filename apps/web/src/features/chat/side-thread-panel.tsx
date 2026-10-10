@@ -260,7 +260,9 @@ export function SideThreadPanel({
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="flex min-h-full flex-col px-3 pt-3 pb-6 lg:px-4">
             {run.messages.length === 0 ? (
-              <p className="m-auto text-sm text-muted-foreground">Loading thread…</p>
+              <p className="m-auto text-sm text-muted-foreground" role="status">
+                Loading thread…
+              </p>
             ) : (
               <div className="space-y-4">
                 {run.messages.map((message, index) => (

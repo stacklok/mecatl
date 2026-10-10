@@ -277,7 +277,7 @@ function ProposalQueueCard() {
             type="button"
             variant="ghost"
           >
-            <RotateCw className={cn(proposals.isFetching && "animate-spin")} />
+            <RotateCw aria-hidden="true" className={cn(proposals.isFetching && "animate-spin")} />
           </Button>
         </div>
 

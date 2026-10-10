@@ -28,9 +28,9 @@ export function FactsAboutYou() {
   } else if (query.isError) {
     body = <Note role="alert">{errorMessage(query.error)}</Note>;
   } else if (!query.data.supported) {
-    body = <Note>Facts about you is off, so there is nothing to show.</Note>;
+    body = <Note role="status">Facts about you is off, so there is nothing to show.</Note>;
   } else if (query.data.items.length === 0) {
-    body = <Note>The agent hasn&rsquo;t remembered anything about you yet.</Note>;
+    body = <Note role="status">The agent hasn&rsquo;t remembered anything about you yet.</Note>;
   } else {
     const rows = sortFacts(query.data.items, sort.key, sort.dir);
     body = (

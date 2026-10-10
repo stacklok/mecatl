@@ -2862,7 +2862,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
 
       {sessionId && (!selectedSession || !isProvenChatSession(selectedSession)) ? (
         <section className="flex min-w-0 flex-1 flex-col bg-background">
-          <header className="flex h-16 shrink-0 items-center gap-3 border-b px-4 sm:px-6">
+          <header className="flex h-16 shrink-0 items-center gap-3 border-b px-4 min-[500px]:px-6">
             <ChatsMenuButton
               onClick={() => {
                 setSidebarHidden(false);
@@ -2885,14 +2885,14 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
               </Button>
             </div>
           ) : (
-            <p className="m-auto text-sm text-muted-foreground">
+            <p className="m-auto text-sm text-muted-foreground" role="status">
               {sessions.isPending ? "Checking session…" : "This session is unavailable as a chat."}
             </p>
           )}
         </section>
       ) : (
         <section className="relative flex min-w-0 flex-1 flex-col bg-background">
-          <header className="@container/chat-header flex h-16 shrink-0 items-center gap-3 border-b px-4 max-[499px]:gap-2 max-[499px]:px-3 sm:px-6">
+          <header className="@container/chat-header flex h-16 shrink-0 items-center gap-3 border-b px-3 max-[499px]:gap-2 min-[500px]:px-6">
             <ChatsMenuButton
               onClick={() => {
                 setSidebarHidden(false);
@@ -3227,19 +3227,21 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             >
               <div
                 className={cn(
-                  "mx-auto flex min-h-full max-w-3xl flex-col pt-2 pb-6 pl-4 sm:pl-6",
+                  "mx-auto flex min-h-full max-w-3xl flex-col pt-2 pb-6 pl-4 min-[500px]:pl-6",
                   // The right gutter keeps messages clear of the minimap; the empty state
                   // has no minimap, so it centres like the prototype's.
                   !(transcript.isPending && sessionId && !isRunning) &&
                     messages.length === 0 &&
                     approvals.length === 0
-                    ? "pr-4 sm:pr-6"
+                    ? "pr-4 min-[500px]:pr-6"
                     : "pr-12",
                 )}
                 ref={observeTranscriptContent}
               >
                 {transcript.isPending && sessionId && !isRunning ? (
-                  <p className="m-auto text-sm text-muted-foreground">Loading conversation…</p>
+                  <p className="m-auto text-sm text-muted-foreground" role="status">
+                    Loading conversation…
+                  </p>
                 ) : messages.length === 0 && approvals.length === 0 ? (
                   <div className="m-auto flex w-full flex-col items-center">
                     <DraftGreeting

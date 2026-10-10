@@ -46,9 +46,9 @@ export function MessageAvatar({
       )}
     >
       {fallback === "agent" ? (
-        <Bot className="size-4 lg:size-5" />
+        <Bot aria-hidden="true" className="size-4 lg:size-5" />
       ) : (
-        <User className="size-4 lg:size-5" />
+        <User aria-hidden="true" className="size-4 lg:size-5" />
       )}
     </span>
   );

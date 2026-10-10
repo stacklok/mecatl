@@ -63,7 +63,9 @@ export function WorktreePickerView({
   if (error) {
     return (
       <div className="flex flex-col gap-2">
-        <p className="text-destructive">Worktrees could not be read.</p>
+        <p className="text-destructive" role="alert">
+          Worktrees could not be read.
+        </p>
         <Button className="w-fit" onClick={onRetry} size="sm" variant="outline">
           <RefreshCw aria-hidden="true" className="size-3.5" />
           Retry
@@ -77,7 +79,9 @@ export function WorktreePickerView({
   return (
     <div className="flex flex-col gap-4">
       {list.length === 0 ? (
-        <p className="text-muted-foreground">{NO_ELIGIBLE_WORKTREES}</p>
+        <p className="text-muted-foreground" role="status">
+          {NO_ELIGIBLE_WORKTREES}
+        </p>
       ) : (
         <fieldset className="flex flex-col gap-1" disabled={busy}>
           <legend className="mb-1.5 text-xs font-medium text-muted-foreground" id={`${ids}-legend`}>
@@ -145,7 +149,11 @@ export function WorktreePickerView({
           </DialogFooter>
         </div>
       ) : (
-        unavailable && <p className="text-muted-foreground">{unavailable}</p>
+        unavailable && (
+          <p className="text-muted-foreground" role="status">
+            {unavailable}
+          </p>
+        )
       )}
     </div>
   );

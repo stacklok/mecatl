@@ -17,7 +17,7 @@ export function SkillToolDisabledBanner() {
       className="flex items-start gap-3 rounded-xl border border-warning/40 bg-warning/10 p-4"
       role="status"
     >
-      <Sparkles className="mt-0.5 size-4 shrink-0 text-warning" />
+      <Sparkles aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-warning" />
       <p className="text-sm">
         The Skill tool is disabled on this daemon, so skills are not loaded. Start the daemon with a
         skills directory to enable it.
