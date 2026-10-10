@@ -440,10 +440,13 @@ func (m Model) runCompact() (tea.Model, tea.Cmd) {
 	return m, client.CompactSessionCmd(m.deps.Ctx, m.deps.Compactor, m.sessionID, m.compactRequestToken)
 }
 
-// runHelp opens the "?" keys-&-features overlay — the same state the "?" key
-// sets (see onIdleKey). It blurs the textarea so the overlay owns the keyboard.
+// runHelp opens the keys-and-features surface and blurs the composer.
 func (m Model) runHelp() (tea.Model, tea.Cmd) {
-	m.showHelp = true
+	if m.modal != nil {
+		return m, nil
+	}
+	deps := (&m).surfaceDeps()
+	m.modal = &helpState{deps: deps, lines: strings.Split(helpBody(deps.theme, deps.caps, deps.marks), "\n")}
 	m.prompt.Blur()
 	return m, nil
 }

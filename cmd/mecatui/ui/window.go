@@ -1,11 +1,5 @@
 package ui
 
-import (
-	"strings"
-
-	"github.com/stacklok/mecatl/cmd/mecatui/theme"
-)
-
 // scrollWindow returns the [start,end) slice bounds of a scrolling window of size
 // limit over n rows, kept around the selected cursor so it stays visible. It is a
 // pure function of (cursor, n, limit) — the window FOLLOWS the cursor (no stored
@@ -63,34 +57,4 @@ func clampBounded(value, count int) int {
 
 type renderedLineWindowBounds struct {
 	start, end, total, window int
-}
-
-func renderedLineWindow(scroll, total, window int) renderedLineWindowBounds {
-	if window < 0 {
-		window = 0
-	}
-	start := clampScroll(scroll, total, window)
-	return renderedLineWindowBounds{start: start, end: min(start+window, total), total: total, window: window}
-}
-
-// windowRenderedLinesWithIndicator windows ALREADY-RENDERED (ANSI-carrying) lines to a fixed
-// window starting at scroll, appending a caller-owned overflow indicator when
-// the content overflows the window. Each input line must be a COMPLETE styled
-// line (lipgloss renders multi-line strings with per-line SGR sequences — the
-// same property capRenderedLines relies on), so slicing never severs an escape.
-// Like capRenderedLines it must NOT terminaltext.Sanitize its input (that would strip
-// the embedded styling); the line TEXT is sanitized by the callers at render
-// time. Every emitted line carries a trailing newline so the callers' footer
-// concatenation stays uniform across the scrolled and unscrolled cases.
-func windowRenderedLinesWithIndicator(th theme.Theme, lines []string, scroll, window int, indicator func(start, end, total int) string) string {
-	w := renderedLineWindow(scroll, len(lines), window)
-
-	var b strings.Builder
-	for _, ln := range lines[w.start:w.end] {
-		b.WriteString(ln + "\n")
-	}
-	if w.total > w.window {
-		b.WriteString(th.Style("muted").Render(indicator(w.start, w.end, w.total)) + "\n")
-	}
-	return b.String()
 }

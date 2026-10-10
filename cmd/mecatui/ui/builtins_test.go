@@ -729,7 +729,7 @@ func TestHelpBuiltinOpensOverlay(t *testing.T) {
 	m = typeText(t, m, "/help")
 	m, cmd := pressEnter(t, m)
 
-	if !m.showHelp {
+	if m.modal == nil {
 		t.Error("/help should open the help overlay (showHelp=true)")
 	}
 	if m.prompt.Focused() {

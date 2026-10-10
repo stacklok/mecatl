@@ -2043,7 +2043,6 @@ func (m Model) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	// lipgloss.Height of the rendered regions in chrome().
 	m.relayout()
 	m.configureAgentsInvViewport()
-	m.clampHelpScroll()
 	m.clampAgentsDetailScroll()
 	if widthChanged && m.vp.Height() == viewportHeight {
 		m.refreshView()
@@ -2252,12 +2251,6 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return mm, cmd
 	}
 
-	// Help owns the remaining keys while open: its documented navigation and close
-	// controls act on the overlay and every ordinary key is swallowed.
-	if m.showHelp {
-		return m.onHelpKey(msg)
-	}
-
 	// Disarm whichever quit guards are armed: any non-ctrl+c key disarms the Quit
 	// guard and any non-ctrl+d key disarms the QuitD guard (each guard's window spans
 	// only its own consecutive presses). The two guards are INDEPENDENT — neither key
@@ -2362,52 +2355,10 @@ func (m Model) onPendingApprovalRecoveryKey(msg tea.KeyPressMsg) (tea.Model, tea
 	return m, tea.Quit, true
 }
 
-// onHelpKey handles the help overlay's complete keyboard contract. It runs before
-// phase routing, so navigation never reaches the conversation and every other key
-// remains swallowed.
-func (m Model) onHelpKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	m.clampHelpScroll()
-	total, window := m.helpScrollGeometry()
-	switch {
-	case key.Matches(msg, m.keys.Help), key.Matches(msg, m.keys.Close):
-		m.showHelp = false
-		m.helpScroll = 0
-		_ = m.prompt.Focus()
-	case key.Matches(msg, m.keys.ScrollD):
-		m.helpScroll = clampScroll(m.helpScroll+window, total, window)
-	case key.Matches(msg, m.keys.ScrollU):
-		m.helpScroll = clampScroll(m.helpScroll-window, total, window)
-	case key.Matches(msg, m.keys.Down):
-		m.helpScroll = clampScroll(m.helpScroll+1, total, window)
-	case key.Matches(msg, m.keys.Up):
-		m.helpScroll = clampScroll(m.helpScroll-1, total, window)
-	case key.Matches(msg, m.keys.ScrollBottom):
-		m.helpScroll = maxScrollOffset(total, window)
-	case key.Matches(msg, m.keys.ScrollTop):
-		m.helpScroll = 0
-	}
-	return m, nil
-}
-
-// helpScrollGeometry derives the same complete rendered lines and window used by
-// renderHelpOverlay, keeping key navigation and height-bounded rendering aligned.
-func (m Model) helpScrollGeometry() (total, window int) {
-	lines := helpRenderedLines(helpBody(m.deps.Theme, m.caps, m.helpKeyMarkings()))
-	return len(lines), helpWindowHeight(m.deps.Theme, m.vp.Height(), len(lines))
-}
-
-// clampHelpScroll keeps a retained offset valid after a relayout changes the
-// viewport geometry. It deliberately preserves a still-valid offset rather than
-// pinning an earlier End selection to the new bottom.
-func (m *Model) clampHelpScroll() {
-	total, window := m.helpScrollGeometry()
-	m.helpScroll = clampScroll(m.helpScroll, total, window)
-}
-
 // selection owner is active.
 func (m Model) clearAnySelection(msg tea.KeyPressMsg) (Model, bool) {
 	if !key.Matches(msg, m.keys.Cancel) || (!m.sel.active && !m.prompt.HasSelection()) ||
-		m.showHelp || m.modal != nil || m.team.view != teamNone || m.agentsInv.view != agentsInvNone ||
+		m.modal != nil || m.team.view != teamNone || m.agentsInv.view != agentsInvNone ||
 		m.reflections.view != reflectionsNone ||
 		m.effort.view != effortNone || m.worktrees.view != worktreesNone {
 		return m, false
@@ -2971,7 +2922,7 @@ func normalizePastedNewlines(content string) string {
 // primary-selection paste trigger (onMousePress), so the two paths can never
 // drift apart.
 func (m Model) pasteGateOpen() bool {
-	if m.showHelp || m.phase == phaseAwaitingApproval ||
+	if m.phase == phaseAwaitingApproval ||
 		m.modal != nil || m.team.view != teamNone || m.agentsInv.view != agentsInvNone {
 		return false
 	}
@@ -3020,6 +2971,8 @@ func (m Model) onRunningKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// into the textarea for editing. It is distinct from Escape, which cancels
 		// the running turn without changing the queue.
 		return m.editBackQueue()
+	case key.Matches(msg, m.keys.Help) && strings.TrimSpace(m.prompt.Value()) == "":
+		return m.runHelp()
 	case key.Matches(msg, m.keys.Agents):
 		// f6 opens the unified agents overlay MID-RUN (Gap B): the deep view is
 		// most useful while agents stream. openAgents permits phaseRunning, reads the
@@ -3327,12 +3280,9 @@ func (m Model) onIdleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.editBackQueue()
 	case key.Matches(msg, m.keys.Help) && strings.TrimSpace(m.prompt.Value()) == "":
 		// "?" is printable: open help only on an empty prompt so "?" in prose still
-		// inserts literally. The overlay claims the keyboard via the m.showHelp gate
+		// inserts literally. The overlay claims the keyboard through modal routing
 		// in onKey; blur the input while it is up.
-		m.showHelp = true
-		m.helpScroll = 0
-		m.prompt.Blur()
-		return m, nil
+		return m.runHelp()
 	case key.Matches(msg, m.keys.MCPPanel):
 		return m.runMCP()
 	case key.Matches(msg, m.keys.Resources):
@@ -4269,11 +4219,22 @@ func (m Model) onMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// onMouseMsg fans the four mouse message types out to their handlers. It is one
-// switch case in update() (keeping update()'s cyclomatic complexity bounded) that
-// re-discriminates the concrete mouse type here, where the dispatch logically
-// belongs.
+// onMouseMsg fans the four mouse message types out to their handlers. An open
+// modal owns left clicks, motion, release, and wheel input; right-click copy and
+// middle-click paste retain their root-owned behavior. It is one switch case in
+// update() (keeping update()'s cyclomatic complexity bounded) that re-discriminates
+// the concrete mouse type here, where the dispatch logically belongs.
 func (m Model) onMouseMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.modal != nil {
+		switch msg := msg.(type) {
+		case tea.MouseWheelMsg:
+			return m.onMouseWheel(msg)
+		case tea.MouseClickMsg:
+			return m.onMousePress(msg.Mouse())
+		case tea.MouseMotionMsg, tea.MouseReleaseMsg:
+			return m, nil
+		}
+	}
 	if m.agentsInv.view != agentsInvNone {
 		if wheel, ok := msg.(tea.MouseWheelMsg); ok {
 			return m.onAgentsInvWheel(wheel)

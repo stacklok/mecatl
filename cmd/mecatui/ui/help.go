@@ -5,11 +5,13 @@ import (
 	"strings"
 
 	"charm.land/bubbles/v2/key"
-	"charm.land/lipgloss/v2"
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/welcome"
 )
 
@@ -38,27 +40,120 @@ type helpRow struct {
 // widening just shifts the action column right uniformly.
 const helpKeyWidth = 22
 
-// renderHelpOverlay draws the "?" keys-&-features overlay centred over the
-// conversation region. When the body is taller than the offered height, it windows
-// complete ANSI lines and reserves a row for its scroll indicator.
-func renderHelpOverlay(th theme.Theme, caps client.Capabilities, width, height, scroll int, hk helpKeys) string {
-	body := helpBody(th, caps, hk)
-	if height <= 0 {
-		return centerCard(th, body, width, height)
+// helpMaxCardWidth is the shared 128-cell cap for normal list and inspector cards
+// (docs/tui.md, "Layout and navigation").
+const helpMaxCardWidth = 128
+
+// helpState owns the Help overlay's wrapped viewport and frame geometry.
+type helpState struct {
+	deps     surfaceDeps
+	viewport bounded.Viewport
+	lines    []string
+	// view cache: refreshed by Render before each input event.
+	total, window int
+	compact       bool
+}
+
+func (*helpState) modalMaxOuterWidth() int { return helpMaxCardWidth }
+func (s *helpState) modalFrame() bool      { return !s.compact }
+
+func (s *helpState) Render(width, height int) (string, []ClickableRegion) {
+	// Retain the card's former one-row empty-content allowance.
+	frame := helpViewportView(s.lines, width, height-1, &s.viewport, s.deps.marks)
+	s.total, s.window, s.compact = frame.total, frame.window, frame.compact
+	if len(frame.view.Rows) == 0 {
+		return "", nil
 	}
-	lines := helpRenderedLines(body)
-	cardChrome := lipgloss.Height(th.Style("askCard").Render(""))
-	if height <= cardChrome {
-		// A card cannot fit in this exceptionally small viewport. Keep the overlay
-		// usable rather than overflowing the conversation region.
-		return lines[clampScroll(scroll, len(lines), 1)]
+	if s.compact {
+		return frame.view.Rows[0], nil
 	}
-	window := helpWindowHeight(th, height, len(lines))
-	scroll = clampScroll(scroll, len(lines), window)
-	body = strings.TrimSuffix(windowRenderedLinesWithIndicator(th, lines, scroll, window, func(start, end, total int) string {
-		return helpScrollIndicator(hk, start, end, total)
-	}), "\n")
-	return centerCard(th, body, width, height)
+	body := strings.Join(frame.view.Rows, "\n")
+	if frame.total > frame.window {
+		for _, indicator := range helpIndicatorRows(s.deps.marks, frame.view.Above, frame.view.Above+len(frame.view.Rows), frame.total, width) {
+			body += "\n" + s.deps.theme.Style("muted").Render(indicator)
+		}
+	}
+	return body, nil
+}
+
+func (s *helpState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
+	switch {
+	case key.Matches(msg, s.deps.keys.Help), key.Matches(msg, s.deps.keys.Close):
+		return nil, true, true
+	case key.Matches(msg, s.deps.keys.ScrollD):
+		s.viewport.Move(bounded.PageDown, s.total)
+	case key.Matches(msg, s.deps.keys.ScrollU):
+		s.viewport.Move(bounded.PageUp, s.total)
+	case key.Matches(msg, s.deps.keys.Down):
+		s.viewport.Move(bounded.LineDown, s.total)
+	case key.Matches(msg, s.deps.keys.Up):
+		s.viewport.Move(bounded.LineUp, s.total)
+	case key.Matches(msg, s.deps.keys.ScrollBottom):
+		s.viewport.Move(bounded.End, s.total)
+	case key.Matches(msg, s.deps.keys.ScrollTop):
+		s.viewport.Move(bounded.Top, s.total)
+	}
+	return nil, true, false
+}
+
+func (*helpState) HandleMsg(tea.Msg) (tea.Cmd, bool, bool) { return nil, false, false }
+
+func (s *helpState) HandleWheel(msg tea.MouseWheelMsg) (tea.Cmd, bool) {
+	switch msg.Button {
+	case tea.MouseWheelUp:
+		s.viewport.Move(bounded.LineUp, s.total)
+	case tea.MouseWheelDown:
+		s.viewport.Move(bounded.LineDown, s.total)
+	}
+	return nil, true
+}
+
+func (*helpState) Close() {}
+
+// helpFrame is one frame's viewport projection plus the wrapped-row total and the
+// body window it was configured with. compact means the normal card cannot fit.
+type helpFrame struct {
+	view          bounded.ViewportView
+	total, window int
+	compact       bool
+}
+
+// helpViewportView configures the surface-owned help viewport for one frame of
+// card-content geometry. It reserves rows for the wrapped navigation indicator
+// when the content overflows, or falls back to one unframed row.
+func helpViewportView(lines []string, width, height int, viewport *bounded.Viewport, hk helpKeys) helpFrame {
+	width = max(1, width)
+	window := 1
+	compact := height < 1
+	if !compact {
+		var measure bounded.Viewport
+		measure.SetGeometry(width, height, 0, bounded.Wrap)
+		measured := measure.View(lines)
+		total := measured.Above + len(measured.Rows) + measured.Below
+		window = height
+		if total > window {
+			window = height - len(helpIndicatorRows(hk, total-1, total, total, width))
+			compact = window < 1
+		}
+	}
+	if compact {
+		window = 1
+	}
+	viewport.SetGeometry(width, window, 0, bounded.Wrap)
+	view := viewport.View(lines)
+	return helpFrame{view: view, total: view.Above + len(view.Rows) + view.Below, window: window, compact: compact}
+}
+
+func helpCardWidth(width int) int {
+	return min(max(0, width), helpMaxCardWidth)
+}
+
+func helpBodyWidth(th theme.Theme, width int) int {
+	return max(1, helpCardWidth(width)-th.Style("askCard").GetHorizontalFrameSize())
+}
+
+func helpIndicatorRows(hk helpKeys, start, end, total, width int) []string {
+	return strings.Split(ansi.Hardwrap(helpScrollIndicator(hk, start, end, total), width, true), "\n")
 }
 
 // helpScrollIndicator keeps the navigation affordances in every clipped frame,
@@ -67,34 +162,18 @@ func helpScrollIndicator(hk helpKeys, start, end, total int) string {
 	return fmt.Sprintf("lines %d–%d of %d · %s close · %s/%s scroll · %s page · %s jump", start+1, end, total, hk.close, hk.navUp, hk.navDown, hk.scroll, hk.jump)
 }
 
-// helpRenderedLines splits the help body into complete styled lines. helpBody
-// renders every line independently, so windowing cannot leave a terminal style open.
-func helpRenderedLines(body string) []string {
-	return strings.Split(body, "\n")
-}
-
-// helpWindowHeight accounts for the card chrome and its scroll indicator. The
-// indicator replaces one content row only when it is needed, keeping the card within
-// the actual conversation viewport.
-func helpWindowHeight(th theme.Theme, height, total int) int {
-	window := max(1, height-lipgloss.Height(th.Style("askCard").Render("")))
-	if total > window {
-		window = max(1, window-1)
-	}
-	return window
-}
-
 // helpBody builds the overlay's text: a title, grouped chord sections (each row
 // caps-annotated), the skills clarification, and the close hint.
 // hk carries the LIVE key markings from the model's keyMap, so a rebinding
 // propagates here.
 func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
-	muted := th.Style("muted")
+	heading := th.Style("toolName")
+	body := th.Style("toolArgs")
 	var b strings.Builder
 
 	b.WriteString(th.Style("askTitle").Render("Help") + "\n\n")
 
-	b.WriteString(muted.Render("Prompting") + "\n")
+	b.WriteString(heading.Render("Prompting") + "\n")
 	writeHelpRows(&b, th, []helpRow{
 		{key: hk.submit, action: "send prompt"},
 		{key: hk.newlineFirst, action: "insert newline" + hk.newlineAlso},
@@ -104,13 +183,14 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 		{key: hk.paste, action: "paste a clipboard image, or paste text when image attachments are unavailable"},
 		{key: hk.clearPrompt, action: "clear the current draft"},
 		{key: "esc, release, esc", action: "clear the current idle draft within 500ms; the first press makes no visible change"},
-		{key: "", action: "also clears attachments, large pasted text, and pending media; requires a terminal with enhanced key-event support"},
+		{key: "", action: "also clears attachments, large pasted text, and pending media"},
+		{key: "", action: "requires a terminal with enhanced key-event support"},
 		{key: "", action: "fixed shortcut; repeats do not count, and other views handle esc first"},
 		{key: "", action: "use the remappable Clear prompt action (" + hk.clearPrompt + ") on any terminal"},
 		{key: hk.cancel, action: "cancel the current run"},
 	})
 
-	b.WriteString("\n" + muted.Render("While a run is active") + "\n")
+	b.WriteString("\n" + heading.Render("While a run is active") + "\n")
 	streamingSubmit := "queue a follow-up to send after this run"
 	if caps.Steer {
 		streamingSubmit = "guide the running agent at its next step; built-in commands still run here"
@@ -121,7 +201,7 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 		{key: hk.cancel, action: "cancel the current run"},
 	})
 
-	b.WriteString("\n" + muted.Render("Permission request") + "\n")
+	b.WriteString("\n" + heading.Render("Permission request") + "\n")
 	writeHelpRows(&b, th, []helpRow{
 		{key: hk.allow, action: "allow once"},
 		{key: hk.allowAlways, action: "always allow for this session (main agent only)"},
@@ -131,7 +211,7 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 		{key: hk.rawArgs, action: "show raw arguments in the full view"},
 	})
 
-	b.WriteString("\n" + muted.Render("Inspect and manage") + "\n")
+	b.WriteString("\n" + heading.Render("Inspect and manage") + "\n")
 	inspectRows := []helpRow{
 		{key: hk.mcpPanel, action: "open MCP servers and tools", available: caps.MCP, gated: true},
 		{key: hk.resources, action: "browse MCP resources", available: caps.MCP, gated: true},
@@ -152,7 +232,7 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 	)
 	writeHelpRows(&b, th, inspectRows)
 
-	b.WriteString("\n" + muted.Render("Conversation and navigation") + "\n")
+	b.WriteString("\n" + heading.Render("Conversation and navigation") + "\n")
 	writeHelpRows(&b, th, []helpRow{
 		{key: hk.selectAll, action: "select all prompt text"},
 		{key: hk.copySelection, action: "copy selected prompt or conversation text"},
@@ -165,7 +245,7 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 		{key: "middle-click", action: "paste the primary selection (X11/Wayland)"},
 	})
 
-	b.WriteString("\n" + muted.Render("Exit and suspend") + "\n")
+	b.WriteString("\n" + heading.Render("Exit and suspend") + "\n")
 	writeHelpRows(&b, th, []helpRow{
 		{key: "/quit", action: "quit immediately (alias: /exit; cancels an active run)"},
 		{key: hk.suspend, action: "suspend to the shell; the run continues, and fg resumes the TUI"},
@@ -179,55 +259,55 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 	// inventory IS browsable via /skills — so the copy is caps-aware: it points at
 	// /skills when enabled, and keeps the "run automatically, not browsable" framing
 	// when skills are off (nothing to browse).
-	b.WriteString("\n" + muted.Render("Features") + "\n")
+	b.WriteString("\n" + heading.Render("Features") + "\n")
 	if caps.Skills {
-		writeHelpMutedLines(&b, th,
+		writeHelpBodyLines(&b, th,
 			"The agent loads skills when needed. Type /skills to browse available skills.")
 	} else {
-		writeHelpMutedLines(&b, th,
+		writeHelpBodyLines(&b, th,
 			"This server does not provide a skills inventory.")
 	}
 	// Agent definitions, when served, are browsable via /agents (the inventory the
 	// Subagent tool routes delegations to). Distinct from caps.Teams / f6, which is
 	// the live overlay of a team that has actually run.
 	if caps.Agents {
-		b.WriteString(muted.Render("Type /agents to browse the agent-definition inventory.") + "\n")
+		b.WriteString(body.Render("Type /agents to browse the agent-definition inventory.") + "\n")
 	}
 	if caps.SlashCommands {
-		b.WriteString(muted.Render("Type / to browse slash commands.") + "\n")
+		b.WriteString(body.Render("Type / to browse slash commands.") + "\n")
 	}
 	if caps.Memory {
-		b.WriteString(muted.Render("Cross-session memory is enabled.") + "\n")
+		b.WriteString(body.Render("Cross-session memory is enabled.") + "\n")
 	}
 	switch {
 	case caps.Image && caps.Audio:
-		b.WriteString(muted.Render("Type @ to attach a file — images and audio go to the model as media.") + "\n")
+		b.WriteString(body.Render("Type @ to attach a file — images and audio go to the model as media.") + "\n")
 	case caps.Image:
-		b.WriteString(muted.Render("Type @ to attach a file — images go to the model as media.") + "\n")
+		b.WriteString(body.Render("Type @ to attach a file — images go to the model as media.") + "\n")
 	case caps.Audio:
-		b.WriteString(muted.Render("Type @ to attach a file — audio goes to the model as media.") + "\n")
+		b.WriteString(body.Render("Type @ to attach a file — audio goes to the model as media.") + "\n")
 	default:
-		b.WriteString(muted.Render("This model accepts text only; attached files are inserted as text.") + "\n")
+		b.WriteString(body.Render("This model accepts text only; attached files are inserted as text.") + "\n")
 	}
 
 	// Usage legend: decode the footer/turn-stat token arrows AND the cache percentage,
 	// so "↑1.2K ↓340 ⊕1.2K · cache 88%" is self-explanatory — the input/output/cache-write
 	// glyphs, plus the share of input tokens served from cache (the number behind a
 	// surprisingly large prompt).
-	b.WriteString("\n" + muted.Render("Usage") + "\n")
-	b.WriteString(muted.Render("↑ input · ↓ output · ⊕ cache write · cache N% input served from cache") + "\n")
+	b.WriteString("\n" + heading.Render("Usage") + "\n")
+	b.WriteString(body.Render("↑ input · ↓ output · ⊕ cache write · cache N% input served from cache") + "\n")
 
 	// The navigation and close affordances use the LIVE bindings, so a keymap
 	// override never leaves an unusable scrollable overlay.
-	b.WriteString("\n" + muted.Render(hk.close+" close · "+hk.navUp+"/"+hk.navDown+" scroll · "+hk.scroll+" page · "+hk.jump+" jump"))
+	b.WriteString("\n" + body.Render(hk.close+" close · "+hk.navUp+"/"+hk.navDown+" scroll · "+hk.scroll+" page · "+hk.jump+" jump"))
 	return b.String()
 }
 
-// writeHelpMutedLines renders each line independently so helpRenderedLines can
+// writeHelpBodyLines renders each line independently so helpRenderedLines can
 // safely window the ANSI output without severing a style sequence.
-func writeHelpMutedLines(b *strings.Builder, th theme.Theme, lines ...string) {
+func writeHelpBodyLines(b *strings.Builder, th theme.Theme, lines ...string) {
 	for _, line := range lines {
-		b.WriteString(th.Style("muted").Render(line) + "\n")
+		b.WriteString(th.Style("toolArgs").Render(line) + "\n")
 	}
 }
 
