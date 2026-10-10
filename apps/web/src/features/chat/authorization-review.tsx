@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { ExternalLink, ShieldCheck } from "lucide-react";
+import { ExternalLink, KeyRound } from "lucide-react";
 import { useRef, useState } from "react";
-import { Button } from "../../components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
+import { Button, buttonVariants } from "../../components/ui/button";
 import type { ChatMessage } from "./chat-state";
 
 /** Safe event correlation only. The presentation URL is never stored here. */
@@ -123,7 +125,10 @@ export function authorizationStatusLabel(status: string): string {
   }
 }
 
-/** A small row on the originating call; the shared side-panel host owns review. */
+/**
+ * A card on the originating call, in the prototype's info-toned authorization
+ * look; the shared side-panel host owns review.
+ */
 export function AuthorizationReviewTrigger({
   authorization,
   onReview,
@@ -132,13 +137,23 @@ export function AuthorizationReviewTrigger({
   onReview: (authorization: AuthorizationHandoff) => void;
 }) {
   return (
-    <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border bg-background p-2 text-sm">
-      <ShieldCheck aria-hidden="true" className="size-4 shrink-0" />
-      <span className="font-medium">{authorization.displayName}</span>
-      <span className="text-muted-foreground">
+    <div className="mt-3 flex min-w-0 flex-wrap items-center gap-2 rounded-xl border border-info/30 bg-info/5 p-3 text-sm">
+      <KeyRound aria-hidden="true" className="size-4 shrink-0 text-info" />
+      <span className="font-semibold text-info">
         {authorizationStatusLabel(authorization.status)}
       </span>
-      <Button onClick={() => onReview(authorization)} size="sm" variant="outline">
+      {authorization.displayName && (
+        <Badge className="min-w-0 font-mono" variant="info">
+          <span className="truncate">{authorization.displayName}</span>
+        </Badge>
+      )}
+      <Button
+        className="ml-auto"
+        onClick={() => onReview(authorization)}
+        size="sm"
+        type="button"
+        variant="outline"
+      >
         Review authorization
       </Button>
     </div>
@@ -186,11 +201,16 @@ export function AuthorizationReview({
 
   return (
     <section aria-label="Authorization review" className="space-y-4 p-4 text-sm">
-      <div>
-        <p className="font-semibold">{authorization.displayName}</p>
-        <p className="mt-1 text-muted-foreground" role="status">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <KeyRound aria-hidden="true" className="size-4 shrink-0 text-info" />
+        <p className="font-semibold text-info" role="status">
           {authorizationStatusLabel(authorization.status)}
         </p>
+        {authorization.displayName && (
+          <Badge className="min-w-0 font-mono" variant="info">
+            <span className="truncate">{authorization.displayName}</span>
+          </Badge>
+        )}
       </div>
       <p className="break-all text-xs text-muted-foreground">
         Run {authorization.runId} · Call {authorization.callId}
@@ -201,12 +221,12 @@ export function AuthorizationReview({
             Opening the page does not grant access. Complete the external step, then recheck here.
           </p>
           <a
-            className="inline-flex items-center gap-2 rounded-md border px-3 py-2 font-medium underline-offset-2 hover:underline"
+            className={cn(buttonVariants({ size: "sm" }), "gap-1.5")}
             href={presentationPath}
             rel="noopener noreferrer"
             target="_blank"
           >
-            Open authorization <ExternalLink aria-hidden="true" className="size-4" />
+            Open authorization <ExternalLink aria-hidden="true" className="size-3.5" />
           </a>
           {(uncertain || inheritedUncertain) && (
             <>
@@ -228,14 +248,16 @@ export function AuthorizationReview({
               disabled={busy || disabled || uncertain || inheritedUncertain}
               onClick={() => void operate("recheck")}
               size="sm"
+              variant="outline"
             >
               Recheck
             </Button>
             <Button
+              className="text-muted-foreground"
               disabled={busy || disabled || uncertain || inheritedUncertain}
               onClick={() => void operate("cancel")}
               size="sm"
-              variant="outline"
+              variant="ghost"
             >
               Cancel authorization
             </Button>
