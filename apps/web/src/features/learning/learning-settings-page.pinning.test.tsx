@@ -244,9 +244,9 @@ describe("learning review (pinned behaviour)", () => {
     expect(screen.getByText("Keep answers concise.")).toBeTruthy();
     expect(listStatuses()).toEqual(["staged"]);
 
-    await user.click(screen.getByRole("button", { name: copy.promotedFilter }));
+    await user.click(screen.getByRole("radio", { name: copy.promotedFilter }));
     await row("Communication preference");
-    await user.click(screen.getByRole("button", { name: copy.rejectedFilter }));
+    await user.click(screen.getByRole("radio", { name: copy.rejectedFilter }));
     await waitFor(() => expect(listStatuses()).toEqual(["staged", "promoted", "rejected"]));
   });
 
@@ -309,7 +309,7 @@ describe("learning review (pinned behaviour)", () => {
     state.pages.promoted = { items: [proposal({ status: "promoted", version: "v3" })] };
     renderPage();
     await row("Communication preference");
-    await user.click(screen.getByRole("button", { name: copy.promotedFilter }));
+    await user.click(screen.getByRole("radio", { name: copy.promotedFilter }));
     await waitFor(() => expect(listStatuses()).toContain("promoted"));
     const item = await row("Communication preference");
     expect(item.queryByRole("button", { name: copy.approve })).toBeNull();

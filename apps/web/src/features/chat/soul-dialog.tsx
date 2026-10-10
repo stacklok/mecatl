@@ -53,7 +53,12 @@ export function SoulView({
     );
   }
   if (!soul) return null;
-  if (!soul.present) return <p className="text-muted-foreground">{SOUL_NONE}</p>;
+  if (!soul.present)
+    return (
+      <p className="text-muted-foreground" role="status">
+        {SOUL_NONE}
+      </p>
+    );
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-1.5">

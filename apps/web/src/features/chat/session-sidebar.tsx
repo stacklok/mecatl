@@ -161,7 +161,9 @@ export function SessionSidebar(props: SessionSidebarProps) {
 
         <div className="min-h-0 flex-1 overflow-y-auto px-2 pt-3 pb-3">
           {props.items.length === 0 && props.folders.folders.length === 0 ? (
-            <p className="px-3 py-8 text-center text-sm text-muted-foreground">No chats yet</p>
+            <p className="px-3 py-8 text-center text-sm text-muted-foreground" role="status">
+              No chats yet
+            </p>
           ) : (
             groups.map((group) => {
               const folder = group.id.startsWith("folder:")

@@ -349,7 +349,9 @@ function LocalCanvasEditor({
             {value ? (
               <MarkdownMessage>{value}</MarkdownMessage>
             ) : (
-              <p className="text-muted-foreground">No canvas notes yet.</p>
+              <p className="text-muted-foreground" role="status">
+                No canvas notes yet.
+              </p>
             )}
           </div>
         ) : (

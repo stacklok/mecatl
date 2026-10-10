@@ -94,6 +94,7 @@ function DetailState({ error, text, title }: { error?: boolean; text: string; ti
     <div className="flex h-full items-center justify-center p-6 text-center">
       <div
         className={`max-w-md rounded-xl border border-dashed p-8 ${error ? "border-destructive/40" : ""}`}
+        role={error ? "alert" : "status"}
       >
         {title && <h1 className="font-semibold">{title}</h1>}
         <p className={`mt-2 text-sm ${error ? "text-destructive" : "text-muted-foreground"}`}>

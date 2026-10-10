@@ -188,7 +188,9 @@ export function SessionDetailsView({
         )}
       </div>
       {!canInspect ? (
-        <p className="text-muted-foreground">{inspectUnavailable}</p>
+        <p className="text-muted-foreground" role="status">
+          {inspectUnavailable}
+        </p>
       ) : detailPending ? (
         <p className="flex items-center gap-2 text-muted-foreground" role="status">
           <Loader2 aria-hidden="true" className="size-3.5 animate-spin" />

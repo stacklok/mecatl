@@ -69,7 +69,7 @@ export function ShortcutReference() {
         search={{ item: undefined }}
         to="/workspace/settings/$section"
       >
-        ← Settings
+        <span aria-hidden="true">←&nbsp;</span>Settings
       </Link>
       <div className="space-y-1">
         <h1 className={pageTitleClass()}>Keyboard shortcuts</h1>
@@ -133,11 +133,11 @@ export function ShortcutReference() {
             Checking what's turned on…
           </p>
         ) : runtime.error || !features ? (
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-muted-foreground" role="status">
             Connect to an agent to see which features are turned on.
           </p>
         ) : features.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-muted-foreground" role="status">
             No help features are enabled on this agent.
           </p>
         ) : (
