@@ -1,28 +1,33 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { ExternalLink, MessageSquareText } from "lucide-react";
+import { ExternalLink } from "lucide-react";
 import { memo, useCallback, useRef } from "react";
 import { ApprovalPanel, type ApprovalRequest, type ApprovalVerdict } from "./approval-panel";
 import { type AuthorizationHandoff, AuthorizationReviewTrigger } from "./authorization-review";
-import {
-  approvalMatchesToolCall,
-  type ChatMessage,
-  messageOwnsApproval,
-  unmatchedApprovals,
-} from "./chat-state";
+import { type ChatMessage, messageOwnsApproval, unmatchedApprovals } from "./chat-state";
 import {
   type DelegationActivity,
   DelegationCardRow,
   type DelegationFocus,
 } from "./delegation-card";
+import { DeliveryNoteCard } from "./delivery-note-card";
 import { FailedTurnCard } from "./failed-turn-card";
 import { type ChatImage, chatImageDisplay } from "./local-file-preview";
 import { MarkdownMessage } from "./markdown-message";
+import {
+  MessageActions,
+  MessageAvatar,
+  MessageRow,
+  messageAuthorClass,
+  messageBodyClass,
+  messageRowClass,
+} from "./message-bubble";
 import { PlanReviewCard, type PlanVerdict } from "./plan-review-card";
 import { ReasoningDisclosure } from "./reasoning-disclosure";
 import { hasVisibleStopReason, StopReasonChip } from "./stop-reason-chip";
 import { StreamingIndicator } from "./streaming-indicator";
 import type { ToolActivity } from "./tool-activity";
+import { ToolCallList } from "./tool-call-list";
 
 const EMPTY_APPROVALS: ApprovalRequest[] = [];
 
@@ -92,9 +97,11 @@ export function shouldUpdateTranscriptRow(
 }
 
 interface TranscriptRowProps extends TranscriptRowState {
+  agentAvatar: string;
   agentName: string;
   approvalDisabled?: (approval: ApprovalRequest) => boolean;
   approvalUncertain?: (approval: ApprovalRequest) => boolean;
+  onCopyMessage?: (message: ChatMessage) => void;
   onOpenActivity?: (focus: DelegationFocus, opener: HTMLButtonElement) => void;
   onOpenThread?: (message: ChatMessage) => void;
   onReviewAuthorization?: (authorization: AuthorizationHandoff) => void;
@@ -107,10 +114,68 @@ interface TranscriptRowProps extends TranscriptRowState {
   threadDisabled: boolean;
   legacyThreadSessionId?: string;
   threadSessionId?: string;
+  userAvatar: string;
   userName: string;
 }
 
+/** A turn's images: inline data previews, a link for a remote one, else the name. */
+export function MessageImages({
+  images,
+  onPreviewImage,
+}: {
+  images: ChatImage[];
+  onPreviewImage?: (image: ChatImage) => void;
+}) {
+  return (
+    <div className="mt-1 mb-2 grid min-w-0 grid-cols-2 gap-2">
+      {images.map((image, index) => {
+        const display = chatImageDisplay(image);
+        return (
+          <div
+            className="min-w-0 overflow-hidden rounded-lg border bg-background"
+            key={image.id ?? index}
+          >
+            {display.kind === "inline" ? (
+              onPreviewImage ? (
+                <button
+                  aria-label={`Preview ${image.name}`}
+                  className="block w-full"
+                  onClick={() => onPreviewImage(image)}
+                  type="button"
+                >
+                  <img
+                    alt={image.name}
+                    className="max-h-48 w-full object-cover"
+                    src={display.src}
+                  />
+                </button>
+              ) : (
+                <img alt={image.name} className="max-h-48 w-full object-cover" src={display.src} />
+              )
+            ) : display.kind === "link" ? (
+              <a
+                className="flex items-center gap-2 px-3 py-2 text-sm text-foreground underline underline-offset-2 hover:text-brand-ink"
+                href={display.href}
+                rel="noreferrer"
+                target="_blank"
+              >
+                <ExternalLink aria-hidden="true" className="size-4 shrink-0" />
+                <span className="min-w-0 truncate">{image.name}</span>
+              </a>
+            ) : (
+              <span className="block truncate px-3 py-2 text-sm text-muted-foreground">
+                {image.name}
+              </span>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function TranscriptRow({
+  agentAvatar,
   agentName,
   approvalDisabled,
   approvalUncertain,
@@ -118,6 +183,7 @@ function TranscriptRow({
   delegations,
   message,
   legacyThreadSessionId,
+  onCopyMessage,
   onOpenActivity,
   onOpenThread,
   onReviewAuthorization,
@@ -131,6 +197,7 @@ function TranscriptRow({
   streaming,
   threadDisabled,
   threadSessionId,
+  userAvatar,
   userName,
 }: TranscriptRowProps) {
   const user = message.role === "user";
@@ -142,200 +209,122 @@ function TranscriptRow({
   if (!isVisibleTranscriptMessage(message, showToolCalls, streaming, delegations, approvals ?? []))
     return null;
 
+  // A delivery note is the schedule's card, never a speaker's turn: its text
+  // is model-authored and renders as plain text inside the card.
+  if (message.delivery) {
+    return (
+      <article
+        aria-label={`${label} message`}
+        className="min-w-0 max-w-full py-1"
+        id={`chat-message-${message.id}`}
+      >
+        <h3 className="sr-only">{label}</h3>
+        <DeliveryNoteCard body={message.content} delivery={message.delivery} />
+      </article>
+    );
+  }
+
+  const toolsShown =
+    (showToolCalls || approvals?.some((approval) => messageOwnsApproval(message, approval))) &&
+    Boolean(message.tools?.length);
+
   return (
     <article
       aria-label={`${label} message`}
-      className="min-w-0 max-w-full break-words border-b border-border/60 pb-5 last:border-b-0"
+      className={messageRowClass}
       id={`chat-message-${message.id}`}
     >
-      <h3 className="mb-2 text-xs font-semibold text-muted-foreground">{label}</h3>
-      {message.reasoning && <ReasoningDisclosure streaming={streaming} text={message.reasoning} />}
-      {message.images && message.images.length > 0 && (
-        <div className="mb-3 grid min-w-0 grid-cols-2 gap-2">
-          {message.images.map((image, index) => {
-            const display = chatImageDisplay(image);
-            return (
-              <div className="min-w-0 overflow-hidden rounded-lg border" key={image.id ?? index}>
-                {display.kind === "inline" ? (
-                  onPreviewImage ? (
-                    <button
-                      aria-label={`Preview ${image.name}`}
-                      className="block w-full"
-                      onClick={() => onPreviewImage(image)}
-                      type="button"
-                    >
-                      <img
-                        alt={image.name}
-                        className="max-h-48 w-full object-contain"
-                        src={display.src}
-                      />
-                    </button>
-                  ) : (
-                    <img
-                      alt={image.name}
-                      className="max-h-48 w-full object-contain"
-                      src={display.src}
-                    />
-                  )
-                ) : display.kind === "link" ? (
-                  <a
-                    className="block break-all px-3 py-2 text-sm underline"
-                    href={display.href}
-                    rel="noreferrer"
-                    target="_blank"
-                  >
-                    {image.name} <ExternalLink aria-hidden="true" className="inline size-3" />
-                  </a>
-                ) : (
-                  <span className="block truncate px-3 py-2 text-sm">{image.name}</span>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-      {message.delivery ? (
-        <div className="rounded-lg border bg-muted/30 p-3 text-sm" data-delivery-note>
-          <p className="font-medium">
-            Scheduled task {message.delivery.scheduleName} {message.delivery.kind}
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Fire {message.delivery.fireId}
-            {message.delivery.stop ? ` · Stop reason: ${message.delivery.stop}` : ""}
-          </p>
-          {message.content && (
-            <p className="mt-2 whitespace-pre-wrap break-words">{message.content}</p>
-          )}
-        </div>
-      ) : message.content ? (
-        <MarkdownMessage>{message.content}</MarkdownMessage>
-      ) : streaming ? (
-        <StreamingIndicator />
-      ) : null}
-      {(showToolCalls || approvals?.some((approval) => messageOwnsApproval(message, approval))) &&
-        message.tools &&
-        message.tools.length > 0 && (
-          <ol className="mt-3 space-y-2">
-            {message.tools.map((tool) => (
-              <li className="min-w-0 rounded-lg border bg-muted/20 p-3 text-xs" key={tool.id}>
-                <p className="font-mono font-semibold">Tool: {tool.name}</p>
-                <p className="mt-2 text-muted-foreground">Input</p>
-                <pre className="mt-1 max-w-full overflow-x-auto whitespace-pre-wrap break-words rounded bg-background p-2 font-mono">
-                  {tool.args || "{}"}
-                </pre>
-                {tool.output !== undefined && (
-                  <>
-                    <p className="mt-2 text-muted-foreground">
-                      {tool.isError ? "Failed result" : "Result"}
-                    </p>
-                    <pre className="mt-1 max-w-full overflow-x-auto whitespace-pre-wrap break-words rounded bg-background p-2 font-mono">
-                      {tool.output || "No output"}
-                    </pre>
-                    {onPreviewTool && (
-                      <button
-                        className="mt-2 underline"
-                        onClick={() => onPreviewTool(tool)}
-                        type="button"
-                      >
-                        Open result
-                      </button>
-                    )}
-                  </>
-                )}
-                {message.authorizations
-                  ?.filter(
-                    (authorization) =>
-                      authorization.callId === tool.id && authorization.runId === tool.runId,
-                  )
-                  .map((authorization) => (
-                    <AuthorizationReviewTrigger
-                      authorization={authorization}
-                      key={authorization.authorizationId}
-                      onReview={onReviewAuthorization ?? (() => undefined)}
-                    />
-                  ))}
-                {approvals
-                  ?.filter((approval) => approvalMatchesToolCall(approval, tool))
-                  .map((approval) =>
-                    approval.tool === "PresentPlan" ? (
-                      <PlanReviewCard
-                        approval={approval}
-                        disabled={
-                          !approval.controlTarget || (approvalDisabled?.(approval) ?? false)
-                        }
-                        key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
-                        onRespond={(verdict) => onRespondToPlan?.(approval, verdict)}
-                        uncertain={approvalUncertain?.(approval)}
-                        unavailableReason={planUnavailableReason?.(approval)}
-                      />
-                    ) : (
-                      <ApprovalPanel
-                        approval={approval}
-                        disabled={
-                          !approval.controlTarget || (approvalDisabled?.(approval) ?? false)
-                        }
-                        key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
-                        onRespond={(verdict) => onRespondToApproval?.(approval, verdict)}
-                        uncertain={approvalUncertain?.(approval)}
-                      />
-                    ),
-                  )}
-              </li>
-            ))}
-          </ol>
-        )}
-      {message.authorizations
-        ?.filter(
-          (authorization) =>
-            !showToolCalls ||
-            !message.tools?.some(
-              (tool) => tool.id === authorization.callId && tool.runId === authorization.runId,
-            ),
-        )
-        .map((authorization) => (
-          <AuthorizationReviewTrigger
-            authorization={authorization}
-            key={authorization.authorizationId}
-            onReview={onReviewAuthorization ?? (() => undefined)}
+      <MessageRow
+        actions={
+          <MessageActions
+            onCopy={onCopyMessage && message.content ? () => onCopyMessage(message) : undefined}
+            onOpenThread={onOpenThread && message.content ? () => onOpenThread(message) : undefined}
+            threadDisabled={threadDisabled}
+            threadOpen={Boolean(threadSessionId)}
           />
-        ))}
-      {!user && delegations && delegations.length > 0 && onOpenActivity && (
-        <DelegationCardRow activities={delegations} onOpen={onOpenActivity} />
-      )}
-      {!streaming && !message.failure && <StopReasonChip stopReason={message.stopReason ?? ""} />}
-      {message.failure && (
-        <FailedTurnCard
-          detail={message.failure.detail}
-          permanent={message.failure.permanent}
-          summary={message.failure.message}
-        />
-      )}
-      {!streaming && message.turnStat && (
-        <p className="mt-2 text-xs tabular-nums text-muted-foreground">{message.turnStat}</p>
-      )}
-      {onOpenThread && message.content && !message.delivery && (
-        <button
-          aria-label={threadSessionId ? "Open side thread" : "Reply in side thread"}
-          className="mt-2 flex items-center gap-1 text-xs text-muted-foreground underline disabled:opacity-50"
-          disabled={threadDisabled}
-          onClick={() => onOpenThread(message)}
-          type="button"
-        >
-          <MessageSquareText aria-hidden="true" className="size-3" />
-          {threadSessionId ? "Open thread" : "Reply in thread"}
-        </button>
-      )}
-      {onRelinkThread && legacyThreadSessionId && (
-        <button
-          aria-label={`Relink older side thread ${legacyThreadSessionId} to this message`}
-          className="mt-2 rounded px-1 text-xs text-muted-foreground underline hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand"
-          disabled={threadDisabled}
-          onClick={() => onRelinkThread(message)}
-          type="button"
-        >
-          Relink older thread
-        </button>
-      )}
+        }
+        avatar={
+          <MessageAvatar
+            avatarUrl={user ? userAvatar : agentAvatar}
+            fallback={user ? "user" : "agent"}
+            name={label}
+          />
+        }
+      >
+        <h3 className={messageAuthorClass}>{label}</h3>
+        {message.reasoning && (
+          <ReasoningDisclosure streaming={streaming} text={message.reasoning} />
+        )}
+        {message.images && message.images.length > 0 && (
+          <MessageImages images={message.images} onPreviewImage={onPreviewImage} />
+        )}
+        {message.content ? (
+          <div className={messageBodyClass}>
+            <MarkdownMessage>{message.content}</MarkdownMessage>
+          </div>
+        ) : streaming ? (
+          <StreamingIndicator />
+        ) : null}
+        {toolsShown && message.tools && (
+          <ToolCallList
+            approvalDisabled={approvalDisabled}
+            approvalUncertain={approvalUncertain}
+            approvals={approvals}
+            authorizations={showToolCalls ? message.authorizations : undefined}
+            onPreview={onPreviewTool}
+            onRespondToApproval={onRespondToApproval}
+            onRespondToPlan={onRespondToPlan}
+            onReviewAuthorization={onReviewAuthorization}
+            planUnavailableReason={planUnavailableReason}
+            tools={message.tools}
+          />
+        )}
+        {message.authorizations
+          ?.filter(
+            (authorization) =>
+              !showToolCalls ||
+              !message.tools?.some(
+                (tool) => tool.id === authorization.callId && tool.runId === authorization.runId,
+              ),
+          )
+          .map((authorization) => (
+            <AuthorizationReviewTrigger
+              authorization={authorization}
+              key={authorization.authorizationId}
+              onReview={onReviewAuthorization ?? (() => undefined)}
+            />
+          ))}
+        {!user && delegations && delegations.length > 0 && onOpenActivity && (
+          <DelegationCardRow activities={delegations} onOpen={onOpenActivity} />
+        )}
+        {!streaming && !message.failure && <StopReasonChip stopReason={message.stopReason ?? ""} />}
+        {message.failure && (
+          <FailedTurnCard
+            detail={message.failure.detail}
+            permanent={message.failure.permanent}
+            summary={message.failure.message}
+          />
+        )}
+        {!streaming && message.turnStat && (
+          <p
+            className="mt-1 text-[11px] tabular-nums text-muted-foreground/70"
+            title="This turn's tokens sent ↑ and received ↓, model time, and the share of input served from the prompt cache."
+          >
+            {message.turnStat}
+          </p>
+        )}
+        {onRelinkThread && legacyThreadSessionId && (
+          <button
+            aria-label={`Relink older side thread ${legacyThreadSessionId} to this message`}
+            className="mt-1.5 rounded px-1 text-xs text-muted-foreground underline hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand"
+            disabled={threadDisabled}
+            onClick={() => onRelinkThread(message)}
+            type="button"
+          >
+            Relink older thread
+          </button>
+        )}
+      </MessageRow>
     </article>
   );
 }
@@ -344,7 +333,10 @@ const MemoTranscriptRow = memo(
   TranscriptRow,
   (previous, next) =>
     !shouldUpdateTranscriptRow(previous, next) &&
+    previous.agentAvatar === next.agentAvatar &&
     previous.agentName === next.agentName &&
+    previous.userAvatar === next.userAvatar &&
+    previous.onCopyMessage === next.onCopyMessage &&
     previous.userName === next.userName &&
     previous.threadDisabled === next.threadDisabled &&
     previous.threadSessionId === next.threadSessionId &&
@@ -361,12 +353,15 @@ const MemoTranscriptRow = memo(
 );
 
 export interface ChatTranscriptProps {
+  agentAvatar?: string;
   agentName?: string;
   approvalDisabled?: (approval: ApprovalRequest) => boolean;
   approvalUncertain?: (approval: ApprovalRequest) => boolean;
   approvals?: ApprovalRequest[];
   delegationsByMessageId?: Record<string, DelegationActivity[]>;
   messages: ChatMessage[];
+  /** Offers a turn's Copy action; without it, rows have no copy button. */
+  onCopyMessage?: (message: ChatMessage) => void;
   onOpenActivity?: (focus: DelegationFocus, opener: HTMLButtonElement) => void;
   onOpenThread?: (message: ChatMessage) => void;
   onReviewAuthorization?: (authorization: AuthorizationHandoff) => void;
@@ -381,17 +376,20 @@ export interface ChatTranscriptProps {
   threadDisabled?: boolean;
   legacyThreadSessionIdForMessage?: (message: ChatMessage) => string | undefined;
   threadSessionIdForMessage?: (message: ChatMessage) => string | undefined;
+  userAvatar?: string;
   userName?: string;
 }
 
 /** Flat, left-aligned conversation rows; settled rows keep their React identity. */
 export function ChatTranscript({
+  agentAvatar = "",
   agentName = "Mecatl",
   approvalDisabled,
   approvalUncertain,
   approvals = EMPTY_APPROVALS,
   delegationsByMessageId,
   messages,
+  onCopyMessage,
   onOpenActivity,
   onOpenThread,
   onReviewAuthorization,
@@ -406,11 +404,13 @@ export function ChatTranscript({
   threadDisabled = false,
   legacyThreadSessionIdForMessage,
   threadSessionIdForMessage,
+  userAvatar = "",
   userName = "You",
 }: ChatTranscriptProps) {
   const actions = useRef({
     approvalDisabled,
     approvalUncertain,
+    onCopyMessage,
     onOpenActivity,
     onOpenThread,
     onRelinkThread,
@@ -424,6 +424,7 @@ export function ChatTranscript({
   actions.current = {
     approvalDisabled,
     approvalUncertain,
+    onCopyMessage,
     onOpenActivity,
     onOpenThread,
     onRelinkThread,
@@ -434,6 +435,10 @@ export function ChatTranscript({
     onRespondToPlan,
     planUnavailableReason,
   };
+  const copyMessage = useCallback(
+    (message: ChatMessage) => actions.current.onCopyMessage?.(message),
+    [],
+  );
   const openActivity = useCallback(
     (focus: DelegationFocus, opener: HTMLButtonElement) =>
       actions.current.onOpenActivity?.(focus, opener),
@@ -485,9 +490,10 @@ export function ChatTranscript({
   const unmatched = unmatchedApprovals(approvals, messages);
 
   return (
-    <div className="min-w-0 max-w-full space-y-5">
+    <div className="min-w-0 max-w-full space-y-2">
       {messages.map((message) => (
         <MemoTranscriptRow
+          agentAvatar={agentAvatar}
           agentName={agentName}
           approvalDisabled={approvalDisabled ? isApprovalDisabled : undefined}
           approvalUncertain={approvalUncertain ? isApprovalUncertain : undefined}
@@ -496,6 +502,7 @@ export function ChatTranscript({
           key={message.id}
           legacyThreadSessionId={legacyThreadSessionIdForMessage?.(message)}
           message={message}
+          onCopyMessage={onCopyMessage ? copyMessage : undefined}
           onOpenActivity={onOpenActivity ? openActivity : undefined}
           onOpenThread={onOpenThread ? openThread : undefined}
           onReviewAuthorization={onReviewAuthorization ? reviewAuthorization : undefined}
@@ -509,6 +516,7 @@ export function ChatTranscript({
           streaming={message.id === streamingMessageId}
           threadDisabled={threadDisabled}
           threadSessionId={threadSessionIdForMessage?.(message)}
+          userAvatar={userAvatar}
           userName={userName}
         />
       ))}
