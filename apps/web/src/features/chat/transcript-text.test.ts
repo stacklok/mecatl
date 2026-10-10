@@ -29,4 +29,21 @@ describe("serializeTranscript", () => {
     expect(serializeTranscript([message("user", "Hi")], { agentName: "A" })).toBe("**You**\n\nHi");
     expect(serializeTranscript([], { agentName: "A" })).toBe("");
   });
+
+  it("names a scheduled task's delivery note after its schedule, never after the user", () => {
+    const note = (scheduleName: string): ChatMessage => ({
+      content: "Nightly build passed.",
+      delivery: { fireId: "fire-1", kind: "completed", scheduleName, stop: "end_turn" },
+      id: `note-${scheduleName}`,
+      role: "user",
+    });
+    expect(
+      serializeTranscript([message("user", "Hi"), note("Nightly build"), note(" ")], {
+        agentName: "Mecatl",
+        userName: "Giulia",
+      }),
+    ).toBe(
+      "**Giulia**\n\nHi\n\n**Scheduled task Nightly build**\n\nNightly build passed.\n\n**Scheduled task**\n\nNightly build passed.",
+    );
+  });
 });

@@ -17,7 +17,8 @@ export interface TranscriptSerializeOptions {
 /**
  * The conversation as plain text: for every user or assistant message with
  * any content, a bold line naming the author and then the body, separated
- * by blank lines. Empty turns (a failed turn with no text, a reasoning-only
+ * by blank lines. A scheduled task's delivery note is authored by its
+ * schedule, as the transcript shows it, never by the user. Empty turns (a failed turn with no text, a reasoning-only
  * turn) are skipped.
  */
 export function serializeTranscript(
@@ -30,7 +31,11 @@ export function serializeTranscript(
     if (message.role !== "user" && message.role !== "assistant") continue;
     const content = message.content.trim();
     if (!content) continue;
-    const author = message.role === "user" ? userName : options.agentName;
+    const author = message.delivery
+      ? `Scheduled task ${message.delivery.scheduleName.trim()}`.trimEnd()
+      : message.role === "user"
+        ? userName
+        : options.agentName;
     blocks.push(`**${author}**\n\n${content}`);
   }
   return blocks.join("\n\n");
