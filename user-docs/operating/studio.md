@@ -124,12 +124,15 @@ manages the learning mode and sensitivity; Studio does not change them.
 
 Studio explains settings ownership in the settings pages: personal choices stay
 in the browser, while deployment-managed provider, model, posture, and storage
-facts are read-only. Appearance controls explain theme and palette choices.
+facts are read-only. **Settings > Personalise** holds appearance, chat, and
+notification preferences, and explains theme and palette choices.
+**Settings > Permissions** shows the deployment's safety level without a way to
+change it.
 Delegated-activity panels explain their observed history and incomplete replay.
 If the deployment reports degraded session storage, a notice above the
 navigation says that some chats may be missing; **Settings > Storage** shows the
-details. **About** identifies the Studio image, installed SDK, and connected daemon
-builds. Ask users for **Copy support summary** when diagnosing a deployment
+details. **About** identifies the Studio image and installed SDK in one card and
+the connected daemon in another. Ask users for **Copy support summary** when diagnosing a deployment
 issue.
 
 ## Install Studio in your browser
@@ -159,7 +162,9 @@ chat controls; choosing another model creates a fork of that chat. Press Enter
 to send or Shift+Enter for a new line. Enter used to confirm an input method
 candidate leaves the message in the composer.
 
-Starter prompts fill the composer for you to review. A link with `?prompt=` also
+Starter prompts fill the composer for you to review. To hide them on a new chat,
+turn off **Starter prompts** in **Settings > Personalise**; the choice belongs to
+your account in this browser. A link with `?prompt=` also
 fills it without starting a run. If the link includes `send=1`, Studio shows the
 prompt, target chat, model, and permission mode before you select **Send
 prompt** or **Edit prompt**. For a new chat, it also shows tool access. Opening

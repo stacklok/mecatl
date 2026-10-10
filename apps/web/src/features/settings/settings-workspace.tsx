@@ -12,37 +12,67 @@ import {
 } from "@mecatl-studio/contracts/query";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { BookOpen, Copy, ExternalLink, Keyboard, LifeBuoy, Search } from "lucide-react";
-import { type ReactNode, useMemo, useState } from "react";
-import { AuthControl } from "../../components/shell/auth-control";
+import { ChevronDown, Search } from "lucide-react";
+import { useMemo, useState } from "react";
 import { PageShell } from "../../components/shell/page-shell";
 import { Badge } from "../../components/ui/badge";
-import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Switch } from "../../components/ui/switch";
-import { writeClipboardText } from "../../lib/clipboard";
 import { modelPreferenceId, useDisabledModels } from "../../lib/model-preferences";
 import { pageTitleClass } from "../../lib/typography";
+import { cn } from "../../lib/utils";
 import { LearningSettingsPage } from "../learning/learning-settings-page";
 import { MemorySettingsPage } from "../memory/memory-settings-page";
+import { AboutDaemonCard, AboutStudioCard, DaemonFacts, SignInCard } from "./about-cards";
 import { AgentSettings } from "./agent-settings";
 import { IdentitySettings } from "./identity-settings";
 import { InterfaceSettings } from "./interface-settings";
 import { managementNotes } from "./management-notes";
-import { Note, SettingsCard } from "./settings-card";
+import {
+  FactList,
+  FactRow,
+  Note,
+  RuntimeStatusLine,
+  SettingsCard,
+  SettingsRow,
+  type SettingsState,
+} from "./settings-card";
 import {
   connectionMessage,
   freshDeploymentQuery,
   useBrowserOnline,
   useRefreshOnEntry,
 } from "./settings-connection";
-import { type SettingsSection, settingsGroups } from "./settings-sections";
+import { type SettingsSection, settingsGroups, settingsItem } from "./settings-sections";
 import { StorageSettings } from "./storage-settings";
 
 type Model = GetRuntimeSettingsResponse["models"][number];
 
-/** Where a problem with this app (not the connected agent) is reported. */
-const supportUrl = "https://github.com/stacklok/mecatl/issues";
+/** The card a section's loading, offline, or failure line sits in. */
+const stateCardTitles: Record<SettingsSection, string> = {
+  about: "About",
+  agent: "Agent behavior",
+  appearance: "Appearance",
+  diagnostics: "Diagnostics",
+  labs: "Labs",
+  learning: "Learning",
+  "mcp-tools": "MCP tools",
+  memory: "Memory",
+  models: "Models",
+  permissions: "Permissions",
+  profile: "You",
+  providers: "Providers",
+  storage: "Storage",
+};
+
+function connectionState(connection: GetRuntimeResponse["connection"]): SettingsState | null {
+  const text = connectionMessage(connection);
+  if (text === null) return null;
+  if (connection === "connecting" || connection === "reconnecting")
+    return { kind: "loading", text };
+  if (connection === "incompatible") return { kind: "error", text };
+  return { kind: "notice", text };
+}
 
 export function SettingsWorkspace({
   onSectionChange,
@@ -81,61 +111,99 @@ export function SettingsWorkspace({
     settings.refetch,
   );
   const modelPreferences = useDisabledModels();
-  const runtimeState = !browserOnline
-    ? "Offline. Connect to the agent to read current deployment settings."
+  const runtimeState: SettingsState | null = !browserOnline
+    ? {
+        kind: "notice",
+        text: "Offline. Connect to the agent to read current deployment settings.",
+      }
     : runtimeValidating || runtime.isFetching || runtime.isPending
-      ? "Loading current runtime settings…"
+      ? { kind: "loading", text: "Loading current runtime settings…" }
       : runtime.isError
-        ? "Current runtime settings could not be loaded. Check the connection and try again."
-        : connectionMessage(runtime.data.connection);
-  const inventoryState =
+        ? {
+            kind: "error",
+            text: "Current runtime settings could not be loaded. Check the connection and try again.",
+          }
+        : connectionState(runtime.data.connection);
+  const inventoryState: SettingsState | null =
     runtimeState ??
     (settingsValidating || settings.isFetching || settings.isPending
-      ? "Loading settings…"
+      ? { kind: "loading", text: "Loading settings…" }
       : settings.isError
-        ? "Current settings could not be loaded. Check the connection and try again."
+        ? {
+            kind: "error",
+            text: "Current settings could not be loaded. Check the connection and try again.",
+          }
         : null);
+  const stateCard = (state: SettingsState) => (
+    <SettingsCard title={stateCardTitles[section]}>
+      <RuntimeStatusLine state={state} />
+    </SettingsCard>
+  );
+  const CurrentIcon = settingsItem(section).icon;
 
   return (
     <PageShell>
-      <h1 className={pageTitleClass()}>Settings</h1>
+      <div className="space-y-6">
+        <h1 className={pageTitleClass()}>Settings</h1>
 
-      <div className="mt-7 sm:hidden">
-        <label className="text-xs font-medium text-muted-foreground" htmlFor="settings-section">
-          Settings section
-        </label>
-        <select
-          className="mt-2 min-h-11 w-full rounded-lg border border-control-border bg-card px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          id="settings-section"
-          onChange={(event) => onSectionChange?.(event.target.value as SettingsSection)}
-          value={section}
-        >
-          {settingsGroups.map((group) => (
-            <optgroup key={group.title} label={group.title}>
-              {group.items.map((item) => (
-                <option key={item.value} value={item.value}>
-                  {item.label}
-                </option>
+        <div className="min-[500px]:hidden">
+          <label
+            className="block px-4 pb-2 text-[13px] font-medium text-muted-foreground"
+            htmlFor="settings-section"
+          >
+            Settings section
+          </label>
+          {/* The prototype's drill-down row look, kept on the native picker that
+              Studio's one-route-per-section navigation relies on. */}
+          <div className="relative">
+            <CurrentIcon
+              aria-hidden="true"
+              className="pointer-events-none absolute top-1/2 left-4 size-[18px] -translate-y-1/2 text-muted-foreground"
+            />
+            <select
+              className="min-h-11 w-full appearance-none rounded-2xl border-0 bg-muted/50 py-2 pr-10 pl-11 text-[15px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              id="settings-section"
+              onChange={(event) => onSectionChange?.(event.target.value as SettingsSection)}
+              value={section}
+            >
+              {settingsGroups.map((group) => (
+                <optgroup key={group.title} label={group.title}>
+                  {group.items.map((item) => (
+                    <option key={item.value} value={item.value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </optgroup>
               ))}
-            </optgroup>
-          ))}
-        </select>
-      </div>
+            </select>
+            <ChevronDown
+              aria-hidden="true"
+              className="pointer-events-none absolute top-1/2 right-4 size-4 -translate-y-1/2 text-muted-foreground"
+            />
+          </div>
+        </div>
 
-      <div className="mt-7 flex items-start gap-8">
-        <nav aria-label="Settings sections" className="hidden w-40 shrink-0 sm:block">
-          <ul className="space-y-4">
+        <div className="flex flex-col gap-6 min-[500px]:flex-row min-[500px]:items-start min-[500px]:gap-10">
+          <nav
+            aria-label="Settings sections"
+            className="hidden w-44 shrink-0 flex-col gap-5 min-[500px]:flex"
+          >
             {settingsGroups.map((group) => (
-              <li key={group.title}>
-                <p className="px-3 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              <div className="space-y-1" key={group.title}>
+                <p className="px-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
                   {group.title}
                 </p>
-                <ul className="space-y-1">
+                <ul className="flex flex-col gap-1">
                   {group.items.map((item) => (
                     <li key={item.value}>
                       <button
                         aria-current={section === item.value ? "page" : undefined}
-                        className={`min-h-11 w-full rounded-lg px-3 py-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-brand ${section === item.value ? "bg-muted font-medium" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"}`}
+                        className={cn(
+                          "flex min-h-11 w-full items-center rounded-lg px-2 text-left text-sm whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:outline-brand",
+                          section === item.value
+                            ? "bg-muted font-medium text-foreground"
+                            : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                        )}
                         onClick={() => onSectionChange?.(item.value)}
                         type="button"
                       >
@@ -144,129 +212,163 @@ export function SettingsWorkspace({
                     </li>
                   ))}
                 </ul>
-              </li>
+              </div>
             ))}
-          </ul>
-        </nav>
+          </nav>
 
-        <div className="min-w-0 max-w-3xl flex-1 space-y-6">
-          {section === "profile" && (
-            <>
-              <IdentitySettings />
-              <ProfileSession />
-            </>
-          )}
-          {section === "agent" && (
-            <>
-              <AgentSettings />
-              <SettingsCard title="Agent behavior">
+          <div className="min-w-0 max-w-3xl flex-1 space-y-5">
+            {section === "profile" && (
+              <>
+                <IdentitySettings />
+                <ProfileSession />
+              </>
+            )}
+            {section === "agent" && (
+              <>
+                <AgentSettings />
+                <SettingsCard title="Agent behavior">
+                  {runtimeState ? (
+                    <RuntimeStatusLine state={runtimeState} />
+                  ) : (
+                    <div className="flex flex-col gap-3">
+                      <div className="divide-y divide-border/60">
+                        <SettingsRow
+                          description="Whether a message sent while the agent works can redirect it."
+                          label="Steering during a run"
+                        >
+                          <Badge variant={runtime.data?.capabilities.steer ? "success" : "muted"}>
+                            {runtime.data?.capabilities.steer ? "Available" : "Not enabled"}
+                          </Badge>
+                        </SettingsRow>
+                      </div>
+                      <Note>Agent behavior is managed by this deployment.</Note>
+                    </div>
+                  )}
+                </SettingsCard>
+              </>
+            )}
+            {section === "appearance" && <InterfaceSettings />}
+            {section === "providers" &&
+              (inventoryState
+                ? stateCard(inventoryState)
+                : settings.data && <ProviderInventory settings={settings.data} />)}
+            {section === "models" &&
+              (inventoryState
+                ? stateCard(inventoryState)
+                : settings.data && (
+                    <ModelInventory modelPreferences={modelPreferences} settings={settings.data} />
+                  ))}
+            {section === "about" &&
+              (inventoryState
+                ? stateCard(inventoryState)
+                : runtime.data &&
+                  settings.data && (
+                    <>
+                      <AboutStudioCard runtime={runtime.data} />
+                      <AboutDaemonCard runtime={runtime.data} settings={settings.data} />
+                      <SignInCard />
+                    </>
+                  ))}
+            {section === "memory" &&
+              (runtimeState ? (
+                stateCard(runtimeState)
+              ) : (
+                <MemorySettingsPage capabilities={runtime.data?.capabilities} />
+              ))}
+            {section === "learning" &&
+              (runtimeState ? stateCard(runtimeState) : <LearningSettingsPage />)}
+            {section === "storage" &&
+              (runtimeState ? stateCard(runtimeState) : <StorageSettings />)}
+            {section === "permissions" && (
+              <SettingsCard title="Permissions">
                 {runtimeState ? (
-                  <StateCard text={runtimeState} />
+                  <RuntimeStatusLine state={runtimeState} />
+                ) : (
+                  <div className="flex flex-col gap-3">
+                    <div className="divide-y divide-border/60">
+                      <SettingsRow
+                        description="What the agent is running at right now."
+                        label="Safety level"
+                      >
+                        <PostureBadge posture={runtime.data?.capabilities.posture} />
+                      </SettingsRow>
+                    </div>
+                    <Note>Permission posture is managed by this deployment.</Note>
+                  </div>
+                )}
+              </SettingsCard>
+            )}
+            {section === "mcp-tools" && (
+              <SettingsCard title="MCP tools">
+                {runtimeState ? (
+                  <RuntimeStatusLine state={runtimeState} />
+                ) : (
+                  <div className="flex flex-col gap-3">
+                    <FactList>
+                      <FactRow label="MCP support">
+                        {runtime.data?.capabilities.mcp ? "Available" : "Not enabled"}
+                      </FactRow>
+                      <FactRow label="Connector status">
+                        {runtime.data?.capabilities.mcpConnectorStatus
+                          ? "Available"
+                          : "Not enabled"}
+                      </FactRow>
+                    </FactList>
+                    <Note>
+                      MCP setup is managed by this deployment. Studio does not yet show the tool
+                      inventory.
+                    </Note>
+                  </div>
+                )}
+              </SettingsCard>
+            )}
+            {section === "diagnostics" &&
+              (inventoryState
+                ? stateCard(inventoryState)
+                : runtime.data &&
+                  settings.data && (
+                    <DiagnosticsSettings runtime={runtime.data} settings={settings.data} />
+                  ))}
+            {section === "labs" && (
+              <SettingsCard title="Labs">
+                {runtimeState ? (
+                  <RuntimeStatusLine state={runtimeState} />
                 ) : (
                   <Note>
-                    Steering during a run is{" "}
-                    {runtime.data?.capabilities.steer ? "available" : "not enabled"}. Agent behavior
-                    is managed by this deployment.
+                    No Labs features are available in Studio yet. This runtime is{" "}
+                    {runtime.data?.mock ? "a local mock" : "a connected agent"}.
                   </Note>
                 )}
               </SettingsCard>
-            </>
-          )}
-          {section === "appearance" && <InterfaceSettings />}
-          {section === "providers" &&
-            (inventoryState ? (
-              <StateCard text={inventoryState} />
-            ) : (
-              settings.data && <ProviderInventory settings={settings.data} />
-            ))}
-          {section === "models" &&
-            (inventoryState ? (
-              <StateCard text={inventoryState} />
-            ) : (
-              settings.data && (
-                <ModelInventory modelPreferences={modelPreferences} settings={settings.data} />
-              )
-            ))}
-          {section === "about" &&
-            (inventoryState ? (
-              <StateCard text={inventoryState} />
-            ) : (
-              runtime.data &&
-              settings.data && <AboutAgent runtime={runtime.data} settings={settings.data} />
-            ))}
-          {section === "memory" &&
-            (runtimeState ? (
-              <StateCard text={runtimeState} />
-            ) : (
-              <MemorySettingsPage capabilities={runtime.data?.capabilities} />
-            ))}
-          {section === "learning" &&
-            (runtimeState ? <StateCard text={runtimeState} /> : <LearningSettingsPage />)}
-          {section === "storage" &&
-            (runtimeState ? <StateCard text={runtimeState} /> : <StorageSettings />)}
-          {section === "permissions" && (
-            <SettingsCard title="Permissions">
-              {runtimeState ? (
-                <StateCard text={runtimeState} />
-              ) : (
-                <dl>
-                  <Fact label="Permission posture">
-                    {runtime.data?.capabilities.posture || "Not reported"}
-                  </Fact>
-                </dl>
-              )}
-              <div className="mt-3">
-                <Note>Permission posture is managed by this deployment.</Note>
-              </div>
-            </SettingsCard>
-          )}
-          {section === "mcp-tools" && (
-            <SettingsCard title="MCP tools">
-              {runtimeState ? (
-                <StateCard text={runtimeState} />
-              ) : (
-                <dl className="grid gap-3 sm:grid-cols-2">
-                  <Fact label="MCP support">
-                    {runtime.data?.capabilities.mcp ? "Available" : "Not enabled"}
-                  </Fact>
-                  <Fact label="Connector status">
-                    {runtime.data?.capabilities.mcpConnectorStatus ? "Available" : "Not enabled"}
-                  </Fact>
-                </dl>
-              )}
-              <div className="mt-3">
-                <Note>
-                  MCP setup is managed by this deployment. Studio does not yet show the tool
-                  inventory.
-                </Note>
-              </div>
-            </SettingsCard>
-          )}
-          {section === "diagnostics" &&
-            (inventoryState ? (
-              <StateCard text={inventoryState} />
-            ) : (
-              runtime.data &&
-              settings.data && (
-                <DiagnosticsSettings runtime={runtime.data} settings={settings.data} />
-              )
-            ))}
-          {section === "labs" && (
-            <SettingsCard title="Labs">
-              {runtimeState ? (
-                <StateCard text={runtimeState} />
-              ) : (
-                <Note>
-                  No Labs features are available in Studio yet. This runtime is{" "}
-                  {runtime.data?.mock ? "a local mock" : "a connected agent"}.
-                </Note>
-              )}
-            </SettingsCard>
-          )}
+            )}
+          </div>
         </div>
       </div>
     </PageShell>
   );
+}
+
+/** The user-facing word for each posture tier the SDK reports. */
+const postureLabels: Record<string, string> = {
+  auto: "Auto",
+  strict: "Strict",
+  trusted: "Trusted",
+  yolo: "Yolo",
+};
+
+function PostureBadge({ posture }: { posture: string | undefined }) {
+  const tier = posture?.trim();
+  if (!tier) return <Badge variant="muted">Not reported</Badge>;
+  const normalized = tier.toLowerCase();
+  const variant =
+    normalized === "yolo"
+      ? "destructive"
+      : normalized === "auto"
+        ? "warning"
+        : normalized === "trusted"
+          ? "info"
+          : "outline";
+  return <Badge variant={variant}>{postureLabels[normalized] ?? tier}</Badge>;
 }
 
 function ProfileSession() {
@@ -284,12 +386,12 @@ function ProfileSession() {
     session.data !== undefined,
     session.refetch,
   );
-  const sessionState = !browserOnline
-    ? "Offline. Sign-in details are unavailable."
+  const sessionState: SettingsState | null = !browserOnline
+    ? { kind: "notice", text: "Offline. Sign-in details are unavailable." }
     : sessionValidating || session.isFetching || session.isPending
-      ? "Checking sign-in details…"
+      ? { kind: "loading", text: "Checking sign-in details…" }
       : session.isError
-        ? "Sign-in details could not be loaded."
+        ? { kind: "error", text: "Sign-in details could not be loaded." }
         : null;
   const account =
     session.data?.mode === "oidc" && session.data.status === "authenticated"
@@ -299,21 +401,21 @@ function ProfileSession() {
   return (
     <SettingsCard title="Sign-in session">
       {sessionState ? (
-        <StateCard text={sessionState} />
+        <RuntimeStatusLine state={sessionState} />
       ) : (
-        <dl className="grid gap-3 sm:grid-cols-2">
-          <Fact label="Session status">
+        <FactList>
+          <FactRow label="Session status">
             {session.data?.status === "authenticated" ? "Signed in" : "Sign-in not required"}
-          </Fact>
-          <Fact label="Authentication mode">
+          </FactRow>
+          <FactRow label="Authentication mode">
             {session.data?.mode === "oidc"
               ? "Interactive sign-in"
               : session.data?.mode === "static"
                 ? "Shared static identity"
                 : "No authentication"}
-          </Fact>
-          {account && <Fact label="Account reference">{account}</Fact>}
-        </dl>
+          </FactRow>
+          {account && <FactRow label="Account reference">{account}</FactRow>}
+        </FactList>
       )}
     </SettingsCard>
   );
@@ -322,43 +424,54 @@ function ProfileSession() {
 function ProviderInventory({ settings }: { settings: GetRuntimeSettingsResponse }) {
   return (
     <SettingsCard title="Providers">
-      <ul className="space-y-1 text-sm text-muted-foreground">
-        {managementNotes(settings.management).map((note) => (
-          <li key={note}>{note}</li>
-        ))}
-        <li>Credentials are never shown here.</li>
-      </ul>
-      {!settings.modelsSupported ? (
-        <StateCard
-          text={settings.modelsReason || "Model providers are not available on this deployment."}
-        />
-      ) : settings.providers.length === 0 ? (
-        <StateCard text="No providers are reported by this deployment yet." />
-      ) : (
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {settings.providers.map((provider) => {
-            return (
-              <article className="rounded-xl border bg-background p-4" key={provider.id}>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="font-medium">{humanize(provider.id)}</h3>
-                  <ProviderState state={provider.state} />
-                </div>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  {provider.modelCount} model{provider.modelCount === 1 ? "" : "s"} reported
-                </p>
-                <Link
-                  className="mt-3 inline-flex min-h-11 items-center text-sm font-medium text-brand underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-brand"
-                  search={{ providerId: provider.id }}
-                  to="/workspace/provider"
-                >
-                  View provider details
-                </Link>
-              </article>
-            );
-          })}
-        </div>
-      )}
+      <div className="flex flex-col gap-3">
+        <ul className="space-y-1 text-sm text-muted-foreground">
+          {managementNotes(settings.management).map((note) => (
+            <li key={note}>{note}</li>
+          ))}
+          <li>Credentials are never shown here.</li>
+        </ul>
+        {!settings.modelsSupported ? (
+          <Note role="status">
+            {settings.modelsReason || "Model providers are not available on this deployment."}
+          </Note>
+        ) : settings.providers.length === 0 ? (
+          <Note role="status">No providers are reported by this deployment yet.</Note>
+        ) : (
+          <ul className="divide-y divide-border/60 overflow-hidden rounded-lg border">
+            {settings.providers.map((provider) => (
+              <ProviderRow key={provider.id} provider={provider} />
+            ))}
+          </ul>
+        )}
+      </div>
     </SettingsCard>
+  );
+}
+
+/** A read-only provider row in the prototype's list grammar, linked to its detail page. */
+function ProviderRow({ provider }: { provider: GetRuntimeSettingsResponse["providers"][number] }) {
+  const state = providerState(provider.state);
+  return (
+    <li>
+      <Link
+        className="flex min-h-11 items-center gap-3 px-4 py-2 hover:bg-muted/40 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand"
+        search={{ providerId: provider.id }}
+        to="/workspace/provider"
+      >
+        <span aria-hidden="true" className={cn("size-2 shrink-0 rounded-full", state.dot)} />
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-medium">{humanize(provider.id)}</span>
+          <span className="block truncate text-xs text-muted-foreground tabular-nums">
+            {state.label} · {provider.modelCount} model{provider.modelCount === 1 ? "" : "s"}
+          </span>
+          {!state.ready && provider.hint && (
+            <span className="block text-xs text-muted-foreground">{provider.hint}</span>
+          )}
+          <span className="sr-only">View provider details</span>
+        </span>
+      </Link>
+    </li>
   );
 }
 
@@ -381,50 +494,52 @@ function ModelInventory({
 
   return (
     <SettingsCard title="Models">
-      <Note>
-        Visible is a personal preference stored in this browser. Default model and routing are
-        managed by the deployment.
-      </Note>
-      <dl className="mt-4 grid gap-3 sm:grid-cols-2">
-        <Fact label="Default model">Managed by deployment; not reported to Studio.</Fact>
-        <Fact label="Routing">
-          {settings.management.routingConfigurationReason || "Managed by deployment."}
-        </Fact>
-      </dl>
-      {settings.modelsSupported && settings.models.length > 0 && (
-        <div className="relative mt-4 max-w-sm">
-          <Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" />
-          <Input
-            aria-label="Filter models"
-            className="min-h-11 pl-9"
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Find a model"
-            value={search}
-          />
-        </div>
-      )}
-      {!settings.modelsSupported ? (
-        <StateCard
-          text={settings.modelsReason || "Model selection is not available on this deployment."}
-        />
-      ) : settings.models.length === 0 ? (
-        <StateCard text="No models are available yet." />
-      ) : models.length === 0 ? (
-        <StateCard text="No models match your search." />
-      ) : (
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {models.map((model) => (
-            <ModelCard
-              enabled={!modelPreferences.disabled.has(modelPreferenceId(model))}
-              key={`${model.providerId}-${model.id}`}
-              model={model}
-              onEnabledChange={(enabled) =>
-                modelPreferences.setModelEnabled(modelPreferenceId(model), enabled)
-              }
+      <div className="flex flex-col gap-4">
+        <Note>
+          Visible is a personal preference stored in this browser. Default model and routing are
+          managed by the deployment.
+        </Note>
+        <FactList>
+          <FactRow label="Default model">Managed by deployment; not reported to Studio.</FactRow>
+          <FactRow label="Routing">
+            {settings.management.routingConfigurationReason || "Managed by deployment."}
+          </FactRow>
+        </FactList>
+        {settings.modelsSupported && settings.models.length > 0 && (
+          <div className="relative max-w-sm">
+            <Search className="pointer-events-none absolute left-3 top-3.5 size-4 text-muted-foreground" />
+            <Input
+              aria-label="Filter models"
+              className="min-h-11 pl-9"
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Find a model"
+              value={search}
             />
-          ))}
-        </div>
-      )}
+          </div>
+        )}
+        {!settings.modelsSupported ? (
+          <Note role="status">
+            {settings.modelsReason || "Model selection is not available on this deployment."}
+          </Note>
+        ) : settings.models.length === 0 ? (
+          <Note role="status">No models are available yet.</Note>
+        ) : models.length === 0 ? (
+          <Note role="status">No models match your search.</Note>
+        ) : (
+          <div className="grid gap-3 min-[500px]:grid-cols-2 lg:grid-cols-3">
+            {models.map((model) => (
+              <ModelCard
+                enabled={!modelPreferences.disabled.has(modelPreferenceId(model))}
+                key={`${model.providerId}-${model.id}`}
+                model={model}
+                onEnabledChange={(enabled) =>
+                  modelPreferences.setModelEnabled(modelPreferenceId(model), enabled)
+                }
+              />
+            ))}
+          </div>
+        )}
+      </div>
     </SettingsCard>
   );
 }
@@ -439,9 +554,9 @@ function ModelCard({
   onEnabledChange: (enabled: boolean) => void;
 }) {
   return (
-    <article className="rounded-xl border bg-background p-4" title={model.id}>
+    <article className="rounded-lg border bg-background p-4" title={model.id}>
       <div className="flex items-start justify-between gap-3">
-        <h3 className="font-medium">{model.displayName}</h3>
+        <h3 className="text-sm font-medium">{model.displayName}</h3>
         <label
           className="flex min-h-11 items-center gap-2 text-xs text-muted-foreground"
           htmlFor={`visible-model-${model.providerId}-${model.id}`}
@@ -471,99 +586,6 @@ function ModelCard({
   );
 }
 
-function reported(value: string | undefined): string {
-  return value?.trim() || "Not reported";
-}
-
-/** Only the BFF's safe build and runtime projections go into copied diagnostics. */
-function supportSummary(runtime: GetRuntimeResponse, settings: GetRuntimeSettingsResponse): string {
-  return [
-    `Studio build: ${reported(runtime.studioBuildId)}`,
-    `SDK version: ${reported(runtime.sdkVersion)}`,
-    `Daemon build: ${reported(settings.buildId)}`,
-    `Daemon implementation: ${reported(settings.serverImplementation)}`,
-    `Runtime source: ${runtime.source}`,
-    `Connection: ${runtime.connection}`,
-    `Deployment: ${reported(runtime.deployment)}`,
-  ].join("\n");
-}
-
-function AboutAgent({
-  runtime,
-  settings,
-}: {
-  runtime: GetRuntimeResponse;
-  settings: GetRuntimeSettingsResponse;
-}) {
-  const [copyStatus, setCopyStatus] = useState("");
-  return (
-    <SettingsCard title="About">
-      <Note>
-        Studio is the browser client. Its build and installed SDK are reported separately from the
-        connected daemon.
-      </Note>
-      <dl className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <Fact label="Studio build">{reported(runtime.studioBuildId)}</Fact>
-        <Fact label="SDK version">{reported(runtime.sdkVersion)}</Fact>
-        <Fact label="Daemon build">{reported(settings.buildId)}</Fact>
-        <Fact label="Daemon implementation">{reported(settings.serverImplementation)}</Fact>
-        <Fact label="Runtime source">{runtime.source}</Fact>
-        <Fact label="Connection">{runtime.connection}</Fact>
-        <Fact label="Deployment">{reported(runtime.deployment)}</Fact>
-      </dl>
-      <div className="mt-4 flex flex-wrap gap-2">
-        <Button
-          className="min-h-11"
-          onClick={async () => {
-            const outcome = await writeClipboardText(supportSummary(runtime, settings));
-            setCopyStatus(
-              outcome.ok ? "Support summary copied." : "Could not copy the support summary.",
-            );
-          }}
-          size="sm"
-          type="button"
-          variant="outline"
-        >
-          <Copy aria-hidden="true" />
-          Copy support summary
-        </Button>
-        <Button asChild className="min-h-11" size="sm" variant="outline">
-          <a
-            href="https://mecatl.dev/docs/building/deployment/studio"
-            rel="noreferrer"
-            target="_blank"
-          >
-            <BookOpen aria-hidden="true" />
-            Documentation
-            <ExternalLink aria-hidden="true" className="size-3 text-muted-foreground" />
-          </a>
-        </Button>
-        <Button asChild className="min-h-11" size="sm" variant="outline">
-          <a href={supportUrl} rel="noreferrer" target="_blank">
-            <LifeBuoy aria-hidden="true" />
-            Report a problem
-            <ExternalLink aria-hidden="true" className="size-3 text-muted-foreground" />
-          </a>
-        </Button>
-        <Button asChild className="min-h-11" size="sm" variant="outline">
-          <Link to="/workspace/shortcuts">
-            <Keyboard aria-hidden="true" />
-            Keyboard shortcuts
-          </Link>
-        </Button>
-      </div>
-      {copyStatus && (
-        <p className="mt-2 text-sm" role="status">
-          {copyStatus}
-        </p>
-      )}
-      <div className="mt-2 divide-y border-t">
-        <AuthControl />
-      </div>
-    </SettingsCard>
-  );
-}
-
 function DiagnosticsSettings({
   runtime,
   settings,
@@ -574,59 +596,37 @@ function DiagnosticsSettings({
   const storage = useQuery(getStorageHealthOptions());
   return (
     <SettingsCard title="Diagnostics">
-      <dl className="grid gap-3 sm:grid-cols-2">
-        <Fact label="Runtime connection">{runtime.connection}</Fact>
-        <Fact label="Runtime source">{runtime.source}</Fact>
-        <Fact label="Daemon implementation">{settings.serverImplementation || "Not reported"}</Fact>
-        <Fact label="Daemon build">{settings.buildId || "Not reported"}</Fact>
-      </dl>
-      {storage.isPending ? (
-        <StateCard text="Loading storage diagnostics…" />
-      ) : storage.isError ? (
-        <StateCard text="Storage diagnostics could not be loaded." />
-      ) : !storage.data.supported ? (
-        <StateCard text="Storage diagnostics are not supported by this deployment." />
-      ) : (
-        <p className="mt-4 text-sm text-muted-foreground">
-          Storage health: {storage.data.available ? "Available" : "Unavailable"}.
-        </p>
-      )}
-      <div className="mt-3">
+      <div className="flex flex-col gap-3">
+        <DaemonFacts runtime={runtime} settings={settings} />
+        {storage.isPending ? (
+          <RuntimeStatusLine state={{ kind: "loading", text: "Loading storage diagnostics…" }} />
+        ) : storage.isError ? (
+          <RuntimeStatusLine
+            state={{ kind: "error", text: "Storage diagnostics could not be loaded." }}
+          />
+        ) : !storage.data.supported ? (
+          <Note role="status">Storage diagnostics are not supported by this deployment.</Note>
+        ) : (
+          <Note>Storage health: {storage.data.available ? "Available" : "Unavailable"}.</Note>
+        )}
         <Note>Logs and usage are managed by this deployment and are not available here.</Note>
       </div>
     </SettingsCard>
   );
 }
 
-function Fact({ children, label }: { children: ReactNode; label: string }) {
-  return (
-    <div className="rounded-lg border bg-background p-3">
-      <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</dt>
-      <dd className="mt-2 break-words text-sm">{children}</dd>
-    </div>
-  );
-}
-
-function ProviderState({ state }: { state: string }) {
+function providerState(state: string): { dot: string; label: string; ready: boolean } {
   const normalized = state.toLowerCase();
   if (normalized === "ok" || normalized === "available") {
-    return <Badge variant="success">Ready</Badge>;
+    return { dot: "bg-success", label: "Ready", ready: true };
   }
   if (normalized === "unauthorized") {
-    return <Badge variant="warning">Sign-in needed</Badge>;
+    return { dot: "bg-warning", label: "Sign-in needed", ready: false };
   }
   if (normalized === "unreachable") {
-    return <Badge variant="destructive">Unavailable</Badge>;
+    return { dot: "bg-destructive", label: "Unavailable", ready: false };
   }
-  return <Badge variant="muted">Not ready</Badge>;
-}
-
-function StateCard({ text }: { text: string }) {
-  return (
-    <div className="mt-4 rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">
-      {text}
-    </div>
-  );
+  return { dot: "bg-muted-foreground", label: "Not ready", ready: false };
 }
 
 function humanize(value: string): string {
