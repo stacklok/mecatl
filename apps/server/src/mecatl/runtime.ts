@@ -251,6 +251,7 @@ function copyCapabilities(capabilities: ServerCapabilities): RuntimeResponse["ca
   return {
     ...structuredClone(capabilities),
     bash: capabilities.shell === true,
+    executionTemplates: capabilities.executionTemplates === true,
     storageMigration: false,
   };
 }

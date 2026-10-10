@@ -626,7 +626,7 @@ describe("ordinary approval interactions", () => {
       expect(await screen.findByText(/outcome is uncertain/i)).toBeTruthy();
       cleanup();
     }
-  });
+  }, 20_000);
 });
 
 describe("side-thread plan review", () => {

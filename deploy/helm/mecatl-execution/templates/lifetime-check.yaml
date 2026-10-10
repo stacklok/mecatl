@@ -1,21 +1,95 @@
 {{- $root := . -}}
 {{- $name := include "mecatl-execution.fullname" . -}}
+{{- if lookup "v1" "ConfigMap" .Release.Namespace (printf "%s-profiles" $name) -}}
+{{- fail "legacy profile releases cannot be upgraded in place to execution templates; preserve retained allocations and seek an explicit migration" -}}
+{{- end -}}
 {{- $provider := lookup "apps/v1" "Deployment" .Release.Namespace $name -}}
 {{- if gt (int (dig "spec" "replicas" 0 $provider)) 0 -}}
 {{- fail "quiesce the execution provider (scale to zero and wait for its Pods to disappear) before upgrading" -}}
 {{- end -}}
-{{- $profiles := lookup "v1" "ConfigMap" .Release.Namespace (printf "%s-profiles" $name) -}}
-{{- if $profiles -}}
-{{- if not (dig "lifetime.json" "" ($profiles.data | default dict)) -}}
-{{- fail "retained execution profiles are missing lifetime.json history; automatic adoption is unsupported, recover trusted retained history before upgrading" -}}
+{{- $templates := lookup "v1" "ConfigMap" .Release.Namespace (printf "%s-templates" $name) -}}
+{{- $prune := .Values.maintenance.pruneRevisions | default dict -}}
+{{- if and $prune (not $templates) -}}
+{{- fail "template pruning requires trusted retained lifetime.json history; recover it before retrying" -}}
 {{- end -}}
-{{- if ne (dig "lifetime.json" "" ($profiles.data | default dict)) (include "mecatl-execution.lifetimeConfig" .) -}}
-{{- fail "retained execution profiles/network configuration is incompatible; preserve the original lifetime configuration" -}}
+{{- $oldProfiles := dict -}}
+{{- if $templates -}}
+{{- $history := dig "lifetime.json" "" ($templates.data | default dict) -}}
+{{- if not $history -}}
+{{- fail "retained execution templates are missing lifetime.json history; recover trusted retained history before upgrading" -}}
+{{- end -}}
+{{- $old := fromJson $history -}}
+{{- $current := include "mecatl-execution.lifetimeConfig" . | fromJson -}}
+{{- $networkOld := get $old "networkPolicy" | default dict -}}
+{{- $networkNew := get $current "networkPolicy" | default dict -}}
+{{- $oldProfiles = get $networkOld "workloadProfiles" | default dict -}}
+{{- $newProfiles := get $networkNew "workloadProfiles" | default dict -}}
+{{- if or (not (hasKey $old "definitions")) (hasKey $old "securitySecretName") (ne (toJson (omit $networkOld "workloadProfiles")) (toJson (omit $networkNew "workloadProfiles"))) -}}
+{{- fail "retained execution templates/network configuration is incompatible; preserve the original lifetime configuration" -}}
+{{- end -}}
+{{- range $id, $policy := $oldProfiles -}}
+{{- if ne (toJson $policy) (toJson (get $newProfiles $id)) -}}
+{{- fail "retained execution template network configuration is incompatible; policies for existing IDs are immutable across revisions" -}}
+{{- end -}}
+{{- end -}}
+{{- range $id, $_ := $newProfiles -}}
+{{- if not (hasKey $oldProfiles $id) -}}
+{{- if or (hasKey (get $old "definitions") $id) (not (hasKey (get $current "definitions") $id)) -}}
+{{- fail "cannot add egress to a retained or undefined template ID" -}}
+{{- end -}}
+{{- range (lookup "v1" "Pod" $root.Release.Namespace "").items -}}
+{{- if eq (dig "execution.mecatl.dev/template-id" "" (.metadata.labels | default dict)) (sha256sum $id | trunc 16) -}}
+{{- fail "new template policy matches a retained workload Pod" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if $prune -}}
+{{- if or (not $provider) (ne (int (dig "spec" "replicas" -1 $provider)) 0) (lt (int (dig "metadata" "generation" 0 $provider)) 1) (ne (int (dig "status" "observedGeneration" 0 $provider)) (int (dig "metadata" "generation" 0 $provider))) (ne (int (dig "status" "replicas" 0 $provider)) 0) (ne (int (dig "status" "readyReplicas" 0 $provider)) 0) (ne (int (dig "status" "availableReplicas" 0 $provider)) 0) -}}
+{{- fail "template pruning requires an observed, scaled-to-zero provider Deployment and retained history" -}}
+{{- end -}}
+{{- $ledger := lookup "v1" "ConfigMap" .Release.Namespace "mecatl-execution-profile-allocations" -}}
+{{- if not $ledger -}}
+{{- fail "template pruning requires the retained capacity ledger; recover it before retrying" -}}
+{{- end -}}
+{{- $_ := include "mecatl-execution.retainedMetadata" (dict "root" . "apiVersion" "v1" "kind" "ConfigMap" "name" "mecatl-execution-profile-allocations") -}}
+{{- range $key, $slots := $ledger.data | default dict -}}
+{{- if or (not (regexMatch "^profile-[a-f0-9]{32}\\.json$" $key)) (ne $slots "[]") -}}
+{{- fail "template pruning requires an empty, valid capacity ledger (including pending reservations)" -}}
+{{- end -}}
+{{- end -}}
+{{- if (lookup "execution.mecatl.dev/v1alpha1" "ExecutionEnvironment" .Release.Namespace "").items -}}
+{{- fail "template pruning requires all execution environments to be deleted" -}}
+{{- end -}}
+{{- range $kind := list "Pod" "PersistentVolumeClaim" -}}
+{{- if (lookup "v1" $kind $root.Release.Namespace "").items -}}
+{{- fail (printf "template pruning requires no Pods or PersistentVolumeClaims in the provider namespace; found %s" $kind) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- range $id, $revisions := get $old "definitions" -}}
+{{- range $revision, $execution := $revisions -}}
+{{- $next := get (get $current "definitions") $id | default dict -}}
+{{- if hasKey $next $revision -}}
+{{- if ne (toJson $execution) (toJson (get $next $revision)) -}}
+{{- fail "retained execution template definition is missing or modified; publish additive revisions without dropping historical definitions" -}}
+{{- end -}}
+{{- else if not (has $revision (get $prune $id | default list)) -}}
+{{- fail "retained execution template definition is missing or modified; publish additive revisions without dropping historical definitions" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- range $id, $revisions := $prune -}}
+{{- range $revision := $revisions -}}
+{{- if or (not (hasKey (get (get $old "definitions") $id | default dict) $revision)) (hasKey (get (get $current "definitions") $id | default dict) $revision) -}}
+{{- fail "template pruning must name exactly the removed historical definitions" -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {{/* A reserved slot can precede CR publication; no CR is not bootstrap proof. */}}
 {{- $capacity := lookup "v1" "ConfigMap" .Release.Namespace "mecatl-execution-profile-allocations" -}}
-{{- $retained := not (empty $capacity.data) -}}
+{{- $retained := or (not (empty $capacity.data)) (not (empty $prune)) -}}
 {{- range (lookup "execution.mecatl.dev/v1alpha1" "ExecutionEnvironment" .Release.Namespace "").items -}}
 {{- $retained = true -}}
 {{- end -}}
@@ -34,9 +108,9 @@
 {{- if or (not $executorAccount) (ne (dig "automountServiceAccountToken" true $executorAccount) false) (not (empty ($executorAccount.imagePullSecrets | default list))) -}}
 {{- fail (printf "retained execution allocations require ServiceAccount %s with token automount disabled and no inherited pull secrets; restore the original release-owned account before retrying" (include "mecatl-execution.executorServiceAccount" .)) -}}
 {{- end -}}
-{{- range $cm := list (printf "%s-profiles" $name) (printf "%s-security-manifest" $name) (printf "%s-security-authority" $name) "mecatl-execution-profile-allocations" -}}
+{{- range $cm := list (printf "%s-templates" $name) (printf "%s-security-manifest" $name) (printf "%s-security-authority" $name) "mecatl-execution-profile-allocations" -}}
 {{- $live := lookup "v1" "ConfigMap" $root.Release.Namespace $cm -}}
-{{- if not ($live.data | default dict) -}}
+{{- if or (not $live) (and (ne $cm "mecatl-execution-profile-allocations") (not ($live.data | default dict))) (and (eq $cm "mecatl-execution-profile-allocations") (not $prune) (not ($live.data | default dict))) -}}
 {{- fail (printf "retained execution allocations require nonempty %s; authority/capacity bootstrap is forbidden" $cm) -}}
 {{- end -}}
 {{- end -}}
@@ -45,7 +119,7 @@
 {{- fail "retained execution allocations require security authority state.json; bootstrap is forbidden" -}}
 {{- end -}}
 {{- $policies := list (printf "%s-workload-default-deny" $name) -}}
-{{- range $profile, $_ := .Values.networkPolicy.workloadProfiles -}}
+{{- range $profile, $_ := $oldProfiles -}}
 {{- $policies = append $policies (printf "%s-profile-%s" $name (sha256sum $profile | trunc 16)) -}}
 {{- end -}}
 {{- range $policy := $policies -}}
@@ -55,9 +129,9 @@
 {{- end -}}
 {{- end -}}
 {{- range (lookup "networking.k8s.io/v1" "NetworkPolicy" .Release.Namespace "").items -}}
-{{- if or (hasKey (.spec.podSelector.matchLabels | default dict) "execution.mecatl.dev/profile") (hasSuffix "-workload-default-deny" .metadata.name) -}}
-{{- if not $profiles -}}
-{{- fail "retained workload policies require the original release profiles ConfigMap" -}}
+{{- if or (hasKey (.spec.podSelector.matchLabels | default dict) "execution.mecatl.dev/template-id") (hasSuffix "-workload-default-deny" .metadata.name) -}}
+{{- if not $templates -}}
+{{- fail "retained workload policies require the original release templates ConfigMap" -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

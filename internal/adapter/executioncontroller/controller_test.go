@@ -2,6 +2,9 @@ package executioncontroller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -98,7 +101,13 @@ func TestExecutorAppliesAndValidatesProfileScheduling(t *testing.T) {
 	seconds := int64(60)
 	profile.Spec.NodeSelector = map[string]string{"node.kubernetes.io/instance-type": "worker"}
 	profile.Spec.Tolerations = []corev1.Toleration{{Key: "dedicated", Operator: corev1.TolerationOpEqual, Value: "build", Effect: corev1.TaintEffectNoSchedule}, {Key: "drain", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute, TolerationSeconds: &seconds}}
-	profiles.byName["go"] = profile
+	revision := fixtureRevision(t, profile.Spec)
+	profile.Digest = "sha256:" + revision[3:]
+	profiles.revisions["go"] = map[string]resolvedProfile{revision: profile}
+	profiles.eligibility["go"] = map[string]TemplatePolicy{revision: {}}
+	profiles.defaultRevision["go"] = revision
+	env.Object["spec"].(map[string]any)["templateRevision"] = revision
+	env.Object["spec"].(map[string]any)["templateDigest"] = profile.Digest
 	k := kubefake.NewSimpleClientset()
 	r := NewReconciler(dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env), k, "ns", profiles)
 	for range 2 {
@@ -204,7 +213,13 @@ func TestExecutorPullIdentity(t *testing.T) {
 	profiles := testProfiles().WithExecutorServiceAccount("release-mecatl-execution-executor")
 	profile, _ := profiles.get("go")
 	profile.Spec.ImagePullSecrets = []string{"registry-one", "registry.two"}
-	profiles.byName["go"] = profile
+	revision := fixtureRevision(t, profile.Spec)
+	profile.Digest = "sha256:" + revision[3:]
+	profiles.revisions["go"] = map[string]resolvedProfile{revision: profile}
+	profiles.eligibility["go"] = map[string]TemplatePolicy{revision: {}}
+	profiles.defaultRevision["go"] = revision
+	env.Object["spec"].(map[string]any)["templateRevision"] = revision
+	env.Object["spec"].(map[string]any)["templateDigest"] = profile.Digest
 	d := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
 	k := kubefake.NewSimpleClientset()
 	r := NewReconciler(d, k, "ns", profiles)
@@ -253,7 +268,7 @@ func TestExecutorPullIdentity(t *testing.T) {
 	}
 }
 
-func TestExecutorPullProfileDigestMismatchDoesNotAllocate(t *testing.T) {
+func TestExecutorPullTemplateRevisionMismatchDoesNotAllocate(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		drift string
@@ -262,13 +277,13 @@ func TestExecutorPullProfileDigestMismatchDoesNotAllocate(t *testing.T) {
 		{name: "scheduling", drift: "    nodeSelector: {node.kubernetes.io/instance-type: worker}\n    tolerations: [{key: dedicated, operator: Equal, value: build, effect: NoSchedule}]\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "profiles.yaml")
+			path := filepath.Join(t.TempDir(), "templates.yaml")
 			load := func(content string) *Profiles {
 				t.Helper()
 				if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 					t.Fatal(err)
 				}
-				profiles, err := LoadProfiles(path)
+				profiles, err := loadTemplateProfileFixture(path)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -282,7 +297,11 @@ func TestExecutorPullProfileDigestMismatchDoesNotAllocate(t *testing.T) {
 				t.Fatal("changed profile digest did not differ")
 			}
 			env := testEnvironment()
-			if err := unstructured.SetNestedField(env.Object, old.Digest, "spec", "profileDigest"); err != nil {
+			env.SetFinalizers([]string{environmentFinalizer})
+			if err := unstructured.SetNestedField(env.Object, original.defaultRevision["go"], "spec", "templateRevision"); err != nil {
+				t.Fatal(err)
+			}
+			if err := unstructured.SetNestedField(env.Object, old.Digest, "spec", "templateDigest"); err != nil {
 				t.Fatal(err)
 			}
 			d := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
@@ -291,7 +310,7 @@ func TestExecutorPullProfileDigestMismatchDoesNotAllocate(t *testing.T) {
 				t.Fatal(err)
 			}
 			got, err := d.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), env.GetName(), metav1.GetOptions{})
-			if err != nil || conditionTrue(got, "Ready") || textNested(got.Object, "status", "pod", "uid") != "" || textNested(got.Object, "spec", "profileDigest") != old.Digest {
+			if err != nil || conditionTrue(got, "Ready") || textNested(got.Object, "status", "pod", "uid") != "" || textNested(got.Object, "spec", "templateDigest") != old.Digest || textNested(got.Object, "spec", "templateRevision") != original.defaultRevision["go"] {
 				t.Fatalf("old profile was adopted or changed: %v: %v", got, err)
 			}
 			pods, err := k.CoreV1().Pods("ns").List(t.Context(), metav1.ListOptions{})
@@ -663,16 +682,55 @@ func profileResourceClient() *kubefake.Clientset {
 	)
 }
 
+func TestRevokedTemplateStopsExecutorWithoutDeletingRetainedPVC(t *testing.T) {
+	env := testEnvironment()
+	env.SetFinalizers([]string{environmentFinalizer})
+	registry := testProfiles()
+	registry.eligibility["go"][registry.defaultRevision["go"]] = TemplatePolicy{Revoked: true}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "executor-test", Namespace: "ns", UID: types.UID("pod-uid"), OwnerReferences: []metav1.OwnerReference{{APIVersion: env.GetAPIVersion(), Kind: env.GetKind(), Name: env.GetName(), UID: env.GetUID(), Controller: new(true)}}}}
+	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "workspace-test", Namespace: "ns"}}
+	if err := unstructured.SetNestedField(env.Object, "pod-uid", "status", "pod", "uid"); err != nil {
+		t.Fatal(err)
+	}
+	if err := unstructured.SetNestedField(env.Object, pod.Name, "status", "pod", "name"); err != nil {
+		t.Fatal(err)
+	}
+	d := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+	k := kubefake.NewSimpleClientset(pod, pvc)
+	r := NewReconciler(d, k, "ns", registry)
+	if err := r.Reconcile(t.Context(), env.GetName()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := k.CoreV1().Pods("ns").Get(t.Context(), pod.Name, metav1.GetOptions{}); err == nil {
+		t.Fatal("revoked executor Pod was not stopped")
+	}
+	if _, err := k.CoreV1().PersistentVolumeClaims("ns").Get(t.Context(), pvc.Name, metav1.GetOptions{}); err != nil {
+		t.Fatalf("retained workspace was removed: %v", err)
+	}
+	got, err := d.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), env.GetName(), metav1.GetOptions{})
+	if err != nil || conditionTrue(got, "Ready") {
+		t.Fatalf("revoked environment remained ready: %v, %v", got, err)
+	}
+}
+
 func testProfiles() *Profiles {
 	spec := ProfileSpec{Image: "example@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", StorageClass: "standard", StorageSize: "1Gi", CPURequest: "100m", MemoryRequest: "64Mi", CPULimit: "1", MemoryLimit: "1Gi", EphemeralStorageRequest: "64Mi", EphemeralStorageLimit: "1Gi", TmpSizeLimit: "256Mi", RuntimeClassName: "sandboxed", MaxFileBytes: 1024, MaxCommandBytes: 1024, MaxCommandDuration: time.Minute, MaxEnvironments: 100}
 	profile, err := validateProfile("go", spec)
 	if err != nil {
 		panic(err)
 	}
+	canonical, err := json.Marshal(spec)
+	if err != nil {
+		panic(err)
+	}
+	sum := sha256.Sum256(append([]byte("mecatl/execution-template/v1\x00"), canonical...))
+	revision := "v1-" + hex.EncodeToString(sum[:])
 	profile.Spec = spec
-	profile.Digest = "sha256:profile"
-	return &Profiles{byName: map[string]resolvedProfile{"go": profile}, executorServiceAccount: "test-mecatl-execution-executor"}
+	profile.Digest = "sha256:" + hex.EncodeToString(sum[:])
+	return &Profiles{byName: map[string]resolvedProfile{"go": profile}, defaultRevision: map[string]string{"go": revision}, revisions: map[string]map[string]resolvedProfile{"go": {revision: profile}}, eligibility: map[string]map[string]TemplatePolicy{"go": {revision: {}}}, executorServiceAccount: "test-mecatl-execution-executor"}
 }
 func testEnvironment() *unstructured.Unstructured {
-	return &unstructured.Unstructured{Object: map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "exec-test", "namespace": "ns", "uid": string(types.UID("uid"))}, "spec": map[string]any{"schemaVersion": int64(2), "profile": "go", "profileDigest": "sha256:profile", "revision": "rev", "desired": "Active"}, "status": map[string]any{"schemaVersion": int64(2), "epoch": int64(1), "references": []any{}, "fenceState": "Healthy"}}}
+	registry := testProfiles()
+	revision := registry.defaultRevision["go"]
+	return &unstructured.Unstructured{Object: map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "exec-test", "namespace": "ns", "uid": string(types.UID("uid"))}, "spec": map[string]any{"schemaVersion": int64(2), "templateID": "go", "templateRevision": revision, "templateDigest": registry.byName["go"].Digest, "revision": "rev", "desired": "Active"}, "status": map[string]any{"schemaVersion": int64(2), "epoch": int64(1), "references": []any{}, "fenceState": "Healthy"}}}
 }

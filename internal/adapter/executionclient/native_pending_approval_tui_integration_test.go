@@ -197,7 +197,8 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 			defer releaseCommand()
 			executor := &recordingExecutor{executed: make(chan executionenv.ExecutorRequest, 1), release: release}
 			controllerStore := executioncontroller.NewStore(dyn, "ns", profiles, executor)
-			profile, err := controllerStore.ValidateProfile(ctx, "coding")
+			revision := profiles.DefaultRevision("coding")
+			profile, err := controllerStore.ValidateTemplate(ctx, "coding", revision)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -209,7 +210,7 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 			ref := session.EnvironmentRef{Kind: session.EnvironmentKind("kubernetes"), ID: "env-" + tc.name, Revision: "rev-1"}
 			envObj := &unstructured.Unstructured{Object: map[string]any{
 				"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": ref.ID, "namespace": "ns"},
-				"spec":   map[string]any{"schemaVersion": int64(2), "revision": ref.Revision, "ownerHash": hex.EncodeToString(ownerSum[:]), "ownerIssuer": owner.Issuer, "ownerSubject": owner.Subject, "clientHash": hex.EncodeToString(clientSum[:]), "bindingID": string(sessionID), "profile": "coding", "profileDigest": profile.Digest, "desired": "Active"},
+				"spec":   map[string]any{"schemaVersion": int64(2), "revision": ref.Revision, "ownerHash": hex.EncodeToString(ownerSum[:]), "ownerIssuer": owner.Issuer, "ownerSubject": owner.Subject, "clientHash": hex.EncodeToString(clientSum[:]), "bindingID": string(sessionID), "templateID": "coding", "templateRevision": revision, "templateDigest": profile.Digest, "desired": "Active"},
 				"status": map[string]any{"schemaVersion": int64(2), "epoch": int64(1), "grantGeneration": int64(1), "fenceState": "Healthy", "pod": map[string]any{"name": "executor-pod"}, "references": []any{map[string]any{"bindingID": string(sessionID), "state": "Published", "operationID": "seed", "createdAt": now.Format(time.RFC3339Nano)}}, "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}},
 			}}
 			if _, err := dyn.Resource(executioncontroller.ExecutionEnvironmentGVR).Namespace("ns").Create(ctx, envObj, metav1.CreateOptions{}); err != nil {
@@ -222,7 +223,7 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer executionClient.Close()
-			provider, err := NewProvider(executionClient, "coding")
+			provider, err := NewTemplateProvider(executionClient, "coding", revision)
 			if err != nil {
 				t.Fatal(err)
 			}

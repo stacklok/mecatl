@@ -24,6 +24,7 @@ type ownershipPlacementProvider struct {
 	detaches    atomic.Int32
 	rollbacks   atomic.Int32
 	rollbackErr error
+	commitErr   error
 	afterBind   func(context.Context, PlacementBindRequest)
 }
 
@@ -39,6 +40,7 @@ func (p *ownershipPlacementProvider) binding(reattach bool) PlacementBinding {
 		GovernanceRoot: "/owned",
 		Close:          func() error { p.detaches.Add(1); return nil },
 		Rollback:       func() error { p.rollbacks.Add(1); return p.rollbackErr },
+		Commit:         func(context.Context) error { return p.commitErr },
 	}
 }
 
@@ -48,6 +50,10 @@ func (p *ownershipPlacementProvider) Bind(ctx context.Context, req PlacementBind
 		p.afterBind(ctx, req)
 	}
 	return binding, nil
+}
+
+func (*ownershipPlacementProvider) ListExecutionTemplates(context.Context, *session.Principal) ([]ExecutionTemplateInfo, string, error) {
+	return []ExecutionTemplateInfo{{ID: "coding", Revision: "v1-" + strings.Repeat("a", 64), DisplayToken: "v1-" + strings.Repeat("b", 64)}}, "inventory", nil
 }
 
 func (p *ownershipPlacementProvider) Reattach(_ context.Context, req PlacementReattachRequest) (PlacementBinding, error) {
@@ -335,6 +341,33 @@ func TestRollbackFailureRetainsExplicitRecoveryDiagnostic(t *testing.T) {
 	}
 	if !strings.Contains(diag.text, "exact placement retained for recovery") {
 		t.Fatalf("diagnostics = %q, want retryable recovery record", diag.text)
+	}
+}
+
+func TestSelectedTemplateAmbiguousCommitNeverRollsBackPublishedPlacement(t *testing.T) {
+	provider := &ownershipPlacementProvider{ref: session.EnvironmentRef{Kind: "microvm", ID: "published", Revision: "1"}, commitErr: errors.New("commit response lost")}
+	store := memstore.New()
+	svc, err := NewService(Config{
+		Engine: repairEngine(), Store: store, PlacementProvider: provider, PlacementScope: "test", SharedEngineRoot: "/owned", OwnershipEnforced: true,
+		ExecutionTemplateAllowed: func(*session.Principal, string, string) bool { return true },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(svc.Close)
+	ctx := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser})
+	selection := ExecutionSelection{Kind: PlacementSelectorTemplate, ID: "coding", Revision: "v1-" + strings.Repeat("a", 64)}
+	created, err := svc.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{}, ProviderSelector{}, ProfileDefault, WithSessionID("ambiguous"), WithExecutionSelection(selection))
+	if !errors.Is(err, ErrInternal) || created == nil {
+		t.Fatalf("create = %v, %v", created, err)
+	}
+	persisted, err := store.Load(ctx, created.ID)
+	if err != nil || persisted.EnvironmentRef != provider.ref || persisted.ExecutionTemplateRevision != selection.Revision {
+		t.Fatalf("published session lost: %v, %v", persisted, err)
+	}
+	svc.CloseSession(created.ID)
+	if provider.rollbacks.Load() != 0 || provider.detaches.Load() != 1 {
+		t.Fatalf("published placement rollbacks=%d detaches=%d", provider.rollbacks.Load(), provider.detaches.Load())
 	}
 }
 

@@ -401,7 +401,7 @@ func TestDebugSessionConverseAdvertisesAndExecutesInspectSession(t *testing.T) {
 				t.Fatalf("create target: %v", err)
 			}
 			debug, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{
-				Profile: string(server.ProfileNoFS), ProviderId: tc.provider, ModelId: "gpt-5.6-sol", DebugTargetSessionId: target.GetSessionId(),
+				Execution: &mecatlv1.ExecutionSelection{None: &mecatlv1.ExecutionNone{}}, ProviderId: tc.provider, ModelId: "gpt-5.6-sol", DebugTargetSessionId: target.GetSessionId(),
 			})
 			if err != nil {
 				t.Fatalf("create debug session: %v", err)

@@ -119,11 +119,13 @@
     "execution": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled", "endpoint", "profile", "tlsSecret", "caKey", "certKey", "keyKey"],
+      "required": ["enabled", "endpoint", "templateID", "templateRevision", "allowedSubjects", "tlsSecret", "caKey", "certKey", "keyKey"],
       "properties": {
         "enabled": {"type": "boolean"},
         "endpoint": {"type": "string", "anyOf": [{"const": ""}, {"pattern": "^(?:[A-Za-z0-9.-]+|\\[[0-9A-Fa-f:]+\\]):[0-9]+$"}]},
-        "profile": {"type": "string"},
+        "templateID": {"type": "string", "pattern": "^$|^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$"},
+        "templateRevision": {"type": "string", "pattern": "^$|^v1-[0-9a-f]{64}$"},
+        "allowedSubjects": {"type": "array", "uniqueItems": true, "maxItems": 64, "items": {"type": "string", "minLength": 1, "maxLength": 253, "pattern": "^[A-Za-z0-9._:@/-]+$"}},
         "tlsSecret": {"type": "string"},
         "caKey": {"type": "string", "minLength": 1},
         "certKey": {"type": "string", "minLength": 1},
@@ -390,7 +392,7 @@
       "then": {
         "properties": {
           "workspace": {"maxLength": 0},
-          "execution": {"properties": {"endpoint": {"minLength": 1}, "profile": {"minLength": 1}, "tlsSecret": {"minLength": 1}}},
+          "execution": {"properties": {"endpoint": {"minLength": 1}, "templateID": {"minLength": 1}, "templateRevision": {"minLength": 1}, "allowedSubjects": {"minItems": 1}, "tlsSecret": {"minLength": 1}}},
           "redis": {"properties": {"filesystem": {"properties": {"enabled": {"const": false}}}}},
           "oidc": {"properties": {"enabled": {"const": true}}}
         }

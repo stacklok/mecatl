@@ -54,7 +54,7 @@ func lifecycleAdminEnvironment(schema int64, refs []any) *unstructured.Unstructu
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment",
 		"metadata": map[string]any{"name": "env", "namespace": "ns", "uid": "env-uid", "finalizers": []any{environmentFinalizer}},
-		"spec":     map[string]any{"schemaVersion": schema, "revision": "rev", "ownerHash": "owner", "clientHash": hashText("client"), "profile": "go", "profileDigest": "sha256:profile", "desired": "Active"},
+		"spec":     map[string]any{"schemaVersion": schema, "revision": "rev", "ownerHash": "owner", "clientHash": hashText("client"), "templateID": "go", "templateRevision": testProfiles().defaultRevision["go"], "templateDigest": testProfiles().byName["go"].Digest, "desired": "Active"},
 		"status": map[string]any{"schemaVersion": schema, "epoch": int64(4), "grantGeneration": int64(1), "fenceState": fenceHealthy, "references": refs,
 			"pvc": map[string]any{"name": "workspace", "uid": "pvc-uid"}, "pod": map[string]any{"name": "executor", "uid": "pod-uid"},
 			"conditions": []any{map[string]any{"type": "Ready", "status": "True"}}},
@@ -65,7 +65,7 @@ func terminalExecutor() *corev1.Pod {
 	profile, _ := testProfiles().get("go")
 	noPriv, nonroot, ro := false, true, true
 	uid := int64(65532)
-	return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "executor", Namespace: "ns", UID: types.UID("pod-uid"), Finalizers: []string{executorFinalizer}, Labels: map[string]string{"execution.mecatl.dev/environment": "env", "execution.mecatl.dev/profile": hashText("go")[:16]}, OwnerReferences: []metav1.OwnerReference{{APIVersion: "execution.mecatl.dev/v1alpha1", Kind: "ExecutionEnvironment", Name: "env", UID: types.UID("env-uid"), Controller: &nonroot}}}, Spec: corev1.PodSpec{ServiceAccountName: "test-mecatl-execution-executor", AutomountServiceAccountToken: &noPriv, RuntimeClassName: &profile.Spec.RuntimeClassName, RestartPolicy: corev1.RestartPolicyNever, SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &nonroot, RunAsUser: &uid, RunAsGroup: &uid, FSGroup: &uid, SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}}, Containers: []corev1.Container{{Name: "executor", Image: profile.Spec.Image, Command: []string{"/bin/sh", "-c", "trap : TERM INT; sleep infinity & wait"}, SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &noPriv, ReadOnlyRootFilesystem: &ro, RunAsNonRoot: &nonroot, RunAsUser: &uid, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}}, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: profile.CPURequest, corev1.ResourceMemory: profile.MemoryRequest, corev1.ResourceEphemeralStorage: profile.EphemeralStorageRequest}, Limits: corev1.ResourceList{corev1.ResourceCPU: profile.CPULimit, corev1.ResourceMemory: profile.MemoryLimit, corev1.ResourceEphemeralStorage: profile.EphemeralStorageLimit}}, VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "tmp", MountPath: "/tmp"}}}}, Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "workspace"}}}, {Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: &profile.TmpSizeLimit}}}}}, Status: corev1.PodStatus{Phase: corev1.PodFailed, ContainerStatuses: []corev1.ContainerStatus{{Name: "executor", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 137}}}}}}
+	return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "executor", Namespace: "ns", UID: types.UID("pod-uid"), Finalizers: []string{executorFinalizer}, Labels: map[string]string{"execution.mecatl.dev/environment": "env", "execution.mecatl.dev/template-id": hashText("go")[:16]}, OwnerReferences: []metav1.OwnerReference{{APIVersion: "execution.mecatl.dev/v1alpha1", Kind: "ExecutionEnvironment", Name: "env", UID: types.UID("env-uid"), Controller: &nonroot}}}, Spec: corev1.PodSpec{ServiceAccountName: "test-mecatl-execution-executor", AutomountServiceAccountToken: &noPriv, RuntimeClassName: &profile.Spec.RuntimeClassName, RestartPolicy: corev1.RestartPolicyNever, SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &nonroot, RunAsUser: &uid, RunAsGroup: &uid, FSGroup: &uid, SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}}, Containers: []corev1.Container{{Name: "executor", Image: profile.Spec.Image, Command: []string{"/bin/sh", "-c", "trap : TERM INT; sleep infinity & wait"}, SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &noPriv, ReadOnlyRootFilesystem: &ro, RunAsNonRoot: &nonroot, RunAsUser: &uid, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}}, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: profile.CPURequest, corev1.ResourceMemory: profile.MemoryRequest, corev1.ResourceEphemeralStorage: profile.EphemeralStorageRequest}, Limits: corev1.ResourceList{corev1.ResourceCPU: profile.CPULimit, corev1.ResourceMemory: profile.MemoryLimit, corev1.ResourceEphemeralStorage: profile.EphemeralStorageLimit}}, VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "tmp", MountPath: "/tmp"}}}}, Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "workspace"}}}, {Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: &profile.TmpSizeLimit}}}}}, Status: corev1.PodStatus{Phase: corev1.PodFailed, ContainerStatuses: []corev1.ContainerStatus{{Name: "executor", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 137}}}}}}
 }
 
 func retainedPVC() *corev1.PersistentVolumeClaim {
@@ -243,7 +243,7 @@ func TestCompletedReplacementReplayRemainsIdempotentAfterRetirement(t *testing.T
 }
 
 func TestAdmittedRetireAndDeleteIgnoreLaterProfileDrift(t *testing.T) {
-	for _, mode := range []string{"removed", "changed"} {
+	for _, mode := range []string{"removed", "revoked"} {
 		t.Run(mode, func(t *testing.T) {
 			env := lifecycleAdminEnvironment(2, []any{})
 			pod, pvc := terminalExecutor(), retainedPVC()
@@ -266,11 +266,11 @@ func TestAdmittedRetireAndDeleteIgnoreLaterProfileDrift(t *testing.T) {
 			if err := store.RetireExact(t.Context(), q); err != nil {
 				t.Fatal(err)
 			}
-			drifted := &Profiles{byName: map[string]resolvedProfile{}}
-			if mode == "changed" {
-				profile, _ := testProfiles().get("go")
-				profile.Digest = "sha256:changed"
-				drifted.byName["go"] = profile
+			drifted := testProfiles()
+			if mode == "removed" {
+				delete(drifted.revisions, "go")
+			} else {
+				drifted.eligibility["go"][drifted.defaultRevision["go"]] = TemplatePolicy{Revoked: true}
 			}
 			r := NewReconciler(dynamicClient, kube, "ns", drifted)
 			t.Cleanup(r.queue.ShutDown)
@@ -320,7 +320,7 @@ func TestAdmittedRetireAndDeleteIgnoreLaterProfileDrift(t *testing.T) {
 }
 
 func TestProfileDriftBlocksEveryReplacementMutation(t *testing.T) {
-	for _, mode := range []string{"removed", "changed"} {
+	for _, mode := range []string{"removed", "revoked"} {
 		for _, phase := range []string{"Quiescing", "WaitingForTermination", "RemovingPodFinalizer", "WaitingForPodDeletion", "CreatingReplacement"} {
 			t.Run(mode+"/"+phase, func(t *testing.T) {
 				env := lifecycleAdminEnvironment(2, []any{})
@@ -338,11 +338,11 @@ func TestProfileDriftBlocksEveryReplacementMutation(t *testing.T) {
 				}
 				dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
 				kube := kubefake.NewSimpleClientset(objects...)
-				profiles := &Profiles{byName: map[string]resolvedProfile{}}
-				if mode == "changed" {
-					profile, _ := testProfiles().get("go")
-					profile.Digest = "sha256:changed"
-					profiles.byName["go"] = profile
+				profiles := testProfiles()
+				if mode == "removed" {
+					delete(profiles.revisions, "go")
+				} else {
+					profiles.eligibility["go"][profiles.defaultRevision["go"]] = TemplatePolicy{Revoked: true}
 				}
 				r := NewReconciler(dynamicClient, kube, "ns", profiles)
 				t.Cleanup(r.queue.ShutDown)

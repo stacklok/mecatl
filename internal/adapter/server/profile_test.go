@@ -68,7 +68,7 @@ func TestGRPCCreateSessionProfileRoundTrip(t *testing.T) {
 	client, cleanup := dialGRPC(t, svc)
 	defer cleanup()
 
-	resp, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{Profile: "no-fs"})
+	resp, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{Execution: &mecatlv1.ExecutionSelection{None: &mecatlv1.ExecutionNone{}}})
 	if err != nil {
 		t.Fatalf("CreateSession(no-fs, empty workspace): %v", err)
 	}
@@ -105,7 +105,7 @@ func TestGRPCCreateSessionProfileValidation(t *testing.T) {
 		req  *mecatlv1.CreateSessionRequest
 		want string
 	}{
-		{"unknown profile rejected", &mecatlv1.CreateSessionRequest{Profile: "ram-only"}, "unknown session profile"},
+		{"unknown execution variant rejected", &mecatlv1.CreateSessionRequest{Execution: &mecatlv1.ExecutionSelection{}}, "execution must select"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -147,7 +147,7 @@ func TestHTTPCreateSessionProfileRoundTrip(t *testing.T) {
 		return resp
 	}
 
-	if resp := post(`{"profile":"no-fs"}`); resp.StatusCode != http.StatusCreated {
+	if resp := post(`{"execution":{"none":{}}}`); resp.StatusCode != http.StatusCreated {
 		t.Fatalf("no-fs + empty workspace = %d, want 201", resp.StatusCode)
 	}
 	if got := gotProfile.Load(); got != server.ProfileNoFS {

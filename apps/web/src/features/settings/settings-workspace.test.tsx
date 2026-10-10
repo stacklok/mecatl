@@ -73,6 +73,7 @@ function runtime(overrides: Partial<GetRuntimeResponse> = {}): GetRuntimeRespons
       audio: false,
       bash: true,
       debugMcp: false,
+      executionTemplates: false,
       image: true,
       learnedSkills: true,
       learningProposals: true,

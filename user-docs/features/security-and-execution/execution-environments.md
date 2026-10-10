@@ -10,12 +10,12 @@ description:
 # Execution environments
 
 An execution environment keeps a session's file operations and shell commands in
-one workspace. Choose the default profile for workspace tasks or `no-fs` for
-sessions that need no local file access.
+one workspace. Choose the deployment default, no filesystem, or an exact eligible
+operator-owned execution template ID and revision.
 
 ## Availability
 
-The default profile is available in `mecated`, `mecak8s`, `mecatui`'s embedded
+The deployment default is available in `mecated`, `mecak8s`, `mecatui`'s embedded
 server, and engine embeddings. A local deployment can set `microvm-local` as
 that default so filesystem and shell tools run in a repository-scoped VM. Linux
 amd64 with KVM is the qualified path. An experimental Darwin arm64 path exists
@@ -25,8 +25,21 @@ released support. See
 [Local microVM environments](/operating/microvm-environments.md) for platform
 and artifact requirements.
 
-A session can instead select the `no-fs` profile for research, coordination, or
-remote deployments that must not expose a local filesystem.
+A session can instead select `execution.none` for research, coordination, or
+remote deployments that must not expose a local filesystem. When advertised by
+the server, `execution.template` pins an eligible operator-approved ID and
+revision; catalog listing does not reserve capacity and selection is rechecked
+on creation. Catalog rows expose `declaredExecutionFiles` and
+`declaredBuiltInShell` in the SDK and Studio (`declared_execution_files` and
+`declared_built_in_shell` on HTTP/gRPC). Studio and the TUI label these as
+**declared** affordances: they neither reserve capacity nor grant tools. The
+bound session reports effective filesystem and built-in Shell capabilities,
+which can be narrower because of host tooling or session authority.
+
+If creation rejects a stale revision or unavailable capacity, Studio keeps the
+draft and exact selection. Use **Refresh templates** or choose another revision;
+no deployment default is substituted. In the TUI, close the picker and reopen
+`/execution` to refresh before retrying.
 
 ## Default workspace
 
@@ -42,24 +55,23 @@ A new run or process may require another `Read` before `Edit` or an
 existing-file `Write` because the version record belongs to the live
 environment. This fail-safe check does not mean file data was lost.
 
-## The no-filesystem profile
+## No-filesystem execution
 
-Create a no-filesystem session by setting `profile: "no-fs"`:
+Create a no-filesystem session by setting `execution.none`:
 
 ```sh
 curl -s -X POST http://127.0.0.1:8081/v1/sessions \
-  -d '{"profile":"no-fs"}'
+  -d '{"execution":{"none":{}}}'
 ```
 
-The create request has no `workspace` field. The server binds `no-fs` to its
-filesystem-free placement and rejects every other nonempty profile value. A
-no-FS catalog removes `Read`, `ListDir`, `Write`, `Edit`, `Copy`, `Move`,
-`Remove`, `Grep`, `Glob`, `Shell`, `ShellStatus`, `Parallel`, and `SkillDraft`.
-It retains web tools, memory, MCP tools, skills, `Subagent`, and `Team`;
-children use the same file-less tool set and cannot create a shell or fork a
-workspace.
+Omitting `execution` binds the deployment default. The server rejects invalid
+selections rather than falling back to the default. An explicit no-FS catalog
+removes `Read`, `ListDir`, `Write`, `Edit`, `Copy`, `Move`, `Remove`, `Grep`,
+`Glob`, `Shell`, `ShellStatus`, `Parallel`, and `SkillDraft`. It retains web
+tools, memory, MCP tools, skills, `Subagent`, and `Team`; children use the same
+file-less tool set and cannot create a shell or fork a workspace.
 
-The profile is fixed at session creation. The model cannot switch it during a
+The selection is fixed at session creation. The model cannot switch it during a
 run. See [Core tools](/features/sessions/tools.md) for the complete catalog.
 
 ## Child environments
@@ -84,8 +96,11 @@ removed before a command runs.
 
 ## Persistence and reattachment
 
-The environment identity is persisted with a session snapshot. When a session
-resumes, Mecatl reattaches that exact identity through the deployment's placement
+The environment identity and creation-time, host-observed execution affordances
+are persisted with a session snapshot. Session reads, renames, and mode changes
+report those bound affordances (intersected with session authority) even while the
+executor is offline; this does not grant permission to execute. When a session
+resumes, Mecatl reattaches the exact identity through the deployment's placement
 provider. If the provider cannot reattach it or returns a different environment,
 the run fails instead of falling back to a local workspace.
 
@@ -155,31 +170,15 @@ objects and their workspace data are not automatically upgraded, reset, or delet
 
 ### Production security material
 
-The production chart requires one projected Secret containing the TLS identity,
-client CA bundle, and Ed25519 grant keys, plus `provider.securityManifest`. The
-chart does not generate keys or certificates. The manifest is strict JSON with
-this shape:
+The production chart projects platform-managed provider TLS identity and client
+CA files from operator-owned Secrets. It does not mint certificates or issue
+signed grants. The separately published `provider.securityManifest` contains
+client authorization policy and names the TLS files:
 
 ```json
 {
   "version": 1,
   "generation": 42,
-  "issuer": "https://execution.example.com",
-  "audience": "mecatl-execution",
-  "activeKeyID": "k1",
-  "grantTTL": "1m",
-  "clockSkew": "5s",
-  "keys": [
-    {
-      "id": "k1",
-      "version": 1,
-      "file": "grant-k1.pem",
-      "publicKeySHA256": "0000000000000000000000000000000000000000000000000000000000000000",
-      "activateAt": "2027-01-01T00:00:00Z",
-      "verifyUntil": "2027-01-02T00:00:00Z",
-      "state": "active"
-    }
-  ],
   "tls": {
     "certificateFile": "tls.crt",
     "privateKeyFile": "tls.key",
@@ -189,7 +188,8 @@ this shape:
     {
       "uri": "spiffe://cluster.example.com/ns/mecatl/sa/mecak8s",
       "mayAttestOwner": true,
-      "administrator": false
+      "administrator": false,
+      "executionTemplates": ["coding"]
     },
     {
       "uri": "spiffe://cluster.example.com/ns/mecatl/sa/execution-admin",
@@ -201,10 +201,9 @@ this shape:
 }
 ```
 
-The all-zero fingerprint and 2027 dates are non-secret example values. Replace
-the fingerprint with the lowercase hexadecimal SHA-256 hash of the raw 32-byte
-Ed25519 public key, not PEM text or DER encoding, and use a reviewed active
-window.
+The provider checks the original peer certificate and current client policy at
+admission, renewal, and completion. A policy change increments `generation`;
+TLS certificate or trust renewal is independent of that generation.
 
 ### Administrator scope
 
@@ -225,39 +224,26 @@ a creator does. Follow the
 [administrative runbook](/operating/mecak8s/execution-provider-lifecycle.md#run-an-administrative-lifecycle-operation)
 for quiesced upgrades and scope removal.
 
-### Authority rotation and readiness
+### Policy rotation and readiness
 
-Use only basename file names. The projected Secret keys in this example are
-`grant-k1.pem`, `tls.crt`, `tls.key`, and `clients.pem`; an external secret
-manager owns their bytes. Kubernetes projected-volume `..data` symlinks are
-supported, but paths escaping the mounted directory are rejected. Keep every
-referenced filename immutable and use a new name for changed signing, TLS, or CA
-material. Stage those files before publishing a higher-generation manifest and
-retain the overlap files. Secret and ConfigMap projections are independent; see
-the
-[authority rotation procedure](/operating/mecak8s/execution-provider-lifecycle.md#rotate-execution-provider-authority)
-for publication, verification, and recovery from mixed-material digest drift.
-Increase `generation` for every authority change. Key IDs and `(id, version)`
-fingerprints cannot be reused; the provider persists a bounded high-water ledger
-in its authority ConfigMap. Keep retired keys as `verify-only` until all grants
-expire, then mark them `revoked`. Invalid, incomplete, rolled-back, or newly
-expired material makes readiness fail and denies new RPC authorization until
-corrected. The provider re-verifies the peer certificate and URI policy against
-the current client CA on every RPC, including RPCs on an existing HTTP/2
-connection. Profile-resource or controller-cache startup failures terminate the
-provider with that bounded reason class before it accepts traffic. A failed
-`/ready` response reports `security-authority-or-expiry`. Inspect provider logs
-and the named RuntimeClass, StorageClass, and authority ConfigMap metadata; the
-endpoint never returns key or certificate contents.
+An external secret manager owns `tls.crt`, `tls.key`, and `clients.pem` (the
+provider's projected TLS identity and client CA bundle). Kubernetes projected
+`..data` symlinks are supported, but paths escaping the mounted directory are
+rejected. The provider reloads renewed valid TLS material independently of the
+client-policy manifest. For client-policy changes, publish a higher-generation
+manifest and verify provider readiness. A stale replica denies requests rather
+than using a rolled-back policy. TLS trust withdrawal or certificate expiry
+aborts affected in-flight operations; old RPCs drain only while their original
+peer identity remains authorized. See the
+[policy and TLS rotation procedure](/operating/mecak8s/execution-provider-lifecycle.md#rotate-execution-provider-authority).
 
-### Grant revocation
+### Revocation
 
 `RevokeEnvironment` is an administrator-only, exact-reference CAS. Supply the
-current positive grant generation; success increments it without changing the
-execution epoch. Old grants then cannot authorize another operation or renewal.
-An operation already accepted may still finish and clean up, so revocation is
-not termination proof and a new run needs a fresh claim after the old claim is
-released or fenced.
+current positive `grant_generation` (the wire name for the durable revocation
+fence); success increments it without changing the execution epoch. Old operations then cannot renew or authorize more work.
+Revocation is not executor termination proof; a new run needs a fresh claim
+after the old claim is released or fenced.
 
 ### Network and resource limits
 

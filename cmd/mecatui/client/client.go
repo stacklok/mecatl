@@ -350,7 +350,7 @@ func (c *Client) CreateDebugSession(ctx context.Context, targetID string, mode m
 
 func (c *Client) createDebugSession(ctx context.Context, resolvedTarget string, mode mecatlv1.PermissionMode, sel ModelSelection, debugMCP ...string) (string, string, Capabilities, ResolvedModel, error) {
 	id, caps, resolved, err := c.createSession(ctx, &mecatlv1.CreateSessionRequest{
-		Profile:              "no-fs",
+		Execution:            &mecatlv1.ExecutionSelection{None: &mecatlv1.ExecutionNone{}},
 		Mode:                 mode,
 		ProviderId:           sel.ProviderID,
 		ModelId:              sel.ModelID,

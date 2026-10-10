@@ -287,6 +287,7 @@ export type GetRuntimeResponses = {
             audio: boolean;
             bash: boolean;
             debugMcp: boolean;
+            executionTemplates: boolean;
             image: boolean;
             learnedSkills: boolean;
             learningProposals: boolean;
@@ -412,13 +413,22 @@ export type ListSessionsResponse = ListSessionsResponses[keyof ListSessionsRespo
 export type CreateSessionData = {
     body: {
         debugTargetSessionId?: string;
+        execution?: {
+            none: {
+                [key: string]: never;
+            };
+        } | {
+            template: {
+                id: string;
+                revision: string;
+            };
+        };
         mode?: 'default' | 'plan' | 'acceptEdits';
         model?: {
             id: string;
             providerId: string;
         };
         reasoningEffort?: 'default' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
-        toolAccess?: 'all' | 'noFilesystem';
     };
     path?: never;
     query?: never;
@@ -426,6 +436,17 @@ export type CreateSessionData = {
 };
 
 export type CreateSessionErrors = {
+    /**
+     * The request could not be completed.
+     */
+    409: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
     /**
      * The request could not be completed.
      */
@@ -462,6 +483,54 @@ export type CreateSessionResponses = {
 };
 
 export type CreateSessionResponse = CreateSessionResponses[keyof CreateSessionResponses];
+
+export type ListExecutionTemplatesData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/execution-templates';
+};
+
+export type ListExecutionTemplatesErrors = {
+    /**
+     * The Mecatl runtime is unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type ListExecutionTemplatesError = ListExecutionTemplatesErrors[keyof ListExecutionTemplatesErrors];
+
+export type ListExecutionTemplatesResponses = {
+    /**
+     * Eligible execution templates for this caller.
+     */
+    200: {
+        inventoryRevision: string;
+        items: Array<{
+            template: {
+                id: string;
+                revision: string;
+            };
+            name: string;
+            description: string;
+            displayToken: string;
+            extensions: {
+                [key: string]: string;
+            };
+            declaredExecutionFiles: boolean;
+            declaredBuiltInShell: boolean;
+        }>;
+    };
+};
+
+export type ListExecutionTemplatesResponse = ListExecutionTemplatesResponses[keyof ListExecutionTemplatesResponses];
 
 export type GetSessionTranscriptData = {
     body?: never;
@@ -625,6 +694,9 @@ export type GetSessionDetailResponses = {
     200: {
         capabilities: {
             image: boolean;
+            audio: boolean;
+            executionFiles: boolean;
+            builtInShell: boolean;
             manualCompaction: boolean;
             modelSelection: boolean;
         };

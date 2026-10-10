@@ -49,6 +49,7 @@ const completeCapabilities = {
   audio: true,
   shell: true,
   debugMcp: true,
+  executionTemplates: false,
   image: true,
   learnedSkills: true,
   learningProposals: true,
@@ -259,6 +260,7 @@ describe("SDK server discovery", () => {
     expect(result.capabilities.posture).toBe("future-posture");
     expect(ServerFeature).toEqual({
       ExactPlanAskControl: "exact_plan_ask_control",
+      ExecutionTemplates: "execution_templates",
       HttpSteer: "http_steer",
       McpServersOnCreate: "mcp_servers_on_create",
       PromptFreeControls: "prompt_free_controls",
@@ -898,6 +900,7 @@ describe("SDK server discovery", () => {
       expect(report).toContain("readonly server: Server;");
       expect(reportBlock(report, "interface Server")).toEqual([
         "compatibility(options?: RequestOptions): Promise<ServerCompatibility>;",
+        "executionTemplates(options?: RequestOptions): Promise<ExecutionTemplateInventory>;",
         "info(options?: ServerInfoOptions, requestOptions?: RequestOptions): Promise<ServerInfo>;",
       ]);
       expect(reportBlock(report, "interface ServerCompatibility")).toEqual([
@@ -916,6 +919,7 @@ describe("SDK server discovery", () => {
       ]);
       expect(reportBlock(report, "const ServerFeature:")).toEqual([
         'readonly ExactPlanAskControl: "exact_plan_ask_control";',
+        'readonly ExecutionTemplates: "execution_templates";',
         'readonly HttpSteer: "http_steer";',
         'readonly McpServersOnCreate: "mcp_servers_on_create";',
         'readonly PromptFreeControls: "prompt_free_controls";',

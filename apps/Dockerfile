@@ -7,17 +7,16 @@
 # build-provenance steps as the Slack bot image; built no-push on every relevant
 # PR by the `studio` CI job; built locally by `task studio:image`.
 #
-# Build context is apps/ ONLY (see .dockerignore): Studio consumes the published
-# @stacklok-oss/mecatl-sdk from npm and never reaches into sdk/typescript, so the
-# Go repository root is not part of this image at all.
+# Build context is repository root so the BFF can consume the checked-out SDK
+# (the released npm package does not yet contain execution-template RPCs).
 #
 # Shape (multi-stage):
 #   1. build   — node:26-slim (Debian + shell + toolchain): pnpm 12.4.2 via
 #                corepack (the `packageManager` pin in package.json; Node 25+
 #                no longer bundles corepack, so it is installed first), a frozen
-#                lockfile install, `pnpm build` (contracts generate → server
-#                esbuild bundle → web Vite bundle), then `pnpm deploy --prod`
-#                to prune the server package to production-only node_modules.
+#                lockfile installs for SDK and Studio, `pnpm build` (contracts
+#                generate → server bundle → web bundle), then `pnpm install --prod`
+#                to keep only production dependencies in the Studio workspace.
 #   2. runtime — cgr.dev/chainguard/node pinned by DIGEST (same posture as
 #                .ko.yaml's chainguard/static pin: only the `latest` tag is
 #                pullable without a Chainguard contract, so pin the digest of
@@ -26,10 +25,9 @@
 #                manager), no pnpm/corepack, no toolchain; it does ship Node's
 #                bundled npm and a busybox `sh` (verified against the pinned
 #                digest — the `-dev` variant is the one that adds apk). Non-root
-#                user 65532, ENTRYPOINT `/usr/bin/node`, WORKDIR /opt/studio.
-#                Only the server's dist/, its pruned production node_modules,
-#                its package.json (for `"type": "module"`), and the built SPA
-#                are copied in — no dev dependencies, no sources.
+#                user 65532, ENTRYPOINT `/usr/bin/node`, WORKDIR
+#                /opt/studio/apps/server. Studio's pruned pnpm store, server
+#                links and bundle, package.json, and built SPA are copied in.
 #
 # The build stage runs on the BUILD platform (--platform=$BUILDPLATFORM) so a
 # multi-arch release (linux/amd64,linux/arm64) does not run pnpm + Vite under
@@ -51,9 +49,7 @@
 #                         container never ships mecated) and requires
 #                         STUDIO_ALLOW_UNAUTHENTICATED=1 for static-token /
 #                         no-auth runtimes.
-#   STUDIO_WEB_DIST       where the server finds the SPA; the source-tree
-#                         default (../web/dist relative to the server package)
-#                         does not hold in the flattened /opt/studio layout.
+#   STUDIO_WEB_DIST       explicit location of the SPA in the image.
 #
 # Runs as the base image's non-root user (65532). Because STUDIO_IMAGE=1, the
 # server binds ${STUDIO_HOST:-0.0.0.0}:${STUDIO_PORT:-3100}; the TLS-terminating proxy in front of it is
@@ -69,21 +65,25 @@ ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
 RUN npm install --global corepack@0.36.0 && corepack enable
 
 WORKDIR /src
+COPY sdk/typescript/package.json sdk/typescript/pnpm-lock.yaml sdk/typescript/pnpm-workspace.yaml sdk/typescript/tsconfig*.json sdk/typescript/
+RUN cd sdk/typescript && pnpm install --frozen-lockfile
+COPY sdk/typescript/src sdk/typescript/src
+RUN cd sdk/typescript && pnpm exec tsc -p tsconfig.build.json
+
+WORKDIR /src/apps
 # Manifests + lockfile first so the dependency layer caches across source edits.
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
-COPY contracts/package.json contracts/package.json
-COPY server/package.json server/package.json
-COPY web/package.json web/package.json
+COPY apps/package.json apps/pnpm-lock.yaml apps/pnpm-workspace.yaml apps/.npmrc ./
+COPY apps/contracts/package.json contracts/package.json
+COPY apps/server/package.json server/package.json
+COPY apps/web/package.json web/package.json
 RUN pnpm install --frozen-lockfile
 
-COPY . .
+COPY apps/ .
 # contracts (openapi.json + generated client) → server (esbuild → server/dist) → web (Vite → web/dist)
 RUN STUDIO_BUILD_ID="${STUDIO_BUILD_ID}" pnpm build
-# Prune to the server's production dependency closure. pnpm ≥ 12.2 derives a
-# dedicated deploy lockfile from the shared one, so the `workspace:*` dependency
-# on @mecatl-studio/contracts becomes a `file:` copy inside /out/server/node_modules
-# without needing injectWorkspacePackages.
-RUN pnpm --filter @mecatl-studio/server --prod deploy /out/server
+# Reinstall production dependencies in place: pnpm deploy refuses the
+# checked-out SDK because its source lives outside the apps workspace.
+RUN pnpm install --prod --frozen-lockfile
 
 # ---------------------------------------------------------------------------
 # Stage 2: runtime (Chainguard node, pinned by digest)
@@ -97,14 +97,15 @@ FROM cgr.dev/chainguard/node:latest@sha256:78a8d37362503110e162d3f4e3f60362ff854
 # directory as the current user, and the base already runs as 65532, so switch
 # to root for the build steps; USER 65532 below restores the runtime user.
 USER 0
-WORKDIR /opt/studio
-COPY --from=build /out/server/package.json ./package.json
-COPY --from=build /out/server/node_modules ./node_modules
-COPY --from=build /src/server/dist ./dist
-COPY --from=build /src/web/dist ./web/dist
+WORKDIR /opt/studio/apps/server
+COPY --from=build /src/apps/server/package.json ./package.json
+COPY --from=build /src/apps/node_modules ../node_modules
+COPY --from=build /src/apps/server/node_modules ./node_modules
+COPY --from=build /src/apps/server/dist ./dist
+COPY --from=build /src/apps/web/dist ../web/dist
 
 ENV STUDIO_IMAGE=1 \
-    STUDIO_WEB_DIST=/opt/studio/web/dist \
+    STUDIO_WEB_DIST=/opt/studio/apps/web/dist \
     NODE_ENV=production
 
 # Early access: the UI and its HTTP surface may change between releases without

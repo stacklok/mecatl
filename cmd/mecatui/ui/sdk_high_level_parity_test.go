@@ -54,6 +54,7 @@ var sdkBoundaryBuiltins = map[string]sdkBoundaryRow{
 	"reflections": {category: sdkBacked, sdkOperation: "Client.learningProposals.list"},
 	"reflect":     {category: sdkBacked, sdkOperation: "Client.reflection.reflect"},
 	"dream":       {category: sdkBacked, sdkOperation: "Client.dreamPlans.generate"},
+	"execution":   {category: sdkBacked, sdkOperation: "Client.server.executionTemplates", additionalSDKOperation: "Client.sessions.create", applicationDetail: "The TUI offers default and none without a template catalog and binds exact revisions on create."},
 	"models":      {category: sdkBacked, sdkOperation: "Client.models.list"},
 	"effort":      {category: sdkBacked, sdkOperation: "Client.sessions.fork"},
 	"worktrees": {

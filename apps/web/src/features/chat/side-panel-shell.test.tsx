@@ -139,7 +139,14 @@ describe("shared side panel frame", () => {
       serverImplementation: "test",
     });
     client.setQueryData(getSessionDetailOptions({ path: { sessionId: "thread-1" } }).queryKey, {
-      capabilities: { image: false, manualCompaction: false, modelSelection: false },
+      capabilities: {
+        audio: false,
+        builtInShell: false,
+        executionFiles: false,
+        image: false,
+        manualCompaction: false,
+        modelSelection: false,
+      },
       id: "thread-1",
       kind: "main",
       mode: "default",

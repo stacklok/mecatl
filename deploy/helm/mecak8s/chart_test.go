@@ -31,6 +31,25 @@ func chartDir(t *testing.T) string {
 	return "."
 }
 
+func TestExecutionTemplateClientChartRequiresOwnerGrants(t *testing.T) {
+	base := []string{"template", "qualification", ".", "-f", "../../mecatl-execution-kind/mecak8s-values.yaml", "--set-string", "execution.templateRevision=v1-" + strings.Repeat("a", 64)}
+	rendered, err := helm(t, base...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0].Args
+	for _, expected := range []string{"--execution-template-id=go", "--execution-template-revision=v1-" + strings.Repeat("a", 64), "--execution-allowed-subjects=alice"} {
+		if !slices.Contains(args, expected) {
+			t.Fatalf("client chart omitted %q", expected)
+		}
+	}
+	for _, invalid := range [][]string{{"--set-json", "execution.allowedSubjects=[]"}, {"--set", "execution.profile=go"}, {"--set-json", `execution.allowedSubjects=["alice,anyone"]`}} {
+		if output, err := helm(t, append(append([]string{}, base...), invalid...)...); err == nil {
+			t.Fatalf("unsafe execution client values rendered: %s", output)
+		}
+	}
+}
+
 func TestMecak8sHelmChart_ReleaseMetadataMatchesVersion(t *testing.T) {
 	versionData, err := os.ReadFile("../../../VERSION")
 	if err != nil {

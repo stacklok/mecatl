@@ -56,6 +56,7 @@ semantic-version protocol.
 |RPC|Kind|Purpose|
 |-|-|-|
 |`CreateSession(CreateSessionRequest) → CreateSessionResponse`|unary|allocate a server-side session, return its id|
+|`ListExecutionTemplates(ListExecutionTemplatesRequest) → ListExecutionTemplatesResponse`|unary|list bounded eligible operator-template display rows for the verified owner, without allocation|
 |`GetSession(GetSessionRequest) → GetSessionResponse`|unary|snapshot of an existing session, including authoritative title/provenance, title-generation lifecycle, and canonical durable token usage when present|
 |`RenameSession(RenameSessionRequest) → RenameSessionResponse`|unary|replace an owned idle main session's title and mark its provenance operator-authored; this permanently disables automatic title generation; ownership, kind, state, liveness, and lease are revalidated at execution|
 |`DeleteSession(DeleteSessionRequest) → DeleteSessionResponse`|unary|permanently remove an owned idle main session snapshot and store-managed sidecars; the same execution-time gates apply|
@@ -120,15 +121,29 @@ drops events for a slow client. `WatchSessionEvents` provides durable replay and
 follow. Its guarantee covers durably appended events: a total backend outage
 followed by loss of the watcher process can leave an unreportable gap.
 
-### Server-owned placement
+### Server-owned execution
 
 `CreateSessionRequest` has no workspace, cwd, exact EnvironmentRef, placement
-ID, or worktree selector. Omitted `profile` binds the trusted deployment
-default; `profile:"no-fs"` explicitly attenuates filesystem access. The response
-and `GetSession` expose bounded `PlacementMetadata` only. Exact
-`EnvironmentRef{Kind, ID, Revision}` remains private in the session snapshot and
-trusted driver storage. Run entry reattaches that exact identity rather than
-inferring it from a current default.
+ID, or worktree selector. Omitted `execution` binds the deployment default;
+`execution.none` selects a file-less session and `execution.template` selects
+an operator-owned `{id,revision}`. Invalid selections never fall back to the
+default. The response and `GetSession` expose bounded `PlacementMetadata` and
+effective `session_capabilities.execution_files` and `built_in_shell`. The exact
+`EnvironmentRef{Kind, ID, Revision}` stays private and is reattached at run entry.
+
+`ListExecutionTemplates` is an authenticated, optional catalog. Check both
+`features` contains `execution_templates` and
+`capabilities.execution_templates` before listing. It returns at most 64 eligible
+inert display rows (`template`, `name`, `description`, `display_token`,
+`extensions`) plus a revision of the caller-filtered inventory. An empty list
+means enabled but nothing eligible; disabled returns `UNIMPLEMENTED`, unavailable
+returns `UNAVAILABLE`. A list is not a reservation. The host checks the verified
+owner principal under its operator policy; the private mTLS provider separately
+checks its template allowlist, namespace and owner at exact bind. Unknown and
+unauthorized selections both return `NOT_FOUND`. The selector is never an image,
+path, credential or private environment reference. Fork and clear inherit the
+source's exact allocation; a worktree selector is not a template selector.
+
 
 `ListCommandsRequest` and `ListWorktreesRequest` carry `session_id`, not a root.
 The server owner-authorizes and exactly reattaches that source before discovery;
@@ -139,7 +154,7 @@ relisted; they are neither paths nor durable bearer IDs.
 
 ### Dedicated debugger creation
 
-Set `CreateSessionRequest.profile = "no-fs"` and set `debug_target_session_id`
+Set `CreateSessionRequest.execution.none = {}` and set `debug_target_session_id`
 to the exact authorized target. Optional repeated `debug_mcp_servers` names only
 already-configured server-global streaming-HTTP MCP servers. The response
 advertises `session_debug`/`debug_mcp` and persists the selected names plus

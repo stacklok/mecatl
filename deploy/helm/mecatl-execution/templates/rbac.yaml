@@ -60,15 +60,19 @@ rules:
 - apiGroups: ["node.k8s.io"]
   resources: ["runtimeclasses"]
   resourceNames:
-{{- range $name, $profile := .Values.profiles }}
-  - {{ $profile.runtimeClassName | quote }}
+{{- range $id, $template := .Values.templates }}
+{{- range $revision, $definition := $template.revisions }}
+  - {{ $definition.execution.runtimeClassName | quote }}
+{{- end }}
 {{- end }}
   verbs: ["get"]
 - apiGroups: ["storage.k8s.io"]
   resources: ["storageclasses"]
   resourceNames:
-{{- range $name, $profile := .Values.profiles }}
-  - {{ $profile.storageClass | quote }}
+{{- range $id, $template := .Values.templates }}
+{{- range $revision, $definition := $template.revisions }}
+  - {{ $definition.execution.storageClass | quote }}
+{{- end }}
 {{- end }}
   verbs: ["get"]
 ---

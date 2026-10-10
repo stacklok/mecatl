@@ -146,7 +146,7 @@ func TestDebugSessionGRPCProjectionAndCapability(t *testing.T) {
 	}
 	h := server.NewHarnessServer(svc)
 	created, err := h.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
-		Profile: string(server.ProfileNoFS), DebugTargetSessionId: string(target.ID), DebugMcpServers: []string{"github"},
+		Execution: &mecatlv1.ExecutionSelection{None: &mecatlv1.ExecutionNone{}}, DebugTargetSessionId: string(target.ID), DebugMcpServers: []string{"github"},
 	})
 	if err != nil {
 		t.Fatalf("grpc CreateSession: %v", err)

@@ -197,12 +197,12 @@ one, use `wait_ms` to wait, or pass an ID to `cancel` to stop it. Background
 commands run in the real workspace, so their changes can overlap later tool
 calls. Mecatl cancels them when the run ends.
 
-### The no-filesystem session profile
+### The no-filesystem execution selection
 
-A session created with `profile: "no-fs"` removes
+A session created with `execution: {none: {}}` removes
 `Read`/`ListDir`/`Write`/`Edit`/`Copy`/`Move`/`Remove`/`Grep`/`Glob`/`Shell`/`ShellStatus`/`Parallel`/`SkillDraft`
 from the catalog. `WebFetch`, `WebSearch`, memory, and MCP tools remain.
-Children inherit the file-less catalog. Clients choose the profile when creating
+Children inherit the file-less catalog. Clients choose execution when creating
 the session; the model cannot change it. See
 [Execution environments](/features/security-and-execution/execution-environments.md)
 for filesystem and no-filesystem placement.
@@ -215,7 +215,7 @@ precedence for that invocation. `mecatui` uses this setting for its embedded
 server; `mecatui connect` uses the remote server's placement.
 
 The server applies the configured placement to ordinary session creation.
-Clients receive bounded `PlacementMetadata` and can select `profile: "no-fs"` to
+Clients receive bounded `PlacementMetadata` and can select `execution.none` to
 remove filesystem access, but cannot submit a placement alias, workspace path,
 or exact environment reference. The daemon controls images, resources, egress,
 lifecycle, and attestation. If placement is unavailable, session creation fails

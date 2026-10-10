@@ -1309,9 +1309,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Build context is apps/ ONLY: Studio consumes the PUBLISHED
-      # @stacklok-oss/mecatl-sdk, never the in-tree SDK, so the Go
-      # root and sdk/typescript are not part of the image. The image is pushed
+      # Build context includes the checked-out SDK for Studio's execution-template
+      # APIs. The image is pushed
       # BY DIGEST, with no tag: nothing can pull it by name until the scan,
       # signature, attestations, and their verification below have all passed,
       # so a failed step never leaves an unsigned :latest behind. Studio is in
@@ -1323,7 +1322,7 @@ jobs:
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: apps
+          context: .
           file: apps/Dockerfile
           platforms: linux/amd64,linux/arm64
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,push=true

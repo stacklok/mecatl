@@ -192,6 +192,8 @@ export type {
   RunSteerOptions,
 } from "./run-controls.js";
 export type {
+  ExecutionTemplateInfo,
+  ExecutionTemplateInventory,
   Server,
   ServerCompatibility,
   ServerInfo,

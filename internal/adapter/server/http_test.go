@@ -1050,6 +1050,33 @@ func TestHTTPScheduleLifecycle(t *testing.T) {
 	}
 }
 
+func TestHTTPScheduleRejectsUnsupportedExecutionSelector(t *testing.T) {
+	svc, store := newScheduleService(t, time.Unix(1_700_000_000, 0))
+	srv := httptest.NewServer(server.NewHTTPHandler(svc))
+	defer srv.Close()
+	for _, method := range []string{http.MethodPost, http.MethodPut} {
+		url := srv.URL + "/v1/schedules"
+		if method == http.MethodPut {
+			url += "/unknown-selector"
+		}
+		req, err := http.NewRequest(method, url, strings.NewReader(`{"name":"unknown-selector","prompt":"p","trigger":{"cron":"* * * * *"},"execution":{"none":{}}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("%s unknown selector status=%d", method, resp.StatusCode)
+		}
+	}
+	if _, err := store.Load(t.Context(), "unknown-selector"); err == nil {
+		t.Fatal("unsupported selector created schedule")
+	}
+}
+
 // TestHTTPScheduleCreateOneShot is the regression test for the protojson decode
 // fix: a one-shot trigger's Timestamp is an RFC3339 STRING on the wire
 // (google.protobuf.Timestamp's JSON mapping), which stdlib encoding/json

@@ -108,19 +108,88 @@ describe("Mecatl chat sessions", () => {
       mode: "plan",
       model: { id: "claude-sonnet", providerId: "anthropic" },
       reasoningEffort: "high",
-      toolAccess: "noFilesystem",
+      execution: { none: {} },
     });
 
     expect(create).toHaveBeenCalledWith({
       mode: 2,
       modelId: "claude-sonnet",
-      profile: "no-fs",
+      execution: { none: {} },
       providerId: "anthropic",
       reasoningEffort: "high",
     });
   });
 
-  it("forces the no-fs profile and forwards debugTargetSessionId for an AI-debug session", async () => {
+  it("forwards an exact template unchanged, with no fallback or profile wire", async () => {
+    const create = vi.fn().mockResolvedValue({ id: "templated" });
+    const service = createMecatlChatService({ sessions: { create } } as unknown as Client);
+    const template = { id: "safe", revision: `v1-${"a".repeat(64)}` };
+    await service.createSession({
+      mode: "default",
+      reasoningEffort: "default",
+      execution: { template },
+    });
+    expect(create).toHaveBeenCalledWith({ mode: 1, execution: { template } });
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves execution omitted for default, even when template discovery is disabled", async () => {
+    const create = vi.fn().mockResolvedValue({ id: "default" });
+    const service = createMecatlChatService({ sessions: { create } } as unknown as Client);
+    await service.createSession({ mode: "default", reasoningEffort: "default" });
+    expect(create).toHaveBeenCalledWith({ mode: 1 });
+  });
+
+  it("lists only SDK-projected catalog data and returns bound execution capabilities", async () => {
+    const template = { id: "safe", revision: `v1-${"b".repeat(64)}` };
+    const inventory = {
+      items: [
+        {
+          template,
+          name: "Safe",
+          description: "",
+          displayToken: "token",
+          extensions: {},
+          declaredExecutionFiles: true,
+          declaredBuiltInShell: true,
+        },
+      ],
+      inventoryRevision: "rev",
+    };
+    const service = createMecatlChatService({
+      server: {
+        executionTemplates: vi.fn().mockResolvedValue(inventory),
+        compatibility: vi
+          .fn()
+          .mockResolvedValue({ capabilities: { manualCompaction: false, modelSelection: false } }),
+      },
+      sessions: {
+        get: vi.fn().mockResolvedValue({
+          snapshot: vi.fn().mockResolvedValue({
+            sessionId: "s",
+            mode: 1,
+            state: "idle",
+            sessionCapabilities: {
+              image: true,
+              audio: false,
+              executionFiles: true,
+              builtInShell: false,
+            },
+            tokenUsage: {},
+          }),
+        }),
+      },
+    } as unknown as Client);
+    expect(await service.executionTemplates?.()).toEqual(inventory);
+    expect((await service.detail("s")).capabilities).toMatchObject({
+      image: true,
+      audio: false,
+      executionFiles: true,
+      builtInShell: false,
+    });
+  });
+
+  it("forces explicit none and forwards debugTargetSessionId for an AI-debug session", async () => {
     const create = vi.fn().mockResolvedValue({ id: "session-debug" });
     const service = createMecatlChatService({ sessions: { create } } as unknown as Client);
 
@@ -128,13 +197,13 @@ describe("Mecatl chat sessions", () => {
       debugTargetSessionId: "session-1",
       mode: "default",
       reasoningEffort: "default",
-      toolAccess: "all",
+      execution: { none: {} },
     });
 
     expect(create).toHaveBeenCalledWith({
       debugTargetSessionId: "session-1",
       mode: 1,
-      profile: "no-fs",
+      execution: { none: {} },
     });
   });
 
@@ -293,7 +362,14 @@ describe("Mecatl chat sessions", () => {
     } as unknown as Client);
 
     await expect(service.detail("session-1")).resolves.toEqual({
-      capabilities: { image: true, manualCompaction: true, modelSelection: true },
+      capabilities: {
+        image: true,
+        audio: false,
+        executionFiles: false,
+        builtInShell: false,
+        manualCompaction: true,
+        modelSelection: true,
+      },
       id: "session-1",
       kind: "main",
       mode: "plan",

@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -16,6 +15,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -45,35 +45,43 @@ func TestForwardRestoreTrustBundleSupportsFixtureClient(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(initial, "ca.crt"), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: oldCADER}), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, grant, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	grantDER, err := x509.MarshalPKCS8PrivateKey(grant)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(initial, "grant-key.pem"), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: grantDER}), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	generate(initial, out)
 	for _, tc := range []struct {
 		file, cert, key, ca string
 	}{
-		{"bridge.json", "tls.crt", "tls.key", "bridge-clients.pem"},
-		{"final.json", "provider-new.crt", "provider-new.key", "final-clients.pem"},
-		{"restore-fixture-clients.json", "provider-new.crt", "provider-new.key", "bridge-clients.pem"},
+		{"bridge.json", "tls.crt", "tls.key", "clients.pem"},
+		{"final.json", "tls.crt", "tls.key", "clients.pem"},
+		{"restore-fixture-clients.json", "tls.crt", "tls.key", "clients.pem"},
 	} {
 		var manifest struct {
 			TLS struct {
 				CertificateFile, PrivateKeyFile, ClientCAFile string
 			}
+			Clients []struct {
+				URI                string   `json:"uri"`
+				ExecutionTemplates []string `json:"executionTemplates"`
+			} `json:"clients"`
 		}
 		if err := json.Unmarshal(read(filepath.Join(out, tc.file)), &manifest); err != nil {
 			t.Fatal(err)
 		}
 		if manifest.TLS.CertificateFile != tc.cert || manifest.TLS.PrivateKeyFile != tc.key || manifest.TLS.ClientCAFile != tc.ca {
-			t.Errorf("%s must reference immutable material names", tc.file)
+			t.Errorf("%s must reference the projected TLS and trust paths", tc.file)
+		}
+		if len(manifest.Clients) == 0 || manifest.Clients[0].URI != "spiffe://mecatl.test/client/mecak8s" || !slices.Contains(manifest.Clients[0].ExecutionTemplates, "operator-utility") || !slices.Contains(manifest.Clients[0].ExecutionTemplates, "incompatible-derivative") {
+			t.Errorf("%s lost a fixture derivative template grant", tc.file)
+		}
+		foundQualification := false
+		for _, client := range manifest.Clients {
+			if client.URI == "spiffe://mecatl.test/client/qualification" {
+				foundQualification = true
+				if !slices.Equal(client.ExecutionTemplates, []string{"go"}) {
+					t.Errorf("%s must preserve exactly the qualification go template grant", tc.file)
+				}
+			}
+		}
+		if !foundQualification {
+			t.Errorf("%s lost the qualification client", tc.file)
 		}
 	}
 

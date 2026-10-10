@@ -24,6 +24,8 @@ const APIMajor int32 = 1
 // Identifiers are STABLE ONCE PUBLISHED. Renaming one is a break dressed up as
 // a refactor: a deployed client gates on the exact string.
 const (
+	// FeatureExecutionTemplates gates the authenticated public template catalog.
+	FeatureExecutionTemplates = "execution_templates"
 	// FeatureExactPlanAskControl reports both strict ResolvePlanAsk transports
 	// when the deployment can durably record a known continuation failure.
 	FeatureExactPlanAskControl = "exact_plan_ask_control"
@@ -107,6 +109,7 @@ type FeatureScope struct {
 // diffs and golden fixtures readable.
 var allFeatures = []string{
 	FeatureExactPlanAskControl,
+	FeatureExecutionTemplates,
 	FeatureHTTPSteer,
 	FeatureMCPServersOnCreate,
 	FeaturePromptFreeControls,

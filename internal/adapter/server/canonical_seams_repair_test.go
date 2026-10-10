@@ -318,7 +318,7 @@ func TestInvariant_create_session_rejects_only_legacy_unknown_placement_fields(t
 		t.Fatal(err)
 	}
 	h := NewHarnessServer(svc)
-	for _, field := range []protowire.Number{1, 8} {
+	for _, field := range []protowire.Number{1, 6, 8} {
 		req := &mecatlv1.CreateSessionRequest{}
 		req.ProtoReflect().SetUnknown(protowire.AppendString(protowire.AppendTag(nil, field, protowire.BytesType), "legacy-path"))
 		if _, err := h.CreateSession(context.Background(), req); status.Code(err) != codes.InvalidArgument {
@@ -327,8 +327,8 @@ func TestInvariant_create_session_rejects_only_legacy_unknown_placement_fields(t
 	}
 	req := &mecatlv1.CreateSessionRequest{}
 	req.ProtoReflect().SetUnknown(protowire.AppendVarint(protowire.AppendTag(nil, 99, protowire.VarintType), 1))
-	if _, err := h.CreateSession(context.Background(), req); err != nil {
-		t.Fatalf("forward-compatible unknown field rejected: %v", err)
+	if _, err := h.CreateSession(context.Background(), req); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("unknown create field = %v, want InvalidArgument", err)
 	}
 }
 

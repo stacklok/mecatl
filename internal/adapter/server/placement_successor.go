@@ -205,6 +205,7 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	if err := setSessionLabels(created, selector, profileForSession(source), source.Owner, authority); err != nil {
 		return "", err
 	}
+	created.ExecutionTemplateID, created.ExecutionTemplateRevision = source.ExecutionTemplateID, source.ExecutionTemplateRevision
 	created.EnvironmentRef = binding.Ref
 	if copyHistory {
 		if err := created.SeedHistory(s.providerCarryoverSnapshot(source, selector.ProviderID)); err != nil {
@@ -306,6 +307,11 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 		cleanupEngine()
 		return "", ErrSessionLeasedElsewhere
 	}
+	engine := s.cfg.Engine
+	if builtEngine != nil {
+		engine = builtEngine.engine
+	}
+	stampExecutionCapabilities(created, engine, binding.Environment)
 	if err := s.persistNewSession(mutationCtx, created); err != nil {
 		cleanupEngine()
 		if errors.Is(err, port.ErrSessionAlreadyExists) {

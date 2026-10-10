@@ -33,12 +33,9 @@
 #          irrelevant.
 #   studio — the Mecatl Studio job (`studio`: apps/ lint, typecheck, test, the
 #          generated-artifact drift check, and a no-push image build of
-#          apps/Dockerfile). Studio is a self-contained pnpm workspace that
-#          consumes only the PUBLISHED @stacklok-oss/mecatl-sdk, so
-#          neither sdk/typescript/ nor contracts/ nor any Go change can alter it —
-#          relevant ONLY to apps/ and to the CI-control files that define the job
-#          and its task recipes (.github/, Taskfile.yml). Everything else is
-#          irrelevant.
+#          apps/Dockerfile). Studio builds the checked-out SDK alongside
+#          apps/, so a change under sdk/typescript/ also requires Studio gates;
+#          Go runtime changes are covered by go_relevant.
 #   microvm — the opt-in nested runtime's build, test, lint, standalone, and live
 #          hypervisor jobs. It runs for that runtime's direct root integration
 #          closure and the exact workflow/scripts that execute those jobs. Other
@@ -99,11 +96,10 @@ irrelevant() {
       return 0
       ;;
     studio)
-      # Mecatl Studio: relevant to the apps/ workspace (which depends on the
-      # published SDK, never the in-tree one) and the CI-control files that define
-      # the job and the task recipes it runs.
+      # Mecatl Studio: relevant to apps/ and the checked-out SDK it builds,
+      # plus the CI-control files defining this job and task recipes.
       case "$1" in
-        apps/*|.github/*|Taskfile.yml) return 1 ;;
+        apps/*|sdk/typescript/*|.github/*|Taskfile.yml) return 1 ;;
       esac
       return 0
       ;;

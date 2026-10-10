@@ -9,7 +9,6 @@ import { ChatComposer, type DraftChatConfiguration, resolveComposerAction } from
 const configuration: DraftChatConfiguration = {
   mode: "default",
   reasoningEffort: "default",
-  toolAccess: "all",
 };
 
 const models = [
@@ -60,7 +59,9 @@ describe("chat composer", () => {
       expect(screen.getByLabelText("Model")).toBeTruthy();
       expect(screen.getByLabelText("Effort")).toBeTruthy();
       expect(screen.getByLabelText("Mode")).toBeTruthy();
-      expect(screen.getByLabelText("Tools")).toBeTruthy();
+      expect(
+        within(screen.getByRole("dialog", { name: "Chat options" })).getByLabelText("Execution"),
+      ).toBeTruthy();
       await user.click(screen.getByRole("button", { name: "Close chat options" }));
       expect(document.activeElement).toBe(options);
       view.unmount();
@@ -160,7 +161,7 @@ describe("chat composer", () => {
           model: "Automatic",
           mode: "Plan",
           target: "New chat",
-          toolAccess: "No filesystem",
+          execution: "No files or built-in Shell",
         }}
         seedRequiresConfirmation
         seedText="Another prompt"
@@ -171,7 +172,7 @@ describe("chat composer", () => {
     expect(within(draftConfirmation).getByText("New chat")).toBeTruthy();
     expect(within(draftConfirmation).getByText("Automatic")).toBeTruthy();
     expect(within(draftConfirmation).getByText("Plan")).toBeTruthy();
-    expect(within(draftConfirmation).getByText("No filesystem")).toBeTruthy();
+    expect(within(draftConfirmation).getByText("No files or built-in Shell")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Send prompt" }));
     await waitFor(() => expect(onSend).toHaveBeenCalledWith("Another prompt", "send", []));
   });

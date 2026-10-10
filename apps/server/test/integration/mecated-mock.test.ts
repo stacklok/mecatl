@@ -104,7 +104,7 @@ describe.skipIf(!available)("Studio BFF against a spawned mecated --mock", () =>
 
   it("creates a session, streams a run over SSE, and reads the transcript back", async () => {
     const created = await json("/api/v1/sessions", {
-      body: JSON.stringify({ mode: "default", reasoningEffort: "default", toolAccess: "all" }),
+      body: JSON.stringify({ mode: "default", reasoningEffort: "default" }),
       headers: csrf,
       method: "POST",
     });
@@ -157,7 +157,7 @@ describe.skipIf(!available)("Studio BFF against a spawned mecated --mock", () =>
 
   it("answers 409 stale_run_control for a control on an unknown run", async () => {
     const created = await json("/api/v1/sessions", {
-      body: JSON.stringify({ mode: "default", reasoningEffort: "default", toolAccess: "all" }),
+      body: JSON.stringify({ mode: "default", reasoningEffort: "default" }),
       headers: csrf,
       method: "POST",
     });
@@ -298,7 +298,7 @@ describe.skipIf(!available)("Studio BFF against a spawned mecated --mock", () =>
     // bound is deliberately tiny. Everything below the route is real: the SDK,
     // the spawned daemon, and its event log.
     const created = await json("/api/v1/sessions", {
-      body: JSON.stringify({ mode: "default", reasoningEffort: "default", toolAccess: "all" }),
+      body: JSON.stringify({ mode: "default", reasoningEffort: "default" }),
       headers: csrf,
       method: "POST",
     });

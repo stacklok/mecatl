@@ -551,7 +551,8 @@ Flags:
         base URL of an HTTP JSON search endpoint. Overrides configured environment-
         based search providers. The API key is read from WEBSEARCH_API_KEY.
   --workspace string
-        default session workspace root (default "<WORKSPACE>")
+        default session workspace root (default
+        "<WORKSPACE>")
   --yolo
         alias for --posture=yolo. Allows tools server-wide and lets child command
         substitutions run automatically. Deny rules and configured ask rules still
@@ -626,13 +627,18 @@ Usage: mecak8s [flags]
         Enable the Parallel tool for isolated child branches
   --enable-teams
         Enable the experimental agent-team capability
+  --execution-allowed-subjects string
+        Comma-separated OIDC subject allowlist for execution template inventory and
+        binding; empty denies all
   --execution-enabled
         Use an independently deployed Kubernetes execution provider for default sessions
   --execution-endpoint string
         Host:port endpoint of the mTLS gRPC execution provider. Requires --execution-
         enabled
-  --execution-profile string
-        Operator-configured execution provider profile
+  --execution-template-id string
+        Operator-configured default execution template ID
+  --execution-template-revision string
+        Exact versioned default execution template revision
   --execution-tls-ca string
         Mounted CA bundle used only by the execution client
   --execution-tls-cert string

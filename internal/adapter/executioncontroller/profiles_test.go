@@ -1,23 +1,67 @@
 package executioncontroller
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/goccy/go-yaml"
 	corev1 "k8s.io/api/core/v1"
 )
 
-func TestLoadProfilesStrictAndDigestPinned(t *testing.T) {
+func loadTemplateProfileFixture(path string) (*Profiles, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var source struct {
+		Profiles map[string]ProfileSpec `yaml:"profiles"`
+	}
+	if err := yaml.UnmarshalWithOptions(body, &source, yaml.DisallowUnknownField()); err != nil {
+		return nil, err
+	}
+	file := TemplatesFile{Templates: make(map[string]TemplateDefinition, len(source.Profiles))}
+	for id, spec := range source.Profiles {
+		if len(spec.ImagePullSecrets) == 0 {
+			spec.ImagePullSecrets = nil
+		}
+		if len(spec.Tolerations) == 0 {
+			spec.Tolerations = nil
+		}
+		if len(spec.NodeSelector) == 0 {
+			spec.NodeSelector = nil
+		}
+		canonical, err := json.Marshal(spec)
+		if err != nil {
+			return nil, err
+		}
+		sum := sha256.Sum256(append([]byte("mecatl/execution-template/v1\x00"), canonical...))
+		revision := "v1-" + hex.EncodeToString(sum[:])
+		file.Templates[id] = TemplateDefinition{Default: revision, Revisions: map[string]TemplateRevision{revision: {Execution: spec}}}
+	}
+	body, err = yaml.Marshal(file)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		return nil, err
+	}
+	return LoadTemplates(path)
+}
+
+func TestLoadTemplatesStrictAndDigestPinned(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "profiles.yaml")
 	good := validProfileYAML()
 	if err := os.WriteFile(path, []byte(good), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	p, err := LoadProfiles(path)
+	p, err := loadTemplateProfileFixture(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,15 +69,22 @@ func TestLoadProfilesStrictAndDigestPinned(t *testing.T) {
 	if !ok || !strings.HasPrefix(v.Digest, "sha256:") {
 		t.Fatalf("profile=%+v", v)
 	}
+	for _, image := range []string{"example.invalid/workload@sha256:short", "example.invalid/workload@sha256:" + strings.Repeat("g", 64), "example.invalid/workload@sha256:" + strings.Repeat("a", 64) + " suffix"} {
+		spec := v.Spec
+		spec.Image = image
+		if _, err := validateProfile("go", spec); err == nil {
+			t.Fatalf("malformed digest reference %q accepted", image)
+		}
+	}
 	if err := os.WriteFile(path, []byte(good+"    unknown: true\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadProfiles(path); err == nil {
+	if _, err := loadTemplateProfileFixture(path); err == nil {
 		t.Fatal("unknown field accepted")
 	}
 	unpinned := strings.Replace(good, "@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "", 1)
 	_ = os.WriteFile(path, []byte(unpinned), 0o600)
-	if _, err := LoadProfiles(path); err == nil {
+	if _, err := loadTemplateProfileFixture(path); err == nil {
 		t.Fatal("unpinned image accepted")
 	}
 }
@@ -54,7 +105,7 @@ func TestLoadProfilesRejectsInvalidQuantities(t *testing.T) {
 			if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := LoadProfiles(path); err == nil {
+			if _, err := loadTemplateProfileFixture(path); err == nil {
 				t.Fatal("invalid quantity accepted")
 			}
 		})
@@ -72,7 +123,7 @@ func TestLoadProfilesAcceptsQuantityUnitVariants(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	profiles, err := LoadProfiles(path)
+	profiles, err := loadTemplateProfileFixture(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +140,7 @@ func TestProfilePullSecretDigestAndValidation(t *testing.T) {
 		if err := os.WriteFile(path, []byte(validProfileYAML()+extra), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		profiles, err := LoadProfiles(path)
+		profiles, err := loadTemplateProfileFixture(path)
 		if err != nil {
 			return resolvedProfile{}, err
 		}
@@ -101,7 +152,7 @@ func TestProfilePullSecretDigestAndValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	empty, err := load("    imagePullSecrets: []\n")
-	if err != nil || legacy.Digest != empty.Digest || legacy.Digest != "sha256:7f64bdddd86008c73dd9601fad9dfdbbfa696c91e75dd3c7005e98934679a994" {
+	if err != nil || legacy.Digest != empty.Digest || legacy.Digest != "sha256:"+fixtureRevision(t, legacy.Spec)[3:] {
 		t.Fatalf("legacy digest changed: %s, empty: %s, err: %v", legacy.Digest, empty.Digest, err)
 	}
 	configured, err := load("    imagePullSecrets: [registry-one, registry.two]\n")
@@ -134,7 +185,7 @@ func TestProfileSchedulingDigestAndValidation(t *testing.T) {
 		if err := os.WriteFile(path, []byte(validProfileYAML()+extra), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		profiles, err := LoadProfiles(path)
+		profiles, err := loadTemplateProfileFixture(path)
 		if err != nil {
 			return resolvedProfile{}, err
 		}

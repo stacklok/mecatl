@@ -30,7 +30,7 @@ rotation, upgrades, retirement, and deletion.
 When `execution.enabled` is `false`, the chart mounts no execution mTLS Secret
 and passes no execution-provider flags. The separate provider and its existing
 environments continue independently. Clients can explicitly request
-`profile: "no-fs"` to keep a session filesystem-free.
+`execution: {none: {}}` to keep a session filesystem-free.
 
 ## Mounted workspace (shared filesystem root)
 

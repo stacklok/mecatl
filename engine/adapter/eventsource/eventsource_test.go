@@ -36,6 +36,22 @@ func meta() eventsource.SessionMeta {
 	}
 }
 
+func TestFoldRestoresExecutionCapabilityFacts(t *testing.T) {
+	m := meta()
+	m.ExecutionCapabilities = &session.ExecutionCapabilities{Files: true}
+	folded, err := eventsource.Fold(m, seq(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if folded.ExecutionCapabilities == nil || *folded.ExecutionCapabilities != *m.ExecutionCapabilities {
+		t.Fatalf("folded facts = %+v", folded.ExecutionCapabilities)
+	}
+	folded.ExecutionCapabilities.Files = false
+	if !m.ExecutionCapabilities.Files {
+		t.Fatal("fold aliased source metadata")
+	}
+}
+
 func TestEventFoldRejectsEmptyAuthorityClaim(t *testing.T) {
 	t.Parallel()
 	m := meta()
@@ -521,14 +537,16 @@ func TestFoldStreamErrorPropagates(t *testing.T) {
 // applied to the reconstructed session.
 func TestFoldMetaIsApplied(t *testing.T) {
 	m := eventsource.SessionMeta{
-		ID:             "sess-42",
-		Mode:           session.ModePlan,
-		Limits:         session.Limits{MaxTurns: 9},
-		EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work/space", Revision: "in-tree-v1"},
-		Profile:        "no-fs",
-		ProviderID:     "openrouter",
-		ModelID:        "anthropic/claude",
-		CreatedAt:      time.Unix(1700000000, 0),
+		ID:                        "sess-42",
+		Mode:                      session.ModePlan,
+		Limits:                    session.Limits{MaxTurns: 9},
+		EnvironmentRef:            session.EnvironmentRef{Kind: session.EnvironmentKind("kubernetes"), ID: "exec-test", Revision: "alloc-rev"},
+		Profile:                   "default",
+		ExecutionTemplateID:       "go",
+		ExecutionTemplateRevision: "v1-" + strings.Repeat("a", 64),
+		ProviderID:                "openrouter",
+		ModelID:                   "anthropic/claude",
+		CreatedAt:                 time.Unix(1700000000, 0),
 	}
 	evs := []session.Event{
 		{Type: session.EvTurnStart, Turn: 0},
@@ -540,7 +558,7 @@ func TestFoldMetaIsApplied(t *testing.T) {
 		t.Fatalf("Fold: %v", err)
 	}
 	if s.ID != "sess-42" || s.Mode != session.ModePlan || s.EnvironmentRef != m.EnvironmentRef ||
-		s.Profile != "no-fs" || s.ProviderID != "openrouter" || s.ModelID != "anthropic/claude" ||
+		s.Profile != "default" || s.ExecutionTemplateID != m.ExecutionTemplateID || s.ExecutionTemplateRevision != m.ExecutionTemplateRevision || s.ProviderID != "openrouter" || s.ModelID != "anthropic/claude" ||
 		s.Limits.MaxTurns != 9 || !s.CreatedAt.Equal(time.Unix(1700000000, 0)) {
 		t.Fatalf("meta not applied: %+v", s)
 	}

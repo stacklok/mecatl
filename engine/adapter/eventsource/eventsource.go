@@ -88,8 +88,14 @@ type SessionMeta struct {
 	EnvironmentRef session.EnvironmentRef
 	// Placement is safe display-only metadata; it is never used for reattachment.
 	Placement session.PlacementMetadata
+	// ExecutionCapabilities is the host-observed, creation-time execution ceiling.
+	ExecutionCapabilities *session.ExecutionCapabilities
 	// Profile is the opaque tool-surface profile label ("" = default).
 	Profile string
+	// ExecutionTemplateID/Revision select an exact versioned recipe; neither
+	// value can be reconstructed from events or inferred from EnvironmentRef.
+	ExecutionTemplateID       string
+	ExecutionTemplateRevision string
 	// ProviderID and ModelID are the opaque neutral provider+model selector pair
 	// ("" / "" = server default).
 	ProviderID string
@@ -203,7 +209,13 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	// exactly as sessnap.Restore does. Title-specific metadata restores atomically
 	// through RestoreTitleMetadata below.
 	s.Placement = meta.Placement
+	if meta.ExecutionCapabilities != nil {
+		facts := *meta.ExecutionCapabilities
+		s.ExecutionCapabilities = &facts
+	}
 	s.Profile = meta.Profile
+	s.ExecutionTemplateID = meta.ExecutionTemplateID
+	s.ExecutionTemplateRevision = meta.ExecutionTemplateRevision
 	s.ProviderID = meta.ProviderID
 	s.ModelID = meta.ModelID
 	s.ReasoningEffort = meta.ReasoningEffort

@@ -33,8 +33,18 @@ func executionAccess(provider server.PlacementProvider) server.ExecutionAccess {
 }
 
 type profilePlacementProvider struct {
-	remote server.PlacementProvider
-	local  *localPlacementProvider
+	remote       server.PlacementProvider
+	local        *localPlacementProvider
+	allowed      func(*session.Principal, string, string) bool
+	ownerAllowed func(*session.Principal) bool
+}
+
+func (p *profilePlacementProvider) ListExecutionTemplates(ctx context.Context, principal *session.Principal) ([]server.ExecutionTemplateInfo, string, error) {
+	catalog, ok := p.remote.(server.ExecutionTemplateCatalog)
+	if !ok {
+		return nil, "", server.ErrPlacementUnavailable
+	}
+	return catalog.ListExecutionTemplates(ctx, principal)
 }
 
 func (p *profilePlacementProvider) ValidatePlacement(ctx context.Context) error {
@@ -47,11 +57,19 @@ func (p *profilePlacementProvider) Bind(ctx context.Context, req server.Placemen
 	if req.Selector.IsNoFS() {
 		return p.local.Bind(ctx, req)
 	}
+	if p.allowed != nil || p.ownerAllowed != nil {
+		if p.allowed == nil || p.ownerAllowed == nil || !p.ownerAllowed(req.Principal) || !p.allowed(req.Principal, req.Selector.ID, req.Selector.Revision) {
+			return server.PlacementBinding{}, server.ErrPlacementNotFound
+		}
+	}
 	return p.remote.Bind(ctx, req)
 }
 func (p *profilePlacementProvider) Reattach(ctx context.Context, req server.PlacementReattachRequest) (server.PlacementBinding, error) {
 	if req.Ref.Kind == session.EnvKindNoFS {
 		return p.local.Reattach(ctx, req)
+	}
+	if (p.allowed != nil || p.ownerAllowed != nil) && (p.ownerAllowed == nil || !p.ownerAllowed(req.Principal)) {
+		return server.PlacementBinding{}, server.ErrPlacementNotFound
 	}
 	remote, ok := p.remote.(server.PlacementReattacher)
 	if !ok {
@@ -98,6 +116,9 @@ func (p *profilePlacementProvider) CancelReferenceIntentDelete(ctx context.Conte
 }
 
 func (p *profilePlacementProvider) ReserveSuccessor(ctx context.Context, req server.PlacementSuccessorRequest) (server.PlacementBinding, error) {
+	if (p.allowed != nil || p.ownerAllowed != nil) && (p.ownerAllowed == nil || !p.ownerAllowed(req.Principal)) {
+		return server.PlacementBinding{}, server.ErrPlacementNotFound
+	}
 	reservoir, ok := p.remote.(server.PlacementSuccessorReservoir)
 	if !ok {
 		return server.PlacementBinding{}, server.ErrPlacementUnavailable
@@ -113,6 +134,9 @@ func (p *profilePlacementProvider) AcquireRun(ctx context.Context, req server.Ex
 	access, ok := p.remote.(server.ExecutionAccess)
 	if !ok || !access.Applies(req.Ref) {
 		return nil, server.ErrPlacementUnavailable
+	}
+	if (p.allowed != nil || p.ownerAllowed != nil) && (p.ownerAllowed == nil || !p.ownerAllowed(req.Principal)) {
+		return nil, server.ErrPlacementNotFound
 	}
 	return access.AcquireRun(ctx, req)
 }

@@ -7,7 +7,7 @@ if [ "${MECATL_EXECUTION_LIVE_CLEAN_ENV:-}" != 1 ]; then
   exec env -i HOME="$HOME" USER="${USER:-user}" PATH="$PATH" XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}" \
     DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}" CONTAINER_HOST="${CONTAINER_HOST:-}" DOCKER_HOST="${DOCKER_HOST:-}" \
     TOOLBOX_PATH="${TOOLBOX_PATH:-}" MECATL_EXECUTION_DEV_TOOLBOX="${MECATL_EXECUTION_DEV_TOOLBOX:-}" MECATL_EXECUTION_K8S_TOOLBOX="${MECATL_EXECUTION_K8S_TOOLBOX:-}" \
-    MECATL_EXECUTION_CREDENTIAL_FILE="${MECATL_EXECUTION_CREDENTIAL_FILE:-}" MECATL_EXECUTION_QUAL_STATE="${MECATL_EXECUTION_QUAL_STATE:-}" \
+    MECATL_EXECUTION_CREDENTIAL_FILE="${MECATL_EXECUTION_CREDENTIAL_FILE:-}" MECATL_EXECUTION_QUAL_STATE="${MECATL_EXECUTION_QUAL_STATE:-}" MECATL_EXECUTION_LIVE_SESSION="${MECATL_EXECUTION_LIVE_SESSION:-}" \
     MECATL_EXECUTION_LIVE_CLEAN_ENV=1 "$0" "$@"
 fi
 [ "$#" -eq 0 ] || { echo "usage: MECATL_EXECUTION_CREDENTIAL_FILE=/absolute/file MECATL_EXECUTION_QUAL_STATE=/owned/state $0" >&2; exit 2; }
@@ -77,6 +77,8 @@ helm_kube() {
 }
 [ "$(kube config current-context)" = "$context" ] || { echo "owned kube context mismatch" >&2; exit 1; }
 build_ko() { package=$1 repo=$2; dev env KIND_EXPERIMENTAL_PROVIDER="${KIND_EXPERIMENTAL_PROVIDER:-}" KO_DOCKER_REPO="$repo" ko build --local --bare "$package" | tail -n 1; }
+go_revision=$(awk 'NR==1 && /^v1-[0-9a-f]+$/ && length($0)==67 {print}' "$state/go-template-revision")
+[ -n "$go_revision" ] || { echo "owned template revision unavailable" >&2; exit 1; }
 . "$root/deploy/mecatl-execution-kind/images.sh"
 load_image() {
   tagged=$1
@@ -106,16 +108,21 @@ printf 'provider=%s\nagent=%s\nworkload=%s\ngo_base=%s\n' "$provider_image" "$ag
 
 # Consume the already-qualified storage and synthetic security state. Preserve
 # Kind's local-path helper configuration; the non-root workload is not its helper.
-# Live mode never regenerates or replaces the execution Secret/keyring, or reads it back.
+# Live mode does not replace projected execution TLS Secrets or read private material back.
 # A real provider credential is staged only after this deterministic rerun passes.
 kube -n execution-qualification create configmap execution-mock --from-file=mock-script.json="$root/deploy/mecatl-execution-kind/mock-script.json" --dry-run=client -o yaml | kube apply -f -
 kube -n execution-qualification rollout status deployment/mecatl-execution --timeout=240s
 helm_kube upgrade --install mecak8s "$root/deploy/helm/mecak8s" --namespace execution-qualification -f "$root/deploy/mecatl-execution-kind/mecak8s-values.yaml" \
-  --set-string image.repository="${agent_image%@*}" --set-string image.tag= --set-string image.digest="${agent_image#*@}" --wait --timeout=5m
+  --set-string image.repository="${agent_image%@*}" --set-string image.tag= --set-string image.digest="${agent_image#*@}" --set-string execution.templateRevision="$go_revision" --wait --timeout=5m
 kube -n execution-qualification rollout restart deployment/mecak8s
 kube -n execution-qualification rollout status deployment/mecak8s --timeout=240s
-dev env -i HOME="$HOME" PATH="$PATH" KUBECONFIG="$kubeconfig" MECATL_KUBE_CONTEXT="$context" MECATL_EXECUTION_QUAL_STATE="$state" \
-  go test -tags kind_execution_e2e -run '^TestKindExecutionQualification$' -count=1 -timeout=15m ./e2e/k8s_execution
+# Resuming an already-created live workspace must not allocate more mock
+# workspaces: retained fixtures can legitimately have exhausted template capacity.
+if [ -z "${MECATL_EXECUTION_LIVE_SESSION:-}" ]; then
+dev env -i HOME="$HOME" PATH="$PATH" TOOLBOX_PATH="${TOOLBOX_PATH:-}" XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}" \
+  KUBECONFIG="$kubeconfig" MECATL_KUBE_CONTEXT="$context" MECATL_EXECUTION_K8S_TOOLBOX="${MECATL_EXECUTION_K8S_TOOLBOX:-}" MECATL_EXECUTION_TEMPLATE_REVISION="$go_revision" MECATL_EXECUTION_QUAL_STATE="$state" MECATL_EXECUTION_LIVE_CLUSTER="$cluster" \
+  go test -tags kind_execution_e2e -run '^TestKindExecutionQualification$' -count=1 -v -timeout=15m ./e2e/k8s_execution
+fi
 
 secret="mecak8s-live-$(date -u +%Y%m%d%H%M%S)-$$"
 receipt="$state/live-secret-$secret.receipt.json"
@@ -142,7 +149,7 @@ restore() {
   fi
   if [ "$restore_needed" -eq 1 ]; then
     if helm_kube upgrade --install mecak8s "$root/deploy/helm/mecak8s" --namespace execution-qualification -f "$root/deploy/mecatl-execution-kind/mecak8s-values.yaml" \
-      --set-string image.repository="${agent_image%@*}" --set-string image.tag= --set-string image.digest="${agent_image#*@}" --wait --timeout=5m >/dev/null 2>&1; then
+      --set-string image.repository="${agent_image%@*}" --set-string image.tag= --set-string image.digest="${agent_image#*@}" --set-string execution.templateRevision="$go_revision" --wait --timeout=5m >/dev/null 2>&1; then
       mock_restored=1
     else
       echo "mock profile restoration failed; cluster retained for inspection" >&2
@@ -175,16 +182,19 @@ trap 'exit 143' TERM
 dev env -i HOME="$HOME" PATH="$PATH" KUBECONFIG="$kubeconfig" MECATL_KUBE_CONTEXT="$context" MECATL_EXECUTION_CREDENTIAL_FILE="$MECATL_EXECUTION_CREDENTIAL_FILE" \
   go run -tags kind_execution_e2e ./e2e/k8s_execution/fixture/credentialloader stage "$kubeconfig" "$context" "$secret" "$receipt"
 restore_needed=1
+# Bound both the coding journey and its post-restart continuation, including
+# persisted input/tool-schema spend (roughly 10k tokens per model turn).
 helm_kube upgrade --install mecak8s "$root/deploy/helm/mecak8s" --namespace execution-qualification -f "$root/deploy/mecatl-execution-kind/mecak8s-values.yaml" \
-  --set-string image.repository="${agent_image%@*}" --set-string image.tag= --set-string image.digest="${agent_image#*@}" \
-  --set mockProvider=false --set security.allowUnsafeRealProvider=true --set defaultProvider=openrouter --set-string model=anthropic/claude-haiku-4.5 --set maxRunTokens=32000 \
+  --set-string image.repository="${agent_image%@*}" --set-string image.tag= --set-string image.digest="${agent_image#*@}" --set-string execution.templateRevision="$go_revision" \
+  --set mockProvider=false --set security.allowUnsafeRealProvider=true --set defaultProvider=openrouter --set-string model=anthropic/claude-haiku-4.5 --set maxRunTokens=256000 \
   --set-json 'extraArgs=["--log-level=debug","--no-soul","--no-user-model","--permissions-conventional=false","--agents-conventional=false"]' \
   --set extraVolumes=null --set extraVolumeMounts=null \
   --set-string extraEnv[0].name=OPENROUTER_API_KEY --set-string extraEnv[0].valueFrom.secretKeyRef.name="$secret" --set-string extraEnv[0].valueFrom.secretKeyRef.key=OPENROUTER_API_KEY \
   --wait --timeout=5m
 kube -n execution-qualification rollout status deployment/mecak8s --timeout=240s
-dev env -i HOME="$HOME" PATH="$PATH" KUBECONFIG="$kubeconfig" MECATL_KUBE_CONTEXT="$context" MECATL_EXECUTION_QUAL_STATE="$state" MECATL_EXECUTION_LIVE=1 MECATL_EXECUTION_LIVE_SECRET="$secret" MECATL_EXECUTION_LIVE_CLUSTER="$cluster" \
-  go test -tags kind_execution_e2e -run '^TestKindExecutionLiveQualification$' -count=1 -timeout=10m ./e2e/k8s_execution
+dev env -i HOME="$HOME" PATH="$PATH" TOOLBOX_PATH="${TOOLBOX_PATH:-}" XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}" \
+  KUBECONFIG="$kubeconfig" MECATL_KUBE_CONTEXT="$context" MECATL_EXECUTION_K8S_TOOLBOX="${MECATL_EXECUTION_K8S_TOOLBOX:-}" MECATL_EXECUTION_QUAL_STATE="$state" MECATL_EXECUTION_TEMPLATE_REVISION="$go_revision" MECATL_EXECUTION_LIVE=1 MECATL_EXECUTION_LIVE_SESSION="${MECATL_EXECUTION_LIVE_SESSION:-}" MECATL_EXECUTION_LIVE_SECRET="$secret" MECATL_EXECUTION_LIVE_CLUSTER="$cluster" \
+  go test -tags kind_execution_e2e -run '^TestKindExecutionLiveQualification$' -count=1 -v -timeout=10m ./e2e/k8s_execution
 
 echo "live qualification passed; sanitized summary: $state/live-summary.json"
 echo "qualification cluster retained: $cluster"

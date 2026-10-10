@@ -2,6 +2,9 @@ package executionclient
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -11,11 +14,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/goccy/go-yaml"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -90,7 +96,8 @@ func TestServiceExplicitIDConcurrentMismatchCannotAbortPersistedWinner(t *testin
 	for _, sharedEngine := range []bool{true, false} {
 		t.Run(map[bool]string{true: "shared_engine", false: "per_session_engine"}[sharedEngine], func(t *testing.T) {
 			dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{executioncontroller.ExecutionEnvironmentGVR: "ExecutionEnvironmentList"})
-			controllerStore := executioncontroller.NewStore(dyn, "ns", explicitIDProfiles(t), &recordingExecutor{})
+			profiles := explicitIDProfiles(t)
+			controllerStore := executioncontroller.NewStore(dyn, "ns", profiles, &recordingExecutor{})
 			fixture := startFixture(t, controllerStore, nil)
 			defer fixture.stop()
 			client, err := New(fixture.endpoint, fixture.clientTLS)
@@ -98,7 +105,7 @@ func TestServiceExplicitIDConcurrentMismatchCannotAbortPersistedWinner(t *testin
 				t.Fatal(err)
 			}
 			defer client.Close()
-			provider, err := NewProvider(client, "coding")
+			provider, err := NewTemplateProvider(client, "coding", profiles.DefaultRevision("coding"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -182,7 +189,8 @@ func TestServiceExplicitIDConcurrentMismatchCannotAbortPersistedWinner(t *testin
 
 func TestServiceExplicitIDPrepublicationFailureCannotAbortPersistedWinner(t *testing.T) {
 	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{executioncontroller.ExecutionEnvironmentGVR: "ExecutionEnvironmentList"})
-	controllerStore := executioncontroller.NewStore(dyn, "ns", explicitIDProfiles(t), &recordingExecutor{})
+	profiles := explicitIDProfiles(t)
+	controllerStore := executioncontroller.NewStore(dyn, "ns", profiles, &recordingExecutor{})
 	fixture := startFixture(t, controllerStore, nil)
 	defer fixture.stop()
 	client, err := New(fixture.endpoint, fixture.clientTLS)
@@ -190,7 +198,7 @@ func TestServiceExplicitIDPrepublicationFailureCannotAbortPersistedWinner(t *tes
 		t.Fatal(err)
 	}
 	defer client.Close()
-	provider, err := NewProvider(client, "coding")
+	provider, err := NewTemplateProvider(client, "coding", profiles.DefaultRevision("coding"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +285,7 @@ func TestServiceExplicitIDRetryReusesRemoteAllocationAcrossRestartAndConcurrency
 		t.Fatal(err)
 	}
 	defer client.Close()
-	provider, err := NewProvider(client, "coding")
+	provider, err := NewTemplateProvider(client, "coding", profiles.DefaultRevision("coding"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,16 +400,93 @@ func TestServiceExplicitIDRetryReusesRemoteAllocationAcrossRestartAndConcurrency
 
 func explicitIDProfiles(t *testing.T) *executioncontroller.Profiles {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "profiles.yaml")
-	body := []byte("profiles:\n  coding:\n    image: example.test/executor@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n    storageClass: standard\n    storageSize: 1Gi\n    cpuRequest: 100m\n    memoryRequest: 128Mi\n    cpuLimit: 1\n    memoryLimit: 1Gi\n    ephemeralStorageRequest: 256Mi\n    ephemeralStorageLimit: 1Gi\n    tmpSizeLimit: 128Mi\n    runtimeClassName: gvisor\n    maxFileBytes: 5242880\n    maxCommandBytes: 1048576\n    maxCommandDuration: 1m\n    maxEnvironments: 10\n")
+	return explicitIDProfilesWithPolicy(t, false)
+}
+
+func explicitIDProfilesWithPolicy(t *testing.T, deprecated bool) *executioncontroller.Profiles {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "templates.yaml")
+	spec := executioncontroller.ProfileSpec{Image: "example.test/executor@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", StorageClass: "standard", StorageSize: "1Gi", CPURequest: "100m", MemoryRequest: "128Mi", CPULimit: "1", MemoryLimit: "1Gi", EphemeralStorageRequest: "256Mi", EphemeralStorageLimit: "1Gi", TmpSizeLimit: "128Mi", RuntimeClassName: "gvisor", MaxFileBytes: 5242880, MaxCommandBytes: 1048576, MaxCommandDuration: time.Minute, MaxEnvironments: 10}
+	canonical, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(append([]byte("mecatl/execution-template/v1\x00"), canonical...))
+	revision := "v1-" + hex.EncodeToString(sum[:])
+	defaultRevision := revision
+	if deprecated {
+		defaultRevision = ""
+	}
+	body, err := yaml.Marshal(executioncontroller.TemplatesFile{Templates: map[string]executioncontroller.TemplateDefinition{"coding": {Default: defaultRevision, Revisions: map[string]executioncontroller.TemplateRevision{revision: {Execution: spec, Deprecated: deprecated}}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(path, body, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	profiles, err := executioncontroller.LoadProfiles(path)
+	profiles, err := executioncontroller.LoadTemplates(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return profiles
+}
+
+func TestReadyPublisherPreservesConcurrentReferenceUpdate(t *testing.T) {
+	gvr := executioncontroller.ExecutionEnvironmentGVR
+	env := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": gvr.GroupVersion().String(), "kind": "ExecutionEnvironment",
+		"metadata": map[string]any{"name": "env", "namespace": "ns"},
+	}}
+	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{gvr: "ExecutionEnvironmentList"}, env)
+	injected := false
+	client.PrependReactor("list", "executionenvironments", func(k8stesting.Action) (bool, runtime.Object, error) {
+		if injected {
+			return false, nil, nil
+		}
+		injected = true
+		stale, err := client.Tracker().List(gvr, gvr.GroupVersion().WithKind("ExecutionEnvironment"), "ns")
+		if err != nil {
+			return true, nil, err
+		}
+		current := env.DeepCopy()
+		if err := unstructured.SetNestedSlice(current.Object, []any{map[string]any{"bindingID": "winner", "state": "PendingCreate"}}, "status", "references"); err != nil {
+			return true, nil, err
+		}
+		if err := client.Tracker().Update(gvr, current, "ns"); err != nil {
+			return true, nil, err
+		}
+		return true, stale, nil
+	})
+	published := make(chan struct{}, 1)
+	client.PrependReactor("*", "executionenvironments", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if action.GetVerb() == "update" || action.GetVerb() == "patch" {
+			select {
+			case published <- struct{}{}:
+			default:
+			}
+		}
+		return false, nil, nil
+	})
+	stop, done := make(chan struct{}), make(chan struct{})
+	go func() { defer close(done); publishCreatedEnvironmentsReady(client, stop) }()
+	t.Cleanup(func() { close(stop); <-done })
+	select {
+	case <-published:
+	case <-time.After(5 * time.Second):
+		t.Fatal("readiness publisher did not update the environment")
+	}
+	current, err := client.Resource(gvr).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	refs, found, err := unstructured.NestedSlice(current.Object, "status", "references")
+	if err != nil || !found || len(refs) != 1 {
+		t.Fatalf("readiness publication lost the concurrent reference: %v, found=%v, err=%v", refs, found, err)
+	}
+	pod, _, _ := unstructured.NestedString(current.Object, "status", "pod", "name")
+	if pod != "executor" {
+		t.Fatalf("readiness publisher did not set the executor pod: %q", pod)
+	}
 }
 
 func publishCreatedEnvironmentsReady(client *dynamicfake.FakeDynamicClient, stop <-chan struct{}) {
@@ -417,10 +502,9 @@ func publishCreatedEnvironmentsReady(client *dynamicfake.FakeDynamicClient, stop
 				continue
 			}
 			for i := range list.Items {
-				o := list.Items[i].DeepCopy()
-				_ = unstructured.SetNestedMap(o.Object, map[string]any{"name": "executor"}, "status", "pod")
-				_ = unstructured.SetNestedSlice(o.Object, []any{map[string]any{"type": "Ready", "status": "True"}}, "status", "conditions")
-				_, _ = client.Resource(executioncontroller.ExecutionEnvironmentGVR).Namespace("ns").UpdateStatus(context.Background(), o, metav1.UpdateOptions{})
+				// The fake does not enforce resourceVersion conflicts; a stale full status update can erase reference intents.
+				patch := []byte(`{"status":{"pod":{"name":"executor"},"conditions":[{"type":"Ready","status":"True"}]}}`)
+				_, _ = client.Resource(executioncontroller.ExecutionEnvironmentGVR).Namespace("ns").Patch(context.Background(), list.Items[i].GetName(), types.MergePatchType, patch, metav1.PatchOptions{}, "status")
 			}
 		}
 	}

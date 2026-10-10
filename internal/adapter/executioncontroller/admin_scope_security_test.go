@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"reflect"
 	"testing"
-	"time"
 
 	"github.com/stacklok/mecatl/internal/executionenv"
 )
@@ -63,7 +62,7 @@ func TestAdministratorScopeDigestIsNormalizedAndAuthorityBound(t *testing.T) {
 	before, _ := json.Marshal(mf)
 	digest := func(m securityManifest) string {
 		t.Helper()
-		d, err := authorityDigest(m, time.Minute, time.Second, nil, nil, "server")
+		d, err := authorityDigest(m)
 		if err != nil {
 			t.Fatal(err)
 		}

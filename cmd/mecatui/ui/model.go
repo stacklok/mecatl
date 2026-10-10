@@ -144,16 +144,19 @@ type Deps struct {
 	ServerInfo ServerInfoGetter
 	// ServerImpl is the locally-known embedded server family. It is used without
 	// an RPC when Embedded is true.
-	ServerImpl  string
-	Skills      client.SkillLister      // skills-inventory discovery for the /skills panel; nil disables it
-	Agents      client.AgentLister      // agent-definition discovery for the /agents panel; nil disables it
-	Soul        client.SoulFetcher      // soul (persona) inspection for the /soul panel; nil disables it
-	UserModel   client.UserModelLister  // user-model inspection for the /memory panel; nil disables it
-	Reflections client.ReflectionClient // proposal review and explicit reflection; nil disables it
-	Dream       client.DreamClient      // manual memory consolidation review; nil disables /dream
-	Compactor   client.SessionCompactor // out-of-band session compaction; nil disables /compact
-	Models      client.ModelLister      // selectable-model discovery for the /models picker; nil disables it
-	Worktrees   client.WorktreeLister   // worktree discovery for the /worktrees overlay (issue #102); nil disables it
+	ServerImpl         string
+	Skills             client.SkillLister      // skills-inventory discovery for the /skills panel; nil disables it
+	Agents             client.AgentLister      // agent-definition discovery for the /agents panel; nil disables it
+	Soul               client.SoulFetcher      // soul (persona) inspection for the /soul panel; nil disables it
+	UserModel          client.UserModelLister  // user-model inspection for the /memory panel; nil disables it
+	Reflections        client.ReflectionClient // proposal review and explicit reflection; nil disables it
+	Dream              client.DreamClient      // manual memory consolidation review; nil disables /dream
+	Compactor          client.SessionCompactor // out-of-band session compaction; nil disables /compact
+	ExecutionTemplates interface {
+		ListExecutionTemplates(context.Context) (client.ExecutionTemplateInventory, error)
+	}
+	Models    client.ModelLister    // selectable-model discovery for the /models picker; nil disables it
+	Worktrees client.WorktreeLister // worktree discovery for the /worktrees overlay (issue #102); nil disables it
 	// Sched is the schedule discovery + management surface for the /schedule overlay
 	// (issue #234); nil disables it (the overlay is honestly absent). The overlay can
 	// create/inspect/pause/resume/fire-now on any store-backed server; auto-firing on
@@ -634,10 +637,11 @@ type Model struct {
 	// thus its known ~1/3 -race flake — no worse than before.
 	tickArmed bool
 
-	activeTool                   string             // tool name in flight, shown beside the spinner
-	toolProgress                 string             // transient progress line for the in-flight tool (cleared on result/turn boundary)
-	skillsEpoch                  uint64             // model-lifetime monotonic /skills request epoch; never reset on close (the surface mints via its nextEpoch closure)
-	skillChangeLast              string             // newest bounded lifecycle receipt already announced
+	activeTool                   string // tool name in flight, shown beside the spinner
+	toolProgress                 string // transient progress line for the in-flight tool (cleared on result/turn boundary)
+	skillsEpoch                  uint64 // model-lifetime monotonic /skills request epoch; never reset on close (the surface mints via its nextEpoch closure)
+	skillChangeLast              string // newest bounded lifecycle receipt already announced
+	executionPicker              executionPickerState
 	palette                      paletteState       // slash-command palette (open when the input starts with "/")
 	mention                      mentionState       // @-file-mention completion menu (open when the trailing word is an "@token"); mutually exclusive with palette
 	queued                       []string           // follow-up prompts staged while a run streams; MERGED into one prompt and drained on a healthy stop (see drainQueue)

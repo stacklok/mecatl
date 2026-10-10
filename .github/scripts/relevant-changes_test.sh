@@ -87,15 +87,15 @@ run "site: ci.yml (job definition) runs" site true .github/workflows/ci.yml
 run "site: Taskfile (task recipes) runs" site true Taskfile.yml
 
 # --- studio category: the Mecatl Studio job (`studio`) ---------------------------
-# Relevant only to apps/ (a self-contained workspace on the PUBLISHED SDK) and the
-# CI-control files. A Go, in-tree-SDK, contracts, or site change cannot alter it.
+# Relevant to apps/, the SDK source built for Studio, and CI-control files.
+# A Go or site change alone cannot alter its frontend.
 run "studio: apps server runs" studio true apps/server/src/index.ts
 run "studio: apps web runs" studio true apps/web/src/main.tsx
 run "studio: apps lockfile runs" studio true apps/pnpm-lock.yaml
 run "studio: apps Dockerfile + compose run" studio true apps/Dockerfile apps/docker-compose.yml
 run "studio: apps Taskfile runs" studio true apps/Taskfile.yml
 run "studio: Go engine change skips" studio false engine/agent/loop.go
-run "studio: in-tree SDK change skips (Studio uses the published SDK)" studio false sdk/typescript/src/client.ts
+run "studio: checked-out SDK source change runs" studio true sdk/typescript/src/client.ts
 run "studio: contracts (proto) change skips (no in-tree codegen reaches apps/)" studio false contracts/proto/mecatl/v1/agent.proto
 run "studio: website + user-docs skip" studio false website/a.tsx user-docs/intro.md
 run "studio: docs skip" studio false docs/architecture/api-surface.md

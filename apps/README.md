@@ -17,7 +17,7 @@ one self-contained pnpm workspace (pnpm 12.4.2, Node 26, see `package.json`):
 
 | Package                               | What it is                                                                                                                                                            |
 | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `server/` (`@mecatl-studio/server`)   | A Hono **backend for frontend (BFF)**. Holds the user's mecatl credential, talks to the daemon through the published `@stacklok-oss/mecatl-sdk`, serves the SPA and `/api` from one origin. |
+| `server/` (`@mecatl-studio/server`)   | A Hono **backend for frontend (BFF)**. Holds the user's mecatl credential, talks to the daemon through the checked-out `@stacklok-oss/mecatl-sdk`, serves the SPA and `/api` from one origin. |
 | `web/` (`@mecatl-studio/web`)         | A Vite + React SPA. Calls only the BFF's `/api/v1`; imports neither the SDK nor daemon protocol types.                                                                  |
 | `contracts/` (`@mecatl-studio/contracts`) | Zod schemas, the generated `openapi.json`, and the generated Hey API / TanStack Query client. Generated files are committed and drift-gated.                        |
 
@@ -28,12 +28,11 @@ section.
 
 Studio is a consumer of Mecatl's public surface, not part of the Go build:
 
-- **Published SDK only.** `server/` depends on a released `@stacklok-oss/mecatl-sdk`
-  version from npm (`server/package.json`). Nothing in `apps/` references
-  `sdk/typescript` by path or `file:` / `link:` dependency; `workspace:*` links only the
-  Studio packages to each other. Biome's `noRestrictedImports` rejects relative imports
-  of the in-repo SDK. A UI change that needs an unreleased SDK change waits for the SDK
-  release.
+- **Checked-out SDK.** `server/` uses the repository's `sdk/typescript` through
+  a frozen `file:` dependency until an SDK release includes the execution-template
+  contract. Run `task studio:install` to compile the local SDK before installing
+  Studio. The image builds both from the repository root; the browser still never
+  imports the SDK.
 - **The browser never talks to Mecatl.** `web/` imports neither the SDK nor its
   generated protocol types (Biome rejects `@stacklok-oss/mecatl-sdk`, `/node`, and
   `/gen` there). Only the BFF holds a credential; the browser holds four cookies (see
@@ -64,9 +63,9 @@ Equivalent without Task, with a `mecated` already on your `PATH` (or named by
 `MECATED_BIN`):
 
 ```sh
+task studio:install # from repository root: build the SDK, then install Studio
 cd apps
 cp .env.example .env     # optional; the dev server reads ../.env when present
-pnpm install --frozen-lockfile
 pnpm dev
 ```
 
@@ -77,7 +76,7 @@ that shell first; the spawned daemon inherits it. `MECATL_DEV_MOCK=1` spawns
 ### The gates
 
 ```sh
-task studio:install          # pnpm install --frozen-lockfile (fingerprinted; no-op when fresh)
+task studio:install          # build checked-out SDK, then pnpm install --frozen-lockfile
 task studio:lint             # Biome lint + format check, all three packages
 task studio:typecheck        # tsc --noEmit for contracts, server, web
 task studio:test             # Vitest (offline; never spawns mecated)

@@ -78,6 +78,25 @@ set. Open `/workspace/shortcuts` directly or follow **Keyboard shortcuts** from
 **Settings > About**. The page lists the current browser bindings and features
 enabled by the connected deployment.
 
+### Choose execution for a new chat
+
+Before sending the first prompt, open **Execution** in the chat composer (or
+**Chat options** on mobile). **Deployment default** uses your server's configured
+workspace; **No files or built-in Shell** creates a file-less chat. If the server
+advertises template discovery, you can select an eligible template by its display
+name, ID, and pinned revision. The server checks your access again at creation;
+selection does not reserve capacity. Studio never shows image names, paths, or
+credentials from the execution recipe.
+
+A disabled catalog still lets you choose default or none. An empty catalog means
+no templates are eligible for your account; an unavailable catalog can be retried
+later. If a selected revision disappears, refresh the list and choose another:
+Studio does not replace that choice with a default. Capacity failures likewise
+leave your draft unsent. A chat's displayed **files** and **built-in Shell** status
+comes from the bound session's capabilities, not from the template label or the
+server-wide Shell setting. Diagnostic chats always choose none.
+
+### Inspect delegated activity
 ### Browse and review skills
 
 Open **Skills** to browse the deployment's configured skills. Sort the table by

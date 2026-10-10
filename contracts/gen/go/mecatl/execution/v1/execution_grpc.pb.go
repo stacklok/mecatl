@@ -26,8 +26,9 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ExecutionProviderService_ValidateProfile_FullMethodName          = "/mecatl.execution.v1.ExecutionProviderService/ValidateProfile"
-	ExecutionProviderService_EnsureEnvironment_FullMethodName        = "/mecatl.execution.v1.ExecutionProviderService/EnsureEnvironment"
+	ExecutionProviderService_ListExecutionTemplates_FullMethodName   = "/mecatl.execution.v1.ExecutionProviderService/ListExecutionTemplates"
+	ExecutionProviderService_ValidateTemplate_FullMethodName         = "/mecatl.execution.v1.ExecutionProviderService/ValidateTemplate"
+	ExecutionProviderService_EnsureTemplate_FullMethodName           = "/mecatl.execution.v1.ExecutionProviderService/EnsureTemplate"
 	ExecutionProviderService_AttachEnvironment_FullMethodName        = "/mecatl.execution.v1.ExecutionProviderService/AttachEnvironment"
 	ExecutionProviderService_AcquireRun_FullMethodName               = "/mecatl.execution.v1.ExecutionProviderService/AcquireRun"
 	ExecutionProviderService_RenewRun_FullMethodName                 = "/mecatl.execution.v1.ExecutionProviderService/RenewRun"
@@ -55,8 +56,9 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type ExecutionProviderServiceClient interface {
-	ValidateProfile(ctx context.Context, in *ValidateProfileRequest, opts ...grpc.CallOption) (*ValidateProfileResponse, error)
-	EnsureEnvironment(ctx context.Context, in *EnsureEnvironmentRequest, opts ...grpc.CallOption) (*EnsureEnvironmentResponse, error)
+	ListExecutionTemplates(ctx context.Context, in *ListExecutionTemplatesRequest, opts ...grpc.CallOption) (*ListExecutionTemplatesResponse, error)
+	ValidateTemplate(ctx context.Context, in *ValidateTemplateRequest, opts ...grpc.CallOption) (*ValidateTemplateResponse, error)
+	EnsureTemplate(ctx context.Context, in *EnsureTemplateRequest, opts ...grpc.CallOption) (*EnsureEnvironmentResponse, error)
 	AttachEnvironment(ctx context.Context, in *AttachEnvironmentRequest, opts ...grpc.CallOption) (*AttachEnvironmentResponse, error)
 	AcquireRun(ctx context.Context, in *AcquireRunRequest, opts ...grpc.CallOption) (*RunClaimResponse, error)
 	RenewRun(ctx context.Context, in *RenewRunRequest, opts ...grpc.CallOption) (*RunClaimResponse, error)
@@ -88,20 +90,30 @@ func NewExecutionProviderServiceClient(cc grpc.ClientConnInterface) ExecutionPro
 	return &executionProviderServiceClient{cc}
 }
 
-func (c *executionProviderServiceClient) ValidateProfile(ctx context.Context, in *ValidateProfileRequest, opts ...grpc.CallOption) (*ValidateProfileResponse, error) {
+func (c *executionProviderServiceClient) ListExecutionTemplates(ctx context.Context, in *ListExecutionTemplatesRequest, opts ...grpc.CallOption) (*ListExecutionTemplatesResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ValidateProfileResponse)
-	err := c.cc.Invoke(ctx, ExecutionProviderService_ValidateProfile_FullMethodName, in, out, cOpts...)
+	out := new(ListExecutionTemplatesResponse)
+	err := c.cc.Invoke(ctx, ExecutionProviderService_ListExecutionTemplates_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *executionProviderServiceClient) EnsureEnvironment(ctx context.Context, in *EnsureEnvironmentRequest, opts ...grpc.CallOption) (*EnsureEnvironmentResponse, error) {
+func (c *executionProviderServiceClient) ValidateTemplate(ctx context.Context, in *ValidateTemplateRequest, opts ...grpc.CallOption) (*ValidateTemplateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ValidateTemplateResponse)
+	err := c.cc.Invoke(ctx, ExecutionProviderService_ValidateTemplate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *executionProviderServiceClient) EnsureTemplate(ctx context.Context, in *EnsureTemplateRequest, opts ...grpc.CallOption) (*EnsureEnvironmentResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(EnsureEnvironmentResponse)
-	err := c.cc.Invoke(ctx, ExecutionProviderService_EnsureEnvironment_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, ExecutionProviderService_EnsureTemplate_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -322,8 +334,9 @@ func (c *executionProviderServiceClient) CancelCommand(ctx context.Context, in *
 // All implementations must embed UnimplementedExecutionProviderServiceServer
 // for forward compatibility.
 type ExecutionProviderServiceServer interface {
-	ValidateProfile(context.Context, *ValidateProfileRequest) (*ValidateProfileResponse, error)
-	EnsureEnvironment(context.Context, *EnsureEnvironmentRequest) (*EnsureEnvironmentResponse, error)
+	ListExecutionTemplates(context.Context, *ListExecutionTemplatesRequest) (*ListExecutionTemplatesResponse, error)
+	ValidateTemplate(context.Context, *ValidateTemplateRequest) (*ValidateTemplateResponse, error)
+	EnsureTemplate(context.Context, *EnsureTemplateRequest) (*EnsureEnvironmentResponse, error)
 	AttachEnvironment(context.Context, *AttachEnvironmentRequest) (*AttachEnvironmentResponse, error)
 	AcquireRun(context.Context, *AcquireRunRequest) (*RunClaimResponse, error)
 	RenewRun(context.Context, *RenewRunRequest) (*RunClaimResponse, error)
@@ -355,11 +368,14 @@ type ExecutionProviderServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedExecutionProviderServiceServer struct{}
 
-func (UnimplementedExecutionProviderServiceServer) ValidateProfile(context.Context, *ValidateProfileRequest) (*ValidateProfileResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ValidateProfile not implemented")
+func (UnimplementedExecutionProviderServiceServer) ListExecutionTemplates(context.Context, *ListExecutionTemplatesRequest) (*ListExecutionTemplatesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListExecutionTemplates not implemented")
 }
-func (UnimplementedExecutionProviderServiceServer) EnsureEnvironment(context.Context, *EnsureEnvironmentRequest) (*EnsureEnvironmentResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method EnsureEnvironment not implemented")
+func (UnimplementedExecutionProviderServiceServer) ValidateTemplate(context.Context, *ValidateTemplateRequest) (*ValidateTemplateResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ValidateTemplate not implemented")
+}
+func (UnimplementedExecutionProviderServiceServer) EnsureTemplate(context.Context, *EnsureTemplateRequest) (*EnsureEnvironmentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method EnsureTemplate not implemented")
 }
 func (UnimplementedExecutionProviderServiceServer) AttachEnvironment(context.Context, *AttachEnvironmentRequest) (*AttachEnvironmentResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AttachEnvironment not implemented")
@@ -446,38 +462,56 @@ func RegisterExecutionProviderServiceServer(s grpc.ServiceRegistrar, srv Executi
 	s.RegisterService(&ExecutionProviderService_ServiceDesc, srv)
 }
 
-func _ExecutionProviderService_ValidateProfile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ValidateProfileRequest)
+func _ExecutionProviderService_ListExecutionTemplates_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListExecutionTemplatesRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(ExecutionProviderServiceServer).ValidateProfile(ctx, in)
+		return srv.(ExecutionProviderServiceServer).ListExecutionTemplates(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: ExecutionProviderService_ValidateProfile_FullMethodName,
+		FullMethod: ExecutionProviderService_ListExecutionTemplates_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ExecutionProviderServiceServer).ValidateProfile(ctx, req.(*ValidateProfileRequest))
+		return srv.(ExecutionProviderServiceServer).ListExecutionTemplates(ctx, req.(*ListExecutionTemplatesRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _ExecutionProviderService_EnsureEnvironment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(EnsureEnvironmentRequest)
+func _ExecutionProviderService_ValidateTemplate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ValidateTemplateRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(ExecutionProviderServiceServer).EnsureEnvironment(ctx, in)
+		return srv.(ExecutionProviderServiceServer).ValidateTemplate(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: ExecutionProviderService_EnsureEnvironment_FullMethodName,
+		FullMethod: ExecutionProviderService_ValidateTemplate_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ExecutionProviderServiceServer).EnsureEnvironment(ctx, req.(*EnsureEnvironmentRequest))
+		return srv.(ExecutionProviderServiceServer).ValidateTemplate(ctx, req.(*ValidateTemplateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ExecutionProviderService_EnsureTemplate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EnsureTemplateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ExecutionProviderServiceServer).EnsureTemplate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ExecutionProviderService_EnsureTemplate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ExecutionProviderServiceServer).EnsureTemplate(ctx, req.(*EnsureTemplateRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -868,12 +902,16 @@ var ExecutionProviderService_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*ExecutionProviderServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "ValidateProfile",
-			Handler:    _ExecutionProviderService_ValidateProfile_Handler,
+			MethodName: "ListExecutionTemplates",
+			Handler:    _ExecutionProviderService_ListExecutionTemplates_Handler,
 		},
 		{
-			MethodName: "EnsureEnvironment",
-			Handler:    _ExecutionProviderService_EnsureEnvironment_Handler,
+			MethodName: "ValidateTemplate",
+			Handler:    _ExecutionProviderService_ValidateTemplate_Handler,
+		},
+		{
+			MethodName: "EnsureTemplate",
+			Handler:    _ExecutionProviderService_EnsureTemplate_Handler,
 		},
 		{
 			MethodName: "AttachEnvironment",
