@@ -494,7 +494,9 @@ function ModelInventory({
 
   return (
     <SettingsCard title="Models">
-      <div className="flex flex-col gap-4">
+      {/* Columns follow the card's own width: beside the section nav, a 500–640px
+          window leaves too little room for two readable model cards. */}
+      <div className="@container flex flex-col gap-4">
         <Note>
           Visible is a personal preference stored in this browser. Default model and routing are
           managed by the deployment.
@@ -526,7 +528,7 @@ function ModelInventory({
         ) : models.length === 0 ? (
           <Note role="status">No models match your search.</Note>
         ) : (
-          <div className="grid gap-3 min-[500px]:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-3 @min-[480px]:grid-cols-2 @min-[700px]:grid-cols-3">
             {models.map((model) => (
               <ModelCard
                 enabled={!modelPreferences.disabled.has(modelPreferenceId(model))}
@@ -555,7 +557,7 @@ function ModelCard({
 }) {
   return (
     <article className="rounded-lg border bg-background p-4" title={model.id}>
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-x-3">
         <h3 className="text-sm font-medium">{model.displayName}</h3>
         <label
           className="flex min-h-11 items-center gap-2 text-xs text-muted-foreground"

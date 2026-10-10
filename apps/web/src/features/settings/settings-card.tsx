@@ -24,7 +24,9 @@ export function SettingsCard({ children, title }: { children: ReactNode; title: 
 /**
  * The prototype's settings row: label and optional description on the left,
  * the control on the right. Wrap consecutive rows in
- * `<div className="divide-y divide-border/60">` for hairline separators.
+ * `<div className="divide-y divide-border/60">` for hairline separators. The
+ * control never grows past the row, so a fixed-width input narrows in a
+ * tight column instead of spilling out of the card.
  */
 export function SettingsRow({
   children,
@@ -59,7 +61,7 @@ export function SettingsRow({
           <p className="max-w-md text-xs text-muted-foreground">{description}</p>
         ) : null}
       </div>
-      <div className="flex shrink-0 items-center gap-2">{children}</div>
+      <div className="flex min-w-0 max-w-full shrink-0 items-center gap-2">{children}</div>
     </div>
   );
 }
@@ -69,11 +71,18 @@ export function FactList({ children }: { children: ReactNode }) {
   return <dl className="divide-y rounded-lg border bg-background">{children}</dl>;
 }
 
+/**
+ * One fact: the value sits beside its label, and drops below it only when its
+ * longest word would not fit there, so words stay whole (beside the Settings
+ * nav, a 500–640px window leaves a card about 150px of row).
+ */
 export function FactRow({ children, label }: { children: ReactNode; label: string }) {
   return (
-    <div className="flex items-start justify-between gap-3 px-4 py-3">
+    <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1 px-4 py-3">
       <dt className="shrink-0 text-sm">{label}</dt>
-      <dd className="min-w-0 break-words text-right text-sm text-muted-foreground">{children}</dd>
+      <dd className="min-w-min flex-1 basis-0 break-words text-right text-sm text-muted-foreground">
+        {children}
+      </dd>
     </div>
   );
 }

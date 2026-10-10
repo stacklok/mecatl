@@ -22,7 +22,7 @@ export function IdentitySettings() {
       >
         <Input
           aria-label="Your display name"
-          className="min-h-11 w-44 min-[500px]:w-60"
+          className="min-h-11 w-44 max-w-full min-[500px]:w-60"
           id="user-display-name"
           maxLength={40}
           onChange={(event) => userName.setValue(event.target.value)}

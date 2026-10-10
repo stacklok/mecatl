@@ -32,7 +32,7 @@ export function AgentSettings() {
       >
         <Input
           aria-label="Agent name"
-          className="min-h-11 w-44 min-[500px]:w-60"
+          className="min-h-11 w-44 max-w-full min-[500px]:w-60"
           id="agent-display-name"
           maxLength={40}
           onChange={(event) => agentName.setValue(event.target.value)}
