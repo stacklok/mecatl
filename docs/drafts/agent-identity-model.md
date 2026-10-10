@@ -1,6 +1,15 @@
 # Agent identity: mecatl as its own SPIFFE trust domain
 
-Same tier as [`docs/scoped-resource-grants.md`](scoped-resource-grants.md).
+**Status: superseded by [Agent identity and authority](agent-identity/README.md).**
+The replacement chapters consolidate this model with the newer authority design
+and the design-review decisions. This document remains as historical source
+material; its harness-owned issuer, credential layout, and delivery phases are
+not the selected architecture.
+
+Supersession does not mean every design question is resolved. The `may_act`
+question remains pending, and the authority and implementation donors still need
+a final completeness review. Follow the replacement chapters for the proposed
+architecture and its explicit open questions.
 
 This doc proposes how mecatl identifies **who is acting** in a multi-user,
 multi-session, autoscaled deployment: a user spawns an agent, the agent spawns

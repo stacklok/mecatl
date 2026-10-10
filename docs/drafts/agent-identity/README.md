@@ -1,6 +1,6 @@
 # Agent identity and authority
 
-This document proposes how Mecatl identifies **who is acting** in a multi-user, multi-session deployment: a user starts an agent, the agent delegates to subagents, each delegation stays within its parent's authority, and the resulting actions leave a durable audit trail. The goal is to let an operator or downstream service trace an action back to the agent and user behind it, with authorization enforced outside the agent loop.
+This document proposes how Mecatl identifies **who is acting** in a multi-user, multi-session deployment: a user starts an agent, the agent delegates to subagents, each delegation stays within its parent's authority, and the resulting actions leave a durable audit trail. The goal is to let an operator trace an action back to the agent and user behind it, with authorization enforced outside the agent loop.
 
 **Workload identity alone cannot answer these questions.** It identifies the Mecatl service, but one service can host many users, agent definitions, and running instances. This architecture gives those agents identities of their own and connects them to the users they act for. It follows an agent from the trusted definition loaded at session creation, through its execution and delegation, to the tool calls made on its behalf, which may use a human user's credentials to access an external service.
 
@@ -33,29 +33,29 @@ The user is the person on whose behalf the agents act. The workload is the Mecat
 
 ## Establishing an agent's identity
 
-A trusted loader resolves definitions from administrator-managed files, repositories, or APIs; the loop cannot establish identity by supplying a name. The selected definitions stay fixed for the session. Their sources and revisions must remain available across pauses and restoration, so repository changes cannot silently replace them.
+The [agent-definition loader](agent-definitions.md#loading-definitions-for-a-session) resolves definitions from configured sources, such as administrator-managed files, repositories, or APIs; the loop cannot establish identity by supplying a name. The selected definitions stay fixed for the session. Their sources and revisions must remain available across pauses and restoration, so repository changes cannot silently replace them.
 
-This requires separating the concerns currently combined in `AgentDef`: instructions and execution limits configure the harness, identity and provenance establish the agent, and permissions govern access. Changing a turn limit should not redefine identity; loading a definition should not grant access to Alice's accounts.
+The existing `AgentDef` structure currently combines instructions, execution settings, and tool configuration. This design proposes a split that gives the harness the configuration needed to execute the agent and the broker the definition records and authority ceilings needed to authorize MCP calls. Source and revision records still need a representation. Changing a turn limit should not redefine the agent's identity; loading a definition should not grant access to a user's accounts.
 
 ## Where trust lives
 
 The agent loop uses those definitions to perform work, but it cannot decide which identities or permissions the rest of the system should trust. Definition loading, authorization, and audit therefore need trusted responsibilities outside the loop.
 
-The harness hosts the API and agent loop and authenticates the initiating user. Definition loading supplies the session's configuration and establishes the corresponding identity and provenance records. An **identity broker** is a separate trusted service that governs access to protected tools. It issues agent credentials, checks requested operations against policy, and arranges downstream access using credentials it controls. It also records the decisions and actions it observes.
+The harness hosts the API and agent loop and authenticates the initiating user. An **agent-definition loader** supplies harness execution configuration and broker definition records and authority ceilings. An **identity broker** is a separate trusted service that governs access to protected tools. It issues agent credentials, checks requested operations against policy, and arranges downstream access using credentials it controls. It also records the decisions and actions it observes.
 
-The broker's authorization role extends beyond MCP to filesystem operations, Shell, and agent spawning. Those operations can execute in different places; the broker governs access without becoming the filesystem or command executor.
+This design scopes broker authorization to MCP tools. Extending that boundary to filesystem operations, Shell, and agent spawning is a future direction; their authorization and routing remain to be designed.
 
 ```mermaid
 flowchart LR
     U["Client"] -->|"Session creation and requests"| H["mecak8s"]
-    F["Agent-definition sources"] --> R["Definition loading (placement TBD)"]
-    R -->|"Session configuration"| H
+    F["Agent-definition sources"] --> R["Agent-definition loader (placement TBD)"]
+    R -->|"Execution configuration"| H
     subgraph B["Identity broker (combined deployment)"]
         I["Identity issuance and authorization"]
         T["ToolHive AS, credential storage, and vMCP"]
         I <-->|"Authorized operations"| T
     end
-    R -->|"Initialize session definitions"| I
+    R -->|"Definition records and authority ceilings"| I
     H <-->|"User report, tool requests, and results"| I
     T <-->|"Protected calls"| P["MCP backends / providers"]
     I -->|"Decisions and observed outcomes"| A["Audit records"]
@@ -63,7 +63,7 @@ flowchart LR
 
 The diagram shows the broker-backed remote architecture's MCP path. Local deployments can retain direct tool access; protected operations in the remote deployment must pass through the broker.
 
-Before an agent starts, definition loading supplies each component with what it needs. `mecak8s` receives the configuration for running the agent; the broker receives its identity and provenance and owns the authorization decisions. Where loading runs, and how it supplies both components, remain open.
+Before the agent loop starts, the agent-definition loader supplies `mecak8s` with execution configuration and initializes the corresponding definition records and authority ceilings in the broker. The loader is outside the untrusted agent loop. Its process placement and how the broker authenticates its input remain to be specified.
 
 The broker contains the agent trust issuer alongside ToolHive's authorization server, credential storage, and vMCP. The issuer signs agent identity credentials; the ToolHive components handle access to downstream tools. The tools themselves execute the operations.
 
@@ -77,16 +77,18 @@ The broker checks the call using Alice's identity, the reviewer instance, and it
 
 GitHub sees access under Alice's account. The broker's audit record supplies the rest of the story: which reviewer acted, which agent delegated the work, why the call was permitted, and what result was observed. A missing result is recorded as unknown, not as proof that the operation never happened.
 
+See [Interactive execution](credentials-and-lifecycle.md#interactive-execution) for the detailed credentials sequence.
+
 ## Detailed chapters
 
-The proposed chapters develop each part of the architecture. Filenames below are planned pages, not links to unwritten documents.
+The proposed chapters develop each part of the architecture. Linked chapters have been started; unlinked filenames are planned pages.
 
 | Chapter | Focus |
 | --- | --- |
-| `audit.md` | Follow a delegated action through concrete token and audit-record examples, including what the evidence establishes. |
-| `agent-definitions.md` | Load trusted, session-bound definitions and separate execution configuration, identity, and permissions. |
-| `mcp-authorization.md` | Explain how user and agent permissions govern MCP calls and how the broker uses ToolHive. |
-| `credentials-and-lifecycle.md` | Explain instance credentials, run bindings, downstream access, and continuity across pauses and restarts. |
+| [Audit](audit.md) | Follow a delegated action through concrete token and audit-record examples, including what the evidence establishes. |
+| [Agent definitions](agent-definitions.md) | Explain `AgentDef` and separate harness execution configuration from broker-enforced authority. |
+| [MCP authorization](mcp-authorization.md) | Explain how user and agent permissions govern MCP calls and how the broker uses ToolHive. |
+| [Credentials and lifecycle](credentials-and-lifecycle.md) | Explain instance credentials, run bindings, downstream access, and continuity across pauses and restarts. |
 | `all-tool-mediation.md` | Develop the broader authorization boundary for filesystem tools, Shell, and spawning. |
 
-Chapters can have implementation companions for integration details and evidence. Earlier material remains available in the [identity model](../agent-identity-model.md), [authority design](../../agent-authority.md), and [implementation notes](../../agent-authority-implementation.md). The old model's harness-owned signing and audit responsibilities are replaced here by the broker-centered architecture.
+The [implementation and verification companion](implementation.md) records integration requirements and checks. Earlier material remains available in the [identity model](../agent-identity-model.md), [authority design](../../agent-authority.md), and [implementation notes](../../agent-authority-implementation.md). The old model's harness-owned signing and audit responsibilities are replaced here by the broker-centered architecture.
