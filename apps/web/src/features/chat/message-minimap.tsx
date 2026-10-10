@@ -43,7 +43,8 @@ function previewText(content: string): string {
  * rest every dash is the same dim width, so the rail stays out of the way;
  * hovering or focusing one widens it and its neighbours and previews that
  * message beside the rail. The row a reader jumped to stays marked. Each
- * dash is a full-height button so it stays a real tap target, and a long
+ * dash is a full-height button so it stays a real tap target (a touch-size
+ * one on a coarse pointer, with the same 3px mark inside), and a long
  * conversation scrolls the rail instead of shrinking it.
  */
 export function MessageMinimap({
@@ -133,7 +134,7 @@ export function MessageMinimap({
               <button
                 aria-current={current ? "location" : undefined}
                 aria-label={label}
-                className="group/dash flex h-3 w-7 shrink-0 items-center justify-end rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand"
+                className="group/dash flex h-3 w-7 shrink-0 pointer-coarse:h-11 items-center justify-end rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand"
                 data-current={current}
                 key={message.id}
                 onBlur={() => setHovered(undefined)}

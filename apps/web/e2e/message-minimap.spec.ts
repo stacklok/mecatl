@@ -89,6 +89,21 @@ test("an early minimap marker reaches its own row without moving the page", asyn
   const transcript = page.getByRole("region", { name: "Conversation transcript" });
   const minimap = page.getByRole("navigation", { name: "Message minimap" });
   await expect(minimap.getByRole("button")).toHaveCount(60);
+  // A touch screen gets a full-size tap target per dash; a mouse keeps the
+  // prototype's tight 12px pitch. The visible dash stays 3px either way.
+  const coarse = await page.evaluate(() => matchMedia("(pointer: coarse)").matches);
+  expect(coarse).toBe(testInfo.project.name === "chromium-mobile");
+  const dashes = await minimap.getByRole("button").evaluateAll((buttons) =>
+    buttons.map((button) => ({
+      mark: button.firstElementChild?.getBoundingClientRect().height ?? 0,
+      target: button.getBoundingClientRect().height,
+    })),
+  );
+  for (const dash of dashes) {
+    if (coarse) expect(dash.target).toBeGreaterThanOrEqual(44);
+    else expect(dash.target).toBe(12);
+    expect(dash.mark).toBe(3);
+  }
   await expect.poll(() => transcript.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
 
   const pageTop = await page.evaluate(() => document.scrollingElement?.scrollTop ?? 0);
