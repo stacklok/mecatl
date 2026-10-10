@@ -64,8 +64,8 @@ Studio exposes the shared capabilities described in the
 [feature guides](/features/index.md), and it hides or disables what the
 connected deployment does not enable:
 
-- **Chats**: sessions with streamed runs, image attachments, permission
-  approvals, steering, and model and reasoning-effort selection.
+- **Chats**: sessions with streamed runs, image and text-file attachments,
+  permission approvals, steering, and model and reasoning-effort selection.
 - **Scheduled**: [scheduled tasks](/features/sessions/scheduled-tasks.md) with a
   cron builder and fire history, when the deployment enables scheduling.
 - **Skills**: configured and learned skills, learning proposals, and session
@@ -155,12 +155,20 @@ starting page.
 
 ## Use a chat
 
-Open **Chats**, choose an available model, reasoning effort, and permission
-mode, then write a message and select **Send**. You can also set tool access
-before starting a chat. In an existing chat, change the permission mode in the
-chat controls; choosing another model creates a fork of that chat. Press Enter
-to send or Shift+Enter for a new line. Enter used to confirm an input method
-candidate leaves the message in the composer.
+Open **Chats**, write a message, and select **Send**. The row under the composer
+holds the chat's settings: **Mode** (the permission mode), **Model** (the model
+and its reasoning effort), and, before a chat starts, **Tools** (tool access). On
+a phone, the same settings are under **Composer options**, the sliders button.
+In an existing chat, changing the mode applies in place; choosing another model
+or effort creates a fork of that chat. The row also shows how much of the
+model's context the chat uses, with **Compact** when the deployment allows it.
+The chat header shows the mode when it is **Accept edits** or **Plan**. Press
+Enter to send or Shift+Enter for a new line. Enter used to confirm an input
+method candidate leaves the message in the composer.
+
+Studio keeps each chat's unsent text in this browser tab, so it is still there
+after a reload or when you come back from another chat. Attachments are not
+kept. **Clear draft**, the × beside **Send**, empties the composer.
 
 Starter prompts fill the composer for you to review. To hide them on a new chat,
 turn off **Starter prompts** in **Settings > Personalise**; the choice belongs to
@@ -172,9 +180,12 @@ or reloading the link never sends it automatically. If you need to sign in
 first, keep the original tab open. Its prompt stays there while the popup or new
 tab completes sign-in.
 
-If the selected model supports images, use **Attach images** to add up to 16
-images to one message. Each image can be at most 10 MiB, with a combined limit
-of 20 MiB. Studio sends images only; other file types are not chat attachments.
+Use **Attach files**, or drop files on the composer, to add attachments. If the
+selected model supports images, you can add up to 16 images to one message. Each
+image can be at most 10 MiB, with a combined limit of 20 MiB. Text files of up
+to 256 KiB each, and 512 KiB together, are added to the message text, each
+between `--- attached file: <name> ---` and `--- end of <name> ---` lines.
+Studio refuses binary and audio files.
 You can select the microphone button to dictate in a browser that supports
 speech recognition on a secure origin. Review or edit the recognized text before
 sending. If recognition is unavailable or microphone access fails, Studio
@@ -193,10 +204,12 @@ reconnect. A history gap does not claim that the run finished.
 
 While Mecatl is working, the composer can queue a text message for the next run
 or steer the active run. Your Interface preference chooses what Enter does;
-Shift+Enter selects the other action. You can edit or remove queued messages.
+Shift+Enter selects the other action. Queued messages wait above the composer.
+Each one's actions menu can edit or delete it, or steer it into the active run.
+A steered message leaves the queue only when the run accepts it.
 Use **Stop** to cancel the active run. If a run fails and offers **Retry**, that
 action retries the failed run without sending the prompt again. Image messages
-can be sent after the current run ends.
+and text-file attachments can be sent after the current run ends.
 
 ### Review tool calls and plans
 
@@ -260,9 +273,9 @@ status from the same handoff. A new pending status restores the actions; a
 resolved status updates the panel. If no later status appears, the outcome
 remains uncertain and the actions stay disabled.
 
-Folders, queued messages, and account preferences survive a reload for the same
-account. Studio clears them when you sign out or switch accounts. The device
-theme and palette remain.
+Folders, queued messages, unsent drafts, and account preferences survive a
+reload for the same account. Studio clears them when you sign out or switch
+accounts. The device theme and palette remain.
 
 ### Return to a chat
 
