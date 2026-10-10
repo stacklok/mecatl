@@ -325,7 +325,9 @@ function LearnedSkillDialog({
                 Changes since {skill.supersedes}
               </p>
               {comparison.isPending ? (
-                <p className="text-xs text-muted-foreground">Comparing versions…</p>
+                <p className="text-xs text-muted-foreground" role="status">
+                  Comparing versions…
+                </p>
               ) : comparison.isError || !hasSkillDiffChanges(rows) ? (
                 <p className="text-xs text-muted-foreground">
                   No textual diff available — full body below.

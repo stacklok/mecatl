@@ -278,7 +278,9 @@ export function SessionInspection({
           )}
           {view === "transcript" &&
             (!canReadTranscript ? (
-              <p className="text-muted-foreground">{transcriptUnavailable}</p>
+              <p className="text-muted-foreground" role="status">
+                {transcriptUnavailable}
+              </p>
             ) : (
               <TranscriptView
                 error={transcript.isError}
@@ -289,7 +291,9 @@ export function SessionInspection({
             ))}
           {view === "soul" &&
             (!canReadSoul ? (
-              <p className="text-muted-foreground">{soulUnavailable}</p>
+              <p className="text-muted-foreground" role="status">
+                {soulUnavailable}
+              </p>
             ) : (
               <SoulView
                 error={soul.isError}
@@ -300,7 +304,9 @@ export function SessionInspection({
             ))}
           {view === "worktrees" &&
             (!canReadWorktrees ? (
-              <p className="text-muted-foreground">{worktreesUnavailable}</p>
+              <p className="text-muted-foreground" role="status">
+                {worktreesUnavailable}
+              </p>
             ) : (
               <WorktreePickerView
                 busy={Boolean(action)}

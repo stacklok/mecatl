@@ -61,7 +61,10 @@ export function ProviderDetail({ providerId }: { providerId: string }) {
     content = <State text={connection} />;
   } else if (runtime.isError) {
     content = (
-      <State text="Provider details could not be loaded. Check the connection and try again." />
+      <State
+        error
+        text="Provider details could not be loaded. Check the connection and try again."
+      />
     );
   } else if (detailValidating || detail.isFetching || detail.isPending) {
     content = <State text="Loading provider details…" />;
@@ -71,7 +74,10 @@ export function ProviderDetail({ providerId }: { providerId: string }) {
     ) : isModelsUnsupported(detail.error) ? (
       <State text="Model providers are not available on this deployment." />
     ) : (
-      <State text="Provider details could not be loaded. Check the connection and try again." />
+      <State
+        error
+        text="Provider details could not be loaded. Check the connection and try again."
+      />
     );
   } else {
     content = <ProviderFacts detail={detail.data} />;
@@ -85,7 +91,7 @@ export function ProviderDetail({ providerId }: { providerId: string }) {
         search={{ item: undefined }}
         to="/workspace/settings/$section"
       >
-        ← Providers
+        <span aria-hidden="true">←&nbsp;</span>Providers
       </Link>
       <h1 className="mt-5 break-all text-3xl font-semibold tracking-tight">{providerId}</h1>
       <p className="mt-2 text-sm text-muted-foreground">
@@ -99,12 +105,12 @@ export function ProviderDetail({ providerId }: { providerId: string }) {
 function ProviderFacts({ detail }: { detail: GetProviderSettingsResponse }) {
   const { provider } = detail;
   return (
-    <section className="rounded-2xl border bg-card p-5 sm:p-6">
+    <section className="rounded-2xl border bg-card p-5 min-[500px]:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-lg font-semibold">Provider status</h2>
         <ProviderState state={provider.state} />
       </div>
-      <dl className="mt-5 grid gap-3 sm:grid-cols-2">
+      <dl className="mt-5 grid gap-3 min-[500px]:grid-cols-2">
         <Fact label="Provider ID">{provider.id}</Fact>
         <Fact label="Available models">{provider.modelCount} models</Fact>
         <Fact label="Status hint">{provider.hint || "Not available"}</Fact>
@@ -116,7 +122,7 @@ function ProviderFacts({ detail }: { detail: GetProviderSettingsResponse }) {
           No models are available from this provider.
         </p>
       ) : (
-        <ul className="mt-3 grid gap-3 sm:grid-cols-2">
+        <ul className="mt-3 grid gap-3 min-[500px]:grid-cols-2">
           {detail.models.map((model) => (
             <li className="rounded-lg border bg-background p-3" key={model.id}>
               <p className="font-medium">{model.displayName}</p>
@@ -150,9 +156,12 @@ function ProviderState({ state }: { state: string }) {
   return <Badge variant="muted">Not ready</Badge>;
 }
 
-function State({ text }: { text: string }) {
+function State({ error, text }: { error?: boolean; text: string }) {
   return (
-    <div className="rounded-2xl border border-dashed p-8 text-center text-sm text-muted-foreground">
+    <div
+      className="rounded-2xl border border-dashed p-8 text-center text-sm text-muted-foreground"
+      role={error ? "alert" : "status"}
+    >
       {text}
     </div>
   );

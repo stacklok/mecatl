@@ -237,7 +237,9 @@ function ModelFilterList({
           </div>
         ))}
         {!showDefault && filteredGroups.length === 0 && (
-          <p className="px-3 py-6 text-center text-sm text-muted-foreground">No models match</p>
+          <p className="px-3 py-6 text-center text-sm text-muted-foreground" role="status">
+            No models match
+          </p>
         )}
       </div>
     </>
@@ -296,7 +298,9 @@ export function ModelSheetSection({
           </button>
         )}
         {!showDefault && filteredGroups.length === 0 && (
-          <p className="px-4 py-6 text-center text-sm text-muted-foreground">No models match</p>
+          <p className="px-4 py-6 text-center text-sm text-muted-foreground" role="status">
+            No models match
+          </p>
         )}
         {filteredGroups.map(([providerId, models]) => (
           <div key={providerId}>

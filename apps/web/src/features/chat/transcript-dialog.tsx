@@ -81,7 +81,9 @@ export function TranscriptView({
         </p>
       )}
       {entries.length === 0 ? (
-        <p className="text-muted-foreground">{TRANSCRIPT_EMPTY_NOTE}</p>
+        <p className="text-muted-foreground" role="status">
+          {TRANSCRIPT_EMPTY_NOTE}
+        </p>
       ) : (
         <ol className="flex flex-col gap-3">
           {entries.map((entry) => (

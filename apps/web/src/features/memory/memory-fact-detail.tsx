@@ -48,14 +48,20 @@ export function MemoryFactDetail({ memoryId }: { memoryId: string }) {
   if (!entry || isNotFound(detail.error)) {
     if (runtime.isPending || (connected && list.isPending)) {
       return (
-        <div className="flex min-h-[40vh] items-center justify-center text-sm text-muted-foreground">
+        <div
+          className="flex min-h-[40vh] items-center justify-center text-sm text-muted-foreground"
+          role="status"
+        >
           Loading…
         </div>
       );
     }
     if (!supported) {
       return (
-        <div className="flex min-h-[40vh] flex-col items-center justify-center gap-2 px-6 text-center">
+        <div
+          className="flex min-h-[40vh] flex-col items-center justify-center gap-2 px-6 text-center"
+          role="status"
+        >
           <p className="text-sm font-medium">Memory is turned off for this agent.</p>
           {list.data?.reason && <p className="text-sm text-muted-foreground">{list.data.reason}</p>}
         </div>
@@ -64,7 +70,7 @@ export function MemoryFactDetail({ memoryId }: { memoryId: string }) {
     const reachable = connected && !list.isError;
     return (
       <div className="flex min-h-[60vh] flex-col items-center justify-center px-4">
-        <div className="w-full max-w-md rounded-xl border bg-card p-8 text-center">
+        <div className="w-full max-w-md rounded-xl border bg-card p-8 text-center" role="status">
           <h1 className="text-lg font-semibold">Memory not found</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             {reachable ? (
@@ -121,9 +127,13 @@ export function MemoryFactDetail({ memoryId }: { memoryId: string }) {
           className="rounded-xl border bg-card p-5 text-sm leading-relaxed"
         >
           {detail.isPending ? (
-            <p className="text-muted-foreground">Loading value…</p>
+            <p className="text-muted-foreground" role="status">
+              Loading value…
+            </p>
           ) : detail.isError ? (
-            <p className="text-destructive">Value unavailable: {errorMessage(detail.error)}</p>
+            <p className="text-destructive" role="alert">
+              Value unavailable: {errorMessage(detail.error)}
+            </p>
           ) : (
             <pre className="whitespace-pre-wrap break-words font-mono text-sm">
               {current?.value || "(empty value)"}
