@@ -107,6 +107,8 @@ class Bff {
   manualCompaction = false;
   transcriptMessages: Record<string, unknown>[] | undefined;
   worktreeCalls = 0;
+  /** Holds a session's detail read until the test releases it. */
+  heldDetail: { id: string; release: Promise<void> } | undefined;
   readonly fetch = async (request: Request) => {
     const path = decodeURIComponent(new URL(request.url).pathname);
     const text = request.method === "GET" ? "" : await request.clone().text();
@@ -156,6 +158,8 @@ class Bff {
         this.clearStatus,
       );
     const detail = /^\/api\/v1\/sessions\/([^/]+)$/.exec(path);
+    const held = this.heldDetail;
+    if (detail && held && held.id === detail[1]) await held.release;
     if (detail)
       return json({
         id: detail[1],
@@ -391,6 +395,50 @@ describe("chat list row menu", () => {
     await waitFor(() =>
       expect(mounted.router.state.location.search).toMatchObject({ sessionId: "successor" }),
     );
+  });
+
+  it("forks only once while a fork is in flight", async () => {
+    const bff = new Bff();
+    bff.rows = [
+      row("chat"),
+      { ...row("other"), title: "Other chat" },
+      { ...row("third"), title: "Third chat" },
+      row("successor"),
+    ];
+    let release!: () => void;
+    bff.heldDetail = { id: "other", release: new Promise((done) => (release = done)) };
+    const mounted = await mount(bff);
+    const user = userEvent.setup();
+    await screen.findByText("Saved answer");
+    const forkFrom = async (title: string) => {
+      await user.click(
+        screen.getByRole("button", { name: `Options for chat: ${title}`, hidden: true }),
+      );
+      return screen.findByRole("menuitem", { name: "Fork chat" });
+    };
+    const first = await forkFrom("Other chat");
+    first.focus();
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(bff.calls("/api/v1/sessions/other")).toHaveLength(1));
+
+    // The fork is still reading its model: another row can't start a second one.
+    const second = await forkFrom("Third chat");
+    expect(second.getAttribute("data-disabled")).not.toBeNull();
+    second.focus();
+    await user.keyboard("{Enter}");
+    await user.keyboard("{Escape}");
+    // Nor can the fork shortcut on the open chat.
+    fireEvent.keyDown(document.body, { ctrlKey: true, key: "S", shiftKey: true });
+    await act(async () => {
+      release();
+    });
+    await waitFor(() =>
+      expect(mounted.router.state.location.search).toMatchObject({ sessionId: "successor" }),
+    );
+    const forks = bff.requests.filter(
+      (request) => request.method === "POST" && request.path.endsWith("/fork"),
+    );
+    expect(forks.map((request) => request.path)).toEqual(["/api/v1/sessions/other/fork"]);
   });
 
   it("copies a row's ID, and a debug chat's target ID", async () => {

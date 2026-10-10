@@ -56,6 +56,8 @@ interface SessionSidebarProps {
   onCreateFolder: (sessionId: string) => void;
   onDelete: (session: SessionSummaryResponse) => void;
   onDeleteFolder: (folder: ChatFolder) => void;
+  /** A fork is in flight, so every row's Fork chat waits. */
+  forking?: boolean;
   /** Forks a row as-is, without opening it first; absent hides the row's Fork chat. */
   onFork?: (session: SessionSummaryResponse) => void;
   onMoveToFolder: (sessionId: string, folderId?: string) => void;
@@ -213,6 +215,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                         <SessionRow
                           deleting={props.deletingId === session.id}
                           folders={props.folders}
+                          forking={props.forking ?? false}
                           key={session.id}
                           onCreateFolder={() => props.onCreateFolder(session.id)}
                           onDelete={() => props.onDelete(session)}
@@ -252,6 +255,7 @@ function ReasonLine({ reason }: { reason: string }) {
 function SessionRow({
   deleting,
   folders,
+  forking,
   onCreateFolder,
   onDelete,
   onFork,
@@ -265,6 +269,7 @@ function SessionRow({
 }: {
   deleting: boolean;
   folders: ChatFolderState;
+  forking: boolean;
   onCreateFolder: () => void;
   onDelete: () => void;
   onFork?: () => void;
@@ -381,7 +386,7 @@ function SessionRow({
           {onViewTranscript && (
             <ViewTranscriptMenuItem onSelect={onViewTranscript} session={session} />
           )}
-          {onFork && <ForkChatMenuItem onSelect={onFork} session={session} />}
+          {onFork && <ForkChatMenuItem disabled={forking} onSelect={onFork} session={session} />}
           {isMobile ? (
             // A submenu has no room beside the menu on a phone, so the folders sit inline.
             <DropdownMenuGroup aria-label="Move to folder">

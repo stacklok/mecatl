@@ -414,6 +414,11 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const setMode = useMutation(setSessionModeMutation());
   const compactSession = useMutation(compactSessionMutation());
   const forkSession = useMutation(forkSessionMutation());
+  // A fork reads the row's model before it posts, so the mutation alone
+  // doesn't cover the whole fork: the ref gates a second start within the
+  // same render, and the state disables the fork entries meanwhile.
+  const forkInFlight = useRef(false);
+  const [forkStarting, setForkStarting] = useState(false);
   const clearSession = useMutation(clearSessionMutation());
   const [delegationFleet, setDelegationFleet] = useState(() =>
     createDelegationFleet(sessionId ?? ""),
@@ -1294,7 +1299,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       await forkStandaloneChat();
       return;
     }
-    if (!row.capabilities.fork || row.debugTargetSessionId || forkSession.isPending) return;
+    if (!row.capabilities.fork || row.debugTargetSessionId || forkInFlight.current) return;
+    forkInFlight.current = true;
+    setForkStarting(true);
     setError(undefined);
     setNotice("Forking this conversation…");
     try {
@@ -1317,12 +1324,22 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
+      forkInFlight.current = false;
+      setForkStarting(false);
       setNotice(undefined);
     }
   }
 
   async function forkStandaloneChat() {
-    if (!sessionId || !selectedSession?.capabilities.fork || !displayedDetail?.model) return;
+    if (
+      !sessionId ||
+      !selectedSession?.capabilities.fork ||
+      !displayedDetail?.model ||
+      forkInFlight.current
+    )
+      return;
+    forkInFlight.current = true;
+    setForkStarting(true);
     setError(undefined);
     setNotice("Forking this conversation…");
     try {
@@ -1338,6 +1355,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
+      forkInFlight.current = false;
+      setForkStarting(false);
       setNotice(undefined);
     }
   }
@@ -2895,6 +2914,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             title: `Delete folder “${folder.name}”?`,
           });
         }}
+        forking={forkStarting || forkSession.isPending}
         onFork={(row) => void forkListedChat(row)}
         onMoveToFolder={chatFolders.move}
         onViewTranscript={(row) => openInspection(row.id, "transcript")}
@@ -3081,6 +3101,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     disabled={
+                      forkStarting ||
                       forkSession.isPending ||
                       !displayedDetail?.model ||
                       !selectedSession?.capabilities.fork
