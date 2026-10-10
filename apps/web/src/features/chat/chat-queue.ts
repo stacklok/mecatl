@@ -91,9 +91,15 @@ export function useQueuedMessages(sessionId: string) {
   return { add, items, remove, update };
 }
 
-export function takeNextQueuedMessage(sessionId: string) {
-  const [next, ...remaining] = readQueue(sessionId);
-  if (next) writeQueue(sessionId, remaining);
+/** Takes the oldest queued message, passing over `skipId` (a message a steer is delivering). */
+export function takeNextQueuedMessage(sessionId: string, skipId?: string) {
+  const queue = readQueue(sessionId);
+  const next = queue.find((item) => item.id !== skipId);
+  if (!next) return undefined;
+  writeQueue(
+    sessionId,
+    queue.filter((item) => item !== next),
+  );
   return next;
 }
 

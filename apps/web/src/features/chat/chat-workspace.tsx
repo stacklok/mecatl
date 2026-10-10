@@ -425,6 +425,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const [composerDraftPresent, setComposerDraftPresent] = useState(false);
   const [clearDraftSignal, setClearDraftSignal] = useState(0);
   const [steeringQueuedId, setSteeringQueuedId] = useState<string>();
+  /** The queued message a steer is delivering; the queue drain skips it. */
+  const steeringQueuedRef = useRef<string | undefined>(undefined);
   const [escapeClearHint, setEscapeClearHint] = useState(false);
   const workspaceRoot = useRef<HTMLDivElement>(null);
   const chatOptionsTrigger = useRef<HTMLButtonElement>(null);
@@ -1578,6 +1580,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     const item = queuedMessages.items.find((candidate) => candidate.id === id);
     const target = controlTarget(runTarget, sessionId);
     if (!item || !target || steeringQueuedId) return;
+    steeringQueuedRef.current = id;
     setSteeringQueuedId(id);
     setError(undefined);
     setNotice(undefined);
@@ -1594,6 +1597,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         setNotice("The run ended before steering. The message stays queued.");
       else setError(errorMessage(caught));
     } finally {
+      steeringQueuedRef.current = undefined;
       setSteeringQueuedId(undefined);
     }
   }
@@ -1601,7 +1605,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   function drainNextQueuedMessage(activeSessionId: string) {
     if (protectedRequestsPaused()) return;
     if (viewedSessionId.current !== activeSessionId) return;
-    const next = takeNextQueuedMessage(activeSessionId);
+    // A message being steered is already on its way; draining it too would deliver it twice.
+    const next = takeNextQueuedMessage(activeSessionId, steeringQueuedRef.current);
     if (next) void sendPrompt(next.text, [], activeSessionId);
   }
 

@@ -2134,6 +2134,49 @@ describe("mounted chat workspace BFF boundary", () => {
     expect(window.localStorage.getItem("studio.chat.draft.chat-a")).toBeNull();
   });
 
+  it("never drains a queued message while it is being steered", async () => {
+    const bff = new BffFixture();
+    const first = heldStream();
+    bff.runResponses.push(first.response);
+    const { router } = await mountWorkspace(bff);
+    typePrompt("first prompt");
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(bff.requestsFor("POST", "/runs")).toHaveLength(1));
+    await act(async () => first.send(runStarted()));
+    await waitFor(() => expect(router.state.location.search.sessionId).toBe("chat-a"));
+    typePrompt("steer me");
+    fireEvent.click(screen.getByRole("button", { name: "Queue message" }));
+    await waitFor(() =>
+      expect(window.localStorage.getItem("studio.chat.queue.chat-a")).toContain("steer me"),
+    );
+
+    let acceptSteer!: (response: Response) => void;
+    bff.nextReplies.set("/api/v1/sessions/chat-a/runs/run-a/steer", [
+      new Promise<Response>((resolve) => {
+        acceptSteer = resolve;
+      }),
+    ]);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Actions for queued message 1" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Steer" }));
+    await waitFor(() => expect(bff.requestsFor("POST", "/steer")).toHaveLength(1));
+
+    // The run settles while the steer is still in flight.
+    await act(async () => {
+      first.send(runEvent("result", "2", "", "run-a", { stop: "end_turn" }));
+      first.close();
+    });
+    await screen.findByRole("button", { name: "Send message" });
+    await waitFor(() =>
+      expect(bff.requestsAt("GET", "/api/v1/sessions/chat-a").length).toBeGreaterThan(0),
+    );
+    await act(async () => acceptSteer(new Response(null, { status: 204 })));
+    await waitFor(() => expect(window.localStorage.getItem("studio.chat.queue.chat-a")).toBeNull());
+    expect(bff.requestsFor("POST", "/runs").map((request) => request.body)).toEqual([
+      { images: [], prompt: "first prompt" },
+    ]);
+  });
+
   it("retries a saved failed turn without starting a second run or resending its prompt", async () => {
     const bff = new BffFixture(session("chat-a"));
     window.sessionStorage.setItem(

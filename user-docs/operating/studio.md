@@ -247,7 +247,8 @@ While Mecatl is working, the composer can queue a text message for the next run
 or steer the active run. Your Interface preference chooses what Enter does;
 Shift+Enter selects the other action. Queued messages wait above the composer.
 Each one's actions menu can edit or delete it, or steer it into the active run.
-A steered message leaves the queue only when the run accepts it.
+A steered message leaves the queue only when the run accepts it, and the queue
+never sends it as the next run while the steer is on its way.
 Use **Stop** to cancel the active run. If a run fails and offers **Retry**, that
 action retries the failed run without sending the prompt again. Image messages
 and text-file attachments can be sent after the current run ends.
