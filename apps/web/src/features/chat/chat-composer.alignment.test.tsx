@@ -128,6 +128,17 @@ describe("persisted composer draft", () => {
     expect(readDraft("chat-a")).toBe("");
   });
 
+  it("keeps a restored draft when the composer remounts after an earlier escape clear", async () => {
+    writeDraft("chat-a", "came back to this");
+    const onSend = vi.fn().mockResolvedValue(true);
+    const view = render(<ChatComposer clearDraftSignal={3} draftKey="chat-a" onSend={onSend} />);
+    expect(composerInput().value).toBe("came back to this");
+    expect(readDraft("chat-a")).toBe("came back to this");
+    view.rerender(<ChatComposer clearDraftSignal={4} draftKey="chat-a" onSend={onSend} />);
+    await waitFor(() => expect(composerInput().value).toBe(""));
+    expect(readDraft("chat-a")).toBe("");
+  });
+
   it("never shows one account's draft to the next account", () => {
     const onSend = vi.fn().mockResolvedValue(true);
     reconcileAccount("alice");

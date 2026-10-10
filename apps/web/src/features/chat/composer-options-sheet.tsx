@@ -11,7 +11,7 @@ import {
   Wrench,
   X,
 } from "lucide-react";
-import { type ReactNode, useId, useRef, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Sheet, SheetClose, SheetContent, SheetTitle } from "../../components/ui/sheet";
 import { MODE_OPTIONS, modeTitle, type SessionPermissionMode } from "../../lib/permission-mode";
@@ -92,7 +92,6 @@ export function ComposerOptionsSheet({
   const [view, setView] = useState<"main" | "mode" | "model" | "tools">("main");
   const trigger = useRef<HTMLButtonElement>(null);
   const restoreFocus = useRef(true);
-  const effortHeading = useId();
 
   function close(returnFocus = true) {
     restoreFocus.current = returnFocus;
@@ -252,14 +251,11 @@ export function ComposerOptionsSheet({
                   close();
                 }}
               />
-              <div aria-labelledby={effortHeading} className="border-t px-4 py-3" role="group">
-                <p
-                  className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground"
-                  id={effortHeading}
-                >
+              <fieldset className="min-w-0 border-t px-4 py-3">
+                <legend className="float-left mb-2 w-full text-xs font-medium uppercase tracking-wide text-muted-foreground">
                   Effort
-                </p>
-                <div className="flex flex-wrap gap-1.5">
+                </legend>
+                <div className="clear-left flex flex-wrap gap-1.5">
                   {EFFORT_OPTIONS.map((option) => (
                     <button
                       aria-pressed={option.value === model.effort}
@@ -279,7 +275,7 @@ export function ComposerOptionsSheet({
                     </button>
                   ))}
                 </div>
-              </div>
+              </fieldset>
               {model.onReset && (
                 <button
                   className="border-t px-4 py-3 text-left text-sm text-muted-foreground transition-colors hover:bg-muted/50 disabled:opacity-50"

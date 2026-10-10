@@ -228,8 +228,12 @@ export function ChatComposer({
   useEffect(() => {
     onDraftChange?.(hasDraftContent);
   }, [hasDraftContent, onDraftChange]);
+  // Only a signal that changes while mounted clears: a remount (back from an
+  // inspect-only chat) must not wipe the draft it just restored.
+  const handledClearSignal = useRef(clearDraftSignal);
   useEffect(() => {
-    if (!clearDraftSignal) return;
+    if (clearDraftSignal === handledClearSignal.current) return;
+    handledClearSignal.current = clearDraftSignal;
     setPrompt("");
     setImages([]);
     setTextFiles([]);
