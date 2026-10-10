@@ -10,3 +10,4 @@ The `studio-alignment-2228/` folder holds the before/after composites for the St
 - `studio-alignment-1855/`: before/after composites for #1855 (Settings > Learning).
 - `studio-alignment-2231/`: before/after composites for #2231 (chat Stop on phones).
 - `studio-alignment-2206a/`: before/after/prototype composites for #2206 part (a) (keyboard shortcuts).
+- `studio-alignment-2207a/`: before/after/prototype composites for #2207 part (a) (chat approvals).
