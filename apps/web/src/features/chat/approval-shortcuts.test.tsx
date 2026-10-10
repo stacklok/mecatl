@@ -86,14 +86,18 @@ describe("approval shortcuts", () => {
         <select aria-label="Choice">
           <option>One</option>
         </select>
-        <div aria-label="Editor" contentEditable role="textbox" suppressContentEditableWarning />
+        <div contentEditable data-editor suppressContentEditableWarning />
         <EscapeHintContext.Provider value={approval}>
           <ApprovalPanel approval={approval} disabled={false} onRespond={respond} />
         </EscapeHintContext.Provider>
       </div>,
     );
-    for (const name of ["Field", "Composer", "Editor"]) {
-      const target = screen.getByRole("textbox", { name });
+    const editor = document.querySelector("[data-editor]") as HTMLElement;
+    for (const target of [
+      screen.getByRole("textbox", { name: "Field" }),
+      screen.getByRole("textbox", { name: "Composer" }),
+      editor,
+    ]) {
       target.focus();
       for (const key of ["y", "a", "w", "n", "d"]) press(key, {}, target);
     }
@@ -285,6 +289,12 @@ describe("approval card", () => {
     const warning = screen.getByRole("region", { name: "Permission required: Bash" });
     expect(within(warning).queryByText("This action modifies or deletes data.")).toBeNull();
     expect(within(warning).getByText("ls")).toBeTruthy();
+    // The header wraps rather than squeezing the tool name: on a phone the badge
+    // moves to its own line, and only a name wider than the card truncates.
+    const badge = warning.querySelector('[data-slot="badge"]');
+    expect(badge?.parentElement?.getAttribute("class")?.split(" ")).toContain("flex-wrap");
+    expect(badge?.getAttribute("class")?.split(" ")).toContain("max-w-full");
+    expect(badge?.querySelector(".truncate")?.textContent).toBe("Bash");
     // No side-panel slot: no detail button.
     expect(within(warning).queryByRole("button", { name: "Open in detail panel" })).toBeNull();
   });
