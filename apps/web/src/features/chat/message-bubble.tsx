@@ -103,23 +103,32 @@ export function MessageActions({
   );
 }
 
-/** One turn: avatar, then the author and body, then the actions. */
+/**
+ * One turn: the avatar, then the author line with the row's actions at its
+ * end, then the body. The actions sit on the author line rather than in a
+ * column of their own, so a phone's narrow row keeps its text width.
+ */
 export function MessageRow({
   actions,
+  author,
   avatar,
   children,
-  className,
 }: {
   actions?: ReactNode;
+  author: ReactNode;
   avatar: ReactNode;
   children: ReactNode;
-  className?: string;
 }) {
   return (
     <>
       <div className="shrink-0 pt-0.5">{avatar}</div>
-      <div className={cn("min-w-0 flex-1", className)}>{children}</div>
-      {actions && <div className="shrink-0 pt-0.5">{actions}</div>}
+      <div className="min-w-0 flex-1">
+        <div className="flex min-h-6 items-center justify-between gap-2">
+          {author}
+          {actions}
+        </div>
+        {children}
+      </div>
     </>
   );
 }

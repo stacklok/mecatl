@@ -2796,7 +2796,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         </section>
       ) : (
         <section className="relative flex min-w-0 flex-1 flex-col bg-background">
-          <header className="flex h-16 shrink-0 items-center gap-3 border-b px-4 max-[499px]:gap-2 max-[499px]:px-3 sm:px-6">
+          <header className="@container/chat-header flex h-16 shrink-0 items-center gap-3 border-b px-4 max-[499px]:gap-2 max-[499px]:px-3 sm:px-6">
             <ChatsMenuButton
               onClick={() => {
                 setSidebarHidden(false);
@@ -2820,7 +2820,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
               )}
             </div>
             <FleetStatusChip
-              className="max-[499px]:hidden"
+              className="@max-[52rem]/chat-header:hidden"
               fleet={sessionId ? visibleDelegationFleet : undefined}
               onOpen={(family, opener) => {
                 activityOpener.current = opener;
@@ -3640,6 +3640,7 @@ export function Message({
             threadOpen={Boolean(threadSessionId)}
           />
         }
+        author={<p className={messageAuthorClass}>{name}</p>}
         avatar={
           <MessageAvatar
             avatarUrl={user ? userAvatar : agentAvatar}
@@ -3648,7 +3649,6 @@ export function Message({
           />
         }
       >
-        <p className={messageAuthorClass}>{name}</p>
         {message.reasoning && (
           <ReasoningDisclosure streaming={streaming} text={message.reasoning} />
         )}

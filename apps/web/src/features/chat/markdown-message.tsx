@@ -43,7 +43,7 @@ const mdComponents: Components = {
       />
     ) : (
       <code
-        className="break-all rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[0.87em] dark:bg-zinc-800"
+        className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[0.87em] [overflow-wrap:anywhere] dark:bg-zinc-800"
         {...props}
       >
         {code}
