@@ -155,6 +155,14 @@ target. Shared text opens a new chat with the text in the composer, as a
 `?prompt=` link does, and never sends it. Studio receives only the shared text;
 a title or link that the sharing app sends separately is not included.
 
+The browser puts shared text in the page address, so its length is limited.
+Studio accepts an address and headers of up to 16 KB, which fits about 14,000
+characters of English text but only about 1,600 characters of Chinese or
+Japanese text. An ingress in front of Studio can set a lower limit; ingress-nginx,
+for example, refuses addresses over 8 KB by default. When shared text is too
+long, Studio shows a page that says so instead of a chat; copy the text and
+paste it into a new chat's message box.
+
 The installed window loads Studio from its origin and needs a connection to the
 BFF and Mecatl deployment for agent actions. A loaded window reports an
 unavailable connection if that link drops. For a fully offline launch, the
