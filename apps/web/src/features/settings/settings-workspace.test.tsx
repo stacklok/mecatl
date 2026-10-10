@@ -392,9 +392,9 @@ describe("settings facts", () => {
       unknownCount: "0",
     });
     const titles = {
-      about: ["About"],
+      about: ["About Mecatl Studio", "About the agent"],
       agent: ["Agent", "Agent behavior"],
-      appearance: ["Appearance"],
+      appearance: ["Appearance", "Chat"],
       diagnostics: ["Diagnostics"],
       labs: ["Labs"],
       learning: ["Learning", "Suggestions", "Learn from a chat"],
