@@ -523,6 +523,50 @@ describe("dialog facts", () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("chat"));
   });
 
+  it("withholds every ID, the debug target's too, when the daemon denies copying", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    const bff = new Bff();
+    const denied = { copyId: false, copyIdReason: "id_hidden" };
+    bff.rows = [
+      row("chat"),
+      {
+        ...row("debug-chat"),
+        capabilities: {
+          ...row("chat").capabilities,
+          ...denied,
+          publicChat: false,
+          publicChatReason: "",
+        },
+        debugTargetSessionId: "chat",
+        kind: "debug",
+        title: "Diagnose",
+      },
+    ];
+    await mount(bff, "debug-chat");
+    const details = await openDetails(user);
+    expect(await within(details).findByText("Debug target")).toBeTruthy();
+    expect(within(details).queryByText("chat")).toBeNull();
+    expect(within(details).queryByRole("button", { name: "Copy Debug target ID" })).toBeNull();
+
+    fireEvent.click(within(details).getByRole("button", { name: "View transcript" }));
+    const transcript = await screen.findByRole("dialog", { name: "Saved transcript" });
+    expect(transcript.textContent).not.toContain("debug-chat");
+    expect(within(transcript).getByText("Diagnose")).toBeTruthy();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    await user.click(
+      screen.getByRole("button", { name: "Options for chat: Diagnose", hidden: true }),
+    );
+    const copyTarget = await screen.findByRole("menuitem", { name: "Copy debug target ID" });
+    expect(copyTarget.getAttribute("data-disabled")).not.toBeNull();
+    expect(copyTarget.getAttribute("aria-description")).toBe("id_hidden");
+    copyTarget.focus();
+    await user.keyboard("{Enter}");
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
   it("marks an untrusted, drifted soul", async () => {
     const bff = new Bff();
     bff.soul = { ...bff.soul, drifted: true, provenance: "user", trusted: false };

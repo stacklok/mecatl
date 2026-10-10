@@ -277,7 +277,11 @@ export function SessionDetailsView({
             )}
             {debugTarget && (
               <Row label="Debug target">
-                <CopyableId id={debugTarget} label="Debug target ID" />
+                {copyAllowed ? (
+                  <CopyableId id={debugTarget} label="Debug target ID" />
+                ) : (
+                  <span className="text-muted-foreground">Unavailable</span>
+                )}
               </Row>
             )}
           </dl>

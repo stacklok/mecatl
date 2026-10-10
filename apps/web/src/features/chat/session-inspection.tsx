@@ -221,7 +221,9 @@ export function SessionInspection({
             className={view === "transcript" ? "break-all font-mono text-xs" : undefined}
           >
             {view === "transcript"
-              ? `${session.title || "Untitled chat"} · ${session.id}`
+              ? session.capabilities.copyId
+                ? `${session.title || "Untitled chat"} · ${session.id}`
+                : session.title || "Untitled chat"
               : descriptions[view]}
           </DialogDescription>
         </DialogHeader>
