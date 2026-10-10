@@ -36,6 +36,22 @@ func meta() eventsource.SessionMeta {
 	}
 }
 
+func TestFoldRestoresExecutionCapabilityFacts(t *testing.T) {
+	m := meta()
+	m.ExecutionCapabilities = &session.ExecutionCapabilities{Files: true}
+	folded, err := eventsource.Fold(m, seq(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if folded.ExecutionCapabilities == nil || *folded.ExecutionCapabilities != *m.ExecutionCapabilities {
+		t.Fatalf("folded facts = %+v", folded.ExecutionCapabilities)
+	}
+	folded.ExecutionCapabilities.Files = false
+	if !m.ExecutionCapabilities.Files {
+		t.Fatal("fold aliased source metadata")
+	}
+}
+
 func TestEventFoldRejectsEmptyAuthorityClaim(t *testing.T) {
 	t.Parallel()
 	m := meta()

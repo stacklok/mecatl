@@ -96,8 +96,11 @@ removed before a command runs.
 
 ## Persistence and reattachment
 
-The environment identity is persisted with a session snapshot. When a session
-resumes, Mecatl reattaches that exact identity through the deployment's placement
+The environment identity and creation-time, host-observed execution affordances
+are persisted with a session snapshot. Session reads, renames, and mode changes
+report those bound affordances (intersected with session authority) even while the
+executor is offline; this does not grant permission to execute. When a session
+resumes, Mecatl reattaches the exact identity through the deployment's placement
 provider. If the provider cannot reattach it or returns a different environment,
 the run fails instead of falling back to a local workspace.
 

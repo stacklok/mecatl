@@ -45,7 +45,7 @@ func main() {
 		"version": 1, "generation": 1,
 		"tls": map[string]any{"certificateFile": "tls.crt", "privateKeyFile": "tls.key", "clientCAFile": "clients.pem"},
 		"clients": []any{
-			map[string]any{"uri": "spiffe://mecatl.test/client/mecak8s", "mayAttestOwner": true, "administrator": true, "executionTemplates": []string{"go", "operator-utility", "quota-cas", "quota-kube"}},
+			map[string]any{"uri": "spiffe://mecatl.test/client/mecak8s", "mayAttestOwner": true, "administrator": true, "executionTemplates": []string{"go", "incompatible-derivative", "operator-utility", "quota-cas", "quota-kube"}},
 			map[string]any{"uri": "spiffe://mecatl.test/client/intruder", "mayAttestOwner": true, "administrator": false},
 			map[string]any{"uri": "spiffe://mecatl.test/client/operations", "mayAttestOwner": true, "administrator": true, "administratorFor": []string{"spiffe://mecatl.test/client/mecak8s"}},
 			map[string]any{"uri": "spiffe://mecatl.test/client/wrong-scope", "mayAttestOwner": true, "administrator": true, "administratorFor": []string{"spiffe://mecatl.test/client/intruder"}},

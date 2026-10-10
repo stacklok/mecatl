@@ -2591,6 +2591,7 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 			sess.ExecutionTemplateID, sess.ExecutionTemplateRevision = opts.execution.ID, opts.execution.Revision
 		}
 		s.setTitleGenerationEligibility(sess, sel)
+		stampExecutionCapabilities(sess, s.cfg.Engine, placement.Environment)
 		if err := seedCarryover(sess, carrySnap); err != nil {
 			return nil, err
 		}
@@ -2742,6 +2743,7 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		sess.Placement = canonicalPlacementMetadata(*placement)
 	}
 	s.setTitleGenerationEligibility(sess, sel)
+	stampExecutionCapabilities(sess, eng, placement.Environment)
 	if err := seedCarryover(sess, carrySnap); err != nil {
 		if closeFn != nil {
 			_ = closeFn()

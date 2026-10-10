@@ -290,6 +290,14 @@ var (
 	ErrNoPendingAuthorization = errors.New("session: no pending external authorization")
 )
 
+// ExecutionCapabilities records only whether the bound execution environment
+// and engine offered these tools at creation. It contains no placement identity
+// or live authorization; readers must still intersect it with bound authority.
+type ExecutionCapabilities struct {
+	Files bool
+	Shell bool
+}
+
 // Session is the aggregate root of the Agent Session context. All mutation of
 // the conversation, counters, and lifecycle flows through its intention-revealing
 // methods so the state machine and stop conditions always hold. Outside code
@@ -324,6 +332,10 @@ type Session struct {
 	// It is minted by the placement provider and must be valid before persistence
 	// or execution. Resolution to live capabilities belongs to composition.
 	EnvironmentRef EnvironmentRef
+	// ExecutionCapabilities is the creation-time host-observed tool and placement
+	// ceiling. Nil means no trusted observation was persisted; it does not imply
+	// the current service's default tool surface. It is never execution authority.
+	ExecutionCapabilities *ExecutionCapabilities
 	// Placement is safe display-only metadata minted by the placement provider.
 	// It is persisted for public inventory projection but never used to bind or
 	// reattach an environment.

@@ -31,6 +31,9 @@ func TestQualificationTemplateGrant(t *testing.T) {
 	}
 	found := false
 	for _, client := range manifest.Clients {
+		if client.URI == "spiffe://mecatl.test/client/mecak8s" && !slices.Equal(client.ExecutionTemplates, []string{"go", "incompatible-derivative", "operator-utility", "quota-cas", "quota-kube"}) {
+			t.Fatal("mecak8s must be authorized for every synthetic qualification template")
+		}
 		if client.URI == "spiffe://mecatl.test/client/qualification" {
 			found = true
 			if !slices.Equal(client.ExecutionTemplates, []string{"go"}) {

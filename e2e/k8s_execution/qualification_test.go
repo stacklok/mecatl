@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	tuiClient "github.com/stacklok/mecatl/cmd/mecatui/client"
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/internal/adapter/executionclient"
 	"github.com/stacklok/mecatl/internal/executionenv"
@@ -369,6 +370,79 @@ func TestKindExecutionDerivativeUtility(t *testing.T) {
 			t.Fatal("incompatible derivative corrupted retained workspace")
 		}
 	})
+}
+
+// The shipped TUI transport and selection client runs against the authenticated
+// mock-model fixture; the interactive terminal itself is covered by UI tests.
+func TestKindExecutionTUIClientMockJourney(t *testing.T) {
+	state, kubeconfig, ctx, cancel := requireProduction(t)
+	defer cancel()
+	requireOwnedHelmFixture(t, state, kubeconfig)
+	applyMockScript(t, ctx, kubeconfig, "mock-script.json")
+	runKubectl(t, ctx, kubeconfig, "rollout", "restart", "deployment/mecak8s", "-n", namespace)
+	runKubectl(t, ctx, kubeconfig, "rollout", "status", "deployment/mecak8s", "-n", namespace, "--timeout=240s")
+	issuer := portForward(t, ctx, kubeconfig, "service/oidc-issuer", 8443)
+	token := fixtureToken(t, ctx, issuer.addr, filepath.Join(state, "pki"), "alice")
+	issuer.stop()
+	grpcForward := portForward(t, ctx, kubeconfig, "service/mecak8s", 8080)
+	httpForward := portForward(t, ctx, kubeconfig, "service/mecak8s", 8081)
+	defer httpForward.stop()
+	wire, err := tuiClient.Dial(tuiClient.DialConfig{Server: grpcForward.addr, AuthToken: token})
+	if err != nil {
+		t.Fatal("dial TUI transport:", err)
+	}
+	inventory, err := wire.ListExecutionTemplates(ctx)
+	if err != nil {
+		t.Fatal("discover authenticated TUI catalog:", err)
+	}
+	var selected tuiClient.ExecutionTemplate
+	for _, item := range inventory.Items {
+		if item.ID == "go" && item.Revision == os.Getenv("MECATL_EXECUTION_TEMPLATE_REVISION") {
+			selected = item
+		}
+	}
+	if selected.ID == "" || !selected.DeclaredExecutionFiles || !selected.DeclaredBuiltInShell {
+		t.Fatal("TUI catalog omitted the exact eligible filesystem and Shell template")
+	}
+	sessionID, caps, _, err := wire.CreateSessionWithExecution(ctx, 0, tuiClient.ModelSelection{}, tuiClient.ExecutionChoice{TemplateID: selected.ID, Revision: selected.Revision})
+	if err != nil || sessionID == "" || !caps.ExecutionFiles || !caps.BuiltInShell {
+		t.Fatal("TUI client did not bind exact execution with files and Shell:", err)
+	}
+	ref := environmentForBinding(t, ctx, kubeconfig, sessionID)
+	assertMockJourney(t, prompt(t, ctx, httpForward.addr, sessionID, token, "run the scripted remote qualification"))
+	pvcUID := readExecutionStatus(t, ctx, kubeconfig, ref.ID).PVCUID
+	if err := wire.Close(); err != nil {
+		t.Fatal("close TUI transport:", err)
+	}
+	grpcForward.stop()
+	httpForward.stop()
+	applyReattachScript(t, ctx, kubeconfig, state)
+	runKubectl(t, ctx, kubeconfig, "rollout", "restart", "deployment/mecak8s", "-n", namespace)
+	runKubectl(t, ctx, kubeconfig, "rollout", "status", "deployment/mecak8s", "-n", namespace, "--timeout=240s")
+	grpcForward = portForward(t, ctx, kubeconfig, "service/mecak8s", 8080)
+	defer grpcForward.stop()
+	httpForward = portForward(t, ctx, kubeconfig, "service/mecak8s", 8081)
+	defer httpForward.stop()
+	wire, err = tuiClient.Dial(tuiClient.DialConfig{Server: grpcForward.addr, AuthToken: token})
+	if err != nil {
+		t.Fatal("reconnect TUI transport:", err)
+	}
+	defer wire.Close()
+	if snapshot, err := wire.GetSession(ctx, sessionID); err != nil || !snapshot.Capabilities.ExecutionFiles || !snapshot.Capabilities.BuiltInShell {
+		t.Fatal("TUI reconnect lost bound capabilities:", err)
+	}
+	if got := environmentForBinding(t, ctx, kubeconfig, sessionID); got != ref || readExecutionStatus(t, ctx, kubeconfig, ref.ID).PVCUID != pvcUID || pvcUID == "" {
+		t.Fatal("TUI reconnect replaced exact environment or workspace PVC")
+	}
+	reconnected := promptEventually(t, ctx, httpForward.addr, sessionID, token, "verify exact reattachment after restart")
+	for _, marker := range []string{"reattach-read", "reattach-shell", "beta", "REMOTE_EXECUTION_REATTACH_COMPLETE"} {
+		if !bytes.Contains(reconnected, []byte(marker)) {
+			t.Fatalf("TUI client reconnected session missing %s", marker)
+		}
+	}
+	applyMockScript(t, ctx, kubeconfig, "mock-script.json")
+	runKubectl(t, ctx, kubeconfig, "rollout", "restart", "deployment/mecak8s", "-n", namespace)
+	runKubectl(t, ctx, kubeconfig, "rollout", "status", "deployment/mecak8s", "-n", namespace, "--timeout=240s")
 }
 
 func logQualificationStage(t *testing.T, started *time.Time, completed, next string) {

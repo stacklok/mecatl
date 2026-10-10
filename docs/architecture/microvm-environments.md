@@ -32,8 +32,15 @@ These are separate from the bound session's effective capabilities and do not
 reserve capacity or authorize execution. Listing remains allocation-free;
 eligibility is checked again at the provider's allocation seam.
 
-Each persisted session carries one opaque `session.EnvironmentRef{Kind, ID, Revision}`.
-Every later run, load, or schedule fire reauthorizes the owner and reattaches that exact ref.
+Each persisted session carries one opaque `session.EnvironmentRef{Kind, ID, Revision}`
+and host-observed creation-time `ExecutionCapabilities` (Read workspace and built-in
+Shell runner presence, each gated by the session's engine tool surface). Session
+snapshots intersect these facts with durable bound authority without contacting
+the executor, so reads and metadata mutations remain available during outages.
+These booleans are display facts, not live permission or readiness grants; old
+snapshots without the facts do not inherit today's deployment defaults.
+
+Every later run or schedule fire reauthorizes the owner and reattaches the exact ref.
 `server.PlacementBinder` rejects any binding whose ref differs, and a provider without
 reattachment fails. Bind is never used as a fallback: following the current default after
 a restart or config change would silently move a session onto a different tree.

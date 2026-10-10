@@ -572,11 +572,7 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 	}
 	responseDone := creatediag.Begin(r.Context(), "http_response")
 	scaps := h.svc.sessionCapabilitiesFor(sess)
-	files, shell, err := h.svc.executionSessionCapabilities(r.Context(), sess)
-	if err != nil {
-		writeServiceError(w, err)
-		return
-	}
+	files, shell := executionSessionCapabilities(sess)
 	writeJSON(w, http.StatusCreated, createSessionResp{
 		SessionID:           string(sess.ID),
 		SessionCapabilities: &sessionCapabilitiesJSON{Image: scaps.Image, Audio: scaps.Audio, ExecutionFiles: files, BuiltInShell: shell},
@@ -700,13 +696,9 @@ func (h *HTTPHandler) writeSuccessor(ctx context.Context, w http.ResponseWriter,
 	}{string(id), placementMetadataToJSON(created.Placement)})
 }
 
-func (h *HTTPHandler) writeSession(ctx context.Context, w http.ResponseWriter, status int, sess *session.Session) {
+func (h *HTTPHandler) writeSession(_ context.Context, w http.ResponseWriter, status int, sess *session.Session) {
 	scaps := h.svc.sessionCapabilitiesFor(sess)
-	files, shell, err := h.svc.executionSessionCapabilities(ctx, sess)
-	if err != nil {
-		writeServiceError(w, err)
-		return
-	}
+	files, shell := executionSessionCapabilities(sess)
 	writeJSON(w, status, sessionResp{
 		SessionID:              string(sess.ID),
 		State:                  string(sess.State),

@@ -232,8 +232,30 @@ func TestChartPrunesRetiredRevisionAtCapacity(t *testing.T) {
 	if _, err := renderLifetimeWithFile(t, retained, file); err == nil || !strings.Contains(err.Error(), "retained execution template definition") {
 		t.Fatalf("implicit prune accepted: %v", err)
 	}
-	if _, err := renderLifetimeWithFile(t, retained, file, optIn...); err != nil {
+	pruned, err := renderLifetimeWithFile(t, retained, file, optIn...)
+	if err != nil {
 		t.Fatalf("retired revision could not be pruned at capacity: %v", err)
+	}
+	var history struct {
+		Definitions map[string]map[string]json.RawMessage `json:"definitions"`
+	}
+	prunedData := pruned["ConfigMap/test-mecatl-execution-templates"]["data"].(map[string]any)
+	if err := json.Unmarshal([]byte(prunedData["lifetime.json"].(string)), &history); err != nil {
+		t.Fatal("decode rendered durable history:", err)
+	}
+	if _, exists := history.Definitions["go"][first]; exists {
+		t.Fatal("pruned revision remains in rendered durable history")
+	}
+	if len(history.Definitions["go"]) != 32 || len(history.Definitions["go"][next]) == 0 {
+		t.Fatal("pruning failed to free one durable history slot for the new revision")
+	}
+	prunedRetained := make(map[string]map[string]any, len(retained))
+	for k, obj := range retained {
+		prunedRetained[k] = obj
+	}
+	prunedRetained["ConfigMap/test-mecatl-execution-templates"] = pruned["ConfigMap/test-mecatl-execution-templates"]
+	if _, err := renderLifetimeWithFile(t, prunedRetained, file); err != nil {
+		t.Fatalf("upgrade after pruning still requires one-time consent: %v", err)
 	}
 	emptyLedger := map[string]map[string]any{}
 	for k, obj := range retained {

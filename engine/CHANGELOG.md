@@ -13,6 +13,12 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Durable bound execution affordances** — adds `session.ExecutionCapabilities`
+  and `Session.ExecutionCapabilities` for host-stamped, creation-time filesystem
+  and Shell availability facts. Snapshot and event-source restoration preserve
+  these facts independently of executor liveness; they are not authorization.
+  Added (minor).
+
 - **Execution-template provenance** — adds opaque `session.Session.ExecutionTemplateID`
   and `ExecutionTemplateRevision` labels for exact public-create retry matching.
   Execution reattachment still uses the durable environment reference. Added (minor).

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -38,37 +39,25 @@ func (s *Service) executionCatalogAvailable() bool {
 	return ok && s.cfg.ExecutionTemplateAllowed != nil
 }
 
-func (s *Service) executionSessionCapabilities(ctx context.Context, sess *session.Session) (bool, bool, error) {
-	if sess == nil || sess.EnvironmentRef.Kind == session.EnvKindNoFS {
-		return false, false, nil
+func stampExecutionCapabilities(sess *session.Session, engine *agent.Engine, env tool.Environment) {
+	facts := &session.ExecutionCapabilities{}
+	if engine != nil {
+		facts.Files = engine.HasTool("Read") && env.Workspace() != nil && env.Workspace().Root() != ""
+		facts.Shell = engine.HasTool(tool.ShellToolName) && env.CommandRunner() != nil
 	}
-	s.mu.Lock()
-	built := s.sessionEngines[sess.ID]
-	env, registered := s.sessionEnvironments[sess.ID]
-	s.mu.Unlock()
-	if !registered {
-		binding, release, err := s.borrowSessionPlacement(ctx, sess)
-		if err != nil {
-			return false, false, err
-		}
-		defer release()
-		env = binding.Environment
+	sess.ExecutionCapabilities = facts
+}
+
+func executionSessionCapabilities(sess *session.Session) (bool, bool) {
+	if sess == nil || sess.ExecutionCapabilities == nil || sess.EnvironmentRef.Kind == session.EnvKindNoFS {
+		return false, false
 	}
-	engine := s.cfg.Engine
-	if built != nil {
-		engine = built.engine
-	}
-	if engine == nil {
-		return false, false, nil
-	}
-	files, shell := engine.HasTool("Read"), engine.HasTool(tool.ShellToolName)
+	files, shell := sess.ExecutionCapabilities.Files, sess.ExecutionCapabilities.Shell
 	if authority, bound := sess.BoundAuthority(); bound {
 		files = files && authority.CapabilitySet.FileSystem && authority.CapabilitySet.AllowsTool("Read")
 		shell = shell && authority.CapabilitySet.AllowsTool(tool.ShellToolName)
 	}
-	files = files && env.Workspace() != nil && env.Workspace().Root() != ""
-	shell = shell && env.CommandRunner() != nil
-	return files, shell, nil
+	return files, shell
 }
 
 // ListExecutionTemplates returns a filtered, bounded inventory for the verified owner.

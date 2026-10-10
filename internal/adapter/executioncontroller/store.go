@@ -495,7 +495,7 @@ func (s *Store) execute(ctx context.Context, client, owner string, rc executione
 			return refsErr
 		}
 		claim, _, expiry, claimOK := activeRunFrom(o)
-		if textNested(o.Object, "spec", "ownerHash") != owner || textNested(o.Object, "spec", "clientHash") != hashText(client) || !publishedReference(refs, rc.BindingID) {
+		if !publishedReference(refs, rc.BindingID) {
 			return &executionenv.Error{Code: executionenv.CodeNotFound, Message: environmentNotFoundMessage}
 		}
 		if !claimOK || !s.now().Before(expiry) || claim.BindingID != rc.BindingID || claim.RunID != rc.RunID || claim.ClaimID != rc.ClaimID || claim.Epoch != rc.Epoch || claim.GrantGeneration != rc.GrantGeneration || !generationMatches(o, rc.GrantGeneration) {

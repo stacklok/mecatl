@@ -126,10 +126,7 @@ func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateS
 	// read from the composition single source (Service.ResolvedModel) — NEVER from
 	// req.GetModelId(), which is empty for a default session and ambiguous for a
 	// passthrough id. Same single-source discipline as session_capabilities.
-	files, shell, err := h.svc.executionSessionCapabilities(ctx, sess)
-	if err != nil {
-		return nil, toStatus(err)
-	}
+	files, shell := executionSessionCapabilities(sess)
 	return &mecatlv1.CreateSessionResponse{
 		SessionId: string(sess.ID),
 		SessionCapabilities: &mecatlv1.SessionCapabilities{
@@ -173,15 +170,12 @@ func (h *HarnessServer) GetServerInfo(_ context.Context, req *mecatlv1.GetServer
 	return h.svc.serverInfoResponse(req.GetProviderId()), nil
 }
 
-func (h *HarnessServer) sessionSnapshot(ctx context.Context, sess *session.Session) (*mecatlv1.Session, error) {
-	files, shell, err := h.svc.executionSessionCapabilities(ctx, sess)
-	if err != nil {
-		return nil, err
-	}
+func (h *HarnessServer) sessionSnapshot(ctx context.Context, sess *session.Session) *mecatlv1.Session {
+	files, shell := executionSessionCapabilities(sess)
 	proto := toProtoSession(sess, h.svc.resolvedModelFor(sess), h.svc.capabilitiesFor(ctx), h.svc.sessionCapabilitiesFor(sess))
 	proto.SessionCapabilities.ExecutionFiles = files
 	proto.SessionCapabilities.BuiltInShell = shell
-	return proto, nil
+	return proto
 }
 
 // GetSession returns a snapshot of the requested session.
@@ -196,10 +190,7 @@ func (h *HarnessServer) GetSession(ctx context.Context, req *mecatlv1.GetSession
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	proto, err := h.sessionSnapshot(ctx, sess)
-	if err != nil {
-		return nil, toStatus(err)
-	}
+	proto := h.sessionSnapshot(ctx, sess)
 	// Lazy display-time fallback: a session whose snapshot Title was never seeded
 	// (or is empty) gets a derived label so GetSession shows one without a
 	// write-on-read — sess.Title is NOT mutated.
@@ -271,10 +262,7 @@ func (h *HarnessServer) SetMode(ctx context.Context, req *mecatlv1.SetModeReques
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	proto, err := h.sessionSnapshot(ctx, sess)
-	if err != nil {
-		return nil, toStatus(err)
-	}
+	proto := h.sessionSnapshot(ctx, sess)
 	return &mecatlv1.SetModeResponse{Session: proto}, nil
 }
 
@@ -433,10 +421,7 @@ func (h *HarnessServer) RenameSession(ctx context.Context, req *mecatlv1.RenameS
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	proto, err := h.sessionSnapshot(ctx, sess)
-	if err != nil {
-		return nil, toStatus(err)
-	}
+	proto := h.sessionSnapshot(ctx, sess)
 	return &mecatlv1.RenameSessionResponse{Session: proto}, nil
 }
 

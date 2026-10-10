@@ -145,7 +145,8 @@ type Snapshot struct {
 	// Authority is the plain, derived capability payload. A nil pointer is a
 	// genuine legacy record written without authority; a present payload must decode to the
 	// one governance.CapabilitySet representation or restore fails closed.
-	Authority *session.Authority `json:"authority,omitempty"`
+	Authority             *session.Authority             `json:"authority,omitempty"`
+	ExecutionCapabilities *session.ExecutionCapabilities `json:"execution_capabilities,omitempty"`
 	// EnvironmentRef is the sole durable execution-environment identity. It is
 	// required and must contain the exact provider revision used for reattachment.
 	EnvironmentRef session.EnvironmentRef `json:"environment_ref"`
@@ -319,6 +320,10 @@ func Of(s *session.Session) (Snapshot, error) {
 		// alias (and later mutate) the aggregate's own principal.
 		Owner: s.Owner.Clone(),
 	}
+	if s.ExecutionCapabilities != nil {
+		facts := *s.ExecutionCapabilities
+		snap.ExecutionCapabilities = &facts
+	}
 	if authority, ok := s.BoundAuthority(); ok {
 		snap.Authority = &authority
 	}
@@ -385,6 +390,10 @@ func (s Snapshot) Restore() (*session.Session, error) {
 	restored.ModelID = s.ModelID
 	restored.ReasoningEffort = s.ReasoningEffort
 	restored.Placement = s.Placement
+	if s.ExecutionCapabilities != nil {
+		facts := *s.ExecutionCapabilities
+		restored.ExecutionCapabilities = &facts
+	}
 	restored.DebugMCPServers = append([]string(nil), s.DebugMCPServers...)
 	restored.DebugMCPTools = append([]string(nil), s.DebugMCPTools...)
 	restored.DebugTargetFingerprint = s.DebugTargetFingerprint

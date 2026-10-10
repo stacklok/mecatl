@@ -50,7 +50,7 @@ func generate(initial, out string) {
 }
 
 func manifest(generation uint64, enabled bool, cert, privateKey, clients string) map[string]any {
-	templates := []string{"go", "operator-utility", "quota-cas", "quota-kube"}
+	templates := []string{"go", "incompatible-derivative", "operator-utility", "quota-cas", "quota-kube"}
 	if !enabled {
 		templates = nil
 	}

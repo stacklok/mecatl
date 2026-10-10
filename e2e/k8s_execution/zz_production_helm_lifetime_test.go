@@ -364,6 +364,34 @@ func TestKindExecutionProductionHelmLifetime(t *testing.T) {
 		t.Fatal("deprecated revision remained eligible for new binding")
 	}
 	countsBeforeRejectedBind := map[string]int{}
+	identities := func(resource string, args ...string) map[string]string {
+		t.Helper()
+		query := append([]string{"get", resource, "-n", namespace, "-o", "json"}, args...)
+		var listing struct {
+			Items []struct {
+				Metadata struct {
+					Name string `json:"name"`
+					UID  string `json:"uid"`
+				} `json:"metadata"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal(runKubectl(t, ctx, kubeconfig, query...), &listing); err != nil {
+			t.Fatal("decode existing runtime identities:", err)
+		}
+		result := make(map[string]string, len(listing.Items))
+		for _, item := range listing.Items {
+			if item.Metadata.UID == "" {
+				t.Fatal("existing runtime identity has no UID")
+			}
+			result[item.Metadata.Name] = item.Metadata.UID
+		}
+		return result
+	}
+	beforeIdentities := map[string]map[string]string{
+		"executionenvironments.execution.mecatl.dev": identities("executionenvironments.execution.mecatl.dev"),
+		"persistentvolumeclaims":                     identities("persistentvolumeclaims"),
+		"pods":                                       identities("pods", "-l", "execution.mecatl.dev/environment"),
+	}
 	for _, resource := range []string{"executionenvironments.execution.mecatl.dev", "persistentvolumeclaims", "pods"} {
 		countsBeforeRejectedBind[resource] = resourceCount(t, ctx, kubeconfig, resource)
 	}
@@ -380,6 +408,15 @@ func TestKindExecutionProductionHelmLifetime(t *testing.T) {
 	for resource, before := range countsBeforeRejectedBind {
 		if after := resourceCount(t, ctx, kubeconfig, resource); after != before {
 			t.Fatalf("list/change/rejected bind changed %s count: %d -> %d", resource, before, after)
+		}
+	}
+	for resource, before := range beforeIdentities {
+		args := []string{}
+		if resource == "pods" {
+			args = []string{"-l", "execution.mecatl.dev/environment"}
+		}
+		if after := identities(resource, args...); !reflect.DeepEqual(after, before) {
+			t.Fatalf("list/change/rejected bind replaced existing %s identity", resource)
 		}
 	}
 	if got := waitReady(t, ctx, deprecatedClient, owner, binding, attached.Environment); got.Environment != attached.Environment {

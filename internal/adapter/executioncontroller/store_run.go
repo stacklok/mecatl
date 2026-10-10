@@ -99,9 +99,6 @@ func (s *Store) AcquireRun(ctx context.Context, ref executionenv.EnvironmentRef,
 		if textNested(o.Object, "status", "lifecycleOperation", "id") != "" {
 			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: transitioningMessage}
 		}
-		if textNested(o.Object, "spec", "ownerHash") != owner || textNested(o.Object, "spec", "clientHash") != hashText(client) || textNested(o.Object, "spec", "revision") != ref.Revision {
-			return &executionenv.Error{Code: executionenv.CodeNotFound, Message: environmentNotFoundMessage}
-		}
 		refs, parseErr := referenceRecords(o)
 		if parseErr != nil {
 			return parseErr
@@ -255,7 +252,7 @@ func (s *Store) ReleaseRun(ctx context.Context, ref executionenv.EnvironmentRef,
 		if textNested(o.Object, "status", "lifecycleOperation", "id") != "" {
 			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: transitioningMessage}
 		}
-		if textNested(o.Object, "spec", "ownerHash") != owner || textNested(o.Object, "spec", "clientHash") != hashText(client) || cur.Environment != ref || cur.BindingID != req.BindingID || cur.RunID != req.RunID || cur.ClaimID != req.ClaimID || cur.Epoch != req.Epoch || cur.GrantGeneration != req.GrantGeneration || !generationMatches(o, req.GrantGeneration) {
+		if cur.Environment != ref || cur.BindingID != req.BindingID || cur.RunID != req.RunID || cur.ClaimID != req.ClaimID || cur.Epoch != req.Epoch || cur.GrantGeneration != req.GrantGeneration || !generationMatches(o, req.GrantGeneration) {
 			return &executionenv.Error{Code: executionenv.CodeConflict, Message: "run claim mismatch"}
 		}
 		if textNested(o.Object, "status", "activeOperation", "id") != "" {

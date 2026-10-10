@@ -68,8 +68,8 @@ func TestForwardRestoreTrustBundleSupportsFixtureClient(t *testing.T) {
 		if manifest.TLS.CertificateFile != tc.cert || manifest.TLS.PrivateKeyFile != tc.key || manifest.TLS.ClientCAFile != tc.ca {
 			t.Errorf("%s must reference the projected TLS and trust paths", tc.file)
 		}
-		if len(manifest.Clients) == 0 || manifest.Clients[0].URI != "spiffe://mecatl.test/client/mecak8s" || !slices.Contains(manifest.Clients[0].ExecutionTemplates, "operator-utility") {
-			t.Errorf("%s lost the operator-utility template grant", tc.file)
+		if len(manifest.Clients) == 0 || manifest.Clients[0].URI != "spiffe://mecatl.test/client/mecak8s" || !slices.Contains(manifest.Clients[0].ExecutionTemplates, "operator-utility") || !slices.Contains(manifest.Clients[0].ExecutionTemplates, "incompatible-derivative") {
+			t.Errorf("%s lost a fixture derivative template grant", tc.file)
 		}
 		foundQualification := false
 		for _, client := range manifest.Clients {

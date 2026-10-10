@@ -307,6 +307,11 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 		cleanupEngine()
 		return "", ErrSessionLeasedElsewhere
 	}
+	engine := s.cfg.Engine
+	if builtEngine != nil {
+		engine = builtEngine.engine
+	}
+	stampExecutionCapabilities(created, engine, binding.Environment)
 	if err := s.persistNewSession(mutationCtx, created); err != nil {
 		cleanupEngine()
 		if errors.Is(err, port.ErrSessionAlreadyExists) {

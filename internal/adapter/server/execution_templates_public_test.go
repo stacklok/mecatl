@@ -21,9 +21,11 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
@@ -210,6 +212,121 @@ func TestExecutionSessionFilesWithoutShell(t *testing.T) {
 	}
 }
 
+type offlineReadPlacementProvider struct {
+	testPlacementProvider
+	reattachCalls atomic.Int32
+	offline       atomic.Bool
+}
+
+func (p *offlineReadPlacementProvider) Reattach(ctx context.Context, req server.PlacementReattachRequest) (server.PlacementBinding, error) {
+	p.reattachCalls.Add(1)
+	if p.offline.Load() {
+		return server.PlacementBinding{}, server.ErrPlacementUnavailable
+	}
+	return p.testPlacementProvider.Reattach(ctx, req)
+}
+
+func TestNoneRunDoesNotBorrowSharedFileTools(t *testing.T) {
+	sharedCatalog := tool.NewCatalog()
+	sharedCatalog.MustRegister(fstools.ReadTool{})
+	sharedCatalog.MustRegister(fstools.NewShellTool())
+	shared := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("shared")), Catalog: sharedCatalog, Policy: permpolicy.NewPolicy(nil, nil), Model: "test"})
+	var requests []port.LLMRequest
+	llm := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { requests = append(requests, req) })},
+		mockllm.ToolCallTurn(session.NewToolCall("r", "Read", []byte(`{"path":"secret"}`)), session.NewToolCall("s", tool.ShellToolName, []byte(`{"command":"echo forbidden"}`))), mockllm.TextTurn("done"))
+	svc, err := newPlacementTestService(server.Config{Engine: shared, Store: memstore.New(),
+		SessionEngine: func(_ context.Context, _ server.ProviderSelector, _ []mcp.ServerConfig, profile server.SessionProfile, _ string, _ session.PermissionMode) (server.SessionEngineResult, error) {
+			if profile != server.ProfileNoFS {
+				t.Fatalf("profile = %q", profile)
+			}
+			return server.SessionEngineResult{Engine: agent.NewEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test"})}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+	created, err := server.NewHarnessServer(svc).CreateSession(t.Context(), &mecatlv1.CreateSessionRequest{Execution: &mecatlv1.ExecutionSelection{None: &mecatlv1.ExecutionNone{}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.GetSessionCapabilities().GetExecutionFiles() || created.GetSessionCapabilities().GetBuiltInShell() {
+		t.Fatalf("none caps = %+v", created.GetSessionCapabilities())
+	}
+	run, err := svc.StartRun(t.Context(), session.SessionID(created.GetSessionId()), "try both")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var final string
+	var rejected int
+	for ev := range run.Events() {
+		if ev.Type == session.EvResult && ev.Result != nil {
+			final = ev.Result.Text
+		}
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.IsError && strings.Contains(ev.ToolResult.Content, "unknown tool") {
+			rejected++
+		}
+	}
+	svc.FinishRun(session.SessionID(created.GetSessionId()), run)
+	if final != "done" {
+		t.Fatalf("reply = %q", final)
+	}
+	if len(requests) == 0 {
+		t.Fatal("no model request")
+	}
+	for _, req := range requests {
+		for _, spec := range req.Tools {
+			if spec.Name == "Read" || spec.Name == tool.ShellToolName {
+				t.Fatalf("none advertised %q", spec.Name)
+			}
+		}
+	}
+	if rejected != 2 {
+		t.Fatalf("unknown-tool rejections = %d, want 2", rejected)
+	}
+}
+
+func TestBoundExecutionCapabilitiesRespectPersistedAuthority(t *testing.T) {
+	catalog := tool.NewCatalog()
+	catalog.MustRegister(fstools.ReadTool{})
+	catalog.MustRegister(fstools.NewShellTool())
+	engine := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("ok")), Catalog: catalog, Policy: permpolicy.NewPolicy(nil, nil), Model: "test"})
+	store := memstore.New()
+	provider := &offlineReadPlacementProvider{testPlacementProvider: testPlacementProvider{root: "/ws"}}
+	root := session.Authority{CapabilitySet: governance.CapabilitySet{Tools: []string{"Read", tool.ShellToolName}}, Provenance: "test"}
+	build := func() *server.Service {
+		t.Helper()
+		svc, err := newPlacementTestService(server.Config{Engine: engine, Store: store, PlacementProvider: provider, PlacementScope: "test", RootAuthority: func(session.SessionKind) session.Authority { return root }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return svc
+	}
+	svc := build()
+	created, err := server.NewHarnessServer(svc).CreateSession(t.Context(), &mecatlv1.CreateSessionRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.GetSessionCapabilities().GetExecutionFiles() || created.GetSessionCapabilities().GetBuiltInShell() {
+		t.Fatalf("ungranted caps = %+v", created.GetSessionCapabilities())
+	}
+	svc.Close()
+	provider.offline.Store(true)
+	before := provider.reattachCalls.Load()
+	fresh := build()
+	defer fresh.Close()
+	got, err := server.NewHarnessServer(fresh).GetSession(t.Context(), &mecatlv1.GetSessionRequest{SessionId: created.GetSessionId()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.GetSession().GetSessionCapabilities().GetExecutionFiles() || got.GetSession().GetSessionCapabilities().GetBuiltInShell() {
+		t.Fatalf("offline bounded caps = %+v", got)
+	}
+	if provider.reattachCalls.Load() != before {
+		t.Fatal("offline GetSession reattached provider")
+	}
+}
+
 func TestBoundExecutionCapabilitiesAcrossTransportsAndRestart(t *testing.T) {
 	catalog := tool.NewCatalog()
 	catalog.MustRegister(fstools.ReadTool{})
@@ -218,9 +335,10 @@ func TestBoundExecutionCapabilitiesAcrossTransportsAndRestart(t *testing.T) {
 	llm := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { modelRequest = req })}, mockllm.TextTurn("ok"))
 	engine := agent.NewEngine(agent.Deps{LLM: llm, Catalog: catalog, Policy: permpolicy.NewPolicy(nil, nil), Model: "test"})
 	store := memstore.New()
+	provider := &offlineReadPlacementProvider{testPlacementProvider: testPlacementProvider{root: "/ws"}}
 	makeService := func() *server.Service {
 		t.Helper()
-		svc, err := newPlacementTestService(server.Config{Engine: engine, Store: store, SessionEngine: profileRecordingFactory("ok", &atomic.Value{}, &atomic.Int32{})})
+		svc, err := newPlacementTestService(server.Config{Engine: engine, Store: store, PlacementProvider: provider, PlacementScope: "test", SessionEngine: profileRecordingFactory("ok", &atomic.Value{}, &atomic.Int32{})})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -309,10 +427,14 @@ func TestBoundExecutionCapabilitiesAcrossTransportsAndRestart(t *testing.T) {
 		t.Fatalf("HTTP none create=%d %s", createHTTP.Code, createHTTP.Body.String())
 	}
 	svc.Close()
+	provider.offline.Store(true)
+	beforeAttach := provider.reattachCalls.Load()
 	fresh := makeService()
 	defer fresh.Close()
 	svc = fresh
 	checkHTTP("HTTP restart get", http.MethodGet, "/v1/sessions/"+id, "", true)
+	checkHTTP("HTTP restart mode", http.MethodPost, "/v1/sessions/"+id+"/mode", `{"mode":"plan"}`, true)
+	checkHTTP("HTTP restart rename", http.MethodPost, "/v1/sessions/"+id+"/rename", `{"title":"offline"}`, true)
 	for _, tc := range []struct {
 		id    string
 		files bool
@@ -322,6 +444,30 @@ func TestBoundExecutionCapabilitiesAcrossTransportsAndRestart(t *testing.T) {
 			t.Fatal(err)
 		}
 		check("restart get", get.GetSession().GetSessionCapabilities(), tc.files)
+		if tc.files {
+			mode, err := server.NewHarnessServer(fresh).SetMode(t.Context(), &mecatlv1.SetModeRequest{SessionId: tc.id, Mode: mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT})
+			if err != nil {
+				t.Fatal(err)
+			}
+			check("restart mode", mode.GetSession().GetSessionCapabilities(), true)
+			rename, err := server.NewHarnessServer(fresh).RenameSession(t.Context(), &mecatlv1.RenameSessionRequest{SessionId: tc.id, Title: "offline grpc"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			check("restart rename", rename.GetSession().GetSessionCapabilities(), true)
+		}
+	}
+	if got := provider.reattachCalls.Load(); got != beforeAttach {
+		t.Fatalf("offline reads and mutations called Reattach %d times", got-beforeAttach)
+	}
+	if run, err := fresh.StartRun(t.Context(), session.SessionID(id), "must not execute"); err == nil {
+		if run != nil {
+			fresh.FinishRun(session.SessionID(id), run)
+		}
+		t.Fatal("offline placement admitted a run")
+	}
+	if got := provider.reattachCalls.Load(); got == beforeAttach {
+		t.Fatal("run did not check the live placement")
 	}
 }
 
