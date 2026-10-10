@@ -2,136 +2,96 @@
 
 import type { SessionDetailResponse, SessionUsageResponse } from "@mecatl-studio/contracts";
 import { GitFork, Minimize2 } from "lucide-react";
-import { Button } from "../../components/ui/button";
-import type { ComposerModelOption, DraftChatConfiguration } from "./chat-composer";
-import { ComposerOptionMenu } from "./composer-option-menu";
+import { cn } from "../../lib/utils";
+import { GHOST_TRIGGER_CLASS } from "./composer-option-menu";
 import { contextUtilization } from "./context-usage";
-import { groupModels, ModelEffortMenu } from "./model-effort-menu";
 
-const MODE_OPTIONS = [
-  {
-    description: "Always ask before making changes.",
-    title: "Manual",
-    value: "default" as const,
-  },
-  {
-    description: "Automatically accept all file edits.",
-    title: "Accept edits",
-    value: "acceptEdits" as const,
-  },
-  {
-    description: "Create a plan before making changes.",
-    title: "Plan",
-    value: "plan" as const,
-  },
-];
-
-interface ChatSessionControlsProps {
+interface SessionUsageControlsProps {
   compacting: boolean;
   detail: SessionDetailResponse;
   disabled: boolean;
   forking: boolean;
-  models: ComposerModelOption[];
   modePending: boolean;
   onCompact: () => void;
-  onFork: (
-    model: { id: string; providerId: string },
-    reasoningEffort: DraftChatConfiguration["reasoningEffort"],
-  ) => void;
-  onModeChange: (mode: DraftChatConfiguration["mode"]) => void;
-  safetyLevel?: string;
+  /** `pills` sits at the end of the composer's pill row; `sheet` is the phone options sheet's footer. */
+  variant: "pills" | "sheet";
 }
 
-export function ChatSessionControls({
+/**
+ * A live chat's usage and compaction, beside the composer's Mode and Model
+ * pills: how much of the model's context the conversation fills, the Compact
+ * action, and a note while a fork or a mode change is in flight. Mode and
+ * Model themselves are composer pills (`chat-composer.tsx`).
+ */
+export function SessionUsageControls({
   compacting,
   detail,
   disabled,
   forking,
-  models,
   modePending,
   onCompact,
-  onFork,
-  onModeChange,
-  safetyLevel = "managed",
-}: ChatSessionControlsProps) {
-  const busy = disabled || compacting || forking || modePending;
+  variant,
+}: SessionUsageControlsProps) {
   const model = detail.model;
-  const groupedModels = groupModels(models);
-
-  return (
-    <section
-      aria-label="Chat configuration and usage"
-      className="mx-auto mb-2 w-[calc(100%-2rem)] max-w-3xl rounded-xl border bg-muted/20 px-3 py-2"
+  const busy = disabled || compacting || forking || modePending;
+  const compactTitle = detail.capabilities.manualCompaction
+    ? "Compact model-visible conversation history"
+    : "Manual compaction is not enabled on this deployment";
+  const pending = (forking || modePending) && (
+    <p
+      className={cn(
+        "flex items-center gap-1.5 text-xs text-muted-foreground",
+        variant === "pills" ? "shrink-0 whitespace-nowrap px-1" : "px-4 pb-2",
+      )}
+      role="status"
     >
-      <div className="flex flex-wrap items-center gap-2">
-        <ComposerOptionMenu
-          disabled={busy}
-          items={MODE_OPTIONS}
-          label="Mode"
-          onSelect={onModeChange}
-          value={detail.mode}
-          valueLabel={
-            MODE_OPTIONS.find((option) => option.value === detail.mode)?.title ?? "Manual"
-          }
-        />
+      {forking && <GitFork aria-hidden="true" className="size-3.5" />}
+      {forking ? "Forking this conversation…" : "Updating permission mode…"}
+    </p>
+  );
+  const usage = model && (
+    <ContextUsage
+      contextWindow={model.contextWindow}
+      model={`${model.id} · ${humanize(model.providerId)}`}
+      usage={detail.usage}
+      variant={variant}
+    />
+  );
 
-        <div
-          aria-label={`Safety level: ${safetyLabel(safetyLevel)}. Managed by your organization.`}
-          className="flex h-8 items-center gap-1.5 rounded-full border bg-background px-3 text-xs"
-          role="status"
-          title="Safety level is managed by your organization"
-        >
-          <span className="font-medium">Safety</span>
-          <span className="text-muted-foreground">{safetyLabel(safetyLevel)}</span>
-        </div>
-
-        {/* Hidden without an inventory: see the note in chat-composer.tsx. */}
-        {models.length > 0 ? (
-          <ModelEffortMenu
-            disabled={busy || !detail.capabilities.modelSelection}
-            effort={model?.reasoningEffort ?? "default"}
-            groupedModels={groupedModels}
-            model={model}
-            onEffortChange={(effort) =>
-              model && onFork(model, effort as DraftChatConfiguration["reasoningEffort"])
-            }
-            onModelChange={(nextModel) =>
-              nextModel && onFork(nextModel, model?.reasoningEffort ?? "default")
-            }
-          />
-        ) : null}
-
-        <Button
-          className="ml-auto h-8"
+  if (variant === "sheet") {
+    return (
+      <div className="border-t py-2">
+        {usage}
+        {pending}
+        <button
+          className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm transition-colors hover:bg-muted/50 disabled:opacity-50"
           disabled={busy || !detail.capabilities.manualCompaction}
           onClick={onCompact}
-          size="sm"
-          title={
-            detail.capabilities.manualCompaction
-              ? "Compact model-visible conversation history"
-              : "Manual compaction is not enabled on this deployment"
-          }
-          variant="ghost"
+          title={compactTitle}
+          type="button"
         >
-          <Minimize2 aria-hidden="true" />
+          <Minimize2 aria-hidden="true" className="size-4 text-muted-foreground" />
           {compacting ? "Compacting…" : "Compact"}
-        </Button>
+        </button>
       </div>
+    );
+  }
 
-      {model && (
-        <ContextUsage
-          contextWindow={model.contextWindow}
-          model={`${model.id} · ${humanize(model.providerId)}`}
-          usage={detail.usage}
-        />
-      )}
-      {(forking || modePending) && (
-        <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
-          {forking && <GitFork aria-hidden="true" className="size-3.5" />}
-          {forking ? "Forking this conversation…" : "Updating permission mode…"}
-        </p>
-      )}
-    </section>
+  return (
+    <div className="ml-auto flex shrink-0 items-center gap-1">
+      {pending}
+      {usage}
+      <button
+        className={GHOST_TRIGGER_CLASS}
+        disabled={busy || !detail.capabilities.manualCompaction}
+        onClick={onCompact}
+        title={compactTitle}
+        type="button"
+      >
+        <Minimize2 aria-hidden="true" className="size-3.5 text-muted-foreground" />
+        {compacting ? "Compacting…" : "Compact"}
+      </button>
+    </div>
   );
 }
 
@@ -139,10 +99,12 @@ function ContextUsage({
   contextWindow,
   model,
   usage,
+  variant,
 }: {
   contextWindow: string;
   model: string;
   usage: SessionUsageResponse;
+  variant: "pills" | "sheet";
 }) {
   const fraction = contextUtilization(usage, contextWindow);
   const total = BigInt(usage.inputTokens) + BigInt(usage.outputTokens);
@@ -151,25 +113,27 @@ function ContextUsage({
 
   return (
     <div
-      className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground"
-      title={`${formatTokens(usage.inputTokens)} input · ${formatTokens(usage.outputTokens)} output · ${formatTokens(usage.reasoningTokens)} reasoning · ${formatTokens(usage.cacheReadTokens)} cache read`}
+      className={cn(
+        "flex items-center gap-2 text-xs text-muted-foreground",
+        variant === "pills"
+          ? "shrink-0 whitespace-nowrap px-1.5 @max-md:hidden"
+          : "flex-wrap px-4 py-2",
+      )}
+      title={`${model} · ${formatTokens(usage.inputTokens)} input · ${formatTokens(usage.outputTokens)} output · ${formatTokens(usage.reasoningTokens)} reasoning · ${formatTokens(usage.cacheReadTokens)} cache read`}
     >
-      <span className="truncate font-medium">{model}</span>
-      <span aria-hidden="true" className="h-1 w-16 overflow-hidden rounded-full bg-border">
+      {variant === "sheet" && <span className="truncate font-medium">{model}</span>}
+      <span aria-hidden="true" className="h-1 w-12 overflow-hidden rounded-full bg-border">
         <span
           className={`block h-full rounded-full ${fraction >= 0.85 ? "bg-warning" : "bg-brand/60"}`}
           style={{ width: `${Math.max(2, percent)}%` }}
         />
       </span>
       <span className="tabular-nums">~{percent}% of context</span>
-      <span className="text-muted-foreground/70">{formatTokens(total.toString())} tokens</span>
+      {variant === "sheet" && (
+        <span className="text-muted-foreground/70">{formatTokens(total.toString())} tokens</span>
+      )}
     </div>
   );
-}
-
-function safetyLabel(value: string) {
-  if (!value) return "Managed";
-  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
 }
 
 function humanize(value: string) {

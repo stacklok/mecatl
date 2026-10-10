@@ -91,7 +91,7 @@ describe("truncated chat labels", () => {
       />,
     );
     await user.upload(
-      screen.getByLabelText("Choose images to attach"),
+      screen.getByLabelText("Choose files to attach"),
       new File(["image data"], fileName, { type: "image/png" }),
     );
     const label = await waitFor(() => screen.getByText(fileName));

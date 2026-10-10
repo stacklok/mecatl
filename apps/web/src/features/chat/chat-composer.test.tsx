@@ -52,16 +52,17 @@ describe("chat composer", () => {
       );
       expect(screen.getByRole("textbox", { name: "Message Mecatl" })).toBeTruthy();
       expect(screen.getByRole("button", { name: "Send message" })).toBeTruthy();
-      expect(screen.getByRole("button", { name: "Attach images" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Attach files" })).toBeTruthy();
       expect(screen.getByRole("button", { name: "Start dictation" })).toBeTruthy();
-      const options = screen.getByRole("button", { name: "Chat options" });
+      const options = screen.getByRole("button", { name: "Composer options" });
       await user.click(options);
-      expect(screen.getByRole("dialog", { name: "Chat options" })).toBeTruthy();
-      expect(screen.getByLabelText("Model")).toBeTruthy();
-      expect(screen.getByLabelText("Effort")).toBeTruthy();
-      expect(screen.getByLabelText("Mode")).toBeTruthy();
-      expect(screen.getByLabelText("Tools")).toBeTruthy();
-      await user.click(screen.getByRole("button", { name: "Close chat options" }));
+      const sheet = screen.getByRole("dialog", { name: "Composer options" });
+      expect(within(sheet).getByRole("button", { name: /^Model/ })).toBeTruthy();
+      expect(within(sheet).getByRole("button", { name: /^Mode\s/ })).toBeTruthy();
+      expect(within(sheet).getByRole("button", { name: /^Tools/ })).toBeTruthy();
+      await user.click(within(sheet).getByRole("button", { name: /^Model/ }));
+      expect(within(sheet).getByRole("group", { name: "Effort" })).toBeTruthy();
+      await user.click(screen.getByRole("button", { name: "Close composer options" }));
       expect(document.activeElement).toBe(options);
       view.unmount();
     }
@@ -182,14 +183,22 @@ describe("chat composer", () => {
     const view = render(
       <ChatComposer imageAttachmentsSupported={false} onPreviewImage={vi.fn()} onSend={onSend} />,
     );
-    expect(screen.queryByRole("button", { name: "Attach images" })).toBeNull();
+    // Text files can always be attached, so the button stays; an image is refused instead.
+    await user.upload(
+      screen.getByLabelText("Choose files to attach"),
+      new File(["image data"], "early.png", { type: "image/png" }),
+    );
+    expect(screen.queryByText("early.png")).toBeNull();
+    expect(screen.getByRole("alert").textContent).toBe(
+      "early.png: this model does not accept image input.",
+    );
     view.rerender(
       <ChatComposer imageAttachmentsSupported onPreviewImage={vi.fn()} onSend={onSend} />,
     );
     const input = screen.getByRole("textbox", { name: "Message Mecatl" });
     fireEvent.change(input, { target: { value: "Keep this text" } });
     const image = new File(["image data"], "picture.png", { type: "image/png" });
-    await user.upload(screen.getByLabelText("Choose images to attach"), image);
+    await user.upload(screen.getByLabelText("Choose files to attach"), image);
     await waitFor(() => expect(screen.getByText("picture.png")).toBeTruthy());
     view.rerender(
       <ChatComposer imageAttachmentsSupported={false} onPreviewImage={vi.fn()} onSend={onSend} />,
@@ -197,7 +206,14 @@ describe("chat composer", () => {
     expect(screen.queryByText("picture.png")).toBeNull();
     expect(screen.getByRole("alert").textContent).toMatch(/model does not support/i);
     expect((input as HTMLTextAreaElement).value).toBe("Keep this text");
-    expect(screen.queryByRole("button", { name: "Attach images" })).toBeNull();
+    await user.upload(
+      screen.getByLabelText("Choose files to attach"),
+      new File(["image data"], "late.png", { type: "image/png" }),
+    );
+    expect(screen.queryByText("late.png")).toBeNull();
+    expect(screen.getByRole("alert").textContent).toBe(
+      "late.png: this model does not accept image input.",
+    );
   });
 
   it("holds images until the active run ends", async () => {
@@ -209,7 +225,7 @@ describe("chat composer", () => {
     const input = screen.getByRole("textbox", { name: "Message Mecatl" });
     fireEvent.change(input, { target: { value: "image prompt" } });
     await user.upload(
-      screen.getByLabelText("Choose images to attach"),
+      screen.getByLabelText("Choose files to attach"),
       new File(["image data"], "picture.png", { type: "image/png" }),
     );
     await waitFor(() => expect(screen.getByText("picture.png")).toBeTruthy());
@@ -237,7 +253,7 @@ describe("chat composer", () => {
       { length: 17 },
       (_, index) => new File(["a"], `${index}.png`, { type: "image/png" }),
     );
-    await user.upload(screen.getByLabelText("Choose images to attach"), files);
+    await user.upload(screen.getByLabelText("Choose files to attach"), files);
     await waitFor(() =>
       expect(screen.getAllByRole("button", { name: /^Preview / })).toHaveLength(16),
     );
