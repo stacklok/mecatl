@@ -997,3 +997,122 @@ describe("approval keyboard and verdict phases", () => {
     expect(fixture.requests.filter((request) => request.method === "POST")).toHaveLength(1);
   });
 });
+
+describe("prototype approval UI on the workspace ledger", () => {
+  async function startAsk(
+    fixture: Fixture,
+    sessionId: string,
+    runId: string,
+    reason: string,
+    args = editArgs,
+    tool = "Edit",
+  ) {
+    await act(async () => {
+      fixture.stream.send({ runId, sessionId, type: "run.started" });
+      fixture.stream.send(
+        event("permission.ask", "1", runId, { askId: `ask-${runId}`, args, reason, tool }),
+      );
+    });
+    return (await screen.findByText(reason)).closest("section") as HTMLElement;
+  }
+
+  it("answers the active ask from the keyboard once, through the exact verdict route", async () => {
+    for (const side of [false, true]) {
+      const fixture = new Fixture();
+      await mount(fixture, side);
+      const sessionId = side ? "thread-a" : "chat-a";
+      (document.activeElement as HTMLElement | null)?.blur();
+      const card = await startAsk(fixture, sessionId, "run-k", "Keyboard ask");
+      await waitFor(() =>
+        expect(document.activeElement).toBe(
+          within(card).getByRole("button", { name: "Allow once" }),
+        ),
+      );
+      let answer!: (response: Response) => void;
+      fixture.verdicts.push(new Promise<Response>((resolve) => (answer = resolve)));
+      await userEvent.setup().keyboard("y");
+      await waitFor(() => expect(fixture.posts()).toHaveLength(1));
+      await userEvent.setup().keyboard("ynw");
+      expect(fixture.posts()).toEqual([
+        {
+          body: { verdict: "allow_once" },
+          method: "POST",
+          pathname: `/api/v1/sessions/${sessionId}/runs/run-k/permissions/ask-run-k`,
+        },
+      ]);
+      await act(async () => answer(new Response(null, { status: 204 })));
+      await waitFor(() => expect(screen.queryByText("Keyboard ask")).toBeNull());
+      cleanup();
+    }
+  });
+
+  it("opens an ask in the detail panel and answers it there through the same ledger", async () => {
+    const fixture = new Fixture();
+    await mount(fixture);
+    const longWrite = JSON.stringify({ content: "line\n".repeat(60), path: "many.txt" });
+    const card = await startAsk(fixture, "chat-a", "run-d", "Detail ask", longWrite, "Write");
+    expect(within(card).queryByRole("button", { name: /Show all/ })).toBeNull();
+    fireEvent.click(within(card).getByRole("button", { name: "Open in detail panel" }));
+    const panel = await screen.findByRole("complementary", { name: "Write" });
+    expect(within(panel).getByText("Detail ask")).toBeTruthy();
+    expect(within(panel).getByRole("button", { name: /Show all 61 lines/ })).toBeTruthy();
+    expect(within(panel).queryByText("Esc to Close")).toBeNull();
+
+    let lose!: (error: Error) => void;
+    fixture.verdicts.push(new Promise<Response>((_resolve, reject) => (lose = reject)));
+    fireEvent.click(within(panel).getByRole("button", { name: "Always allow" }));
+    await waitFor(() => expect(fixture.posts()).toHaveLength(1));
+    expect(fixture.posts()[0]).toEqual({
+      body: { verdict: "allow_always" },
+      method: "POST",
+      pathname: "/api/v1/sessions/chat-a/runs/run-d/permissions/ask-run-d",
+    });
+    // The card and the panel read one ledger: both block while it is in flight.
+    for (const surface of [card, panel]) {
+      expect(
+        ["Allow once", "Always allow", "Deny"].map(
+          (name) => (within(surface).getByRole("button", { name }) as HTMLButtonElement).disabled,
+        ),
+      ).toEqual([true, true, true]);
+    }
+    await act(async () => lose(new Error("connection lost")));
+    expect(await within(panel).findByText(/outcome is uncertain/i)).toBeTruthy();
+    expect(within(card).getByText(/outcome is uncertain/i)).toBeTruthy();
+    fireEvent.click(within(panel).getByRole("button", { name: "Deny" }));
+    fireEvent.keyDown(panel, { key: "n" });
+    expect(fixture.posts()).toHaveLength(1);
+
+    // A stream event settles the ask; its panel closes with its card.
+    await act(async () =>
+      fixture.stream.send(event("approval", "2", "run-d", { askId: "ask-run-d" })),
+    );
+    await waitFor(() => expect(screen.queryByText("Detail ask")).toBeNull());
+    expect(screen.queryByRole("complementary", { name: "Write" })).toBeNull();
+  });
+
+  it("closes the detail panel once the verdict is acknowledged", async () => {
+    const fixture = new Fixture();
+    await mount(fixture);
+    const card = await startAsk(fixture, "chat-a", "run-e", "Acknowledged ask");
+    fireEvent.click(within(card).getByRole("button", { name: "Open in detail panel" }));
+    const panel = await screen.findByRole("complementary", { name: "Edit" });
+    fixture.verdicts.push(Promise.resolve(new Response(null, { status: 204 })));
+    fireEvent.click(within(panel).getByRole("button", { name: "Deny" }));
+    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Edit" })).toBeNull());
+    expect(screen.queryByText("Acknowledged ask")).toBeNull();
+    expect(fixture.posts()).toEqual([
+      {
+        body: { verdict: "deny" },
+        method: "POST",
+        pathname: "/api/v1/sessions/chat-a/runs/run-e/permissions/ask-run-e",
+      },
+    ]);
+  });
+
+  it("offers the detail panel only where the surface has a panel slot", async () => {
+    const fixture = new Fixture();
+    await mount(fixture, true);
+    const card = await startAsk(fixture, "thread-a", "run-s", "Thread ask");
+    expect(within(card).queryByRole("button", { name: "Open in detail panel" })).toBeNull();
+  });
+});

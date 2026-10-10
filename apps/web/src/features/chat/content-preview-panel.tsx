@@ -7,11 +7,14 @@ import {
   NotebookPen,
   Pencil,
   ScanEye,
+  ShieldAlert,
   ShieldCheck,
 } from "lucide-react";
 import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Textarea } from "../../components/ui/textarea";
+import { type ApprovalDetail, ApprovalDetailPanel } from "./approval-detail-panel";
 import {
   type AuthorizationHandoff,
   type AuthorizationOperation,
@@ -28,6 +31,7 @@ import { SideThreadPanel } from "./side-thread-panel";
 import type { ToolActivity } from "./tool-activity";
 
 export type ContentPreview =
+  | { askId: string; kind: "approval"; runId: string }
   | { authorization: AuthorizationHandoff; kind: "authorization" }
   | { file: LocalFilePreview; kind: "file" }
   | { kind: "tool"; tool: ToolActivity }
@@ -65,6 +69,7 @@ export function restoreActivityOpenerFocus({
 
 export function ContentPreviewPanel({
   activity,
+  approval,
   authorizationDisabled = false,
   authorizationUncertain = false,
   canvas,
@@ -77,6 +82,8 @@ export function ContentPreviewPanel({
   preview,
 }: {
   activity?: ActivityPreviewState;
+  /** The live ask an "approval" preview shows, re-resolved by the surface each render. */
+  approval?: ApprovalDetail;
   authorizationDisabled?: boolean;
   authorizationUncertain?: boolean;
   canvas: string;
@@ -108,6 +115,7 @@ export function ContentPreviewPanel({
   return (
     <GenericPreviewPanel
       activity={activity}
+      approval={approval}
       authorizationDisabled={authorizationDisabled}
       authorizationUncertain={authorizationUncertain}
       canvas={canvas}
@@ -124,6 +132,7 @@ export function ContentPreviewPanel({
 
 function GenericPreviewPanel({
   activity,
+  approval,
   authorizationDisabled,
   authorizationUncertain,
   canvas,
@@ -136,6 +145,7 @@ function GenericPreviewPanel({
   preview,
 }: {
   activity?: ActivityPreviewState;
+  approval?: ApprovalDetail;
   authorizationDisabled: boolean;
   authorizationUncertain: boolean;
   canvas: string;
@@ -177,11 +187,22 @@ function GenericPreviewPanel({
     close();
   }
 
+  if (preview.kind === "approval" && !approval) return null;
+
   return (
     <SidePanelShell
+      actions={
+        preview.kind === "approval" && approval && approval.total > 1 ? (
+          <Badge className="tabular-nums" variant="outline">
+            {approval.position} of {approval.total}
+          </Badge>
+        ) : undefined
+      }
       autoFocusClose={preview.kind !== "activity"}
       icon={
-        preview.kind === "authorization" ? (
+        preview.kind === "approval" ? (
+          <ShieldAlert aria-hidden="true" className="size-4 text-brand-ink" />
+        ) : preview.kind === "authorization" ? (
           <ShieldCheck aria-hidden="true" className="size-4 text-brand-ink" />
         ) : preview.kind === "activity" ? (
           <ListTree aria-hidden="true" className="size-4 text-brand-ink" />
@@ -197,11 +218,24 @@ function GenericPreviewPanel({
       onClose={close}
       onKeyDown={handleKeyDown}
       restoreFocusOnClose={preview.kind !== "activity"}
-      title={previewTitle(preview)}
+      surface={preview.kind === "approval" ? "approval" : undefined}
+      title={
+        preview.kind === "approval"
+          ? approval?.approval.tool || "Permission required"
+          : previewTitle(preview)
+      }
       titleRef={title}
       titleTabIndex={preview.kind === "activity" ? -1 : undefined}
     >
-      {preview.kind === "authorization" ? (
+      {preview.kind === "approval" && approval ? (
+        <ApprovalDetailPanel
+          key={`${preview.runId}\u0000${preview.askId}`}
+          approval={approval.approval}
+          disabled={approval.disabled}
+          onRespond={approval.onRespond}
+          uncertain={approval.uncertain}
+        />
+      ) : preview.kind === "authorization" ? (
         <AuthorizationReview
           key={`${preview.authorization.sessionId}\u0000${preview.authorization.authorizationId}\u0000${authorizationUncertain}`}
           authorization={preview.authorization}
@@ -369,7 +403,7 @@ function isWebUrl(value: string) {
   }
 }
 
-function previewTitle(preview: StaticPreview) {
+function previewTitle(preview: Exclude<StaticPreview, { kind: "approval" }>) {
   if (preview.kind === "authorization") return "Authorization review";
   if (preview.kind === "activity") return "Session activity";
   if (preview.kind === "canvas") return "Local canvas";

@@ -109,6 +109,7 @@ import {
 import { useIsMobile } from "../../lib/use-mobile";
 import { useAuthRecovery } from "../auth/auth-recovery-context";
 import { useShortcut, useShortcutSuppression } from "../shortcuts/shortcut-provider";
+import { ApprovalDetailContext } from "./approval-detail-context";
 import { ApprovalPanel, type ApprovalRequest, type ApprovalVerdict } from "./approval-panel";
 import {
   type AuthorizationHandoff,
@@ -2612,9 +2613,32 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     planAvailable: escapeAsk?.tool === "PresentPlan" && !planUnavailableReason(escapeAsk),
     runActive: isRunning && Boolean(controlTarget(runTarget, sessionId)),
   });
+  const openApprovalDetail = useCallback(
+    (approval: ApprovalRequest) =>
+      setContentPreview({
+        askId: approval.askId,
+        kind: "approval",
+        runId: approval.controlTarget?.runId ?? "",
+      }),
+    [],
+  );
+  const detailIndex =
+    contentPreview?.kind === "approval"
+      ? approvals.findIndex(
+          (candidate) =>
+            candidate.askId === contentPreview.askId &&
+            (candidate.controlTarget?.runId ?? "") === contentPreview.runId,
+        )
+      : -1;
+  const detailApproval = detailIndex >= 0 ? approvals[detailIndex] : undefined;
+  // The detail panel shows a live ask only: once the ledger settles it (or the
+  // stream retracts it) the panel closes with its card.
+  useEffect(() => {
+    if (contentPreview?.kind === "approval" && !detailApproval) setContentPreview(undefined);
+  }, [contentPreview, detailApproval]);
 
   return (
-    <div className="relative flex h-full min-w-0" ref={workspaceRoot}>
+    <div className="relative flex h-full min-w-0" data-chat-surface="workspace" ref={workspaceRoot}>
       <SessionSidebar
         collapsed={sidebarHidden}
         creating={createSession.isPending || isRunning}
@@ -3001,71 +3025,73 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                   </div>
                 ) : (
                   <EscapeHintContext.Provider value={escapeAsk}>
-                    <ChatTranscript
-                      agentName={agentName}
-                      approvalDisabled={(candidate) =>
-                        candidate.tool === "PresentPlan"
-                          ? planApprovalDisabled(candidate)
-                          : ordinaryApprovalDisabled(candidate)
-                      }
-                      approvalUncertain={(candidate) =>
-                        candidate.tool === "PresentPlan"
-                          ? planApprovalUncertain(candidate)
-                          : ordinaryApprovalUncertain(candidate)
-                      }
-                      approvals={approvals}
-                      delegationsByMessageId={delegationPlacement.byMessageId}
-                      legacyThreadSessionIdForMessage={(message) => {
-                        const key = matchingThreadKeyForMessage(
-                          message,
-                          transcript.data,
-                          threadAssociations,
-                        );
-                        return key
-                          ? threadAssociations.legacyCandidates[key]?.sessionId
-                          : undefined;
-                      }}
-                      messages={messages}
-                      onOpenActivity={(focus, opener) => {
-                        activityOpener.current = opener;
-                        activityOpenerFocus.current = focus;
-                        setActivityFocus(focus);
-                        setActivityFocusRequest((value) => value + 1);
-                        setContentPreview({ kind: "activity" });
-                      }}
-                      onOpenThread={(message) => void openSideThread(message)}
-                      onRelinkThread={(message) => void relinkOlderThread(message)}
-                      onReviewAuthorization={(authorization) =>
-                        setContentPreview({ authorization, kind: "authorization" })
-                      }
-                      onPreviewImage={(image) =>
-                        setContentPreview({ file: imagePreview(image, true), kind: "file" })
-                      }
-                      onPreviewTool={(tool) => setContentPreview({ kind: "tool", tool })}
-                      onRespondToApproval={(candidate, verdict) =>
-                        void respondToApproval(candidate, verdict)
-                      }
-                      onRespondToPlan={(candidate, verdict) =>
-                        void respondToPlan(candidate, verdict)
-                      }
-                      planUnavailableReason={planUnavailableReason}
-                      showToolCalls={showToolCalls}
-                      streamingMessageId={
-                        isRunning && messages.at(-1)?.role === "assistant"
-                          ? messages.at(-1)?.id
-                          : undefined
-                      }
-                      threadDisabled={forkSession.isPending}
-                      threadSessionIdForMessage={(message) => {
-                        const key = matchingThreadKeyForMessage(
-                          message,
-                          transcript.data,
-                          threadAssociations,
-                        );
-                        return key ? threadAssociations.byKey[key]?.sessionId : undefined;
-                      }}
-                      userName={userName}
-                    />
+                    <ApprovalDetailContext.Provider value={openApprovalDetail}>
+                      <ChatTranscript
+                        agentName={agentName}
+                        approvalDisabled={(candidate) =>
+                          candidate.tool === "PresentPlan"
+                            ? planApprovalDisabled(candidate)
+                            : ordinaryApprovalDisabled(candidate)
+                        }
+                        approvalUncertain={(candidate) =>
+                          candidate.tool === "PresentPlan"
+                            ? planApprovalUncertain(candidate)
+                            : ordinaryApprovalUncertain(candidate)
+                        }
+                        approvals={approvals}
+                        delegationsByMessageId={delegationPlacement.byMessageId}
+                        legacyThreadSessionIdForMessage={(message) => {
+                          const key = matchingThreadKeyForMessage(
+                            message,
+                            transcript.data,
+                            threadAssociations,
+                          );
+                          return key
+                            ? threadAssociations.legacyCandidates[key]?.sessionId
+                            : undefined;
+                        }}
+                        messages={messages}
+                        onOpenActivity={(focus, opener) => {
+                          activityOpener.current = opener;
+                          activityOpenerFocus.current = focus;
+                          setActivityFocus(focus);
+                          setActivityFocusRequest((value) => value + 1);
+                          setContentPreview({ kind: "activity" });
+                        }}
+                        onOpenThread={(message) => void openSideThread(message)}
+                        onRelinkThread={(message) => void relinkOlderThread(message)}
+                        onReviewAuthorization={(authorization) =>
+                          setContentPreview({ authorization, kind: "authorization" })
+                        }
+                        onPreviewImage={(image) =>
+                          setContentPreview({ file: imagePreview(image, true), kind: "file" })
+                        }
+                        onPreviewTool={(tool) => setContentPreview({ kind: "tool", tool })}
+                        onRespondToApproval={(candidate, verdict) =>
+                          void respondToApproval(candidate, verdict)
+                        }
+                        onRespondToPlan={(candidate, verdict) =>
+                          void respondToPlan(candidate, verdict)
+                        }
+                        planUnavailableReason={planUnavailableReason}
+                        showToolCalls={showToolCalls}
+                        streamingMessageId={
+                          isRunning && messages.at(-1)?.role === "assistant"
+                            ? messages.at(-1)?.id
+                            : undefined
+                        }
+                        threadDisabled={forkSession.isPending}
+                        threadSessionIdForMessage={(message) => {
+                          const key = matchingThreadKeyForMessage(
+                            message,
+                            transcript.data,
+                            threadAssociations,
+                          );
+                          return key ? threadAssociations.byKey[key]?.sessionId : undefined;
+                        }}
+                        userName={userName}
+                      />
+                    </ApprovalDetailContext.Provider>
                   </EscapeHintContext.Provider>
                 )}
                 {delegationPlacement.unanchored.length > 0 && (
@@ -3258,36 +3284,53 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         />
       )}
       {displayedPreview && provenChat && (
-        <ContentPreviewPanel
-          escapeManagedExternally
-          escapeHint={!escapeAsk}
-          activity={{
-            fallbackOpener: sessionActivityControl.current,
-            fleet: visibleDelegationFleet,
-            focus: activityFocus,
-            focusRequest: activityFocusRequest,
-            onFocusChange: setActivityFocus,
-            opener: activityOpener.current,
-            openerFocus: activityOpenerFocus.current,
-          }}
-          authorizationDisabled={authorizationBusy !== undefined}
-          authorizationUncertain={
-            displayedPreview?.kind === "authorization" &&
-            authorizationUncertain.current.has(
-              `${displayedPreview.authorization.sessionId}\u0000${displayedPreview.authorization.authorizationId}`,
-            )
-          }
-          canvas={canvas.value}
-          onCanvasChange={canvas.setValue}
-          onAuthorizationOperation={operateAuthorization}
-          onRefreshAuthorizationActivity={refreshAuthorizationActivity}
-          onClose={() => {
-            setContentPreview(undefined);
-            const opener = panelOpener.current;
-            if (opener?.isConnected) opener.focus();
-          }}
-          preview={displayedPreview}
-        />
+        <EscapeHintContext.Provider value={escapeAsk}>
+          <ContentPreviewPanel
+            escapeManagedExternally
+            escapeHint={!escapeAsk}
+            approval={
+              detailApproval
+                ? {
+                    approval: detailApproval,
+                    disabled:
+                      detailApproval.tool === "PresentPlan" ||
+                      !detailApproval.controlTarget ||
+                      ordinaryApprovalDisabled(detailApproval),
+                    onRespond: (verdict) => void respondToApproval(detailApproval, verdict),
+                    position: detailIndex + 1,
+                    total: approvals.length,
+                    uncertain: ordinaryApprovalUncertain(detailApproval),
+                  }
+                : undefined
+            }
+            activity={{
+              fallbackOpener: sessionActivityControl.current,
+              fleet: visibleDelegationFleet,
+              focus: activityFocus,
+              focusRequest: activityFocusRequest,
+              onFocusChange: setActivityFocus,
+              opener: activityOpener.current,
+              openerFocus: activityOpenerFocus.current,
+            }}
+            authorizationDisabled={authorizationBusy !== undefined}
+            authorizationUncertain={
+              displayedPreview?.kind === "authorization" &&
+              authorizationUncertain.current.has(
+                `${displayedPreview.authorization.sessionId}\u0000${displayedPreview.authorization.authorizationId}`,
+              )
+            }
+            canvas={canvas.value}
+            onCanvasChange={canvas.setValue}
+            onAuthorizationOperation={operateAuthorization}
+            onRefreshAuthorizationActivity={refreshAuthorizationActivity}
+            onClose={() => {
+              setContentPreview(undefined);
+              const opener = panelOpener.current;
+              if (opener?.isConnected) opener.focus();
+            }}
+            preview={displayedPreview}
+          />
+        </EscapeHintContext.Provider>
       )}
       {selectionAction && (
         <div
