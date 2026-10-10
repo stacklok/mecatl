@@ -194,8 +194,13 @@ explains the failure and keeps the typed draft available.
 ### Follow and control a run
 
 The transcript streams messages with Markdown, code blocks, and tool activity.
-Saved inline images appear in the transcript; an external image URL appears as a
-link you can choose to open. You can scroll back to read earlier messages and
+With **Show Tools** on in **Chat options**, each turn's tool calls sit under an
+**Activity** line that counts them and any failures. Open it to see one row per
+call with its status, arguments, and result; a finished Edit or Write also shows
+its diff. **Expand details** opens these lines by default. Select a row to see
+the call's full input and output in the side panel. A pending request or
+authorization for a call keeps its line open. Saved inline images appear in the
+transcript; an external image URL appears as a link you can choose to open. You can scroll back to read earlier messages and
 use **Scroll to latest message** to resume following the stream. The status
 distinguishes sending, working, waiting for approval, and a recorded completed,
 stopped, canceled, or failed result. If a stream closes without a recorded
@@ -207,6 +212,9 @@ or steer the active run. Your Interface preference chooses what Enter does;
 Shift+Enter selects the other action. Queued messages wait above the composer.
 Each one's actions menu can edit or delete it, or steer it into the active run.
 A steered message leaves the queue only when the run accepts it.
+Work the agent hands to subagents, parallel branches, or a team appears as
+cards under its turn, each with its observed state. Select a card, or a family
+count in the chat header, to open **Session activity** on that child.
 Use **Stop** to cancel the active run. If a run fails and offers **Retry**, that
 action retries the failed run without sending the prompt again. Image messages
 and text-file attachments can be sent after the current run ends.
@@ -296,12 +304,16 @@ another client appear even when their live activity was missed.
 
 ### Navigate and branch a conversation
 
-In a long chat, use the numbered **Message minimap** beside the transcript to
-jump to a message. Its buttons work with a keyboard and remain available on a
-small screen. Select **Scroll to latest message** when you want to follow new
-messages again.
+In a long chat, use the **Message minimap** beside the transcript to jump to a
+message: point at or focus a mark to preview its message, then select it. Its
+marks work with a keyboard and remain available on a small screen. Select
+**Scroll to latest message** when you want to follow new messages again.
 
-Select **Reply in thread** under a saved message to open a separate chat in the
+Each message offers **Copy to clipboard** and a side-thread action beside its
+author. Select text in the transcript to **Add to chat**, which adds it to your
+draft, **Copy** it, or **Add to canvas**.
+
+Select **Reply in side thread** on a saved message to open a separate chat in the
 side panel. The thread copies the source chat's full history at the time you
 fork it, including messages after the one you selected. The selected message
 anchors the thread in the source transcript. Each occurrence has its own
