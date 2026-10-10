@@ -11,7 +11,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { routeTree } from "../../routeTree.gen";
 import { ShortcutReference } from "./shortcut-reference";
-import { keycaps, shortcutRegistry } from "./shortcut-registry";
+import { describeShortcut, keycaps, shortcutGroups, shortcutRegistry } from "./shortcut-registry";
 
 function render(runtime?: GetRuntimeResponse) {
   const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
@@ -35,7 +35,10 @@ const runtime = {
 } as GetRuntimeResponse;
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  window.localStorage.clear();
+});
 
 describe("shortcut reference", () => {
   it("renders shortcuts from the registry on direct load", async () => {
@@ -155,5 +158,57 @@ describe("shortcut reference", () => {
       host.remove();
       vi.useRealTimers();
     }
+  });
+
+  it("groups shortcuts under every reference heading, Conversation included", () => {
+    const page = document.createElement("div");
+    page.innerHTML = render(runtime);
+    const headings = [...page.querySelectorAll("section > h2")].map((h) => h.textContent);
+    expect(headings.slice(0, shortcutGroups.length)).toEqual([...shortcutGroups]);
+    const conversation = page.querySelector('section[aria-label="Conversation"]');
+    expect(conversation?.textContent).toContain("Act on the top chat layer");
+    expect(conversation?.textContent).toContain("Expand or collapse details");
+    expect(headings).toContain("Escape in a chat");
+  });
+
+  it.each(["queue", "steer"] as const)(
+    "words Enter and Shift+Enter from the stored %s preference",
+    (behavior) => {
+      if (behavior !== "queue") {
+        window.localStorage.setItem("studio.chat.composer.enterToSend", behavior);
+      }
+      const page = document.createElement("div");
+      page.innerHTML = render(runtime);
+      const composer = page.querySelector('section[aria-label="Composer"]');
+      const send = shortcutRegistry.find((shortcut) => shortcut.id === "composer.send");
+      const newline = shortcutRegistry.find((shortcut) => shortcut.id === "composer.newline");
+      if (!send || !newline) throw new Error("composer rows missing");
+      expect(composer?.textContent).toContain(describeShortcut(send, behavior));
+      expect(composer?.textContent).toContain(describeShortcut(newline, behavior));
+      expect(composer?.textContent).toContain(
+        behavior === "steer"
+          ? "Send message — while the agent is replying: steer the agent"
+          : "Send message — while the agent is replying: queue the message",
+      );
+    },
+  );
+
+  it("lists Image attachments only when the deployment enables images", () => {
+    const off = render(runtime);
+    expect(off).not.toContain("Image attachments");
+    const on = render({
+      ...runtime,
+      capabilities: { ...runtime.capabilities, image: true },
+    } as GetRuntimeResponse);
+    expect(on).toContain("Image attachments");
+    expect(on).toContain("Attach images to a message from the composer");
+  });
+
+  it("announces the feature check as a status", () => {
+    const page = document.createElement("div");
+    page.innerHTML = render();
+    expect(page.querySelector('[role="status"]')?.textContent).toContain(
+      "Checking what's turned on",
+    );
   });
 });
