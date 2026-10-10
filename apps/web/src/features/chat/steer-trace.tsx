@@ -70,8 +70,9 @@ export function appendSteerTrace(
 /**
  * The developer steer trace, in the prototype's steer-trace line: a dashed,
  * muted mono list above the queued messages, one line per observed steer
- * event, newest last. It shows only the projection above, and says so when
- * nothing has been observed yet.
+ * event, newest last. A line truncates with its full text on hover; on a
+ * phone, which has no hover, it wraps. It shows only the projection above,
+ * and says so when nothing has been observed yet.
  */
 export function SteerTrace({ entries }: { entries: SteerTraceEntry[] }) {
   return (
@@ -89,7 +90,7 @@ export function SteerTrace({ entries }: { entries: SteerTraceEntry[] }) {
               const line = `Run ${entry.runId} · Message ${entry.messageId} · Event ${entry.kind} · Outcome ${entry.outcome ?? "unknown"}${entry.promoted !== undefined ? ` · Promoted ${entry.promoted ? "yes" : "no"}` : ""}`;
               return (
                 <li
-                  className="truncate"
+                  className="truncate max-[499px]:whitespace-normal max-[499px]:[overflow-wrap:anywhere]"
                   key={`${entry.runId}:${entry.messageId}:${entry.kind}:${entry.outcome}:${entry.promoted}`}
                   title={line}
                 >
