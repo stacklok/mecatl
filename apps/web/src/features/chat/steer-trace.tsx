@@ -67,28 +67,40 @@ export function appendSteerTrace(
   return [...entries, entry].slice(-100);
 }
 
+/**
+ * The developer steer trace, in the prototype's steer-trace line: a dashed,
+ * muted mono list above the queued messages, one line per observed steer
+ * event, newest last. A line truncates with its full text on hover; on a
+ * phone, which has no hover, it wraps. It shows only the projection above,
+ * and says so when nothing has been observed yet.
+ */
 export function SteerTrace({ entries }: { entries: SteerTraceEntry[] }) {
   return (
     <section
       aria-label="Developer steer trace"
-      className="mx-auto w-full max-w-3xl rounded-lg border bg-muted/20 p-3 text-xs"
+      className="mx-auto mb-1.5 w-full max-w-3xl px-4 max-[499px]:px-3 min-[500px]:px-6"
     >
-      <h2 className="font-semibold">Developer steer trace</h2>
-      {entries.length === 0 ? (
-        <p className="mt-2 text-muted-foreground">No observed steer activity. Outcome unknown.</p>
-      ) : (
-        <ol className="mt-2 space-y-1 font-mono break-all">
-          {entries.map((entry) => (
-            <li
-              key={`${entry.runId}:${entry.messageId}:${entry.kind}:${entry.outcome}:${entry.promoted}`}
-            >
-              Run {entry.runId} · Message {entry.messageId} · Event {entry.kind} · Outcome{" "}
-              {entry.outcome ?? "unknown"}
-              {entry.promoted !== undefined ? ` · Promoted ${entry.promoted ? "yes" : "no"}` : ""}
-            </li>
-          ))}
-        </ol>
-      )}
+      <h2 className="sr-only">Developer steer trace</h2>
+      <div className="rounded-lg border border-dashed bg-background px-3 py-1.5 font-mono text-[11px] leading-4 text-muted-foreground">
+        {entries.length === 0 ? (
+          <p>No observed steer activity. Outcome unknown.</p>
+        ) : (
+          <ol className="max-h-24 space-y-0.5 overflow-y-auto">
+            {entries.map((entry) => {
+              const line = `Run ${entry.runId} · Message ${entry.messageId} · Event ${entry.kind} · Outcome ${entry.outcome ?? "unknown"}${entry.promoted !== undefined ? ` · Promoted ${entry.promoted ? "yes" : "no"}` : ""}`;
+              return (
+                <li
+                  className="truncate max-[499px]:whitespace-normal max-[499px]:[overflow-wrap:anywhere]"
+                  key={`${entry.runId}:${entry.messageId}:${entry.kind}:${entry.outcome}:${entry.promoted}`}
+                  title={line}
+                >
+                  {line}
+                </li>
+              );
+            })}
+          </ol>
+        )}
+      </div>
     </section>
   );
 }

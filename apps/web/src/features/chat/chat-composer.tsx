@@ -88,6 +88,8 @@ interface StagedTextFile {
 interface ChatComposerProps {
   /** A live chat's model can change: the deployment allows model selection. */
   canForkModel?: boolean;
+  /** Text to add to the draft, after a blank line (a transcript selection's "Add to chat"). */
+  appendText?: string;
   clearDraftSignal?: number;
   /** A draft's settings. Absent on a live chat, whose settings come from the `live*` props. */
   configuration?: DraftChatConfiguration;
@@ -129,6 +131,7 @@ interface ChatComposerProps {
   seedContext?: SeedConfirmationContext;
   seedRequiresConfirmation?: boolean;
   seedText?: string;
+  onAppendConsumed?: () => void;
   /** The same usage and Compact action, at the foot of the phone options sheet. */
   sheetFooter?: ReactNode;
   working?: boolean;
@@ -155,6 +158,7 @@ export type ComposerEnterAction = "send" | "queue" | "steer" | "newline";
  */
 export function ChatComposer({
   canForkModel = false,
+  appendText,
   clearDraftSignal = 0,
   configuration,
   disabled = false,
@@ -177,6 +181,7 @@ export function ChatComposer({
   seedContext,
   seedRequiresConfirmation = false,
   seedText,
+  onAppendConsumed,
   sheetFooter,
   working = false,
   workingBehavior = "queue",
@@ -252,6 +257,16 @@ export function ChatComposer({
     onSeedConsumed?.();
     if (!seedRequiresConfirmation) textarea.current?.focus();
   }, [seedText]);
+  // "Add to chat" adds a transcript selection to the draft (and so to its
+  // stored copy) after a blank line, then hands focus to the box. The caller
+  // clears appendText once applied, so the same selection can be added again.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: onAppendConsumed is stable per caller and re-running on it would re-append after every consume
+  useEffect(() => {
+    if (appendText === undefined) return;
+    setPrompt((current) => (current ? `${current}\n\n${appendText}` : appendText));
+    onAppendConsumed?.();
+    textarea.current?.focus();
+  }, [appendText]);
   useEffect(() => {
     if (imageAttachmentsSupported || images.length === 0) return;
     setImages([]);

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { Bot, GitFork, Users } from "lucide-react";
+import { AlertCircle, GitBranch, Pencil } from "lucide-react";
+import { cn } from "@/lib/utils";
 import type {
   DelegationState,
   ParallelBranchActivity,
@@ -32,20 +33,90 @@ export function branchLabel(branch: ParallelBranchActivity): string {
   return `Branch ${branch.branchIndex + 1}`;
 }
 
-function ToolSummary({ currentTool, toolCount }: { currentTool?: string; toolCount?: number }) {
-  if (toolCount === undefined && !currentTool) return null;
+function toolFacts(toolCount?: number, currentTool?: string): string[] {
+  const facts: string[] = [];
+  if (toolCount !== undefined) facts.push(`Tools: ${toolCount}`);
+  if (currentTool) facts.push(`Current tool: ${currentTool}`);
+  return facts;
+}
+
+type ChipTone = "running" | "failed" | "settled";
+
+function chipTone(state: DelegationState, failed: boolean): ChipTone {
+  if (state === "running") return "running";
+  return failed ? "failed" : "settled";
+}
+
+/** The prototype's state glyph: a pulsing dot while running, an alert once failed, else a branch. */
+function StateGlyph({ tone }: { tone: ChipTone }) {
+  if (tone === "running") {
+    return (
+      <span aria-hidden="true" className="size-2 shrink-0 animate-pulse rounded-full bg-brand" />
+    );
+  }
+  if (tone === "failed") return <AlertCircle aria-hidden="true" className="size-3 shrink-0" />;
+  return <GitBranch aria-hidden="true" className="size-3 shrink-0" />;
+}
+
+/**
+ * A chip's line truncates, with the whole line as its hover title; a phone
+ * has no hover, so there it wraps instead and the chip grows a line.
+ */
+const wrapOnPhone =
+  "min-w-0 truncate max-[499px]:whitespace-normal max-[499px]:[overflow-wrap:anywhere]";
+
+const chipClass =
+  "inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-full max-[499px]:rounded-2xl bg-secondary px-2.5 py-1 text-left text-xs leading-4 text-muted-foreground transition-colors hover:bg-secondary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2";
+const failedChipClass = "bg-destructive/10 text-destructive hover:bg-destructive/15";
+
+/**
+ * One line of a card: the identity, then the observed facts, joined with
+ * " · ". The state rides in its own live region so a screen reader hears a
+ * child settle; the whole line is the hover title, since the chip truncates.
+ */
+function ChipLine({
+  facts,
+  identity,
+  state,
+}: {
+  facts: string[];
+  identity: string;
+  state: string;
+}) {
   return (
-    <span className="min-w-0 break-words [overflow-wrap:anywhere]">
-      {toolCount !== undefined && `Tools: ${toolCount}`}
-      {toolCount !== undefined && currentTool && " · "}
-      {currentTool && `Current tool: ${currentTool}`}
+    <span className={wrapOnPhone} title={[identity, state, ...facts].join(" · ")}>
+      {identity}
+      {" · "}
+      <span aria-atomic="true" aria-live="polite">
+        {state}
+      </span>
+      {facts.map((fact) => ` · ${fact}`).join("")}
     </span>
   );
 }
 
-const cardClass =
-  "flex min-w-0 max-w-full flex-col gap-1 rounded-lg border border-border/70 bg-muted/20 px-3 py-2 text-left text-xs leading-5 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 [overflow-wrap:anywhere]";
+function CauseLine({ cause }: { cause?: string }) {
+  if (!cause) return null;
+  return (
+    <p className={cn("mt-0.5 pl-1 text-xs text-destructive/90", wrapOnPhone)} title={cause}>
+      {cause}
+    </p>
+  );
+}
 
+function teamMemberState(member: TeamMemberActivity): string {
+  if (member.disposition === "stopped") return `Stopped: ${member.reason ?? "reason unknown"}`;
+  if (member.disposition === "done") return "Done";
+  return delegationStateLabel(member.state, { cause: member.cause });
+}
+
+/**
+ * One delegated child inline in the transcript, in the prototype's chip: a
+ * state glyph and one line of Studio's observed facts. A subagent and a team
+ * member each get a chip; a parallel group is one chip that lists its
+ * branches as inner pills. Read-only: a click opens the child in the
+ * activity panel.
+ */
 export function DelegationCard({
   activity,
   member,
@@ -56,105 +127,130 @@ export function DelegationCard({
   onOpen: (focus: DelegationFocus, opener: HTMLButtonElement) => void;
 }) {
   if (activity.family === "subagent") {
+    const failed = delegationStateLabel(activity.state, activity) === "Failed";
+    const focus: DelegationFocus = { family: "subagent", key: activity.key };
     return (
-      <button
-        className={cardClass}
-        data-delegation-focus={JSON.stringify({ family: "subagent", key: activity.key })}
-        onClick={(event) => onOpen({ family: "subagent", key: activity.key }, event.currentTarget)}
-        type="button"
-      >
-        <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 font-medium">
-          <Bot aria-hidden="true" className="size-4 shrink-0 text-brand" />
-          <span>Subagent {activity.childId}</span>
-          <span aria-atomic="true" aria-live="polite">
-            {delegationStateLabel(activity.state, activity)}
-          </span>
-        </span>
-        {activity.goal && <span className="min-w-0 break-words">{activity.goal}</span>}
-        <span className="flex min-w-0 flex-wrap gap-x-2 text-muted-foreground">
-          <ToolSummary currentTool={activity.currentTool} toolCount={activity.toolCount} />
-          {activity.stop && <span>Stop: {activity.stop}</span>}
-          {activity.historyIncomplete && <span>History incomplete</span>}
-        </span>
-      </button>
+      <div className="flex min-w-0 max-w-full flex-col">
+        <button
+          className={cn(chipClass, failed && failedChipClass)}
+          data-delegation-focus={JSON.stringify(focus)}
+          onClick={(event) => onOpen(focus, event.currentTarget)}
+          type="button"
+        >
+          <StateGlyph tone={chipTone(activity.state, failed)} />
+          <ChipLine
+            facts={[
+              ...toolFacts(activity.toolCount, activity.currentTool),
+              ...(activity.stop ? [`Stop: ${activity.stop}`] : []),
+              ...(activity.historyIncomplete ? ["History incomplete"] : []),
+            ]}
+            identity={`Subagent ${activity.childId}${activity.goal ? `: ${activity.goal}` : ""}`}
+            state={delegationStateLabel(activity.state, activity)}
+          />
+        </button>
+        {failed && <CauseLine cause={activity.cause} />}
+      </div>
     );
   }
 
   if (activity.family === "parallel") {
+    const failed = delegationStateLabel(activity.state, activity) === "Failed";
+    const focus: DelegationFocus = { family: "parallel", key: activity.key };
     return (
       <button
-        className={cardClass}
-        data-delegation-focus={JSON.stringify({ family: "parallel", key: activity.key })}
-        onClick={(event) => onOpen({ family: "parallel", key: activity.key }, event.currentTarget)}
+        className={cn(
+          chipClass,
+          "flex-wrap rounded-2xl",
+          activity.branches.length > 0 && "py-1.5",
+          failed && failedChipClass,
+        )}
+        data-delegation-focus={JSON.stringify(focus)}
+        onClick={(event) => onOpen(focus, event.currentTarget)}
         type="button"
       >
-        <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 font-medium">
-          <GitFork aria-hidden="true" className="size-4 shrink-0 text-brand" />
-          <span>Parallel group</span>
-          <span aria-atomic="true" aria-live="polite">
-            {delegationStateLabel(activity.state, activity)}
-          </span>
+        <span className="inline-flex min-w-0 max-w-full items-center gap-1.5">
+          <StateGlyph tone={chipTone(activity.state, failed)} />
+          <ChipLine
+            facts={[
+              ...(activity.join ? [`Join: ${activity.join}`] : []),
+              ...(activity.branchCount !== undefined ? [`Branches: ${activity.branchCount}`] : []),
+              ...(activity.winner !== undefined ? [`Winner: Branch ${activity.winner + 1}`] : []),
+              ...(activity.stop ? [`Stop: ${activity.stop}`] : []),
+              ...(activity.historyIncomplete ? ["History incomplete"] : []),
+            ]}
+            identity="Parallel group"
+            state={delegationStateLabel(activity.state, activity)}
+          />
         </span>
-        <span className="flex min-w-0 flex-wrap gap-x-2 text-muted-foreground">
-          {activity.join && <span>Join: {activity.join}</span>}
-          {activity.branchCount !== undefined && <span>Branches: {activity.branchCount}</span>}
-          {activity.winner !== undefined && <span>Winner: Branch {activity.winner + 1}</span>}
-          {activity.stop && <span>Stop: {activity.stop}</span>}
-          {activity.historyIncomplete && <span>History incomplete</span>}
-        </span>
-        {activity.branches.length > 0 && (
-          <span className="flex min-w-0 flex-wrap gap-x-2 gap-y-0.5">
-            {activity.branches.map((branch) => (
-              <span className="min-w-0 break-words" key={branch.key}>
-                {branchLabel(branch)}
-                {branch.label && ` · ${branch.label}`}
-                {` · ${delegationStateLabel(branch.state, branch)}`}
-                {branch.stop && ` · Stop: ${branch.stop}`}
-                {branch.toolCount !== undefined && ` · Tools: ${branch.toolCount}`}
-                {branch.currentTool && ` · Current tool: ${branch.currentTool}`}
-              </span>
-            ))}
-          </span>
-        )}
+        {activity.branches.map((branch) => {
+          const state = delegationStateLabel(branch.state, branch);
+          return (
+            <span
+              className={cn(
+                "inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-full bg-background/70 px-2 py-0.5",
+                state === "Failed" && "text-destructive",
+              )}
+              key={branch.key}
+            >
+              <StateGlyph tone={chipTone(branch.state, state === "Failed")} />
+              <ChipLine
+                facts={[
+                  ...(branch.stop ? [`Stop: ${branch.stop}`] : []),
+                  ...toolFacts(branch.toolCount, branch.currentTool),
+                ]}
+                identity={`${branchLabel(branch)}${branch.label ? ` · ${branch.label}` : ""}`}
+                state={state}
+              />
+            </span>
+          );
+        })}
       </button>
     );
   }
 
+  const state = member ? teamMemberState(member) : delegationStateLabel(activity.state, activity);
+  const failed = member
+    ? member.disposition === "stopped" || state === "Failed"
+    : state === "Failed";
+  const focus: DelegationFocus = { family: "team", key: activity.key, memberKey: member?.key };
+  const identity = [
+    `Team ${activity.teamId}`,
+    ...(member ? [`Member ${member.name}`] : []),
+    ...(member?.lead ? ["Lead"] : []),
+    ...(member?.role ? [member.role] : []),
+  ].join(" · ");
   return (
-    <button
-      className={cardClass}
-      data-delegation-focus={JSON.stringify({
-        family: "team",
-        key: activity.key,
-        memberKey: member?.key,
-      })}
-      onClick={(event) =>
-        onOpen({ family: "team", key: activity.key, memberKey: member?.key }, event.currentTarget)
-      }
-      type="button"
-    >
-      <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 font-medium">
-        <Users aria-hidden="true" className="size-4 shrink-0 text-brand" />
-        <span>Team {activity.teamId}</span>
-        {member && <span>Member {member.name}</span>}
-        {member?.lead && <span>Lead</span>}
-        <span aria-atomic="true" aria-live="polite">
-          {member
-            ? member.disposition === "stopped"
-              ? `Stopped: ${member.reason ?? "reason unknown"}`
-              : member.disposition === "done"
-                ? "Done"
-                : delegationStateLabel(member.state, { cause: member.cause })
-            : delegationStateLabel(activity.state, activity)}
-        </span>
-      </span>
-      {member?.role && <span className="min-w-0 break-words">{member.role}</span>}
-      <span className="flex min-w-0 flex-wrap gap-x-2 text-muted-foreground">
-        {member?.currentTool && <span>Current tool: {member.currentTool}</span>}
-        {activity.stop && <span>Stop: {activity.stop}</span>}
-        {activity.historyIncomplete && <span>History incomplete</span>}
-      </span>
-    </button>
+    <div className="flex min-w-0 max-w-full flex-col">
+      <button
+        className={cn(chipClass, failed && failedChipClass)}
+        data-delegation-focus={JSON.stringify(focus)}
+        onClick={(event) => onOpen(focus, event.currentTarget)}
+        type="button"
+      >
+        <StateGlyph
+          tone={
+            member && (member.disposition === "done" || member.disposition === "stopped")
+              ? failed
+                ? "failed"
+                : "settled"
+              : chipTone(member?.state ?? activity.state, failed)
+          }
+        />
+        {member?.mutating && (
+          <Pencil aria-label="Read-write" className="size-3 shrink-0" role="img" />
+        )}
+        <ChipLine
+          facts={[
+            ...(member?.currentTool ? [`Current tool: ${member.currentTool}`] : []),
+            ...(activity.stop ? [`Stop: ${activity.stop}`] : []),
+            ...(activity.historyIncomplete ? ["History incomplete"] : []),
+          ]}
+          identity={identity}
+          state={state}
+        />
+      </button>
+      {failed && <CauseLine cause={member?.cause} />}
+    </div>
   );
 }
 
@@ -168,7 +264,7 @@ export function DelegationCardRow({
 }) {
   if (activities.length === 0) return null;
   return (
-    <fieldset className="mt-2 flex min-w-0 max-w-full flex-wrap gap-2">
+    <fieldset className="mt-1.5 flex min-w-0 max-w-full flex-wrap gap-1.5">
       <legend className="sr-only">Delegated activity</legend>
       {activities.flatMap((activity) =>
         activity.family === "team" && activity.members.length > 0

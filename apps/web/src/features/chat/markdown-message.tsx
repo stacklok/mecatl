@@ -36,9 +36,16 @@ const mdComponents: Components = {
   ),
   code: ({ children: code, className, ...props }) =>
     className ? (
-      <HighlightedCode code={String(code).replace(/\n$/u, "")} lang={langForClassName(className)} />
+      <HighlightedCode
+        code={String(code).replace(/\n$/u, "")}
+        lang={langForClassName(className)}
+        tone="dark"
+      />
     ) : (
-      <code className="break-all rounded bg-muted px-1 py-0.5 font-mono text-[0.82em]" {...props}>
+      <code
+        className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[0.87em] [overflow-wrap:anywhere] dark:bg-zinc-800"
+        {...props}
+      >
         {code}
       </code>
     ),
@@ -47,9 +54,14 @@ const mdComponents: Components = {
   h3: ({ children }) => <h3 className="mt-5 mb-1.5 text-base font-semibold">{children}</h3>,
   h4: ({ children }) => <h4 className="mt-4 mb-1 text-sm font-semibold">{children}</h4>,
   hr: () => <hr className="my-4 border-t border-border" />,
+  li: ({ children }) => <li className="ml-1">{children}</li>,
+  ol: ({ children }) => <ol className="my-2 ml-4 list-decimal space-y-0.5">{children}</ol>,
+  p: ({ children }) => <p className="my-0.5">{children}</p>,
+  // The prototype's code panel: dark in both themes, so its tokens take the
+  // dark theme's colours (HighlightedCode's "dark" tone).
   pre: ({ children: code, ...props }) => (
     <pre
-      className="my-3 max-w-full overflow-x-auto rounded-lg border bg-muted/40 p-4 font-mono text-xs leading-6"
+      className="my-3 max-w-full overflow-x-auto rounded-lg border bg-zinc-950 p-4 font-mono text-[13px] leading-relaxed text-zinc-100 dark:bg-zinc-900"
       {...props}
     >
       {code}
@@ -69,6 +81,7 @@ const mdComponents: Components = {
   ),
   thead: ({ children }) => <thead>{children}</thead>,
   tr: ({ children }) => <tr className="border-b last:border-0 hover:bg-muted/50">{children}</tr>,
+  ul: ({ children }) => <ul className="my-2 ml-4 list-disc space-y-0.5">{children}</ul>,
 };
 
 export function MarkdownMessage({ children }: { children: string }) {
