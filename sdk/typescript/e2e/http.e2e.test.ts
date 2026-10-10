@@ -36,7 +36,8 @@ describe("offline HTTP wire", () => {
     await withDaemon({ durable: true, http: true }, async ({ ready }) => {
       if (ready.http_address === undefined) throw new Error("mecated omitted HTTP readiness");
       const client = connect({ baseUrl: `http://${ready.http_address}` });
-      const oneShot = timestampFromDate(new Date(Date.now() + 3_600_123));
+      const oneShotBase = Math.ceil(Date.now() / 1_000) * 1_000;
+      const oneShot = timestampFromDate(new Date(oneShotBase + 3_600_123));
       const fireTimeout = durationFromMs(1_500);
       try {
         const created = await client.schedules.create(
