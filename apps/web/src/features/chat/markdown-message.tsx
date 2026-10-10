@@ -1,12 +1,46 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Components } from "react-markdown";
+import { type ComponentProps, createContext, useContext } from "react";
+import type { Components, ExtraProps } from "react-markdown";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { HighlightedCode, langForClassName } from "./code-highlight";
 
+/** True inside a fenced or indented code block's `<pre>` panel. */
+const InCodePanel = createContext(false);
+
+/**
+ * A `<code>` element: a code block on the dark panel (labelled or not, and
+ * indented blocks too, which carry no language class), or an inline chip.
+ */
+function MarkdownCode({
+  children: code,
+  className,
+  node: _node,
+  ...props
+}: ComponentProps<"code"> & ExtraProps) {
+  const inPanel = useContext(InCodePanel);
+  if (inPanel || className) {
+    return (
+      <HighlightedCode
+        code={String(code).replace(/\n$/u, "")}
+        lang={langForClassName(className)}
+        tone="dark"
+      />
+    );
+  }
+  return (
+    <code
+      className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[0.87em] [overflow-wrap:anywhere] dark:bg-zinc-800"
+      {...props}
+    >
+      {code}
+    </code>
+  );
+}
+
 const mdComponents: Components = {
-  a: ({ children: label, ...props }) => (
+  a: ({ children: label, node: _node, ...props }) => (
     <a
       className="break-all text-info underline underline-offset-2"
       rel="noreferrer"
@@ -34,21 +68,7 @@ const mdComponents: Components = {
       {children}
     </blockquote>
   ),
-  code: ({ children: code, className, ...props }) =>
-    className ? (
-      <HighlightedCode
-        code={String(code).replace(/\n$/u, "")}
-        lang={langForClassName(className)}
-        tone="dark"
-      />
-    ) : (
-      <code
-        className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[0.87em] [overflow-wrap:anywhere] dark:bg-zinc-800"
-        {...props}
-      >
-        {code}
-      </code>
-    ),
+  code: MarkdownCode,
   h1: ({ children }) => <h1 className="mt-6 mb-2 text-xl font-bold">{children}</h1>,
   h2: ({ children }) => <h2 className="mt-6 mb-2 text-lg font-bold">{children}</h2>,
   h3: ({ children }) => <h3 className="mt-5 mb-1.5 text-base font-semibold">{children}</h3>,
@@ -59,12 +79,12 @@ const mdComponents: Components = {
   p: ({ children }) => <p className="my-0.5">{children}</p>,
   // The prototype's code panel: dark in both themes, so its tokens take the
   // dark theme's colours (HighlightedCode's "dark" tone).
-  pre: ({ children: code, ...props }) => (
+  pre: ({ children: code, node: _node, ...props }) => (
     <pre
       className="my-3 max-w-full overflow-x-auto rounded-lg border bg-zinc-950 p-4 font-mono text-[13px] leading-relaxed text-zinc-100 dark:bg-zinc-900"
       {...props}
     >
-      {code}
+      <InCodePanel.Provider value>{code}</InCodePanel.Provider>
     </pre>
   ),
   table: ({ children }) => (
