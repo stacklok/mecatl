@@ -90,7 +90,7 @@ RUN pnpm --filter @mecatl-studio/server --prod deploy /out/server
 # ---------------------------------------------------------------------------
 # Multi-arch index digest of `latest` (linux/amd64 + linux/arm64); the digest is
 # what is pulled. Its Node major is checked against `engines` in CI, not here.
-FROM cgr.dev/chainguard/node:latest@sha256:78a8d37362503110e162d3f4e3f60362ff85429a34e0c810c68828b98c699e88
+FROM cgr.dev/chainguard/node:latest@sha256:4e771308d07813bf9a1aa25299a45e5664533c47fe4c541c14498752f2dbc2dd
 
 # A fresh root-owned directory: the base image's /app is world-writable, which
 # would let the non-root server replace its own code. WORKDIR creates the
