@@ -456,7 +456,6 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const [, setAuthorizationUncertainEpoch] = useState(0);
   const [authorizationBusy, setAuthorizationBusy] = useState<string>();
   const [inspection, setInspection] = useState<{ sessionId: string; view: InspectionView }>();
-  const inspectionOpen = Boolean(inspection);
   const [debugTarget, setDebugTarget] = useState<DebugSessionTarget>();
   const [selectionAction, setSelectionAction] = useState<SelectionAction>();
   const [appendText, setAppendText] = useState<string>();
@@ -713,6 +712,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     ? (titledSessionItems.find((session) => session.id === inspection.sessionId) ??
       (inspection.sessionId === sessionId ? selectedSession : undefined))
     : undefined;
+  // Open only while it renders: a row that leaves the list closes its dialog,
+  // and must release the shortcuts and Escape with it.
+  const inspectionOpen = Boolean(inspection && inspectionSession);
   function openInspection(targetId: string, view: InspectionView) {
     setInspection({ sessionId: targetId, view });
   }

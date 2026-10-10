@@ -9,6 +9,7 @@
 
 import type { SessionSummaryResponse } from "@mecatl-studio/contracts";
 import { client } from "@mecatl-studio/contracts/client";
+import { listSessionsQueryKey } from "@mecatl-studio/contracts/query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createMemoryHistory,
@@ -373,6 +374,32 @@ describe("chat list row menu", () => {
     const details = await screen.findByRole("dialog", { name: "Session details" });
     expect(within(details).queryByRole("button", { name: "Debug with AI" })).toBeNull();
     expect(within(details).getByText("Open this chat to debug it with AI.")).toBeTruthy();
+  });
+
+  it("releases the shortcuts when an inspected row leaves the list", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    const bff = new Bff();
+    bff.rows = [row("chat"), { ...row("other"), title: "Other chat" }];
+    const mounted = await mount(bff);
+    await screen.findByText("Saved answer");
+    await user.click(
+      screen.getByRole("button", { name: "Options for chat: Other chat", hidden: true }),
+    );
+    const item = await screen.findByRole("menuitem", { name: "View transcript" });
+    item.focus();
+    await user.keyboard("{Enter}");
+    await screen.findByRole("dialog", { name: "Saved transcript" });
+
+    // Another tab deletes the inspected chat; the next list read drops its row.
+    bff.rows = [row("chat")];
+    await act(async () => {
+      await mounted.queryClient.invalidateQueries({ queryKey: listSessionsQueryKey() });
+    });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    (document.activeElement as HTMLElement | null)?.blur();
+    fireEvent.keyDown(document.body, { key: "c" });
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("chat"));
   });
 
   it("forks another chat with its own model and opens the fork", async () => {
