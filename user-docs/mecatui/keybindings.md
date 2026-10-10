@@ -11,10 +11,6 @@ description:
 Press `?` on an empty prompt to open the live help overlay. It shows your active
 bindings and dims features that the connected server does not provide.
 
-Use **Up/Down** to move one line, **Page Up/Page Down** to move one page, and
-**Home/End** to jump to the beginning or end of a long help overlay. When mouse
-capture is on, the mouse wheel also scrolls it.
-
 ## Everyday keys
 
 |Key|Action|
