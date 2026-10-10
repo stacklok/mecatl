@@ -72,7 +72,10 @@ type Page = Partial<ListLearningProposalsResponse>;
 const state = {
   capabilities: { learningProposals: true, reflection: true },
   decide: [] as unknown[],
-  details: {} as Record<string, () => GetLearningProposalResponse | Response>,
+  details: {} as Record<
+    string,
+    () => GetLearningProposalResponse | Response | Promise<GetLearningProposalResponse | Response>
+  >,
   detailCalls: [] as string[],
   listCalls: [] as URLSearchParams[],
   /** Pages keyed by `status|cursor`. */
@@ -118,7 +121,7 @@ const fakeFetch: typeof globalThis.fetch = async (input) => {
   if (detail && request.method === "GET") {
     const id = decodeURIComponent(detail[1] ?? "");
     state.detailCalls.push(id);
-    const answer = state.details[id]?.();
+    const answer = await state.details[id]?.();
     if (answer instanceof Response) return answer;
     return answer ? json(answer) : problem(404, "not_found", `No learning proposal with id ${id}`);
   }
@@ -127,9 +130,9 @@ const fakeFetch: typeof globalThis.fetch = async (input) => {
 
 const initialApiConfig = apiClient.getConfig();
 
-function renderPage() {
+function renderPage({ staleTime = Number.POSITIVE_INFINITY }: { staleTime?: number } = {}) {
   const client = new QueryClient({
-    defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+    defaultOptions: { queries: { retry: false, staleTime } },
   });
   // The generated query keys carry the client's base URL, so configure it first.
   apiClient.setConfig({ baseUrl: window.location.origin, fetch: fakeFetch });
@@ -171,7 +174,14 @@ const calls = () =>
     status: query.get("status"),
   }));
 
+let sharedUser: ReturnType<typeof userEvent.setup> | undefined;
+const user = () => {
+  sharedUser ??= userEvent.setup();
+  return sharedUser;
+};
+
 beforeEach(() => {
+  sharedUser = undefined;
   state.capabilities = { learningProposals: true, reflection: true };
   state.decide = [];
   state.details = {};
@@ -358,6 +368,187 @@ describe("learning queue rows", () => {
         { body: { decision: "approve", expectedVersion: "v2", reason: "" }, id: "p1" },
       ]),
     );
+  });
+
+  /** A detail read the test releases by hand, to land it after the list has moved. */
+  function heldDetail() {
+    let release: (answer: GetLearningProposalResponse) => void = () => {};
+    const answer = new Promise<GetLearningProposalResponse>((resolve) => {
+      release = resolve;
+    });
+    return { answer, release: (value: GetLearningProposalResponse) => release(value) };
+  }
+
+  async function approveSends(item: ReturnType<typeof within>, version: string, id = "p1") {
+    await user().click(item.getByRole("button", { name: "Approve" }));
+    const dialog = await screen.findByRole("alertdialog");
+    await user().click(within(dialog).getByRole("button", { name: "Confirm" }));
+    await waitFor(() =>
+      expect(state.decide.at(-1)).toEqual({
+        body: { decision: "approve", expectedVersion: version, reason: "" },
+        id,
+      }),
+    );
+  }
+
+  const changedNotice =
+    "This suggestion changed since the list was loaded. Review it again before deciding.";
+
+  it("re-reads Details after a remount instead of reusing the app's cached read", async () => {
+    state.pages = { "staged|": { items: [proposal("p1")] } };
+    state.details.p1 = () => ({ ...proposal("p1"), evidence: [evidence({ preview: "first" })] });
+    // Studio's app client keeps reads fresh for 30 seconds.
+    renderPage({ staleTime: 30_000 });
+    let item = await row("Title of p1");
+    await user().click(item.getByRole("button", { name: "Details" }));
+    expect(await item.findByText("first")).toBeTruthy();
+
+    // The suggestion moves on, Refresh loads it, and a filter round trip remounts the row.
+    state.pages = { "staged|": { items: [proposal("p1", { version: "v2" })] } };
+    state.details.p1 = () => ({
+      ...proposal("p1", { version: "v2" }),
+      evidence: [evidence({ preview: "second" })],
+    });
+    await user().click(screen.getByRole("button", { name: "Refresh suggestions" }));
+    await waitFor(() => expect(calls()).toHaveLength(2));
+    await user().click(screen.getByRole("button", { name: "Deferred" }));
+    await screen.findByText("No deferred suggestions.");
+    await user().click(screen.getByRole("button", { name: "Pending" }));
+    item = await row("Title of p1");
+    expect(item.getByRole("button", { name: "Details" }).getAttribute("aria-expanded")).toBe(
+      "false",
+    );
+    await user().click(item.getByRole("button", { name: "Details" }));
+    expect(await item.findByText("second")).toBeTruthy();
+    expect(state.detailCalls).toEqual(["p1", "p1"]);
+    expect(item.queryByText(changedNotice)).toBeNull();
+    await approveSends(item, "v2");
+  });
+
+  it("drops a slow read that lands after Refresh instead of downgrading the row", async () => {
+    state.pages = { "staged|": { items: [proposal("p1")] } };
+    const held = heldDetail();
+    state.details.p1 = () => held.answer;
+    renderPage();
+    let item = await row("Title of p1");
+    await user().click(item.getByRole("button", { name: "Details" }));
+    await waitFor(() => expect(state.detailCalls).toEqual(["p1"]));
+
+    state.pages = { "staged|": { items: [proposal("p1", { version: "v3" })] } };
+    await user().click(screen.getByRole("button", { name: "Refresh suggestions" }));
+    await waitFor(() => expect(calls()).toHaveLength(2));
+    item = await row("Title of p1");
+    // The daemon is at v3 now; the read that started at v1 answers v2.
+    state.details.p1 = () => ({
+      ...proposal("p1", { version: "v3" }),
+      evidence: [evidence({ preview: "v3 sources" })],
+    });
+    held.release({ ...proposal("p1", { version: "v2" }), evidence: [evidence()] });
+    expect(await item.findByText("v3 sources")).toBeTruthy();
+    expect(item.queryByText(changedNotice)).toBeNull();
+    await approveSends(item, "v3");
+  });
+
+  it("ignores a slow read that lands after its row unmounted", async () => {
+    state.pages = { "staged|": { items: [proposal("p1")] } };
+    const held = heldDetail();
+    state.details.p1 = () => held.answer;
+    renderPage();
+    const first = await row("Title of p1");
+    await user().click(first.getByRole("button", { name: "Details" }));
+    await waitFor(() => expect(state.detailCalls).toEqual(["p1"]));
+
+    // A filter round trip unmounts the row, and Refresh then loads v3.
+    await user().click(screen.getByRole("button", { name: "Deferred" }));
+    await screen.findByText("No deferred suggestions.");
+    await user().click(screen.getByRole("button", { name: "Pending" }));
+    await row("Title of p1");
+    state.pages = { "staged|": { items: [proposal("p1", { version: "v3" })] } };
+    await user().click(screen.getByRole("button", { name: "Refresh suggestions" }));
+    await waitFor(() => expect(calls().length).toBeGreaterThanOrEqual(3));
+    held.release({ ...proposal("p1", { version: "v2" }), evidence: [evidence()] });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await approveSends(await row("Title of p1"), "v3");
+  });
+
+  it("reads again when the list moved past a slow read", async () => {
+    state.pages = { "staged|": { items: [proposal("p1"), proposal("p2")] } };
+    const held = heldDetail();
+    state.details.p1 = () => held.answer;
+    renderPage();
+    const item = await row("Title of p1");
+    await user().click(item.getByRole("button", { name: "Details" }));
+    await waitFor(() => expect(state.detailCalls).toEqual(["p1"]));
+
+    // Approving p2 refreshes the list in place, which now has p1 at v2.
+    state.pages = { "staged|": { items: [proposal("p1", { version: "v2" }), proposal("p2")] } };
+    await approveSends(await row("Title of p2"), "v1", "p2");
+    await waitFor(() => expect(calls()).toHaveLength(2));
+    state.details.p1 = () => ({
+      ...proposal("p1", { version: "v2" }),
+      evidence: [evidence({ preview: "current sources" })],
+    });
+    held.release({ ...proposal("p1"), evidence: [evidence({ preview: "stale sources" })] });
+    expect(await item.findByText("current sources")).toBeTruthy();
+    expect(item.queryByText("stale sources")).toBeNull();
+    expect(item.queryByText(changedNotice)).toBeNull();
+    await approveSends(item, "v2");
+  });
+
+  it("asks to reopen Details when the list moves past the second read too", async () => {
+    state.pages = { "staged|": { items: [proposal("p1"), proposal("p2")] } };
+    const firstRead = heldDetail();
+    const secondRead = heldDetail();
+    state.details.p1 = () => firstRead.answer;
+    renderPage();
+    const item = await row("Title of p1");
+    await user().click(item.getByRole("button", { name: "Details" }));
+    await waitFor(() => expect(state.detailCalls).toEqual(["p1"]));
+
+    state.pages = { "staged|": { items: [proposal("p1", { version: "v2" }), proposal("p2")] } };
+    await approveSends(await row("Title of p2"), "v1", "p2");
+    await waitFor(() => expect(calls()).toHaveLength(2));
+    state.details.p1 = () => secondRead.answer;
+    firstRead.release({ ...proposal("p1"), evidence: [evidence()] });
+    await waitFor(() => expect(state.detailCalls).toEqual(["p1", "p1"]));
+
+    state.pages = { "staged|": { items: [proposal("p1", { version: "v3" }), proposal("p2")] } };
+    await approveSends(await row("Title of p2"), "v1", "p2");
+    await waitFor(() => expect(calls()).toHaveLength(3));
+    secondRead.release({ ...proposal("p1", { version: "v2" }), evidence: [evidence()] });
+    expect((await item.findByRole("alert")).textContent).toBe(
+      "This suggestion changed while its sources were loading. Close and reopen Details to load them again.",
+    );
+    expect(item.queryByText(changedNotice)).toBeNull();
+    await approveSends(item, "v3");
+  });
+
+  it("takes a slow read that is newer than the refreshed list", async () => {
+    state.pages = { "staged|": { items: [proposal("p1"), proposal("p2")] } };
+    const held = heldDetail();
+    state.details.p1 = () => held.answer;
+    renderPage();
+    const item = await row("Title of p1");
+    await user().click(item.getByRole("button", { name: "Details" }));
+    await waitFor(() => expect(state.detailCalls).toEqual(["p1"]));
+
+    state.pages = {
+      "staged|": {
+        items: [
+          proposal("p1", { updatedAt: "2026-10-01T10:00:00Z", version: "v2" }),
+          proposal("p2"),
+        ],
+      },
+    };
+    await approveSends(await row("Title of p2"), "v1", "p2");
+    await waitFor(() => expect(calls()).toHaveLength(2));
+    held.release({
+      ...proposal("p1", { updatedAt: "2026-10-01T11:00:00Z", version: "v3" }),
+      evidence: [evidence()],
+    });
+    expect(await item.findByText(changedNotice)).toBeTruthy();
+    expect(state.detailCalls).toEqual(["p1"]);
+    await approveSends(item, "v3");
   });
 
   it("explains a failed re-read", async () => {

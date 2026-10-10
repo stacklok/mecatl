@@ -13,9 +13,11 @@
  *   (approving it drafts a learned skill), and enabled only when the daemon says
  *   this partition can promote. Sources are shown, never used to gate: only the
  *   daemon's own re-check at decision time is authoritative.
- * - Sources load on demand. Opening Details re-reads the proposal by id, because
- *   only that read checks whether each source still resolves; when the version
- *   moved, the row says so and the list takes the current proposal.
+ * - Sources load on demand. Opening Details re-reads the proposal by id, never
+ *   from cache, because only that read checks whether each source still
+ *   resolves; when the version moved, the row says so and the list takes the
+ *   current proposal. A read that the list overtook while it was in flight
+ *   never replaces the newer row: the row reads again instead.
  */
 
 import type {
@@ -26,7 +28,7 @@ import { getLearningProposalOptions } from "@mecatl-studio/contracts/query";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ChevronRight } from "lucide-react";
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -81,6 +83,16 @@ function approvalBlockedReason(proposal: Proposal): string | undefined {
   return undefined;
 }
 
+/**
+ * Whether `read` is provably newer than `listed`. Versions are opaque tokens,
+ * so only the daemon's update times can order two different versions.
+ */
+function isNewerProposal(read: Proposal, listed: Proposal): boolean {
+  const readAt = Date.parse(read.updatedAt);
+  const listedAt = Date.parse(listed.updatedAt);
+  return Number.isFinite(readAt) && Number.isFinite(listedAt) && readAt > listedAt;
+}
+
 /** True when a decision or undo lost the daemon's version check. */
 export function isProposalConflict(error: unknown): boolean {
   return (
@@ -114,6 +126,16 @@ export function ProposalRow({
   const [loading, setLoading] = useState(false);
   const [detailNotice, setDetailNotice] = useState<string>();
   const [detailError, setDetailError] = useState<string>();
+  // The latest listed proposal, for a read that resolves after the list moved.
+  const listed = useRef(proposal);
+  listed.current = proposal;
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   const updatedAt = proposal.updatedAt ? Date.parse(proposal.updatedAt) : Number.NaN;
   const updated = Number.isNaN(updatedAt) ? "" : formatRelativeTime(updatedAt);
@@ -125,30 +147,57 @@ export function ProposalRow({
     ? undefined
     : proposal.promotionUnavailableReason || "Undo is not available for this suggestion.";
 
+  async function loadDetail(retried: boolean): Promise<void> {
+    const base = listed.current;
+    try {
+      // Never from cache: the app keeps reads fresh for 30 seconds, and an older
+      // read would show stale sources and hand the list an older version.
+      const current = await queryClient.fetchQuery({
+        ...getLearningProposalOptions({ path: { proposalId: base.id } }),
+        staleTime: 0,
+      });
+      // An unmounted row's list may have moved on; only a mounted row can check.
+      if (!mounted.current) return;
+      const latest = listed.current;
+      if (
+        current.version !== latest.version &&
+        latest.version !== base.version &&
+        !isNewerProposal(current, latest)
+      ) {
+        // The list moved while this read was in flight, and the read is not
+        // newer: read again rather than show or apply an older version.
+        if (!retried) return loadDetail(true);
+        setDetailError(
+          "This suggestion changed while its sources were loading. Close and reopen Details to load them again.",
+        );
+        return;
+      }
+      setDetail(current);
+      setDetailError(undefined);
+      if (current.version !== latest.version) {
+        setDetailNotice(
+          "This suggestion changed since the list was loaded. Review it again before deciding.",
+        );
+        // The list keeps list-shaped items; the sources stay with this row.
+        const { evidence: _evidence, ...summary } = current;
+        onReplace(summary);
+      }
+    } catch (caught: unknown) {
+      if (mounted.current) {
+        setDetailError(`Could not load where this came from: ${errorMessage(caught)}`);
+      }
+    }
+  }
+
   function toggle() {
     const next = !open;
     setOpen(next);
     if (!next || detail || loading) return;
     // First open: re-read, so the sources' availability and the version are current.
     setLoading(true);
-    queryClient
-      .fetchQuery(getLearningProposalOptions({ path: { proposalId: proposal.id } }))
-      .then((current) => {
-        setDetail(current);
-        setDetailError(undefined);
-        if (current.version !== proposal.version) {
-          setDetailNotice(
-            "This suggestion changed since the list was loaded. Review it again before deciding.",
-          );
-          // The list keeps list-shaped items; the sources stay with this row.
-          const { evidence: _evidence, ...summary } = current;
-          onReplace(summary);
-        }
-      })
-      .catch((caught: unknown) => {
-        setDetailError(`Could not load where this came from: ${errorMessage(caught)}`);
-      })
-      .finally(() => setLoading(false));
+    void loadDetail(false).finally(() => {
+      if (mounted.current) setLoading(false);
+    });
   }
 
   return (
