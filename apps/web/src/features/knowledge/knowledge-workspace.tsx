@@ -4,9 +4,9 @@ import { getRuntimeOptions, listConfiguredSkillsOptions } from "@mecatl-studio/c
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
+import { SortableHead, useTableSort } from "@/components/sortable-head";
 import { PageShell } from "../../components/shell/page-shell";
 import { Input } from "../../components/ui/input";
-import { SortableHead, type SortDirection } from "../../components/ui/sortable-head";
 import { Table, TableBody, TableCell, TableHeader, TableRow } from "../../components/ui/table";
 import { errorMessage } from "../../lib/error-message";
 import { pageTitleClass } from "../../lib/typography";
@@ -73,22 +73,13 @@ export function KnowledgeWorkspace({
 function ConfiguredSkills() {
   const query = useQuery(listConfiguredSkillsOptions());
   const [filter, setFilter] = useState("");
-  const [sort, setSort] = useState<{ direction: SortDirection; key: SkillSortKey }>({
-    direction: "asc",
-    key: "name",
-  });
+  const sort = useTableSort<SkillSortKey>("name");
   if (query.isPending) return <StateCard text="Loading skills…" />;
   if (query.isError) return <StateCard error text={errorMessage(query.error)} />;
   if (!query.data.supported)
     return <StateCard text={query.data.reason} title="Skills are unavailable" />;
   if (query.data.items.length === 0) return <StateCard icon="skill" text="No skills here yet" />;
-  const rows = sortSkills(filterSkills(query.data.items, filter), sort.key, sort.direction);
-  const toggle = (key: SkillSortKey) =>
-    setSort((current) => ({
-      direction: current.key === key && current.direction === "asc" ? "desc" : "asc",
-      key,
-    }));
-  const direction = (key: SkillSortKey) => (sort.key === key ? sort.direction : undefined);
+  const rows = sortSkills(filterSkills(query.data.items, filter), sort.key, sort.dir);
   return (
     <div className="space-y-3">
       <Input
@@ -106,23 +97,18 @@ function ConfiguredSkills() {
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
                   <SortableHead
-                    className="w-px whitespace-nowrap px-4"
-                    direction={direction("name")}
+                    className="w-px whitespace-nowrap"
                     label="Name"
-                    onSort={() => toggle("name")}
+                    sort={sort}
+                    sortKey="name"
                   />
-                  <SortableHead
-                    className="px-4"
-                    direction={direction("description")}
-                    label="Description"
-                    onSort={() => toggle("description")}
-                  />
+                  <SortableHead label="Description" sort={sort} sortKey="description" />
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.map((skill) => (
                   <TableRow key={skill.name}>
-                    <TableCell className="w-px max-w-[360px] whitespace-nowrap px-4 py-3 pr-6">
+                    <TableCell className="w-px max-w-[360px] whitespace-nowrap pr-6">
                       <Link
                         className="block truncate text-sm font-medium hover:underline"
                         params={{ item: skill.name, view: "configured" }}
@@ -134,7 +120,7 @@ function ConfiguredSkills() {
                         {skill.name}
                       </p>
                     </TableCell>
-                    <TableCell className="w-full max-w-0 px-4 py-3">
+                    <TableCell className="w-full max-w-0">
                       <p className="line-clamp-1 whitespace-normal text-xs text-muted-foreground">
                         {skill.description || NO_DESCRIPTION}
                       </p>
