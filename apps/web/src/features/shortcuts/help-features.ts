@@ -18,9 +18,8 @@ interface HelpFeatureSpec {
 
 /**
  * Only capabilities with a genuine, reachable spot in this app's UI —
- * unlike Studio's fuller list (agents/@-mentions, slash commands, teams,
- * media attachments, AI-debug, worktrees, MCP), which this repo has no
- * surface for yet. Documenting a row with nowhere for it to show up would
+ * unlike the fuller list (agents/@-mentions, slash commands, teams,
+ * AI-debug, worktrees, MCP), which Studio has no surface for yet. Documenting a row with nowhere for it to show up would
  * be a fake affordance, not a feature list.
  */
 const HELP_FEATURES: readonly HelpFeatureSpec[] = [
@@ -83,6 +82,14 @@ const HELP_FEATURES: readonly HelpFeatureSpec[] = [
     hint: "Choose a model for the chat from the composer's Model picker",
     id: "model_selection",
     label: "Model selection",
+  },
+  {
+    // The deployment-level gate `chat-workspace.tsx` reads for a new chat; a
+    // chat's model can still decline images, which the page notes below the rows.
+    enabled: (caps) => caps.image,
+    hint: "Attach images to a message from the composer when the chat's model accepts them",
+    id: "image",
+    label: "Image attachments",
   },
 ];
 

@@ -1,10 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import type { EnterSendBehavior } from "@/lib/profile-preferences";
+
 export interface ShortcutDefinition {
   combo: string;
   description: string;
-  group: "Chats" | "Composer" | "General";
+  /**
+   * Documentation only: no `useShortcut` handler dispatches this id. The
+   * behaviour lives in a component's own key handling (the composer's
+   * `onKeyDown`, `chat-escape.ts`), so the row describes it rather than
+   * binding it.
+   */
+  fixed?: true;
+  group: "Chats" | "Composer" | "Conversation" | "General";
   id: string;
+  /**
+   * The literal key is load-bearing and must never be rebound: Escape's
+   * layering, its while-typing exemption, and Radix's overlay handling all
+   * depend on it being Esc. Studio has no rebinding UI, so the flag is a
+   * guard for the day one is added.
+   */
+  locked?: true;
 }
 
 export const shortcutRegistry = [
@@ -38,11 +54,16 @@ export const shortcutRegistry = [
     group: "General",
     id: "chat.toggleList",
   },
+  // Escape is handled by `chat-escape.ts` on chat surfaces only, so the reference
+  // lists it under Conversation. It keeps its place in this array so the
+  // dispatcher's scan order is unchanged.
   {
     combo: "esc",
     description: "Act on the top chat layer (see Escape order below)",
-    group: "General",
+    fixed: true,
+    group: "Conversation",
     id: "close.esc",
+    locked: true,
   },
   {
     combo: "mod+shift+o",
@@ -98,21 +119,24 @@ export const shortcutRegistry = [
     group: "Chats",
     id: "chat.clear",
   },
+  // Conversation: keys that act on the open conversation rather than the chat list.
   {
     combo: "mod+shift+g",
     description: "Expand or collapse details — tool rows, reasoning, raw errors",
-    group: "Chats",
+    group: "Conversation",
     id: "chat.expandDetails",
   },
   {
     combo: "enter",
     description: "Send message",
+    fixed: true,
     group: "Composer",
     id: "composer.send",
   },
   {
     combo: "shift+enter",
     description: "Insert a new line",
+    fixed: true,
     group: "Composer",
     id: "composer.newline",
   },
@@ -120,7 +144,7 @@ export const shortcutRegistry = [
 
 export type ShortcutId = (typeof shortcutRegistry)[number]["id"];
 
-export const shortcutGroups = ["General", "Chats", "Composer"] as const;
+export const shortcutGroups = ["General", "Chats", "Conversation", "Composer"] as const;
 
 const keycapLabels: Record<string, string> = {
   alt: "⌥",
@@ -204,4 +228,28 @@ export function shortcutAllowedByScopes(
 
 export function shortcutWorksWhileTyping(combo: string): boolean {
   return combo.split("+").includes("mod") || combo === "esc";
+}
+
+/**
+ * The description the reference page shows for a shortcut. The two composer
+ * rows follow the user's Enter preference (`useEnterSendBehavior`), so the page
+ * says what Enter and Shift+Enter do while the agent is replying instead of
+ * pointing at the setting. Mirrors `resolveComposerAction` in `chat-composer.tsx`:
+ * Enter does the preference and Shift+Enter the opposite. Every other row keeps
+ * its registry description.
+ */
+export function describeShortcut(
+  shortcut: Pick<ShortcutDefinition, "description" | "id">,
+  enterBehavior: EnterSendBehavior,
+): string {
+  const steer = "steer the agent";
+  const queue = "queue the message";
+  switch (shortcut.id) {
+    case "composer.send":
+      return `${shortcut.description} — while the agent is replying: ${enterBehavior === "steer" ? steer : queue}`;
+    case "composer.newline":
+      return `${shortcut.description} — while the agent is replying: ${enterBehavior === "steer" ? queue : steer}`;
+    default:
+      return shortcut.description;
+  }
 }

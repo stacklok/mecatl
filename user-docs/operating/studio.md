@@ -76,7 +76,8 @@ connected deployment does not enable:
 A global search palette and a keyboard-shortcuts reference page complete the
 set. Open `/workspace/shortcuts` directly or follow **Keyboard shortcuts** from
 **Settings > About**. The page lists the current browser bindings and features
-enabled by the connected deployment.
+enabled by the connected deployment. The Enter and Shift+Enter rows follow your
+**Message during a run** preference.
 
 ### Browse and review skills
 
