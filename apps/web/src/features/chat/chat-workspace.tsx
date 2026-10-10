@@ -427,6 +427,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const [steeringQueuedId, setSteeringQueuedId] = useState<string>();
   /** The queued message a steer is delivering; the queue drain skips it. */
   const steeringQueuedRef = useRef<string | undefined>(undefined);
+  /** The chat a draft's send created, which the composer carries the send's text into. */
+  const [draftCreatedSessionId, setDraftCreatedSessionId] = useState<string>();
   const [escapeClearHint, setEscapeClearHint] = useState(false);
   const workspaceRoot = useRef<HTMLDivElement>(null);
   const chatOptionsTrigger = useRef<HTMLButtonElement>(null);
@@ -1189,6 +1191,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     if (owner.controller.signal.aborted || activeRun.current !== owner) return undefined;
     owner.sessionId = created.id;
     viewedSessionId.current = created.id;
+    setDraftCreatedSessionId(created.id);
     await selectSession(created.id);
     return created.id;
   }
@@ -3317,6 +3320,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
               void templates.refetch();
             }}
             configuration={sessionId ? undefined : draftConfiguration}
+            createdChatKey={draftCreatedSessionId}
             disabled={
               createSession.isPending ||
               Boolean(sessionId && !selectedSession?.capabilities.publicChat)

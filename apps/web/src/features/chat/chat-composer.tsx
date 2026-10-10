@@ -90,6 +90,12 @@ interface ChatComposerProps {
   clearDraftSignal?: number;
   /** A draft's settings. Absent on a live chat, whose settings come from the `live*` props. */
   configuration?: DraftChatConfiguration;
+  /**
+   * The chat a draft's send created and opened. When the draft key switches
+   * to it while that send is in flight, the send's text follows into it. Any
+   * other switch during a send swaps in the next chat's own draft.
+   */
+  createdChatKey?: string;
   disabled?: boolean;
   /**
    * The draft store's key: a chat's session ID, or `new` for the draft view.
@@ -137,6 +143,19 @@ interface ChatComposerProps {
   workingBehavior?: EnterSendBehavior;
 }
 
+/** The send in flight, and where its text lives while it settles. */
+interface InFlightSend {
+  /** The `createdChatKey` when the send began; only a newer one is this send's chat. */
+  createdChatKeyAtSend?: string;
+  /** The draft key whose stored draft holds the sent text. */
+  home?: string;
+  /** A confirmed seed, which is never stored as a draft. */
+  seed: boolean;
+  /** The composer still shows the sent text: it has not swapped to another chat. */
+  shown: boolean;
+  text: string;
+}
+
 export interface SeedConfirmationContext {
   model: string;
   mode: string;
@@ -159,6 +178,7 @@ export function ChatComposer({
   canForkModel = false,
   clearDraftSignal = 0,
   configuration,
+  createdChatKey,
   disabled = false,
   draftKey,
   executionInventory,
@@ -200,6 +220,9 @@ export function ChatComposer({
   imageCapability.current = imageAttachmentsSupported;
   const latestDraftKey = useRef(draftKey);
   latestDraftKey.current = draftKey;
+  const inFlight = useRef<InFlightSend | null>(null);
+  /** The draft key a carry emptied; the persist effect clears its stored copy. */
+  const carriedFrom = useRef<string | undefined>(undefined);
   const composing = useRef(false);
   const compositionSequence = useRef(0);
   const sawCompositionEnter = useRef(false);
@@ -209,25 +232,48 @@ export function ChatComposer({
   const updatePrompt = useCallback((value: string) => setPrompt(value), []);
   const voice = useVoiceInput(prompt, updatePrompt);
 
-  // Another chat: swap in its stored draft and drop the staged files. A send
-  // in flight keeps its text and files instead: a draft's first send opens
-  // the chat it created, and a refused send must leave the prompt in place.
+  // Another chat: swap in its stored draft and drop the staged files, even
+  // while a send is in flight, so one chat's text never lands in another's
+  // draft or send. The one exception is a draft's first send, which opens the
+  // chat it created: its text follows there until the send settles.
   if (draftOwner !== draftKey) {
     setDraftOwner(draftKey);
-    if (!submitting) {
+    const sending = inFlight.current;
+    const carry =
+      sending?.shown === true &&
+      draftKey !== undefined &&
+      draftKey === createdChatKey &&
+      createdChatKey !== sending.createdChatKeyAtSend;
+    if (sending && carry) {
+      // Guarded so a repeated render moves the text only once.
+      if (sending.home !== draftKey) {
+        // A confirmed seed was never stored, so the old key keeps the user's own draft.
+        if (!sending.seed) carriedFrom.current = sending.home;
+        sending.home = draftKey;
+      }
+    } else {
+      if (sending) sending.shown = false;
       setPrompt(draftKey === undefined ? "" : readDraft(draftKey));
       setImages([]);
       setTextFiles([]);
       setAttachmentError("");
+      setSeedConfirmation(undefined);
     }
   }
 
   // Persist on every change rather than on a timer, so nothing writes after
   // an account change has cleared storage and before this tree unmounts.
   useEffect(() => {
+    if (carriedFrom.current !== undefined) {
+      writeDraft(carriedFrom.current, "");
+      carriedFrom.current = undefined;
+    }
     if (draftKey === undefined || draftOwner !== draftKey) return;
+    // A seed awaiting confirmation is not the user's draft: storing it would
+    // overwrite what they typed and let a reload send it unconfirmed.
+    if (seedConfirmation !== undefined) return;
     writeDraft(draftKey, prompt);
-  }, [draftKey, draftOwner, prompt]);
+  }, [draftKey, draftOwner, prompt, seedConfirmation]);
 
   const hasDraftContent = Boolean(prompt) || images.length > 0 || textFiles.length > 0;
   useEffect(() => {
@@ -295,26 +341,50 @@ export function ChatComposer({
       return false;
     }
     voice.stop();
-    const submitKey = draftKey;
+    const sending: InFlightSend = {
+      createdChatKeyAtSend: createdChatKey,
+      home: draftKey,
+      seed: confirmedSeed,
+      shown: true,
+      text: prompt,
+    };
+    inFlight.current = sending;
     submittingRef.current = true;
     setSubmitting(true);
     try {
-      if (await onSend(nextPrompt, action, images)) {
-        setPrompt("");
+      const accepted = await onSend(nextPrompt, action, images);
+      settleSwappedSend(sending, accepted);
+      if (accepted && sending.shown) {
+        // A confirmed seed never replaced the stored draft, so the user's own text comes back.
+        setPrompt(sending.seed && sending.home !== undefined ? readDraft(sending.home) : "");
         setImages([]);
         setTextFiles([]);
         setAttachmentError("");
         setSeedConfirmation(undefined);
-        return true;
       }
-      return false;
+      return accepted;
     } finally {
-      // The draft moved to the chat its send opened; the old key's copy is spent.
-      if (submitKey !== undefined && latestDraftKey.current !== submitKey)
-        writeDraft(submitKey, "");
+      inFlight.current = null;
       submittingRef.current = false;
       setSubmitting(false);
     }
+  }
+
+  /**
+   * A send that settles after the composer swapped to another chat. Its text
+   * stays stored under the chat it was typed in: an accepted send spends that
+   * copy, and a refused one keeps it. A copy the user has since edited stays.
+   */
+  function settleSwappedSend(sending: InFlightSend, accepted: boolean) {
+    const home = sending.home;
+    if (sending.shown || sending.seed || home === undefined) return;
+    if (latestDraftKey.current === home) {
+      if (accepted) setPrompt((current) => (current === sending.text ? "" : current));
+      return;
+    }
+    const stored = readDraft(home);
+    if (accepted && stored === sending.text) writeDraft(home, "");
+    if (!accepted && stored === "") writeDraft(home, sending.text);
   }
 
   async function addFiles(files: File[]) {

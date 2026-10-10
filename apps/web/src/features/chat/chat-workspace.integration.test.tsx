@@ -24,6 +24,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearUserScopedStorage } from "../../lib/account-storage";
 import { setRequestRecoveryState } from "../../lib/api-client";
+import { readDraft } from "../../lib/draft-store";
 import { AuthRecoveryContext, type AuthRecoveryContextValue } from "../auth/auth-recovery-context";
 import { ShortcutProvider } from "../shortcuts/shortcut-provider";
 import { ChatWorkspace } from "./chat-workspace";
@@ -2132,6 +2133,71 @@ describe("mounted chat workspace BFF boundary", () => {
     ).toBe("draft for chat-a");
     expect(window.sessionStorage.getItem("studio.chat.draft.chat-a")).toBe("draft for chat-a");
     expect(window.localStorage.getItem("studio.chat.draft.chat-a")).toBeNull();
+  });
+
+  it("keeps the open chat's draft when the user switches chats during a send", async () => {
+    const bff = new BffFixture(session("chat-a"), session("chat-b"));
+    bff.runResponses.push(heldStream().response);
+    const { router } = await mountConnectedWorkspace(bff, "chat-b");
+    typePrompt("draft for chat-b");
+    await act(async () => {
+      await router.navigate({ search: { sessionId: "chat-a" }, to: "/workspace/chat" });
+    });
+    expect(await screen.findByRole("heading", { name: "Chat chat-a" })).toBeTruthy();
+    typePrompt("for chat-a");
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(bff.requestsFor("POST", "/runs")).toHaveLength(1));
+
+    // Leaving chat-a stops its stream before the first delivery, so the send is refused.
+    await act(async () => {
+      await router.navigate({ search: { sessionId: "chat-b" }, to: "/workspace/chat" });
+    });
+    expect(await screen.findByRole("heading", { name: "Chat chat-b" })).toBeTruthy();
+    const input = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Mecatl" });
+    await waitFor(() => expect(input.disabled).toBe(false));
+    expect(input.value).toBe("draft for chat-b");
+    expect(readDraft("chat-b")).toBe("draft for chat-b");
+    expect(readDraft("chat-a")).toBe("for chat-a");
+
+    await act(async () => {
+      await router.navigate({ search: { sessionId: "chat-a" }, to: "/workspace/chat" });
+    });
+    expect(await screen.findByRole("heading", { name: "Chat chat-a" })).toBeTruthy();
+    expect(screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Mecatl" }).value).toBe(
+      "for chat-a",
+    );
+  });
+
+  it("carries a new chat's first prompt into the chat its send creates", async () => {
+    const bff = new BffFixture();
+    const run = heldStream();
+    let startRun!: (response: Response) => void;
+    bff.nextReplies.set("/api/v1/sessions/chat-a/runs", [
+      new Promise<Response>((resolve) => {
+        startRun = resolve;
+      }),
+    ]);
+    const { router } = await mountWorkspace(bff);
+    typePrompt("first prompt");
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(bff.requestsFor("POST", "/runs")).toHaveLength(1));
+    expect(router.state.location.search.sessionId).toBe("chat-a");
+    expect(screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Mecatl" }).value).toBe(
+      "first prompt",
+    );
+    expect(readDraft("chat-a")).toBe("first prompt");
+    expect(readDraft("new")).toBe("");
+
+    await act(async () => {
+      startRun(run.response);
+      run.send(runStarted());
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message Mecatl" }).value,
+      ).toBe(""),
+    );
+    expect(readDraft("chat-a")).toBe("");
   });
 
   it("never drains a queued message while it is being steered", async () => {

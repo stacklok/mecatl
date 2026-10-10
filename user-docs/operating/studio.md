@@ -215,7 +215,8 @@ your account in this browser. A link with `?prompt=` also
 fills it without starting a run. If the link includes `send=1`, Studio shows the
 prompt, target chat, model, and permission mode before you select **Send
 prompt** or **Edit prompt**. For a new chat, it also shows tool access. Opening
-or reloading the link never sends it automatically. If you need to sign in
+or reloading the link never sends it automatically, and the prompt does not
+replace your saved draft until you select **Edit prompt**. If you need to sign in
 first, keep the original tab open. Its prompt stays there while the popup or new
 tab completes sign-in.
 
