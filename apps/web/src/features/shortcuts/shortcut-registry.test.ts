@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   keycaps,
@@ -174,5 +177,220 @@ describe("shortcutAllowedByScopes", () => {
     const outer = new Set<ShortcutId>(["search.open", "settings.open"]);
     const inner = new Set<ShortcutId>();
     expect(shortcutAllowedByScopes("search.open", [outer, inner])).toBe(false);
+  });
+});
+
+/**
+ * Pins the registry as Studio ships it, so a restyle of the reference page cannot
+ * silently change what a shortcut is, which key fires it, or where it may fire.
+ */
+describe("registry pin", () => {
+  it("pins every shortcut's id, combo, group, description, and while-typing scope", () => {
+    expect(
+      shortcutRegistry.map(({ combo, description, group, id }) => ({
+        combo,
+        description,
+        group,
+        id,
+        whileTyping: shortcutWorksWhileTyping(combo),
+      })),
+    ).toEqual([
+      {
+        combo: "mod+k",
+        description: "Open workspace search",
+        group: "General",
+        id: "search.open",
+        whileTyping: true,
+      },
+      {
+        combo: "mod+,",
+        description: "Open settings",
+        group: "General",
+        id: "settings.open",
+        whileTyping: true,
+      },
+      {
+        combo: "?",
+        description: "Show keyboard shortcuts",
+        group: "General",
+        id: "shortcuts.open",
+        whileTyping: false,
+      },
+      {
+        combo: "mod+/",
+        description: "Show keyboard shortcuts while typing",
+        group: "General",
+        id: "shortcuts.open.mod",
+        whileTyping: true,
+      },
+      {
+        combo: "mod+b",
+        description: "Toggle the chat list",
+        group: "General",
+        id: "chat.toggleList",
+        whileTyping: true,
+      },
+      {
+        combo: "esc",
+        description: "Act on the top chat layer (see Escape order below)",
+        group: "General",
+        id: "close.esc",
+        whileTyping: true,
+      },
+      {
+        combo: "mod+shift+o",
+        description: "New chat",
+        group: "Chats",
+        id: "chat.new",
+        whileTyping: true,
+      },
+      {
+        combo: "up",
+        description: "Previous chat",
+        group: "Chats",
+        id: "chat.prev",
+        whileTyping: false,
+      },
+      {
+        combo: "down",
+        description: "Next chat",
+        group: "Chats",
+        id: "chat.next",
+        whileTyping: false,
+      },
+      {
+        combo: "k",
+        description: "Previous chat (vim-style)",
+        group: "Chats",
+        id: "chat.prev.vim",
+        whileTyping: false,
+      },
+      {
+        combo: "j",
+        description: "Next chat (vim-style)",
+        group: "Chats",
+        id: "chat.next.vim",
+        whileTyping: false,
+      },
+      {
+        combo: "l",
+        description: "Jump to the most recent chat",
+        group: "Chats",
+        id: "chat.latest",
+        whileTyping: false,
+      },
+      {
+        combo: "c",
+        description: "Copy the open chat's session ID",
+        group: "Chats",
+        id: "chat.copyId",
+        whileTyping: false,
+      },
+      {
+        combo: "mod+shift+s",
+        description: "Fork the open chat as-is — continue in a copy",
+        group: "Chats",
+        id: "chat.fork",
+        whileTyping: true,
+      },
+      {
+        combo: "mod+shift+x",
+        description: "Clear conversation — a fresh chat with the same settings",
+        group: "Chats",
+        id: "chat.clear",
+        whileTyping: true,
+      },
+      {
+        combo: "mod+shift+g",
+        description: "Expand or collapse details — tool rows, reasoning, raw errors",
+        group: "Chats",
+        id: "chat.expandDetails",
+        whileTyping: true,
+      },
+      {
+        combo: "enter",
+        description: "Send message",
+        group: "Composer",
+        id: "composer.send",
+        whileTyping: false,
+      },
+      {
+        combo: "shift+enter",
+        description: "Insert a new line",
+        group: "Composer",
+        id: "composer.newline",
+        whileTyping: false,
+      },
+    ]);
+  });
+
+  it("pins the keycaps each shortcut renders on Mac and elsewhere", () => {
+    expect(
+      Object.fromEntries(
+        shortcutRegistry.map((shortcut) => [
+          shortcut.id,
+          [keycaps(shortcut.combo, true).join(" "), keycaps(shortcut.combo, false).join(" ")],
+        ]),
+      ),
+    ).toEqual({
+      "chat.clear": ["⌘ ⇧ X", "Ctrl ⇧ X"],
+      "chat.copyId": ["C", "C"],
+      "chat.expandDetails": ["⌘ ⇧ G", "Ctrl ⇧ G"],
+      "chat.fork": ["⌘ ⇧ S", "Ctrl ⇧ S"],
+      "chat.latest": ["L", "L"],
+      "chat.new": ["⌘ ⇧ O", "Ctrl ⇧ O"],
+      "chat.next": ["↓", "↓"],
+      "chat.next.vim": ["J", "J"],
+      "chat.prev": ["↑", "↑"],
+      "chat.prev.vim": ["K", "K"],
+      "chat.toggleList": ["⌘ B", "Ctrl B"],
+      "close.esc": ["Esc", "Esc"],
+      "composer.newline": ["⇧ Enter", "⇧ Enter"],
+      "composer.send": ["Enter", "Enter"],
+      "search.open": ["⌘ K", "Ctrl K"],
+      "settings.open": ["⌘ ,", "Ctrl ,"],
+      "shortcuts.open": ["?", "?"],
+      "shortcuts.open.mod": ["⌘ /", "Ctrl /"],
+    });
+  });
+
+  it("pins modal-scope filtering for every shortcut", () => {
+    for (const { id } of shortcutRegistry) {
+      expect(shortcutAllowedByScopes(id, []), id).toBe(true);
+      expect(shortcutAllowedByScopes(id, [new Set<ShortcutId>()]), id).toBe(false);
+      expect(shortcutAllowedByScopes(id, [new Set<ShortcutId>([id])]), id).toBe(true);
+      expect(
+        shortcutAllowedByScopes(id, [new Set<ShortcutId>([id]), new Set<ShortcutId>()]),
+        id,
+      ).toBe(false);
+    }
+  });
+
+  it("pins which shortcuts the app dispatches through useShortcut", () => {
+    const sourceRoot = fileURLToPath(new URL("../..", import.meta.url));
+    const registered = new Set<string>();
+    for (const file of readdirSync(sourceRoot, { recursive: true }) as string[]) {
+      if (!/\.tsx?$/.test(file) || /\.test\.tsx?$/.test(file)) continue;
+      const source = readFileSync(join(sourceRoot, file), "utf8");
+      for (const match of source.matchAll(/useShortcut\("([^"]+)"/g))
+        registered.add(match[1] ?? "");
+    }
+    expect([...registered].sort()).toEqual([
+      "chat.clear",
+      "chat.copyId",
+      "chat.expandDetails",
+      "chat.fork",
+      "chat.latest",
+      "chat.new",
+      "chat.next",
+      "chat.next.vim",
+      "chat.prev",
+      "chat.prev.vim",
+      "chat.toggleList",
+      "search.open",
+      "settings.open",
+      "shortcuts.open",
+      "shortcuts.open.mod",
+    ]);
   });
 });
