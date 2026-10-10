@@ -25,10 +25,15 @@ export function AgentSettings() {
       description="Personal display name and picture stored in this browser. Agent behavior comes from the deployment."
       title="Agent"
     >
-      <IdentityField description="What the agent calls itself." label="Agent name">
+      <IdentityField
+        description="Shown on the agent's replies."
+        htmlFor="agent-display-name"
+        label="Agent name"
+      >
         <Input
           aria-label="Agent name"
-          className="min-h-11 max-w-64"
+          className="min-h-11 w-44 min-[500px]:w-60"
+          id="agent-display-name"
           maxLength={40}
           onChange={(event) => agentName.setValue(event.target.value)}
           placeholder={defaultAgentName}
