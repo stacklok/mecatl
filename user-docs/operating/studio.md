@@ -378,7 +378,8 @@ Select an image or tool result in the transcript, or an attached file in the
 composer, to inspect its preview in the same side panel. A code file shows
 numbered lines. Select **Canvas** in the chat header to edit Markdown notes and
 switch between **Edit** and **Preview**; the canvas toolbar also has **Copy
-canvas** and **Clear canvas**. On a phone, an open chat has it under **Chat
+canvas** and **Clear canvas**, which asks before it deletes the notes, since
+clearing can't be undone. On a phone, an open chat has it under **Chat
 options > Open local canvas** instead. Canvas notes stay in this browser for
 your account and the selected chat. Opening or previewing them does not send
 their text to Mecatl.

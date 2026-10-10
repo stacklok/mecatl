@@ -13,6 +13,17 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState } from "react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Textarea } from "../../components/ui/textarea";
@@ -336,17 +347,33 @@ function LocalCanvasEditor({
           >
             <Copy aria-hidden="true" className="size-4" />
           </Button>
-          <Button
-            aria-label="Clear canvas"
-            className="size-7 text-muted-foreground"
-            disabled={!value}
-            onClick={() => onChange("")}
-            size="icon"
-            type="button"
-            variant="ghost"
-          >
-            <Eraser aria-hidden="true" className="size-4" />
-          </Button>
+          {/* The canvas has no undo, so Clear asks first. */}
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                aria-label="Clear canvas"
+                className="size-7 text-muted-foreground"
+                disabled={!value}
+                size="icon"
+                type="button"
+                variant="ghost"
+              >
+                <Eraser aria-hidden="true" className="size-4" />
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Clear the canvas?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This deletes every note on the canvas in this browser. You can't undo it.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={() => onChange("")}>Clear</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
       </div>
       <div className="flex flex-1 flex-col p-4">

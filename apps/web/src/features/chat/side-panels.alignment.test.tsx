@@ -69,8 +69,37 @@ describe("side panel frames", () => {
     await user.click(preview);
     expect(preview.getAttribute("aria-pressed")).toBe("true");
     fireEvent.click(screen.getByRole("button", { name: "Clear canvas" }));
+    const confirm = await screen.findByRole("alertdialog", { name: "Clear the canvas?" });
+    fireEvent.click(within(confirm).getByRole("button", { name: "Clear" }));
     expect(screen.getByText("No canvas notes yet.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Copy canvas" })).toHaveProperty("disabled", true);
+  });
+
+  it("asks before Clear wipes the canvas, and Cancel keeps every note", async () => {
+    const user = userEvent.setup();
+    render(<Canvas initial={"# Notes\n\nA long draft"} />);
+    const field = screen.getByRole("textbox", { name: "Local canvas" });
+    const clear = screen.getByRole("button", { name: "Clear canvas" });
+    await user.click(clear);
+    const confirm = await screen.findByRole("alertdialog", { name: "Clear the canvas?" });
+    // The canvas is untouched while the confirmation is open.
+    expect((field as HTMLTextAreaElement).value).toBe("# Notes\n\nA long draft");
+    await user.click(within(confirm).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect((field as HTMLTextAreaElement).value).toBe("# Notes\n\nA long draft");
+    expect(screen.getByRole("complementary", { name: "Local canvas" })).toBeTruthy();
+
+    await user.click(clear);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect((field as HTMLTextAreaElement).value).toBe("# Notes\n\nA long draft");
+
+    await user.click(clear);
+    const again = await screen.findByRole("alertdialog", { name: "Clear the canvas?" });
+    await user.click(within(again).getByRole("button", { name: "Clear" }));
+    expect(
+      (screen.getByRole("textbox", { name: "Local canvas" }) as HTMLTextAreaElement).value,
+    ).toBe("");
   });
 
   it("closes with the prototype's controls and keeps the maximize label", () => {
