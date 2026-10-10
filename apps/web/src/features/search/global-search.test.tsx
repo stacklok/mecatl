@@ -283,6 +283,12 @@ describe("GlobalSearch", () => {
     });
     expect(document.querySelector('[role="dialog"]')).toBeNull();
 
+    // React Query notifies subscribers of the new account on a timer that act()
+    // does not flush, so wait for the palette re-keyed to account-b. Clicking the
+    // old trigger is correctly a no-op: its account scope no longer matches.
+    await vi.waitFor(() =>
+      expect(document.querySelector('button[aria-label="Search"]')).not.toBe(trigger),
+    );
     const newTrigger = document.querySelector<HTMLButtonElement>('button[aria-label="Search"]');
     await act(async () => newTrigger?.click());
     expect(inventoryState.calls).toEqual(["sessions", "sessions"]);
@@ -392,6 +398,12 @@ describe("GlobalSearch", () => {
       inventoryState.authSession,
     );
 
+    // React Query notifies subscribers of the new account on a timer that act()
+    // does not flush, so wait for the palette re-keyed to account-b. Clicking the
+    // old trigger is correctly a no-op: its account scope no longer matches.
+    await vi.waitFor(() =>
+      expect(document.querySelector('button[aria-label="Search"]')).not.toBe(trigger),
+    );
     const newTrigger = document.querySelector<HTMLButtonElement>('button[aria-label="Search"]');
     await act(async () => newTrigger?.click());
     expect(inventoryState.authCalls).toBe(3);

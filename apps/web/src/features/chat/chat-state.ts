@@ -266,13 +266,6 @@ export function permissionAsk(payload: unknown): ApprovalRequest | undefined {
   };
 }
 
-export function errorMessage(error: unknown): string {
-  if (typeof error === "object" && error !== null && "detail" in error) {
-    return String(error.detail);
-  }
-  return error instanceof Error ? error.message : "The request could not be completed.";
-}
-
 /**
  * The accumulating state one run's SSE deliveries fold into — the pure half
  * of `consumeRun`-shaped stream handling, factored out so both the main chat

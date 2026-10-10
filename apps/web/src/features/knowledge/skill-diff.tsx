@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { computeLineDiff } from "../chat/edit-diff";
+import { diffLines } from "../../lib/line-diff";
 
 export function DiffBlock({ rows }: { rows: SkillDiffRow[] }) {
   return (
@@ -80,11 +80,28 @@ function unifiedDiffRow(line: string): SkillDiffRow {
   return { kind, text: line.slice(1) };
 }
 
+/**
+ * The line diff of one field. Above `LINE_DIFF_MAX_LINES` the alignment is
+ * skipped and the rows are the whole old text removed, then the whole new
+ * text added (still an accurate -N/+N count).
+ */
 function lineDiffRows(before: string, after: string): SkillDiffRow[] {
-  return computeLineDiff(before, after).lines.map((line) => ({
-    kind: line.kind === "added" ? "addition" : line.kind === "removed" ? "deletion" : "context",
-    text: line.text,
+  const ops = diffLines(before, after);
+  if (ops === null) {
+    return [
+      ...splitLines(before).map((text) => ({ kind: "deletion" as const, text })),
+      ...splitLines(after).map((text) => ({ kind: "addition" as const, text })),
+    ];
+  }
+  return ops.map((op) => ({
+    kind: op.type === "add" ? "addition" : op.type === "del" ? "deletion" : "context",
+    text: op.text,
   }));
+}
+
+/** Splits on "\n"; the empty text has NO lines, as in `diffLines`. */
+function splitLines(text: string): string[] {
+  return text === "" ? [] : text.split("\n");
 }
 
 interface TextPair {

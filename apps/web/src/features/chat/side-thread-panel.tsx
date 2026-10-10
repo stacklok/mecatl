@@ -41,6 +41,8 @@ import {
 } from "../../components/ui/dropdown-menu";
 import { Textarea } from "../../components/ui/textarea";
 import { captureSseFailure, protectedRequestsPaused } from "../../lib/api-client";
+import { copyToClipboard } from "../../lib/clipboard";
+import { errorMessage } from "../../lib/error-message";
 import { modelPreferenceId, useDisabledModels } from "../../lib/model-preferences";
 import {
   defaultAgentName,
@@ -56,7 +58,6 @@ import { useChatEscape } from "./chat-escape";
 import {
   applyRunDelivery,
   type ChatMessage,
-  errorMessage,
   initialRunDeliveryState,
   messageOwnsApproval,
   messagesFromTranscript,
@@ -192,11 +193,7 @@ export function SideThreadPanel({
       .filter((message) => message.content)
       .map((message) => `${message.role === "user" ? userName : agentName}: ${message.content}`)
       .join("\n\n");
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {
-      // Clipboard access is an optional convenience.
-    }
+    await copyToClipboard(text, "Thread");
   }
 
   async function openAsFullChat() {

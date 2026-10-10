@@ -31,7 +31,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../../components/ui/dialog";
-import { errorMessage, formatDate, NO_DESCRIPTION } from "./format";
+import { errorMessage } from "../../lib/error-message";
+import { formatDate } from "../../lib/formatters";
+import { NO_DESCRIPTION } from "./format";
 import { DiffBlock, hasSkillDiffChanges, skillDiffRows } from "./skill-diff";
 import { StateCard } from "./state-card";
 
