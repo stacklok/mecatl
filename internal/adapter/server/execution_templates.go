@@ -23,6 +23,7 @@ var ErrExecutionTemplatesDisabled = errors.New("execution templates disabled")
 type ExecutionTemplateInfo struct {
 	ID, Revision, Name, Description, DisplayToken string
 	Extensions                                    map[string]string
+	DeclaredExecutionFiles, DeclaredBuiltInShell  bool
 }
 
 // ExecutionTemplateCatalog is optional and must enumerate only operator-authorized
@@ -37,31 +38,37 @@ func (s *Service) executionCatalogAvailable() bool {
 	return ok && s.cfg.ExecutionTemplateAllowed != nil
 }
 
-func (s *Service) executionSessionCapabilities(sess *session.Session) (bool, bool) {
+func (s *Service) executionSessionCapabilities(ctx context.Context, sess *session.Session) (bool, bool, error) {
 	if sess == nil || sess.EnvironmentRef.Kind == session.EnvKindNoFS {
-		return false, false
+		return false, false, nil
 	}
 	s.mu.Lock()
 	built := s.sessionEngines[sess.ID]
 	env, registered := s.sessionEnvironments[sess.ID]
 	s.mu.Unlock()
+	if !registered {
+		binding, release, err := s.borrowSessionPlacement(ctx, sess)
+		if err != nil {
+			return false, false, err
+		}
+		defer release()
+		env = binding.Environment
+	}
 	engine := s.cfg.Engine
 	if built != nil {
 		engine = built.engine
 	}
 	if engine == nil {
-		return false, false
+		return false, false, nil
 	}
 	files, shell := engine.HasTool("Read"), engine.HasTool(tool.ShellToolName)
 	if authority, bound := sess.BoundAuthority(); bound {
 		files = files && authority.CapabilitySet.FileSystem && authority.CapabilitySet.AllowsTool("Read")
 		shell = shell && authority.CapabilitySet.AllowsTool(tool.ShellToolName)
 	}
-	if registered {
-		files = files && env.Workspace() != nil && env.Workspace().Root() != ""
-		shell = shell && env.CommandRunner() != nil
-	}
-	return files, shell
+	files = files && env.Workspace() != nil && env.Workspace().Root() != ""
+	shell = shell && env.CommandRunner() != nil
+	return files, shell, nil
 }
 
 // ListExecutionTemplates returns a filtered, bounded inventory for the verified owner.

@@ -97,6 +97,8 @@ describe("composer configuration selectors", () => {
       description: "",
       displayToken: "t",
       extensions: {},
+      declaredExecutionFiles: true,
+      declaredBuiltInShell: false,
     };
     function Picker() {
       const [configuration, setConfiguration] = useState(initialConfiguration);
@@ -118,6 +120,7 @@ describe("composer configuration selectors", () => {
       );
     }
     render(<Picker />);
+    expect(screen.getByRole("option", { name: /declared files: true, Shell: false/ })).toBeTruthy();
     await user.selectOptions(
       screen.getByLabelText("Execution"),
       JSON.stringify(["safe", revision]),

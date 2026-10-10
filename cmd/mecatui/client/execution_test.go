@@ -5,8 +5,27 @@ import (
 	"errors"
 	"testing"
 
+	"google.golang.org/grpc"
+
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
+
+type executionCatalogClient struct{ *fakeModelsClient }
+
+func (*executionCatalogClient) ListExecutionTemplates(context.Context, *mecatlv1.ListExecutionTemplatesRequest, ...grpc.CallOption) (*mecatlv1.ListExecutionTemplatesResponse, error) {
+	return &mecatlv1.ListExecutionTemplatesResponse{Items: []*mecatlv1.ExecutionTemplateInfo{{Template: &mecatlv1.ExecutionTemplate{Id: "files-only", Revision: "revision"}, DeclaredExecutionFiles: true, DeclaredBuiltInShell: false}}}, nil
+}
+
+func TestExecutionCatalogDeclaredAffordances(t *testing.T) {
+	fake := &executionCatalogClient{&fakeModelsClient{caps: &mecatlv1.ServerCapabilities{ExecutionTemplates: true}, features: []string{"execution_templates"}}}
+	inventory, err := newFakeClient(fake).ListExecutionTemplates(t.Context())
+	if err != nil || len(inventory.Items) != 1 || !inventory.Items[0].DeclaredExecutionFiles || inventory.Items[0].DeclaredBuiltInShell {
+		t.Fatalf("catalog projection=%+v, %v", inventory, err)
+	}
+	if fake.lastCreate != nil {
+		t.Fatal("catalog listing created a session")
+	}
+}
 
 func TestExplicitExecutionRejectedBeforeCreateOnOldServer(t *testing.T) {
 	fake := &fakeModelsClient{caps: &mecatlv1.ServerCapabilities{}}

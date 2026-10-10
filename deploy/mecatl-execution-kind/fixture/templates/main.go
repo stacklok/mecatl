@@ -16,8 +16,8 @@ import (
 )
 
 func main() {
-	if len(os.Args) != 5 {
-		fail(fmt.Errorf("usage: templates RECIPE_FILE WORKLOAD_IMAGE DERIVATIVE_IMAGE OUTPUT_FILE"))
+	if len(os.Args) != 6 {
+		fail(fmt.Errorf("usage: templates RECIPE_FILE WORKLOAD_IMAGE DERIVATIVE_IMAGE INCOMPATIBLE_IMAGE OUTPUT_FILE"))
 	}
 	input, err := os.ReadFile(os.Args[1])
 	if err != nil {
@@ -37,6 +37,9 @@ func main() {
 		recipe["image"] = os.Args[2]
 		if id == "operator-utility" {
 			recipe["image"] = os.Args[3]
+		}
+		if id == "incompatible-derivative" {
+			recipe["image"] = os.Args[4]
 		}
 		encoded, err := yaml.Marshal(recipe)
 		if err != nil {
@@ -61,7 +64,7 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
-	f, err := os.OpenFile(os.Args[4], os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	f, err := os.OpenFile(os.Args[5], os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		fail(err)
 	}
@@ -72,7 +75,7 @@ func main() {
 	if err = f.Close(); err != nil {
 		fail(err)
 	}
-	if _, err = executioncontroller.LoadTemplates(os.Args[4]); err != nil {
+	if _, err = executioncontroller.LoadTemplates(os.Args[5]); err != nil {
 		fail(err)
 	}
 }

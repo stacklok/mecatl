@@ -2595,7 +2595,8 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 			return nil, err
 		}
 		created, err := s.persistPlacedCreatedSession(ctx, sess, owner, retryRequest, placement)
-		if err == nil && created == sess {
+		if created == sess {
+			// A lost reference-commit response does not unpublish the session.
 			s.installSessionPlacement(sess.ID, *placement, opts.placementEnvironmentOverride)
 			publishedPlacement = true
 		}

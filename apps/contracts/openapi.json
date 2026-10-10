@@ -1252,14 +1252,6 @@
                       "max"
                     ],
                     "default": "default"
-                  },
-                  "toolAccess": {
-                    "type": "string",
-                    "enum": [
-                      "all",
-                      "noFilesystem"
-                    ],
-                    "default": "all"
                   }
                 },
                 "additionalProperties": false
@@ -1451,6 +1443,12 @@
                             "additionalProperties": {
                               "type": "string"
                             }
+                          },
+                          "declaredExecutionFiles": {
+                            "type": "boolean"
+                          },
+                          "declaredBuiltInShell": {
+                            "type": "boolean"
                           }
                         },
                         "required": [
@@ -1458,7 +1456,9 @@
                           "name",
                           "description",
                           "displayToken",
-                          "extensions"
+                          "extensions",
+                          "declaredExecutionFiles",
+                          "declaredBuiltInShell"
                         ]
                       },
                       "maxItems": 64

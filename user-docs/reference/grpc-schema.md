@@ -1048,6 +1048,8 @@ ExecutionSelection is an exclusive choice; absence means deployment default.
 | `description` | `string` |  |  |  |
 | `display_token` | `string` |  |  |  |
 | `extensions` | `ExecutionTemplateInfo.ExtensionsEntry` | repeated |  |  |
+| `declared_execution_files` | `bool` |  |  | Declared provider affordances; effective session capabilities may be narrower. |
+| `declared_built_in_shell` | `bool` |  |  |  |
 
 
 

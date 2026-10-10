@@ -2126,6 +2126,20 @@ Operator-projected eligible revision; never a recipe or execution authority.
 export interface ExecutionTemplateInfo
 ```
 
+<Heading as="h4" id="api-executiontemplateinfo-declaredbuiltinshell-propertysignature"><code>ExecutionTemplateInfo.declaredBuiltInShell</code></Heading>
+
+```ts
+readonly declaredBuiltInShell: boolean;
+```
+
+<Heading as="h4" id="api-executiontemplateinfo-declaredexecutionfiles-propertysignature"><code>ExecutionTemplateInfo.declaredExecutionFiles</code></Heading>
+
+Declared affordances, not the effective capabilities of a bound session.
+
+```ts
+readonly declaredExecutionFiles: boolean;
+```
+
 <Heading as="h4" id="api-executiontemplateinfo-description-propertysignature"><code>ExecutionTemplateInfo.description</code></Heading>
 
 ```ts

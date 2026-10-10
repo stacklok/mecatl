@@ -28,7 +28,7 @@ each change without logging private keys or credential values.
 ## Upgrade, uninstall, and reinstall the execution provider
 
 The supported lifecycle keeps the **same Helm release name, namespace, resource
-names, template definitions, network policy configuration, and security Secret
+names, retained template definitions, network policy configuration, and security Secret
 source mode**. Keep `execution-values.yaml` and the current nonsecret client-policy
 manifest in your operator configuration store. Keep operator-owned Secrets and TLS trust overlap independently; the chart neither owns nor reads Secret
 contents.
@@ -91,6 +91,62 @@ For a compatible provider upgrade:
    supported; old objects are not automatically upgraded, reset, or deleted.
    Mixed-version provider operation is unsupported.
 
+### Reuse a full template history
+
+A template ID holds at most 32 revisions, and the entire release holds at most
+64. To publish beyond either limit, remove a retired historical definition in
+the same upgrade that adds the next revision. Keep every definition still used
+by an environment. The chart requires explicit `maintenance.pruneRevisions`
+consent for each removed ID/revision pair; ordinary upgrades reject any
+removal.
+
+1. While the provider is running, complete `RetireEnvironment` and
+   `DeleteRetiredEnvironment` for **every** environment in the release. Wait
+   for deletion to finish, including PVC deletion and capacity release. Stop
+   client traffic and scale the provider to zero as in the upgrade procedure.
+   Keep it stopped through the Helm upgrade; Helm lookup and apply do not form
+   a transaction.
+2. Verify that the existing Deployment has observed its zero-replica
+   generation and that the namespace contains no Pods or PVCs. Confirm there
+   are no `ExecutionEnvironment` CRs, including terminating CRs. Inspect the
+   retained `mecatl-execution-profile-allocations` ConfigMap: its data must be
+   empty or contain only `profile-<32 lowercase hex>.json` entries with the
+   exact value `[]`. A reservation can exist before a CR is created. For
+   example, inspect the live resources before continuing:
+
+   ```sh
+   kubectl --namespace <NAMESPACE> get deployment mecatl-execution \
+     -o jsonpath='{.metadata.generation}{" "}{.status.observedGeneration}{" "}{.spec.replicas}{" "}{.status.replicas}{"\n"}'
+   kubectl --namespace <NAMESPACE> get executionenvironments,pods,pvc
+   kubectl --namespace <NAMESPACE> get configmap mecatl-execution-profile-allocations \
+     -o jsonpath='{.data}{"\n"}'
+   ```
+
+   If any check fails, finish the supported lifecycle operations or recover
+   the trusted ledger; do not reset or delete retained resources.
+3. Back up the existing `data["lifetime.json"]` and reviewed Helm values in
+   your operator configuration store. Remove only the selected retired
+   revision from `templates.<ID>.revisions` in `execution-values.yaml`, add
+   the next revision, and select an eligible default. Preserve the remaining
+   recipes and network policy configuration. For the single upgrade that
+   removes it, pass the exact removed revision as consent:
+
+   ```sh
+   helm upgrade mecatl-execution oci://ghcr.io/stacklok/mecatl/charts/mecatl-execution \
+     --version <VERSION> --namespace <NAMESPACE> --values execution-values.yaml \
+     --set-json 'maintenance.pruneRevisions.<ID>=["<RETIRED_TEMPLATE_REVISION>"]' \
+     --wait --timeout=4m $HELM_APPLY_MODE
+   ```
+
+   Set `HELM_APPLY_MODE` as in the compatible-upgrade procedure. Omit the
+   prune setting on subsequent upgrades; it is valid only when the named
+   definition exists in the previous retained history and is absent from the
+   candidate. Verify the new `lifetime.json` and provider readiness before
+   resuming traffic. If the upgrade fails, keep writers stopped and restore
+   the trusted values/history or resolve the reported state mismatch before
+   retrying. Do not use a rollback that would reintroduce a pruned definition
+   in place of a subsequently published revision.
+
 ### Uninstall and reinstall with retained state
 
 Default uninstall removes the provider but keeps runtime CRs, PVCs, surviving
@@ -117,7 +173,9 @@ helm install mecatl-execution oci://ghcr.io/stacklok/mecatl/charts/mecatl-execut
 
 Helm adopts retained resources only when their managed-by label and release-name
 and release-namespace annotations match. The chart rejects missing or empty ledgers while allocations or capacity
-reservations survive, and rejects changes to retained execution definitions.
+reservations survive, and rejects unconsented changes to retained execution definitions.
+Use the [full-history procedure](#reuse-a-full-template-history) for a
+retired definition.
 Template removal or egress edits require careful retention and quiescence:
 retained allow policies are additive, so leaving an obsolete policy could widen
 access. The provider rejects an older policy manifest against the retained

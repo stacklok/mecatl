@@ -17,6 +17,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1056,7 +1057,7 @@ func (p *Provider) ListExecutionTemplates(ctx context.Context, principal *sessio
 	}
 	items := make([]server.ExecutionTemplateInfo, 0, len(response.GetItems()))
 	for _, item := range response.GetItems() {
-		items = append(items, server.ExecutionTemplateInfo{ID: item.GetTemplate().GetId(), Revision: item.GetTemplate().GetRevision(), Name: item.GetName(), Description: item.GetDescription(), DisplayToken: item.GetDisplayToken(), Extensions: item.GetExtensions()})
+		items = append(items, server.ExecutionTemplateInfo{ID: item.GetTemplate().GetId(), Revision: item.GetTemplate().GetRevision(), Name: item.GetName(), Description: item.GetDescription(), DisplayToken: item.GetDisplayToken(), Extensions: item.GetExtensions(), DeclaredExecutionFiles: slices.Contains(item.GetCapabilities(), "filesystem"), DeclaredBuiltInShell: slices.Contains(item.GetCapabilities(), "foreground-command")})
 	}
 	return items, response.GetInventoryRevision(), nil
 }

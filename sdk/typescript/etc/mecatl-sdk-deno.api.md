@@ -487,6 +487,9 @@ export interface EventUsage {
 // @public
 export interface ExecutionTemplateInfo {
     // (undocumented)
+    readonly declaredBuiltInShell: boolean;
+    readonly declaredExecutionFiles: boolean;
+    // (undocumented)
     readonly description: string;
     // (undocumented)
     readonly displayToken: string;

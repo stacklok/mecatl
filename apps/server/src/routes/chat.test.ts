@@ -474,6 +474,17 @@ describe("chat routes", () => {
     expect(await response.json()).toEqual({ inventoryRevision: "rev", items: [] });
   });
 
+  it("rejects the obsolete noFilesystem selector before calling the service", async () => {
+    createdSessionRequest = undefined;
+    const response = await request("/api/v1/sessions", {
+      body: JSON.stringify({ toolAccess: "noFilesystem" }),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    });
+    expect(response.status).toBe(400);
+    expect(createdSessionRequest).toBeUndefined();
+  });
+
   it("creates sessions", async () => {
     const response = await request("/api/v1/sessions", {
       body: JSON.stringify({
@@ -492,7 +503,6 @@ describe("chat routes", () => {
       mode: "plan",
       model: { id: "claude-sonnet", providerId: "anthropic" },
       reasoningEffort: "high",
-      toolAccess: "all",
       execution: { none: {} },
     });
   });

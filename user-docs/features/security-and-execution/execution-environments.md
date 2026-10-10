@@ -29,8 +29,17 @@ A session can instead select `execution.none` for research, coordination, or
 remote deployments that must not expose a local filesystem. When advertised by
 the server, `execution.template` pins an eligible operator-approved ID and
 revision; catalog listing does not reserve capacity and selection is rechecked
-on creation. The effective filesystem and built-in Shell capabilities are
-reported by the bound session, not inferred from its template name.
+on creation. Catalog rows expose `declaredExecutionFiles` and
+`declaredBuiltInShell` in the SDK and Studio (`declared_execution_files` and
+`declared_built_in_shell` on HTTP/gRPC). Studio and the TUI label these as
+**declared** affordances: they neither reserve capacity nor grant tools. The
+bound session reports effective filesystem and built-in Shell capabilities,
+which can be narrower because of host tooling or session authority.
+
+If creation rejects a stale revision or unavailable capacity, Studio keeps the
+draft and exact selection. Use **Refresh templates** or choose another revision;
+no deployment default is substituted. In the TUI, close the picker and reopen
+`/execution` to refresh before retrying.
 
 ## Default workspace
 

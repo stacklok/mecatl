@@ -775,7 +775,8 @@ function ExecutionPicker({
               value={JSON.stringify([item.template.id, item.template.revision])}
             >
               {item.name || item.template.id} ({item.template.id},{" "}
-              {item.template.revision.slice(0, 14)}…)
+              {item.template.revision.slice(0, 14)}…) — declared files:{" "}
+              {String(item.declaredExecutionFiles)}, Shell: {String(item.declaredBuiltInShell)}
             </option>
           ))}
         </select>
@@ -793,7 +794,7 @@ function ExecutionPicker({
                     : ""}
         </span>
       </label>
-      {onRefresh && (status === "unavailable" || (status === "ready" && missing)) && (
+      {onRefresh && (status === "unavailable" || status === "ready") && (
         <button className="text-xs underline" disabled={disabled} onClick={onRefresh} type="button">
           Refresh templates
         </button>

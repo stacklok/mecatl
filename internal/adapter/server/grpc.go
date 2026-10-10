@@ -126,7 +126,10 @@ func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateS
 	// read from the composition single source (Service.ResolvedModel) — NEVER from
 	// req.GetModelId(), which is empty for a default session and ambiguous for a
 	// passthrough id. Same single-source discipline as session_capabilities.
-	files, shell := h.svc.executionSessionCapabilities(sess)
+	files, shell, err := h.svc.executionSessionCapabilities(ctx, sess)
+	if err != nil {
+		return nil, toStatus(err)
+	}
 	return &mecatlv1.CreateSessionResponse{
 		SessionId: string(sess.ID),
 		SessionCapabilities: &mecatlv1.SessionCapabilities{
@@ -170,6 +173,17 @@ func (h *HarnessServer) GetServerInfo(_ context.Context, req *mecatlv1.GetServer
 	return h.svc.serverInfoResponse(req.GetProviderId()), nil
 }
 
+func (h *HarnessServer) sessionSnapshot(ctx context.Context, sess *session.Session) (*mecatlv1.Session, error) {
+	files, shell, err := h.svc.executionSessionCapabilities(ctx, sess)
+	if err != nil {
+		return nil, err
+	}
+	proto := toProtoSession(sess, h.svc.resolvedModelFor(sess), h.svc.capabilitiesFor(ctx), h.svc.sessionCapabilitiesFor(sess))
+	proto.SessionCapabilities.ExecutionFiles = files
+	proto.SessionCapabilities.BuiltInShell = shell
+	return proto, nil
+}
+
 // GetSession returns a snapshot of the requested session.
 func (h *HarnessServer) GetSession(ctx context.Context, req *mecatlv1.GetSessionRequest) (*mecatlv1.GetSessionResponse, error) {
 	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
@@ -182,8 +196,10 @@ func (h *HarnessServer) GetSession(ctx context.Context, req *mecatlv1.GetSession
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	proto := toProtoSession(sess, h.svc.resolvedModelFor(sess), h.svc.capabilitiesFor(ctx), h.svc.sessionCapabilitiesFor(sess))
-	proto.SessionCapabilities.ExecutionFiles, proto.SessionCapabilities.BuiltInShell = h.svc.executionSessionCapabilities(sess)
+	proto, err := h.sessionSnapshot(ctx, sess)
+	if err != nil {
+		return nil, toStatus(err)
+	}
 	// Lazy display-time fallback: a session whose snapshot Title was never seeded
 	// (or is empty) gets a derived label so GetSession shows one without a
 	// write-on-read — sess.Title is NOT mutated.
@@ -255,7 +271,11 @@ func (h *HarnessServer) SetMode(ctx context.Context, req *mecatlv1.SetModeReques
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	return &mecatlv1.SetModeResponse{Session: toProtoSession(sess, h.svc.resolvedModelFor(sess), h.svc.capabilitiesFor(ctx), h.svc.sessionCapabilitiesFor(sess))}, nil
+	proto, err := h.sessionSnapshot(ctx, sess)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.SetModeResponse{Session: proto}, nil
 }
 
 // CloseSession ends a session and releases its server-side resources. It returns
@@ -413,7 +433,11 @@ func (h *HarnessServer) RenameSession(ctx context.Context, req *mecatlv1.RenameS
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	return &mecatlv1.RenameSessionResponse{Session: toProtoSession(sess, h.svc.resolvedModelFor(sess), h.svc.capabilitiesFor(ctx), h.svc.sessionCapabilitiesFor(sess))}, nil
+	proto, err := h.sessionSnapshot(ctx, sess)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.RenameSessionResponse{Session: proto}, nil
 }
 
 // DeleteSession physically removes an idle main session and store-managed sidecars.

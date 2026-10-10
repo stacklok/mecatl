@@ -400,6 +400,11 @@ func TestServiceExplicitIDRetryReusesRemoteAllocationAcrossRestartAndConcurrency
 
 func explicitIDProfiles(t *testing.T) *executioncontroller.Profiles {
 	t.Helper()
+	return explicitIDProfilesWithPolicy(t, false)
+}
+
+func explicitIDProfilesWithPolicy(t *testing.T, deprecated bool) *executioncontroller.Profiles {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "templates.yaml")
 	spec := executioncontroller.ProfileSpec{Image: "example.test/executor@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", StorageClass: "standard", StorageSize: "1Gi", CPURequest: "100m", MemoryRequest: "128Mi", CPULimit: "1", MemoryLimit: "1Gi", EphemeralStorageRequest: "256Mi", EphemeralStorageLimit: "1Gi", TmpSizeLimit: "128Mi", RuntimeClassName: "gvisor", MaxFileBytes: 5242880, MaxCommandBytes: 1048576, MaxCommandDuration: time.Minute, MaxEnvironments: 10}
 	canonical, err := json.Marshal(spec)
@@ -408,7 +413,11 @@ func explicitIDProfiles(t *testing.T) *executioncontroller.Profiles {
 	}
 	sum := sha256.Sum256(append([]byte("mecatl/execution-template/v1\x00"), canonical...))
 	revision := "v1-" + hex.EncodeToString(sum[:])
-	body, err := yaml.Marshal(executioncontroller.TemplatesFile{Templates: map[string]executioncontroller.TemplateDefinition{"coding": {Default: revision, Revisions: map[string]executioncontroller.TemplateRevision{revision: {Execution: spec}}}}})
+	defaultRevision := revision
+	if deprecated {
+		defaultRevision = ""
+	}
+	body, err := yaml.Marshal(executioncontroller.TemplatesFile{Templates: map[string]executioncontroller.TemplateDefinition{"coding": {Default: defaultRevision, Revisions: map[string]executioncontroller.TemplateRevision{revision: {Execution: spec, Deprecated: deprecated}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}

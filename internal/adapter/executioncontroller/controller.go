@@ -210,24 +210,29 @@ func (r *Reconciler) Reconcile(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	if r.profiles.isRevoked(env) {
-		if err := r.stopRevokedExecutor(ctx, env); err != nil {
-			return errors.Join(err, r.setCondition(ctx, env, "Ready", false, "InvalidTemplate", "retained execution template is missing or revoked"))
-		}
-		if textNested(env.Object, "status", "lifecycleOperation", "id") == "" {
-			return r.setCondition(ctx, env, "Ready", false, "InvalidTemplate", "retained execution template is missing or revoked")
-		}
+	revoked := r.profiles.isRevoked(env)
+	var stopErr error
+	if revoked {
+		stopErr = r.stopRevokedExecutor(ctx, env)
 	}
 	if requireCurrentSchema(env) != nil {
-		return r.setCondition(ctx, env, "Ready", false, "IncompatibleSchema", "only schema version 2 is supported")
+		return errors.Join(stopErr, r.setCondition(ctx, env, "Ready", false, "IncompatibleSchema", "only schema version 2 is supported"))
 	}
 	if expires := textNested(env.Object, "status", "activeOperation", "expiresAt"); expires != "" {
 		deadline, parseErr := time.Parse(time.RFC3339Nano, expires)
 		now := r.now()
 		if parseErr != nil || !now.Before(deadline) {
-			return r.setFenceUnknown(ctx, env, "operation holder lease expired; operation identity retained for recovery")
+			return errors.Join(stopErr, r.setFenceUnknown(ctx, env, "operation holder lease expired; operation identity retained for recovery"))
 		}
 		r.queue.AddAfter(name, deadline.Sub(now))
+	}
+	if revoked {
+		if stopErr != nil {
+			return errors.Join(stopErr, r.setCondition(ctx, env, "Ready", false, "InvalidTemplate", "retained execution template is missing or revoked"))
+		}
+		if textNested(env.Object, "status", "lifecycleOperation", "id") == "" {
+			return r.setCondition(ctx, env, "Ready", false, "InvalidTemplate", "retained execution template is missing or revoked")
+		}
 	}
 	// The admitted durable delete owns finalization, including after DELETE has
 	// set deletionTimestamp. A peer must not re-arm the generic finalizer.

@@ -44,6 +44,11 @@ resourceGovernance:
   limitsMemory: 80Gi
   limitsEphemeralStorage: 80Gi
 templates: {}
+# One-upgrade opt-in: name only definitions removed from the previous lifetime.json.
+# Requires an empty provider namespace, no CRs or capacity reservations, and
+# an observed scaled-to-zero provider. Remove this value after the upgrade.
+maintenance:
+  pruneRevisions: {}
 
 # Each revision key must be v1- plus the lowercase SHA-256 of
 # "mecatl/execution-template/v1\0" followed by encoding/json of the

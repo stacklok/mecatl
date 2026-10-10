@@ -50,13 +50,24 @@ describe("session lifecycle", () => {
           return { sessionId: "created" };
         },
         listExecutionTemplates: () => ({
-          items: [{ template: { id: "safe", revision: "v1-revision" }, name: "Safe" }],
+          items: [
+            {
+              template: { id: "safe", revision: "v1-revision" },
+              name: "Safe",
+              declaredExecutionFiles: true,
+              declaredBuiltInShell: false,
+            },
+          ],
           inventoryRevision: "inventory",
         }),
       });
     });
     const client = connect({ transport });
-    expect((await client.server.executionTemplates()).items[0]?.template.id).toBe("safe");
+    expect((await client.server.executionTemplates()).items[0]).toMatchObject({
+      template: { id: "safe" },
+      declaredExecutionFiles: true,
+      declaredBuiltInShell: false,
+    });
     await client.sessions.create({});
     await client.sessions.create({ execution: { none: {} } });
     await client.sessions.create({

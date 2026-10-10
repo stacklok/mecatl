@@ -80,6 +80,9 @@ export interface ExecutionTemplateInfo {
   readonly description: string;
   readonly displayToken: string;
   readonly extensions: Readonly<Record<string, string>>;
+  /** Declared affordances, not the effective capabilities of a bound session. */
+  readonly declaredExecutionFiles: boolean;
+  readonly declaredBuiltInShell: boolean;
 }
 
 /** Bounded authenticated template inventory. @public */
@@ -314,6 +317,8 @@ export function createServer(operations: ServerOperations): Server {
           description: item.description,
           displayToken: item.displayToken,
           extensions: { ...item.extensions },
+          declaredExecutionFiles: item.declaredExecutionFiles,
+          declaredBuiltInShell: item.declaredBuiltInShell,
         })),
       };
     },

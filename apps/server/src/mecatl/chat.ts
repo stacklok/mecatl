@@ -293,6 +293,8 @@ export function createMecatlChatService(client: Client): ChatService {
           description: item.description,
           displayToken: item.displayToken,
           extensions: { ...item.extensions },
+          declaredExecutionFiles: item.declaredExecutionFiles,
+          declaredBuiltInShell: item.declaredBuiltInShell,
         })),
       };
     },

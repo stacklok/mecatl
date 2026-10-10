@@ -108,7 +108,6 @@ describe("Mecatl chat sessions", () => {
       mode: "plan",
       model: { id: "claude-sonnet", providerId: "anthropic" },
       reasoningEffort: "high",
-      toolAccess: "all",
       execution: { none: {} },
     });
 
@@ -128,7 +127,6 @@ describe("Mecatl chat sessions", () => {
     await service.createSession({
       mode: "default",
       reasoningEffort: "default",
-      toolAccess: "all",
       execution: { template },
     });
     expect(create).toHaveBeenCalledWith({ mode: 1, execution: { template } });
@@ -138,14 +136,24 @@ describe("Mecatl chat sessions", () => {
   it("leaves execution omitted for default, even when template discovery is disabled", async () => {
     const create = vi.fn().mockResolvedValue({ id: "default" });
     const service = createMecatlChatService({ sessions: { create } } as unknown as Client);
-    await service.createSession({ mode: "default", reasoningEffort: "default", toolAccess: "all" });
+    await service.createSession({ mode: "default", reasoningEffort: "default" });
     expect(create).toHaveBeenCalledWith({ mode: 1 });
   });
 
   it("lists only SDK-projected catalog data and returns bound execution capabilities", async () => {
     const template = { id: "safe", revision: `v1-${"b".repeat(64)}` };
     const inventory = {
-      items: [{ template, name: "Safe", description: "", displayToken: "token", extensions: {} }],
+      items: [
+        {
+          template,
+          name: "Safe",
+          description: "",
+          displayToken: "token",
+          extensions: {},
+          declaredExecutionFiles: true,
+          declaredBuiltInShell: true,
+        },
+      ],
       inventoryRevision: "rev",
     };
     const service = createMecatlChatService({
@@ -189,7 +197,6 @@ describe("Mecatl chat sessions", () => {
       debugTargetSessionId: "session-1",
       mode: "default",
       reasoningEffort: "default",
-      toolAccess: "all",
       execution: { none: {} },
     });
 

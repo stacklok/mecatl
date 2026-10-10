@@ -12,6 +12,7 @@ import (
 	"github.com/goccy/go-yaml"
 
 	"github.com/stacklok/mecatl/internal/adapter/executioncontroller"
+	"github.com/stacklok/mecatl/internal/executionenv"
 )
 
 func scriptRange(t *testing.T, file, start, end string) string {
@@ -94,7 +95,8 @@ func TestCanonicalTemplateFixtureTracksWorkloadDigest(t *testing.T) {
 		image := "example.invalid/workload@sha256:" + strings.Repeat(marker, 64)
 		path := filepath.Join(t.TempDir(), "templates.yaml")
 		derivative := "example.invalid/derivative@sha256:" + strings.Repeat("c", 64)
-		cmd := exec.Command("go", "run", "-tags", "kind_execution_e2e", "./fixture/templates", "template-recipes.yaml", image, derivative, path)
+		incompatible := "example.invalid/incompatible@sha256:" + strings.Repeat("d", 64)
+		cmd := exec.Command("go", "run", "-tags", "kind_execution_e2e", "./fixture/templates", "template-recipes.yaml", image, derivative, incompatible, path)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("render template fixture: %v: %s", err, out)
@@ -107,7 +109,37 @@ func TestCanonicalTemplateFixtureTracksWorkloadDigest(t *testing.T) {
 		if revision != registry.DefaultRevision("go") || revision == previous || registry.DefaultRevision("operator-utility") == "" || registry.DefaultRevision("operator-utility") == revision {
 			t.Fatalf("fixture images did not produce distinct canonical revisions: %s", revision)
 		}
+		if registry.DefaultRevision("incompatible-derivative") == "" || registry.DefaultRevision("incompatible-derivative") == registry.DefaultRevision("operator-utility") {
+			t.Fatal("incompatible fixture must have its own exact image revision")
+		}
 		previous = revision
+	}
+}
+
+func TestIncompatibleDerivativeProtocolFixture(t *testing.T) {
+	fixture, err := filepath.Abs("fixture/derivative/incompatible-protocol")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	sentinel := filepath.Join(workspace, "sentinel")
+	if err := os.WriteFile(sentinel, []byte("retained\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", fixture)
+	cmd.Dir = workspace
+	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + workspace}
+	cmd.Stdin = strings.NewReader("{\"operation\":\"command.start\",\"command\":\"printf corrupted > sentinel\"}\n")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope executionenv.ExecutorEnvelope
+	if err := executionenv.DecodeStrict(out, &envelope); err == nil {
+		t.Fatalf("negative fixture produced compatible protocol: %s", out)
+	}
+	if data, err := os.ReadFile(sentinel); err != nil || string(data) != "retained\n" {
+		t.Fatal("negative fixture executed the request")
 	}
 }
 
@@ -209,7 +241,7 @@ func TestProductionHelmInstallsCurrentCRDAndCanonicalTemplates(t *testing.T) {
 }
 
 func TestDerivativeBuildUsesVerifiedLocalBaseForDockerAndPodman(t *testing.T) {
-	build := scriptRange(t, "run.sh", "# Give BuildKit a resolvable, run-unique local name", "\nimage_step_done derivative_build")
+	build := scriptRange(t, "run.sh", "# Give BuildKit a resolvable, run-unique local name", "\nimage_step_done incompatible_derivative_build")
 	for _, runtime := range []string{"docker", "podman"} {
 		t.Run(runtime, func(t *testing.T) {
 			root := t.TempDir()
@@ -219,7 +251,11 @@ set -eu
 case "$1" in
 image) test "$2" = inspect; printf 'sha256:%064d\n' 0 ;;
 tag) test "$2" = "$WORKLOAD_TAG"; test "$3" = "$BASE_REF" ;;
-build) test "$2" = "$PULL_POLICY"; test "$3" = --build-arg; test "$4" = "EXECUTOR_BASE=$BASE_REF" ;;
+build)
+  test "$2" = "$PULL_POLICY"
+  shift 2
+  if [ "$1" = --target ]; then test "$2" = incompatible; shift 2; fi
+  test "$1" = --build-arg; test "$2" = "EXECUTOR_BASE=$BASE_REF" ;;
 *) exit 1 ;;
 esac
 `, 0o700)
@@ -255,7 +291,7 @@ func TestProductionThenLiveImageAlias(t *testing.T) {
 				alias := "ko.local/provider@" + digest
 				db := filepath.Join(root, "db")
 				var sourceRows strings.Builder
-				for _, name := range []string{"provider", "agent", "oidc", "netprobe", "workload", "derivative"} {
+				for _, name := range []string{"provider", "agent", "oidc", "netprobe", "workload", "derivative", "incompatible"} {
 					sourceRows.WriteString("ko.local/" + name + ":head type " + digest + "\n")
 				}
 				writeFixture(t, db, sourceRows.String(), 0o600)
@@ -285,7 +321,7 @@ esac
 `, 0o700)
 				writeFixture(t, filepath.Join(root, "bin/kind"), "#!/bin/sh\nset -eu\ntest \"$1 $2\" = 'load image-archive'\ntest -f \"$3\"\ntest \"$4 $5\" = '--name owned'\n", 0o700)
 				env := []string{"PATH=" + filepath.Join(root, "bin") + ":" + os.Getenv("PATH"), "root=" + root, "state=" + root, "runtime=" + runtime, "cluster=owned", "DB=" + db, "TAGS=" + filepath.Join(root, "tags")}
-				for _, name := range []string{"provider", "agent", "oidc", "netprobe", "workload", "derivative"} {
+				for _, name := range []string{"provider", "agent", "oidc", "netprobe", "workload", "derivative", "incompatible"} {
 					env = append(env, name+"_tag=ko.local/"+name+":head")
 				}
 				out, err := runStep(t, root, production, env...)
@@ -303,7 +339,7 @@ esac
 					t.Fatalf("wrong alias: %s", out)
 				}
 				tags, err := os.ReadFile(filepath.Join(root, "tags"))
-				if err != nil || string(tags) != strings.Repeat("tag\n", 6) {
+				if err != nil || string(tags) != strings.Repeat("tag\n", 7) {
 					t.Fatalf("must create each alias once, never overwrite/re-tag: %q, %v", tags, err)
 				}
 			})

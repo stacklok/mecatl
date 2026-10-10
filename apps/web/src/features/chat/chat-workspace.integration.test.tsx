@@ -1524,67 +1524,84 @@ describe("mounted chat workspace BFF boundary", () => {
     expect(screen.getAllByText("Tool: Calendar")).toHaveLength(1);
   });
 
-  it("lists eligible templates when negotiated and forwards the pinned revision without fallback", async () => {
-    const user = userEvent.setup();
-    const bff = new BffFixture();
-    const revision = `v1-${"a".repeat(64)}`;
-    bff.nextReplies.set("/api/v1/runtime", [
-      Promise.resolve(
-        json({
-          capabilities: { executionTemplates: true, image: false, posture: "managed" },
-          connection: "online",
-          features: ["execution_templates"],
-        }),
-      ),
-    ]);
-    bff.nextReplies.set("/api/v1/execution-templates", [
-      Promise.resolve(
-        json({
-          inventoryRevision: "1",
-          items: [
-            {
-              template: { id: "safe", revision },
-              name: "Managed workspace",
-              description: "",
-              displayToken: "a",
-              extensions: {},
-            },
-          ],
-        }),
-      ),
-    ]);
-    await mountWorkspace(bff);
-    bff.nextReplies.set("/api/v1/sessions", [
-      Promise.resolve(
-        json(
-          {
-            code: "template_unavailable",
-            detail: "Refresh the catalog",
-            status: 409,
-            title: "Template unavailable",
-            type: "urn:mecatl-studio:problem:template_unavailable",
-            instance: "/api/v1/sessions",
-          },
-          409,
+  it.each([409, 503])(
+    "keeps selected-template failures actionable without fallback (status %s)",
+    async (status) => {
+      const user = userEvent.setup();
+      const bff = new BffFixture();
+      const revision = `v1-${"a".repeat(64)}`;
+      bff.nextReplies.set("/api/v1/runtime", [
+        Promise.resolve(
+          json({
+            capabilities: { executionTemplates: true, image: false, posture: "managed" },
+            connection: "online",
+            features: ["execution_templates"],
+          }),
         ),
-      ),
-    ]);
-    await waitFor(() =>
-      expect(bff.requestsAt("GET", "/api/v1/execution-templates")).toHaveLength(1),
-    );
-    await user.selectOptions(
-      screen.getByLabelText("Execution"),
-      JSON.stringify(["safe", revision]),
-    );
-    typePrompt("Use a pinned workspace");
-    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-    await waitFor(() => expect(bff.requestsAt("POST", "/api/v1/sessions")).toHaveLength(1));
-    expect(bff.requestsAt("POST", "/api/v1/sessions")[0]?.body).toMatchObject({
-      execution: { template: { id: "safe", revision } },
-    });
-    expect(bff.requestsAt("POST", "/api/v1/sessions")).toHaveLength(1);
-    expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/runs")).toHaveLength(0);
-  });
+      ]);
+      bff.nextReplies.set("/api/v1/execution-templates", [
+        Promise.resolve(
+          json({
+            inventoryRevision: "1",
+            items: [
+              {
+                template: { id: "safe", revision },
+                name: "Managed workspace",
+                description: "",
+                displayToken: "a",
+                extensions: {},
+                declaredExecutionFiles: true,
+                declaredBuiltInShell: true,
+              },
+            ],
+          }),
+        ),
+      ]);
+      await mountWorkspace(bff);
+      bff.nextReplies.set("/api/v1/sessions", [
+        Promise.resolve(
+          json(
+            {
+              code: "template_unavailable",
+              detail: "Refresh the catalog",
+              status,
+              title: "Template unavailable",
+              type: "urn:mecatl-studio:problem:template_unavailable",
+              instance: "/api/v1/sessions",
+            },
+            status,
+          ),
+        ),
+      ]);
+      await waitFor(() =>
+        expect(bff.requestsAt("GET", "/api/v1/execution-templates")).toHaveLength(1),
+      );
+      await user.selectOptions(
+        screen.getByLabelText("Execution"),
+        JSON.stringify(["safe", revision]),
+      );
+      typePrompt("Use a pinned workspace");
+      fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+      await waitFor(() => expect(bff.requestsAt("POST", "/api/v1/sessions")).toHaveLength(1));
+      expect(bff.requestsAt("POST", "/api/v1/sessions")[0]?.body).toMatchObject({
+        execution: { template: { id: "safe", revision } },
+      });
+      expect(bff.requestsAt("POST", "/api/v1/sessions")).toHaveLength(1);
+      expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/runs")).toHaveLength(0);
+      expect(await screen.findByText(/capacity may be full/)).toBeTruthy();
+      expect(
+        (screen.getByRole("textbox", { name: "Message Mecatl" }) as HTMLTextAreaElement).value,
+      ).toBe("Use a pinned workspace");
+      await user.click(screen.getByRole("button", { name: "Refresh templates" }));
+      await waitFor(() =>
+        expect(bff.requestsAt("GET", "/api/v1/execution-templates")).toHaveLength(2),
+      );
+      expect((screen.getByLabelText("Execution") as HTMLSelectElement).value).toBe(
+        JSON.stringify(["safe", revision]),
+      );
+      expect(bff.requestsAt("POST", "/api/v1/sessions")).toHaveLength(1);
+    },
+  );
 
   it("anchors two equal recorded replies while Fork receives the full source session", async () => {
     const bff = new BffFixture(session("chat-a"));

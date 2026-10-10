@@ -333,6 +333,42 @@ func TestKindExecutionDerivativeUtility(t *testing.T) {
 			t.Fatal("unique utility is present in supported base image")
 		}
 	}
+	t.Run("incompatible_protocol", func(t *testing.T) {
+		revision := kindTemplateRevision(t, ctx, client, "incompatible-derivative")
+		sessionID := createSessionTemplate(t, ctx, agentForward.addr, alice, "incompatible-derivative", revision)
+		ref := environmentForBinding(t, ctx, kubeconfig, sessionID)
+		ready := waitReady(t, ctx, client, owner, sessionID, ref)
+		before := readExecutionStatus(t, ctx, kubeconfig, ref.ID)
+		if before.PVCUID == "" {
+			t.Fatal("negative control has no retained workspace")
+		}
+		pod := kubeValue(t, ctx, kubeconfig, "get", "pods", "-n", namespace, "-l", "execution.mecatl.dev/environment="+ref.ID, "-o", "jsonpath={.items[0].metadata.name}")
+		// Seed independently of the intentionally broken executor protocol.
+		runKubectl(t, ctx, kubeconfig, "exec", "-n", namespace, pod, "--", "/bin/sh", "-c", "printf 'retained-negative-control\\n' > /workspace/qualification-sentinel")
+		claim, err := client.AcquireRun(ctx, executionenv.RunClaimRequest{Environment: ready.Environment, Owner: owner, BindingID: sessionID, RunID: "incompatible-qualification", OperationID: "incompatible-qualification", TTL: time.Minute})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rc := executionenv.RequestContext{Environment: claim.Environment, Owner: owner, BindingID: sessionID, RunID: claim.RunID, ClaimID: claim.ClaimID, Epoch: claim.Epoch, GrantGeneration: claim.GrantGeneration}
+		result, err := client.StartCommand(ctx, executionenv.CommandStartRequest{Context: rc, Command: "/usr/local/bin/mecatl-operator-utility && printf 'corrupted\\n' > qualification-sentinel", TimeoutMillis: 30000})
+		if !isRemoteCode(err, executionenv.CodeFenceUnknown) || result.State == executionenv.CommandSucceeded {
+			t.Fatalf("incompatible derivative qualified: state=%s code=%s", result.State, remoteErrorCode(err))
+		}
+		if _, err := client.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileRead, Path: "qualification-sentinel"}); !isRemoteCode(err, executionenv.CodeNotReady) {
+			t.Fatalf("incompatible executor remained usable: %s", remoteErrorCode(err))
+		}
+		after := readExecutionStatus(t, ctx, kubeconfig, ref.ID)
+		if after.FenceState != "FenceUnknown" || after.PVCUID != before.PVCUID || after.PodUID != before.PodUID {
+			t.Fatal("negative qualification failed to fence and retain the exact workspace")
+		}
+		if uid := kubeValue(t, ctx, kubeconfig, "get", "pvc", "-n", namespace, "-l", "execution.mecatl.dev/environment="+ref.ID, "-o", "jsonpath={.items[0].metadata.uid}"); uid != before.PVCUID {
+			t.Fatal("negative qualification replaced or deleted the retained PVC")
+		}
+		out, err := command(ctx, kubeconfig, "exec", "-n", namespace, pod, "--", "cat", "/workspace/qualification-sentinel").CombinedOutput()
+		if err != nil || string(out) != "retained-negative-control\n" {
+			t.Fatal("incompatible derivative corrupted retained workspace")
+		}
+	})
 }
 
 func logQualificationStage(t *testing.T, started *time.Time, completed, next string) {

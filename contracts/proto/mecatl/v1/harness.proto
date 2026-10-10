@@ -625,6 +625,9 @@ message ExecutionTemplateInfo {
   string description = 3;
   string display_token = 4;
   map<string, string> extensions = 5;
+  // Declared provider affordances; effective session capabilities may be narrower.
+  bool declared_execution_files = 6;
+  bool declared_built_in_shell = 7;
 }
 
 // McpServerSpec is one client-provided MCP server on CreateSessionRequest. It

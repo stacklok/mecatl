@@ -21,6 +21,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -48,7 +49,7 @@ func (p *publicTemplateProvider) ListExecutionTemplates(context.Context, *sessio
 	if p.items != nil {
 		return p.items, "revision", nil
 	}
-	return []server.ExecutionTemplateInfo{{ID: "safe", Revision: testRevision, DisplayToken: testRevision, Name: "Safe", Extensions: map[string]string{"team/key": "value"}}}, "revision", nil
+	return []server.ExecutionTemplateInfo{{ID: "safe", Revision: testRevision, DisplayToken: testRevision, Name: "Safe", DeclaredExecutionFiles: true, DeclaredBuiltInShell: false, Extensions: map[string]string{"team/key": "value"}}}, "revision", nil
 }
 func (*publicTemplateProvider) Reattach(ctx context.Context, req server.PlacementReattachRequest) (server.PlacementBinding, error) {
 	return testPlacementProvider{}.Reattach(ctx, req)
@@ -101,6 +102,9 @@ func TestExecutionSelectionHTTPAndGRPC(t *testing.T) {
 	if err != nil || len(catalog.GetItems()) != 1 || catalog.GetItems()[0].GetTemplate().GetId() != "safe" {
 		t.Fatalf("catalog=%+v err=%v", catalog, err)
 	}
+	if !catalog.Items[0].GetDeclaredExecutionFiles() || catalog.Items[0].GetDeclaredBuiltInShell() {
+		t.Fatalf("gRPC catalog lost declared affordances: %v", catalog.Items[0])
+	}
 	if rows, _, err := svc.ListExecutionTemplates(templateOwner("bob")); err != nil || len(rows) != 0 {
 		t.Fatalf("denied catalog=%v err=%v", rows, err)
 	}
@@ -116,6 +120,9 @@ func TestExecutionSelectionHTTPAndGRPC(t *testing.T) {
 	created, err := h.CreateSession(owner, &mecatlv1.CreateSessionRequest{Execution: templateProto("safe", testRevision)})
 	if err != nil || !p.last.IsTemplate() || p.last.ID != "safe" || created.GetSessionId() == "" {
 		t.Fatalf("bind=%+v response=%+v err=%v", p.last, created, err)
+	}
+	if created.GetSessionCapabilities().GetExecutionFiles() || created.GetSessionCapabilities().GetBuiltInShell() {
+		t.Fatal("declared catalog affordances widened the tool-less session's effective capabilities")
 	}
 	persisted, err := svc.GetSession(owner, session.SessionID(created.GetSessionId()))
 	if err != nil || persisted.ExecutionTemplateRevision != testRevision {
@@ -163,6 +170,9 @@ func TestExecutionSelectionHTTPAndGRPC(t *testing.T) {
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &inventory) != nil || len(inventory.Items) != 1 {
 		t.Fatalf("http list=%d: %s", rec.Code, rec.Body.String())
 	}
+	if !bytes.Contains(inventory.Items[0], []byte(`"declared_execution_files":true`)) || !bytes.Contains(inventory.Items[0], []byte(`"declared_built_in_shell":false`)) {
+		t.Fatalf("catalog omitted declared affordances: %s", inventory.Items[0])
+	}
 }
 
 func TestExecutionCatalogHiddenMalformedMetadataDoesNotBlockAllowedRow(t *testing.T) {
@@ -197,6 +207,121 @@ func TestExecutionSessionFilesWithoutShell(t *testing.T) {
 	got, err := server.NewHarnessServer(svc).GetSession(t.Context(), &mecatlv1.GetSessionRequest{SessionId: created.GetSessionId()})
 	if err != nil || !got.GetSession().GetSessionCapabilities().GetExecutionFiles() || got.GetSession().GetSessionCapabilities().GetBuiltInShell() {
 		t.Fatalf("get caps=%+v err=%v", got, err)
+	}
+}
+
+func TestBoundExecutionCapabilitiesAcrossTransportsAndRestart(t *testing.T) {
+	catalog := tool.NewCatalog()
+	catalog.MustRegister(fstools.ReadTool{})
+	catalog.MustRegister(fstools.NewShellTool())
+	var modelRequest port.LLMRequest
+	llm := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { modelRequest = req })}, mockllm.TextTurn("ok"))
+	engine := agent.NewEngine(agent.Deps{LLM: llm, Catalog: catalog, Policy: permpolicy.NewPolicy(nil, nil), Model: "test"})
+	store := memstore.New()
+	makeService := func() *server.Service {
+		t.Helper()
+		svc, err := newPlacementTestService(server.Config{Engine: engine, Store: store, SessionEngine: profileRecordingFactory("ok", &atomic.Value{}, &atomic.Int32{})})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return svc
+	}
+	check := func(label string, caps *mecatlv1.SessionCapabilities, files bool) {
+		t.Helper()
+		if caps.GetExecutionFiles() != files || caps.GetBuiltInShell() {
+			t.Fatalf("%s: capabilities=%+v, want files=%v shell=false", label, caps, files)
+		}
+	}
+	svc := makeService()
+	h := server.NewHarnessServer(svc)
+	created, err := h.CreateSession(t.Context(), &mecatlv1.CreateSessionRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := created.GetSessionId()
+	check("create", created.GetSessionCapabilities(), true)
+	get, err := h.GetSession(t.Context(), &mecatlv1.GetSessionRequest{SessionId: id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	check("get", get.GetSession().GetSessionCapabilities(), true)
+	mode, err := h.SetMode(t.Context(), &mecatlv1.SetModeRequest{SessionId: id, Mode: mecatlv1.PermissionMode_PERMISSION_MODE_PLAN})
+	if err != nil {
+		t.Fatal(err)
+	}
+	check("mode", mode.GetSession().GetSessionCapabilities(), true)
+	rename, err := h.RenameSession(t.Context(), &mecatlv1.RenameSessionRequest{SessionId: id, Title: "named"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	check("rename", rename.GetSession().GetSessionCapabilities(), true)
+	checkHTTP := func(label, method, path, body string, files bool) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		server.NewHTTPHandler(svc).ServeHTTP(rec, httptest.NewRequest(method, path, strings.NewReader(body)))
+		var detail struct {
+			SessionCapabilities struct {
+				ExecutionFiles bool `json:"execution_files"`
+				BuiltInShell   bool `json:"built_in_shell"`
+			} `json:"session_capabilities"`
+		}
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &detail) != nil || detail.SessionCapabilities.ExecutionFiles != files || detail.SessionCapabilities.BuiltInShell {
+			t.Fatalf("%s: HTTP status=%d body=%s", label, rec.Code, rec.Body.String())
+		}
+	}
+	checkHTTP("HTTP get", http.MethodGet, "/v1/sessions/"+id, "", true)
+	checkHTTP("HTTP mode", http.MethodPost, "/v1/sessions/"+id+"/mode", `{"mode":"default"}`, true)
+	checkHTTP("HTTP rename", http.MethodPost, "/v1/sessions/"+id+"/rename", `{"title":"HTTP named"}`, true)
+	run, err := svc.StartRun(t.Context(), session.SessionID(id), "read a file")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := drainServerRun(run); got != "ok" {
+		t.Fatalf("run result=%q", got)
+	}
+	if !strings.Contains(modelRequest.System.VolatileSuffix, "NO shell") {
+		t.Fatalf("shell-less instruction missing from model request")
+	}
+	readAvailable := false
+	for _, spec := range modelRequest.Tools {
+		if spec.Name == tool.ShellToolName {
+			t.Fatal("nil runner advertised Shell to model")
+		}
+		readAvailable = readAvailable || spec.Name == "Read"
+	}
+	if !readAvailable {
+		t.Fatal("filesystem binding did not advertise Read to model")
+	}
+	none, err := h.CreateSession(t.Context(), &mecatlv1.CreateSessionRequest{Execution: &mecatlv1.ExecutionSelection{None: &mecatlv1.ExecutionNone{}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	check("none create", none.GetSessionCapabilities(), false)
+	createHTTP := httptest.NewRecorder()
+	server.NewHTTPHandler(svc).ServeHTTP(createHTTP, httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{"execution":{"none":{}}}`)))
+	var createdHTTP struct {
+		SessionCapabilities struct {
+			ExecutionFiles bool `json:"execution_files"`
+			BuiltInShell   bool `json:"built_in_shell"`
+		} `json:"session_capabilities"`
+	}
+	if createHTTP.Code != http.StatusCreated || json.Unmarshal(createHTTP.Body.Bytes(), &createdHTTP) != nil || createdHTTP.SessionCapabilities.ExecutionFiles || createdHTTP.SessionCapabilities.BuiltInShell {
+		t.Fatalf("HTTP none create=%d %s", createHTTP.Code, createHTTP.Body.String())
+	}
+	svc.Close()
+	fresh := makeService()
+	defer fresh.Close()
+	svc = fresh
+	checkHTTP("HTTP restart get", http.MethodGet, "/v1/sessions/"+id, "", true)
+	for _, tc := range []struct {
+		id    string
+		files bool
+	}{{id, true}, {none.GetSessionId(), false}} {
+		get, err := server.NewHarnessServer(fresh).GetSession(t.Context(), &mecatlv1.GetSessionRequest{SessionId: tc.id})
+		if err != nil {
+			t.Fatal(err)
+		}
+		check("restart get", get.GetSession().GetSessionCapabilities(), tc.files)
 	}
 }
 

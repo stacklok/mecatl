@@ -41,7 +41,7 @@ func (s *Store) CatalogTemplates() []*executionv1.TemplateCatalogItem {
 					extensions[namespace+"/"+key] = value
 				}
 			}
-			items = append(items, &executionv1.TemplateCatalogItem{Template: &executionv1.TemplateSelector{Id: id, Revision: revision}, Name: display.Name, Description: display.Description, DisplayToken: "v1-" + hex.EncodeToString(sum[:]), Extensions: extensions})
+			items = append(items, &executionv1.TemplateCatalogItem{Template: &executionv1.TemplateSelector{Id: id, Revision: revision}, Name: display.Name, Description: display.Description, DisplayToken: "v1-" + hex.EncodeToString(sum[:]), Extensions: extensions, Capabilities: []string{"filesystem", "foreground-command"}})
 		}
 	}
 	sort.Slice(items, func(i, j int) bool {

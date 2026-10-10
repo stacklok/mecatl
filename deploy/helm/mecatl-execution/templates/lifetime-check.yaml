@@ -8,6 +8,10 @@
 {{- fail "quiesce the execution provider (scale to zero and wait for its Pods to disappear) before upgrading" -}}
 {{- end -}}
 {{- $templates := lookup "v1" "ConfigMap" .Release.Namespace (printf "%s-templates" $name) -}}
+{{- $prune := .Values.maintenance.pruneRevisions | default dict -}}
+{{- if and $prune (not $templates) -}}
+{{- fail "template pruning requires trusted retained lifetime.json history; recover it before retrying" -}}
+{{- end -}}
 {{- $oldProfiles := dict -}}
 {{- if $templates -}}
 {{- $history := dig "lifetime.json" "" ($templates.data | default dict) -}}
@@ -40,17 +44,52 @@
 {{- end -}}
 {{- end -}}
 {{- end -}}
+{{- if $prune -}}
+{{- if or (not $provider) (ne (int (dig "spec" "replicas" -1 $provider)) 0) (lt (int (dig "metadata" "generation" 0 $provider)) 1) (ne (int (dig "status" "observedGeneration" 0 $provider)) (int (dig "metadata" "generation" 0 $provider))) (ne (int (dig "status" "replicas" 0 $provider)) 0) (ne (int (dig "status" "readyReplicas" 0 $provider)) 0) (ne (int (dig "status" "availableReplicas" 0 $provider)) 0) -}}
+{{- fail "template pruning requires an observed, scaled-to-zero provider Deployment and retained history" -}}
+{{- end -}}
+{{- $ledger := lookup "v1" "ConfigMap" .Release.Namespace "mecatl-execution-profile-allocations" -}}
+{{- if not $ledger -}}
+{{- fail "template pruning requires the retained capacity ledger; recover it before retrying" -}}
+{{- end -}}
+{{- $_ := include "mecatl-execution.retainedMetadata" (dict "root" . "apiVersion" "v1" "kind" "ConfigMap" "name" "mecatl-execution-profile-allocations") -}}
+{{- range $key, $slots := $ledger.data | default dict -}}
+{{- if or (not (regexMatch "^profile-[a-f0-9]{32}\\.json$" $key)) (ne $slots "[]") -}}
+{{- fail "template pruning requires an empty, valid capacity ledger (including pending reservations)" -}}
+{{- end -}}
+{{- end -}}
+{{- if (lookup "execution.mecatl.dev/v1alpha1" "ExecutionEnvironment" .Release.Namespace "").items -}}
+{{- fail "template pruning requires all execution environments to be deleted" -}}
+{{- end -}}
+{{- range $kind := list "Pod" "PersistentVolumeClaim" -}}
+{{- if (lookup "v1" $kind $root.Release.Namespace "").items -}}
+{{- fail (printf "template pruning requires no Pods or PersistentVolumeClaims in the provider namespace; found %s" $kind) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- range $id, $revisions := get $old "definitions" -}}
 {{- range $revision, $execution := $revisions -}}
-{{- if or (not (hasKey (get (get $current "definitions") $id | default dict) $revision)) (ne (toJson $execution) (toJson (get (get (get $current "definitions") $id | default dict) $revision))) -}}
+{{- $next := get (get $current "definitions") $id | default dict -}}
+{{- if hasKey $next $revision -}}
+{{- if ne (toJson $execution) (toJson (get $next $revision)) -}}
 {{- fail "retained execution template definition is missing or modified; publish additive revisions without dropping historical definitions" -}}
+{{- end -}}
+{{- else if not (has $revision (get $prune $id | default list)) -}}
+{{- fail "retained execution template definition is missing or modified; publish additive revisions without dropping historical definitions" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- range $id, $revisions := $prune -}}
+{{- range $revision := $revisions -}}
+{{- if or (not (hasKey (get (get $old "definitions") $id | default dict) $revision)) (hasKey (get (get $current "definitions") $id | default dict) $revision) -}}
+{{- fail "template pruning must name exactly the removed historical definitions" -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
 {{/* A reserved slot can precede CR publication; no CR is not bootstrap proof. */}}
 {{- $capacity := lookup "v1" "ConfigMap" .Release.Namespace "mecatl-execution-profile-allocations" -}}
-{{- $retained := not (empty $capacity.data) -}}
+{{- $retained := or (not (empty $capacity.data)) (not (empty $prune)) -}}
 {{- range (lookup "execution.mecatl.dev/v1alpha1" "ExecutionEnvironment" .Release.Namespace "").items -}}
 {{- $retained = true -}}
 {{- end -}}
@@ -71,7 +110,7 @@
 {{- end -}}
 {{- range $cm := list (printf "%s-templates" $name) (printf "%s-security-manifest" $name) (printf "%s-security-authority" $name) "mecatl-execution-profile-allocations" -}}
 {{- $live := lookup "v1" "ConfigMap" $root.Release.Namespace $cm -}}
-{{- if not ($live.data | default dict) -}}
+{{- if or (not $live) (and (ne $cm "mecatl-execution-profile-allocations") (not ($live.data | default dict))) (and (eq $cm "mecatl-execution-profile-allocations") (not $prune) (not ($live.data | default dict))) -}}
 {{- fail (printf "retained execution allocations require nonempty %s; authority/capacity bootstrap is forbidden" $cm) -}}
 {{- end -}}
 {{- end -}}

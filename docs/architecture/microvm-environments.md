@@ -9,11 +9,13 @@ can [qualify local source builds](#qualify-local-microvm-source-builds).
 ## Server-owned placement
 
 Trusted composition installs exactly one `server.PlacementProvider` and an authorization
-scope before listeners serve; startup validates it but never binds. Clients never send a
-workspace path, cwd, placement ID, or `EnvironmentRef`. A create picks only the deployment
-`default` or explicit `no-fs`. A path in a request would be filesystem authority that a
-remote caller could aim at the host. ACP's required cwd is only checked against the
-binding already chosen. Current providers:
+scope before listeners serve; startup validates it but never binds. A create selects
+only the deployment default or explicit `execution.none`; on hosts with an optional
+operator-owned execution-template catalog, an authorized client may instead select
+an exact bounded template ID and revision. Clients never send a workspace path,
+cwd, placement ID, or `EnvironmentRef`: a path in a request would be filesystem
+authority that a remote caller could aim at the host. ACP's required cwd is only
+checked against the binding already chosen. Current providers:
 
 | Provider | Default placement |
 | --- | --- |
@@ -23,6 +25,12 @@ binding already chosen. Current providers:
 | Remote execution (mecak8s) | The execution service's binding; no-FS stays local |
 
 ### Exact reattachment
+
+The optional template catalog projects declared filesystem and foreground-command
+affordances from the private provider into typed public files/Shell booleans.
+These are separate from the bound session's effective capabilities and do not
+reserve capacity or authorize execution. Listing remains allocation-free;
+eligibility is checked again at the provider's allocation seam.
 
 Each persisted session carries one opaque `session.EnvironmentRef{Kind, ID, Revision}`.
 Every later run, load, or schedule fire reauthorizes the owner and reattaches that exact ref.

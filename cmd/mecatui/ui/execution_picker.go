@@ -172,7 +172,7 @@ func (m Model) renderExecutionPicker() string {
 		if label == "" {
 			label = item.ID
 		}
-		rows = append(rows, terminaltext.Sanitize(label)+" ("+terminaltext.Sanitize(item.ID)+" / "+terminaltext.Sanitize(item.Revision)+")")
+		rows = append(rows, terminaltext.Sanitize(label)+" ("+terminaltext.Sanitize(item.ID)+" / "+terminaltext.Sanitize(item.Revision)+")"+fmt.Sprintf(" — declared files: %t, built-in Shell: %t", item.DeclaredExecutionFiles, item.DeclaredBuiltInShell))
 	}
 	for i, row := range rows {
 		prefix := "  "

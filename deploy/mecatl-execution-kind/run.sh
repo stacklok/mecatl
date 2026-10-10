@@ -238,9 +238,12 @@ else
 fi
 "$runtime" build "$pull_policy" --build-arg EXECUTOR_BASE="$executor_base" -f "$root/deploy/mecatl-execution-kind/fixture/derivative/Dockerfile" -t "$derivative_tag" "$root/deploy/mecatl-execution-kind/fixture/derivative" >/dev/null
 image_step_done derivative_build
+incompatible_tag="localhost/mecatl-execution-incompatible:e2e"
+"$runtime" build "$pull_policy" --target incompatible --build-arg EXECUTOR_BASE="$executor_base" -f "$root/deploy/mecatl-execution-kind/fixture/derivative/Dockerfile" -t "$incompatible_tag" "$root/deploy/mecatl-execution-kind/fixture/derivative" >/dev/null
+image_step_done incompatible_derivative_build
 
 load_index=0
-for item in "$provider_tag" "$agent_tag" "$oidc_tag" "$netprobe_tag" "$workload_tag" "$derivative_tag"; do
+for item in "$provider_tag" "$agent_tag" "$oidc_tag" "$netprobe_tag" "$workload_tag" "$derivative_tag" "$incompatible_tag"; do
   archive="$state/images/$(printf '%s' "$item" | sha256sum | cut -c1-16).tar"
   "$runtime" save "$item" -o "$archive" >/dev/null
   kind load image-archive "$archive" --name "$cluster"
@@ -254,7 +257,8 @@ oidc_image=$(pin_loaded "$oidc_tag")
 netprobe_image=$(pin_loaded "$netprobe_tag")
 workload_image=$(pin_loaded "$workload_tag")
 derivative_image=$(pin_loaded "$derivative_tag")
-printf 'provider=%s\nagent=%s\noidc=%s\nnetprobe=%s\nworkload=%s\nderivative=%s\ngo_base=%s\n' "$provider_image" "$agent_image" "$oidc_image" "$netprobe_image" "$workload_image" "$derivative_image" "$go_image" >"$state/images/proof"
+incompatible_image=$(pin_loaded "$incompatible_tag")
+printf 'provider=%s\nagent=%s\noidc=%s\nnetprobe=%s\nworkload=%s\nderivative=%s\nincompatible=%s\ngo_base=%s\n' "$provider_image" "$agent_image" "$oidc_image" "$netprobe_image" "$workload_image" "$derivative_image" "$incompatible_image" "$go_image" >"$state/images/proof"
 image_step_done pin_loaded
 phase_done images
 
@@ -400,7 +404,7 @@ fi
 # canonical encoding and validate the result with its real loader before install.
 template_values="$state/templates-values-$run_id.yaml"
 go_revision=$(dev go run -tags kind_execution_e2e ./deploy/mecatl-execution-kind/fixture/templates \
-  "$root/deploy/mecatl-execution-kind/template-recipes.yaml" "$workload_image" "$derivative_image" "$template_values")
+  "$root/deploy/mecatl-execution-kind/template-recipes.yaml" "$workload_image" "$derivative_image" "$incompatible_image" "$template_values")
 case "$go_revision" in v1-*) ;; *) echo "missing generated go template revision" >&2; exit 1 ;; esac
 printf '%s\n' "$go_revision" >"$state/go-template-revision"
 

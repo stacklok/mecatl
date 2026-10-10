@@ -60,6 +60,8 @@ message TemplateCatalogItem {
   string description = 3;
   string display_token = 4;
   map<string, string> extensions = 5; // namespace/key -> inert value
+  // Declared provider affordances, not effective session authority.
+  repeated string capabilities = 6;
 }
 message ListExecutionTemplatesRequest {}
 message ListExecutionTemplatesResponse {

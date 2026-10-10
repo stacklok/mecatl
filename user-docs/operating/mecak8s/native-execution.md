@@ -46,6 +46,14 @@ for restart recovery, fencing, and capacity behavior.
 
 ## Prepare registry access
 
+Qualify workload derivatives through actual file and command operations, not
+just image-reference validation. The Kind fixture builds a positive derivative
+with an operator utility and a negative derivative whose `/mecatl-executor`
+returns an incompatible protocol. The negative control must fail its bound
+command, fence further operations, and retain the exact PVC and sentinel data.
+A running Pod or a catalog's declared affordances alone do not prove runtime
+compatibility.
+
 For private registry pulls, create pull Secrets in the execution namespace
 before installing the provider chart. Import a locally prepared Docker config
 without putting credential contents in Helm values or command arguments:

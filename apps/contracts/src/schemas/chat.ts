@@ -32,6 +32,8 @@ export const executionTemplateInventorySchema = z.object({
         description: z.string(),
         displayToken: z.string(),
         extensions: z.record(z.string(), z.string()),
+        declaredExecutionFiles: z.boolean(),
+        declaredBuiltInShell: z.boolean(),
       }),
     )
     .max(64),
@@ -91,7 +93,6 @@ export const createSessionRequestSchema = z
     mode: sessionModeSchema.default("default"),
     model: sessionModelSelectionSchema.optional(),
     reasoningEffort: reasoningEffortSchema.default("default"),
-    toolAccess: sessionToolAccessSchema.default("all"),
   })
   .strict()
   .refine(

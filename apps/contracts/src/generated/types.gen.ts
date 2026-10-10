@@ -429,7 +429,6 @@ export type CreateSessionData = {
             providerId: string;
         };
         reasoningEffort?: 'default' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
-        toolAccess?: 'all' | 'noFilesystem';
     };
     path?: never;
     query?: never;
@@ -525,6 +524,8 @@ export type ListExecutionTemplatesResponses = {
             extensions: {
                 [key: string]: string;
             };
+            declaredExecutionFiles: boolean;
+            declaredBuiltInShell: boolean;
         }>;
     };
 };

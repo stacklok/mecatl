@@ -363,15 +363,24 @@ func TestKindExecutionProductionHelmLifetime(t *testing.T) {
 	if _, err := deprecatedClient.ValidateTemplate(ctx, "go", oldRevision); err == nil {
 		t.Fatal("deprecated revision remained eligible for new binding")
 	}
-	if _, err := deprecatedClient.EnsureTemplate(ctx, "deprecated-new-binding", "go", oldRevision, owner, "deprecated-ensure"); err == nil {
+	countsBeforeRejectedBind := map[string]int{}
+	for _, resource := range []string{"executionenvironments.execution.mecatl.dev", "persistentvolumeclaims", "pods"} {
+		countsBeforeRejectedBind[resource] = resourceCount(t, ctx, kubeconfig, resource)
+	}
+	if _, err := deprecatedClient.EnsureTemplate(ctx, "deprecated-new-binding", "go", oldRevision, owner, "deprecated-ensure"); remoteErrorCode(err) != string(executionenv.CodeNotFound) {
 		t.Fatal("deprecated revision accepted a new allocation")
 	}
 	deprecatedRequest, err := json.Marshal(map[string]any{"execution": map[string]any{"template": map[string]string{"id": "go", "revision": oldRevision}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status, _ := request(t, ctx, "POST", "http://"+agentForward.addr+"/v1/sessions", aliceToken, deprecatedRequest); status == 201 || status/100 != 4 {
+	if status, _ := request(t, ctx, "POST", "http://"+agentForward.addr+"/v1/sessions", aliceToken, deprecatedRequest); status != 404 {
 		t.Fatalf("deprecated public template bind status=%d", status)
+	}
+	for resource, before := range countsBeforeRejectedBind {
+		if after := resourceCount(t, ctx, kubeconfig, resource); after != before {
+			t.Fatalf("list/change/rejected bind changed %s count: %d -> %d", resource, before, after)
+		}
 	}
 	if got := waitReady(t, ctx, deprecatedClient, owner, binding, attached.Environment); got.Environment != attached.Environment {
 		t.Fatal("deprecation broke an existing exact reference")

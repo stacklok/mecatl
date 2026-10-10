@@ -572,7 +572,11 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 	}
 	responseDone := creatediag.Begin(r.Context(), "http_response")
 	scaps := h.svc.sessionCapabilitiesFor(sess)
-	files, shell := h.svc.executionSessionCapabilities(sess)
+	files, shell, err := h.svc.executionSessionCapabilities(r.Context(), sess)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusCreated, createSessionResp{
 		SessionID:           string(sess.ID),
 		SessionCapabilities: &sessionCapabilitiesJSON{Image: scaps.Image, Audio: scaps.Audio, ExecutionFiles: files, BuiltInShell: shell},
@@ -590,7 +594,7 @@ func (h *HTTPHandler) getSession(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
-	h.writeSession(w, http.StatusOK, sess)
+	h.writeSession(r.Context(), w, http.StatusOK, sess)
 }
 
 // getSessionTranscript handles GET /v1/sessions/{id}/transcript.
@@ -616,7 +620,7 @@ func (h *HTTPHandler) setMode(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
-	h.writeSession(w, http.StatusOK, sess)
+	h.writeSession(r.Context(), w, http.StatusOK, sess)
 }
 
 type successorBody struct {
@@ -696,9 +700,13 @@ func (h *HTTPHandler) writeSuccessor(ctx context.Context, w http.ResponseWriter,
 	}{string(id), placementMetadataToJSON(created.Placement)})
 }
 
-func (h *HTTPHandler) writeSession(w http.ResponseWriter, status int, sess *session.Session) {
+func (h *HTTPHandler) writeSession(ctx context.Context, w http.ResponseWriter, status int, sess *session.Session) {
 	scaps := h.svc.sessionCapabilitiesFor(sess)
-	files, shell := h.svc.executionSessionCapabilities(sess)
+	files, shell, err := h.svc.executionSessionCapabilities(ctx, sess)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
 	writeJSON(w, status, sessionResp{
 		SessionID:              string(sess.ID),
 		State:                  string(sess.State),
@@ -1268,7 +1276,7 @@ func (h *HTTPHandler) renameSession(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
-	h.writeSession(w, http.StatusOK, sess)
+	h.writeSession(r.Context(), w, http.StatusOK, sess)
 }
 
 // deleteSession handles POST /v1/sessions/{id}/delete. DELETE on the base path

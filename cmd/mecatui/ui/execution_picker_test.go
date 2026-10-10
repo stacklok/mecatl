@@ -38,7 +38,7 @@ func (s executionTestLister) ListExecutionTemplates(context.Context) (client.Exe
 func TestExecutionPickerNoFallbackAndCapabilities(t *testing.T) {
 	revision := "v1-" + strings.Repeat("a", 64)
 	session := &executionTestSession{fakeConv: &fakeConv{}}
-	m := newTestModelFromDeps(Deps{Session: session, ExecutionTemplates: executionTestLister{inventory: client.ExecutionTemplateInventory{Items: []client.ExecutionTemplate{{ID: "safe", Revision: revision, Name: "Safe"}}}}, Ctx: context.Background(), Theme: theme.New("aztec", theme.AztecPalette())})
+	m := newTestModelFromDeps(Deps{Session: session, ExecutionTemplates: executionTestLister{inventory: client.ExecutionTemplateInventory{Items: []client.ExecutionTemplate{{ID: "safe", Revision: revision, Name: "Safe", DeclaredExecutionFiles: true, DeclaredBuiltInShell: false}}}}, Ctx: context.Background(), Theme: theme.New("aztec", theme.AztecPalette())})
 	m.phase = phaseIdle
 	m.sessionID = "old"
 	m.caps.ExecutionTemplates = true
@@ -51,6 +51,9 @@ func TestExecutionPickerNoFallbackAndCapabilities(t *testing.T) {
 	m = mm.(Model)
 	if len(m.executionPicker.items) != 1 {
 		t.Fatal("catalog entry missing")
+	}
+	if !strings.Contains(m.renderExecutionPicker(), "declared files: true, built-in Shell: false") {
+		t.Fatal("picker omitted declared affordances")
 	}
 	m.executionPicker.cursor = 2
 	mm, cmd, _ = m.onExecutionKey(tea.KeyPressMsg{Code: tea.KeyEnter})

@@ -89,14 +89,16 @@ func (s *Store) EnsurePendingOwnedRevision(ctx context.Context, client, expected
 
 //nolint:gocyclo // The full admission transition is intentionally audited in one method.
 func (s *Store) ensurePending(ctx context.Context, client, owner string, attested executionenv.Owner, binding, profile, templateRevision, fp, operationID string) (Allocation, error) {
-	p, ok := s.profiles.selectRevision(profile, templateRevision)
-	if !ok {
-		return Allocation{}, &executionenv.Error{Code: executionenv.CodeNotFound, Message: "execution template not found"}
-	}
 	name := allocationName(client, owner, binding)
 	cur, err := s.resources.Get(ctx, name, metav1.GetOptions{})
 	if err == nil {
-		if err := s.initializeStatus(ctx, cur, binding, operationID); err != nil {
+		if err := allocationIdentityMatches(cur, client, owner, binding, profile, templateRevision, fp); err != nil {
+			return Allocation{}, err
+		}
+		if s.profiles.isRevoked(cur) {
+			return Allocation{}, &executionenv.Error{Code: executionenv.CodeNotFound, Message: "execution template not found"}
+		}
+		if err := s.initializeStatus(ctx, cur, client, owner, binding, profile, templateRevision, fp, operationID); err != nil {
 			return Allocation{}, err
 		}
 		cur, err = s.resources.Get(ctx, name, metav1.GetOptions{})
@@ -110,6 +112,10 @@ func (s *Store) ensurePending(ctx context.Context, client, owner string, atteste
 	}
 	if !apierrors.IsNotFound(err) {
 		return Allocation{}, fmt.Errorf("get execution environment: %w", err)
+	}
+	p, ok := s.profiles.selectRevision(profile, templateRevision)
+	if !ok {
+		return Allocation{}, &executionenv.Error{Code: executionenv.CodeNotFound, Message: "execution template not found"}
 	}
 	revision, err := randomID()
 	if err != nil {
@@ -141,17 +147,17 @@ func (s *Store) ensurePending(ctx context.Context, client, owner string, atteste
 		}
 		return Allocation{}, fmt.Errorf("create execution environment: %w", err)
 	}
-	if textNested(created.Object, "spec", "templateID") != profile {
-		if s.kube != nil {
+	if err := allocationIdentityMatches(created, client, owner, binding, profile, templateRevision, fp); err != nil {
+		if s.kube != nil && textNested(created.Object, "spec", "templateID") != profile {
 			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 			defer cancel()
 			if releaseErr := releaseProfileSlot(cleanupCtx, s.kube, s.namespace, profile, name); releaseErr != nil {
 				return Allocation{}, fmt.Errorf("release losing profile allocation: %w", releaseErr)
 			}
 		}
-		return Allocation{}, &executionenv.Error{Code: executionenv.CodeAlreadyExists, Message: "binding belongs to another execution template"}
+		return Allocation{}, err
 	}
-	if err := s.initializeStatus(ctx, created, binding, operationID); err != nil {
+	if err := s.initializeStatus(ctx, created, client, owner, binding, profile, templateRevision, fp, operationID); err != nil {
 		return Allocation{}, err
 	}
 	created, err = s.resources.Get(ctx, name, metav1.GetOptions{})
@@ -267,14 +273,20 @@ func releaseProfileSlot(ctx context.Context, kube kubernetes.Interface, namespac
 	return errors.New("profile allocation authority changed concurrently")
 }
 
-func (s *Store) initializeStatus(ctx context.Context, env *unstructured.Unstructured, binding, operationID string) error {
+func (s *Store) initializeStatus(ctx context.Context, env *unstructured.Unstructured, client, owner, binding, profile, templateRevision, fp, operationID string) error {
 	if operationID == "" {
 		return &executionenv.Error{Code: executionenv.CodeInvalidArgument, Message: "operation identity is required"}
+	}
+	if err := allocationIdentityMatches(env, client, owner, binding, profile, templateRevision, fp); err != nil {
+		return err
 	}
 	if intNested(env.Object, "status", "epoch") > 0 {
 		return requireCurrentSchema(env)
 	}
 	return s.retryUpdateStatusRaw(ctx, env.GetName(), func(o *unstructured.Unstructured) error {
+		if err := allocationIdentityMatches(o, client, owner, binding, profile, templateRevision, fp); err != nil {
+			return err
+		}
 		if intNested(o.Object, "status", "epoch") > 0 {
 			return requireCurrentSchema(o)
 		}
@@ -301,10 +313,19 @@ func allocationName(client, owner, binding string) string {
 	sum := sha256.Sum256([]byte(client + "\x00" + owner + "\x00" + binding))
 	return "exec-" + hex.EncodeToString(sum[:20])
 }
-func allocationFromRevision(o *unstructured.Unstructured, client, owner, binding, profile, templateRevision, fp string) (Allocation, error) {
+func allocationIdentityMatches(o *unstructured.Unstructured, client, owner, binding, profile, templateRevision, fp string) error {
 	spec, _, _ := unstructured.NestedMap(o.Object, "spec")
 	if text(spec, "ownerHash") != owner || text(spec, "clientHash") != hashText(client) || text(spec, "bindingID") != binding || text(spec, "templateID") != profile || text(spec, "templateRevision") != templateRevision || text(spec, "requestFingerprint") != fp {
-		return Allocation{}, &executionenv.Error{Code: executionenv.CodeConflict, Message: "allocation identity conflicts with existing environment"}
+		if text(spec, "templateID") != profile {
+			return &executionenv.Error{Code: executionenv.CodeAlreadyExists, Message: "binding belongs to another execution template"}
+		}
+		return &executionenv.Error{Code: executionenv.CodeConflict, Message: "allocation identity conflicts with existing environment"}
+	}
+	return nil
+}
+func allocationFromRevision(o *unstructured.Unstructured, client, owner, binding, profile, templateRevision, fp string) (Allocation, error) {
+	if err := allocationIdentityMatches(o, client, owner, binding, profile, templateRevision, fp); err != nil {
+		return Allocation{}, err
 	}
 	return exactAllocation(o, client, owner, binding)
 }
@@ -332,13 +353,19 @@ func exactAllocation(o *unstructured.Unstructured, client, owner, binding string
 // Attach adds a binding reference only to the exact healthy environment.
 func (s *Store) Attach(ctx context.Context, ref executionenv.EnvironmentRef, client, owner, binding string) (Allocation, error) {
 	var out Allocation
-	err := s.retryUpdateStatus(ctx, ref.ID, func(o *unstructured.Unstructured) error {
-		if s.profiles.isRevoked(o) {
-			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: templateRevokedMessage}
+	err := s.retryUpdateStatusRaw(ctx, ref.ID, func(o *unstructured.Unstructured) error {
+		if textNested(o.Object, "spec", "ownerHash") != owner || textNested(o.Object, "spec", "clientHash") != hashText(client) {
+			return &executionenv.Error{Code: executionenv.CodeNotFound, Message: environmentNotFoundMessage}
+		}
+		if err := requireCurrentSchema(o); err != nil {
+			return err
 		}
 		a, err := exactAllocation(o, client, owner, binding)
 		if err != nil {
 			return err
+		}
+		if s.profiles.isRevoked(o) {
+			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: templateRevokedMessage}
 		}
 		if a.Environment != ref || textNested(o.Object, "spec", "desired") != "Active" {
 			return &executionenv.Error{Code: executionenv.CodeConflict, Message: "environment revision unavailable"}
@@ -434,7 +461,13 @@ func (s *Store) execute(ctx context.Context, client, owner string, rc executione
 	}
 	var pod string
 	var maxFileBytes, maxCommandBytes int64
-	err = s.retryUpdateStatus(ctx, rc.Environment.ID, func(o *unstructured.Unstructured) error {
+	err = s.retryUpdateStatusRaw(ctx, rc.Environment.ID, func(o *unstructured.Unstructured) error {
+		if textNested(o.Object, "spec", "ownerHash") != owner || textNested(o.Object, "spec", "clientHash") != hashText(client) {
+			return &executionenv.Error{Code: executionenv.CodeNotFound, Message: environmentNotFoundMessage}
+		}
+		if err := requireCurrentSchema(o); err != nil {
+			return err
+		}
 		if s.profiles.isRevoked(o) {
 			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: templateRevokedMessage}
 		}
