@@ -478,6 +478,7 @@ function memoryRevisionFromSdk(revision: UserModelRevision) {
     description: revision.description,
     key: revision.key,
     origin: revision.origin,
+    sourceProposalId: revision.sourceProposalId,
     sourceSessionId: revision.sourceSessionId,
     status: revision.status,
     updatedAt: timestampToIso(revision.updatedAt),
