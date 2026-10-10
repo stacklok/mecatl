@@ -330,6 +330,25 @@ function hasUnsettledDelegation(fleet: DelegationFleet, runId: string): boolean 
   );
 }
 
+/**
+ * The open tool panel's call as the transcript has it now, so the panel
+ * follows the call from running to its output. A call is its run and id
+ * (with its name and arguments, which never change, to tell apart a reused
+ * id in a recorded transcript); the opened snapshot stays when the row is gone.
+ */
+function liveTool(messages: ChatMessage[], opened: ToolActivity): ToolActivity {
+  const matches = messages.flatMap((message) =>
+    (message.tools ?? []).filter(
+      (tool) => tool.id === opened.id && (tool.runId ?? "") === (opened.runId ?? ""),
+    ),
+  );
+  return (
+    matches.find((tool) => tool.name === opened.name && tool.args === opened.args) ??
+    matches[0] ??
+    opened
+  );
+}
+
 function foldDelegationDelivery(fleet: DelegationFleet, delivery: RunStreamEvent): DelegationFleet {
   const next = applyDelegationDelivery(fleet, delivery);
   return delivery.type === "run.event" &&
@@ -840,7 +859,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                   authorization.authorizationId === contentPreview.authorization.authorizationId,
               ) ?? contentPreview.authorization,
         }
-      : contentPreview;
+      : contentPreview?.kind === "tool"
+        ? { ...contentPreview, tool: liveTool(messages, contentPreview.tool) }
+        : contentPreview;
   useEffect(() => {
     if (contentPreview && !panelWasOpen.current) {
       const focused = document.activeElement;

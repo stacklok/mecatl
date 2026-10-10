@@ -910,6 +910,42 @@ describe("mounted chat workspace BFF boundary", () => {
     ).toHaveLength(0);
   });
 
+  it("updates an open tool panel when its call finishes", async () => {
+    window.localStorage.setItem("studio.profile.show-tool-calls", "visible");
+    window.localStorage.setItem("studio.profile.expand-details", "expanded");
+    const bff = new BffFixture(session("chat-a", "running"));
+    const activity = heldStream();
+    bff.activityResponses.set("", [activity.response]);
+    await mountConnectedWorkspace(bff, "chat-a");
+    await waitFor(() => expect(bff.requestsFor("GET", "/activity")).toHaveLength(1));
+    await act(async () => {
+      activity.send(runStarted());
+      activity.send(
+        runEvent("tool.call", "1", "", "run-a", {
+          args: '{"path":"go.mod"}',
+          id: "call-1",
+          name: "Read",
+        }),
+      );
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Open Read details" }));
+    const panel = screen.getByRole("complementary", { name: "Read result" });
+    expect(panel.textContent).toContain("(still running)");
+
+    await act(async () => {
+      activity.send(
+        runEvent("tool.result", "2", "", "run-a", {
+          callId: "call-1",
+          content: "module example.com/demo",
+          isError: false,
+        }),
+      );
+    });
+    await waitFor(() => expect(panel.textContent).toContain("module example.com/demo"));
+    expect(panel.textContent).not.toContain("(still running)");
+    expect(within(panel).getByText("completed")).toBeTruthy();
+  });
+
   it("cancels a pending authorization from the mounted review without sending a permission verdict", async () => {
     window.localStorage.setItem("studio.profile.show-tool-calls", "visible");
     const bff = new BffFixture(session("chat-a", "authorizing"));
