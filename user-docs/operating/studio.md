@@ -79,7 +79,7 @@ A global search palette and a keyboard-shortcuts reference page complete the
 set. Open `/workspace/shortcuts` directly or follow **Keyboard shortcuts** from
 **Settings > About**. The page lists the current browser bindings and features
 enabled by the connected deployment. The Enter and Shift+Enter rows follow your
-**Message during a run** preference.
+**Messages while the agent works** preference in **Settings > Personalise**.
 
 ### Choose execution for a new chat
 
