@@ -633,3 +633,20 @@
 #|     #   additional_origins: []
 #|     #   private_origins: []
 #|     #   max_redirects: 0
+
+#| === websearch === (tier: operator)
+#| HTTP web-search adapter settings. Operator-tier only; project values are ignored.
+# websearch:
+#   # Enabled controls whether web search is available. Nil leaves the runtime default
+#   # unchanged.
+#   enabled: false
+#   # URL is the generic JSON search endpoint.
+#   url: ""
+#   # AuthHeader is the optional request header that carries the search credential.
+#   auth_header: ""
+#   # QueryParam is the query-string parameter that carries the search text.
+#   query_param: ""
+#   # Searxng configures the optional SearXNG backend.
+#   searxng:
+#     # URL is the SearXNG search endpoint.
+#     url: ""

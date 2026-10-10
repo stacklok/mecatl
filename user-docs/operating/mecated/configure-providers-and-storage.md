@@ -19,9 +19,11 @@ the client to the service and leaves server provider setup with its operator.
 
 ### Model and search credential file
 
-Set model-provider API keys with `OPENAI_API_KEY`, `OPENROUTER_API_KEY`,
-`ANTHROPIC_API_KEY`, or `OPENCODE_API_KEY`. To keep model and search credentials
-in one operator-owned file, use `auth.yaml`:
+This file primarily configures LLM providers, but its `providers:` mapping is
+the shared credential namespace for model and search providers. Set
+model-provider API keys with `OPENAI_API_KEY`, `OPENROUTER_API_KEY`,
+`ANTHROPIC_API_KEY`, or `OPENCODE_API_KEY`. To keep model credentials and
+optional search credentials in one operator-owned file, use `auth.yaml`:
 
 ```yaml
 providers:
@@ -35,18 +37,22 @@ providers:
   opencode:
     api_key: <OPENCODE_API_KEY>
 
-  # Search providers: configure WebSearch only.
+  # Search providers: configure the Exa paid tier, Brave Search, or a generic HTTP endpoint.
   exa:
     api_key: <EXA_API_KEY>
   brave:
     api_key: <BRAVE_API_KEY>
+  websearch:
+    api_key: <WEBSEARCH_API_KEY>
 ```
 
 A matching API-key environment variable takes precedence over the file entry.
-The `exa` and `brave` entries configure `WebSearch` for `mecated` and embedded
-`mecatui`; they do not configure or satisfy the requirement for an LLM provider.
-For search backend selection and anonymous Exa behavior, see
-[Configure web search](/features/sessions/tools.md#configure-web-search).
+The `exa` entry enables Exa's paid search tier; the `brave` entry selects Brave
+Search; and `websearch` supplies the credential for a configured generic HTTP
+endpoint. These entries are search credentials, not model providers, and do
+not satisfy the requirement for an LLM provider. See [Configure web
+search](/features/sessions/tools.md#configure-web-search) for backend
+selection.
 The default path is `$XDG_CONFIG_HOME/mecatl/auth.yaml`, normally
 `~/.config/mecatl/auth.yaml`. `--api-key-file <PATH>` selects another file;
 `credential_store.api_key.file` in operator settings can also select the path.

@@ -208,20 +208,25 @@ func TestWebSearchDisabled(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		provider tool.SearchProvider
+		want     []string
+		avoid    string
 	}{
-		{"nil provider", nil},
-		{"ErrSearchUnavailable", Unavailable{}},
+		{"nil provider", nil, []string{"disabled on this deployment", "--websearch=off", "Report this to the user"}, ""},
+		{"ErrSearchUnavailable", Unavailable{}, []string{"disabled on this deployment", "--websearch=off", "Report this to the user"}, ""},
+		{"settings disabled", Unavailable{Reason: "the operator set websearch.enabled: false in settings.yaml"}, []string{"disabled on this deployment", "websearch.enabled: false", "Report this to the user"}, "--websearch=off"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			res := exec(t, NewWebSearchTool(tc.provider), call(t, "WebSearch", map[string]any{"query": "go"}), nil)
 			if res.IsError {
 				t.Fatalf("disabled should not be an error result: %q", res.Content)
 			}
-			// The disabled message names the kill switch and tells the model not to retry.
-			for _, want := range []string{"disabled on this deployment", "--websearch=off", "Report this to the user"} {
+			for _, want := range tc.want {
 				if !strings.Contains(res.Content, want) {
 					t.Fatalf("disabled message missing %q; got %q", want, res.Content)
 				}
+			}
+			if tc.avoid != "" && strings.Contains(res.Content, tc.avoid) {
+				t.Fatalf("disabled message falsely claims %q; got %q", tc.avoid, res.Content)
 			}
 		})
 	}
