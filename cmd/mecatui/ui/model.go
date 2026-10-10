@@ -658,9 +658,6 @@ type Model struct {
 	userModelRequestToken        uint64             // Model-lifetime fence for delayed saved-memory results
 	reflections                  reflectionsState
 	reflectionsGen               uint64
-	dream                        dreamState
-	dreamGen                     uint64
-	dreamRequest                 uint64
 	// steer is the steer-mode (Capabilities.Steer) mid-run state: ONE bundle (the
 	// merged operator steer text + its client-minted message_id) with its
 	// AUTHORITATIVE lifecycle — idle → pending (sent, un-acked) → sent (acked,
@@ -719,8 +716,6 @@ type Model struct {
 	// lets the picker label the current model "picked this session" (vs a launch-time
 	// workspace/global default). Zero until a restart-now pick. Display-only.
 	pickedThisSession client.ModelSelection
-	showHelp          bool           // the "?" keys-&-features overlay is open (caps-driven; see help.go)
-	helpScroll        int            // first visible complete help-body line while the overlay is open
 	stream            *client.Stream // current run's stream
 	cancelRun         context.CancelFunc
 

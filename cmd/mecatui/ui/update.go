@@ -508,7 +508,7 @@ func (m Model) dispatchNonInputMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // updateInventoryMsgs is the fall-through chain for the unmigrated inventory
-// overlays (agentsInv, reflections, dream, worktrees, schedule):
+// overlays (agentsInv, reflections, worktrees, schedule):
 // each per-overlay helper returns handled=false for a non-matching msg, so at
 // most one consumes. Most carry no follow-up command; /schedule's
 // ScheduleActionMsg re-lists on success so the cmd is propagated. Surfaces
@@ -519,9 +519,6 @@ func (m Model) updateInventoryMsgs(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		return mm, nil, true
 	}
 	if mm, handled := m.updateReflectionsMsg(msg); handled {
-		return mm, nil, true
-	}
-	if mm, handled := m.updateDreamMsg(msg); handled {
 		return mm, nil, true
 	}
 	if mm, cmd, handled := m.updateExecutionMsg(msg); handled {
@@ -2049,12 +2046,13 @@ func (m Model) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	// lipgloss.Height of the rendered regions in chrome().
 	m.relayout()
 	m.configureAgentsInvViewport()
-	m.clampHelpScroll()
 	m.clampAgentsDetailScroll()
 	if widthChanged && m.vp.Height() == viewportHeight {
 		m.refreshView()
 		m.conversationView.observe(m.vp)
 	}
+	m.hits.clear()
+	m.metrics.clear()
 	// Open modal surfaces derive geometry at Render time; no resize fan-out is needed.
 	return m, m.maybeKittyTransmit()
 }
@@ -2256,12 +2254,6 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return mm, cmd
 	}
 
-	// Help owns the remaining keys while open: its documented navigation and close
-	// controls act on the overlay and every ordinary key is swallowed.
-	if m.showHelp {
-		return m.onHelpKey(msg)
-	}
-
 	// Disarm whichever quit guards are armed: any non-ctrl+c key disarms the Quit
 	// guard and any non-ctrl+d key disarms the QuitD guard (each guard's window spans
 	// only its own consecutive presses). The two guards are INDEPENDENT — neither key
@@ -2366,54 +2358,12 @@ func (m Model) onPendingApprovalRecoveryKey(msg tea.KeyPressMsg) (tea.Model, tea
 	return m, tea.Quit, true
 }
 
-// onHelpKey handles the help overlay's complete keyboard contract. It runs before
-// phase routing, so navigation never reaches the conversation and every other key
-// remains swallowed.
-func (m Model) onHelpKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	m.clampHelpScroll()
-	total, window := m.helpScrollGeometry()
-	switch {
-	case key.Matches(msg, m.keys.Help), key.Matches(msg, m.keys.Close):
-		m.showHelp = false
-		m.helpScroll = 0
-		_ = m.prompt.Focus()
-	case key.Matches(msg, m.keys.ScrollD):
-		m.helpScroll = clampScroll(m.helpScroll+window, total, window)
-	case key.Matches(msg, m.keys.ScrollU):
-		m.helpScroll = clampScroll(m.helpScroll-window, total, window)
-	case key.Matches(msg, m.keys.Down):
-		m.helpScroll = clampScroll(m.helpScroll+1, total, window)
-	case key.Matches(msg, m.keys.Up):
-		m.helpScroll = clampScroll(m.helpScroll-1, total, window)
-	case key.Matches(msg, m.keys.ScrollBottom):
-		m.helpScroll = maxScrollOffset(total, window)
-	case key.Matches(msg, m.keys.ScrollTop):
-		m.helpScroll = 0
-	}
-	return m, nil
-}
-
-// helpScrollGeometry derives the same complete rendered lines and window used by
-// renderHelpOverlay, keeping key navigation and height-bounded rendering aligned.
-func (m Model) helpScrollGeometry() (total, window int) {
-	lines := helpRenderedLines(helpBody(m.deps.Theme, m.caps, m.helpKeyMarkings()))
-	return len(lines), helpWindowHeight(m.deps.Theme, m.vp.Height(), len(lines))
-}
-
-// clampHelpScroll keeps a retained offset valid after a relayout changes the
-// viewport geometry. It deliberately preserves a still-valid offset rather than
-// pinning an earlier End selection to the new bottom.
-func (m *Model) clampHelpScroll() {
-	total, window := m.helpScrollGeometry()
-	m.helpScroll = clampScroll(m.helpScroll, total, window)
-}
-
 // selection owner is active.
 func (m Model) clearAnySelection(msg tea.KeyPressMsg) (Model, bool) {
 	if !key.Matches(msg, m.keys.Cancel) || (!m.sel.active && !m.prompt.HasSelection()) ||
-		m.showHelp || m.modal != nil || m.team.view != teamNone || m.agentsInv.view != agentsInvNone ||
+		m.modal != nil || m.team.view != teamNone || m.agentsInv.view != agentsInvNone ||
 		m.reflections.view != reflectionsNone ||
-		m.dream.view != dreamClosed || m.effort.view != effortNone || m.executionPicker.open || m.worktrees.view != worktreesNone {
+		m.effort.view != effortNone || m.executionPicker.open || m.worktrees.view != worktreesNone {
 		return m, false
 	}
 	m = m.clearSelection()
@@ -2458,6 +2408,7 @@ func (m Model) dispatchPhaseKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // / esc-only. Returns handled=false when no overlay is open so onKey falls through.
 func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	if s, ok := m.modal.(*admissionRecoveryState); ok {
+		(&m).prepareSurfaceInput()
 		mm, cmd := m.onAdmissionKey(msg, s)
 		return mm, cmd, true
 	}
@@ -2473,7 +2424,6 @@ func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		m.onAgentsKey,
 		m.onAgentsInvKey,
 		m.onReflectionsKey,
-		m.onDreamKey,
 		m.onConnectKey,
 		m.onEffortKey,
 		m.onExecutionKey,
@@ -2488,6 +2438,13 @@ func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	return m, nil, false
 }
 
+// prepareSurfaceInput refreshes the offer without publishing its hit regions.
+func (m *Model) prepareSurfaceInput() {
+	_ = m.renderModalSurface()
+	m.hits.clear()
+	m.metrics.clear()
+}
+
 // dispatchSurfaceKey routes a KeyPressMsg through the open modal surface when
 // one is open. On handled+closed it runs the surface's (no-return) Close, nils
 // the field, and batches the textarea refocus — the parent refocuses because
@@ -2497,6 +2454,7 @@ func (m Model) dispatchSurfaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool
 	if m.modal == nil {
 		return m, nil, false
 	}
+	(&m).prepareSurfaceInput()
 	cmd, handled, closed := m.modal.HandleKey(msg)
 	if !handled {
 		return m, nil, false
@@ -2968,8 +2926,8 @@ func normalizePastedNewlines(content string) string {
 // primary-selection paste trigger (onMousePress), so the two paths can never
 // drift apart.
 func (m Model) pasteGateOpen() bool {
-	if m.showHelp || m.phase == phaseAwaitingApproval ||
-		m.modal != nil || m.team.view != teamNone || m.agentsInv.view != agentsInvNone || m.dream.view != dreamClosed {
+	if m.phase == phaseAwaitingApproval ||
+		m.modal != nil || m.team.view != teamNone || m.agentsInv.view != agentsInvNone {
 		return false
 	}
 	return m.phase == phaseIdle || m.phase == phaseRunning
@@ -3017,6 +2975,8 @@ func (m Model) onRunningKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// into the textarea for editing. It is distinct from Escape, which cancels
 		// the running turn without changing the queue.
 		return m.editBackQueue()
+	case key.Matches(msg, m.keys.Help) && strings.TrimSpace(m.prompt.Value()) == "":
+		return m.runHelp()
 	case key.Matches(msg, m.keys.Agents):
 		// f6 opens the unified agents overlay MID-RUN (Gap B): the deep view is
 		// most useful while agents stream. openAgents permits phaseRunning, reads the
@@ -3324,12 +3284,9 @@ func (m Model) onIdleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.editBackQueue()
 	case key.Matches(msg, m.keys.Help) && strings.TrimSpace(m.prompt.Value()) == "":
 		// "?" is printable: open help only on an empty prompt so "?" in prose still
-		// inserts literally. The overlay claims the keyboard via the m.showHelp gate
+		// inserts literally. The overlay claims the keyboard through modal routing
 		// in onKey; blur the input while it is up.
-		m.showHelp = true
-		m.helpScroll = 0
-		m.prompt.Blur()
-		return m, nil
+		return m.runHelp()
 	case key.Matches(msg, m.keys.MCPPanel):
 		return m.runMCP()
 	case key.Matches(msg, m.keys.Resources):
@@ -4247,6 +4204,7 @@ func (m Model) endRun(stop string) Model {
 // The conversation viewport receives wheel events only while no modal is open.
 func (m Model) onMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	if m.modal != nil {
+		(&m).prepareSurfaceInput()
 		if m.width <= 0 || m.vp.Height() <= 0 {
 			return m, nil
 		}
@@ -4265,11 +4223,22 @@ func (m Model) onMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// onMouseMsg fans the four mouse message types out to their handlers. It is one
-// switch case in update() (keeping update()'s cyclomatic complexity bounded) that
-// re-discriminates the concrete mouse type here, where the dispatch logically
-// belongs.
+// onMouseMsg fans the four mouse message types out to their handlers. An open
+// modal owns left clicks, motion, release, and wheel input; right-click copy and
+// middle-click paste retain their root-owned behavior. It is one switch case in
+// update() (keeping update()'s cyclomatic complexity bounded) that re-discriminates
+// the concrete mouse type here, where the dispatch logically belongs.
 func (m Model) onMouseMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.modal != nil {
+		switch msg := msg.(type) {
+		case tea.MouseWheelMsg:
+			return m.onMouseWheel(msg)
+		case tea.MouseClickMsg:
+			return m.onMousePress(msg.Mouse())
+		case tea.MouseMotionMsg, tea.MouseReleaseMsg:
+			return m, nil
+		}
+	}
 	if m.agentsInv.view != agentsInvNone {
 		if wheel, ok := msg.(tea.MouseWheelMsg); ok {
 			return m.onAgentsInvWheel(wheel)

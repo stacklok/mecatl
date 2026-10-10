@@ -447,6 +447,21 @@ Strict OPERATOR-TIER Streamable HTTP MCP authority configuration. Mode selects o
 | `mcp.servers[].auth.oauth.tools[].input_schema` | `[]uint8` | `(absent)` |  |
 | `mcp.servers[].auth.oauth.tools[].read_only` | `bool` | `false` |  |
 
+## `websearch`
+
+Tier: **operator**
+
+HTTP web-search adapter settings. Operator-tier only; project values are ignored.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `websearch.enabled` | `bool` | `(absent)` | Enabled controls whether web search is available. Nil leaves the runtime default unchanged. |
+| `websearch.url` | `string` | `(empty)` | URL is the generic JSON search endpoint. |
+| `websearch.auth_header` | `string` | `(empty)` | AuthHeader is the optional request header that carries the search credential. |
+| `websearch.query_param` | `string` | `(empty)` | QueryParam is the query-string parameter that carries the search text. |
+| `websearch.searxng` | `websearchsearxngsection` | `(absent)` | Searxng configures the optional SearXNG backend. |
+| `websearch.searxng.url` | `string` | `(empty)` | URL is the SearXNG search endpoint. |
+
 ## Flag- / file-configured features (NOT in `settings.yaml`)
 
 By design, `settings.yaml` covers the subtrees above. Several other

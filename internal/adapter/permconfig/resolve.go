@@ -202,6 +202,11 @@ type Resolver struct {
 	// first-non-nil; project mcp blocks are warning-only and never captured.
 	operatorMCP *MCPSection
 
+	// operatorWebSearch is the first complete operator-tier websearch: subtree.
+	// Explicit CLI files precede user-global settings; project blocks are stripped
+	// before strict nested decoding and are never captured.
+	operatorWebSearch *WebSearchSection
+
 	// operatorRetention is the first complete operator-tier retention block.
 	operatorRetention    *RetentionSection
 	operatorRetentionErr error
@@ -516,6 +521,15 @@ func (r *Resolver) OperatorMCP() *MCPSection {
 	return r.operatorMCP
 }
 
+// OperatorWebSearch returns the complete operator-tier websearch subtree, or nil
+// when absent. Enabled remains a pointer so absent differs from explicit false.
+func (r *Resolver) OperatorWebSearch() *WebSearchSection {
+	if r == nil {
+		return nil
+	}
+	return r.operatorWebSearch
+}
+
 // OperatorRetention returns the immutable operator-tier retention block.
 func (r *Resolver) OperatorRetention() (*RetentionSection, error) {
 	if r == nil {
@@ -771,6 +785,11 @@ func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) []governance.Rule {
 				"mcp: IGNORING a project-tier mcp: block (operator-tier only — a project repo cannot configure global MCP servers)",
 				"file", src.path, "root", ws.Root())
 		}
+		if hasTopLevelKey(data, "websearch") {
+			r.diag.Log(context.Background(), port.LevelWarn,
+				"websearch: IGNORING project-tier websearch block (operator-tier only)",
+				"file", src.path, "root", ws.Root())
+		}
 		if cfg.Retention != nil {
 			r.diag.Log(context.Background(), port.LevelWarn,
 				"retention: IGNORING a project-tier retention block (operator-tier only; projects cannot weaken cleanup protection)",
@@ -929,6 +948,7 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 		r.captureTelemetry(cfg.Telemetry)
 		// Operator-tier MCP profiles: capture the complete first block; never field-merge.
 		r.captureMCP(cfg.MCP)
+		r.captureWebSearch(cfg.WebSearch)
 		r.captureRetention(cfg.Retention)
 		r.captureStorageManagement(cfg.StorageManagement)
 		r.captureSystemPrompt(cfg.SystemPrompt)
@@ -975,6 +995,7 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 				r.captureTelemetry(cfg.Telemetry)
 				// User-global MCP: captured only if no higher CLI file already did.
 				r.captureMCP(cfg.MCP)
+				r.captureWebSearch(cfg.WebSearch)
 				r.captureRetention(cfg.Retention)
 				r.captureStorageManagement(cfg.StorageManagement)
 				r.captureSystemPrompt(cfg.SystemPrompt)
@@ -1153,6 +1174,14 @@ func (r *Resolver) captureMCP(s *MCPSection) {
 		return
 	}
 	r.operatorMCP = s
+}
+
+// captureWebSearch records the first complete operator-tier websearch block.
+func (r *Resolver) captureWebSearch(s *WebSearchSection) {
+	if s == nil || r.operatorWebSearch != nil {
+		return
+	}
+	r.operatorWebSearch = s
 }
 
 func (r *Resolver) captureRetention(s *RetentionSection) {

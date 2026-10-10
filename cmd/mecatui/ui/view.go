@@ -100,8 +100,6 @@ func (m Model) renderBody() string {
 	switch {
 	case m.sessionDetailsOpen:
 		return renderSessionDetails(m.deps.Theme, m.sessionDetails(), m.helpKeyMarkings(), m.width, m.vp.Height())
-	case m.showHelp:
-		return renderHelpOverlay(m.deps.Theme, m.caps, m.width, m.vp.Height(), m.helpScroll, m.helpKeyMarkings())
 	case m.team.view != teamNone:
 		return renderAgentsOverlay(m.deps.Theme, m.agentsTab, m.subagents, m.parallel, m.team, m.teamBlockForOverlay(), m.conv.subagentFleet, m.conv.parallelGroups, m.helpKeyMarkings(), m.width, m.vp.Height(), m.height)
 	case m.agentsInv.view != agentsInvNone:
@@ -110,8 +108,6 @@ func (m Model) renderBody() string {
 		return (&m).renderModalSurface()
 	case m.reflections.view != reflectionsNone:
 		return renderReflectionsOverlay(m.deps.Theme, m.reflections, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
-	case m.dream.view != dreamClosed:
-		return renderDreamOverlay(m.deps.Theme, m.dream, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.effort.view != effortNone:
 		return renderEffortOverlay(m.deps.Theme, m.effort, m.resolvedSessionModel.ReasoningEffort, m.currentModelNoReasoning(), m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.executionPicker.open:

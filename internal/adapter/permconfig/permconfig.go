@@ -77,14 +77,7 @@ func parseYAMLForTier(data []byte, project bool) (Config, error) {
 	}
 
 	if project {
-		entries := root.Values[:0]
-		for _, entry := range root.Values {
-			key, _ := permconfigMappingKey(entry.Key)
-			if key != "harness_context" && key != "models" {
-				entries = append(entries, entry)
-			}
-		}
-		root.Values = entries
+		stripProjectTierSettings(root)
 	}
 	var cfg Config
 	if err := cfg.UnmarshalYAML(root); err != nil {
@@ -96,6 +89,17 @@ func parseYAMLForTier(data []byte, project bool) (Config, error) {
 		}
 	}
 	return cfg, nil
+}
+
+func stripProjectTierSettings(root *ast.MappingNode) {
+	entries := root.Values[:0]
+	for _, entry := range root.Values {
+		key, _ := permconfigMappingKey(entry.Key)
+		if key != "harness_context" && key != "models" && key != "websearch" {
+			entries = append(entries, entry)
+		}
+	}
+	root.Values = entries
 }
 
 // permconfigSchemaError carries the fixed section identity and a source location
@@ -186,6 +190,7 @@ func (c *Config) UnmarshalYAML(node ast.Node) error {
 		"openrouter":             newPermconfigNodePointer(&c.OpenRouter),
 		"telemetry":              newPermconfigNodePointer(&c.Telemetry),
 		"mcp":                    newPermconfigNodePointer(&c.MCP),
+		"websearch":              newPermconfigNodePointer(&c.WebSearch),
 		"retention":              newPermconfigNodePointer(&c.Retention),
 		"storage_management":     newPermconfigNodePointer(&c.StorageManagement),
 		"system_prompt":          newPermconfigNodePointer(&c.SystemPrompt),

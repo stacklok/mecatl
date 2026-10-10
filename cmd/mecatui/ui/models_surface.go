@@ -69,6 +69,11 @@ type modelsGlobalDefaultIntent struct {
 func (modelsGlobalDefaultIntent) isSurfaceIntent() {}
 
 func (s *modelsState) Render(width, height int) (string, []ClickableRegion) {
+	if width <= 0 || height <= 0 {
+		s.rowBudget = 0
+		s.hitItems = nil
+		return "", nil
+	}
 	prefix, suffix := modelsFixedLines(*s, s.provenance)
 	s.rowBudget = max(0, height-len(prefix)-len(suffix))
 	list := s.listControl()
@@ -125,6 +130,10 @@ func (s *modelsState) Render(width, height int) (string, []ClickableRegion) {
 
 func (s *modelsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 	switch {
+	case key.Matches(msg, s.deps.keys.Close) && s.rowBudget == 0:
+		return nil, true, true
+	case s.rowBudget == 0:
+		return nil, true, false
 	case key.Matches(msg, s.deps.keys.Close):
 		if s.filter.Value() != "" {
 			s.filter.SetValue("")

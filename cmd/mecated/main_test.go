@@ -60,6 +60,41 @@ func TestLogListenerPostureClassifiesCallerAuthentication(t *testing.T) {
 	}
 }
 
+func TestSearchCommandRootProjection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auth.yaml")
+	if err := os.WriteFile(path, []byte("providers:\n  exa:\n    api_key: daemon-exa-key\n  brave:\n    api_key: daemon-brave-key\n  websearch:\n    api_key: daemon-websearch-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("EXA_API_KEY", "")
+	t.Setenv("BRAVE_API_KEY", "")
+	t.Setenv("WEBSEARCH_API_KEY", "")
+	cfg, err := parseFlags([]string{"--api-key-file", path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.providerCredentials.Any() {
+		t.Fatal("search keys must not count as LLM provider credentials")
+	}
+	out := appConfig(cfg, nil, nil, nil, nil, nil)
+	if out.ExaAPIKey != "daemon-exa-key" || out.BraveAPIKey != "daemon-brave-key" || out.WebSearchAPIKey != "daemon-websearch-key" {
+		t.Fatal("daemon did not project file-backed search credentials")
+	}
+	profile, _, err := out.ProviderCredentialLoader.Load(nil)
+	if err != nil || profile.ExaAPIKey != out.ExaAPIKey || profile.BraveAPIKey != out.BraveAPIKey || profile.WebSearchAPIKey != out.WebSearchAPIKey {
+		t.Fatalf("daemon credential loader search keys = exa=%q brave=%q websearch=%q err=%v", profile.ExaAPIKey, profile.BraveAPIKey, profile.WebSearchAPIKey, err)
+	}
+	t.Setenv("BRAVE_API_KEY", "env-brave-key")
+	t.Setenv("WEBSEARCH_API_KEY", "env-websearch-key")
+	cfg, err = parseFlags([]string{"--api-key-file", path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out = appConfig(cfg, nil, nil, nil, nil, nil)
+	if out.BraveAPIKey != "env-brave-key" || out.WebSearchAPIKey != "env-websearch-key" {
+		t.Fatalf("daemon did not give environment search credentials precedence: brave=%q websearch=%q", out.BraveAPIKey, out.WebSearchAPIKey)
+	}
+}
+
 func TestOpenAICodexCommandRootReusesResolvedSnapshot(t *testing.T) {
 	for _, envName := range []string{"OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENCODE_API_KEY"} {
 		t.Setenv(envName, "")

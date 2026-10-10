@@ -75,7 +75,7 @@ func boundedDreamReason(reason string) string {
 
 func normalizeDreamError(err error) error {
 	switch {
-	case errors.Is(err, context.DeadlineExceeded):
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, ErrDreamDeadline):
 		return ErrDreamDeadline
 	case errors.Is(err, ErrInvalidArgument):
 		return err

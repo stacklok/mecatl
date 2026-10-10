@@ -101,6 +101,8 @@ const (
 type mcpState struct {
 	view mcpView
 
+	zeroOffer bool // true after Render receives no usable surface geometry
+
 	loading bool   // an RPC is in flight (panel/list/read/get)
 	errMsg  string // last classified MCP error, rendered distinctly
 	errCls  client.MCPErrorClass
@@ -196,7 +198,12 @@ type argField struct {
 }
 
 // Render returns the MCP surface body; the parent centers it.
-func (s *mcpState) Render(width, _ int) (string, []ClickableRegion) {
+func (s *mcpState) Render(width, height int) (string, []ClickableRegion) {
+	if width <= 0 || height <= 0 {
+		s.zeroOffer = true
+		return "", nil
+	}
+	s.zeroOffer = false
 	th := s.deps.theme
 	caps := s.deps.caps
 	hk := s.deps.marks
@@ -221,6 +228,12 @@ func (s *mcpState) Render(width, _ int) (string, []ClickableRegion) {
 // first, and closes the panel/list at the top level (closed=true). Every key is
 // handled=true (the modal owns the keyboard). Key bindings read from s.deps.keys.
 func (s *mcpState) HandleKey(msg tea.KeyPressMsg) (cmd tea.Cmd, handled bool, closed bool) {
+	if s.zeroOffer {
+		if key.Matches(msg, s.deps.keys.Close) {
+			return nil, true, true
+		}
+		return nil, true, false
+	}
 	switch s.view {
 	case mcpPanel:
 		return s.handlePanelKey(msg)

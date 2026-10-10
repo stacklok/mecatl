@@ -763,7 +763,7 @@ func TestSteer_RunningSlashCommandsInterceptLocalBuiltins(t *testing.T) {
 		mm, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 		runBatchLeaves(cmd) // execute the actual returned local-builtin command
 		m = mm.(Model)
-		if !m.showHelp {
+		if m.modal == nil {
 			t.Fatal("bare /help must open local help while the run remains active")
 		}
 		if m.phase != phaseRunning {

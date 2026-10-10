@@ -78,12 +78,12 @@ func (f *Fake) Calls() int {
 var _ tool.SearchProvider = (*Fake)(nil)
 
 // Unavailable is the honest "no search backend configured" SearchProvider: every
-// Search returns tool.ErrSearchUnavailable. The composition root installs it when
-// no operator search backend is configured, so the always-present WebSearch tool
-// surfaces an honest "ask the operator" message rather than vanishing from the
-// catalog (the silent-disable aversion). It is the SearchProvider analogue of the
-// no-shell CommandRunner.
-type Unavailable struct{}
+// Search returns tool.ErrSearchUnavailable. Reason, when set, is model-visible
+// operator configuration context; an empty Reason preserves the --websearch=off
+// wording used by the explicit kill switch.
+type Unavailable struct {
+	Reason string
+}
 
 // Search always returns tool.ErrSearchUnavailable.
 func (Unavailable) Search(_ context.Context, _ tool.SearchQuery) ([]tool.SearchResult, error) {

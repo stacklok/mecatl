@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
 func escapePress(repeat ...bool) tea.KeyPressMsg {
@@ -219,7 +220,6 @@ func TestDoubleEscapeOwnersConsumeAndDisarm(t *testing.T) {
 	assertFreshNext := func(t *testing.T, m Model) {
 		t.Helper()
 		m.phase = phaseIdle
-		m.showHelp = false
 		m.closeModal()
 		m.prompt.Focus()
 		m = applyAll(m, escapePress())
@@ -239,10 +239,12 @@ func TestDoubleEscapeOwnersConsumeAndDisarm(t *testing.T) {
 	})
 	t.Run("help", func(t *testing.T) {
 		m := enableEventTypes(doubleEscapeDraft(t))
-		m.doubleEscapeArmed, m.doubleEscapeReleased, m.showHelp = true, true, true
+		m.doubleEscapeArmed, m.doubleEscapeReleased = true, true
+		mm, _ := m.runHelp()
+		m = mm.(Model)
 		m = applyAll(m, escapePress())
-		if m.doubleEscapeArmed || m.showHelp || m.prompt.Empty() {
-			t.Fatalf("help did not consume/disarm: armed=%t open=%t", m.doubleEscapeArmed, m.showHelp)
+		if m.doubleEscapeArmed || m.modal != nil || m.prompt.Empty() {
+			t.Fatalf("help did not consume/disarm: armed=%t open=%t", m.doubleEscapeArmed, m.modal != nil)
 		}
 		assertFreshNext(t, m)
 	})
@@ -291,13 +293,16 @@ func TestDoubleEscapeAllEscapeOwnersSuppressGesture(t *testing.T) {
 		}},
 		{"paused queue", func(m Model) Model { m.queuePaused = "paused"; return m }},
 		{"session details", func(m Model) Model { m.sessionDetailsOpen = true; return m }},
-		{"help", func(m Model) Model { m.showHelp = true; return m }},
+		{"help", func(m Model) Model { mm, _ := m.runHelp(); return mm.(Model) }},
 		{"modal", func(m Model) Model { m.modal = shellAskModel(t, `{"command":"true"}`).modal; return m }},
 		{"team", func(m Model) Model { m.team.view = teamRoster; return m }},
 		{"agents inventory", func(m Model) Model { m.agentsInv.view = agentsInvPanel; return m }},
-		{"user model", func(m Model) Model { m.modal = &userModelState{view: userModelPanel}; return m }},
+		{"user model", func(m Model) Model {
+			m.modal = &userModelState{view: userModelPanel, deps: (&m).surfaceDeps(), list: new(bounded.List), viewport: new(bounded.Viewport)}
+			return m
+		}},
 		{"reflections", func(m Model) Model { m.reflections.view = reflectionsList; return m }},
-		{"dream", func(m Model) Model { m.dream.view = dreamGenerating; return m }},
+		{"dream", func(m Model) Model { m.modal = &dreamState{view: dreamGenerating}; return m }},
 		{"connect", func(m Model) Model { m.connect.open = true; return m }},
 		{"effort", func(m Model) Model { m.effort.view = effortPanel; return m }},
 		{"worktrees", func(m Model) Model { m.worktrees.view = worktreesPanel; return m }},

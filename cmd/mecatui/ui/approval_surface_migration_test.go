@@ -185,6 +185,7 @@ func TestSurfaceApprovalMigration_Scenario2_VerdictTransportAndChildPolicy(t *te
 	debug.sessionID = "debug"
 	debug.phase = phaseIdle
 	debug = applyAll(debug, client.PermissionAskMsg{AskID: "debug:1:a", Tool: "Shell"})
+	debug = applyAll(debug, tea.WindowSizeMsg{Width: 100, Height: 30})
 	debug.stream = nil
 	debug, cmd = pressKey(debug, tea.KeyPressMsg{Code: 'a', Text: "a"})
 	if cmd != nil {

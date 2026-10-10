@@ -107,10 +107,10 @@ func convTopRow(m Model) int {
 // bodyOwnerOpen is the single inventory of overlays and modals that replace the
 // conversation body and own Escape before root prompt handling.
 func bodyOwnerOpen(m Model) bool {
-	return m.sessionDetailsOpen || m.showHelp || m.team.view != teamNone ||
+	return m.sessionDetailsOpen || m.team.view != teamNone ||
 		m.agentsInv.view != agentsInvNone || m.modal != nil ||
 		m.reflections.view != reflectionsNone ||
-		m.dream.view != dreamClosed || m.connect.open || m.effort.view != effortNone ||
+		m.connect.open || m.effort.view != effortNone ||
 		m.executionPicker.open || m.worktrees.view != worktreesNone || m.schedule.view != scheduleNone
 }
 

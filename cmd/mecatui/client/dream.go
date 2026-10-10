@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
 
@@ -101,6 +102,41 @@ func DecideDreamPlanCmd(ctx context.Context, c DreamClient, id, decision string,
 		receipt, err := c.DecideDreamPlan(ctx, id, decision)
 		return DreamMsg{Receipt: &receipt, Err: err, Generation: generation, RequestID: requestID}
 	}
+}
+
+type DreamGenerateErrorKind uint8
+
+const (
+	DreamGenerateUnknown DreamGenerateErrorKind = iota
+	DreamGenerateFailed
+	DreamGenerateDeadline
+	DreamGenerateCapacity
+	DreamGenerateUnavailable
+)
+
+// ClassifyDreamGenerateError trusts only the server's scoped ErrorInfo, never status text.
+func ClassifyDreamGenerateError(err error) DreamGenerateErrorKind {
+	st, ok := grpcstatus.FromError(err)
+	if !ok {
+		return DreamGenerateUnknown
+	}
+	for _, detail := range st.Details() {
+		info, ok := detail.(*errdetails.ErrorInfo)
+		if !ok || info.GetDomain() != "mecatl.stacklok.com" {
+			continue
+		}
+		switch {
+		case st.Code() == codes.Internal && info.GetReason() == "dream_generate_failed":
+			return DreamGenerateFailed
+		case st.Code() == codes.DeadlineExceeded && info.GetReason() == "dream_deadline":
+			return DreamGenerateDeadline
+		case st.Code() == codes.ResourceExhausted && info.GetReason() == "dream_capacity":
+			return DreamGenerateCapacity
+		case st.Code() == codes.Unimplemented && info.GetReason() == "dream_unavailable":
+			return DreamGenerateUnavailable
+		}
+	}
+	return DreamGenerateUnknown
 }
 
 type DreamDecisionErrorKind uint8

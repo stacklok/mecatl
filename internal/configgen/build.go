@@ -48,6 +48,7 @@ func BuildModel(docs Docs) *Model {
 		openRouterSubtree(docs),
 		telemetrySubtree(docs),
 		mcpSubtree(docs),
+		webSearchSubtree(docs),
 	}}
 }
 
@@ -566,6 +567,22 @@ func telemetrySubtree(docs Docs) *Subtree {
 			"  productMetrics:",
 			"    enabled: false",
 		},
+	}
+}
+
+func webSearchSubtree(docs Docs) *Subtree {
+	fields := fieldsOf("WebSearchSection", permconfig.WebSearchSection{}, docs)
+	for _, f := range fields {
+		if f.Key == "searxng" {
+			f.Nested = fieldsOf("WebSearchSearxngSection", permconfig.WebSearchSearxngSection{}, docs)
+		}
+	}
+	return &Subtree{
+		Key:          "websearch",
+		Tier:         TierOperator,
+		CommentedOut: true,
+		Doc:          "HTTP web-search adapter settings. Operator-tier only; project values are ignored.",
+		Fields:       fields,
 	}
 }
 

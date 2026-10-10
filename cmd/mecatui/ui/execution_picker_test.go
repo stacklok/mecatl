@@ -47,7 +47,7 @@ func TestExecutionPickerNoFallbackAndCapabilities(t *testing.T) {
 	if !m.executionPicker.loading || cmd == nil {
 		t.Fatal("catalog did not load")
 	}
-	mm, _, _ = m.updateExecutionMsg(cmd())
+	mm, _ = m.Update(cmd())
 	m = mm.(Model)
 	if len(m.executionPicker.items) != 1 {
 		t.Fatal("catalog entry missing")
@@ -62,7 +62,7 @@ func TestExecutionPickerNoFallbackAndCapabilities(t *testing.T) {
 		t.Fatal("no creation command")
 	}
 	session.err = errors.New("private: do not display")
-	mm, _, _ = m.updateExecutionMsg(cmd())
+	mm, _ = m.Update(cmd())
 	m = mm.(Model)
 	if m.sessionID != "old" || session.seen[0].Revision != revision || strings.Contains(m.renderExecutionPicker(), "private:") {
 		t.Fatal("selection fell back or exposed upstream error")
@@ -70,13 +70,36 @@ func TestExecutionPickerNoFallbackAndCapabilities(t *testing.T) {
 	session.err = nil
 	mm, cmd, _ = m.onExecutionKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
-	mm, _, _ = m.updateExecutionMsg(cmd())
+	mm, _ = m.Update(cmd())
 	m = mm.(Model)
 	if m.sessionID != "new" || !m.caps.ExecutionFiles || !m.caps.BuiltInShell {
 		t.Fatal("creation did not bind true session capabilities")
 	}
 	if detail := renderSessionDetails(m.deps.Theme, m.sessionDetails(), helpKeys{}, 80, 25); !strings.Contains(detail, "Execution files: true") || !strings.Contains(detail, "Built-in Shell: true") {
 		t.Fatal("session details did not show bound execution capabilities")
+	}
+}
+
+func TestExecutionPickerOwnsSelectionAndEscape(t *testing.T) {
+	m := newTestModelFromDeps(Deps{Session: &executionTestSession{fakeConv: &fakeConv{}}, Ctx: context.Background(), Theme: theme.New("aztec", theme.AztecPalette())})
+	m.phase = phaseIdle
+	if !selectable(m) {
+		t.Fatal("conversation should allow selection before opening the picker")
+	}
+	mm, _ := m.openExecution()
+	m = mm.(Model)
+	if !bodyOwnerOpen(m) || selectable(m) {
+		t.Fatal("execution picker did not own the conversation body")
+	}
+	m.sel.active = true
+	escape := tea.KeyPressMsg{Code: tea.KeyEscape}
+	if _, cleared := m.clearAnySelection(escape); cleared {
+		t.Fatal("root selection handling consumed the picker's Escape")
+	}
+	mm, _, handled := m.onOverlayKey(escape)
+	m = mm.(Model)
+	if !handled || m.executionPicker.open || bodyOwnerOpen(m) {
+		t.Fatal("Escape did not close the execution picker")
 	}
 }
 
@@ -96,7 +119,7 @@ func TestExecutionPickerInventoryStates(t *testing.T) {
 			m.caps.ExecutionTemplates = true
 			mm, cmd := m.openExecution()
 			m = mm.(Model)
-			mm, _, _ = m.updateExecutionMsg(cmd())
+			mm, _ = m.Update(cmd())
 			m = mm.(Model)
 			if !strings.Contains(m.executionPicker.status, tc.want) || strings.Contains(m.executionPicker.status, "private") || len(m.executionPicker.items) != 0 {
 				t.Fatalf("unexpected catalog state: %q", m.executionPicker.status)
