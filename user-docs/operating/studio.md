@@ -281,7 +281,8 @@ thread, even when two messages have the same text.
 
 Select an image or tool result in the transcript to inspect its preview in the
 same side panel. Select **Canvas** in the chat header to edit Markdown notes and
-switch between **Edit** and **Preview**. Canvas notes stay in this browser for
+switch between **Edit** and **Preview**. On a phone, an open chat has it under
+**Chat options > Open local canvas** instead. Canvas notes stay in this browser for
 your account and the selected chat. Opening or previewing them does not send
 their text to Mecatl.
 

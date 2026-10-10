@@ -45,6 +45,7 @@ import {
   GitFork,
   ListTodo,
   ListTree,
+  LoaderCircle,
   MessageSquareText,
   MoreHorizontal,
   NotebookPen,
@@ -105,6 +106,7 @@ import {
   useStartOn,
   useUserDisplayName,
 } from "../../lib/profile-preferences";
+import { useIsMobile } from "../../lib/use-mobile";
 import { useAuthRecovery } from "../auth/auth-recovery-context";
 import { useShortcut, useShortcutSuppression } from "../shortcuts/shortcut-provider";
 import { ApprovalPanel, type ApprovalRequest, type ApprovalVerdict } from "./approval-panel";
@@ -415,6 +417,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const workspaceRoot = useRef<HTMLDivElement>(null);
   const chatOptionsTrigger = useRef<HTMLButtonElement>(null);
   const chatOptionsEscapeSession = useRef<string | undefined>(undefined);
+  // The phone header's chat options menu opens Canvas only once the menu has closed and
+  // returned focus to its trigger, so the panel takes focus and later returns it there.
+  const chatOptionsOpensCanvas = useRef(false);
   useEffect(() => {
     const clearPending = () => {
       chatOptionsEscapeSession.current = undefined;
@@ -476,6 +481,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const enterSendBehavior = useEnterSendBehavior().value;
   const queuedMessages = useQueuedMessages(provenChat ? (sessionId ?? "") : "");
   const canvas = useLocalCanvas(sessionId ?? "draft");
+  const isMobile = useIsMobile();
   const threadAssociations = useThreadAssociations(sessionId ?? "", transcript.data);
   const threadSessionIds = useThreadSessionIds();
   const titledSessionItems = useMemo(
@@ -2699,7 +2705,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         </section>
       ) : (
         <section className="relative flex min-w-0 flex-1 flex-col bg-background">
-          <header className="flex h-16 shrink-0 items-center gap-3 border-b px-4 sm:px-6">
+          <header className="flex h-16 shrink-0 items-center gap-3 border-b px-4 max-[499px]:gap-2 max-[499px]:px-3 sm:px-6">
             <ChatsMenuButton
               onClick={() => {
                 setSidebarHidden(false);
@@ -2738,15 +2744,17 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
               <ListTodo aria-hidden="true" />
               <span className="hidden sm:inline">Activity</span>
             </Button>
-            <Button
-              aria-label="Open local canvas"
-              onClick={() => setContentPreview({ kind: "canvas" })}
-              size="sm"
-              variant="ghost"
-            >
-              <NotebookPen aria-hidden="true" />
-              <span className="hidden sm:inline">Canvas</span>
-            </Button>
+            {!(isMobile && sessionId) && (
+              <Button
+                aria-label="Open local canvas"
+                onClick={() => setContentPreview({ kind: "canvas" })}
+                size="sm"
+                variant="ghost"
+              >
+                <NotebookPen aria-hidden="true" />
+                <span className="hidden sm:inline">Canvas</span>
+              </Button>
+            )}
             {sessionId && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -2768,6 +2776,10 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                   onCloseAutoFocus={(event) => {
                     event.preventDefault();
                     chatOptionsTrigger.current?.focus();
+                    if (chatOptionsOpensCanvas.current) {
+                      chatOptionsOpensCanvas.current = false;
+                      setContentPreview({ kind: "canvas" });
+                    }
                   }}
                 >
                   <DropdownMenuItem onSelect={() => setInspectionOpen(true)}>
@@ -2819,6 +2831,16 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                     <Eraser aria-hidden="true" />
                     Clear conversation
                   </DropdownMenuItem>
+                  {isMobile && (
+                    <DropdownMenuItem
+                      onSelect={() => {
+                        chatOptionsOpensCanvas.current = true;
+                      }}
+                    >
+                      <NotebookPen aria-hidden="true" />
+                      Open local canvas
+                    </DropdownMenuItem>
+                  )}
                   {runtime.data?.capabilities.sessionDebug && (
                     <DropdownMenuItem
                       disabled={createSession.isPending}
@@ -2889,7 +2911,13 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
               (statusFacts.phase === "closed" && controlTarget(runTarget, sessionId))) && (
               <div className="flex items-center gap-2">
                 {isRunning && (
-                  <Badge variant="success">
+                  <LoaderCircle
+                    aria-hidden="true"
+                    className="size-4 shrink-0 animate-spin text-brand min-[500px]:hidden"
+                  />
+                )}
+                {isRunning && (
+                  <Badge className="max-[499px]:sr-only" variant="success">
                     {statusFacts.authorizationPending
                       ? "Waiting for authorization"
                       : reattached
@@ -2900,20 +2928,23 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                 {controlTarget(runTarget, sessionId) && (
                   <>
                     <Button
+                      className="max-[499px]:size-11 max-[499px]:px-0"
                       disabled={controlPending}
                       onClick={() => void stopRun()}
                       size="sm"
                       variant="outline"
                     >
                       <Square aria-hidden="true" className="fill-current" />
-                      Stop
+                      <span className="max-[499px]:sr-only">Stop</span>
                     </Button>
                     {!escapeAsk &&
                       !contentPreview &&
                       !sidebarOpen &&
                       isRunning &&
                       !controlPending && (
-                        <span className="text-xs text-muted-foreground">Esc to Stop</span>
+                        <span className="text-xs text-muted-foreground max-[499px]:hidden">
+                          Esc to Stop
+                        </span>
                       )}
                   </>
                 )}
