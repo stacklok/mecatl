@@ -204,6 +204,16 @@ describe("shortcut reference", () => {
     expect(on).toContain("Attach images to a message from the composer");
   });
 
+  it("notes that a chat's model may decline images only when the image row shows", () => {
+    const off = render(runtime);
+    expect(off).not.toContain("may still decline");
+    const on = render({
+      ...runtime,
+      capabilities: { ...runtime.capabilities, image: true },
+    } as GetRuntimeResponse);
+    expect(on).toContain("may still decline");
+  });
+
   it("announces the feature check as a status", () => {
     const page = document.createElement("div");
     page.innerHTML = render();

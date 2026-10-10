@@ -145,10 +145,12 @@ export function ShortcutReference() {
                 </li>
               ))}
             </ul>
-            <p className="mt-4 text-xs text-muted-foreground">
-              Rows describe the deployment as a whole; the open chat&rsquo;s model may still decline
-              images the deployment allows.
-            </p>
+            {features.some((row) => row.id === "image") ? (
+              <p className="mt-4 text-xs text-muted-foreground">
+                Rows describe the deployment as a whole; the open chat&rsquo;s model may still
+                decline images the deployment allows.
+              </p>
+            ) : null}
           </>
         )}
       </section>
