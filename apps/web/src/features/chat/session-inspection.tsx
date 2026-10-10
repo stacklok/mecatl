@@ -11,8 +11,18 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "../../components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../../components/ui/dialog";
-import { copyToClipboard } from "../../lib/clipboard";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "../../components/ui/dialog";
+import { cn } from "../../lib/utils";
+import { SessionDetailsView } from "./session-details-dialog";
+import { SoulView } from "./soul-dialog";
+import { TranscriptView } from "./transcript-dialog";
+import { WorktreePickerView } from "./worktree-picker-dialog";
 
 export type InspectionView = "details" | "transcript" | "soul" | "worktrees";
 
@@ -37,11 +47,19 @@ export function isProvenChatSession(session: SessionSummaryResponse): boolean {
 interface SessionInspectionProps {
   initialView?: InspectionView;
   onClose: () => void;
-  onDebug: (sessionId: string) => void;
+  /** Absent when this session is not the open chat: debugging binds to the open chat only. */
+  onDebug?: (sessionId: string) => void;
   onOpenSuccessor: (sessionId: string) => void;
   runtime?: RuntimeResponse;
   session: SessionSummaryResponse;
 }
+
+const descriptions: Record<Exclude<InspectionView, "transcript">, string> = {
+  details: "This session as the daemon records it.",
+  soul: "The instructions the daemon adds to every run, as the model receives them.",
+  worktrees:
+    "Start a chat rooted at another worktree of this repository. This chat stays in the list.",
+};
 
 const titles: Record<InspectionView, string> = {
   details: "Session details",
@@ -165,6 +183,30 @@ export function SessionInspection({
     }
   }
 
+  const transcriptUnavailable = !online
+    ? "Transcript unavailable while offline."
+    : unavailable(session.capabilities.viewTranscriptReason, "Transcript unavailable.");
+  const soulUnavailable = `Soul inspection unavailable${!online ? " while offline" : " on this connection"}.`;
+  const worktreesUnavailable = `Worktrees unavailable${!online ? " while offline" : " for this session"}.`;
+  const debugSupported = online && runtime?.capabilities.sessionDebug === true;
+  const notes = [
+    ...(canReadTranscript ? [] : [transcriptUnavailable]),
+    ...(canReadSoul ? [] : [soulUnavailable]),
+    ...(canReadWorktrees ? [] : [worktreesUnavailable]),
+    ...(!debugSupported
+      ? [`Debug unavailable${!online ? " while offline" : " on this connection"}.`]
+      : !onDebug
+        ? ["Open this chat to debug it with AI."]
+        : []),
+  ];
+  const views: { label: string; view: InspectionView; enabled: boolean }[] = [
+    { enabled: true, label: "Details", view: "details" },
+    { enabled: canReadTranscript, label: "View transcript", view: "transcript" },
+    { enabled: canReadSoul, label: "Inspect soul", view: "soul" },
+    { enabled: canReadWorktrees, label: "Choose worktree", view: "worktrees" },
+  ];
+  const chosen = Boolean(worktrees.data?.items.some((item) => item.selector === selectedSelector));
+
   return (
     <Dialog
       onOpenChange={(open) => {
@@ -172,258 +214,115 @@ export function SessionInspection({
       }}
       open
     >
-      <DialogContent
-        aria-describedby={undefined}
-        className="flex max-h-[min(85vh,48rem)] flex-col overflow-hidden sm:max-w-2xl"
-      >
+      <DialogContent className="flex max-h-[min(85vh,48rem)] flex-col gap-4 overflow-hidden sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{titles[view]}</DialogTitle>
+          <DialogDescription
+            className={view === "transcript" ? "break-all font-mono text-xs" : undefined}
+          >
+            {view === "transcript"
+              ? `${session.title || "Untitled chat"} · ${session.id}`
+              : descriptions[view]}
+          </DialogDescription>
         </DialogHeader>
-        <nav aria-label="Inspection views" className="flex flex-wrap gap-2">
-          <Button
-            onClick={() => changeView("details")}
-            size="sm"
-            variant={view === "details" ? "secondary" : "outline"}
-          >
-            Details
-          </Button>
-          <Button
-            disabled={!canReadTranscript}
-            onClick={() => changeView("transcript")}
-            size="sm"
-            variant={view === "transcript" ? "secondary" : "outline"}
-          >
-            View transcript
-          </Button>
-          <Button
-            disabled={!canReadSoul}
-            onClick={() => changeView("soul")}
-            size="sm"
-            variant={view === "soul" ? "secondary" : "outline"}
-          >
-            Inspect soul
-          </Button>
-          <Button
-            disabled={!canReadWorktrees}
-            onClick={() => changeView("worktrees")}
-            size="sm"
-            variant={view === "worktrees" ? "secondary" : "outline"}
-          >
-            Choose worktree
-          </Button>
+        <nav
+          aria-label="Inspection views"
+          className="-mt-1 flex w-fit max-w-full flex-wrap gap-0.5 rounded-full bg-muted p-1"
+        >
+          {views.map((item) => (
+            <Button
+              aria-current={view === item.view ? "page" : undefined}
+              className={cn(
+                "h-7 rounded-full px-3 text-xs text-muted-foreground hover:text-foreground",
+                view === item.view && "bg-background text-foreground shadow-sm hover:bg-background",
+              )}
+              disabled={!item.enabled}
+              key={item.view}
+              onClick={() => changeView(item.view)}
+              size="sm"
+              variant="ghost"
+            >
+              {item.label}
+            </Button>
+          ))}
         </nav>
-        <div className="min-h-0 overflow-y-auto text-sm" data-testid="inspection-scrollport">
+        <div
+          className="-mx-6 flex min-h-0 flex-col gap-4 overflow-y-auto px-6 text-sm"
+          data-testid="inspection-scrollport"
+        >
           {view === "details" && (
-            <>
-              {!canInspect ? (
-                <p>
-                  {unavailable(
-                    session.capabilities.inspectReason,
-                    online ? "Inspection unavailable." : "Inspection unavailable while offline.",
-                  )}
-                </p>
-              ) : detail.isPending ? (
-                <p>Loading details…</p>
-              ) : detail.isError ? (
-                <p>Session details could not be read.</p>
-              ) : (
-                detail.data && (
-                  <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 break-words">
-                    <dt>ID</dt>
-                    <dd>{session.capabilities.copyId ? session.id : "Unavailable"}</dd>
-                    <dt>Kind</dt>
-                    <dd>{detail.data.kind}</dd>
-                    <dt>State</dt>
-                    <dd>{detail.data.state}</dd>
-                    <dt>Model</dt>
-                    <dd>{detail.data.model?.id ?? session.modelId ?? "Unavailable"}</dd>
-                    <dt>Input tokens</dt>
-                    <dd>{detail.data.usage.inputTokens}</dd>
-                    <dt>Output tokens</dt>
-                    <dd>{detail.data.usage.outputTokens}</dd>
-                    <dt>Cache read tokens</dt>
-                    <dd>{detail.data.usage.cacheReadTokens}</dd>
-                    <dt>Cache write tokens</dt>
-                    <dd>{detail.data.usage.cacheWriteTokens}</dd>
-                    <dt>Reasoning tokens</dt>
-                    <dd>{detail.data.usage.reasoningTokens}</dd>
-                    {detail.data.placement && (
-                      <>
-                        <dt>Placement</dt>
-                        <dd>{detail.data.placement.label}</dd>
-                        <dt>Branch</dt>
-                        <dd>{detail.data.placement.branch}</dd>
-                        <dt>Revision</dt>
-                        <dd>{detail.data.placement.revision}</dd>
-                      </>
-                    )}
-                  </dl>
-                )
+            <SessionDetailsView
+              canInspect={canInspect}
+              detail={detail.data}
+              detailError={detail.isError}
+              detailPending={detail.isPending}
+              inspectUnavailable={unavailable(
+                session.capabilities.inspectReason,
+                online ? "Inspection unavailable." : "Inspection unavailable while offline.",
               )}
-              {session.capabilities.copyId ? (
-                <Button
-                  onClick={() => void copyToClipboard(session.id, "Session ID")}
-                  size="sm"
-                  variant="outline"
-                >
-                  Copy session ID
-                </Button>
-              ) : (
-                <p>{unavailable(session.capabilities.copyIdReason, "ID copying unavailable.")}</p>
-              )}
-              {!canReadTranscript && (
-                <p>
-                  {!online
-                    ? "Transcript unavailable while offline."
-                    : unavailable(
-                        session.capabilities.viewTranscriptReason,
-                        "Transcript unavailable.",
-                      )}
-                </p>
-              )}
-              {!canReadSoul && (
-                <p>
-                  Soul inspection unavailable{!online ? " while offline" : " on this connection"}.
-                </p>
-              )}
-              {!canReadWorktrees && (
-                <p>Worktrees unavailable{!online ? " while offline" : " for this session"}.</p>
-              )}
-              {online && runtime?.capabilities.sessionDebug ? (
-                <Button
-                  onClick={() => {
-                    onDebug(session.id);
-                    onClose();
-                  }}
-                  size="sm"
-                  variant="outline"
-                >
-                  Debug with AI
-                </Button>
-              ) : (
-                <p>Debug unavailable{!online ? " while offline" : " on this connection"}.</p>
-              )}
-            </>
+              notes={notes}
+              onDebug={
+                debugSupported && onDebug
+                  ? () => {
+                      onDebug(session.id);
+                      onClose();
+                    }
+                  : undefined
+              }
+              onRetry={() => void detail.refetch()}
+              runtime={runtime}
+              session={session}
+            />
           )}
           {view === "transcript" &&
             (!canReadTranscript ? (
-              <p>
-                {!online
-                  ? "Transcript unavailable while offline."
-                  : unavailable(
-                      session.capabilities.viewTranscriptReason,
-                      "Transcript unavailable.",
-                    )}
-              </p>
-            ) : transcript.isPending ? (
-              <p>Loading saved transcript…</p>
-            ) : transcript.isError ? (
-              <p>Saved transcript could not be read.</p>
+              <p className="text-muted-foreground">{transcriptUnavailable}</p>
             ) : (
-              transcript.data && (
-                <>
-                  {!transcript.data.complete && <p role="status">Incomplete saved transcript</p>}
-                  <ol className="space-y-3">
-                    {transcript.data.messages.map((message, index) => (
-                      // biome-ignore lint/suspicious/noArrayIndexKey: the saved transcript has no durable row ID; its ordinal identifies the occurrence
-                      <li className="rounded border p-3" key={index}>
-                        <strong>{message.role}</strong>
-                        <p className="whitespace-pre-wrap break-words">{message.text}</p>
-                      </li>
-                    ))}
-                  </ol>
-                </>
-              )
+              <TranscriptView
+                error={transcript.isError}
+                onRetry={() => void transcript.refetch()}
+                pending={transcript.isPending}
+                transcript={transcript.data}
+              />
             ))}
           {view === "soul" &&
             (!canReadSoul ? (
-              <p>
-                Soul inspection unavailable{!online ? " while offline" : " on this connection"}.
-              </p>
-            ) : soul.isPending ? (
-              <p>Loading soul…</p>
-            ) : soul.isError ? (
-              <p>Soul could not be read.</p>
+              <p className="text-muted-foreground">{soulUnavailable}</p>
             ) : (
-              soul.data && (
-                <>
-                  <p>
-                    {soul.data.present
-                      ? `Provenance: ${soul.data.provenance}`
-                      : "No soul is present."}
-                  </p>
-                  <pre className="whitespace-pre-wrap break-words">{soul.data.content}</pre>
-                </>
-              )
+              <SoulView
+                error={soul.isError}
+                onRetry={() => void soul.refetch()}
+                pending={soul.isPending}
+                soul={soul.data}
+              />
             ))}
           {view === "worktrees" &&
             (!canReadWorktrees ? (
-              <p>Worktrees unavailable{!online ? " while offline" : " for this session"}.</p>
-            ) : worktrees.isPending ? (
-              <p>Loading worktrees…</p>
-            ) : worktrees.isError ? (
-              <p>Worktrees could not be read.</p>
+              <p className="text-muted-foreground">{worktreesUnavailable}</p>
             ) : (
-              worktrees.data && (
-                <>
-                  {worktrees.data.items.length === 0 && (
-                    <p>No eligible worktrees for this session.</p>
-                  )}
-                  <fieldset>
-                    <legend className="sr-only">Eligible worktrees</legend>
-                    {worktrees.data.items.map((item) => (
-                      <label className="flex items-center gap-2 py-2" key={item.selector}>
-                        <input
-                          checked={selectedSelector === item.selector}
-                          name="successor-worktree"
-                          onChange={() => setSelectedSelector(item.selector)}
-                          type="radio"
-                        />
-                        <span>
-                          {item.label}
-                          {item.branch && ` · ${item.branch}`}
-                          {item.revision && ` · ${item.revision}`}
-                        </span>
-                      </label>
-                    ))}
-                  </fieldset>
-                  {session.capabilities.fork && detail.data?.model && (
-                    <Button
-                      disabled={
-                        !worktrees.data.items.some((item) => item.selector === selectedSelector) ||
-                        Boolean(action)
-                      }
-                      onClick={() => void createSuccessor("fork")}
-                      size="sm"
-                    >
-                      Fork in selected worktree
-                    </Button>
-                  )}
-                  {session.capabilities.fork && (
-                    <Button
-                      disabled={
-                        !worktrees.data.items.some((item) => item.selector === selectedSelector) ||
-                        Boolean(action)
-                      }
-                      onClick={() => void createSuccessor("clear")}
-                      size="sm"
-                      variant="outline"
-                    >
-                      Clear in selected worktree
-                    </Button>
-                  )}
-                  {!session.capabilities.fork && (
-                    <p>
-                      {unavailable(
-                        session.capabilities.forkReason,
-                        "Successor creation unavailable.",
-                      )}
-                    </p>
-                  )}
-                </>
-              )
+              <WorktreePickerView
+                busy={Boolean(action)}
+                canClear={session.capabilities.fork}
+                canFork={session.capabilities.fork && Boolean(detail.data?.model)}
+                error={worktrees.isError}
+                onClear={() => void createSuccessor("clear")}
+                onFork={() => void createSuccessor("fork")}
+                onRetry={() => void worktrees.refetch()}
+                onSelect={setSelectedSelector}
+                pending={worktrees.isPending}
+                selected={chosen ? selectedSelector : undefined}
+                unavailable={unavailable(
+                  session.capabilities.forkReason,
+                  "Successor creation unavailable.",
+                )}
+                worktrees={worktrees.data}
+              />
             ))}
-          {error && <p role="alert">{error}</p>}
+          {error && (
+            <p className="text-destructive" role="alert">
+              {error}
+            </p>
+          )}
         </div>
       </DialogContent>
     </Dialog>

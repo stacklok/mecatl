@@ -24,6 +24,8 @@ import {
   ArrowUp,
   Copy,
   LoaderCircle,
+  Maximize2,
+  MessageSquareText,
   Mic,
   MicOff,
   MoreHorizontal,
@@ -218,8 +220,13 @@ export function SideThreadPanel({
         actions={
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button aria-label="Thread options" size="icon" variant="ghost">
-                <MoreHorizontal aria-hidden="true" />
+              <Button
+                aria-label="Thread options"
+                className="size-8 text-muted-foreground"
+                size="icon"
+                variant="ghost"
+              >
+                <MoreHorizontal aria-hidden="true" className="size-4" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
@@ -227,6 +234,7 @@ export function SideThreadPanel({
                 Show Tools
               </DropdownMenuCheckboxItem>
               <DropdownMenuItem onSelect={() => void openAsFullChat()}>
+                <Maximize2 aria-hidden="true" />
                 Open as full chat
               </DropdownMenuItem>
               <DropdownMenuSeparator />
@@ -240,6 +248,9 @@ export function SideThreadPanel({
         bodyClassName="flex flex-col overflow-hidden"
         closeLabel="Close thread"
         escapeHint={!escapeAsk}
+        icon={
+          <MessageSquareText aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+        }
         maximizable
         onClose={onClose}
         rootRef={threadRoot}
@@ -247,11 +258,11 @@ export function SideThreadPanel({
         title="Thread"
       >
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="flex min-h-full flex-col px-4 py-6">
+          <div className="flex min-h-full flex-col px-3 pt-3 pb-6 lg:px-4">
             {run.messages.length === 0 ? (
               <p className="m-auto text-sm text-muted-foreground">Loading thread…</p>
             ) : (
-              <div className="space-y-6">
+              <div className="space-y-4">
                 {run.messages.map((message, index) => (
                   <Message
                     agentAvatar={agentAvatar}
@@ -329,59 +340,81 @@ export function SideThreadPanel({
         )}
 
         <form
-          className="px-4 pb-4"
+          className="px-3 pb-3 lg:px-4"
           onSubmit={(event) => {
             event.preventDefault();
             void submit();
           }}
         >
-          <div className="rounded-2xl border bg-card p-2 shadow-[0_8px_30px_rgb(0_0_0/0.06)] focus-within:ring-2 focus-within:ring-ring/40">
-            <Textarea
-              aria-label="Reply in thread"
-              className="max-h-40 min-h-14 resize-none border-0 bg-transparent px-2 py-2 shadow-none focus-visible:ring-0 dark:bg-transparent"
-              disabled={busy}
-              onChange={(event) => setPrompt(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  void submit();
-                }
-              }}
-              placeholder={busy ? "Mecatl is working…" : "Reply in thread…"}
-              ref={textarea}
-              value={prompt}
-            />
-            <div className="flex items-center justify-between gap-2 px-1 pb-1 pt-2">
-              <div className="flex items-center gap-1.5">
+          <div className="relative rounded-2xl bg-zinc-50 dark:bg-zinc-900">
+            <div className="relative rounded-2xl border bg-background transition-colors focus-within:border-zinc-400 dark:focus-within:border-zinc-600">
+              <div className="px-4 pt-4 pb-2">
+                <Textarea
+                  aria-label="Reply in thread"
+                  className="field-sizing-content max-h-40 min-h-[4.5rem] resize-none rounded-none border-0 bg-transparent px-0 py-0 text-sm shadow-none placeholder:opacity-60 focus-visible:ring-0 dark:bg-transparent"
+                  disabled={busy}
+                  onChange={(event) => setPrompt(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      void submit();
+                    }
+                  }}
+                  placeholder={busy ? "Mecatl is working…" : "Reply in thread…"}
+                  ref={textarea}
+                  value={prompt}
+                />
+              </div>
+              <div className="flex items-center gap-1 px-2 pb-2">
                 {voice.isSupported && (
                   <Button
                     aria-label={voice.isListening ? "Stop dictation" : "Start dictation"}
                     aria-pressed={voice.isListening}
-                    className="size-8 shrink-0 rounded-full"
+                    className={
+                      voice.isListening
+                        ? "size-8 shrink-0 rounded-full bg-brand/10 text-brand hover:bg-brand/20"
+                        : "size-8 shrink-0 rounded-full text-muted-foreground hover:bg-muted/60"
+                    }
                     disabled={busy}
                     onClick={voice.toggle}
                     size="icon"
                     type="button"
-                    variant={voice.isListening ? "secondary" : "ghost"}
+                    variant="ghost"
                   >
                     {voice.isListening ? <MicOff aria-hidden="true" /> : <Mic aria-hidden="true" />}
                   </Button>
                 )}
+                <Button
+                  aria-label={busy ? "Mecatl is working" : "Send reply"}
+                  className="ml-auto size-8 shrink-0 rounded-full bg-brand text-brand-foreground hover:bg-brand/90"
+                  disabled={busy || recovery.phase !== "ready" || !prompt.trim()}
+                  size="icon"
+                  type="submit"
+                >
+                  {busy ? (
+                    <LoaderCircle aria-hidden="true" className="animate-spin" />
+                  ) : (
+                    <ArrowUp aria-hidden="true" />
+                  )}
+                </Button>
               </div>
-              <Button
-                aria-label={busy ? "Mecatl is working" : "Send reply"}
-                className="size-8 shrink-0 rounded-full"
-                disabled={busy || recovery.phase !== "ready" || !prompt.trim()}
-                size="icon"
-                type="submit"
-              >
-                {busy ? (
-                  <LoaderCircle aria-hidden="true" className="animate-spin" />
-                ) : (
-                  <ArrowUp aria-hidden="true" />
-                )}
-              </Button>
             </div>
+            {/* Hidden without a deployment model inventory: see the note in
+                chat-composer.tsx. */}
+            {models.length > 0 ? (
+              <div className="-mt-4 flex items-center gap-1 rounded-b-2xl border border-t-0 border-zinc-300 bg-zinc-50 px-2 pt-5 pb-1.5 dark:border-zinc-700 dark:bg-zinc-900">
+                <ModelEffortMenu
+                  disabled={busy || !sessionDetail.data?.capabilities.modelSelection}
+                  effort={model?.reasoningEffort ?? "default"}
+                  groupedModels={groupModels(models)}
+                  model={model}
+                  onEffortChange={(effort) => model && void forkToModel(model, effort)}
+                  onModelChange={(nextModel) =>
+                    nextModel && void forkToModel(nextModel, model?.reasoningEffort ?? "default")
+                  }
+                />
+              </div>
+            ) : null}
           </div>
         </form>
         {!escapeAsk && !run.isRunning && prompt && !escapeClearHint && (
@@ -392,22 +425,6 @@ export function SideThreadPanel({
             Press Escape again to clear the unsent draft.
           </p>
         )}
-        {/* Hidden without a deployment model inventory: see the note in
-            chat-composer.tsx. */}
-        {models.length > 0 ? (
-          <div className="px-4 pb-4">
-            <ModelEffortMenu
-              disabled={busy || !sessionDetail.data?.capabilities.modelSelection}
-              effort={model?.reasoningEffort ?? "default"}
-              groupedModels={groupModels(models)}
-              model={model}
-              onEffortChange={(effort) => model && void forkToModel(model, effort)}
-              onModelChange={(nextModel) =>
-                nextModel && void forkToModel(nextModel, model?.reasoningEffort ?? "default")
-              }
-            />
-          </div>
-        ) : null}
       </SidePanelShell>
     </EscapeHintContext.Provider>
   );
