@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { AlertCircle, Check, CircleHelp } from "lucide-react";
 import { type Ref, useEffect, useId, useRef, useState } from "react";
+import { cn } from "@/lib/utils";
 import { branchLabel, type DelegationFocus, delegationStateLabel } from "./delegation-card";
 import type {
   DelegationFleet,
@@ -38,17 +40,20 @@ function initialFamily(fleet: DelegationFleet): Family {
 
 /** Read-only delegated activity; the surrounding side-panel frame remains independently owned. */
 export function SessionActivityContent({
+  family: requestedFamily,
   fleet,
   focus,
   onFocusChange,
 }: {
+  /** The family to open on, as the header's fleet chip asks; else the busiest one. */
+  family?: Family;
   fleet: DelegationFleet;
   focus?: DelegationFocus;
   onFocusChange: (focus?: DelegationFocus) => void;
 }) {
   const id = useId();
   const [roster, setRoster] = useState(() => ({
-    family: initialFamily(fleet),
+    family: requestedFamily ?? initialFamily(fleet),
     sessionId: fleet.sessionId,
   }));
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -85,16 +90,18 @@ export function SessionActivityContent({
   }
 
   return (
-    <div className="flex min-h-0 min-w-0 max-w-full flex-col gap-4 p-4 text-sm [overflow-wrap:anywhere]">
+    <div className="flex min-h-0 min-w-0 max-w-full flex-col gap-3 px-4 py-3 text-sm [overflow-wrap:anywhere]">
       {fleet.incompleteHistory && (
         <p className="rounded-md border border-warning/50 bg-warning/10 px-3 py-2 text-xs">
           Activity history incomplete. Only observed events are shown; an unfinished outcome may be
           unknown.
         </p>
       )}
+      {/* The Tabs primitive's look (TabsList/TabsTrigger), kept on this
+          tablist so its family focus and keyboard rules stay as they are. */}
       <div
         aria-label="Activity families"
-        className="grid min-w-0 grid-cols-3 gap-1 rounded-lg bg-muted/40 p-1"
+        className="grid h-9 min-w-0 grid-cols-3 items-center rounded-lg bg-muted p-[3px] text-muted-foreground"
         role="tablist"
       >
         {families.map((item) => (
@@ -102,7 +109,7 @@ export function SessionActivityContent({
             aria-label={`${familyLabels[item]} (${entries(fleet, item).length})`}
             aria-controls={`${id}-panel`}
             aria-selected={family === item}
-            className="flex min-w-0 flex-col items-center justify-center rounded-md px-0.5 py-2 text-center text-[11px] font-medium leading-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[active=true]:bg-background data-[active=true]:shadow-sm"
+            className="flex h-[calc(100%-1px)] min-w-0 items-center justify-center gap-1 rounded-md px-1 text-xs font-medium whitespace-nowrap text-foreground transition-[color,box-shadow] focus-visible:outline-1 focus-visible:outline-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[active=true]:bg-background data-[active=true]:shadow-sm dark:text-muted-foreground dark:data-[active=true]:bg-card dark:data-[active=true]:text-foreground"
             data-active={family === item}
             id={`${id}-${item}`}
             key={item}
@@ -115,8 +122,10 @@ export function SessionActivityContent({
             tabIndex={family === item ? 0 : -1}
             type="button"
           >
-            <span className="whitespace-nowrap">{familyLabels[item]}</span>
-            <span className="text-muted-foreground">({entries(fleet, item).length})</span>
+            <span className="min-w-0 truncate">{familyLabels[item]}</span>
+            <span className="tabular-nums text-muted-foreground">
+              ({entries(fleet, item).length})
+            </span>
           </button>
         ))}
       </div>
@@ -127,20 +136,21 @@ export function SessionActivityContent({
         role="tabpanel"
       >
         <section className="min-w-0">
-          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          <h3 className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
             Roster
           </h3>
           {entries(fleet, family).length === 0 ? (
-            <p className="text-sm text-muted-foreground">
+            <p className="py-4 text-sm text-muted-foreground">
               No observed {familyLabels[family].toLowerCase()} activity.
             </p>
           ) : (
-            <div className="flex min-w-0 flex-col gap-1">
+            <div className="flex min-w-0 flex-col">
               {family === "subagent" &&
                 fleet.subagents.map((item) => (
                   <RosterButton
                     key={item.key}
                     onClick={() => onFocusChange({ family: "subagent", key: item.key })}
+                    state={delegationStateLabel(item.state, item)}
                     selected={selected?.key === item.key}
                   >
                     Subagent {item.childId} · {delegationStateLabel(item.state, item)}
@@ -151,6 +161,7 @@ export function SessionActivityContent({
                   <RosterButton
                     key={item.key}
                     onClick={() => onFocusChange({ family: "parallel", key: item.key })}
+                    state={delegationStateLabel(item.state, item)}
                     selected={selected?.key === item.key}
                   >
                     Parallel group {item.parentCallId} · {delegationStateLabel(item.state, item)}
@@ -161,6 +172,7 @@ export function SessionActivityContent({
                   <RosterButton
                     key={item.key}
                     onClick={() => onFocusChange({ family: "team", key: item.key })}
+                    state={delegationStateLabel(item.state, item)}
                     selected={selected?.key === item.key}
                   >
                     Team {item.teamId} · {delegationStateLabel(item.state, item)}
@@ -195,24 +207,52 @@ export function SessionActivityContent({
   );
 }
 
+/** The prototype's roster glyph for one observed outcome label. */
+function RosterGlyph({ state }: { state: string }) {
+  if (state === "Running") {
+    return (
+      <span
+        aria-hidden="true"
+        className="mt-1 size-2 shrink-0 animate-pulse rounded-full bg-brand"
+      />
+    );
+  }
+  if (state === "Failed" || state.startsWith("Stopped")) {
+    return <AlertCircle aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-destructive" />;
+  }
+  if (state === "Outcome unknown") {
+    return (
+      <CircleHelp aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+    );
+  }
+  return <Check aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />;
+}
+
 function RosterButton({
   children,
   onClick,
   selected,
+  state,
 }: {
   children: React.ReactNode;
   onClick: () => void;
   selected: boolean;
+  /** The row's observed outcome label, shown as the prototype's state glyph. */
+  state: string;
 }) {
   return (
     <button
       aria-pressed={selected}
-      className="min-w-0 max-w-full rounded-md border border-border/70 px-3 py-2 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[selected=true]:border-brand data-[selected=true]:bg-brand/5"
+      className={cn(
+        "flex min-w-0 max-w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-xs text-foreground/90 transition-colors hover:bg-secondary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[selected=true]:bg-secondary",
+        (state === "Failed" || state.startsWith("Stopped")) && "text-destructive",
+      )}
       data-selected={selected}
       onClick={onClick}
       type="button"
     >
-      {children}
+      <RosterGlyph state={state} />
+      <span className="min-w-0 flex-1">{children}</span>
     </button>
   );
 }
@@ -239,7 +279,7 @@ function ObservedStatus({
   stop?: string;
 }) {
   return (
-    <p aria-atomic="true" aria-live="polite" className="text-sm font-medium">
+    <p aria-atomic="true" aria-live="polite" className="text-xs font-medium">
       State: {delegationStateLabel(state, { cause, failed, stop })}
       {stop && <span> · Stop: {stop}</span>}
     </p>
@@ -249,7 +289,7 @@ function ObservedStatus({
 function ToolFacts({ currentTool, toolCount }: { currentTool?: string; toolCount?: number }) {
   if (currentTool === undefined && toolCount === undefined) return null;
   return (
-    <p className="text-sm text-muted-foreground">
+    <p className="text-xs text-muted-foreground">
       {toolCount !== undefined && `Tools: ${toolCount}`}
       {toolCount !== undefined && currentTool && " · "}
       {currentTool && `Current tool: ${currentTool}`}
@@ -265,8 +305,8 @@ function SubagentDetails({
   item: SubagentActivity;
 }) {
   return (
-    <section className="min-w-0 space-y-3 border-t pt-4">
-      <h3 className="font-semibold" ref={headingRef} tabIndex={-1}>
+    <section className="min-w-0 space-y-2 border-t pt-3 text-xs">
+      <h3 className="text-sm font-medium" ref={headingRef} tabIndex={-1}>
         Subagent {item.childId}
       </h3>
       <HistoryNotice item={item} />
@@ -294,19 +334,19 @@ function ParallelDetails({
 }) {
   const branch = item.branches.find((entry) => entry.key === focus?.branchKey);
   return (
-    <section className="min-w-0 space-y-3 border-t pt-4">
-      <h3 className="font-semibold" ref={branch ? undefined : headingRef} tabIndex={-1}>
+    <section className="min-w-0 space-y-2 border-t pt-3 text-xs">
+      <h3 className="text-sm font-medium" ref={branch ? undefined : headingRef} tabIndex={-1}>
         Parallel group {item.parentCallId}
       </h3>
       <HistoryNotice item={item} />
       <ObservedStatus state={item.state} stop={item.stop} />
-      <p className="flex min-w-0 flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground">
+      <p className="flex min-w-0 flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
         {item.join && <span>Join: {item.join}</span>}
         {item.branchCount !== undefined && <span>Branches: {item.branchCount}</span>}
         {item.winner !== undefined && <span>Winner: Branch {item.winner + 1}</span>}
       </p>
       <div className="min-w-0 space-y-2">
-        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <h4 className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
           Branch states
         </h4>
         {item.branches.length === 0 && <p>No branch events observed.</p>}
@@ -316,6 +356,7 @@ function ParallelDetails({
             onClick={() =>
               onFocusChange({ family: "parallel", key: item.key, branchKey: entry.key })
             }
+            state={delegationStateLabel(entry.state, entry)}
             selected={branch?.key === entry.key}
           >
             <span className="block font-medium">
@@ -335,7 +376,7 @@ function ParallelDetails({
       {branch ? (
         <BranchDetails branch={branch} headingRef={headingRef} />
       ) : (
-        <p className="text-sm text-muted-foreground">Choose a branch to see its trace.</p>
+        <p className="text-xs text-muted-foreground">Choose a branch to see its trace.</p>
       )}
     </section>
   );
@@ -349,7 +390,7 @@ function BranchDetails({
   headingRef: Ref<HTMLHeadingElement>;
 }) {
   return (
-    <section className="min-w-0 space-y-2 border-t pt-3">
+    <section className="min-w-0 space-y-2 border-t pt-3 text-xs">
       <h4 className="font-medium" ref={headingRef} tabIndex={-1}>
         {branchLabel(branch)}
       </h4>
@@ -376,8 +417,12 @@ function TeamDetails({
 }) {
   const selectedMember = item.members.find((member) => member.key === focus?.memberKey);
   return (
-    <section className="min-w-0 space-y-4 border-t pt-4">
-      <h3 className="font-semibold" ref={selectedMember ? undefined : headingRef} tabIndex={-1}>
+    <section className="min-w-0 space-y-3 border-t pt-3 text-xs">
+      <h3
+        className="text-sm font-medium"
+        ref={selectedMember ? undefined : headingRef}
+        tabIndex={-1}
+      >
         Team {item.teamId}
       </h3>
       <HistoryNotice item={item} />
@@ -386,10 +431,10 @@ function TeamDetails({
       {selectedMember ? (
         <MemberDetails headingRef={headingRef} member={selectedMember} />
       ) : (
-        <p className="text-sm text-muted-foreground">Choose a member to see its trace.</p>
+        <p className="text-xs text-muted-foreground">Choose a member to see its trace.</p>
       )}
       <section className="min-w-0 space-y-2">
-        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <h4 className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
           Roster
         </h4>
         {item.members.length === 0 && <p>No members observed.</p>}
@@ -397,6 +442,7 @@ function TeamDetails({
           <RosterButton
             key={member.key}
             onClick={() => onFocusChange({ family: "team", key: item.key, memberKey: member.key })}
+            state={memberOutcome(member)}
             selected={selectedMember?.key === member.key}
           >
             <span className="block font-medium">
@@ -409,13 +455,13 @@ function TeamDetails({
         ))}
       </section>
       <section className="min-w-0 space-y-2">
-        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <h4 className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
           Tasks
         </h4>
         {item.tasks.length === 0 && <p>No current tasks observed.</p>}
         <ul className="min-w-0 space-y-2">
           {item.tasks.map((task) => (
-            <li className="min-w-0 rounded-md border border-border/70 px-3 py-2" key={task.id}>
+            <li className="min-w-0 rounded-md border border-border px-2 py-1.5" key={task.id}>
               <p className="font-medium">
                 Task {task.id} · {task.state}
               </p>
@@ -427,13 +473,13 @@ function TeamDetails({
         </ul>
       </section>
       <section className="min-w-0 space-y-2">
-        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <h4 className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
           Findings
         </h4>
         {item.findings.length === 0 && <p>No findings observed.</p>}
         <ul className="min-w-0 space-y-2">
           {withOccurrenceKeys(item.findings).map(({ item: finding, key }) => (
-            <li className="min-w-0 rounded-md border border-border/70 px-3 py-2" key={key}>
+            <li className="min-w-0 rounded-md border border-border px-2 py-1.5" key={key}>
               <span className="font-medium">{finding.member}: </span>
               {finding.body}
             </li>
@@ -458,7 +504,7 @@ function MemberDetails({
   member: TeamMemberActivity;
 }) {
   return (
-    <section className="min-w-0 space-y-2 border-t pt-3">
+    <section className="min-w-0 space-y-2 border-t pt-3 text-xs">
       <h4 className="font-medium" ref={headingRef} tabIndex={-1}>
         Member {member.name}
       </h4>
@@ -477,7 +523,7 @@ function MemberDetails({
 function Trace({ trace }: { trace: DelegationTrace }) {
   return (
     <section aria-label="Recent trace" aria-live="off" className="min-w-0 space-y-2">
-      <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <h4 className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
         Recent trace
       </h4>
       {trace.omitted > 0 && (
@@ -486,10 +532,13 @@ function Trace({ trace }: { trace: DelegationTrace }) {
       {trace.entries.length === 0 ? (
         <p className="text-sm text-muted-foreground">No trace entries observed.</p>
       ) : (
-        <ol className="min-w-0 space-y-2">
+        <ol className="min-w-0 space-y-1">
           {withOccurrenceKeys(trace.entries).map(({ item: entry, key }) => (
             <li
-              className="min-w-0 rounded-md border border-border/70 bg-muted/20 px-3 py-2 text-xs"
+              className={cn(
+                "min-w-0 rounded-md border border-border bg-muted/30 px-2 py-1 font-mono text-[11px]",
+                entry.isError && "border-destructive/40 text-destructive/90",
+              )}
               key={key}
             >
               <p className="font-medium">

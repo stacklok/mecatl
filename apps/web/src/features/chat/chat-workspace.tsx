@@ -37,23 +37,19 @@ import { useNavigate } from "@tanstack/react-router";
 import {
   AlertCircle,
   ArrowDown,
-  Bot,
   Bug,
   Copy,
   Eraser,
-  ExternalLink,
   GitFork,
   ListTodo,
   ListTree,
   LoaderCircle,
-  MessageSquareText,
   MoreHorizontal,
   NotebookPen,
   Pencil,
   RotateCcw,
   Square,
   Trash2,
-  User,
   Wrench,
 } from "lucide-react";
 import {
@@ -98,12 +94,14 @@ import { errorMessage } from "../../lib/error-message";
 import { modelPreferenceId, useDisabledModels } from "../../lib/model-preferences";
 import {
   defaultAgentName,
+  useAgentAvatar,
   useAgentDisplayName,
   useEnterSendBehavior,
   useExpandDetails,
   useSessionListSide,
   useShowToolCalls,
   useStartOn,
+  useUserAvatar,
   useUserDisplayName,
 } from "../../lib/profile-preferences";
 import { useIsMobile } from "../../lib/use-mobile";
@@ -148,7 +146,7 @@ import {
   toolResult,
 } from "./chat-state";
 import { ChatStatus, type ChatStatusFacts, deriveChatStatus } from "./chat-status";
-import { ChatTranscript, isNearTranscriptBottom } from "./chat-transcript";
+import { ChatTranscript, isNearTranscriptBottom, MessageImages } from "./chat-transcript";
 import {
   type ContentPreview,
   ContentPreviewPanel,
@@ -169,15 +167,19 @@ import { DraftGreeting } from "./draft-greeting";
 import { EscapeHintContext } from "./escape-hint-context";
 import { clearFailedRun, readFailedRun, saveFailedRun } from "./failed-run-storage";
 import { FailedTurnCard } from "./failed-turn-card";
+import { FleetStatusChip } from "./fleet-status-chip";
 import { pickLatestEligibleChat } from "./latest-chat";
 import { appendCanvasQuote, useLocalCanvas } from "./local-canvas";
-import {
-  type ChatImage,
-  chatImageDisplay,
-  type ImageAttachment,
-  imagePreview,
-} from "./local-file-preview";
+import { type ChatImage, type ImageAttachment, imagePreview } from "./local-file-preview";
 import { MarkdownMessage } from "./markdown-message";
+import {
+  MessageActions,
+  MessageAvatar,
+  MessageRow,
+  messageAuthorClass,
+  messageBodyClass,
+  messageRowClass,
+} from "./message-bubble";
 import { MessageMinimap } from "./message-minimap";
 import { PermissionModeBadge } from "./permission-mode-badge";
 import { exactPlanControlAvailability, followPlanContinuationFromBff } from "./plan-continuation";
@@ -216,6 +218,7 @@ import {
 } from "./steer-trace";
 import { hasVisibleStopReason, StopReasonChip } from "./stop-reason-chip";
 import { StreamingIndicator } from "./streaming-indicator";
+import { TextSelectionToolbar } from "./text-selection-toolbar";
 import {
   matchingThreadKeyForMessage,
   readThreadAssociations,
@@ -227,7 +230,8 @@ import {
   useThreadAssociations,
   useThreadSessionIds,
 } from "./thread-map";
-import { type ToolActivity, ToolActivityList } from "./tool-activity";
+import type { ToolActivity } from "./tool-activity";
+import { ToolCallList } from "./tool-call-list";
 import { formatTurnStat, usageMenuLines } from "./turn-stats";
 import { useChatMessages } from "./use-chat-messages";
 import { shouldRefreshTranscriptAfterInventory } from "./use-delivery-follow";
@@ -369,6 +373,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   );
   const [delegationAnchors, setDelegationAnchors] = useState<Record<string, DelegationAnchor>>({});
   const [activityFocus, setActivityFocus] = useState<DelegationFocus>();
+  const [activityFamily, setActivityFamily] = useState<DelegationFocus["family"]>();
   const [activityFocusRequest, setActivityFocusRequest] = useState(0);
   const activityOpener = useRef<HTMLButtonElement>(null);
   const activityOpenerFocus = useRef<DelegationFocus>(undefined);
@@ -400,6 +405,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const [authorizationBusy, setAuthorizationBusy] = useState<string>();
   const [inspectionOpen, setInspectionOpen] = useState(false);
   const [selectionAction, setSelectionAction] = useState<SelectionAction>();
+  const [appendText, setAppendText] = useState<string>();
   const [confirmPrompt, setConfirmPrompt] = useState<ConfirmPrompt>();
   const [textPrompt, setTextPrompt] = useState<TextPrompt>();
   const [textPromptValue, setTextPromptValue] = useState("");
@@ -477,6 +483,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const chatFolders = useChatFolders();
   const agentName = useAgentDisplayName().value.trim() || defaultAgentName;
   const userName = useUserDisplayName().value.trim() || "You";
+  const agentAvatar = useAgentAvatar().value;
+  const userAvatar = useUserAvatar().value;
   const sessionListSide = useSessionListSide().value;
   const { setValue: setShowToolCalls, value: showToolCalls } = useShowToolCalls();
   const { setValue: setExpandDetails, value: expandDetails } = useExpandDetails();
@@ -557,6 +565,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     setDelegationFleet(createDelegationFleet(sessionId ?? ""));
     setDelegationAnchors({});
     setActivityFocus(undefined);
+    setActivityFamily(undefined);
     activityOpenerFocus.current = undefined;
     activityOpener.current = null;
     // A run belongs to one session: leaving it stops its stream here, so its
@@ -2558,7 +2567,11 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     if (!event.currentTarget.contains(range.commonAncestorContainer)) return;
     const rect = range.getBoundingClientRect();
     setSelectionAction({
-      left: Math.min(window.innerWidth - 140, Math.max(12, rect.left + rect.width / 2)),
+      // The toolbar centres on this point; keep its three actions on screen.
+      left: Math.min(
+        window.innerWidth - SELECTION_TOOLBAR_HALF_WIDTH,
+        Math.max(SELECTION_TOOLBAR_HALF_WIDTH, rect.left + rect.width / 2),
+      ),
       text,
       top: Math.max(12, rect.top - 12),
     });
@@ -2788,6 +2801,18 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                 </Badge>
               )}
             </div>
+            <FleetStatusChip
+              className="max-[499px]:hidden"
+              fleet={sessionId ? visibleDelegationFleet : undefined}
+              onOpen={(family, opener) => {
+                activityOpener.current = opener;
+                activityOpenerFocus.current = undefined;
+                setActivityFocus(undefined);
+                setActivityFamily(family);
+                setActivityFocusRequest((value) => value + 1);
+                setContentPreview({ kind: "activity" });
+              }}
+            />
             <Button
               aria-label="Open session activity"
               disabled={!sessionId}
@@ -2795,6 +2820,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                 activityOpener.current = event.currentTarget;
                 activityOpenerFocus.current = undefined;
                 setActivityFocus(undefined);
+                setActivityFamily(undefined);
                 setActivityFocusRequest((value) => value + 1);
                 setContentPreview({ kind: "activity" });
               }}
@@ -3044,8 +3070,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
               }}
               ref={transcriptScroll}
             >
-              <div className="mx-auto flex min-h-full max-w-3xl flex-col py-8 pl-4 pr-12 sm:pl-6 sm:pr-12">
-                {showSteerTrace && <SteerTrace entries={steerTrace} />}
+              <div className="mx-auto flex min-h-full max-w-3xl flex-col pt-2 pb-6 pl-4 pr-12 sm:pl-6">
                 {transcript.isPending && sessionId && !isRunning ? (
                   <p className="m-auto text-sm text-muted-foreground">Loading conversation…</p>
                 ) : messages.length === 0 && approvals.length === 0 ? (
@@ -3064,6 +3089,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                   <EscapeHintContext.Provider value={escapeAsk}>
                     <ApprovalDetailContext.Provider value={openApprovalDetail}>
                       <ChatTranscript
+                        agentAvatar={agentAvatar}
                         agentName={agentName}
                         approvalDisabled={(candidate) =>
                           candidate.tool === "PresentPlan"
@@ -3088,10 +3114,14 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                             : undefined;
                         }}
                         messages={messages}
+                        onCopyMessage={(message) =>
+                          void copyToClipboard(message.content, "Message")
+                        }
                         onOpenActivity={(focus, opener) => {
                           activityOpener.current = opener;
                           activityOpenerFocus.current = focus;
                           setActivityFocus(focus);
+                          setActivityFamily(undefined);
                           setActivityFocusRequest((value) => value + 1);
                           setContentPreview({ kind: "activity" });
                         }}
@@ -3126,6 +3156,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                           );
                           return key ? threadAssociations.byKey[key]?.sessionId : undefined;
                         }}
+                        userAvatar={userAvatar}
                         userName={userName}
                       />
                     </ApprovalDetailContext.Provider>
@@ -3138,6 +3169,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                       activityOpener.current = opener;
                       activityOpenerFocus.current = focus;
                       setActivityFocus(focus);
+                      setActivityFamily(undefined);
                       setActivityFocusRequest((value) => value + 1);
                       setContentPreview({ kind: "activity" });
                     }}
@@ -3146,6 +3178,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
               </div>
             </section>
             <MessageMinimap
+              agentName={agentName}
               approvals={approvals}
               delegationsByMessageId={delegationPlacement.byMessageId}
               key={sessionId ?? "draft"}
@@ -3160,6 +3193,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
               streamingMessageId={
                 isRunning && messages.at(-1)?.role === "assistant" ? messages.at(-1)?.id : undefined
               }
+              userName={userName}
             />
           </div>
 
@@ -3228,6 +3262,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
               retrying={isRunning}
             />
           )}
+          {showSteerTrace && <SteerTrace entries={steerTrace} />}
           <QueuedMessageStrip
             items={queuedMessages.items}
             onDelete={queuedMessages.remove}
@@ -3258,6 +3293,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             </p>
           )}
           <ChatComposer
+            appendText={appendText}
             canForkModel={displayedDetail?.capabilities.modelSelection === true}
             clearDraftSignal={clearDraftSignal}
             configuration={sessionId ? undefined : draftConfiguration}
@@ -3279,6 +3315,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             onPreviewImage={(image) =>
               setContentPreview({ file: imagePreview(image, false), kind: "file" })
             }
+            onAppendConsumed={() => setAppendText(undefined)}
             onSeedConsumed={() => {
               setSeedText(undefined);
               setSeedRequiresConfirmation(false);
@@ -3371,6 +3408,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             activity={{
               fallbackOpener: sessionActivityControl.current,
               fleet: visibleDelegationFleet,
+              family: activityFamily,
               focus: activityFocus,
               focusRequest: activityFocusRequest,
               onFocusChange: setActivityFocus,
@@ -3398,35 +3436,25 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         </EscapeHintContext.Provider>
       )}
       {selectionAction && (
-        <div
-          className="fixed z-50 flex -translate-x-1/2 -translate-y-full gap-1 rounded-lg border bg-popover p-1 text-popover-foreground shadow-lg"
-          style={{ left: selectionAction.left, top: selectionAction.top }}
-        >
-          <Button
-            onClick={() => {
-              void copyToClipboard(selectionAction.text, "Selection");
-              setSelectionAction(undefined);
-            }}
-            size="sm"
-            variant="ghost"
-          >
-            <Copy aria-hidden="true" />
-            Copy
-          </Button>
-          <Button
-            onClick={() => {
-              canvas.setValue(appendCanvasQuote(canvas.value, selectionAction.text));
-              setContentPreview({ kind: "canvas" });
-              setSelectionAction(undefined);
-              window.getSelection()?.removeAllRanges();
-            }}
-            size="sm"
-            variant="ghost"
-          >
-            <NotebookPen aria-hidden="true" />
-            Add to canvas
-          </Button>
-        </div>
+        <TextSelectionToolbar
+          left={selectionAction.left}
+          onAddToCanvas={() => {
+            canvas.setValue(appendCanvasQuote(canvas.value, selectionAction.text));
+            setContentPreview({ kind: "canvas" });
+            setSelectionAction(undefined);
+            window.getSelection()?.removeAllRanges();
+          }}
+          onAddToChat={() => {
+            setAppendText(selectionAction.text);
+            setSelectionAction(undefined);
+            window.getSelection()?.removeAllRanges();
+          }}
+          onCopy={() => {
+            void copyToClipboard(selectionAction.text, "Selection");
+            setSelectionAction(undefined);
+          }}
+          top={selectionAction.top}
+        />
       )}
       <Dialog onOpenChange={(open) => !open && setTextPrompt(undefined)} open={Boolean(textPrompt)}>
         <DialogContent>
@@ -3580,103 +3608,55 @@ export function Message({
   if (!user && !streaming && !message.content && !hasVisibleTools && !hasExtras) {
     return null;
   }
+  const name = user ? userName : agentName;
   return (
-    <article className={`flex gap-3 ${user ? "justify-end" : "justify-start"}`}>
-      {!user && <MessageAvatar avatarUrl={agentAvatar} fallback="agent" name={agentName} />}
-      <div
-        className={
-          user
-            ? "max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-secondary px-4 py-2.5 text-sm leading-6"
-            : "min-w-0 max-w-[90%] text-sm leading-7"
+    <article className={messageRowClass}>
+      <MessageRow
+        actions={
+          <MessageActions
+            onOpenThread={onOpenThread && message.content ? onOpenThread : undefined}
+            threadDisabled={threadDisabled}
+            threadOpen={Boolean(threadSessionId)}
+          />
+        }
+        avatar={
+          <MessageAvatar
+            avatarUrl={user ? userAvatar : agentAvatar}
+            fallback={user ? "user" : "agent"}
+            name={name}
+          />
         }
       >
-        <p
-          className={`mb-1 text-[11px] font-medium ${user ? "text-right text-muted-foreground" : "text-muted-foreground"}`}
-        >
-          {user ? userName : agentName}
-        </p>
+        <p className={messageAuthorClass}>{name}</p>
         {message.reasoning && (
           <ReasoningDisclosure streaming={streaming} text={message.reasoning} />
         )}
         {message.images && message.images.length > 0 && (
-          <div className="mb-2 grid grid-cols-2 gap-2">
-            {message.images.map((image) => {
-              const display = chatImageDisplay(image);
-              return (
-                <div
-                  className="overflow-hidden rounded-lg border bg-background"
-                  key={image.id ?? `${image.name}-${image.data ?? image.url}`}
-                >
-                  {display.kind === "link" ? (
-                    <a
-                      className="flex items-center gap-2 px-3 py-2 text-sm text-foreground underline underline-offset-2 hover:text-brand-ink"
-                      href={display.href}
-                      rel="noopener noreferrer"
-                      target="_blank"
-                    >
-                      <ExternalLink aria-hidden="true" className="size-4 shrink-0" />
-                      <span className="min-w-0 truncate">{image.name}</span>
-                    </a>
-                  ) : display.kind === "name" ? (
-                    <span className="block truncate px-3 py-2 text-sm text-muted-foreground">
-                      {image.name}
-                    </span>
-                  ) : onPreviewImage ? (
-                    <button
-                      aria-label={`Preview ${image.name}`}
-                      className="block w-full"
-                      onClick={() => onPreviewImage(image)}
-                      type="button"
-                    >
-                      <img
-                        alt={image.name}
-                        className="max-h-48 w-full object-cover"
-                        src={display.src}
-                      />
-                    </button>
-                  ) : (
-                    <img
-                      alt={image.name}
-                      className="max-h-48 w-full object-cover"
-                      src={display.src}
-                    />
-                  )}
-                </div>
-              );
-            })}
-          </div>
+          <MessageImages images={message.images} onPreviewImage={onPreviewImage} />
         )}
         {message.content ? (
-          user ? (
-            message.content
-          ) : (
-            <MarkdownMessage>{message.content}</MarkdownMessage>
-          )
+          <div className={messageBodyClass}>
+            {user ? (
+              <p className="whitespace-pre-wrap">{message.content}</p>
+            ) : (
+              <MarkdownMessage>{message.content}</MarkdownMessage>
+            )}
+          </div>
         ) : message.tools?.length ? null : streaming ? (
           <StreamingIndicator />
         ) : null}
-        {(showToolCalls || matching.length > 0) && message.tools && message.tools.length > 0 && (
-          <ToolActivityList
+        {hasVisibleTools && message.tools && (
+          <ToolCallList
             approvalDisabled={approvalDisabled}
             approvalUncertain={approvalUncertain}
-            approvals={matching.filter((approval) => approval.tool !== "PresentPlan")}
+            approvals={matching}
             onPreview={onPreviewTool}
             onRespondToApproval={onRespondToApproval}
+            onRespondToPlan={onRespondToPlan}
+            planUnavailableReason={planUnavailableReason}
             tools={message.tools}
           />
         )}
-        {matching
-          .filter((approval) => approval.tool === "PresentPlan")
-          .map((approval) => (
-            <PlanReviewCard
-              approval={approval}
-              disabled={!approval.controlTarget || (approvalDisabled?.(approval) ?? false)}
-              key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
-              onRespond={(verdict) => onRespondToPlan?.(approval, verdict)}
-              uncertain={approvalUncertain?.(approval)}
-              unavailableReason={planUnavailableReason?.(approval)}
-            />
-          ))}
         {unmatched.map((approval) =>
           approval.tool === "PresentPlan" ? (
             <PlanReviewCard
@@ -3707,58 +3687,24 @@ export function Message({
         )}
         {!streaming && message.turnStat && (
           <p
-            className="mt-1.5 text-[11px] tabular-nums text-muted-foreground/70"
+            className="mt-1 text-[11px] tabular-nums text-muted-foreground/70"
             title="This turn's tokens sent ↑ and received ↓, model time, and the share of input served from the prompt cache."
           >
             {message.turnStat}
           </p>
         )}
-        {onOpenThread && message.content && (
-          <button
-            aria-label={threadSessionId ? "Open side thread" : "Reply in side thread"}
-            className="mt-2 flex items-center gap-1.5 rounded-full px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
-            disabled={threadDisabled}
-            onClick={onOpenThread}
-            type="button"
-          >
-            <MessageSquareText aria-hidden="true" className="size-3.5" />
-            {threadSessionId ? "Open thread" : "Reply in thread"}
-          </button>
-        )}
-      </div>
-      {user && <MessageAvatar avatarUrl={userAvatar} fallback="user" name={userName} />}
+      </MessageRow>
     </article>
   );
 }
+
+/** Half the selection toolbar's width plus a margin, in CSS pixels. */
+const SELECTION_TOOLBAR_HALF_WIDTH = 180;
 
 interface SelectionAction {
   left: number;
   text: string;
   top: number;
-}
-
-function MessageAvatar({
-  avatarUrl,
-  fallback,
-  name,
-}: {
-  avatarUrl: string;
-  fallback: "agent" | "user";
-  name: string;
-}) {
-  return (
-    <span
-      className={`mt-1 flex size-7 shrink-0 items-center justify-center overflow-hidden rounded-full ${fallback === "agent" ? "bg-brand/10 text-brand-ink" : "bg-muted text-muted-foreground"}`}
-    >
-      {avatarUrl ? (
-        <img alt={name} className="size-full object-cover" src={avatarUrl} />
-      ) : fallback === "agent" ? (
-        <Bot aria-hidden="true" className="size-4" />
-      ) : (
-        <User aria-hidden="true" className="size-4" />
-      )}
-    </span>
-  );
 }
 
 function addUsage(

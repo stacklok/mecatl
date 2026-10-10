@@ -14,6 +14,7 @@ import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState }
 import { Badge } from "@/components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Textarea } from "../../components/ui/textarea";
+import { cn } from "../../lib/utils";
 import { type ApprovalDetail, ApprovalDetailPanel } from "./approval-detail-panel";
 import {
   type AuthorizationHandoff,
@@ -24,11 +25,14 @@ import { HighlightedCode } from "./code-highlight";
 import type { DelegationFocus } from "./delegation-card";
 import type { DelegationFleet } from "./delegation-fleet";
 import { SessionActivityContent } from "./delegation-panel";
+import { parseDiffArgs, ToolDiff } from "./edit-diff";
 import type { LocalFilePreview } from "./local-file-preview";
 import { MarkdownMessage } from "./markdown-message";
 import { SidePanelShell } from "./side-panel-shell";
 import { SideThreadPanel } from "./side-thread-panel";
 import type { ToolActivity } from "./tool-activity";
+import { statusDotClass, toolStatus } from "./tool-call-list";
+import { friendlyToolName } from "./tool-summary";
 
 export type ContentPreview =
   | { askId: string; kind: "approval"; runId: string }
@@ -44,6 +48,8 @@ type StaticPreview = Exclude<ContentPreview, { kind: "thread" }>;
 
 interface ActivityPreviewState {
   fallbackOpener?: HTMLButtonElement | null;
+  /** The family the panel opens on when it has no focus. */
+  family?: DelegationFocus["family"];
   fleet: DelegationFleet;
   focus?: DelegationFocus;
   focusRequest: number;
@@ -247,6 +253,7 @@ function GenericPreviewPanel({
       ) : preview.kind === "activity" && activity ? (
         <SessionActivityContent
           key={activity.focusRequest}
+          family={activity.family}
           fleet={activity.fleet}
           focus={activity.focus}
           onFocusChange={activity.onFocusChange}
@@ -296,31 +303,86 @@ function LocalCanvasEditor({
   );
 }
 
+/**
+ * One call's full detail, ported from the prototype's tool panel: its status,
+ * the input (an Edit or Write as its diff, with Raw back to the formatted
+ * JSON; anything else as that JSON), and the whole output.
+ */
 function ToolResultPreview({ tool }: { tool: ToolActivity }) {
+  const [showRaw, setShowRaw] = useState(false);
+  const status = toolStatus(tool);
+  const head = friendlyToolName(tool.name);
+  const diffable = parseDiffArgs(tool.name, tool.args) !== null;
+  const showDiff = diffable && !showRaw;
   return (
-    <div className="space-y-5 p-4">
-      <PreviewCode label="Input" value={formatStructured(tool.args || "{}")} />
+    <div className="px-4 py-3">
+      <p className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+        <span aria-hidden="true" className={cn("size-1.5 rounded-full", statusDotClass(status))} />
+        {status}
+        {head.mcp && (
+          <span className="truncate font-mono" title="Exact tool name">
+            · {head.raw}
+          </span>
+        )}
+      </p>
+      <div className="flex items-end justify-between gap-2">
+        <PreviewLabel>{showDiff ? "Input — diff" : "Input"}</PreviewLabel>
+        {diffable && (
+          <Button
+            aria-pressed={showRaw}
+            className="mb-1 h-6 px-2 text-xs text-muted-foreground hover:text-foreground"
+            onClick={() => setShowRaw((value) => !value)}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
+            {showRaw ? "Diff" : "Raw"}
+          </Button>
+        )}
+      </div>
+      {showDiff ? (
+        <ToolDiff name={tool.name} rawArgs={tool.args} />
+      ) : (
+        <PreviewCode value={formatStructured(tool.args || "{}")} />
+      )}
+      <PreviewLabel error={tool.isError}>{tool.isError ? "Failed output" : "Output"}</PreviewLabel>
       <PreviewCode
         error={tool.isError}
-        label={tool.isError ? "Failed output" : "Output"}
-        value={formatStructured(tool.output || "No output")}
+        value={
+          tool.output === undefined
+            ? "(still running)"
+            : formatStructured(tool.output || "No output")
+        }
       />
     </div>
   );
 }
 
-function PreviewCode({ error, label, value }: { error?: boolean; label: string; value: string }) {
+function PreviewLabel({ children, error }: { children: string; error?: boolean }) {
   return (
-    <section>
-      <h3
-        className={`mb-2 text-xs font-medium ${error ? "text-destructive" : "text-muted-foreground"}`}
-      >
-        {label}
-      </h3>
-      <pre className="overflow-auto whitespace-pre-wrap rounded-lg border bg-muted/30 p-3 leading-5">
-        <HighlightedCode code={value} />
-      </pre>
-    </section>
+    <h3
+      className={cn(
+        "mt-4 mb-1.5 text-[11px] font-medium uppercase tracking-wide",
+        error ? "text-destructive" : "text-muted-foreground",
+      )}
+    >
+      {children}
+    </h3>
+  );
+}
+
+function PreviewCode({ error, value }: { error?: boolean; value: string }) {
+  return (
+    <pre
+      className={cn(
+        "overflow-auto whitespace-pre-wrap break-words rounded-lg border p-3 text-xs leading-5",
+        error
+          ? "border-destructive/40 bg-destructive/5 text-destructive/90"
+          : "border-border bg-muted/30 text-foreground/80",
+      )}
+    >
+      <HighlightedCode code={value} />
+    </pre>
   );
 }
 
