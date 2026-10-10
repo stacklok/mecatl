@@ -61,31 +61,34 @@ export function ApprovalPanel({
       )}
       ref={card}
     >
-      <div className="flex min-w-0 items-center gap-2">
-        <ShieldAlert
-          aria-hidden="true"
-          className={cn("size-4 shrink-0", destructive ? "text-destructive" : "text-warning")}
-        />
-        <span
-          className={cn(
-            "shrink-0 text-sm font-semibold",
-            destructive ? "text-destructive" : "text-warning",
+      <div className="flex min-w-0 items-start gap-2">
+        {/* Wraps instead of truncating: the tool name is what the reader approves. */}
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+          <ShieldAlert
+            aria-hidden="true"
+            className={cn("size-4 shrink-0", destructive ? "text-destructive" : "text-warning")}
+          />
+          <span
+            className={cn(
+              "text-sm font-semibold",
+              destructive ? "text-destructive" : "text-warning",
+            )}
+          >
+            Permission required
+          </span>
+          {total > 1 && (
+            <Badge className="tabular-nums" variant="outline">
+              {position} of {total}
+            </Badge>
           )}
-        >
-          Permission required
-        </span>
-        {total > 1 && (
-          <Badge className="tabular-nums" variant="outline">
-            {position} of {total}
+          <Badge className="max-w-full font-mono" variant={destructive ? "destructive" : "warning"}>
+            <span className="truncate">{approval.tool || "Tool"}</span>
           </Badge>
-        )}
-        <Badge className="min-w-0 font-mono" variant={destructive ? "destructive" : "warning"}>
-          <span className="truncate">{approval.tool || "Tool"}</span>
-        </Badge>
+        </div>
         {openDetail && (
           <Button
             aria-label="Open in detail panel"
-            className="ml-auto size-7 shrink-0 text-muted-foreground"
+            className="-my-1 size-7 shrink-0 text-muted-foreground"
             onClick={() => openDetail(approval)}
             size="icon"
             title="Open in detail panel"
