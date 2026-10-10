@@ -470,8 +470,26 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const interruptedSettledSession = useRef<string | undefined>(undefined);
   const transcriptScroll = useRef<HTMLDivElement>(null);
   const minimapNavigation = useRef(false);
+  // Following tracks the content's height, not just new messages: a card that
+  // grows in place (a delegation card, an ask, a highlighted code block, an
+  // image) must not leave a reader who sits at the bottom behind it.
+  const followTranscriptBottom = useRef(true);
+  const transcriptContentObserver = useRef<ResizeObserver | null>(null);
+  const observeTranscriptContent = useCallback((node: HTMLDivElement | null) => {
+    transcriptContentObserver.current?.disconnect();
+    transcriptContentObserver.current = null;
+    if (!node || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      const element = transcriptScroll.current;
+      if (!element || !followTranscriptBottom.current || minimapNavigation.current) return;
+      element.scrollTop = element.scrollHeight;
+    });
+    observer.observe(node);
+    transcriptContentObserver.current = observer;
+  }, []);
   const threadCreation = useRef(false);
   const [atTranscriptBottom, setAtTranscriptBottom] = useState(true);
+  followTranscriptBottom.current = atTranscriptBottom;
   const visibleDelegationFleet =
     delegationFleet.sessionId === (sessionId ?? "")
       ? delegationFleet
@@ -3070,7 +3088,10 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
               }}
               ref={transcriptScroll}
             >
-              <div className="mx-auto flex min-h-full max-w-3xl flex-col pt-2 pb-6 pl-4 pr-12 sm:pl-6">
+              <div
+                className="mx-auto flex min-h-full max-w-3xl flex-col pt-2 pb-6 pl-4 pr-12 sm:pl-6"
+                ref={observeTranscriptContent}
+              >
                 {transcript.isPending && sessionId && !isRunning ? (
                   <p className="m-auto text-sm text-muted-foreground">Loading conversation…</p>
                 ) : messages.length === 0 && approvals.length === 0 ? (

@@ -179,6 +179,63 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+class ResizeObserverStub {
+  static instances: ResizeObserverStub[] = [];
+  readonly targets: Element[] = [];
+  constructor(readonly callback: ResizeObserverCallback) {
+    ResizeObserverStub.instances.push(this);
+  }
+  observe(target: Element) {
+    this.targets.push(target);
+  }
+  unobserve() {}
+  disconnect() {
+    this.targets.length = 0;
+  }
+  resize() {
+    this.callback([], this as unknown as ResizeObserver);
+  }
+}
+
+describe("transcript bottom follow", () => {
+  it("follows a card that grows in place while the reader sits at the bottom", async () => {
+    ResizeObserverStub.instances = [];
+    vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+    const bff = new ActivityFixture();
+    const activity = heldStream();
+    bff.responses.set("", [activity.response]);
+    await mountWorkspace(bff);
+    await act(async () => {
+      activity.send(runEvent("user_prompt", 1, "A question"));
+      activity.send(runEvent("message.delta", 2, "First answer"));
+    });
+    await screen.findByText("First answer");
+    const scroll = screen.getByRole("region", { name: "Conversation transcript" });
+    let scrollHeight = 2000;
+    Object.defineProperties(scroll, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, get: () => scrollHeight },
+      scrollTop: { configurable: true, value: 1600, writable: true },
+    });
+    const observer = ResizeObserverStub.instances.find((instance) =>
+      instance.targets.some((target) => scroll.contains(target)),
+    );
+    if (!observer) throw new Error("Nothing observes the transcript's content");
+
+    // No new message: only the content grew, as an expanding card does.
+    scrollHeight = 2600;
+    act(() => observer.resize());
+    expect(scroll.scrollTop).toBe(2600);
+
+    // A reader who scrolled up stays where they are.
+    scroll.scrollTop = 900;
+    fireEvent.scroll(scroll);
+    scrollHeight = 3000;
+    act(() => observer.resize());
+    expect(scroll.scrollTop).toBe(900);
+  });
+});
+
 describe("transcript selection: Add to chat", () => {
   it("adds the selection to the composer's draft after a blank line", async () => {
     const bff = new ActivityFixture();
