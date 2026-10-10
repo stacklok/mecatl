@@ -58,8 +58,15 @@ function StateGlyph({ tone }: { tone: ChipTone }) {
   return <GitBranch aria-hidden="true" className="size-3 shrink-0" />;
 }
 
+/**
+ * A chip's line truncates, with the whole line as its hover title; a phone
+ * has no hover, so there it wraps instead and the chip grows a line.
+ */
+const wrapOnPhone =
+  "min-w-0 truncate max-[499px]:whitespace-normal max-[499px]:[overflow-wrap:anywhere]";
+
 const chipClass =
-  "inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-full bg-secondary px-2.5 py-1 text-left text-xs leading-4 text-muted-foreground transition-colors hover:bg-secondary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2";
+  "inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-full max-[499px]:rounded-2xl bg-secondary px-2.5 py-1 text-left text-xs leading-4 text-muted-foreground transition-colors hover:bg-secondary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2";
 const failedChipClass = "bg-destructive/10 text-destructive hover:bg-destructive/15";
 
 /**
@@ -77,7 +84,7 @@ function ChipLine({
   state: string;
 }) {
   return (
-    <span className="min-w-0 truncate" title={[identity, state, ...facts].join(" · ")}>
+    <span className={wrapOnPhone} title={[identity, state, ...facts].join(" · ")}>
       {identity}
       {" · "}
       <span aria-atomic="true" aria-live="polite">
@@ -91,7 +98,7 @@ function ChipLine({
 function CauseLine({ cause }: { cause?: string }) {
   if (!cause) return null;
   return (
-    <p className="mt-0.5 truncate pl-1 text-xs text-destructive/90" title={cause}>
+    <p className={cn("mt-0.5 pl-1 text-xs text-destructive/90", wrapOnPhone)} title={cause}>
       {cause}
     </p>
   );
