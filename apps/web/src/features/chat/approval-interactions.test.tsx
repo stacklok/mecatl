@@ -1024,9 +1024,7 @@ describe("prototype approval UI on the workspace ledger", () => {
       (document.activeElement as HTMLElement | null)?.blur();
       const card = await startAsk(fixture, sessionId, "run-k", "Keyboard ask");
       await waitFor(() =>
-        expect(document.activeElement).toBe(
-          within(card).getByRole("button", { name: "Allow once" }),
-        ),
+        expect(document.activeElement).toBe(within(card).getByRole("button", { name: "Deny" })),
       );
       let answer!: (response: Response) => void;
       fixture.verdicts.push(new Promise<Response>((resolve) => (answer = resolve)));
@@ -1114,5 +1112,163 @@ describe("prototype approval UI on the workspace ledger", () => {
     await mount(fixture, true);
     const card = await startAsk(fixture, "thread-a", "run-s", "Thread ask");
     expect(within(card).queryByRole("button", { name: "Open in detail panel" })).toBeNull();
+  });
+});
+
+// #2251 review: letter keys answer only the card or panel that holds focus,
+// a new ask takes focus on Deny, and Escape in a detail panel never denies a
+// different ask.
+describe("approval focus scope", () => {
+  async function sendAsks(
+    fixture: Fixture,
+    runId: string,
+    asks: Array<{ askId: string; reason: string }>,
+  ) {
+    await act(async () => {
+      fixture.stream.send({ runId, sessionId: "chat-a", type: "run.started" });
+      for (const [index, { askId, reason }] of asks.entries()) {
+        fixture.stream.send(
+          event("permission.ask", String(index + 1), runId, {
+            args: editArgs,
+            askId,
+            reason,
+            tool: "Edit",
+          }),
+        );
+      }
+    });
+    const cards = [];
+    for (const { reason } of asks)
+      cards.push((await screen.findByText(reason)).closest("section") as HTMLElement);
+    return cards;
+  }
+
+  const pair = [
+    { askId: "ask-1", reason: "First ask" },
+    { askId: "ask-2", reason: "Second ask" },
+  ];
+
+  it("never answers the active ask from another card or from the page body", async () => {
+    const fixture = new Fixture();
+    await mount(fixture);
+    const [first, second] = (await sendAsks(fixture, "run-a", pair)) as [HTMLElement, HTMLElement];
+    const user = userEvent.setup();
+    within(second).getByRole("button", { name: "Raw arguments" }).focus();
+    await user.keyboard("yawnd");
+    within(second).getByRole("button", { name: "Deny" }).focus();
+    await user.keyboard("yw");
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(document.activeElement).toBe(document.body);
+    await user.keyboard("Why does it need this?");
+    expect(fixture.posts()).toEqual([]);
+    for (const card of [first, second])
+      expect(
+        ["Allow once", "Always allow", "Deny"].map(
+          (name) => (within(card).getByRole("button", { name }) as HTMLButtonElement).disabled,
+        ),
+      ).toEqual([false, false, false]);
+  });
+
+  it("focuses Deny on the next ask after a keyboard verdict, so a stray Enter denies it", async () => {
+    const fixture = new Fixture();
+    await mount(fixture);
+    (document.activeElement as HTMLElement | null)?.blur();
+    const user = userEvent.setup();
+    const [first] = (await sendAsks(fixture, "run-k", [
+      { askId: "ask-k", reason: "Keyboard ask" },
+    ])) as [HTMLElement];
+    await waitFor(() =>
+      expect(document.activeElement).toBe(within(first).getByRole("button", { name: "Deny" })),
+    );
+    fixture.verdicts.push(Promise.resolve(new Response(null, { status: 204 })));
+    await user.keyboard("y");
+    await waitFor(() => expect(screen.queryByText("Keyboard ask")).toBeNull());
+
+    const [next] = (await sendAsks(fixture, "run-m", [{ askId: "ask-m", reason: "Next ask" }])) as [
+      HTMLElement,
+    ];
+    await waitFor(() =>
+      expect(document.activeElement).toBe(within(next).getByRole("button", { name: "Deny" })),
+    );
+    fixture.verdicts.push(Promise.resolve(new Response(null, { status: 204 })));
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(fixture.posts()).toHaveLength(2));
+    expect(fixture.posts()).toEqual([
+      {
+        body: { verdict: "allow_once" },
+        method: "POST",
+        pathname: "/api/v1/sessions/chat-a/runs/run-k/permissions/ask-k",
+      },
+      {
+        body: { verdict: "deny" },
+        method: "POST",
+        pathname: "/api/v1/sessions/chat-a/runs/run-m/permissions/ask-m",
+      },
+    ]);
+  });
+
+  it("answers the detail panel's ask once from focus anywhere in its frame", async () => {
+    const fixture = new Fixture();
+    await mount(fixture);
+    const [card] = (await sendAsks(fixture, "run-a", [pair[0] as (typeof pair)[number]])) as [
+      HTMLElement,
+    ];
+    fireEvent.click(within(card).getByRole("button", { name: "Open in detail panel" }));
+    const panel = await screen.findByRole("complementary", { name: "Edit" });
+    // The frame's close button takes focus when the panel opens.
+    expect(document.activeElement).toBe(within(panel).getByRole("button", { name: "Close panel" }));
+    let answer!: (response: Response) => void;
+    fixture.verdicts.push(new Promise<Response>((resolve) => (answer = resolve)));
+    await userEvent.setup().keyboard("w");
+    await waitFor(() => expect(fixture.posts()).toHaveLength(1));
+    expect(fixture.posts()[0]).toEqual({
+      body: { verdict: "allow_always" },
+      method: "POST",
+      pathname: "/api/v1/sessions/chat-a/runs/run-a/permissions/ask-1",
+    });
+    await act(async () => answer(new Response(null, { status: 204 })));
+    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Edit" })).toBeNull());
+    expect(fixture.posts()).toHaveLength(1);
+  });
+
+  it("closes a detail panel on Escape instead of denying a different ask", async () => {
+    const fixture = new Fixture();
+    await mount(fixture);
+    const [first, second] = (await sendAsks(fixture, "run-a", pair)) as [HTMLElement, HTMLElement];
+    const user = userEvent.setup();
+
+    // The panel shows the second ask; the active ask is the first.
+    fireEvent.click(within(second).getByRole("button", { name: "Open in detail panel" }));
+    let panel = await screen.findByRole("complementary", { name: "Edit" });
+    expect(within(panel).getByText("Second ask")).toBeTruthy();
+    expect(panel.contains(document.activeElement)).toBe(true);
+    await user.keyboard("{Escape}");
+    await waitFor(() => {
+      expect(fixture.posts()).toEqual([]);
+      expect(screen.queryByRole("complementary", { name: "Edit" })).toBeNull();
+    });
+    expect(screen.getByText("First ask")).toBeTruthy();
+    expect(screen.getByText("Second ask")).toBeTruthy();
+    // Its hints say so: Escape closes this panel, and no key answers its ask.
+    fireEvent.click(within(second).getByRole("button", { name: "Open in detail panel" }));
+    panel = await screen.findByRole("complementary", { name: "Edit" });
+    expect(within(panel).getByText("Esc to Close")).toBeTruthy();
+    expect(within(panel).queryByText("Esc to Deny")).toBeNull();
+    expect(panel.querySelector("kbd")).toBeNull();
+    fireEvent.click(within(panel).getByRole("button", { name: "Close panel" }));
+
+    // A panel showing the active ask still denies it, as its card does.
+    fireEvent.click(within(first).getByRole("button", { name: "Open in detail panel" }));
+    panel = await screen.findByRole("complementary", { name: "Edit" });
+    expect(within(panel).getByText("Esc to Deny")).toBeTruthy();
+    expect(within(panel).queryByText("Esc to Close")).toBeNull();
+    fixture.verdicts.push(Promise.resolve(new Response(null, { status: 204 })));
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(fixture.posts()).toHaveLength(1));
+    expect(fixture.posts()[0]).toEqual({
+      body: { verdict: "deny" },
+      method: "POST",
+      pathname: "/api/v1/sessions/chat-a/runs/run-a/permissions/ask-1",
+    });
   });
 });

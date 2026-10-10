@@ -2,6 +2,7 @@
 // @vitest-environment happy-dom
 
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApprovalPanel, type ApprovalRequest } from "./approval-panel";
 import { describeAskArgs } from "./ask-args";
@@ -49,6 +50,12 @@ function press(key: string, init: KeyboardEventInit = {}, target: Element = docu
   fireEvent.keyUp(target, { key, ...init });
 }
 
+/** A control inside the rendered card: the keys answer only from focus there. */
+function inCard(name = "Bash"): HTMLElement {
+  const card = screen.getByRole("region", { name: `Permission required: ${name}` });
+  return within(card).getByRole("button", { name: "Raw arguments" });
+}
+
 describe("approval shortcuts", () => {
   it.each([
     ["y", "allow_once"],
@@ -61,18 +68,20 @@ describe("approval shortcuts", () => {
     ["D", "deny"],
   ] as const)("answers %j with %s", (key, verdict) => {
     const respond = renderActive();
-    press(key);
+    press(key, {}, inCard());
     expect(respond.mock.calls).toEqual([[verdict]]);
   });
 
   it("ignores modified, held, composing, and unrelated keys", () => {
     const respond = renderActive();
-    press("y", { ctrlKey: true });
-    press("a", { metaKey: true });
-    press("n", { altKey: true });
-    press("y", { repeat: true });
-    press("y", { isComposing: true });
-    for (const key of ["x", "j", "k", "Enter", " ", "Escape"]) press(key);
+    for (const target of [document.body, inCard()]) {
+      press("y", { ctrlKey: true }, target);
+      press("a", { metaKey: true }, target);
+      press("n", { altKey: true }, target);
+      press("y", { repeat: true }, target);
+      press("y", { isComposing: true }, target);
+      for (const key of ["x", "j", "k", "Enter", " ", "Escape"]) press(key, {}, target);
+    }
     expect(respond).not.toHaveBeenCalled();
   });
 
@@ -128,10 +137,11 @@ describe("approval shortcuts", () => {
   it("offers only Deny when the ask has no arguments", () => {
     const respond = renderActive(ask({ args: "" }));
     const card = screen.getByRole("region", { name: "Permission required: Bash" });
-    press("y");
-    press("w");
+    const deny = within(card).getByRole("button", { name: "Deny" });
+    press("y", {}, deny);
+    press("w", {}, deny);
     expect(respond).not.toHaveBeenCalled();
-    press("n");
+    press("n", {}, deny);
     expect(respond.mock.calls).toEqual([["deny"]]);
     expect([...card.querySelectorAll("kbd")].map((kbd) => kbd.textContent)).toEqual(["N"]);
     expect(document.activeElement).toBe(within(card).getByRole("button", { name: "Deny" }));
@@ -143,10 +153,10 @@ describe("approval shortcuts", () => {
     dialog.setAttribute("role", "dialog");
     dialog.dataset.state = "open";
     document.body.append(dialog);
-    press("y");
+    press("y", {}, inCard());
     expect(respond).not.toHaveBeenCalled();
     dialog.remove();
-    press("y");
+    press("y", {}, inCard());
     expect(respond.mock.calls).toEqual([["allow_once"]]);
   });
 
@@ -173,21 +183,29 @@ describe("approval shortcuts", () => {
         </aside>
       </div>,
     );
-    press("y");
+    // Focus outside both cards answers neither ask, on either surface.
+    for (const target of [
+      document.body,
+      screen.getByRole("button", { name: "Workspace control" }),
+      screen.getByRole("button", { name: "Thread control" }),
+    ]) {
+      for (const key of ["y", "w", "n"]) press(key, {}, target);
+    }
+    expect(workspace).not.toHaveBeenCalled();
+    expect(thread).not.toHaveBeenCalled();
+
+    const workspaceCard = screen.getByText("Workspace ask").closest("section") as HTMLElement;
+    const threadCard = screen.getByText("Thread ask").closest("section") as HTMLElement;
+    press("y", {}, within(workspaceCard).getByRole("button", { name: "Raw arguments" }));
     expect(workspace.mock.calls).toEqual([["allow_once"]]);
     expect(thread).not.toHaveBeenCalled();
 
-    press("n", {}, screen.getByRole("button", { name: "Workspace control" }));
-    expect(workspace.mock.calls).toEqual([["allow_once"], ["deny"]]);
-    expect(thread).not.toHaveBeenCalled();
-
-    press("w", {}, screen.getByRole("button", { name: "Thread control" }));
+    press("w", {}, within(threadCard).getByRole("button", { name: "Raw arguments" }));
     expect(thread.mock.calls).toEqual([["allow_always"]]);
 
-    const threadCard = screen.getByText("Thread ask").closest("section") as HTMLElement;
     press("d", {}, within(threadCard).getByRole("button", { name: "Deny" }));
     expect(thread.mock.calls).toEqual([["allow_always"], ["deny"]]);
-    expect(workspace.mock.calls).toHaveLength(2);
+    expect(workspace.mock.calls).toHaveLength(1);
   });
 
   it("steps focus between the verdict buttons with the arrow keys", () => {
@@ -196,7 +214,8 @@ describe("approval shortcuts", () => {
     const [once, always, deny] = ["Allow once", "Always allow", "Deny"].map((name) =>
       within(card).getByRole("button", { name }),
     );
-    expect(document.activeElement).toBe(once);
+    expect(document.activeElement).toBe(deny);
+    once?.focus();
     const steps: Array<[string, HTMLElement | undefined]> = [
       ["ArrowRight", always],
       ["ArrowDown", deny],
@@ -226,7 +245,7 @@ describe("approval shortcuts", () => {
     expect(document.activeElement).toBe(raw);
   });
 
-  it("focuses Allow once for a new ask only when nothing else holds focus", () => {
+  it("focuses Deny for a new ask only when nothing else holds focus", () => {
     const composer = document.createElement("textarea");
     document.body.append(composer);
     composer.focus();
@@ -236,7 +255,7 @@ describe("approval shortcuts", () => {
     composer.remove();
 
     renderActive();
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Allow once" }));
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Deny" }));
   });
 
   it("shows keycaps that match the keys", () => {
@@ -269,6 +288,81 @@ describe("approval shortcuts", () => {
     for (const key of ["y", "a", "w", "n", "d"]) press(key);
     expect(respond).not.toHaveBeenCalled();
     expect(screen.getByText("Esc to Iterate")).toBeTruthy();
+  });
+});
+
+describe("approval shortcut focus", () => {
+  function renderPair() {
+    const first = ask({ reason: "First ask" });
+    const second = ask({
+      askId: "ask-b",
+      controlTarget: { askId: "ask-b", runId: "run-a", sessionId: "chat-a" },
+      reason: "Second ask",
+    });
+    const respondFirst = vi.fn();
+    const respondSecond = vi.fn();
+    render(
+      <div data-chat-surface="workspace">
+        <button type="button">Workspace control</button>
+        <p>Transcript text</p>
+        <EscapeHintContext.Provider value={first}>
+          <ApprovalPanel approval={first} disabled={false} onRespond={respondFirst} />
+          <ApprovalPanel approval={second} disabled={false} onRespond={respondSecond} />
+        </EscapeHintContext.Provider>
+      </div>,
+    );
+    const card = (reason: string) => screen.getByText(reason).closest("section") as HTMLElement;
+    return { card, respondFirst, respondSecond };
+  }
+
+  it("never answers the active ask from inside another card", () => {
+    const { card, respondFirst, respondSecond } = renderPair();
+    const second = card("Second ask");
+    for (const target of [
+      within(second).getByRole("button", { name: "Raw arguments" }),
+      within(second).getByRole("button", { name: "Allow once" }),
+      within(second).getByRole("button", { name: "Deny" }),
+      within(second).getByText("Second ask"),
+      second,
+    ]) {
+      for (const key of ["y", "a", "w", "n", "d"]) press(key, {}, target);
+    }
+    expect(respondFirst).not.toHaveBeenCalled();
+    expect(respondSecond).not.toHaveBeenCalled();
+    // The active card's own focus still answers it, once per key press.
+    press("n", {}, within(card("First ask")).getByRole("button", { name: "Raw arguments" }));
+    expect(respondFirst.mock.calls).toEqual([["deny"]]);
+    expect(respondSecond).not.toHaveBeenCalled();
+  });
+
+  it("never answers from focus outside the card, so typing elsewhere grants nothing", () => {
+    const { respondFirst, respondSecond } = renderPair();
+    for (const target of [
+      document.body,
+      document.documentElement,
+      screen.getByRole("button", { name: "Workspace control" }),
+      screen.getByText("Transcript text"),
+    ]) {
+      for (const key of ["y", "a", "w", "n", "d", "W", "Y"]) press(key, {}, target);
+    }
+    expect(respondFirst).not.toHaveBeenCalled();
+    expect(respondSecond).not.toHaveBeenCalled();
+  });
+
+  it("types 'Why' into the page, not into Always allow, once the composer loses focus", async () => {
+    const { respondFirst } = renderPair();
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(document.activeElement).toBe(document.body);
+    await userEvent.setup().keyboard("Why is this needed?");
+    expect(respondFirst).not.toHaveBeenCalled();
+  });
+
+  it("focuses Deny for a new ask, so a stray Enter denies and never allows", async () => {
+    const respond = renderActive();
+    const card = screen.getByRole("region", { name: "Permission required: Bash" });
+    expect(document.activeElement).toBe(within(card).getByRole("button", { name: "Deny" }));
+    await userEvent.setup().keyboard("{Enter}");
+    expect(respond.mock.calls).toEqual([["deny"]]);
   });
 });
 

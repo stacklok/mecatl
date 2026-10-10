@@ -16,24 +16,21 @@ function isTyping(element: Element): boolean {
   );
 }
 
-function surfaceOf(element: Element): Element | null {
-  return element.closest("[data-chat-surface]");
-}
+/**
+ * The element whose focus answers one ask: each approval card marks itself
+ * `data-approval-scope`, and the detail panel's whole frame is its ask's scope.
+ */
+const approvalScopeSelector = '[data-approval-scope], [data-chat-surface="approval"]';
 
 /**
- * Whether a key press belongs to the approval in `scope`. A press inside the
- * card always does. Otherwise it must come from the card's own chat surface,
- * and a press with nothing focused belongs to the outermost surface only, so a
- * side panel's ask never answers for the workspace or the other way round.
+ * Whether a key press belongs to the approval in `scope`: only when focus is
+ * inside that card or panel, and not inside another card nested in it. A press
+ * from the page body (a click on plain text in Chromium, or on any button in
+ * WebKit, leaves focus there), from elsewhere on the surface, or from another
+ * card never answers this ask, so typing outside the composer can't grant one.
  */
 export function approvalOwnsKey(scope: Element, target: EventTarget | null): boolean {
-  if (!(target instanceof Element)) return false;
-  if (scope.contains(target)) return true;
-  const surface = surfaceOf(scope);
-  if (target === target.ownerDocument.body || target === target.ownerDocument.documentElement) {
-    return !surface?.parentElement?.closest("[data-chat-surface]");
-  }
-  return surface !== null && surfaceOf(target) === surface;
+  return target instanceof Element && target.closest(approvalScopeSelector) === scope;
 }
 
 /**
@@ -49,9 +46,12 @@ export function approvalOwnsKey(scope: Element, target: EventTarget | null): boo
  *   verdict ledger leaves it answerable: never in flight, acknowledged,
  *   uncertain, or stale. Each verdict still goes through the caller, which
  *   checks the ledger again.
- * - Letters never fire while typing, with a modifier, on a held key, under an
- *   open overlay, or from another surface. Arrows act only on a focused verdict
+ * - Letters act only while focus is inside this card or panel
+ *   (`approvalOwnsKey`), and never while typing, with a modifier, on a held
+ *   key, or under an open overlay. Arrows act only on a focused verdict
  *   button, so they never take over chat navigation elsewhere.
+ * - A new ask takes focus on Deny, never Allow once, so a stray Enter can only
+ *   deny it.
  */
 export function useApprovalShortcuts({
   active,
@@ -72,15 +72,16 @@ export function useApprovalShortcuts({
   latestRespond.current = onRespond;
   const focused = useRef(false);
 
-  // Focus the first verdict once when the ask becomes answerable, but only
-  // when nothing else holds focus: never take it from the composer.
+  // Focus Deny once when the ask becomes answerable, but only when nothing
+  // else holds focus: never take it from the composer. Never Allow once: a
+  // stray Enter meant for something else must not approve an unseen ask.
   useEffect(() => {
     if (!active || focused.current) return;
     focused.current = true;
     const current = document.activeElement;
     if (current && current !== document.body) return;
-    (allowAvailable ? allowOnceRef.current : denyRef.current)?.focus({ preventScroll: true });
-  }, [active, allowAvailable]);
+    denyRef.current?.focus({ preventScroll: true });
+  }, [active]);
 
   useEffect(() => {
     if (!active) return;

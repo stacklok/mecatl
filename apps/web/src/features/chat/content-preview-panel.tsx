@@ -161,6 +161,7 @@ function GenericPreviewPanel({
   preview: StaticPreview;
 }) {
   const title = useRef<HTMLHeadingElement>(null);
+  const frame = useRef<HTMLElement>(null);
   const lastActivityFocusRequest = useRef<number | undefined>(undefined);
   useEffect(() => {
     if (preview.kind !== "activity" || !activity) return;
@@ -218,6 +219,7 @@ function GenericPreviewPanel({
       onClose={close}
       onKeyDown={handleKeyDown}
       restoreFocusOnClose={preview.kind !== "activity"}
+      rootRef={frame}
       surface={preview.kind === "approval" ? "approval" : undefined}
       title={
         preview.kind === "approval"
@@ -233,6 +235,7 @@ function GenericPreviewPanel({
           approval={approval.approval}
           disabled={approval.disabled}
           onRespond={approval.onRespond}
+          scope={frame}
           uncertain={approval.uncertain}
         />
       ) : preview.kind === "authorization" ? (

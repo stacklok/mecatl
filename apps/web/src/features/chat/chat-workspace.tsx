@@ -2651,6 +2651,10 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         )
       : -1;
   const detailApproval = detailIndex >= 0 ? approvals[detailIndex] : undefined;
+  // Escape denies only the surface's active ask. A panel showing another ask
+  // handles Escape itself and only closes, so it never denies an ask it
+  // doesn't show.
+  const detailClosesOnEscape = detailApproval !== undefined && detailApproval !== escapeAsk;
   // The detail panel shows a live ask only: once the ledger settles it (or the
   // stream retracts it) the panel closes with its card.
   useEffect(() => {
@@ -3333,8 +3337,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       {displayedPreview && provenChat && (
         <EscapeHintContext.Provider value={escapeAsk}>
           <ContentPreviewPanel
-            escapeManagedExternally
-            escapeHint={!escapeAsk}
+            escapeManagedExternally={!detailClosesOnEscape}
+            escapeHint={!escapeAsk || detailClosesOnEscape}
             approval={
               detailApproval
                 ? {

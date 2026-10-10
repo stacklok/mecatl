@@ -59,6 +59,7 @@ export function ApprovalPanel({
         "my-3 min-w-0 rounded-xl border p-4",
         destructive ? "border-destructive/40 bg-destructive/5" : "border-warning/40 bg-warning/5",
       )}
+      data-approval-scope=""
       ref={card}
     >
       <div className="flex min-w-0 items-start gap-2">

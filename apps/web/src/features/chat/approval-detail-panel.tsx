@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useRef } from "react";
+import type { RefObject } from "react";
 import type { ApprovalRequest, ApprovalVerdict } from "./approval-panel";
 import { ApprovalVerdictBar } from "./approval-verdict-bar";
 import { AskArgsView } from "./ask-args-view";
@@ -23,19 +23,21 @@ export interface ApprovalDetail {
  * arguments and diff instead of the card's capped view. The side-panel frame
  * (`SidePanelShell`) owns the title, close, and resize. Like the card, it holds
  * no verdict state: the verdict ledger decides `disabled` and `uncertain`.
+ * `scope` is that frame: focus anywhere in it, its close button included,
+ * answers this ask from the keyboard, and focus anywhere else never does.
  */
 export function ApprovalDetailPanel({
   approval,
   disabled,
   onRespond,
+  scope,
   uncertain,
-}: Omit<ApprovalDetail, "position" | "total">) {
-  const body = useRef<HTMLDivElement>(null);
+}: Omit<ApprovalDetail, "position" | "total"> & { scope: RefObject<HTMLElement | null> }) {
   const destructive = isDestructiveToolName(approval.tool);
   const active = useActiveEscapeAsk(approval) && !disabled && !uncertain;
 
   return (
-    <div className="px-4 py-3" ref={body}>
+    <div className="px-4 py-3">
       {approval.reason && <p className="text-sm">{approval.reason}</p>}
       {destructive && (
         <p
@@ -56,7 +58,7 @@ export function ApprovalDetailPanel({
           destructive={destructive}
           disabled={disabled}
           onRespond={onRespond}
-          scope={body}
+          scope={scope}
           shortcuts={active}
         />
       </div>
