@@ -320981,6 +320981,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791582063342,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "56c5534a3a42926d95544e420c9713b2962efaca",
+          "message": "feat(search): configure WebSearch in operator settings (#2241)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-09T18:41:40-07:00",
+          "tree_id": "d90045e7ef7ec8be3087210666d7bcdd0564c3b2",
+          "url": "https://github.com/stacklok/mecatl/commit/56c5534a3a42926d95544e420c9713b2962efaca"
+        },
+        "date": 1791597267870,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3276,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 77,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 795,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -419743,6 +419782,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791597265115,
+  "lastUpdate": 1791597268796,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
