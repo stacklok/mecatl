@@ -3,13 +3,14 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 /**
  * Studio's layouts pivot at 500px (`min-[500px]:` / `max-[499px]:`), like the
- * prototype's. A `sm:` or `md:` class in a feature or the shell needs a reason;
- * each one left is listed here with it. Shared primitives in `components/ui`
- * keep their upstream shadcn classes and are not scanned.
+ * prototype's. A `sm:` or `md:` class (or `max-sm:` / `max-md:`, behind any
+ * other variant) anywhere in `src` needs a reason; each one left is listed
+ * here with it. Shared primitives in `components/ui` keep their upstream
+ * shadcn classes and are not scanned.
  */
 
 const src = fileURLToPath(new URL("..", import.meta.url));
@@ -45,16 +46,81 @@ function sources(directory: string): string[] {
   });
 }
 
+/** The source files the guard reads, relative to `src`: all of it but the shared primitives. */
+function scanned(): string[] {
+  return sources(src)
+    .map((file) => relative(src, file))
+    .filter(
+      (path) =>
+        !path.startsWith("components/ui/") && !pending.some((prefix) => path.startsWith(prefix)),
+    );
+}
+
+/** The viewport breakpoint variants the guard looks for, alone or after other variants. */
+const viewportVariants = new Set(["sm", "md", "max-sm", "max-md"]);
+
+/**
+ * The classes in a source text that carry a viewport `sm:` / `md:` variant,
+ * in any position (`dark:sm:flex`, `[&>svg]:md:size-4`) and in its `max-`
+ * form. A container query (`@md:`, `@max-md:`) reads its container, not the
+ * viewport, so it passes.
+ */
+function breakpointClasses(text: string): string[] {
+  return text.split(/[\s"'`{}()]+/u).filter((token) =>
+    token
+      .split(":")
+      .slice(0, -1)
+      .some((part) => viewportVariants.has(part)),
+  );
+}
+
+describe("the breakpoint guard", () => {
+  it("finds a viewport breakpoint behind any variant, and in its max- form", () => {
+    expect(
+      breakpointClasses(
+        'cn("sm:flex", "dark:md:grid hover:sm:block", "[&>svg]:sm:size-4 max-sm:hidden max-md:p-2")',
+      ),
+    ).toEqual([
+      "sm:flex",
+      "dark:md:grid",
+      "hover:sm:block",
+      "[&>svg]:sm:size-4",
+      "max-sm:hidden",
+      "max-md:p-2",
+    ]);
+  });
+
+  it("leaves container queries, the 500px pivot, and look-alike tokens alone", () => {
+    expect(
+      breakpointClasses(
+        '"@max-md:hidden @sm:flex @min-[72rem]/chat-header:inline min-[500px]:flex max-[499px]:hidden rounded-md text-sm" // README.md: see',
+      ),
+    ).toEqual([]);
+  });
+
+  it("reads every source outside the shared primitives", () => {
+    const files = scanned();
+    for (const path of [
+      "features/chat/chat-workspace.tsx",
+      "components/shell/storage-health-banner.tsx",
+      "components/sortable-head.tsx",
+      "lib/use-mobile.ts",
+      "routes/__root.tsx",
+      "main.tsx",
+    ]) {
+      expect(files).toContain(path);
+    }
+    expect(files.some((path) => path.startsWith("components/ui/"))).toBe(false);
+    expect(files.some((path) => path.startsWith("features/schedules/"))).toBe(false);
+    expect(files.some((path) => /\.test\.tsx?$/u.test(path))).toBe(false);
+  });
+});
+
 it("pivots at 500px, with every remaining sm: or md: class listed and explained", () => {
   const found: Record<string, string[]> = {};
-  for (const file of [
-    ...sources(join(src, "features")),
-    ...sources(join(src, "components/shell")),
-  ]) {
-    const path = relative(src, file);
-    if (pending.some((prefix) => path.startsWith(prefix))) continue;
-    const classes = [...readFileSync(file, "utf8").matchAll(/(?<=[\s"'`{(])(?:sm|md):[^\s"'`]+/gu)];
-    if (classes.length > 0) found[path] = classes.map(([name]) => name);
+  for (const path of scanned()) {
+    const classes = breakpointClasses(readFileSync(join(src, path), "utf8"));
+    if (classes.length > 0) found[path] = classes;
   }
   expect(found).toEqual(
     Object.fromEntries(Object.entries(allowed).map(([path, entry]) => [path, entry.classes])),
