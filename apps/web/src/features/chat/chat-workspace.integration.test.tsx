@@ -1731,6 +1731,74 @@ describe("mounted chat workspace BFF boundary", () => {
     );
   });
 
+  it("creates a draft with the model, effort, mode, and tools picked from the desktop pills", async () => {
+    const user = userEvent.setup();
+    const bff = new BffFixture();
+    serveModelInventory(bff);
+    bff.runResponses.push(
+      completedStream(runStarted(), runEvent("result", "1", "", "run-a", { stop: "end_turn" })),
+    );
+    await mountWorkspace(bff);
+
+    await user.click(await screen.findByRole("button", { name: /^Model Default/ }));
+    await user.hover(screen.getByRole("menuitem", { name: /^Model/ }));
+    const allowed = await screen.findByRole("menuitem", { name: "Allowed model" });
+    act(() => allowed.focus());
+    await user.keyboard("{Enter}");
+    await user.click(screen.getByRole("button", { name: /^Model Allowed model/ }));
+    await user.hover(screen.getByRole("menuitem", { name: /^Effort/ }));
+    const high = await screen.findByRole("menuitem", { name: "High" });
+    act(() => high.focus());
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("button", { name: /^Model Allowed model · High/ })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Mode Manual" }));
+    await user.click(screen.getByRole("menuitem", { name: /^Plan/ }));
+    await user.click(screen.getByRole("button", { name: "Tools All" }));
+    await user.click(screen.getByRole("menuitem", { name: /^No filesystem/ }));
+
+    typePrompt("Create from the pills");
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(bff.requestsAt("POST", "/api/v1/sessions")).toHaveLength(1));
+    expect(bff.requestsAt("POST", "/api/v1/sessions")[0]?.body).toEqual({
+      mode: "plan",
+      model: { id: "allowed", providerId: "provider" },
+      reasoningEffort: "high",
+      toolAccess: "noFilesystem",
+    });
+  });
+
+  it("forks with the current model when only the effort changes", async () => {
+    const user = userEvent.setup();
+    const bff = new BffFixture(session("chat-a"));
+    serveModelInventory(bff);
+    const capabilities = { image: false, manualCompaction: false, modelSelection: true };
+    bff.nextReplies.set("/api/v1/sessions/chat-a", [
+      Promise.resolve(detailResponse("chat-a", "idle", { capabilities, model: currentModel })),
+    ]);
+    await mountConnectedWorkspace(bff, "chat-a");
+    const controls = screen.getByRole("region", { name: "Chat configuration and usage" });
+
+    bff.nextReplies.set("/api/v1/sessions/chat-a/fork", [
+      Promise.resolve(json({ id: "chat-b" }, 201)),
+    ]);
+    await user.click(
+      within(controls).getByRole("button", { name: /^Model Current model · Medium/ }),
+    );
+    expect(screen.queryByRole("menuitem", { name: "Reset to default" })).toBeNull();
+    await user.hover(screen.getByRole("menuitem", { name: /^Effort Medium/ }));
+    const high = await screen.findByRole("menuitem", { name: "High" });
+    act(() => high.focus());
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/fork")).toHaveLength(1),
+    );
+    expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/fork")[0]?.body).toMatchObject({
+      model: { id: "current", providerId: "provider" },
+      reasoningEffort: "high",
+    });
+    expect(bff.requestsAt("PUT", "/api/v1/sessions/chat-a/mode")).toHaveLength(0);
+  });
+
   it("creates one session and drains one queued prompt only after its run settles", async () => {
     const bff = new BffFixture();
     const first = heldStream();
