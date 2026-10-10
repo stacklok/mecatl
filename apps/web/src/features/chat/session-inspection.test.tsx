@@ -438,10 +438,11 @@ describe("session inspection", () => {
       });
       await waitFor(() => expect(bff.worktreeCalls).toBe(2));
       expect(screen.getByText(/selection is stale/i)).toBeTruthy();
-      expect(within(picker).getByRole("radio", { name: /Feature/ })).toHaveProperty(
-        "checked",
-        false,
-      );
+      expect(
+        within(picker)
+          .getByRole("radio", { name: /Feature/ })
+          .getAttribute("aria-checked"),
+      ).toBe("false");
       expect(
         within(picker).getByRole("button", { name: "Fork in selected worktree" }),
       ).toHaveProperty("disabled", true);
@@ -489,7 +490,11 @@ describe("session inspection", () => {
     };
     const first = await openPicker();
     fireEvent.click(await within(first).findByRole("radio", { name: /Feature/ }));
-    expect(within(first).getByRole("radio", { name: /Feature/ })).toHaveProperty("checked", true);
+    expect(
+      within(first)
+        .getByRole("radio", { name: /Feature/ })
+        .getAttribute("aria-checked"),
+    ).toBe("true");
     fireEvent.click(within(first).getByRole("button", { name: "Close" }));
     await waitFor(() =>
       expect(
@@ -500,10 +505,11 @@ describe("session inspection", () => {
     );
     const reopened = await openPicker();
     await waitFor(() => expect(bff.worktreeCalls).toBe(2));
-    expect(within(reopened).getByRole("radio", { name: /Feature/ })).toHaveProperty(
-      "checked",
-      false,
-    );
+    expect(
+      within(reopened)
+        .getByRole("radio", { name: /Feature/ })
+        .getAttribute("aria-checked"),
+    ).toBe("false");
     fireEvent.click(within(reopened).getByRole("radio", { name: /Feature/ }));
     await act(async () =>
       mounted.router.navigate({ search: { sessionId: "successor" }, to: "/workspace/chat" }),
@@ -518,10 +524,11 @@ describe("session inspection", () => {
       mounted.router.navigate({ search: { sessionId: "child" }, to: "/workspace/chat" }),
     );
     const afterSwitch = await openPicker();
-    expect(await within(afterSwitch).findByRole("radio", { name: /Feature/ })).toHaveProperty(
-      "checked",
-      false,
-    );
+    expect(
+      (await within(afterSwitch).findByRole("radio", { name: /Feature/ })).getAttribute(
+        "aria-checked",
+      ),
+    ).toBe("false");
     expect(
       within(afterSwitch).getByRole("button", { name: "Fork in selected worktree" }),
     ).toHaveProperty("disabled", true);

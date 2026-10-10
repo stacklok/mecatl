@@ -5,6 +5,8 @@ import { Loader2, RefreshCw } from "lucide-react";
 import { useId } from "react";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
+import { DialogFooter } from "../../components/ui/dialog";
+import { RadioGroup, RadioGroupItem } from "../../components/ui/radio-group";
 
 /**
  * The worktree view of the session dialog, ported from the prototype's
@@ -49,7 +51,7 @@ export function WorktreePickerView({
   unavailable?: string;
   worktrees?: SessionWorktreesResponse;
 }) {
-  const radioGroup = useId();
+  const ids = useId();
   if (pending) {
     return (
       <p className="flex items-center gap-2 text-muted-foreground" role="status">
@@ -78,24 +80,32 @@ export function WorktreePickerView({
         <p className="text-muted-foreground">{NO_ELIGIBLE_WORKTREES}</p>
       ) : (
         <fieldset className="flex flex-col gap-1" disabled={busy}>
-          <legend className="mb-1.5 text-xs font-medium text-muted-foreground">
+          <legend className="mb-1.5 text-xs font-medium text-muted-foreground" id={`${ids}-legend`}>
             Eligible worktrees
           </legend>
-          {list.map((worktree) => {
-            const checked = selected === worktree.selector;
-            return (
+          <RadioGroup
+            aria-labelledby={`${ids}-legend`}
+            className="flex flex-col gap-1"
+            disabled={busy}
+            onValueChange={onSelect}
+            value={chosen ? selected : ""}
+          >
+            {list.map((worktree, index) => (
               <label
-                className="flex cursor-pointer items-center gap-3 rounded-md border border-border px-3 py-2 transition-colors hover:bg-muted/50 has-[:checked]:border-primary has-[:checked]:bg-muted/40 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-offset-2"
+                className="flex cursor-pointer items-center gap-3 rounded-md border border-border px-3 py-2 transition-colors hover:bg-muted/50 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-muted/40 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-offset-2"
+                htmlFor={`${ids}-radio-${index}`}
                 key={worktree.selector}
               >
-                <input
-                  checked={checked}
-                  className="size-4 shrink-0 accent-primary"
-                  name={radioGroup}
-                  onChange={() => onSelect(worktree.selector)}
-                  type="radio"
+                <RadioGroupItem
+                  aria-labelledby={`${ids}-${index}`}
+                  className="focus-visible:ring-0"
+                  id={`${ids}-radio-${index}`}
+                  value={worktree.selector}
                 />
-                <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+                <span
+                  className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1"
+                  id={`${ids}-${index}`}
+                >
                   <span className="truncate font-mono text-xs">{worktree.label}</span>
                   {worktree.branch && (
                     <Badge className="font-mono" variant="outline">
@@ -110,8 +120,8 @@ export function WorktreePickerView({
                   {worktree.bare && <Badge variant="muted">bare</Badge>}
                 </span>
               </label>
-            );
-          })}
+            ))}
+          </RadioGroup>
         </fieldset>
       )}
       {canFork || canClear ? (
@@ -120,7 +130,7 @@ export function WorktreePickerView({
             Fork brings this conversation's history; clear starts an empty conversation with the
             same model, mode, and limits. This chat stays in the list.
           </p>
-          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <DialogFooter>
             {canClear && (
               <Button disabled={!chosen || busy} onClick={onClear} size="sm" variant="outline">
                 Clear in selected worktree
@@ -132,7 +142,7 @@ export function WorktreePickerView({
                 Fork in selected worktree
               </Button>
             )}
-          </div>
+          </DialogFooter>
         </div>
       ) : (
         unavailable && <p className="text-muted-foreground">{unavailable}</p>
