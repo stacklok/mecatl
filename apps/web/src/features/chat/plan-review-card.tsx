@@ -1,12 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { Button } from "../../components/ui/button";
+import { ClipboardList } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import type { ApprovalRequest } from "./approval-panel";
+import { AskArgsView } from "./ask-args-view";
 import { useActiveEscapeAsk } from "./escape-hint-context";
 
 export type PlanVerdict = "approve" | "accept_edits" | "iterate";
 
-/** Present only scrubbed event arguments. The tool name chooses this view, not verdict authority. */
+/**
+ * Present only scrubbed event arguments. The tool name chooses this view, not verdict authority.
+ *
+ * The prototype's plan-review card: brand-toned, with the plan in the same
+ * argument box and "Raw arguments" toggle as an ordinary ask. Verdicts still go
+ * only through Studio's exact plan-ask control (`plan-asks/{askId}`, gated on
+ * `exact_plan_ask_control`); the surface passes `unavailableReason` when that
+ * control can't answer this exact ask.
+ */
 export function PlanReviewCard({
   approval,
   disabled,
@@ -37,25 +47,36 @@ export function PlanReviewCard({
 
   return (
     <section
-      className="my-2 min-w-0 max-w-full rounded-xl border border-warning/40 bg-warning/5 p-4"
+      className="my-3 min-w-0 max-w-full rounded-xl border border-brand/30 bg-brand/5 p-4"
       aria-label="Plan review"
     >
-      <h2 className="text-sm font-semibold">Plan review</h2>
+      <div className="flex items-center gap-2">
+        <ClipboardList aria-hidden="true" className="size-4 shrink-0 text-brand-ink" />
+        <h2 className="text-sm font-semibold text-brand-ink">Plan review</h2>
+      </div>
       {approval.reason && <p className="mt-2 text-sm">{approval.reason}</p>}
       {note && <p className="mt-2 whitespace-pre-wrap break-words text-sm">{note}</p>}
-      {plan && (
-        <pre className="my-3 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg border bg-background p-3 text-sm">
-          {plan}
-        </pre>
-      )}
-      {!plan && <p className="mt-2 text-sm">The plan text is unavailable or malformed.</p>}
+      <AskArgsView
+        args={approval.args}
+        className="mt-3"
+        formatted={
+          plan ? (
+            <pre className="whitespace-pre-wrap break-words p-3 text-sm">{plan}</pre>
+          ) : (
+            <p className="p-3 text-sm">The plan text is unavailable or malformed.</p>
+          )
+        }
+        rawLimit={65_536}
+        tone="brand"
+        tool={approval.tool}
+      />
       {uncertain && (
-        <p className="mt-2 text-sm" role="status">
+        <p className="mt-3 text-sm" role="status">
           This verdict's outcome is uncertain. Refresh activity before deciding again.
         </p>
       )}
       {unavailableReason ? (
-        <p className="mt-2 text-sm" role="status">
+        <p className="mt-3 text-sm" role="status">
           {unavailableReason}
         </p>
       ) : (
@@ -72,6 +93,7 @@ export function PlanReviewCard({
             Auto-accept edits
           </Button>
           <Button
+            className="text-muted-foreground"
             disabled={disabled}
             onClick={() => onRespond("iterate")}
             size="sm"
@@ -82,13 +104,6 @@ export function PlanReviewCard({
         </div>
       )}
       {escapeHint && <p className="mt-2 text-xs text-muted-foreground">Esc to Iterate</p>}
-      <details className="mt-3 text-xs">
-        <summary>Raw arguments</summary>
-        <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-lg border bg-background p-3 font-mono">
-          {approval.args ? approval.args.slice(0, 65_536) : "Arguments unavailable"}
-        </pre>
-        {approval.args.length > 65_536 && <p>Arguments truncated for display.</p>}
-      </details>
     </section>
   );
 }
