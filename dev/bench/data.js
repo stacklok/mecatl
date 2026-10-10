@@ -289658,6 +289658,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1791582059519,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "56c5534a3a42926d95544e420c9713b2962efaca",
+          "message": "feat(search): configure WebSearch in operator settings (#2241)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-09T18:41:40-07:00",
+          "tree_id": "d90045e7ef7ec8be3087210666d7bcdd0564c3b2",
+          "url": "https://github.com/stacklok/mecatl/commit/56c5534a3a42926d95544e420c9713b2962efaca"
+        },
+        "date": 1791597264348,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -419709,6 +419743,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1791597261596,
+  "lastUpdate": 1791597265115,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
