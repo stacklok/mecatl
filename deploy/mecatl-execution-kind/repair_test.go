@@ -10,6 +10,9 @@ import (
 	"time"
 
 	"github.com/goccy/go-yaml"
+
+	"github.com/stacklok/mecatl/internal/adapter/executioncontroller"
+	"github.com/stacklok/mecatl/internal/executionenv"
 )
 
 func scriptRange(t *testing.T, file, start, end string) string {
@@ -86,6 +89,72 @@ func TestProductionKindUsesShorterSyncPeriodsOnlyInFixture(t *testing.T) {
 	}
 }
 
+func TestCanonicalTemplateFixtureTracksWorkloadDigest(t *testing.T) {
+	var previous string
+	for _, marker := range []string{"a", "b"} {
+		image := "example.invalid/workload@sha256:" + strings.Repeat(marker, 64)
+		path := filepath.Join(t.TempDir(), "templates.yaml")
+		derivative := "example.invalid/derivative@sha256:" + strings.Repeat("c", 64)
+		incompatible := "example.invalid/incompatible@sha256:" + strings.Repeat("d", 64)
+		cmd := exec.Command("go", "run", "-tags", "kind_execution_e2e", "./fixture/templates", "template-recipes.yaml", image, derivative, incompatible, path)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("render template fixture: %v: %s", err, out)
+		}
+		registry, err := executioncontroller.LoadTemplates(path)
+		if err != nil {
+			t.Fatal("rendered chart values disagree with provider loader:", err)
+		}
+		revision := strings.TrimSpace(string(out))
+		if revision != registry.DefaultRevision("go") || revision == previous || registry.DefaultRevision("operator-utility") == "" || registry.DefaultRevision("operator-utility") == revision {
+			t.Fatalf("fixture images did not produce distinct canonical revisions: %s", revision)
+		}
+		if registry.DefaultRevision("incompatible-derivative") == "" || registry.DefaultRevision("incompatible-derivative") == registry.DefaultRevision("operator-utility") {
+			t.Fatal("incompatible fixture must have its own exact image revision")
+		}
+		previous = revision
+	}
+}
+
+func TestIncompatibleDerivativeProtocolFixture(t *testing.T) {
+	fixture, err := filepath.Abs("fixture/derivative/incompatible-protocol")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	sentinel := filepath.Join(workspace, "sentinel")
+	if err := os.WriteFile(sentinel, []byte("retained\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", fixture)
+	cmd.Dir = workspace
+	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + workspace}
+	cmd.Stdin = strings.NewReader("{\"operation\":\"command.start\",\"command\":\"printf corrupted > sentinel\"}\n")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope executionenv.ExecutorEnvelope
+	if err := executionenv.DecodeStrict(out, &envelope); err == nil {
+		t.Fatalf("negative fixture produced compatible protocol: %s", out)
+	}
+	if data, err := os.ReadFile(sentinel); err != nil || string(data) != "retained\n" {
+		t.Fatal("negative fixture executed the request")
+	}
+}
+
+func TestTemplateFixtureNeverSeedsLegacyAllocations(t *testing.T) {
+	body, err := os.ReadFile("run.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"legacyfixture", "legacy-profiles.yaml", "--skip-crds", "profiles.go.image"} {
+		if strings.Contains(string(body), forbidden) {
+			t.Fatalf("hard-cut fixture still provisions %q", forbidden)
+		}
+	}
+}
+
 func TestQualificationTestBinaryWaitAndWorkingDirectory(t *testing.T) {
 	build := scriptRange(t, "run.sh", "test_build_start=$(date +%s)", "\nkube create namespace execution-qualification")
 	run := scriptRange(t, "run.sh", "test_build_wait_start=$(date +%s)", "\nphase_done tests")
@@ -114,7 +183,7 @@ test "$*" = "test -c -tags kind_execution_e2e -o $HOME/state/qualification.test 
 			out, err := runStep(t, root, `
 set -eu
 dev() { (cd "$root" && "$@"); }
-`+build+"\n"+run, "PATH="+filepath.Join(root, "bin")+":"+os.Getenv("PATH"), "root="+root, "state="+state, "kubeconfig="+filepath.Join(state, "kubeconfig"), "context=owned", "MECATL_EXECUTION_DEV_TOOLBOX=", "MECATL_EXECUTION_QUAL_PROFILE=production")
+`+build+"\n"+run, "PATH="+filepath.Join(root, "bin")+":"+os.Getenv("PATH"), "root="+root, "state="+state, "kubeconfig="+filepath.Join(state, "kubeconfig"), "context=owned", "go_revision=v1-"+strings.Repeat("a", 64), "MECATL_EXECUTION_DEV_TOOLBOX=", "MECATL_EXECUTION_QUAL_PROFILE=production")
 			if failed {
 				if err == nil || strings.Contains(string(out), "stale executed") || strings.Contains(string(out), "cwd=") {
 					t.Fatalf("failed test build executed binary: %v: %s", err, out)
@@ -155,27 +224,45 @@ exit 17
 	}
 }
 
-func TestHelmInstallsCurrentCRDWithDefaultApplyMode(t *testing.T) {
+func TestProductionHelmInstallsCurrentCRDAndCanonicalTemplates(t *testing.T) {
+	body, err := os.ReadFile("run.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
 	deploy := scriptRange(t, "run.sh", "set -- upgrade --install mecatl-execution", "\nkube -n execution-qualification create configmap execution-mock")
-	for _, profile := range []string{"development", "production"} {
-		t.Run(profile, func(t *testing.T) {
+	if strings.Contains(deploy, "--skip-crds") || strings.Contains(deploy, "--server-side=false") {
+		t.Fatal("initial provider install must use Helm's default CRD and apply mode")
+	}
+	for _, required := range []string{"template-recipes.yaml", "templates-values-$run_id.yaml", "--set-string execution.templateRevision=\"$go_revision\""} {
+		if !strings.Contains(string(body), required) {
+			t.Fatalf("qualification deploy does not wire %q", required)
+		}
+	}
+}
+
+func TestDerivativeBuildUsesVerifiedLocalBaseForDockerAndPodman(t *testing.T) {
+	build := scriptRange(t, "run.sh", "# Give BuildKit a resolvable, run-unique local name", "\nimage_step_done incompatible_derivative_build")
+	for _, runtime := range []string{"docker", "podman"} {
+		t.Run(runtime, func(t *testing.T) {
 			root := t.TempDir()
-			marker := filepath.Join(root, "helm-args")
-			out, err := runStep(t, root, `
-helm_kube() { printf '%s\n' "$@" > "$MARKER"; }
-`+deploy, "root="+root, "state="+root, "runtime_values="+filepath.Join(root, "runtime-values.yaml"), "provider_image=provider", "workload_image=workload", "MECATL_EXECUTION_QUAL_PROFILE="+profile, "MARKER="+marker)
+			bin := filepath.Join(root, runtime)
+			writeFixture(t, bin, `#!/bin/sh
+set -eu
+case "$1" in
+image) test "$2" = inspect; printf 'sha256:%064d\n' 0 ;;
+tag) test "$2" = "$WORKLOAD_TAG"; test "$3" = "$BASE_REF" ;;
+build)
+  test "$2" = "$PULL_POLICY"
+  shift 2
+  if [ "$1" = --target ]; then test "$2" = incompatible; shift 2; fi
+  test "$1" = --build-arg; test "$2" = "EXECUTOR_BASE=$BASE_REF" ;;
+*) exit 1 ;;
+esac
+`, 0o700)
+			base := "localhost/mecatl-execution-base:qual-owned"
+			out, err := runStep(t, root, "set -eu\nimage_step_done() { :; }\n"+build, "PATH="+root+":"+os.Getenv("PATH"), "runtime="+runtime, "run_id=owned", "workload_tag=localhost/workload:e2e", "WORKLOAD_TAG=localhost/workload:e2e", "BASE_REF="+base, "PULL_POLICY="+map[string]string{"docker": "--pull=false", "podman": "--pull=never"}[runtime], "root="+root)
 			if err != nil {
-				t.Fatalf("deploy fixture: %v: %s", err, out)
-			}
-			args, err := os.ReadFile(marker)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if strings.Contains("\n"+string(args), "\n--skip-crds\n") {
-				t.Fatalf("profile %s must install the current CRD; args=%s", profile, args)
-			}
-			if strings.Contains("\n"+string(args), "\n--server-side=false\n") {
-				t.Fatal("initial fixture install must preserve Helm 4 default apply mode for the lifetime proof")
+				t.Fatalf("derivative local FROM: %v: %s", err, out)
 			}
 		})
 	}
@@ -204,7 +291,7 @@ func TestProductionThenLiveImageAlias(t *testing.T) {
 				alias := "ko.local/provider@" + digest
 				db := filepath.Join(root, "db")
 				var sourceRows strings.Builder
-				for _, name := range []string{"provider", "agent", "oidc", "netprobe", "workload"} {
+				for _, name := range []string{"provider", "agent", "oidc", "netprobe", "workload", "derivative", "incompatible"} {
 					sourceRows.WriteString("ko.local/" + name + ":head type " + digest + "\n")
 				}
 				writeFixture(t, db, sourceRows.String(), 0o600)
@@ -234,7 +321,7 @@ esac
 `, 0o700)
 				writeFixture(t, filepath.Join(root, "bin/kind"), "#!/bin/sh\nset -eu\ntest \"$1 $2\" = 'load image-archive'\ntest -f \"$3\"\ntest \"$4 $5\" = '--name owned'\n", 0o700)
 				env := []string{"PATH=" + filepath.Join(root, "bin") + ":" + os.Getenv("PATH"), "root=" + root, "state=" + root, "runtime=" + runtime, "cluster=owned", "DB=" + db, "TAGS=" + filepath.Join(root, "tags")}
-				for _, name := range []string{"provider", "agent", "oidc", "netprobe", "workload"} {
+				for _, name := range []string{"provider", "agent", "oidc", "netprobe", "workload", "derivative", "incompatible"} {
 					env = append(env, name+"_tag=ko.local/"+name+":head")
 				}
 				out, err := runStep(t, root, production, env...)
@@ -252,7 +339,7 @@ esac
 					t.Fatalf("wrong alias: %s", out)
 				}
 				tags, err := os.ReadFile(filepath.Join(root, "tags"))
-				if err != nil || string(tags) != strings.Repeat("tag\n", 5) {
+				if err != nil || string(tags) != strings.Repeat("tag\n", 7) {
 					t.Fatalf("must create each alias once, never overwrite/re-tag: %q, %v", tags, err)
 				}
 			})
@@ -320,7 +407,7 @@ helm_kube() {
 }
 `+live, "root="+root, "state="+root, "MARKER="+marker, "KUBE_MARKER="+kubeMarker, "DEV_MARKER="+devMarker,
 		"agent_image=ko.local/mecak8s@"+digest, "provider_image=synthetic", "workload_image=synthetic", "go_image=synthetic",
-		"kubeconfig=synthetic", "context=synthetic",
+		"kubeconfig=synthetic", "context=synthetic", "go_revision=v1-"+strings.Repeat("a", 64),
 		"cluster=owned", "MECATL_EXECUTION_CREDENTIAL_FILE=unused")
 	if err != nil {
 		t.Fatalf("live must preserve qualified storage and use digest-only Helm images: %v: %s", err, out)
@@ -336,6 +423,14 @@ helm_kube() {
 	calls, err = os.ReadFile(devMarker)
 	if err != nil || string(calls) != "mock-test\nstage\nlive-test\n" {
 		t.Fatalf("expected mock qualification before credential staging and live qualification: %q: %v", calls, err)
+	}
+}
+
+func TestLiveResumeDoesNotAllocateMockWorkspaces(t *testing.T) {
+	preflight := scriptRange(t, "live.sh", "# Resuming an already-created", "\nsecret=")
+	out, err := runStep(t, t.TempDir(), "dev() { echo 'unexpected allocation'; return 99; }\n"+preflight, "MECATL_EXECUTION_LIVE_SESSION="+strings.Repeat("a", 32))
+	if err != nil || len(out) != 0 {
+		t.Fatalf("resume allocated mock workspaces: %v: %s", err, out)
 	}
 }
 
@@ -363,7 +458,7 @@ helm_kube() { printf 'restore\n' >> "$MARKER"; }
 dev() { printf 'delete\n' >> "$MARKER"; }
 restore_needed=1
 `+restore+"\n"+signal.command+"\nexit 99\n", 0o700)
-			out, err := runStep(t, root, "if sh ./signal.sh; then exit 1; else test \"$?\" -eq "+signal.code+"; fi", "root="+root, "state="+root, "MARKER="+filepath.Join(root, "cleanup"), "receipt="+filepath.Join(root, "receipt"), "agent_image=synthetic@sha256:fake", "kubeconfig=synthetic", "context=kind-owned", "secret=synthetic")
+			out, err := runStep(t, root, "if sh ./signal.sh; then exit 1; else test \"$?\" -eq "+signal.code+"; fi", "root="+root, "state="+root, "MARKER="+filepath.Join(root, "cleanup"), "receipt="+filepath.Join(root, "receipt"), "agent_image=synthetic@sha256:fake", "go_revision=v1-"+strings.Repeat("a", 64), "kubeconfig=synthetic", "context=kind-owned", "secret=synthetic")
 			if err != nil {
 				t.Fatalf("signal was reported as success: %v: %s", err, out)
 			}

@@ -42,7 +42,8 @@ func TestDefinitiveEnvironmentCreateFailureReleasesProfileSlot(t *testing.T) {
 	})
 	kube := kubefake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap, Namespace: "ns"}, Data: map[string]string{}})
 	store := NewStore(dynamicClient, "ns", testProfiles(), nil).WithKubeClient(kube)
-	if _, err := store.EnsurePending(t.Context(), "client", "owner", "binding", "go", "fp", "op"); err == nil {
+	owner := executionenv.Owner{Issuer: "issuer", Subject: "subject"}
+	if _, err := store.EnsurePendingOwnedRevision(t.Context(), "client", ownerHash(owner), owner, "binding", "go", testProfiles().defaultRevision["go"], "fp", "op"); err == nil {
 		t.Fatal("definitive create rejection succeeded")
 	}
 	if slots := profileSlots(t, kube); len(slots) != 0 {
@@ -57,11 +58,65 @@ func TestAmbiguousEnvironmentCreateFailureRetainsProfileSlot(t *testing.T) {
 	})
 	kube := kubefake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap, Namespace: "ns"}, Data: map[string]string{}})
 	store := NewStore(dynamicClient, "ns", testProfiles(), nil).WithKubeClient(kube)
-	if _, err := store.EnsurePending(t.Context(), "client", "owner", "binding", "go", "fp", "op"); err == nil {
+	owner := executionenv.Owner{Issuer: "issuer", Subject: "subject"}
+	if _, err := store.EnsurePendingOwnedRevision(t.Context(), "client", ownerHash(owner), owner, "binding", "go", testProfiles().defaultRevision["go"], "fp", "op"); err == nil {
 		t.Fatal("ambiguous create failure succeeded")
 	}
 	if slots := profileSlots(t, kube); len(slots) != 1 {
 		t.Fatalf("ambiguous create outcome did not retain conservative capacity: %v", slots)
+	}
+}
+
+func TestCompetingTemplateBindingReleasesLosingReservation(t *testing.T) {
+	profiles := testProfiles()
+	const other = "python"
+	profiles.revisions[other] = map[string]resolvedProfile{profiles.defaultRevision["go"]: profiles.byName["go"]}
+	profiles.eligibility[other] = map[string]TemplatePolicy{profiles.defaultRevision["go"]: {}}
+	profiles.byName[other] = profiles.byName["go"]
+	profiles.defaultRevision[other] = profiles.defaultRevision["go"]
+	for _, id := range []string{"go", other} {
+		p := profiles.byName[id]
+		p.Spec.MaxEnvironments = 1
+		profiles.byName[id] = p
+		profiles.revisions[id][profiles.defaultRevision[id]] = p
+	}
+	dynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{ExecutionEnvironmentGVR: "ExecutionEnvironmentList"})
+	kube := kubefake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap, Namespace: "ns"}, Data: map[string]string{}})
+	store := NewStore(dynamicClient, "ns", profiles, nil).WithKubeClient(kube)
+	owner := executionenv.Owner{Issuer: "issuer", Subject: "subject"}
+	bind := func(binding, id string) error {
+		_, err := store.EnsurePendingOwnedRevision(t.Context(), "client", ownerHash(owner), owner, binding, id, profiles.defaultRevision[id], "fp", "op")
+		return err
+	}
+	if err := bind("shared", "go"); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate the competing request observing absence before the winner published.
+	var staleRead atomic.Bool
+	staleRead.Store(true)
+	dynamicClient.PrependReactor("get", "executionenvironments", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if action.(k8stesting.GetAction).GetName() == allocationName("client", ownerHash(owner), "shared") && staleRead.Swap(false) {
+			return true, nil, apierrors.NewNotFound(schema.GroupResource{Group: ExecutionEnvironmentGVR.Group, Resource: ExecutionEnvironmentGVR.Resource}, "shared")
+		}
+		return false, nil, nil
+	})
+	var conflict *executionenv.Error
+	if err := bind("shared", other); !errors.As(err, &conflict) || conflict.Code != executionenv.CodeAlreadyExists {
+		t.Fatalf("competing template = %v", err)
+	}
+	cm, err := kube.CoreV1().ConfigMaps("ns").Get(t.Context(), profileAllocationConfigMap, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var losing []string
+	if err := executionenv.DecodeStrict([]byte(cm.Data[profileAllocationKey(other)]), &losing); err != nil || len(losing) != 0 {
+		t.Fatalf("losing reservation: %v, %v", losing, err)
+	}
+	if err := bind("new", other); err != nil {
+		t.Fatalf("released capacity cannot be reused: %v", err)
+	}
+	if slots := profileSlots(t, kube); len(slots) != 1 {
+		t.Fatalf("winning allocation lost: %v", slots)
 	}
 }
 
@@ -139,12 +194,21 @@ func TestConcurrentProfileReservationsEnforceHardLimit(t *testing.T) {
 	profiles := testProfiles()
 	profile := profiles.byName["go"]
 	profile.Spec.MaxEnvironments = 1
-	profiles.byName["go"] = profile
+	profiles.revisions["go"][profiles.defaultRevision["go"]] = profile
+	newer := profile
+	newer.Spec.MaxEnvironments = 2
+	profiles.revisions["go"]["v1-other-revision"] = newer
+	profiles.eligibility["go"]["v1-other-revision"] = TemplatePolicy{}
 	stores := []*Store{NewStore(dynamicClient, "ns", profiles, nil).WithKubeClient(kubes[0]), NewStore(dynamicClient, "ns", profiles, nil).WithKubeClient(kubes[1])}
 	results := make(chan error, 2)
+	owner := executionenv.Owner{Issuer: "issuer", Subject: "subject"}
 	for i := range stores {
 		go func(i int) {
-			_, err := stores[i].EnsurePending(context.Background(), "client", "owner", "binding-"+strconv.Itoa(i), "go", "fp-"+strconv.Itoa(i), "op-"+strconv.Itoa(i))
+			revision := profiles.defaultRevision["go"]
+			if i == 1 {
+				revision = "v1-other-revision"
+			}
+			_, err := stores[i].EnsurePendingOwnedRevision(context.Background(), "client", ownerHash(owner), owner, "binding-"+strconv.Itoa(i), "go", revision, "fp-"+strconv.Itoa(i), "op-"+strconv.Itoa(i))
 			results <- err
 		}(i)
 	}
@@ -163,11 +227,19 @@ func TestConcurrentProfileReservationsEnforceHardLimit(t *testing.T) {
 	if admitted != 1 || exhausted != 1 {
 		t.Fatalf("admitted=%d exhausted=%d", admitted, exhausted)
 	}
+	var slots []string
+	if err := executionenv.DecodeStrict([]byte(current.Data[profileAllocationKey("go")]), &slots); err != nil || len(slots) != 1 {
+		t.Fatalf("cross-revision capacity ledger leaked: %v, %v", slots, err)
+	}
+	all, err := dynamicClient.Resource(ExecutionEnvironmentGVR).Namespace("ns").List(t.Context(), metav1.ListOptions{})
+	if err != nil || len(all.Items) != 1 || slots[0] != all.Items[0].GetName() {
+		t.Fatalf("cross-revision ledger disagrees with CR: %v, %v", slots, err)
+	}
 }
 
 func TestAcquireRunAndRevokeUseResourceVersionCAS(t *testing.T) {
 	now := time.Date(2026, 9, 17, 5, 0, 0, 0, time.UTC)
-	env := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "env", "namespace": "ns", "resourceVersion": "1"}, "spec": map[string]any{"schemaVersion": int64(2), "revision": "rev", "ownerHash": "owner", "clientHash": hashText("client"), "desired": "Active"}, "status": map[string]any{"schemaVersion": int64(2), "epoch": int64(1), "grantGeneration": int64(1), "fenceState": fenceHealthy, "references": []any{map[string]any{"bindingID": "binding", "state": "Published", "operationID": "seed", "createdAt": now.Format(time.RFC3339Nano)}}, "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}}}}
+	env := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "env", "namespace": "ns", "resourceVersion": "1"}, "spec": map[string]any{"schemaVersion": int64(2), "revision": "rev", "ownerHash": "owner", "clientHash": hashText("client"), "templateID": "go", "templateRevision": testProfiles().defaultRevision["go"], "templateDigest": testProfiles().byName["go"].Digest, "desired": "Active"}, "status": map[string]any{"schemaVersion": int64(2), "epoch": int64(1), "grantGeneration": int64(1), "fenceState": fenceHealthy, "references": []any{map[string]any{"bindingID": "binding", "state": "Published", "operationID": "seed", "createdAt": now.Format(time.RFC3339Nano)}}, "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}}}}
 	clients := []*dynamicfake.FakeDynamicClient{
 		dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env),
 		dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env),

@@ -2,12 +2,12 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  {{- include "mecatl-execution.retainedMetadata" (dict "root" . "apiVersion" "v1" "kind" "ConfigMap" "name" (printf "%s-profiles" (include "mecatl-execution.fullname" .))) | nindent 2 }}
+  {{- include "mecatl-execution.retainedMetadata" (dict "root" . "apiVersion" "v1" "kind" "ConfigMap" "name" (printf "%s-templates" (include "mecatl-execution.fullname" .))) | nindent 2 }}
 data:
   lifetime.json: {{ include "mecatl-execution.lifetimeConfig" . | quote }}
-  profiles.yaml: |
-    profiles:
-{{ toYaml .Values.profiles | indent 6 }}
+  templates.yaml: |
+    templates:
+{{ toYaml .Values.templates | indent 6 }}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -66,9 +66,9 @@ spec:
         args:
         - --namespace={{ .Release.Namespace }}
         - --executor-service-account={{ include "mecatl-execution.executorServiceAccount" . }}
-        - --profiles=/etc/mecatl-execution/profiles.yaml
-        - --grant-keyring-manifest=/etc/mecatl-execution/security/manifest.json
-        - --grant-key-directory=/etc/mecatl-execution/security
+        - --templates=/etc/mecatl-execution/templates.yaml
+        - --security-policy-manifest=/etc/mecatl-execution/security/manifest.json
+        - --tls-directory=/etc/mecatl-execution/security
         - --security-authority-configmap={{ include "mecatl-execution.fullname" . }}-security-authority
         - --security-reload-interval={{ .Values.provider.securityReloadInterval }}
         - --max-concurrent-streams={{ .Values.provider.maxConcurrentStreams }}
@@ -95,12 +95,12 @@ spec:
         resources:
 {{ toYaml .Values.provider.resources | indent 10 }}
         volumeMounts:
-        - {name: profiles, mountPath: /etc/mecatl-execution/profiles.yaml, subPath: profiles.yaml, readOnly: true}
+        - {name: templates, mountPath: /etc/mecatl-execution/templates.yaml, subPath: templates.yaml, readOnly: true}
         - {name: security, mountPath: /etc/mecatl-execution/security, readOnly: true}
         - {name: tmp, mountPath: /tmp}
       volumes:
-      - name: profiles
-        configMap: {name: {{ include "mecatl-execution.fullname" . }}-profiles}
+      - name: templates
+        configMap: {name: {{ include "mecatl-execution.fullname" . }}-templates}
       - name: security
         projected:
           sources:

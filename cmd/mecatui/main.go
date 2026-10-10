@@ -348,6 +348,7 @@ func runWithOptions(argv []string, options runOptions) error {
 		UserModel:               cl,
 		Reflections:             cl,
 		Dream:                   cl,
+		ExecutionTemplates:      cl,
 		Models:                  cl,
 		Worktrees:               cl,
 		Sched:                   cl,
@@ -1721,6 +1722,13 @@ func (s *sessionAdapter) CreateSession(ctx context.Context, sel client.ModelSele
 		return id, caps, resolved, err
 	}
 	return s.cl.CreateSession(ctx, client.ModeFromString(mode), sel)
+}
+
+func (s *sessionAdapter) CreateSessionWithExecution(ctx context.Context, sel client.ModelSelection, mode string, choice client.ExecutionChoice) (string, client.Capabilities, client.ResolvedModel, error) {
+	if s.debugTarget != "" {
+		return "", client.Capabilities{}, client.ResolvedModel{}, fmt.Errorf("debug sessions require none and cannot switch execution")
+	}
+	return s.cl.CreateSessionWithExecution(ctx, client.ModeFromString(mode), sel, choice)
 }
 
 func (s *sessionAdapter) DebugTargetID() string { return s.debugTarget }

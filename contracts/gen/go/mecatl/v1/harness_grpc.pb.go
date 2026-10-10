@@ -43,6 +43,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	HarnessService_GetCompatibilityInfo_FullMethodName            = "/mecatl.v1.HarnessService/GetCompatibilityInfo"
+	HarnessService_ListExecutionTemplates_FullMethodName          = "/mecatl.v1.HarnessService/ListExecutionTemplates"
 	HarnessService_CreateSession_FullMethodName                   = "/mecatl.v1.HarnessService/CreateSession"
 	HarnessService_GetServerInfo_FullMethodName                   = "/mecatl.v1.HarnessService/GetServerInfo"
 	HarnessService_GetSession_FullMethodName                      = "/mecatl.v1.HarnessService/GetSession"
@@ -148,6 +149,9 @@ type HarnessServiceClient interface {
 	// legacy mode. Authenticated like every other RPC, so UNAUTHENTICATED and
 	// UNIMPLEMENTED stay distinguishable.
 	GetCompatibilityInfo(ctx context.Context, in *GetCompatibilityInfoRequest, opts ...grpc.CallOption) (*GetCompatibilityInfoResponse, error)
+	// ListExecutionTemplates returns the authenticated caller's bounded eligible
+	// catalog. It allocates nothing; CreateSession rechecks exact eligibility.
+	ListExecutionTemplates(ctx context.Context, in *ListExecutionTemplatesRequest, opts ...grpc.CallOption) (*ListExecutionTemplatesResponse, error)
 	// CreateSession allocates a new server-side session and returns its id.
 	CreateSession(ctx context.Context, in *CreateSessionRequest, opts ...grpc.CallOption) (*CreateSessionResponse, error)
 	// GetServerInfo returns only the composed server build identity. It is authenticated
@@ -535,6 +539,16 @@ func (c *harnessServiceClient) GetCompatibilityInfo(ctx context.Context, in *Get
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetCompatibilityInfoResponse)
 	err := c.cc.Invoke(ctx, HarnessService_GetCompatibilityInfo_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) ListExecutionTemplates(ctx context.Context, in *ListExecutionTemplatesRequest, opts ...grpc.CallOption) (*ListExecutionTemplatesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListExecutionTemplatesResponse)
+	err := c.cc.Invoke(ctx, HarnessService_ListExecutionTemplates_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1382,6 +1396,9 @@ type HarnessServiceServer interface {
 	// legacy mode. Authenticated like every other RPC, so UNAUTHENTICATED and
 	// UNIMPLEMENTED stay distinguishable.
 	GetCompatibilityInfo(context.Context, *GetCompatibilityInfoRequest) (*GetCompatibilityInfoResponse, error)
+	// ListExecutionTemplates returns the authenticated caller's bounded eligible
+	// catalog. It allocates nothing; CreateSession rechecks exact eligibility.
+	ListExecutionTemplates(context.Context, *ListExecutionTemplatesRequest) (*ListExecutionTemplatesResponse, error)
 	// CreateSession allocates a new server-side session and returns its id.
 	CreateSession(context.Context, *CreateSessionRequest) (*CreateSessionResponse, error)
 	// GetServerInfo returns only the composed server build identity. It is authenticated
@@ -1768,6 +1785,9 @@ type UnimplementedHarnessServiceServer struct{}
 func (UnimplementedHarnessServiceServer) GetCompatibilityInfo(context.Context, *GetCompatibilityInfoRequest) (*GetCompatibilityInfoResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetCompatibilityInfo not implemented")
 }
+func (UnimplementedHarnessServiceServer) ListExecutionTemplates(context.Context, *ListExecutionTemplatesRequest) (*ListExecutionTemplatesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListExecutionTemplates not implemented")
+}
 func (UnimplementedHarnessServiceServer) CreateSession(context.Context, *CreateSessionRequest) (*CreateSessionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CreateSession not implemented")
 }
@@ -2031,6 +2051,24 @@ func _HarnessService_GetCompatibilityInfo_Handler(srv interface{}, ctx context.C
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(HarnessServiceServer).GetCompatibilityInfo(ctx, req.(*GetCompatibilityInfoRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HarnessService_ListExecutionTemplates_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListExecutionTemplatesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).ListExecutionTemplates(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_ListExecutionTemplates_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).ListExecutionTemplates(ctx, req.(*ListExecutionTemplatesRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -3345,6 +3383,10 @@ var HarnessService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetCompatibilityInfo",
 			Handler:    _HarnessService_GetCompatibilityInfo_Handler,
+		},
+		{
+			MethodName: "ListExecutionTemplates",
+			Handler:    _HarnessService_ListExecutionTemplates_Handler,
 		},
 		{
 			MethodName: "CreateSession",

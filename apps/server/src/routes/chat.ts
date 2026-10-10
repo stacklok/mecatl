@@ -7,6 +7,7 @@ import {
   compactSessionResponseSchema,
   createSessionRequestSchema,
   createSessionResponseSchema,
+  executionTemplateInventorySchema,
   forkSessionRequestSchema,
   forkSessionResponseSchema,
   listSessionsResponseSchema,
@@ -96,6 +97,19 @@ const listSessionsRoute = createRoute({
   },
 });
 
+const listExecutionTemplatesRoute = createRoute({
+  method: "get",
+  operationId: "listExecutionTemplates",
+  path: "/api/v1/execution-templates",
+  responses: {
+    200: {
+      content: { "application/json": { schema: executionTemplateInventorySchema } },
+      description: "Eligible execution templates for this caller.",
+    },
+    503: unavailableResponse,
+  },
+});
+
 const createSessionRoute = createRoute({
   method: "post",
   operationId: "createSession",
@@ -111,6 +125,7 @@ const createSessionRoute = createRoute({
       content: { "application/json": { schema: createSessionResponseSchema } },
       description: "The newly created Mecatl session.",
     },
+    409: errorResponse,
     500: errorResponse,
     503: unavailableResponse,
   },
@@ -500,11 +515,46 @@ export function registerChatRoutes(
     return context.json(await chat.listSessions(), 200);
   });
 
+  app.openapi(listExecutionTemplatesRoute, async (context) => {
+    if (chat?.executionTemplates === undefined) return unavailable(context);
+    return context.json(await chat.executionTemplates(), 200);
+  });
+
   app.openapi(createSessionRoute, async (context) => {
     if (chat === undefined) {
       return unavailable(context);
     }
-    return context.json(await chat.createSession(context.req.valid("json")), 201);
+    const request = context.req.valid("json");
+    try {
+      return context.json(await chat.createSession(request), 201);
+    } catch (error) {
+      if ("template" in (request.execution ?? {}) && error instanceof MecatlError) {
+        if (
+          error.code === "not_found" ||
+          error.code === "failed_precondition" ||
+          error.code === "placement_selector_not_found" ||
+          error.code === "placement_selector_stale" ||
+          error.code === "placement_selector_invalid" ||
+          error.code === "placement_binding_invalid"
+        )
+          return problem(
+            context,
+            409,
+            "template_unavailable",
+            "Template unavailable",
+            "The selected revision is no longer eligible. Refresh the catalog and choose another; no fallback was created.",
+          );
+        if (error.code === "resource_exhausted")
+          return problem(
+            context,
+            409,
+            "template_capacity",
+            "Execution capacity reached",
+            "Retry later or select another template; no fallback was created.",
+          );
+      }
+      throw error;
+    }
   });
 
   app.openapi(getTranscriptRoute, async (context) => {

@@ -48,7 +48,7 @@ func TestRenewRunRejectsActiveRunOwnerClientTupleDrift(t *testing.T) {
 
 func TestRenewRunRejectsExpiredClaimAtBoundary(t *testing.T) {
 	now := time.Date(2026, 9, 17, 4, 0, 0, 0, time.UTC)
-	env := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "env", "namespace": "ns"}, "spec": map[string]any{"schemaVersion": int64(2), "revision": "rev", "ownerHash": "owner", "clientHash": hashText("client"), "desired": "Active"}, "status": map[string]any{"schemaVersion": int64(2), "epoch": int64(7), "grantGeneration": int64(3), "fenceState": fenceHealthy, "references": []any{}, "activeRun": map[string]any{"bindingID": "binding", "runID": "run", "claimID": "claim", "operationID": "acquire", "ownerHash": "owner", "clientHash": hashText("client"), "epoch": int64(7), "grantGeneration": int64(3), "expiresAt": now.Format(time.RFC3339Nano)}}}}
+	env := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "env", "namespace": "ns"}, "spec": map[string]any{"schemaVersion": int64(2), "revision": "rev", "ownerHash": "owner", "clientHash": hashText("client"), "templateID": "go", "templateRevision": testProfiles().defaultRevision["go"], "templateDigest": testProfiles().byName["go"].Digest, "desired": "Active"}, "status": map[string]any{"schemaVersion": int64(2), "epoch": int64(7), "grantGeneration": int64(3), "fenceState": fenceHealthy, "references": []any{}, "activeRun": map[string]any{"bindingID": "binding", "runID": "run", "claimID": "claim", "operationID": "acquire", "ownerHash": "owner", "clientHash": hashText("client"), "epoch": int64(7), "grantGeneration": int64(3), "expiresAt": now.Format(time.RFC3339Nano)}}}}
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
 	store := NewStore(client, "ns", testProfiles(), nil)
 	store.now = func() time.Time { return now }
@@ -67,7 +67,7 @@ func TestRenewRunRejectsExpiredClaimAtBoundary(t *testing.T) {
 
 func TestRenewRunReplaysExactOperationWithoutExtendingLease(t *testing.T) {
 	now := time.Date(2026, 9, 17, 4, 0, 0, 0, time.UTC)
-	env := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "env", "namespace": "ns"}, "spec": map[string]any{"schemaVersion": int64(2), "revision": "rev", "ownerHash": "owner", "clientHash": hashText("client"), "desired": "Active"}, "status": map[string]any{"schemaVersion": int64(2), "epoch": int64(7), "grantGeneration": int64(3), "fenceState": fenceHealthy, "references": []any{}, "activeRun": map[string]any{"bindingID": "binding", "runID": "run", "claimID": "claim", "operationID": "acquire", "ownerHash": "owner", "clientHash": hashText("client"), "epoch": int64(7), "grantGeneration": int64(3), "expiresAt": now.Add(time.Minute).Format(time.RFC3339Nano)}}}}
+	env := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "env", "namespace": "ns"}, "spec": map[string]any{"schemaVersion": int64(2), "revision": "rev", "ownerHash": "owner", "clientHash": hashText("client"), "templateID": "go", "templateRevision": testProfiles().defaultRevision["go"], "templateDigest": testProfiles().byName["go"].Digest, "desired": "Active"}, "status": map[string]any{"schemaVersion": int64(2), "epoch": int64(7), "grantGeneration": int64(3), "fenceState": fenceHealthy, "references": []any{}, "activeRun": map[string]any{"bindingID": "binding", "runID": "run", "claimID": "claim", "operationID": "acquire", "ownerHash": "owner", "clientHash": hashText("client"), "epoch": int64(7), "grantGeneration": int64(3), "expiresAt": now.Add(time.Minute).Format(time.RFC3339Nano)}}}}
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
 	store := NewStore(client, "ns", testProfiles(), nil)
 	clock := now
@@ -96,21 +96,29 @@ func TestRenewRunReplaysExactOperationWithoutExtendingLease(t *testing.T) {
 
 func TestStoreEnsureUsesStableLookupAndRejectsFingerprintDrift(t *testing.T) {
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
-	profiles := &Profiles{byName: map[string]resolvedProfile{"go": {Digest: "sha256:profile", Spec: ProfileSpec{Image: "example@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", StorageClass: "standard", StorageSize: "1Gi", CPURequest: "100m", MemoryRequest: "64Mi", CPULimit: "1", MemoryLimit: "1Gi", EphemeralStorageRequest: "64Mi", EphemeralStorageLimit: "1Gi", TmpSizeLimit: "256Mi", RuntimeClassName: "sandboxed", MaxFileBytes: 1024, MaxCommandBytes: 1024, MaxCommandDuration: time.Minute, MaxEnvironments: 100}}, "other": {Digest: "sha256:other", Spec: ProfileSpec{Image: "example@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", StorageClass: "standard", StorageSize: "1Gi", CPURequest: "100m", MemoryRequest: "64Mi", CPULimit: "1", MemoryLimit: "1Gi", EphemeralStorageRequest: "64Mi", EphemeralStorageLimit: "1Gi", TmpSizeLimit: "256Mi", RuntimeClassName: "sandboxed", MaxFileBytes: 1024, MaxCommandBytes: 1024, MaxCommandDuration: time.Minute, MaxEnvironments: 100}}}}
+	profiles := testProfiles()
+	other := profiles.byName["go"]
+	other.Spec.Image = "example@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	otherRevision := fixtureRevision(t, other.Spec)
+	other.Digest = "sha256:" + otherRevision[3:]
+	profiles.revisions["other"] = map[string]resolvedProfile{otherRevision: other}
+	profiles.eligibility["other"] = map[string]TemplatePolicy{otherRevision: {}}
+	profiles.defaultRevision["other"] = otherRevision
 	s := NewStore(client, "ns", profiles, nil)
 	ctx := context.Background()
-	a, err := s.Ensure(ctx, "spiffe://client", "owner", "binding", "go", "fp1")
+	owner := executionenv.Owner{Issuer: "issuer", Subject: "subject"}
+	a, err := s.EnsurePendingOwnedRevision(ctx, "spiffe://client", ownerHash(owner), owner, "binding", "go", profiles.defaultRevision["go"], "fp1", "op")
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := s.Ensure(ctx, "spiffe://client", "owner", "binding", "go", "fp1")
+	b, err := s.EnsurePendingOwnedRevision(ctx, "spiffe://client", ownerHash(owner), owner, "binding", "go", profiles.defaultRevision["go"], "fp1", "op")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if a.Environment != b.Environment || a.Epoch != b.Epoch {
 		t.Fatalf("identity changed: %+v %+v", a, b)
 	}
-	if _, err := s.Ensure(ctx, "spiffe://client", "owner", "binding", "other", "fp2"); err == nil {
+	if _, err := s.EnsurePendingOwnedRevision(ctx, "spiffe://client", ownerHash(owner), owner, "binding", "other", otherRevision, "fp2", "op"); err == nil {
 		t.Fatal("profile drift adopted existing allocation")
 	}
 }
@@ -140,7 +148,7 @@ func (e *terminalErrorExecutor) Execute(context.Context, string, executionenv.Ex
 	return executionenv.ExecutorResponse{}, &executionenv.Error{Code: executionenv.CodeNotFound, Message: "path not found"}
 }
 func TestCancelledStoreOperationStaysActiveUntilBackendStopsThenFences(t *testing.T) {
-	env := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "env", "namespace": "ns"}, "spec": map[string]any{"schemaVersion": int64(2), "revision": "rev", "ownerHash": "owner", "clientHash": hashText("client"), "profile": "go", "profileDigest": "sha256:profile", "desired": "Active"}, "status": map[string]any{"schemaVersion": int64(2), "epoch": int64(1), "grantGeneration": int64(1), "fenceState": "Healthy", "references": []any{map[string]any{"bindingID": "binding", "state": "Published", "operationID": "seed", "createdAt": time.Now().UTC().Format(time.RFC3339Nano)}}, "activeRun": map[string]any{"bindingID": "binding", "runID": "run", "claimID": "claim", "operationID": "acquire", "ownerHash": "owner", "clientHash": hashText("client"), "epoch": int64(1), "grantGeneration": int64(1), "expiresAt": time.Now().Add(time.Minute).UTC().Format(time.RFC3339Nano)}, "pod": map[string]any{"name": "pod"}, "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}}}}
+	env := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "env", "namespace": "ns"}, "spec": map[string]any{"schemaVersion": int64(2), "revision": "rev", "ownerHash": "owner", "clientHash": hashText("client"), "templateID": "go", "templateRevision": testProfiles().defaultRevision["go"], "templateDigest": testProfiles().byName["go"].Digest, "desired": "Active"}, "status": map[string]any{"schemaVersion": int64(2), "epoch": int64(1), "grantGeneration": int64(1), "fenceState": "Healthy", "references": []any{map[string]any{"bindingID": "binding", "state": "Published", "operationID": "seed", "createdAt": time.Now().UTC().Format(time.RFC3339Nano)}}, "activeRun": map[string]any{"bindingID": "binding", "runID": "run", "claimID": "claim", "operationID": "acquire", "ownerHash": "owner", "clientHash": hashText("client"), "epoch": int64(1), "grantGeneration": int64(1), "expiresAt": time.Now().Add(time.Minute).UTC().Format(time.RFC3339Nano)}, "pod": map[string]any{"name": "pod"}, "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}}}}
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
 	exec := &blockingExecutor{started: make(chan struct{}), release: make(chan struct{})}
 	s := NewStore(client, "ns", testProfiles(), exec)
@@ -178,7 +186,7 @@ func TestCancelledStoreOperationStaysActiveUntilBackendStopsThenFences(t *testin
 }
 
 func TestControlledExecutorErrorClearsOperationWithoutFencing(t *testing.T) {
-	env := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "env", "namespace": "ns"}, "spec": map[string]any{"schemaVersion": int64(2), "revision": "rev", "ownerHash": "owner", "clientHash": hashText("client"), "profile": "go", "profileDigest": "sha256:profile", "desired": "Active"}, "status": map[string]any{"schemaVersion": int64(2), "epoch": int64(1), "grantGeneration": int64(1), "fenceState": "Healthy", "references": []any{map[string]any{"bindingID": "binding", "state": "Published", "operationID": "seed", "createdAt": time.Now().UTC().Format(time.RFC3339Nano)}}, "activeRun": map[string]any{"bindingID": "binding", "runID": "run", "claimID": "claim", "operationID": "acquire", "ownerHash": "owner", "clientHash": hashText("client"), "epoch": int64(1), "grantGeneration": int64(1), "expiresAt": time.Now().Add(time.Minute).UTC().Format(time.RFC3339Nano)}, "pod": map[string]any{"name": "pod"}, "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}}}}
+	env := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "env", "namespace": "ns"}, "spec": map[string]any{"schemaVersion": int64(2), "revision": "rev", "ownerHash": "owner", "clientHash": hashText("client"), "templateID": "go", "templateRevision": testProfiles().defaultRevision["go"], "templateDigest": testProfiles().byName["go"].Digest, "desired": "Active"}, "status": map[string]any{"schemaVersion": int64(2), "epoch": int64(1), "grantGeneration": int64(1), "fenceState": "Healthy", "references": []any{map[string]any{"bindingID": "binding", "state": "Published", "operationID": "seed", "createdAt": time.Now().UTC().Format(time.RFC3339Nano)}}, "activeRun": map[string]any{"bindingID": "binding", "runID": "run", "claimID": "claim", "operationID": "acquire", "ownerHash": "owner", "clientHash": hashText("client"), "epoch": int64(1), "grantGeneration": int64(1), "expiresAt": time.Now().Add(time.Minute).UTC().Format(time.RFC3339Nano)}, "pod": map[string]any{"name": "pod"}, "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}}}}
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
 	exec := &terminalErrorExecutor{}
 	s := NewStore(client, "ns", testProfiles(), exec)

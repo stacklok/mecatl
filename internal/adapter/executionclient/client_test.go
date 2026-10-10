@@ -4,16 +4,18 @@ package executionclient
 import (
 	"context"
 	"crypto/ecdsa"
-	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
 	"math/big"
 	"net"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -33,12 +35,24 @@ import (
 
 type integrationBackend struct {
 	allocation                          executioncontroller.Allocation
+	claim                               executionenv.RunClaim
 	ensureCalls, attachCalls, fileCalls int
 	expireNextRead                      bool
 }
 
-func (*integrationBackend) ValidateProfile(context.Context, string) (executioncontroller.Profile, error) {
+const codingRevision = "v1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+func (*integrationBackend) ValidateTemplate(context.Context, string, string) (executioncontroller.Profile, error) {
 	return executioncontroller.Profile{Name: "coding", Digest: "sha256:test"}, nil
+}
+func (*integrationBackend) CatalogTemplates() []*executionv1.TemplateCatalogItem {
+	return []*executionv1.TemplateCatalogItem{{Template: &executionv1.TemplateSelector{Id: "coding", Revision: codingRevision}}}
+}
+func (b *integrationBackend) EnsurePendingOwnedRevision(ctx context.Context, client, owner string, _ executionenv.Owner, binding, id, revision, fp, operationID string) (executioncontroller.Allocation, error) {
+	if id != "coding" || revision != codingRevision {
+		return executioncontroller.Allocation{}, &executionenv.Error{Code: executionenv.CodeNotFound, Message: "execution template not found"}
+	}
+	return b.EnsurePending(ctx, client, owner, binding, id, fp, operationID)
 }
 func (b *integrationBackend) Ensure(_ context.Context, client, owner, binding, _, _ string) (executioncontroller.Allocation, error) {
 	b.ensureCalls++
@@ -62,7 +76,7 @@ func (b *integrationBackend) File(_ context.Context, _, _ string, q executionenv
 	b.fileCalls++
 	if b.expireNextRead && q.Operation == executionenv.OpFileRead {
 		b.expireNextRead = false
-		return executionenv.FileResponse{}, &executionenv.Error{Code: executionenv.CodeUnauthenticated, Message: "expired grant", Retryable: true}
+		return executionenv.FileResponse{}, &executionenv.Error{Code: executionenv.CodeUnauthenticated, Message: "lease renewal required", Retryable: true}
 	}
 	if q.Operation == executionenv.OpFileResolveAuthority {
 		return executionenv.FileResponse{AuthorityTarget: "/workspace/main.go", AuthorityWorkspace: "/workspace"}, nil
@@ -83,10 +97,21 @@ func (b *integrationBackend) EnsurePending(ctx context.Context, client, owner, b
 	return b.Ensure(ctx, client, owner, binding, profile, fp)
 }
 func (b *integrationBackend) AcquireRun(_ context.Context, ref executionenv.EnvironmentRef, client, owner, binding, run, _ string, ttl time.Duration) (executionenv.RunClaim, error) {
-	return executionenv.RunClaim{Environment: ref, BindingID: binding, RunID: run, ClaimID: "claim", Epoch: b.allocation.Epoch + 1, GrantGeneration: 1, ExpiresAt: time.Now().Add(ttl)}, nil
+	if ref != b.allocation.Environment || client != b.allocation.Client || owner != b.allocation.OwnerHash || binding != b.allocation.BindingID {
+		return executionenv.RunClaim{}, &executionenv.Error{Code: executionenv.CodeNotFound, Message: "binding unavailable"}
+	}
+	b.claim = executionenv.RunClaim{Environment: ref, BindingID: binding, RunID: run, ClaimID: "claim", Epoch: b.allocation.Epoch + 1, GrantGeneration: 1, ExpiresAt: time.Now().Add(ttl)}
+	return b.claim, nil
+}
+func (b *integrationBackend) ValidateRunClaim(_ context.Context, client, owner string, rc executionenv.RequestContext) error {
+	if client != b.allocation.Client || owner != b.allocation.OwnerHash || rc.Environment != b.claim.Environment || rc.BindingID != b.claim.BindingID || rc.RunID != b.claim.RunID || rc.ClaimID != b.claim.ClaimID || rc.Epoch != b.claim.Epoch || rc.GrantGeneration != b.claim.GrantGeneration || !time.Now().Before(b.claim.ExpiresAt) {
+		return &executionenv.Error{Code: executionenv.CodePermissionDenied, Message: "run unavailable"}
+	}
+	return nil
 }
 func (b *integrationBackend) RenewRun(_ context.Context, _ executionenv.EnvironmentRef, _ string, _ string, req executionenv.RunClaimRequest) (executionenv.RunClaim, error) {
-	return executionenv.RunClaim{Environment: req.Environment, BindingID: req.BindingID, RunID: req.RunID, ClaimID: req.ClaimID, Epoch: req.Epoch, GrantGeneration: 1, ExpiresAt: time.Now().Add(req.TTL)}, nil
+	b.claim = executionenv.RunClaim{Environment: req.Environment, BindingID: req.BindingID, RunID: req.RunID, ClaimID: req.ClaimID, Epoch: req.Epoch, GrantGeneration: 1, ExpiresAt: time.Now().Add(req.TTL)}
+	return b.claim, nil
 }
 func (*integrationBackend) ReleaseRun(context.Context, executionenv.EnvironmentRef, string, string, executionenv.RunClaimRequest) error {
 	return nil
@@ -129,7 +154,11 @@ func certificate(t *testing.T, parent *x509.Certificate, parentKey *ecdsa.Privat
 		tmpl.URIs = []*url.URL{u}
 	} else if parent != nil {
 		tmpl.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
-		tmpl.DNSNames = []string{"example.test"}
+		if serverName == "localhost" {
+			tmpl.DNSNames = []string{"localhost"}
+		} else {
+			tmpl.DNSNames = []string{"example.test"}
+		}
 	}
 	issuer, signer := tmpl, key
 	if parent != nil {
@@ -157,8 +186,7 @@ func startFixture(t *testing.T, backend executioncontroller.Backend, ready func(
 	_, ca, caKey := certificate(t, nil, nil, "ca", false)
 	serverCert, _, _ := certificate(t, ca, caKey, "example.test", false)
 	clientCert, _, _ := certificate(t, ca, caKey, "client", true)
-	_, private, _ := ed25519.GenerateKey(rand.Reader)
-	h := executioncontroller.NewHandler(executioncontroller.HandlerConfig{Clients: map[string]executioncontroller.ClientPolicy{"spiffe://example.test/mecak8s": {MayAttestOwner: true}}, Signer: executioncontroller.GrantSigner{KeyID: "k1", PrivateKey: private, Issuer: "provider", Audience: "executor", Lifetime: time.Minute}, Verifier: executionenv.GrantVerifier{Keys: map[string]ed25519.PublicKey{"k1": private.Public().(ed25519.PublicKey)}, Issuer: "provider", Audience: "executor", MaxLifetime: 2 * time.Minute}, Ready: ready}, backend)
+	h := executioncontroller.NewHandler(executioncontroller.HandlerConfig{Clients: map[string]executioncontroller.ClientPolicy{"spiffe://example.test/mecak8s": {MayAttestOwner: true, ExecutionTemplates: []string{"coding"}}}, Ready: ready}, backend)
 	pool := x509.NewCertPool()
 	pool.AddCert(ca)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -173,6 +201,59 @@ func startFixture(t *testing.T, backend executioncontroller.Backend, ready func(
 	return grpcFixture{endpoint: ln.Addr().String(), clientTLS: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots, Certificates: []tls.Certificate{clientCert}, ServerName: "example.test"}, stop: func() { s.Stop(); _ = ln.Close() }}
 }
 
+func TestReloadTLSClosesStaleConnectionOnIncompleteProjectionAndRecovers(t *testing.T) {
+	dir := t.TempDir()
+	_, ca, caKey := certificate(t, nil, nil, "ca", false)
+	clientCert, _, clientKey := certificate(t, ca, caKey, "client", true)
+	files := TLSFiles{CA: filepath.Join(dir, "ca.pem"), Cert: filepath.Join(dir, "tls.crt"), Key: filepath.Join(dir, "tls.key")}
+	write := func(path string, data []byte) {
+		t.Helper()
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(files.CA, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ca.Raw}))
+	write(files.Cert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: clientCert.Certificate[0]}))
+	keyDER, err := x509.MarshalECPrivateKey(clientKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(files.Key, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}))
+	c, err := NewWithTLSFiles("localhost:8443", files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	original := c.conn.Load()
+	if err := c.ReloadTLS(); err != nil || c.conn.Load() != original {
+		t.Fatalf("unchanged projection replaced transport: %v", err)
+	}
+	write(files.Key, []byte("incomplete"))
+	if err := c.ReloadTLS(); err == nil || c.conn.Load() != nil {
+		t.Fatal("partial certificate/key projection retained live transport")
+	}
+	if err := c.Invoke(t.Context(), "/test", nil, nil); status.Code(err) != codes.Unavailable {
+		t.Fatalf("stale transport remained callable: %v", err)
+	}
+	write(files.Key, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}))
+	if err := c.ReloadTLS(); err != nil || c.conn.Load() == nil || c.conn.Load() == original {
+		t.Fatalf("valid projection did not restore fresh transport: %v", err)
+	}
+	newCert, _, _ := certificate(t, ca, caKey, "client", true)
+	write(files.Cert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: newCert.Certificate[0]}))
+	if err := c.ReloadTLS(); err == nil || c.conn.Load() != nil {
+		t.Fatal("mismatched renewed leaf and key retained live transport")
+	}
+}
+
+func TestTemplateProviderRequiresExactRevision(t *testing.T) {
+	for _, revision := range []string{"", "v1-" + strings.Repeat("z", 64), "v1-" + strings.Repeat("A", 64), "v1-" + strings.Repeat("a", 63)} {
+		if _, err := NewTemplateProvider(&Client{}, "coding", revision); err == nil {
+			t.Fatalf("malformed revision %q accepted", revision)
+		}
+	}
+}
+
 func TestProviderThroughRealGRPCSignedHandlerRefreshesAndReattachesExactly(t *testing.T) {
 	backend := &integrationBackend{}
 	fx := startFixture(t, backend, nil)
@@ -182,7 +263,7 @@ func TestProviderThroughRealGRPCSignedHandlerRefreshesAndReattachesExactly(t *te
 		t.Fatal(err)
 	}
 	defer client.Close()
-	provider, _ := NewProvider(client, "coding")
+	provider, _ := NewTemplateProvider(client, "coding", codingRevision)
 	principal := &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser}
 	binding, err := provider.Bind(context.Background(), server.PlacementBindRequest{Selector: server.DefaultPlacement(), Principal: principal, BindingID: "session-real"})
 	if err != nil {
@@ -235,7 +316,7 @@ func TestCommandStatusIsUnimplementedOnlyAfterAuthorization(t *testing.T) {
 	}
 	defer client.Close()
 	owner := executionenv.Owner{Issuer: "issuer", Subject: "alice"}
-	ensured, err := client.Ensure(context.Background(), "binding", "coding", owner, "create")
+	ensured, err := client.EnsureTemplate(context.Background(), "binding", "coding", codingRevision, owner, "create")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +324,7 @@ func TestCommandStatusIsUnimplementedOnlyAfterAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rc := executionenv.RequestContext{Environment: claim.Environment, Owner: owner, BindingID: "binding", RunID: claim.RunID, ClaimID: claim.ClaimID, Epoch: claim.Epoch, GrantGeneration: claim.GrantGeneration, Grant: claim.Grant}
+	rc := executionenv.RequestContext{Environment: claim.Environment, Owner: owner, BindingID: "binding", RunID: claim.RunID, ClaimID: claim.ClaimID, Epoch: claim.Epoch, GrantGeneration: claim.GrantGeneration}
 	_, err = client.rpc.CommandStatus(context.Background(), &executionv1.CommandQueryRequest{Context: contextToProto(rc), CommandId: "c1"})
 	if status.Code(err) != codes.Unimplemented {
 		t.Fatalf("authorized status code=%v", status.Code(err))
@@ -263,7 +344,7 @@ func TestGRPCReadinessAndMTLSAreMandatory(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer client.Close()
-	_, err = client.ValidateProfile(context.Background(), "coding")
+	_, err = client.ValidateTemplate(context.Background(), "coding", codingRevision)
 	var remote *executionenv.Error
 	if !errors.As(err, &remote) || remote.Code != executionenv.CodeNotReady {
 		t.Fatalf("error=%v", err)
@@ -277,7 +358,7 @@ func TestGRPCReadinessAndMTLSAreMandatory(t *testing.T) {
 	defer conn.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if _, err := executionv1.NewExecutionProviderServiceClient(conn).ValidateProfile(ctx, &executionv1.ValidateProfileRequest{Profile: "coding"}); err == nil {
+	if _, err := executionv1.NewExecutionProviderServiceClient(conn).ValidateTemplate(ctx, &executionv1.ValidateTemplateRequest{Template: &executionv1.TemplateSelector{Id: "coding", Revision: codingRevision}}); err == nil {
 		t.Fatal("server accepted client without certificate")
 	}
 }

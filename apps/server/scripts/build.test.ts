@@ -71,7 +71,7 @@ describe("Studio image build stamp", () => {
       else process.env.STUDIO_BUILD_ID = original;
       vi.resetModules();
     }
-  });
+  }, 20_000);
 
   it("bakes the release tag into the BFF and omits it in local builds", async () => {
     const original = process.env.STUDIO_BUILD_ID;

@@ -165,7 +165,10 @@ workspace: ""
 execution:
   enabled: false
   endpoint: ""
-  profile: ""
+  templateID: ""
+  templateRevision: ""
+  # Exact authenticated OIDC subjects allowed to discover and bind templates.
+  allowedSubjects: []
   tlsSecret: ""
   caKey: ca.crt
   certKey: tls.crt

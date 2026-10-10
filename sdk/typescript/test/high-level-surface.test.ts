@@ -41,6 +41,10 @@ const HIGH_LEVEL_SURFACE = {
     kind: "namespace",
     operation: "Client.server.compatibility",
   },
+  "HarnessService.ListExecutionTemplates": {
+    kind: "namespace",
+    operation: "Client.server.executionTemplates",
+  },
   "HarnessService.CreateSession": { kind: "namespace", operation: "Client.sessions.create" },
   "HarnessService.GetServerInfo": { kind: "namespace", operation: "Client.server.info" },
   "HarnessService.GetSession": { kind: "session", operation: "Session.snapshot" },
@@ -311,6 +315,13 @@ function invocationPath(node: ts.Node, file: string): PublicOperation | undefine
   if (file === "plan.ts" && functionName === "createPlanResolution") return "Session.resolvePlan";
   if (file === "run-controls.ts" && className === "RunControlsImpl") {
     return `RunControls.${methodName}` as PublicOperation;
+  }
+  if (
+    file === "server.ts" &&
+    functionName === "createServer" &&
+    properties[0] === "executionTemplates"
+  ) {
+    return "Client.server.executionTemplates";
   }
   if (file === "server.ts" && functionName === "createServer" && properties[0] === "info") {
     return "Client.server.info";

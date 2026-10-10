@@ -62,7 +62,9 @@ type Snapshot struct {
 	// v1 snapshot with no "profile" key decoding to "" (the default profile) —
 	// purely additive, no format-tag bump (the same precedent as ProviderPhase /
 	// Parts).
-	Profile string `json:"profile,omitempty"`
+	Profile                   string `json:"profile,omitempty"`
+	ExecutionTemplateID       string `json:"execution_template_id,omitempty"`
+	ExecutionTemplateRevision string `json:"execution_template_revision,omitempty"`
 	// ProviderID and ModelID are the session's opaque neutral provider+model
 	// selector pair. omitempty keeps a v1 snapshot with no key decoding to the empty
 	// pair ("server default") — additive, no version bump. Persisting them lets a
@@ -143,7 +145,8 @@ type Snapshot struct {
 	// Authority is the plain, derived capability payload. A nil pointer is a
 	// genuine legacy record written without authority; a present payload must decode to the
 	// one governance.CapabilitySet representation or restore fails closed.
-	Authority *session.Authority `json:"authority,omitempty"`
+	Authority             *session.Authority             `json:"authority,omitempty"`
+	ExecutionCapabilities *session.ExecutionCapabilities `json:"execution_capabilities,omitempty"`
 	// EnvironmentRef is the sole durable execution-environment identity. It is
 	// required and must contain the exact provider revision used for reattachment.
 	EnvironmentRef session.EnvironmentRef `json:"environment_ref"`
@@ -285,35 +288,41 @@ func Of(s *session.Session) (Snapshot, error) {
 		relationship.BranchIndex = &branchIndex
 	}
 	snap := Snapshot{
-		ID:                     s.ID,
-		State:                  s.State,
-		Mode:                   s.Mode,
-		Limits:                 s.Limits,
-		Counters:               s.Counters,
-		ExternalBinding:        s.ExternalBinding,
-		EnvironmentRef:         s.EnvironmentRef,
-		Placement:              s.Placement,
-		Profile:                s.Profile,
-		ProviderID:             s.ProviderID,
-		ModelID:                s.ModelID,
-		ReasoningEffort:        s.ReasoningEffort,
-		DebugMCPServers:        append([]string(nil), s.DebugMCPServers...),
-		DebugMCPTools:          append([]string(nil), s.DebugMCPTools...),
-		DebugTargetFingerprint: s.DebugTargetFingerprint,
-		Title:                  s.Title,
-		TitleProvenance:        s.TitleProvenance,
-		TitleRevision:          s.TitleRevision,
-		TitleGeneration:        s.TitleGeneration,
-		TitleSourcePrompts:     s.TitleSourcePrompts(),
-		TitleAttempts:          s.TitleAttempts(),
-		TokenUsage:             s.TokenUsageSnapshot(),
-		Kind:                   s.Kind,
-		Relationship:           relationship,
-		CreatedAt:              s.CreatedAt,
-		Incarnation:            s.Incarnation(),
+		ID:                        s.ID,
+		State:                     s.State,
+		Mode:                      s.Mode,
+		Limits:                    s.Limits,
+		Counters:                  s.Counters,
+		ExternalBinding:           s.ExternalBinding,
+		EnvironmentRef:            s.EnvironmentRef,
+		Placement:                 s.Placement,
+		Profile:                   s.Profile,
+		ExecutionTemplateID:       s.ExecutionTemplateID,
+		ExecutionTemplateRevision: s.ExecutionTemplateRevision,
+		ProviderID:                s.ProviderID,
+		ModelID:                   s.ModelID,
+		ReasoningEffort:           s.ReasoningEffort,
+		DebugMCPServers:           append([]string(nil), s.DebugMCPServers...),
+		DebugMCPTools:             append([]string(nil), s.DebugMCPTools...),
+		DebugTargetFingerprint:    s.DebugTargetFingerprint,
+		Title:                     s.Title,
+		TitleProvenance:           s.TitleProvenance,
+		TitleRevision:             s.TitleRevision,
+		TitleGeneration:           s.TitleGeneration,
+		TitleSourcePrompts:        s.TitleSourcePrompts(),
+		TitleAttempts:             s.TitleAttempts(),
+		TokenUsage:                s.TokenUsageSnapshot(),
+		Kind:                      s.Kind,
+		Relationship:              relationship,
+		CreatedAt:                 s.CreatedAt,
+		Incarnation:               s.Incarnation(),
 		// Owner is a pointer for true omitempty; Clone so the snapshot cannot
 		// alias (and later mutate) the aggregate's own principal.
 		Owner: s.Owner.Clone(),
+	}
+	if s.ExecutionCapabilities != nil {
+		facts := *s.ExecutionCapabilities
+		snap.ExecutionCapabilities = &facts
 	}
 	if authority, ok := s.BoundAuthority(); ok {
 		snap.Authority = &authority
@@ -375,10 +384,16 @@ func (s Snapshot) Restore() (*session.Session, error) {
 	// Restore opaque creation labels by direct assignment. Title-specific metadata
 	// restores atomically through RestoreTitleMetadata below.
 	restored.Profile = s.Profile
+	restored.ExecutionTemplateID = s.ExecutionTemplateID
+	restored.ExecutionTemplateRevision = s.ExecutionTemplateRevision
 	restored.ProviderID = s.ProviderID
 	restored.ModelID = s.ModelID
 	restored.ReasoningEffort = s.ReasoningEffort
 	restored.Placement = s.Placement
+	if s.ExecutionCapabilities != nil {
+		facts := *s.ExecutionCapabilities
+		restored.ExecutionCapabilities = &facts
+	}
 	restored.DebugMCPServers = append([]string(nil), s.DebugMCPServers...)
 	restored.DebugMCPTools = append([]string(nil), s.DebugMCPTools...)
 	restored.DebugTargetFingerprint = s.DebugTargetFingerprint

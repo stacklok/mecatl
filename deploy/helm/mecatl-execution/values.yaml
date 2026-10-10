@@ -5,10 +5,12 @@ provider:
   imagePullSecrets: []
   replicas: 2
   securitySecretName: ""
-  # Optional: project explicitly mapped files from up to eight operator-owned Secrets.
+  # Project only platform-managed TLS Secret keys; cert-manager can own these Secrets.
   # securitySources:
-  #   - name: grant-keys
-  #     items: [{key: grant-k1.pem, path: grant-k1.pem}]
+  #   - name: provider-tls
+  #     items: [{key: tls.crt, path: tls.crt}, {key: tls.key, path: tls.key}]
+  #   - name: provider-client-roots
+  #     items: [{key: ca.crt, path: clients.pem}]
   securityManifest: ""
   securityReloadInterval: 2s
   maxConcurrentStreams: 64
@@ -41,27 +43,38 @@ resourceGovernance:
   limitsCPU: "40"
   limitsMemory: 80Gi
   limitsEphemeralStorage: 80Gi
-profiles: {}
+templates: {}
+# One-upgrade opt-in: name only definitions removed from the previous lifetime.json.
+# Requires an empty provider namespace, no CRs or capacity reservations, and
+# an observed scaled-to-zero provider. Remove this value after the upgrade.
+maintenance:
+  pruneRevisions: {}
 
-# Example profile (all fields are required):
-# profiles:
+# Each revision key must be v1- plus the lowercase SHA-256 of
+# "mecatl/execution-template/v1\0" followed by encoding/json of the
+# validated Go ProfileSpec. Keep historical execution definitions for retained
+# allocations; display and deprecation/revocation policy may change independently.
+# Only an ID with no eligible revisions may omit default while keeping its
+# deprecated or revoked history. The mecak8s deployment pins its own eligible
+# default ID/revision and checks it at startup; no other ID is substituted.
+# templates:
 #   go:
-#     image: registry.example/workload@sha256:<digest>
-#     storageClass: standard
-#     storageSize: 2Gi
-#     cpuRequest: 100m
-#     memoryRequest: 128Mi
-#     cpuLimit: "1"
-#     memoryLimit: 1Gi
-#     ephemeralStorageRequest: 64Mi
-#     ephemeralStorageLimit: 1Gi
-#     tmpSizeLimit: 256Mi
-#     runtimeClassName: gvisor
-#     # Optional operator-only scheduling constraints (up to 32 selectors and 16 tolerations).
-#     nodeSelector: {node.kubernetes.io/instance-type: worker}
-#     tolerations:
-#       - {key: dedicated, operator: Equal, value: build, effect: NoSchedule}
-#     maxFileBytes: 5242880
-#     maxCommandBytes: 1048576
-#     maxCommandDuration: 5m
-#     maxEnvironments: 100
+#     default: v1-<canonical execution digest>
+#     revisions:
+#       v1-<canonical execution digest>:
+#         execution:
+#           image: registry.example/workload@sha256:<image digest>
+#           storageClass: standard
+#           storageSize: 2Gi
+#           cpuRequest: 100m
+#           memoryRequest: 128Mi
+#           cpuLimit: "1"
+#           memoryLimit: 1Gi
+#           ephemeralStorageRequest: 64Mi
+#           ephemeralStorageLimit: 1Gi
+#           tmpSizeLimit: 256Mi
+#           runtimeClassName: gvisor
+#           maxFileBytes: 5242880
+#           maxCommandBytes: 1048576
+#           maxCommandDuration: 5m
+#           maxEnvironments: 100

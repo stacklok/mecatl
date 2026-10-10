@@ -101,6 +101,15 @@ export function ChatSessionControls({
           />
         ) : null}
 
+        <div
+          aria-label="Session execution capabilities"
+          className="text-xs text-muted-foreground"
+          role="status"
+        >
+          Files: {detail.capabilities.executionFiles ? "available" : "unavailable"} · Built-in
+          Shell: {detail.capabilities.builtInShell ? "available" : "unavailable"}
+        </div>
+
         <Button
           className="ml-auto h-8"
           disabled={busy || !detail.capabilities.manualCompaction}

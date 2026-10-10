@@ -38,10 +38,20 @@ const chat = {
     createdSessionRequest = request;
     return { id: "session-2" };
   },
+  async executionTemplates() {
+    return { items: [], inventoryRevision: "rev" };
+  },
   async deleteSession() {},
   async detail(sessionId: string) {
     return {
-      capabilities: { image: true, manualCompaction: true, modelSelection: true },
+      capabilities: {
+        audio: false,
+        builtInShell: false,
+        executionFiles: false,
+        image: true,
+        manualCompaction: true,
+        modelSelection: true,
+      },
       id: sessionId,
       kind: "main",
       mode: "plan" as const,
@@ -391,13 +401,97 @@ describe("chat routes", () => {
     });
   });
 
+  it("rejects the reserved profile wire and malformed execution variants", async () => {
+    for (const body of [
+      { profile: "no-fs" },
+      { execution: { none: {}, template: { id: "x", revision: `v1-${"a".repeat(64)}` } } },
+      { execution: { template: { id: "x" } } },
+      {
+        debugTargetSessionId: "debug",
+        execution: { template: { id: "x", revision: `v1-${"a".repeat(64)}` } },
+      },
+    ]) {
+      const response = await request("/api/v1/sessions", {
+        body: JSON.stringify(body),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      });
+      expect(response.status).toBe(400);
+    }
+  });
+
+  it("does not retry stale or full template selectors or leak upstream details", async () => {
+    const revision = `v1-${"a".repeat(64)}`;
+    for (const [code, expected] of [
+      ["placement_selector_stale", "template_unavailable"],
+      ["resource_exhausted", "template_capacity"],
+    ] as const) {
+      const create = vi
+        .fn()
+        .mockRejectedValue(
+          new MecatlError("private upstream address and subject", { code, transport: "grpc" }),
+        );
+      const failing = createApp({ chat: { ...chat, createSession: create } });
+      const response = await failing.request("/api/v1/sessions", {
+        body: JSON.stringify({ execution: { template: { id: "safe", revision } } }),
+        headers: { ...csrfHeaders(), "Content-Type": "application/json" },
+        method: "POST",
+      });
+      expect(response.status).toBe(409);
+      const body = await response.json();
+      expect(body.code).toBe(expected);
+      expect(JSON.stringify(body)).not.toContain("private upstream");
+      expect(create).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("distinguishes disabled catalog from a temporarily unavailable backend", async () => {
+    for (const [code, status] of [
+      ["unsupported_feature", 501],
+      ["placement_unavailable", 503],
+    ] as const) {
+      const failing = createApp({
+        chat: {
+          ...chat,
+          executionTemplates: vi
+            .fn()
+            .mockRejectedValue(new MecatlError("private endpoint", { code, transport: "grpc" })),
+        },
+      });
+      const response = await failing.request("/api/v1/execution-templates");
+      expect(response.status).toBe(status);
+      const body = await response.json();
+      expect(body.code).toBe(
+        code === "unsupported_feature" ? "execution_templates_disabled" : code,
+      );
+      expect(JSON.stringify(body)).not.toContain("private endpoint");
+    }
+  });
+
+  it("serves a bounded caller-filtered template inventory", async () => {
+    const response = await request("/api/v1/execution-templates");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ inventoryRevision: "rev", items: [] });
+  });
+
+  it("rejects the obsolete noFilesystem selector before calling the service", async () => {
+    createdSessionRequest = undefined;
+    const response = await request("/api/v1/sessions", {
+      body: JSON.stringify({ toolAccess: "noFilesystem" }),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    });
+    expect(response.status).toBe(400);
+    expect(createdSessionRequest).toBeUndefined();
+  });
+
   it("creates sessions", async () => {
     const response = await request("/api/v1/sessions", {
       body: JSON.stringify({
         mode: "plan",
         model: { id: "claude-sonnet", providerId: "anthropic" },
         reasoningEffort: "high",
-        toolAccess: "noFilesystem",
+        execution: { none: {} },
       }),
       headers: { "Content-Type": "application/json" },
       method: "POST",
@@ -409,7 +503,7 @@ describe("chat routes", () => {
       mode: "plan",
       model: { id: "claude-sonnet", providerId: "anthropic" },
       reasoningEffort: "high",
-      toolAccess: "noFilesystem",
+      execution: { none: {} },
     });
   });
 

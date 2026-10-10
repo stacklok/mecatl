@@ -3,7 +3,6 @@ package executioncontroller
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
@@ -13,13 +12,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"math"
 	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -27,6 +24,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 
@@ -35,27 +33,16 @@ import (
 
 const (
 	securityManifestVersion = 1
-	maxSecurityKeys         = 64
 	maxSecurityClients      = 256
 	securityStateDataKey    = "state.json"
-	keyStateRevoked         = "revoked"
 )
 
-type securityKeyManifest struct {
-	ID           string    `json:"id"`
-	Version      uint64    `json:"version"`
-	File         string    `json:"file"`
-	PublicSHA256 string    `json:"publicKeySHA256"`
-	ActivateAt   time.Time `json:"activateAt"`
-	VerifyUntil  time.Time `json:"verifyUntil"`
-	State        string    `json:"state"`
-}
-
 type securityClientManifest struct {
-	URI              string   `json:"uri"`
-	MayAttestOwner   bool     `json:"mayAttestOwner"`
-	Administrator    bool     `json:"administrator"`
-	AdministratorFor []string `json:"administratorFor,omitempty"`
+	URI                string   `json:"uri"`
+	MayAttestOwner     bool     `json:"mayAttestOwner"`
+	Administrator      bool     `json:"administrator"`
+	AdministratorFor   []string `json:"administratorFor,omitempty"`
+	ExecutionTemplates []string `json:"executionTemplates,omitempty"`
 }
 
 type securityTLSManifest struct {
@@ -65,42 +52,24 @@ type securityTLSManifest struct {
 }
 
 type securityManifest struct {
-	Version       int                      `json:"version"`
-	Generation    uint64                   `json:"generation"`
-	Issuer        string                   `json:"issuer"`
-	Audience      string                   `json:"audience"`
-	ActiveKeyID   string                   `json:"activeKeyID"`
-	GrantTTL      time.Duration            `json:"-"`
-	GrantTTLText  string                   `json:"grantTTL"`
-	ClockSkewText string                   `json:"clockSkew"`
-	Keys          []securityKeyManifest    `json:"keys"`
-	TLS           securityTLSManifest      `json:"tls"`
-	Clients       []securityClientManifest `json:"clients"`
-}
-
-type keyValidity struct {
-	activateAt, verifyUntil time.Time
-	state                   string
+	Version    int                      `json:"version"`
+	Generation uint64                   `json:"generation"`
+	TLS        securityTLSManifest      `json:"tls"`
+	Clients    []securityClientManifest `json:"clients"`
 }
 
 type securitySnapshot struct {
-	generation   uint64
-	digest       string
-	signer       GrantSigner
-	verifier     executionenv.GrantVerifier
-	keyValidity  map[string]keyValidity
-	activeWindow keyValidity
-	tlsConfig    *tls.Config
-	clientCAs    *x509.CertPool
-	clients      map[string]ClientPolicy
-	validUntil   time.Time
-	fingerprints map[string]string
+	generation uint64
+	digest     string
+	tlsConfig  *tls.Config
+	clientCAs  *x509.CertPool
+	clients    map[string]ClientPolicy
+	validUntil time.Time
 }
 
 type securityLedger struct {
-	Generation   uint64            `json:"generation"`
-	Digest       string            `json:"digest"`
-	Fingerprints map[string]string `json:"fingerprints"`
+	Generation uint64 `json:"generation"`
+	Digest     string `json:"digest"`
 }
 
 type securityState struct {
@@ -113,12 +82,13 @@ type SecurityManager struct {
 	manifestPath, keyDirectory, namespace, configMap string
 	kube                                             kubernetes.Interface
 	now                                              func() time.Time
+	readFile                                         func(*os.Root, string) ([]byte, error)
 	state                                            atomic.Pointer[securityState]
 }
 
 // NewSecurityManager constructs a fail-closed security material reloader.
 func NewSecurityManager(manifestPath, keyDirectory, namespace, configMap string, kube kubernetes.Interface) *SecurityManager {
-	return &SecurityManager{manifestPath: manifestPath, keyDirectory: keyDirectory, namespace: namespace, configMap: configMap, kube: kube, now: func() time.Time { return time.Now().UTC() }}
+	return &SecurityManager{manifestPath: manifestPath, keyDirectory: keyDirectory, namespace: namespace, configMap: configMap, kube: kube, now: func() time.Time { return time.Now().UTC() }, readFile: readRootFile}
 }
 
 // Ready reports whether the current snapshot is authoritative and unexpired.
@@ -222,10 +192,6 @@ func (m *SecurityManager) authorize(ctx context.Context, chain []*x509.Certifica
 	return id, policy, nil
 }
 
-func (m *SecurityManager) material(ctx context.Context) (*securitySnapshot, error) {
-	return m.authoritative(ctx)
-}
-
 func (m *SecurityManager) authoritative(ctx context.Context) (*securitySnapshot, error) {
 	return m.authoritativeAt(ctx, m.now())
 }
@@ -263,7 +229,7 @@ func (m *SecurityManager) verifyAuthority(ctx context.Context, snapshot *securit
 	if err := executionenv.DecodeStrict([]byte(cm.Data[securityStateDataKey]), &ledger); err != nil {
 		return err
 	}
-	if ledger.Generation != snapshot.generation || ledger.Digest != snapshot.digest || !maps.Equal(ledger.Fingerprints, snapshot.fingerprints) {
+	if ledger.Generation != snapshot.generation || ledger.Digest != snapshot.digest {
 		return errors.New("loaded security generation is not authoritative")
 	}
 	return nil
@@ -280,37 +246,55 @@ func (m *SecurityManager) invalidateObservedUnlessReplaced(ctx context.Context, 
 }
 
 func snapshotValidAt(s *securitySnapshot, now time.Time) bool {
-	return s != nil && !now.Before(s.activeWindow.activateAt) && now.Before(s.activeWindow.verifyUntil) && now.Before(s.validUntil)
-}
-
-func (s *securitySnapshot) verifierAt(now time.Time) executionenv.GrantVerifier {
-	v := s.verifier
-	v.Keys = make(map[string]ed25519.PublicKey, len(s.verifier.Keys))
-	for id, key := range s.verifier.Keys {
-		window := s.keyValidity[id]
-		if window.state != keyStateRevoked && !now.Before(window.activateAt) && now.Before(window.verifyUntil) {
-			v.Keys[id] = key
-		}
-	}
-	return v
+	return s != nil && now.Before(s.validUntil)
 }
 
 func (m *SecurityManager) load() (*securitySnapshot, error) {
-	mf, ttl, skew, err := m.loadManifest()
-	if err != nil {
-		return nil, err
-	}
 	root, err := os.OpenRoot(m.keyDirectory)
 	if err != nil {
 		return nil, fmt.Errorf("open security directory: %w", err)
 	}
 	defer func() { _ = root.Close() }()
+	// A projected volume switches all files via ..data, not the opened mount
+	// root. Check both policy and TLS projections around the entire candidate,
+	// including failed reads when Kubernetes removes the previous generation.
+	for range 3 {
+		before, err := m.projectedGenerations(root)
+		if err != nil {
+			return nil, err
+		}
+		candidate, loadErr := m.loadCandidate(root)
+		after, err := m.projectedGenerations(root)
+		if err != nil {
+			return nil, err
+		}
+		if before == after {
+			return candidate, loadErr
+		}
+	}
+	return nil, errors.New("security projection changed during load")
+}
 
-	keys, active, fingerprints, windows, activeWindow, err := m.loadGrantKeys(root, mf)
+func (m *SecurityManager) projectedGenerations(root *os.Root) ([2]string, error) {
+	var generations [2]string
+	var err error
+	generations[0], err = root.Readlink("..data")
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return generations, err
+	}
+	generations[1], err = os.Readlink(filepath.Join(filepath.Dir(m.manifestPath), "..data"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return generations, err
+	}
+	return generations, nil
+}
+
+func (m *SecurityManager) loadCandidate(root *os.Root) (*securitySnapshot, error) {
+	mf, err := m.loadManifest()
 	if err != nil {
 		return nil, err
 	}
-	tlsConfig, clientCAs, tlsValidUntil, caFingerprints, serverFingerprint, err := m.loadTLS(root, mf.TLS)
+	tlsConfig, clientCAs, tlsValidUntil, err := m.loadTLS(root, mf.TLS)
 	if err != nil {
 		return nil, err
 	}
@@ -318,143 +302,60 @@ func (m *SecurityManager) load() (*securitySnapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	digest, err := authorityDigest(mf, ttl, skew, fingerprints, caFingerprints, serverFingerprint)
+	digest, err := authorityDigest(mf)
 	if err != nil {
 		return nil, err
 	}
-	validUntil := tlsValidUntil
-	now := m.now()
-	for _, window := range windows {
-		if window.state != keyStateRevoked && window.verifyUntil.Before(validUntil) {
-			validUntil = window.verifyUntil
-		}
-		if window.state != keyStateRevoked && now.Before(window.activateAt) && window.activateAt.Before(validUntil) {
-			validUntil = window.activateAt
-		}
-	}
-	return &securitySnapshot{
-		generation: mf.Generation, digest: digest,
-		signer: GrantSigner{
-			KeyID: mf.ActiveKeyID, PrivateKey: active, Issuer: mf.Issuer,
-			Audience: mf.Audience, Lifetime: ttl,
-		},
-		verifier: executionenv.GrantVerifier{
-			Keys: keys, Issuer: mf.Issuer, Audience: mf.Audience, MaxLifetime: ttl + skew,
-		},
-		keyValidity: windows, activeWindow: activeWindow,
-		tlsConfig: tlsConfig, clientCAs: clientCAs, clients: clients,
-		validUntil: validUntil, fingerprints: fingerprints,
-	}, nil
+	return &securitySnapshot{generation: mf.Generation, digest: digest, tlsConfig: tlsConfig, clientCAs: clientCAs, clients: clients, validUntil: tlsValidUntil}, nil
 }
 
-func (m *SecurityManager) loadManifest() (securityManifest, time.Duration, time.Duration, error) {
+func (m *SecurityManager) loadManifest() (securityManifest, error) {
 	manifestBytes, err := os.ReadFile(m.manifestPath)
 	if err != nil {
-		return securityManifest{}, 0, 0, fmt.Errorf("read security manifest: %w", err)
+		return securityManifest{}, fmt.Errorf("read security manifest: %w", err)
 	}
 	var mf securityManifest
 	if err := executionenv.DecodeStrict(manifestBytes, &mf); err != nil {
-		return securityManifest{}, 0, 0, fmt.Errorf("decode security manifest: %w", err)
+		return securityManifest{}, fmt.Errorf("decode security manifest: %w", err)
 	}
-	if mf.Version != securityManifestVersion || mf.Generation == 0 || mf.Generation > math.MaxInt64 || mf.Issuer == "" || mf.Audience == "" || mf.ActiveKeyID == "" || len(mf.Keys) == 0 || len(mf.Keys) > maxSecurityKeys || len(mf.Clients) == 0 || len(mf.Clients) > maxSecurityClients {
-		return securityManifest{}, 0, 0, errors.New("security manifest identity or bounds are invalid")
+	if mf.Version != securityManifestVersion || mf.Generation == 0 || mf.Generation > math.MaxInt64 || len(mf.Clients) == 0 || len(mf.Clients) > maxSecurityClients {
+		return securityManifest{}, errors.New("security manifest identity or bounds are invalid")
 	}
-	ttl, err := time.ParseDuration(mf.GrantTTLText)
-	if err != nil || ttl <= 0 || ttl > 5*time.Minute {
-		return securityManifest{}, 0, 0, errors.New("grantTTL must be positive and at most 5m")
-	}
-	skew, err := time.ParseDuration(mf.ClockSkewText)
-	if err != nil || skew < 0 || skew >= ttl {
-		return securityManifest{}, 0, 0, errors.New("clockSkew must be non-negative and less than grantTTL")
-	}
-	return mf, ttl, skew, nil
+	return mf, nil
 }
 
-func (m *SecurityManager) loadGrantKeys(root *os.Root, mf securityManifest) (map[string]ed25519.PublicKey, ed25519.PrivateKey, map[string]string, map[string]keyValidity, keyValidity, error) {
-	keys := make(map[string]ed25519.PublicKey, len(mf.Keys))
-	fingerprints := make(map[string]string, len(mf.Keys))
-	windows := make(map[string]keyValidity, len(mf.Keys))
-	seenVersion := map[uint64]bool{}
-	seenID := map[string]bool{}
-	var active ed25519.PrivateKey
-	var activeWindow keyValidity
-	now := m.now()
-	for _, km := range mf.Keys {
-		if !validKeyManifest(km, seenID, seenVersion) {
-			return nil, nil, nil, nil, keyValidity{}, errors.New("security key entry is invalid or duplicated")
-		}
-		seenID[km.ID] = true
-		seenVersion[km.Version] = true
-		key, err := readEd25519(root, km.File)
-		if err != nil {
-			return nil, nil, nil, nil, keyValidity{}, fmt.Errorf("load security key %q: %w", km.ID, err)
-		}
-		pub := key.Public().(ed25519.PublicKey)
-		sum := sha256.Sum256(pub)
-		fp := hex.EncodeToString(sum[:])
-		if !strings.EqualFold(fp, km.PublicSHA256) {
-			return nil, nil, nil, nil, keyValidity{}, fmt.Errorf("security key %q fingerprint mismatch", km.ID)
-		}
-		fingerprints[km.ID+":"+strconv.FormatUint(km.Version, 10)] = fp
-		window := keyValidity{activateAt: km.ActivateAt, verifyUntil: km.VerifyUntil, state: km.State}
-		windows[km.ID] = window
-		if km.State != keyStateRevoked {
-			keys[km.ID] = pub
-		}
-		if km.ID == mf.ActiveKeyID {
-			if km.State != "active" || now.Before(km.ActivateAt) || !now.Before(km.VerifyUntil) {
-				return nil, nil, nil, nil, keyValidity{}, errors.New("active grant key is outside its activation window")
-			}
-			active = key
-			activeWindow = window
-		}
-	}
-	if active == nil {
-		return nil, nil, nil, nil, keyValidity{}, errors.New("active grant key is missing")
-	}
-	return keys, active, fingerprints, windows, activeWindow, nil
-}
-
-func validKeyManifest(km securityKeyManifest, seenID map[string]bool, seenVersion map[uint64]bool) bool {
-	return validKeyID(km.ID) && !seenID[km.ID] && km.Version != 0 && !seenVersion[km.Version] && validBaseName(km.File) &&
-		(km.State == "active" || km.State == "verify-only" || km.State == keyStateRevoked) &&
-		!km.VerifyUntil.IsZero() && km.VerifyUntil.After(km.ActivateAt)
-}
-
-func (m *SecurityManager) loadTLS(root *os.Root, manifest securityTLSManifest) (*tls.Config, *x509.CertPool, time.Time, []string, string, error) {
-	certPEM, err := readRootFile(root, manifest.CertificateFile)
+func (m *SecurityManager) loadTLS(root *os.Root, manifest securityTLSManifest) (*tls.Config, *x509.CertPool, time.Time, error) {
+	certPEM, err := m.readFile(root, manifest.CertificateFile)
 	if err != nil {
-		return nil, nil, time.Time{}, nil, "", err
+		return nil, nil, time.Time{}, err
 	}
-	keyPEM, err := readRootFile(root, manifest.PrivateKeyFile)
+	keyPEM, err := m.readFile(root, manifest.PrivateKeyFile)
 	if err != nil {
-		return nil, nil, time.Time{}, nil, "", err
+		return nil, nil, time.Time{}, err
 	}
 	serverCert, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
-		return nil, nil, time.Time{}, nil, "", fmt.Errorf("load TLS identity: %w", err)
+		return nil, nil, time.Time{}, fmt.Errorf("load TLS identity: %w", err)
 	}
 	leaf, err := x509.ParseCertificate(serverCert.Certificate[0])
 	if err != nil {
-		return nil, nil, time.Time{}, nil, "", err
+		return nil, nil, time.Time{}, err
 	}
 	now := m.now()
 	if now.Before(leaf.NotBefore) || !now.Before(leaf.NotAfter) || !hasUsage(leaf.ExtKeyUsage, x509.ExtKeyUsageServerAuth) {
-		return nil, nil, time.Time{}, nil, "", errors.New("server certificate is not currently valid for server authentication")
+		return nil, nil, time.Time{}, errors.New("server certificate is not currently valid for server authentication")
 	}
 	serverCert.Leaf = leaf
-	caPEM, err := readRootFile(root, manifest.ClientCAFile)
+	caPEM, err := m.readFile(root, manifest.ClientCAFile)
 	if err != nil {
-		return nil, nil, time.Time{}, nil, "", err
+		return nil, nil, time.Time{}, err
 	}
 	pool := x509.NewCertPool()
-	caFingerprints, err := appendCAs(pool, caPEM)
-	if err != nil {
-		return nil, nil, time.Time{}, nil, "", err
+	if _, err := appendCAs(pool, caPEM); err != nil {
+		return nil, nil, time.Time{}, err
 	}
-	serverSum := sha256.Sum256(leaf.Raw)
 	cfg := &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{serverCert}, ClientAuth: tls.RequireAnyClientCert}
-	return cfg, pool, leaf.NotAfter, caFingerprints, hex.EncodeToString(serverSum[:]), nil
+	return cfg, pool, leaf.NotAfter, nil
 }
 
 func appendCAs(pool *x509.CertPool, pemBytes []byte) ([]string, error) {
@@ -480,6 +381,7 @@ func appendCAs(pool *x509.CertPool, pemBytes []byte) ([]string, error) {
 	return fingerprints, nil
 }
 
+//nolint:gocyclo // One manifest entry must be fully validated before authorization is published.
 func clientPolicies(entries []securityClientManifest) (map[string]ClientPolicy, error) {
 	clients := make(map[string]ClientPolicy, len(entries))
 	for _, entry := range entries {
@@ -509,37 +411,35 @@ func clientPolicies(entries []securityClientManifest) (map[string]ClientPolicy, 
 				return nil, errors.New("administrator creator URI is not canonical or is duplicated")
 			}
 		}
-		clients[entry.URI] = ClientPolicy{MayAttestOwner: entry.MayAttestOwner, Administrator: entry.Administrator, AdministratorFor: scope}
+		allowed := slices.Clone(entry.ExecutionTemplates)
+		if len(allowed) > 64 || len(allowed) > 0 && !entry.MayAttestOwner {
+			return nil, errors.New("execution templates require owner attestation and at most 64 IDs")
+		}
+		slices.Sort(allowed)
+		for i, id := range allowed {
+			if len(validation.IsDNS1123Label(id)) != 0 || i > 0 && id == allowed[i-1] {
+				return nil, errors.New("invalid or duplicate execution template ID")
+			}
+		}
+		clients[entry.URI] = ClientPolicy{MayAttestOwner: entry.MayAttestOwner, Administrator: entry.Administrator, AdministratorFor: scope, ExecutionTemplates: allowed}
 	}
 	return clients, nil
 }
 
-func authorityDigest(mf securityManifest, ttl, skew time.Duration, keyFingerprints map[string]string, caFingerprints []string, serverFingerprint string) (string, error) {
-	keys := slices.Clone(mf.Keys)
-	slices.SortFunc(keys, func(a, b securityKeyManifest) int { return strings.Compare(a.ID, b.ID) })
+func authorityDigest(mf securityManifest) (string, error) {
 	clients := slices.Clone(mf.Clients)
 	for i := range clients {
 		clients[i].AdministratorFor = slices.Clone(clients[i].AdministratorFor)
 		slices.Sort(clients[i].AdministratorFor)
+		clients[i].ExecutionTemplates = slices.Clone(clients[i].ExecutionTemplates)
+		slices.Sort(clients[i].ExecutionTemplates)
 	}
 	slices.SortFunc(clients, func(a, b securityClientManifest) int { return strings.Compare(a.URI, b.URI) })
-	canonical := struct {
-		Version                       int
-		Generation                    uint64
-		Issuer, Audience, ActiveKeyID string
-		GrantTTL, ClockSkew           int64
-		Keys                          []securityKeyManifest
-		TLS                           securityTLSManifest
-		Clients                       []securityClientManifest
-		KeyFingerprints               map[string]string
-		CAFingerprints                []string
-		ServerFingerprint             string
-	}{
-		Version: mf.Version, Generation: mf.Generation, Issuer: mf.Issuer, Audience: mf.Audience, ActiveKeyID: mf.ActiveKeyID,
-		GrantTTL: int64(ttl), ClockSkew: int64(skew), Keys: keys, TLS: mf.TLS, Clients: clients,
-		KeyFingerprints: keyFingerprints, CAFingerprints: slices.Clone(caFingerprints), ServerFingerprint: serverFingerprint,
-	}
-	raw, err := json.Marshal(canonical)
+	raw, err := json.Marshal(struct {
+		Version    int
+		Generation uint64
+		Clients    []securityClientManifest
+	}{mf.Version, mf.Generation, clients})
 	if err != nil {
 		return "", err
 	}
@@ -588,14 +488,14 @@ func (m *SecurityManager) readSecurityLedger(ctx context.Context, cms corev1clie
 	cm, err := cms.Get(ctx, m.configMap, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		cm = &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: m.configMap, Namespace: m.namespace}, Data: map[string]string{}}
-		return cm, false, securityLedger{Fingerprints: map[string]string{}}, nil
+		return cm, false, securityLedger{}, nil
 	}
 	if err != nil {
 		return nil, false, securityLedger{}, err
 	}
-	ledger := securityLedger{Fingerprints: map[string]string{}}
+	ledger := securityLedger{}
 	if raw := cm.Data[securityStateDataKey]; raw != "" {
-		if err := executionenv.DecodeStrict([]byte(raw), &ledger); err != nil || ledger.Generation == 0 || ledger.Digest == "" || ledger.Fingerprints == nil || len(ledger.Fingerprints) > maxSecurityKeys {
+		if err := executionenv.DecodeStrict([]byte(raw), &ledger); err != nil || ledger.Generation == 0 || ledger.Digest == "" {
 			return nil, false, securityLedger{}, errors.New("security authority state is invalid")
 		}
 	}
@@ -607,28 +507,13 @@ func advanceSecurityLedger(ledger *securityLedger, s *securitySnapshot) (bool, e
 		return false, errors.New("security manifest generation rollback rejected")
 	}
 	if s.generation == ledger.Generation && ledger.Generation != 0 {
-		if ledger.Digest != s.digest || !containsFingerprints(ledger.Fingerprints, s.fingerprints) {
+		if ledger.Digest != s.digest {
 			return false, errors.New("security generation authority drift rejected")
 		}
-		s.fingerprints = maps.Clone(ledger.Fingerprints)
 		return false, nil
-	}
-	for identity, fp := range s.fingerprints {
-		old, exists := ledger.Fingerprints[identity]
-		if exists && old != fp {
-			return false, errors.New("security key identity reuse rejected")
-		}
-		if !exists && !keyVersionAdvances(ledger.Fingerprints, identity) {
-			return false, errors.New("security key version rollback rejected")
-		}
-		ledger.Fingerprints[identity] = fp
-	}
-	if len(ledger.Fingerprints) > maxSecurityKeys {
-		return false, errors.New("security key tombstone limit reached; rotate issuer")
 	}
 	ledger.Generation = s.generation
 	ledger.Digest = s.digest
-	s.fingerprints = maps.Clone(ledger.Fingerprints)
 	return true, nil
 }
 
@@ -643,37 +528,7 @@ func readRootFile(root *os.Root, name string) ([]byte, error) {
 	b, readErr := io.ReadAll(io.LimitReader(f, 1<<20))
 	return b, errors.Join(readErr, f.Close())
 }
-func readEd25519(root *os.Root, name string) (ed25519.PrivateKey, error) {
-	b, err := readRootFile(root, name)
-	if err != nil {
-		return nil, err
-	}
-	block, rest := pem.Decode(b)
-	if block == nil || block.Type != "PRIVATE KEY" || len(bytes.TrimSpace(rest)) != 0 {
-		return nil, errors.New("key must be one PKCS8 PEM block")
-	}
-	raw, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-	if err != nil {
-		return nil, errors.New("invalid PKCS8 key")
-	}
-	key, ok := raw.(ed25519.PrivateKey)
-	if !ok {
-		return nil, errors.New("key is not Ed25519")
-	}
-	return key, nil
-}
 func validBaseName(v string) bool { return v != "" && filepath.Base(v) == v && v != "." && v != ".." }
-func validKeyID(v string) bool {
-	if len(v) == 0 || len(v) > 64 {
-		return false
-	}
-	for _, r := range v {
-		if r != '-' && r != '_' && (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') {
-			return false
-		}
-	}
-	return true
-}
 func hasUsage(usages []x509.ExtKeyUsage, wanted x509.ExtKeyUsage) bool {
 	for _, u := range usages {
 		if u == wanted || u == x509.ExtKeyUsageAny {
@@ -681,35 +536,4 @@ func hasUsage(usages []x509.ExtKeyUsage, wanted x509.ExtKeyUsage) bool {
 		}
 	}
 	return false
-}
-func containsFingerprints(authority, candidate map[string]string) bool {
-	for identity, fingerprint := range candidate {
-		if authority[identity] != fingerprint {
-			return false
-		}
-	}
-	return true
-}
-
-func keyVersionAdvances(authority map[string]string, identity string) bool {
-	separator := strings.LastIndexByte(identity, ':')
-	if separator <= 0 {
-		return false
-	}
-	id := identity[:separator]
-	version, err := strconv.ParseUint(identity[separator+1:], 10, 64)
-	if err != nil {
-		return false
-	}
-	for previous := range authority {
-		previousSeparator := strings.LastIndexByte(previous, ':')
-		if previousSeparator <= 0 || previous[:previousSeparator] != id {
-			continue
-		}
-		previousVersion, err := strconv.ParseUint(previous[previousSeparator+1:], 10, 64)
-		if err != nil || version <= previousVersion {
-			return false
-		}
-	}
-	return true
 }

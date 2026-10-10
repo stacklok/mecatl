@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ExecutionTemplateInventory } from "@mecatl-studio/contracts";
 import { ArrowUp, LoaderCircle, Mic, MicOff, Paperclip, SlidersHorizontal, X } from "lucide-react";
 import {
   type FormEvent,
@@ -57,19 +58,6 @@ const MODE_OPTIONS = [
   },
 ];
 
-const TOOL_OPTIONS = [
-  {
-    description: "The agent can use every tool, including file and shell access.",
-    title: "All",
-    value: "all" as const,
-  },
-  {
-    description: "No file or shell tools; other tools stay available.",
-    title: "No filesystem",
-    value: "noFilesystem" as const,
-  },
-];
-
 export interface ComposerModelOption {
   id: string;
   image: boolean;
@@ -81,7 +69,7 @@ export interface DraftChatConfiguration {
   mode: "acceptEdits" | "default" | "plan";
   model?: { id: string; providerId: string };
   reasoningEffort: "default" | "high" | "low" | "max" | "medium" | "xhigh";
-  toolAccess: "all" | "noFilesystem";
+  execution?: { none: Record<string, never> } | { template: { id: string; revision: string } };
 }
 
 interface ChatComposerProps {
@@ -89,6 +77,9 @@ interface ChatComposerProps {
   configuration?: DraftChatConfiguration;
   disabled?: boolean;
   imageAttachmentsSupported?: boolean;
+  executionInventory?: ExecutionTemplateInventory;
+  executionStatus?: "disabled" | "loading" | "unavailable" | "ready";
+  onRefreshExecution?: () => void;
   models?: ComposerModelOption[];
   onConfigurationChange?: (configuration: DraftChatConfiguration) => void;
   onDraftChange?: (present: boolean) => void;
@@ -112,7 +103,7 @@ export interface SeedConfirmationContext {
   model: string;
   mode: string;
   target: string;
-  toolAccess?: string;
+  execution?: string;
 }
 
 export type ComposerEnterAction = "send" | "queue" | "steer" | "newline";
@@ -122,10 +113,13 @@ export function ChatComposer({
   configuration,
   disabled = false,
   imageAttachmentsSupported = false,
+  executionInventory,
+  executionStatus = "disabled",
   models = [],
   onConfigurationChange,
   onDraftChange,
   onPreviewImage,
+  onRefreshExecution,
   onSeedConsumed,
   onSend,
   safetyLevel = "managed",
@@ -401,16 +395,13 @@ export function ChatComposer({
               }
             />
 
-            <ComposerOptionMenu
+            <ExecutionPicker
+              configuration={configuration}
               disabled={busy || working}
-              items={TOOL_OPTIONS}
-              label="Tools"
-              onSelect={(toolAccess) => update({ toolAccess })}
-              value={configuration.toolAccess}
-              valueLabel={
-                TOOL_OPTIONS.find((option) => option.value === configuration.toolAccess)?.title ??
-                "All"
-              }
+              inventory={executionInventory}
+              status={executionStatus}
+              onChange={(execution) => update({ execution })}
+              onRefresh={onRefreshExecution}
             />
 
             <div
@@ -536,6 +527,9 @@ export function ChatComposer({
       {configuration && (
         <MobileConfigurationSheet
           configuration={configuration}
+          executionInventory={executionInventory}
+          executionStatus={executionStatus}
+          onRefreshExecution={onRefreshExecution}
           models={models}
           onChange={update}
           onOpenChange={setMobileOptionsOpen}
@@ -569,10 +563,10 @@ export function ChatComposer({
             <dd className="min-w-0 break-words">{seedContext?.model ?? "Automatic"}</dd>
             <dt className="text-muted-foreground">Permission mode</dt>
             <dd className="min-w-0 break-words">{seedContext?.mode ?? "Manual"}</dd>
-            {seedContext?.toolAccess && (
+            {seedContext?.execution && (
               <>
-                <dt className="text-muted-foreground">Tool access</dt>
-                <dd className="min-w-0 break-words">{seedContext.toolAccess}</dd>
+                <dt className="text-muted-foreground">Execution</dt>
+                <dd className="min-w-0 break-words">{seedContext.execution}</dd>
               </>
             )}
           </dl>
@@ -599,15 +593,21 @@ export function ChatComposer({
 
 function MobileConfigurationSheet({
   configuration,
+  executionInventory,
+  executionStatus,
   models,
   onChange,
+  onRefreshExecution,
   onOpenChange,
   open,
   returnFocus,
 }: {
   configuration: DraftChatConfiguration;
+  executionInventory?: ExecutionTemplateInventory;
+  executionStatus: "disabled" | "loading" | "unavailable" | "ready";
   models: ComposerModelOption[];
   onChange: (change: Partial<DraftChatConfiguration>) => void;
+  onRefreshExecution?: () => void;
   onOpenChange: (open: boolean) => void;
   open: boolean;
   returnFocus: React.RefObject<HTMLButtonElement | null>;
@@ -696,19 +696,110 @@ function MobileConfigurationSheet({
               </MobileSelect>
             </>
           ) : null}
-          <MobileSelect
-            label="Tools"
-            onChange={(value) =>
-              onChange({ toolAccess: value as DraftChatConfiguration["toolAccess"] })
-            }
-            value={configuration.toolAccess}
-          >
-            <option value="all">All</option>
-            <option value="noFilesystem">No filesystem</option>
-          </MobileSelect>
+          <ExecutionPicker
+            configuration={configuration}
+            disabled={false}
+            inventory={executionInventory}
+            status={executionStatus}
+            onChange={(execution) => onChange({ execution })}
+            onRefresh={onRefreshExecution}
+          />
         </div>
       </SheetContent>
     </Sheet>
+  );
+}
+
+function ExecutionPicker({
+  configuration,
+  disabled,
+  inventory,
+  status,
+  onChange,
+  onRefresh,
+}: {
+  configuration: DraftChatConfiguration;
+  disabled: boolean;
+  inventory?: ExecutionTemplateInventory;
+  status: "disabled" | "loading" | "unavailable" | "ready";
+  onChange: (execution: DraftChatConfiguration["execution"]) => void;
+  onRefresh?: () => void;
+}) {
+  const selected =
+    "template" in (configuration.execution ?? {})
+      ? (configuration.execution as { template: { id: string; revision: string } })
+      : undefined;
+  const selectedKey = selected
+    ? JSON.stringify([selected.template.id, selected.template.revision])
+    : "";
+  const items = inventory?.items ?? [];
+  const missing =
+    selected &&
+    !items.some(
+      (item) => JSON.stringify([item.template.id, item.template.revision]) === selectedKey,
+    );
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <label className="flex items-center gap-1.5 text-xs">
+        <span>Execution</span>
+        <select
+          aria-label="Execution"
+          className="h-9 max-w-48 rounded border bg-background px-2"
+          disabled={disabled}
+          value={selectedKey || (configuration.execution ? "none" : "default")}
+          onChange={(event) => {
+            const value = event.target.value;
+            if (value === "default") onChange(undefined);
+            else if (value === "none") onChange({ none: {} });
+            else {
+              const item = items.find(
+                (candidate) =>
+                  JSON.stringify([candidate.template.id, candidate.template.revision]) === value,
+              );
+              if (item) onChange({ template: { ...item.template } });
+            }
+          }}
+        >
+          <option value="default">Deployment default</option>
+          <option value="none">No files or built-in Shell</option>
+          {missing && (
+            <option value={selectedKey}>
+              {status === "ready"
+                ? "Selected template unavailable — reselect"
+                : "Selected revision — awaiting catalog"}
+            </option>
+          )}
+          {items.map((item) => (
+            <option
+              key={JSON.stringify([item.template.id, item.template.revision])}
+              value={JSON.stringify([item.template.id, item.template.revision])}
+            >
+              {item.name || item.template.id} ({item.template.id},{" "}
+              {item.template.revision.slice(0, 14)}…) — declared files:{" "}
+              {String(item.declaredExecutionFiles)}, Shell: {String(item.declaredBuiltInShell)}
+            </option>
+          ))}
+        </select>
+        <span role="status" className="text-muted-foreground">
+          {status === "disabled"
+            ? "Template catalog disabled; default and none remain available."
+            : status === "loading"
+              ? "Loading eligible templates…"
+              : status === "unavailable"
+                ? "Template catalog unavailable. Retry later; default and none remain available."
+                : missing
+                  ? "Selected revision is no longer listed; refresh or choose another. No fallback will be used."
+                  : items.length === 0
+                    ? "No eligible templates."
+                    : ""}
+        </span>
+      </label>
+      {onRefresh && (status === "unavailable" || status === "ready") && (
+        <button className="text-xs underline" disabled={disabled} onClick={onRefresh} type="button">
+          Refresh templates
+        </button>
+      )}
+    </div>
   );
 }
 

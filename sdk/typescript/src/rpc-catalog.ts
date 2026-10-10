@@ -373,6 +373,15 @@ const rpcCatalogRows = [
     http: http("GET", "/v1/compatibility", [], [], "none", "json"),
   }),
   rpc({
+    key: "HarnessService.ListExecutionTemplates",
+    service: "HarnessService",
+    method: "ListExecutionTemplates",
+    shape: "unary",
+    backingService: "ListExecutionTemplates",
+    grpc: grpc(HarnessService.method.listExecutionTemplates),
+    http: http("GET", "/v1/execution-templates", [], [], "none", "json"),
+  }),
+  rpc({
     key: "HarnessService.CreateSession",
     service: "HarnessService",
     method: "CreateSession",

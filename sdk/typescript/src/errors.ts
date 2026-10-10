@@ -34,6 +34,7 @@ export const MECATL_ERROR_CODES = [
   "dream_terminal_conflict",
   "dream_unavailable",
   "environment_logical_root_unavailable",
+  "execution_templates_disabled",
   "failed_precondition",
   "failed_step_retry_ineligible",
   "fire_now_overlap",

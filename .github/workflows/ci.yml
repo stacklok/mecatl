@@ -618,14 +618,9 @@ jobs:
   studio:
     name: Mecatl Studio (apps/)
     needs: changes
-    # Studio is a self-contained pnpm workspace on the PUBLISHED
-    # @stacklok-oss/mecatl-sdk; its offline gates are pure Node. The
-    # integration suite at the end builds bin/mecated and drives the BFF against
-    # it, so a daemon change can break Studio too: the job runs when either its
-    # own studio_relevant flag (apps/ + the CI-control files) or go_relevant is
-    # set, never on sdk relevance alone. The image build is push: false — the
-    # same apps/Dockerfile the `publish-studio` release job pushes, here only
-    # proven to build.
+    # Studio builds the checked-out SDK for execution-template APIs and drives
+    # its integration suite against the daemon; run for apps/, SDK, or Go changes.
+    # The image build is push: false.
     if: needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.studio_relevant == 'true' || needs.changes.outputs.go_relevant == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -649,7 +644,9 @@ jobs:
         with:
           node-version-file: apps/.node-version
           cache: pnpm
-          cache-dependency-path: apps/pnpm-lock.yaml
+          cache-dependency-path: |
+            apps/pnpm-lock.yaml
+            sdk/typescript/pnpm-lock.yaml
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
 
@@ -705,7 +702,7 @@ jobs:
       - name: Build Studio image (no push)
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: apps
+          context: .
           file: apps/Dockerfile
           platforms: linux/amd64
           push: false

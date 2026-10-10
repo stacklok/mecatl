@@ -16,8 +16,11 @@ import (
 	"io/fs"
 	"net"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/grpc"
@@ -41,32 +44,164 @@ const (
 )
 
 // TLSFiles names the runtime-only mTLS material mounted into mecak8s.
-type TLSFiles struct{ CA, Cert, Key string }
+// TLSFiles names a complete mTLS projection. ServerName explicitly pins the
+// verified DNS identity when the dial address is a local port-forward; empty
+// uses the endpoint hostname for TLS verification.
+type TLSFiles struct{ CA, Cert, Key, ServerName string }
 
-// LoadTLSConfig loads provider trust and client identity at process startup.
+// LoadTLSConfig loads provider trust and client identity from a complete projection.
 func LoadTLSConfig(files TLSFiles) (*tls.Config, error) {
+	cfg, _, err := loadTLSMaterial(files)
+	return cfg, err
+}
+
+func loadTLSMaterial(files TLSFiles) (*tls.Config, [32]byte, error) {
+	var digest [32]byte
 	if files.CA == "" || files.Cert == "" || files.Key == "" {
-		return nil, errors.New("execution client: CA, certificate, and key are required")
+		return nil, digest, errors.New("execution client: CA, certificate, and key are required")
 	}
 	ca, err := os.ReadFile(files.CA)
 	if err != nil {
-		return nil, fmt.Errorf("execution client: load CA: %w", err)
+		return nil, digest, fmt.Errorf("execution client: load CA: %w", err)
+	}
+	certPEM, err := os.ReadFile(files.Cert)
+	if err != nil {
+		return nil, digest, fmt.Errorf("execution client: load certificate: %w", err)
+	}
+	keyPEM, err := os.ReadFile(files.Key)
+	if err != nil {
+		return nil, digest, fmt.Errorf("execution client: load key: %w", err)
 	}
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(ca) {
-		return nil, errors.New("execution client: CA contains no certificates")
+		return nil, digest, errors.New("execution client: CA contains no certificates")
 	}
-	cert, err := tls.LoadX509KeyPair(files.Cert, files.Key)
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
-		return nil, fmt.Errorf("execution client: load client identity: %w", err)
+		return nil, digest, fmt.Errorf("execution client: load client identity: %w", err)
 	}
-	return &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: pool, Certificates: []tls.Certificate{cert}}, nil
+	leaf, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil || time.Now().Before(leaf.NotBefore) || !time.Now().Before(leaf.NotAfter) || !clientAuthUsage(leaf.ExtKeyUsage) {
+		return nil, digest, errors.New("execution client: client certificate is not valid for client authentication")
+	}
+	cert.Leaf = leaf
+	h := sha256.New()
+	for _, part := range [][]byte{ca, certPEM, keyPEM} {
+		_, _ = h.Write([]byte{0})
+		_, _ = h.Write(part)
+	}
+	copy(digest[:], h.Sum(nil))
+	return &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: pool, Certificates: []tls.Certificate{cert}, ServerName: files.ServerName}, digest, nil
+}
+
+func clientAuthUsage(usages []x509.ExtKeyUsage) bool {
+	for _, usage := range usages {
+		if usage == x509.ExtKeyUsageClientAuth || usage == x509.ExtKeyUsageAny {
+			return true
+		}
+	}
+	return false
 }
 
 // Client is a bounded client for the private execution-provider gRPC API.
 type Client struct {
-	conn *grpc.ClientConn
-	rpc  executionv1.ExecutionProviderServiceClient
+	conn     atomic.Pointer[grpc.ClientConn]
+	rpc      executionv1.ExecutionProviderServiceClient
+	mu       sync.Mutex
+	active   map[*grpc.ClientConn]int
+	retired  map[*grpc.ClientConn]*time.Timer
+	files    TLSFiles
+	endpoint string
+	material [32]byte
+	identity string
+	trust    *x509.CertPool
+	expires  time.Time
+	closed   bool
+}
+
+func (c *Client) acquire() (*grpc.ClientConn, func(), error) {
+	c.mu.Lock()
+	conn := c.conn.Load()
+	if conn == nil {
+		c.mu.Unlock()
+		return nil, nil, status.Error(codes.Unavailable, "execution client: TLS material unavailable")
+	}
+	if c.active == nil {
+		c.active = make(map[*grpc.ClientConn]int)
+	}
+	c.active[conn]++
+	c.mu.Unlock()
+	return conn, func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.active[conn]--
+		if c.active[conn] == 0 {
+			delete(c.active, conn)
+			if timer, ok := c.retired[conn]; ok {
+				timer.Stop()
+				delete(c.retired, conn)
+				_ = conn.Close()
+			}
+		}
+	}, nil
+}
+
+// Invoke pins the transport for the complete RPC, including its terminal reply.
+func (c *Client) Invoke(ctx context.Context, method string, args, reply any, opts ...grpc.CallOption) error {
+	conn, release, err := c.acquire()
+	if err != nil {
+		return err
+	}
+	defer release()
+	return conn.Invoke(ctx, method, args, reply, opts...)
+}
+
+func (c *Client) NewStream(ctx context.Context, desc *grpc.StreamDesc, method string, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+	conn, release, err := c.acquire()
+	if err != nil {
+		return nil, err
+	}
+	stream, err := conn.NewStream(ctx, desc, method, opts...)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	pinned := &pinnedStream{ClientStream: stream, release: release, done: make(chan struct{})}
+	go func() {
+		select {
+		case <-stream.Context().Done():
+			pinned.finish()
+		case <-pinned.done:
+		}
+	}()
+	return pinned, nil
+}
+
+type pinnedStream struct {
+	grpc.ClientStream
+	release func()
+	once    sync.Once
+	done    chan struct{}
+}
+
+func (s *pinnedStream) finish() {
+	s.once.Do(func() { s.release(); close(s.done) })
+}
+
+func (s *pinnedStream) RecvMsg(m any) error {
+	err := s.ClientStream.RecvMsg(m)
+	if err != nil {
+		s.finish()
+	}
+	return err
+}
+
+func (s *pinnedStream) SendMsg(m any) error {
+	err := s.ClientStream.SendMsg(m)
+	if err != nil {
+		s.finish()
+	}
+	return err
 }
 
 // New constructs a production mTLS execution-provider client. Endpoint is a
@@ -86,6 +221,28 @@ func New(endpoint string, tlsConfig *tls.Config) (*Client, error) {
 	if cfg.MinVersion < tls.VersionTLS13 {
 		cfg.MinVersion = tls.VersionTLS13
 	}
+	conn, err := dial(endpoint, cfg)
+	if err != nil {
+		return nil, err
+	}
+	leaf := cfg.Certificates[0].Leaf
+	if leaf == nil {
+		leaf, err = x509.ParseCertificate(cfg.Certificates[0].Certificate[0])
+		if err != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("execution client: parse client certificate: %w", err)
+		}
+	}
+	c := &Client{trust: cfg.RootCAs, expires: leaf.NotAfter}
+	if len(leaf.URIs) == 1 {
+		c.identity = leaf.URIs[0].String()
+	}
+	c.conn.Store(conn)
+	c.rpc = executionv1.NewExecutionProviderServiceClient(c)
+	return c, nil
+}
+
+func dial(endpoint string, cfg *tls.Config) (*grpc.ClientConn, error) {
 	conn, err := grpc.NewClient(endpoint,
 		grpc.WithTransportCredentials(grpccredentials.NewTLS(cfg)),
 		grpc.WithDisableRetry(),
@@ -94,23 +251,164 @@ func New(endpoint string, tlsConfig *tls.Config) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("execution client: connect: %w", err)
 	}
-	return &Client{conn: conn, rpc: executionv1.NewExecutionProviderServiceClient(conn)}, nil
+	return conn, nil
+}
+
+// NewWithTLSFiles owns a reloadable connection; invalid material withdraws
+// active authority instead of allowing a stale channel to continue.
+func NewWithTLSFiles(endpoint string, files TLSFiles) (*Client, error) {
+	cfg, digest, err := loadTLSMaterial(files)
+	if err != nil {
+		return nil, err
+	}
+	c, err := New(endpoint, cfg)
+	if err != nil {
+		return nil, err
+	}
+	c.files, c.endpoint, c.material = files, endpoint, digest
+	return c, nil
+}
+
+func projectedGeneration(files TLSFiles) string {
+	if filepath.Dir(files.Cert) != filepath.Dir(files.Key) {
+		return ""
+	}
+	generation, _ := os.Readlink(filepath.Join(filepath.Dir(files.Cert), "..data"))
+	return generation
+}
+
+// ReloadTLS publishes a complete, stable identity/trust bundle. Only same-identity
+// renewal under unchanged trust may drain existing RPCs; withdrawal closes them.
+//
+//nolint:gocyclo // Projection validation and connection swap must remain one locked transition.
+func (c *Client) ReloadTLS() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed || c.endpoint == "" {
+		return errors.New("execution client: reload is unavailable")
+	}
+	var cfg *tls.Config
+	var digest [32]byte
+	var err error
+	projectionChanging := false
+	// Kubernetes ..data projections can switch between two individual reads.
+	// Require two consecutive valid identical bundles before publishing either.
+	for i := 0; i < 3; i++ {
+		projectionChanging = false
+		before := projectedGeneration(c.files)
+		cfg, digest, err = loadTLSMaterial(c.files)
+		after := projectedGeneration(c.files)
+		if before != after && before != "" {
+			projectionChanging = true
+			err = errors.New("execution client: TLS projection switched during read")
+		} else if err == nil {
+			_, next, nextErr := loadTLSMaterial(c.files)
+			if projectedGeneration(c.files) != after && after != "" {
+				projectionChanging = true
+				err = errors.New("execution client: TLS projection switched during validation")
+			} else if nextErr == nil && next == digest {
+				break
+			} else {
+				err = nextErr
+				if err == nil {
+					err = errors.New("execution client: TLS projection changed during read")
+				}
+			}
+		}
+		if i < 2 {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	if err != nil && projectionChanging && c.conn.Load() != nil && time.Now().Before(c.expires) {
+		return err
+	}
+	if err == nil && c.conn.Load() != nil && digest == c.material {
+		if !time.Now().Before(c.expires) {
+			c.withdraw()
+			return errors.New("execution client: client certificate expired")
+		}
+		return nil
+	}
+	if err != nil {
+		c.withdraw()
+		return err
+	}
+	conn, err := dial(c.endpoint, cfg)
+	if err != nil {
+		c.withdraw()
+		return err
+	}
+	leaf := cfg.Certificates[0].Leaf
+	identity := ""
+	if len(leaf.URIs) == 1 {
+		identity = leaf.URIs[0].String()
+	}
+	drain := identity != "" && identity == c.identity && c.trust != nil && c.trust.Equal(cfg.RootCAs) && time.Now().Before(c.expires)
+	old := c.conn.Swap(conn)
+	if old != nil {
+		if drain && c.active[old] > 0 {
+			if c.retired == nil {
+				c.retired = make(map[*grpc.ClientConn]*time.Timer)
+			}
+			c.retired[old] = time.AfterFunc(time.Until(c.expires), func() {
+				c.mu.Lock()
+				defer c.mu.Unlock()
+				if _, ok := c.retired[old]; ok {
+					delete(c.retired, old)
+					_ = old.Close()
+				}
+			})
+		} else {
+			_ = old.Close()
+		}
+	}
+	if !drain {
+		c.closeRetired()
+	}
+	c.material, c.identity, c.trust, c.expires = digest, identity, cfg.RootCAs, leaf.NotAfter
+	return nil
+}
+
+// withdraw and closeRetired require c.mu.
+func (c *Client) withdraw() {
+	if old := c.conn.Swap(nil); old != nil {
+		_ = old.Close()
+	}
+	c.closeRetired()
+}
+
+func (c *Client) closeRetired() {
+	for conn, timer := range c.retired {
+		timer.Stop()
+		_ = conn.Close()
+		delete(c.retired, conn)
+	}
+}
+
+// RunTLSReload checks projected credentials until shutdown; renewal is not
+// independent of security-policy publication.
+func (c *Client) RunTLSReload(ctx context.Context, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			_ = c.ReloadTLS()
+		}
+	}
 }
 
 // Close releases the provider connection.
 func (c *Client) Close() {
-	if c != nil && c.conn != nil {
-		_ = c.conn.Close()
+	if c == nil {
+		return
 	}
-}
-
-// ValidateProfile validates a provider profile without allocating an environment.
-func (c *Client) ValidateProfile(ctx context.Context, profile string) (executionenv.ValidateProfileResponse, error) {
-	v, err := c.rpc.ValidateProfile(ctx, &executionv1.ValidateProfileRequest{Profile: profile})
-	if err != nil {
-		return executionenv.ValidateProfileResponse{}, decodeError(ctx, err)
-	}
-	return executionenv.ValidateProfileResponse{Profile: v.Profile, Digest: v.Digest, Capabilities: v.Capabilities, MaxFileBytes: v.MaxFileBytes, MaxCommandBytes: v.MaxCommandBytes, MaxCommandDurationMillis: v.MaxCommandDurationMillis}, nil
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closed = true
+	c.withdraw()
 }
 
 func newOperationID() (string, error) {
@@ -126,16 +424,27 @@ func bindOperationID(owner executionenv.Owner, binding, profile string) string {
 	return "bind-v1-" + hex.EncodeToString(sum[:])
 }
 
-// Ensure idempotently allocates or resolves the environment for a binding.
-func (c *Client) Ensure(ctx context.Context, binding, profile string, owner executionenv.Owner, operationID string) (executionenv.EnsureEnvironmentResponse, error) {
-	v, err := c.rpc.EnsureEnvironment(ctx, &executionv1.EnsureEnvironmentRequest{BindingId: binding, Profile: profile, Owner: ownerToProto(owner), OperationId: operationID})
+func (c *Client) EnsureTemplate(ctx context.Context, binding, id, revision string, owner executionenv.Owner, operationID string) (executionenv.EnsureEnvironmentResponse, error) {
+	v, err := c.rpc.EnsureTemplate(ctx, &executionv1.EnsureTemplateRequest{BindingId: binding, Template: &executionv1.TemplateSelector{Id: id, Revision: revision}, Owner: ownerToProto(owner), OperationId: operationID})
 	if err != nil {
 		return executionenv.EnsureEnvironmentResponse{}, decodeError(ctx, err)
 	}
 	return ensureFromProto(v)
 }
 
-// Attach obtains a fresh grant for an exact environment reference.
+// ListExecutionTemplates returns only operator-authorized display projections.
+func (c *Client) ListExecutionTemplates(ctx context.Context) (*executionv1.ListExecutionTemplatesResponse, error) {
+	v, err := c.rpc.ListExecutionTemplates(ctx, &executionv1.ListExecutionTemplatesRequest{})
+	return v, decodeError(ctx, err)
+}
+
+// ValidateTemplate checks an exact eligible revision without allocation.
+func (c *Client) ValidateTemplate(ctx context.Context, id, revision string) (*executionv1.ValidateTemplateResponse, error) {
+	v, err := c.rpc.ValidateTemplate(ctx, &executionv1.ValidateTemplateRequest{Template: &executionv1.TemplateSelector{Id: id, Revision: revision}})
+	return v, decodeError(ctx, err)
+}
+
+// Attach obtains current allocation state for an exact environment reference.
 func (c *Client) Attach(ctx context.Context, req executionenv.AttachEnvironmentRequest) (executionenv.AttachEnvironmentResponse, error) {
 	v, err := c.rpc.AttachEnvironment(ctx, &executionv1.AttachEnvironmentRequest{Context: contextToProto(req.Context), Purpose: req.Purpose})
 	if err != nil {
@@ -298,7 +607,7 @@ func (c *Client) DeleteRetiredEnvironment(ctx context.Context, ref executionenv.
 	return decodeError(ctx, err)
 }
 
-// RevokeEnvironment atomically fences grants and replays a matching operation receipt.
+// RevokeEnvironment atomically fences active runs and replays a matching operation receipt.
 func (c *Client) RevokeEnvironment(ctx context.Context, ref executionenv.EnvironmentRef, owner executionenv.Owner, expectedGeneration uint64, operationID string) (uint64, error) {
 	out, err := c.rpc.RevokeEnvironment(ctx, &executionv1.RevokeEnvironmentRequest{Environment: refToProto(ref), Owner: ownerToProto(owner), ExpectedGrantGeneration: expectedGeneration, OperationId: operationID})
 	if err != nil {
@@ -370,17 +679,17 @@ func refToProto(r executionenv.EnvironmentRef) *executionv1.EnvironmentRef {
 	return &executionv1.EnvironmentRef{Id: r.ID, Revision: r.Revision}
 }
 func contextToProto(v executionenv.RequestContext) *executionv1.RequestContext {
-	return &executionv1.RequestContext{Environment: refToProto(v.Environment), Owner: ownerToProto(v.Owner), BindingId: v.BindingID, RunId: v.RunID, ClaimId: v.ClaimID, Epoch: v.Epoch, GrantGeneration: v.GrantGeneration, Grant: v.Grant}
+	return &executionv1.RequestContext{Environment: refToProto(v.Environment), Owner: ownerToProto(v.Owner), BindingId: v.BindingID, RunId: v.RunID, ClaimId: v.ClaimID, Epoch: v.Epoch, GrantGeneration: v.GrantGeneration}
 }
 func refFromProto(r *executionv1.EnvironmentRef) executionenv.EnvironmentRef {
 	return executionenv.EnvironmentRef{ID: r.GetId(), Revision: r.GetRevision()}
 }
 func runClaimFromProto(v *executionv1.RunClaimResponse) (executionenv.RunClaim, error) {
 	expiry, err := checkedTime(v.GetExpiresAt())
-	if err != nil || v.GetClaimId() == "" || v.GetRunId() == "" || v.GetEpoch() == 0 || v.GetGrantGeneration() == 0 || v.GetGrant() == "" {
+	if err != nil || v.GetClaimId() == "" || v.GetRunId() == "" || v.GetEpoch() == 0 || v.GetGrantGeneration() == 0 {
 		return executionenv.RunClaim{}, sanitizedProviderError()
 	}
-	return executionenv.RunClaim{Environment: refFromProto(v.GetEnvironment()), BindingID: v.GetBindingId(), RunID: v.GetRunId(), ClaimID: v.GetClaimId(), Epoch: v.GetEpoch(), GrantGeneration: v.GetGrantGeneration(), Grant: v.GetGrant(), ExpiresAt: expiry}, nil
+	return executionenv.RunClaim{Environment: refFromProto(v.GetEnvironment()), BindingID: v.GetBindingId(), RunID: v.GetRunId(), ClaimID: v.GetClaimId(), Epoch: v.GetEpoch(), GrantGeneration: v.GetGrantGeneration(), ExpiresAt: expiry}, nil
 }
 
 func ensureFromProto(v *executionv1.EnsureEnvironmentResponse) (executionenv.EnsureEnvironmentResponse, error) {
@@ -498,16 +807,20 @@ func commandStateFromProto(v executionv1.CommandState) (executionenv.CommandStat
 
 // Provider adapts the execution service to server placement binding.
 type Provider struct {
-	client  *Client
-	profile string
+	client   *Client
+	profile  string
+	revision string
 }
 
-// NewProvider binds a client to one operator-selected profile.
-func NewProvider(client *Client, profile string) (*Provider, error) {
-	if client == nil || profile == "" {
-		return nil, errors.New("execution client: client and profile are required")
+// NewTemplateProvider pins the deployment default to an exact execution revision.
+func NewTemplateProvider(client *Client, id, revision string) (*Provider, error) {
+	if client == nil || id == "" || len(revision) != 67 || !strings.HasPrefix(revision, "v1-") || revision != strings.ToLower(revision) {
+		return nil, errors.New("execution client: template ID and exact v1 revision are required")
 	}
-	return &Provider{client: client, profile: profile}, nil
+	if _, err := hex.DecodeString(revision[3:]); err != nil {
+		return nil, errors.New("execution client: template ID and exact v1 revision are required")
+	}
+	return &Provider{client: client, profile: id, revision: revision}, nil
 }
 
 type referenceDeleteHandle struct {
@@ -591,7 +904,7 @@ type runHandle struct {
 	provider    *Provider
 	owner       executionenv.Owner
 	claim       executionenv.RunClaimRequest
-	credentials *grantContext
+	credentials *runContext
 	environment tool.Environment
 	mu          sync.Mutex
 }
@@ -718,7 +1031,7 @@ func (p *Provider) AcquireRun(ctx context.Context, req server.ExecutionRunReques
 	if toSessionRef(claim.Environment) != req.Ref || claim.BindingID != string(req.BindingID) || claim.RunID != req.RunID {
 		return nil, server.ErrPlacementChanged
 	}
-	credentials := &grantContext{client: p.client, context: executionenv.RequestContext{Environment: claim.Environment, Owner: owner, BindingID: claim.BindingID, RunID: claim.RunID, ClaimID: claim.ClaimID, Epoch: claim.Epoch, GrantGeneration: claim.GrantGeneration, Grant: claim.Grant}, expiresAt: claim.ExpiresAt}
+	credentials := &runContext{client: p.client, context: executionenv.RequestContext{Environment: claim.Environment, Owner: owner, BindingID: claim.BindingID, RunID: claim.RunID, ClaimID: claim.ClaimID, Epoch: claim.Epoch, GrantGeneration: claim.GrantGeneration}, expiresAt: claim.ExpiresAt}
 	ws := &workspace{credentials: credentials}
 	runner := &runner{credentials: credentials}
 	env, envErr := tool.NewEnvironment(req.Ref, ws, memledger.New(), runner)
@@ -731,9 +1044,27 @@ func (p *Provider) AcquireRun(ctx context.Context, req server.ExecutionRunReques
 	return handle, nil
 }
 
+func (p *Provider) ListExecutionTemplates(ctx context.Context, principal *session.Principal) ([]server.ExecutionTemplateInfo, string, error) {
+	if _, err := ownerOf(principal); err != nil {
+		return nil, "", server.ErrPlacementNotFound
+	}
+	response, err := p.client.ListExecutionTemplates(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(response.GetItems()) > 64 {
+		return nil, "", server.ErrInvalidPlacementBinding
+	}
+	items := make([]server.ExecutionTemplateInfo, 0, len(response.GetItems()))
+	for _, item := range response.GetItems() {
+		items = append(items, server.ExecutionTemplateInfo{ID: item.GetTemplate().GetId(), Revision: item.GetTemplate().GetRevision(), Name: item.GetName(), Description: item.GetDescription(), DisplayToken: item.GetDisplayToken(), Extensions: item.GetExtensions(), DeclaredExecutionFiles: slices.Contains(item.GetCapabilities(), "filesystem"), DeclaredBuiltInShell: slices.Contains(item.GetCapabilities(), "foreground-command")})
+	}
+	return items, response.GetInventoryRevision(), nil
+}
+
 // ValidatePlacement performs side-effect-free profile preflight.
 func (p *Provider) ValidatePlacement(ctx context.Context) error {
-	_, err := p.client.ValidateProfile(ctx, p.profile)
+	_, err := p.client.ValidateTemplate(ctx, p.profile, p.revision)
 	return mapPlacementError(err)
 }
 
@@ -746,16 +1077,23 @@ func ownerOf(principal *session.Principal) (executionenv.Owner, error) {
 
 // Bind allocates the environment for the final session binding.
 func (p *Provider) Bind(ctx context.Context, req server.PlacementBindRequest) (server.PlacementBinding, error) {
-	if !req.Selector.IsDefault() || req.BindingID == "" {
+	if !req.Selector.Valid() || (!req.Selector.IsDefault() && !req.Selector.IsTemplate()) || req.BindingID == "" {
+		return server.PlacementBinding{}, server.ErrInvalidPlacementSelection
+	}
+	id, revision := p.profile, p.revision
+	if req.Selector.IsTemplate() {
+		id, revision = req.Selector.ID, req.Selector.Revision
+	}
+	if revision == "" {
 		return server.PlacementBinding{}, server.ErrInvalidPlacementSelection
 	}
 	owner, err := ownerOf(req.Principal)
 	if err != nil {
 		return server.PlacementBinding{}, err
 	}
-	operationID := bindOperationID(owner, string(req.BindingID), p.profile)
+	operationID := bindOperationID(owner, string(req.BindingID), id+"\x00"+revision)
 	ensureDone := creatediag.Begin(ctx, "bind_ensure")
-	ensured, err := p.client.Ensure(ctx, string(req.BindingID), p.profile, owner, operationID)
+	ensured, err := p.client.EnsureTemplate(ctx, string(req.BindingID), id, revision, owner, operationID)
 	ensureDone(err)
 	if err != nil {
 		return server.PlacementBinding{}, mapPlacementError(err)
@@ -858,7 +1196,7 @@ func (p *Provider) binding(owner executionenv.Owner, binding string, attached ex
 	if !attached.Ready || attached.Environment.ID == "" || attached.Environment.Revision == "" || attached.Epoch == 0 {
 		return server.PlacementBinding{}, server.ErrPlacementUnavailable
 	}
-	credentials := &grantContext{client: p.client, context: executionenv.RequestContext{Environment: attached.Environment, Owner: owner, BindingID: binding, Epoch: attached.Epoch, GrantGeneration: attached.GrantGeneration}, expiresAt: time.Time{}}
+	credentials := &runContext{client: p.client, context: executionenv.RequestContext{Environment: attached.Environment, Owner: owner, BindingID: binding, Epoch: attached.Epoch, GrantGeneration: attached.GrantGeneration}, expiresAt: time.Time{}}
 	ws := &workspace{credentials: credentials}
 	runner := &runner{credentials: credentials}
 	sref := toSessionRef(attached.Environment)
@@ -937,7 +1275,7 @@ func mapPlacementError(err error) error {
 	return server.ErrPlacementUnavailable
 }
 
-type grantContext struct {
+type runContext struct {
 	mu         sync.Mutex
 	client     *Client
 	context    executionenv.RequestContext
@@ -945,33 +1283,33 @@ type grantContext struct {
 	renewClaim func(context.Context) error
 }
 
-func (g *grantContext) current(_ context.Context) (executionenv.RequestContext, error) {
+func (g *runContext) current(_ context.Context) (executionenv.RequestContext, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.context.Grant == "" || !time.Now().Before(g.expiresAt) {
-		return executionenv.RequestContext{}, &executionenv.Error{Code: executionenv.CodeUnauthenticated, Message: "run grant unavailable", Retryable: true}
+	if g.context.ClaimID == "" || !time.Now().Before(g.expiresAt) {
+		return executionenv.RequestContext{}, &executionenv.Error{Code: executionenv.CodeUnauthenticated, Message: "run lease unavailable", Retryable: true}
 	}
 	return g.context, nil
 }
 
-func (g *grantContext) refresh(ctx context.Context) (executionenv.RequestContext, error) {
+func (g *runContext) refresh(ctx context.Context) (executionenv.RequestContext, error) {
 	g.mu.Lock()
-	before := g.context.Grant
-	if before == "" || !time.Now().Before(g.expiresAt) {
+	before := g.expiresAt
+	if g.context.ClaimID == "" || !time.Now().Before(before) {
 		g.mu.Unlock()
-		return executionenv.RequestContext{}, &executionenv.Error{Code: executionenv.CodeUnauthenticated, Message: "active run grant expired; retry the run", Retryable: true}
+		return executionenv.RequestContext{}, &executionenv.Error{Code: executionenv.CodeUnauthenticated, Message: "active run lease expired; retry the run", Retryable: true}
 	}
 	renew := g.renewClaim
 	g.mu.Unlock()
 	g.mu.Lock()
-	if g.context.Grant != before && time.Now().Before(g.expiresAt) {
+	if g.expiresAt.After(before) && time.Now().Before(g.expiresAt) {
 		out := g.context
 		g.mu.Unlock()
 		return out, nil
 	}
 	g.mu.Unlock()
 	if renew == nil {
-		return executionenv.RequestContext{}, &executionenv.Error{Code: executionenv.CodeUnauthenticated, Message: "active run grant cannot be refreshed", Retryable: true}
+		return executionenv.RequestContext{}, &executionenv.Error{Code: executionenv.CodeUnauthenticated, Message: "active run lease cannot be renewed", Retryable: true}
 	}
 	if err := renew(ctx); err != nil {
 		return executionenv.RequestContext{}, err
@@ -979,22 +1317,22 @@ func (g *grantContext) refresh(ctx context.Context) (executionenv.RequestContext
 	return g.current(ctx)
 }
 
-func (g *grantContext) expiry() time.Time {
+func (g *runContext) expiry() time.Time {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.expiresAt
 }
 
-func (g *grantContext) replace(claim executionenv.RunClaim) {
+func (g *runContext) replace(claim executionenv.RunClaim) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.context.RunID, g.context.ClaimID, g.context.Epoch, g.context.GrantGeneration, g.context.Grant = claim.RunID, claim.ClaimID, claim.Epoch, claim.GrantGeneration, claim.Grant
+	g.context.RunID, g.context.ClaimID, g.context.Epoch, g.context.GrantGeneration = claim.RunID, claim.ClaimID, claim.Epoch, claim.GrantGeneration
 	g.expiresAt = claim.ExpiresAt
 }
 
-// workspace is bound to one provider-issued environment grant.
+// workspace is bound to one provider-authorized durable run.
 type workspace struct {
-	credentials *grantContext
+	credentials *runContext
 	opMu        sync.Mutex
 }
 
@@ -1165,7 +1503,7 @@ func mapFileError(path string, err error) error {
 
 // runner deliberately implements only foreground CommandRunner.
 type runner struct {
-	credentials *grantContext
+	credentials *runContext
 }
 
 func (*runner) BoundWorkspaceRoot() string { return remoteRoot }

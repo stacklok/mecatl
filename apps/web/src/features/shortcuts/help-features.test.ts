@@ -9,6 +9,7 @@ const allOff: ServerCapabilitiesResponse = {
   audio: false,
   bash: false,
   debugMcp: false,
+  executionTemplates: false,
   image: false,
   learnedSkills: false,
   learningProposals: false,

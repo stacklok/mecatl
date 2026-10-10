@@ -456,7 +456,7 @@ func TestSDKServerEnablers_Scenario9_ClientMCPRejectedWithDebugTarget(t *testing
 	defer cleanup()
 
 	_, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
-		Profile:              "no-fs",
+		Execution:            &mecatlv1.ExecutionSelection{None: &mecatlv1.ExecutionNone{}},
 		DebugTargetSessionId: "some-target",
 		McpServers:           []*mecatlv1.McpServerSpec{protoMCPEntry()},
 	})

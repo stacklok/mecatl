@@ -3,6 +3,7 @@
 import type {
   ClearSessionRequest,
   CreateSessionRequest,
+  ExecutionTemplateInventory,
   ForkSessionRequest,
   ListSessionsResponse,
   RunStreamEvent,
@@ -77,6 +78,7 @@ export interface ChatService {
   clearSession(sessionId: string, request?: ClearSessionRequest): Promise<{ id: string }>;
   compactSession(sessionId: string): Promise<{ compacted: boolean }>;
   createSession(request: CreateSessionRequest): Promise<{ id: string }>;
+  executionTemplates?(): Promise<ExecutionTemplateInventory>;
   deleteSession(sessionId: string): Promise<void>;
   detail(sessionId: string, signal?: AbortSignal): Promise<SessionDetailResponse>;
   forkSession(sessionId: string, request: ForkSessionRequest): Promise<{ id: string }>;
@@ -260,6 +262,9 @@ export function createMecatlChatService(client: Client): ChatService {
     },
 
     async createSession(request) {
+      if (request.debugTargetSessionId && request.execution && !("none" in request.execution)) {
+        throw new Error("Debug chats require no execution environment.");
+      }
       const session = await client.sessions.create({
         mode: toSessionMode(request.mode),
         ...(request.model === undefined
@@ -268,17 +273,30 @@ export function createMecatlChatService(client: Client): ChatService {
         ...(request.reasoningEffort === "default"
           ? {}
           : { reasoningEffort: request.reasoningEffort }),
-        // An AI-debug session is always no-fs (the daemon requires it — its
-        // engine has exactly one read-only tool and never touches a
-        // filesystem), independent of the ordinary toolAccess choice.
-        ...(request.toolAccess === "noFilesystem" || request.debugTargetSessionId
-          ? { profile: "no-fs" }
-          : {}),
+        ...(request.execution === undefined && !request.debugTargetSessionId
+          ? {}
+          : { execution: request.debugTargetSessionId ? { none: {} } : request.execution }),
         ...(request.debugTargetSessionId === undefined
           ? {}
           : { debugTargetSessionId: request.debugTargetSessionId }),
       });
       return { id: session.id };
+    },
+
+    async executionTemplates() {
+      const inventory = await client.server.executionTemplates();
+      return {
+        inventoryRevision: inventory.inventoryRevision,
+        items: inventory.items.map((item) => ({
+          template: { id: item.template.id, revision: item.template.revision },
+          name: item.name,
+          description: item.description,
+          displayToken: item.displayToken,
+          extensions: { ...item.extensions },
+          declaredExecutionFiles: item.declaredExecutionFiles,
+          declaredBuiltInShell: item.declaredBuiltInShell,
+        })),
+      };
     },
 
     async deleteSession(sessionId) {
@@ -295,6 +313,9 @@ export function createMecatlChatService(client: Client): ChatService {
       const resolvedModel = snapshot.resolvedModel;
       return {
         capabilities: {
+          audio: snapshot.sessionCapabilities?.audio === true,
+          builtInShell: snapshot.sessionCapabilities?.builtInShell === true,
+          executionFiles: snapshot.sessionCapabilities?.executionFiles === true,
           image: snapshot.sessionCapabilities?.image === true,
           manualCompaction: compatibility.capabilities.manualCompaction,
           modelSelection: compatibility.capabilities.modelSelection,

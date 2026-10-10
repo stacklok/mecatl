@@ -1,0 +1,10 @@
+# Task-owned Kind fixture only. Production charts accept externally issued Secrets.
+provider:
+  securitySources:
+    - name: execution-security
+      items:
+        - {key: tls.crt, path: tls.crt}
+        - {key: tls.key, path: tls.key}
+    - name: execution-trust
+      items:
+        - {key: clients.pem, path: clients.pem}

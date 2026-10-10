@@ -59,7 +59,7 @@ func (p *PodExecutor) Execute(ctx context.Context, pod string, q executionenv.Ex
 	}
 	var envelope executionenv.ExecutorEnvelope
 	if err := executionenv.DecodeStrict(stdout.Bytes(), &envelope); err != nil {
-		return executionenv.ExecutorResponse{}, fmt.Errorf("invalid executor response: %w", err)
+		return executionenv.ExecutorResponse{}, errors.New("invalid executor response")
 	}
 	if envelope.Error != nil && envelope.Response != nil {
 		return executionenv.ExecutorResponse{}, errors.New("executor returned both result and error")

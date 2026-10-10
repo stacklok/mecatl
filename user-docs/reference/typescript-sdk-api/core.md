@@ -64,6 +64,8 @@ For entry points and runtime support, see the [SDK API overview](./index.md).
 | [`EventOf`](#api-eventof-typealias) | Type alias |
 | [`EventPayloads`](#api-eventpayloads-interface) | Interface |
 | [`EventUsage`](#api-eventusage-interface) | Interface |
+| [`ExecutionTemplateInfo`](#api-executiontemplateinfo-interface) | Interface |
+| [`ExecutionTemplateInventory`](#api-executiontemplateinventory-interface) | Interface |
 | [`ForkSessionOptions`](#api-forksessionoptions-interface) | Interface |
 | [`getRawJson`](#api-getrawjson-function) | Function |
 | [`GuardrailApprovalScope`](#api-guardrailapprovalscope-interface) | Interface |
@@ -1413,6 +1415,21 @@ Existing session ID used to create a separate diagnostic session.
 debugTargetSessionId?: string;
 ```
 
+<Heading as="h4" id="api-createsessionoptions-execution-propertysignature"><code>CreateSessionOptions.execution</code></Heading>
+
+Server-owned placement selection. Omit to use the deployment default.
+
+```ts
+execution?: {
+        none: Record<string, never>;
+    } | {
+        template: {
+            id: string;
+            revision: string;
+        };
+    };
+```
+
 <Heading as="h4" id="api-createsessionoptions-limits-propertysignature"><code>CreateSessionOptions.limits</code></Heading>
 
 Stop conditions for the new session.
@@ -1443,14 +1460,6 @@ Model selector within `providerId`.
 
 ```ts
 modelId?: string;
-```
-
-<Heading as="h4" id="api-createsessionoptions-profile-propertysignature"><code>CreateSessionOptions.profile</code></Heading>
-
-Tool-surface profile, or the deployment default when omitted.
-
-```ts
-profile?: string;
 ```
 
 <Heading as="h4" id="api-createsessionoptions-providerid-propertysignature"><code>CreateSessionOptions.providerId</code></Heading>
@@ -2107,6 +2116,81 @@ readonly outputTokens: bigint;
 
 ```ts
 readonly reasoningTokens: bigint;
+```
+
+<Heading as="h3" id="api-executiontemplateinfo-interface"><code>ExecutionTemplateInfo</code></Heading>
+
+Operator-projected eligible revision; never a recipe or execution authority.
+
+```ts
+export interface ExecutionTemplateInfo
+```
+
+<Heading as="h4" id="api-executiontemplateinfo-declaredbuiltinshell-propertysignature"><code>ExecutionTemplateInfo.declaredBuiltInShell</code></Heading>
+
+```ts
+readonly declaredBuiltInShell: boolean;
+```
+
+<Heading as="h4" id="api-executiontemplateinfo-declaredexecutionfiles-propertysignature"><code>ExecutionTemplateInfo.declaredExecutionFiles</code></Heading>
+
+Declared affordances, not the effective capabilities of a bound session.
+
+```ts
+readonly declaredExecutionFiles: boolean;
+```
+
+<Heading as="h4" id="api-executiontemplateinfo-description-propertysignature"><code>ExecutionTemplateInfo.description</code></Heading>
+
+```ts
+readonly description: string;
+```
+
+<Heading as="h4" id="api-executiontemplateinfo-displaytoken-propertysignature"><code>ExecutionTemplateInfo.displayToken</code></Heading>
+
+```ts
+readonly displayToken: string;
+```
+
+<Heading as="h4" id="api-executiontemplateinfo-extensions-propertysignature"><code>ExecutionTemplateInfo.extensions</code></Heading>
+
+```ts
+readonly extensions: Readonly<Record<string, string>>;
+```
+
+<Heading as="h4" id="api-executiontemplateinfo-name-propertysignature"><code>ExecutionTemplateInfo.name</code></Heading>
+
+```ts
+readonly name: string;
+```
+
+<Heading as="h4" id="api-executiontemplateinfo-template-propertysignature"><code>ExecutionTemplateInfo.template</code></Heading>
+
+```ts
+readonly template: {
+        readonly id: string;
+        readonly revision: string;
+    };
+```
+
+<Heading as="h3" id="api-executiontemplateinventory-interface"><code>ExecutionTemplateInventory</code></Heading>
+
+Bounded authenticated template inventory.
+
+```ts
+export interface ExecutionTemplateInventory
+```
+
+<Heading as="h4" id="api-executiontemplateinventory-inventoryrevision-propertysignature"><code>ExecutionTemplateInventory.inventoryRevision</code></Heading>
+
+```ts
+readonly inventoryRevision: string;
+```
+
+<Heading as="h4" id="api-executiontemplateinventory-items-propertysignature"><code>ExecutionTemplateInventory.items</code></Heading>
+
+```ts
+readonly items: readonly ExecutionTemplateInfo[];
 ```
 
 <Heading as="h3" id="api-forksessionoptions-interface"><code>ForkSessionOptions</code></Heading>
@@ -4224,7 +4308,7 @@ Pre-session compatibility and safe server-identity operations.
 export interface Server
 ```
 
-Callable members: [`compatibility()`](#api-server-compatibility-methodsignature), [`info()`](#api-server-info-methodsignature)
+Callable members: [`compatibility()`](#api-server-compatibility-methodsignature), [`executionTemplates()`](#api-server-executiontemplates-methodsignature), [`info()`](#api-server-info-methodsignature)
 
 <Heading as="h4" id="api-server-compatibility-methodsignature"><code>Server.compatibility</code></Heading>
 
@@ -4239,6 +4323,20 @@ Parameters:
 - `options` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
 
 Returns: `Promise<ServerCompatibility>`: A detached compatibility projection.
+
+<Heading as="h4" id="api-server-executiontemplates-methodsignature"><code>Server.executionTemplates</code></Heading>
+
+List eligible templates for the authenticated caller; requires enabled capability.
+
+```ts
+executionTemplates(options?: RequestOptions): Promise<ExecutionTemplateInventory>;
+```
+
+Parameters:
+
+- `options` (`RequestOptions`, optional)
+
+Returns: `Promise<ExecutionTemplateInventory>`
 
 <Heading as="h4" id="api-server-info-methodsignature"><code>Server.info</code></Heading>
 
@@ -4279,6 +4377,12 @@ readonly audio: boolean;
 
 ```ts
 readonly debugMcp: boolean;
+```
+
+<Heading as="h4" id="api-servercapabilities-executiontemplates-propertysignature"><code>ServerCapabilities.executionTemplates</code></Heading>
+
+```ts
+readonly executionTemplates: boolean;
 ```
 
 <Heading as="h4" id="api-servercapabilities-image-propertysignature"><code>ServerCapabilities.image</code></Heading>
@@ -4921,6 +5025,18 @@ export interface SessionCapabilities
 
 ```ts
 readonly audio: boolean;
+```
+
+<Heading as="h4" id="api-sessioncapabilities-builtinshell-propertysignature"><code>SessionCapabilities.builtInShell</code></Heading>
+
+```ts
+readonly builtInShell: boolean;
+```
+
+<Heading as="h4" id="api-sessioncapabilities-executionfiles-propertysignature"><code>SessionCapabilities.executionFiles</code></Heading>
+
+```ts
+readonly executionFiles: boolean;
 ```
 
 <Heading as="h4" id="api-sessioncapabilities-image-propertysignature"><code>SessionCapabilities.image</code></Heading>
@@ -7282,7 +7398,7 @@ MECATL_ATTACH_FILTERED_KINDS: readonly ["approval", "compaction.archive", "netwo
 Stable server error codes, kept in parity with the Go registry.
 
 ```ts
-MECATL_ERROR_CODES: readonly ["activity_gap", "ask_not_pending", "approval_grant_ineligible", "approval_intent_mismatch", "approval_not_pending", "approval_unsupported", "attempt_live_claim_conflict", "attempt_terminal_conflict", "attempt_version_conflict", "child_not_found", "cleanup_backend", "cleanup_plan_stale", "cleanup_unsupported", "client_mcp_unreachable", "client_mcp_unsupported", "conflict", "context_window_unavailable", "cursor_expired", "cursor_malformed", "draining", "dream_apply_failed", "dream_capacity", "dream_conflict", "dream_deadline", "dream_generate_failed", "dream_in_progress", "dream_not_found", "dream_request_failed", "dream_terminal_conflict", "dream_unavailable", "environment_logical_root_unavailable", "failed_precondition", "failed_step_retry_ineligible", "fire_now_overlap", "internal", "invalid_argument", "learning_unavailable", "management_unauthorized", "mcp_connector_unavailable", "mcp_authorization_pending", "no_active_run", "no_event_log", "no_mcp_provider", "no_schedule_store", "not_awaiting_plan", "not_found", "placement_binding_invalid", "placement_changed", "placement_selector_invalid", "placement_selector_not_found", "placement_selector_stale", "placement_unavailable", "plan_resolution_required", "proposal_conflict", "reflection_cancelled", "reflection_deadline", "reflection_failed", "reflection_queue_full", "request_too_large", "resource_exhausted", "schedule_disabled", "schedule_exhausted", "schedule_not_found", "schedule_not_leader", "schedule_unsupported", "scheduler_not_running", "session_delete_unsupported", "session_leased_elsewhere", "session_metadata_cursor_restart", "session_metadata_paging_unsupported", "session_not_found", "stale_run_control", "storage_health_backend", "team_not_found", "team_not_running", "team_running", "teams_disabled", "too_many_session_engines", "too_many_teams", "unauthenticated", "unimplemented", "watch_capacity", "watch_lagging", "watch_unsupported"]
+MECATL_ERROR_CODES: readonly ["activity_gap", "ask_not_pending", "approval_grant_ineligible", "approval_intent_mismatch", "approval_not_pending", "approval_unsupported", "attempt_live_claim_conflict", "attempt_terminal_conflict", "attempt_version_conflict", "child_not_found", "cleanup_backend", "cleanup_plan_stale", "cleanup_unsupported", "client_mcp_unreachable", "client_mcp_unsupported", "conflict", "context_window_unavailable", "cursor_expired", "cursor_malformed", "draining", "dream_apply_failed", "dream_capacity", "dream_conflict", "dream_deadline", "dream_generate_failed", "dream_in_progress", "dream_not_found", "dream_request_failed", "dream_terminal_conflict", "dream_unavailable", "environment_logical_root_unavailable", "execution_templates_disabled", "failed_precondition", "failed_step_retry_ineligible", "fire_now_overlap", "internal", "invalid_argument", "learning_unavailable", "management_unauthorized", "mcp_connector_unavailable", "mcp_authorization_pending", "no_active_run", "no_event_log", "no_mcp_provider", "no_schedule_store", "not_awaiting_plan", "not_found", "placement_binding_invalid", "placement_changed", "placement_selector_invalid", "placement_selector_not_found", "placement_selector_stale", "placement_unavailable", "plan_resolution_required", "proposal_conflict", "reflection_cancelled", "reflection_deadline", "reflection_failed", "reflection_queue_full", "request_too_large", "resource_exhausted", "schedule_disabled", "schedule_exhausted", "schedule_not_found", "schedule_not_leader", "schedule_unsupported", "scheduler_not_running", "session_delete_unsupported", "session_leased_elsewhere", "session_metadata_cursor_restart", "session_metadata_paging_unsupported", "session_not_found", "stale_run_control", "storage_health_backend", "team_not_found", "team_not_running", "team_running", "teams_disabled", "too_many_session_engines", "too_many_teams", "unauthenticated", "unimplemented", "watch_capacity", "watch_lagging", "watch_unsupported"]
 ```
 
 <Heading as="h3" id="api-mecatl-event-kinds-variable"><code>MECATL_EVENT_KINDS</code></Heading>
@@ -7333,6 +7449,7 @@ Known server feature identifiers. Unknown identifiers remain observable.
 ```ts
 ServerFeature: {
     readonly ExactPlanAskControl: "exact_plan_ask_control";
+    readonly ExecutionTemplates: "execution_templates";
     readonly HttpSteer: "http_steer";
     readonly McpServersOnCreate: "mcp_servers_on_create";
     readonly PromptFreeControls: "prompt_free_controls";

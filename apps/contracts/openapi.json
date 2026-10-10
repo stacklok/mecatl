@@ -658,6 +658,9 @@
                         "debugMcp": {
                           "type": "boolean"
                         },
+                        "executionTemplates": {
+                          "type": "boolean"
+                        },
                         "image": {
                           "type": "boolean"
                         },
@@ -774,6 +777,7 @@
                         "audio",
                         "bash",
                         "debugMcp",
+                        "executionTemplates",
                         "image",
                         "learnedSkills",
                         "learningProposals",
@@ -1162,6 +1166,53 @@
                     "minLength": 1,
                     "maxLength": 256
                   },
+                  "execution": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "none": {
+                            "type": "object",
+                            "properties": {},
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "none"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "template": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 63,
+                                "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+                              },
+                              "revision": {
+                                "type": "string",
+                                "pattern": "^v1-[0-9a-f]{64}$"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "revision"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "template"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
                   "mode": {
                     "type": "string",
                     "enum": [
@@ -1201,16 +1252,9 @@
                       "max"
                     ],
                     "default": "default"
-                  },
-                  "toolAccess": {
-                    "type": "string",
-                    "enum": [
-                      "all",
-                      "noFilesystem"
-                    ],
-                    "default": "all"
                   }
-                }
+                },
+                "additionalProperties": false
               }
             }
           }
@@ -1229,6 +1273,44 @@
                   },
                   "required": [
                     "id"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
                   ]
                 }
               }
@@ -1267,6 +1349,124 @@
                     "status",
                     "title",
                     "type"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The Mecatl runtime is unavailable.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/execution-templates": {
+      "get": {
+        "operationId": "listExecutionTemplates",
+        "responses": {
+          "200": {
+            "description": "Eligible execution templates for this caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "inventoryRevision": {
+                      "type": "string"
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "template": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "revision": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "revision"
+                            ]
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "displayToken": {
+                            "type": "string"
+                          },
+                          "extensions": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "string"
+                            }
+                          },
+                          "declaredExecutionFiles": {
+                            "type": "boolean"
+                          },
+                          "declaredBuiltInShell": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "template",
+                          "name",
+                          "description",
+                          "displayToken",
+                          "extensions",
+                          "declaredExecutionFiles",
+                          "declaredBuiltInShell"
+                        ]
+                      },
+                      "maxItems": 64
+                    }
+                  },
+                  "required": [
+                    "inventoryRevision",
+                    "items"
                   ]
                 }
               }
@@ -1578,6 +1778,15 @@
                         "image": {
                           "type": "boolean"
                         },
+                        "audio": {
+                          "type": "boolean"
+                        },
+                        "executionFiles": {
+                          "type": "boolean"
+                        },
+                        "builtInShell": {
+                          "type": "boolean"
+                        },
                         "manualCompaction": {
                           "type": "boolean"
                         },
@@ -1587,6 +1796,9 @@
                       },
                       "required": [
                         "image",
+                        "audio",
+                        "executionFiles",
+                        "builtInShell",
                         "manualCompaction",
                         "modelSelection"
                       ]

@@ -149,36 +149,18 @@ func compositionChildEnv(t *testing.T, scenario string) []string {
 
 func compositionScratchRoot(t *testing.T) string {
 	t.Helper()
-	dir, err := os.Getwd()
+	root := t.TempDir()
+	if len(filepath.Join(root, "runtime", "mecatui-0123456789", "mecated.sock")) < 100 {
+		return root
+	}
+
+	// Managed temp roots can exceed the Unix socket-path limit; use the OS tmpfs only then.
+	root, err := os.MkdirTemp("/dev/shm", "mecatui-")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for {
-		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-			scratch := filepath.Join(dir, ".scratch")
-			if err := os.MkdirAll(scratch, 0o700); err != nil {
-				t.Fatal(err)
-			}
-			root, err := os.MkdirTemp(scratch, "mh-")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(filepath.Join(root, "runtime", "mecatui-0123456789", "mecated.sock")) < 100 {
-				t.Cleanup(func() { _ = os.RemoveAll(root) })
-				return root
-			}
-			if err := os.RemoveAll(root); err != nil {
-				t.Fatal(err)
-			}
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
-	}
-	t.Fatal("no ancestor checkout has a short enough .scratch directory for embedded socket")
-	return ""
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	return root
 }
 
 func checkEmbeddedCompositionChild(t *testing.T, scenario string) {

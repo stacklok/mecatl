@@ -1,28 +1,20 @@
 package executioncontroller
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"os"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/goccy/go-yaml"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 const maxTolerationSeconds int64 = 86400
-
-// ProfilesFile is the strict operator profile-file schema.
-type ProfilesFile struct {
-	Profiles map[string]ProfileSpec `yaml:"profiles"`
-}
 
 // ProfileSpec defines immutable image, storage, resource, and operation bounds.
 type ProfileSpec struct {
@@ -48,7 +40,13 @@ type ProfileSpec struct {
 
 // Profiles is a validated immutable profile registry.
 type Profiles struct {
-	byName                 map[string]resolvedProfile
+	byName          map[string]resolvedProfile
+	defaultRevision map[string]string
+	// revisions contains every operator-retained execution definition, including
+	// definitions no longer eligible for new bindings.
+	revisions              map[string]map[string]resolvedProfile
+	eligibility            map[string]map[string]TemplatePolicy
+	catalog                map[string]map[string]TemplateDisplay
 	executorServiceAccount string
 }
 
@@ -71,41 +69,13 @@ type resolvedProfile struct {
 	TmpSizeLimit            resource.Quantity
 }
 
-// LoadProfiles reads and strictly validates an operator profile file.
-func LoadProfiles(path string) (*Profiles, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read profiles: %w", err)
-	}
-	var f ProfilesFile
-	if err := yaml.UnmarshalWithOptions(b, &f, yaml.DisallowUnknownField()); err != nil {
-		return nil, fmt.Errorf("decode profiles: %w", err)
-	}
-	if len(f.Profiles) == 0 {
-		return nil, errors.New("profiles file has no profiles")
-	}
-	p := &Profiles{byName: map[string]resolvedProfile{}}
-	for name, s := range f.Profiles {
-		quantities, err := validateProfile(name, s)
-		if err != nil {
-			return nil, err
-		}
-		canonical, err := yaml.Marshal(s)
-		if err != nil {
-			return nil, err
-		}
-		sum := sha256.Sum256(canonical)
-		quantities.Spec = s
-		quantities.Digest = "sha256:" + hex.EncodeToString(sum[:])
-		p.byName[name] = quantities
-	}
-	return p, nil
-}
+var pinnedImage = regexp.MustCompile(`^[^[:space:]@]+@sha256:[0-9a-fA-F]{64}$`)
+
 func validateProfile(name string, s ProfileSpec) (resolvedProfile, error) {
 	if name == "" || strings.ContainsAny(name, "/\\") {
 		return resolvedProfile{}, fmt.Errorf("invalid profile name %q", name)
 	}
-	if !strings.Contains(s.Image, "@sha256:") {
+	if !pinnedImage.MatchString(s.Image) {
 		return resolvedProfile{}, fmt.Errorf("profile %q image must be digest-pinned", name)
 	}
 	if s.StorageClass == "" || s.StorageSize == "" {
@@ -261,6 +231,8 @@ func positiveQuantity(profile, field, value string) (resource.Quantity, error) {
 	}
 	return quantity, nil
 }
+
+//nolint:unparam // Production callers use the sole configured legacy profile; tests cover other names.
 func (p *Profiles) get(name string) (resolvedProfile, bool) {
 	if p == nil {
 		return resolvedProfile{}, false
@@ -275,6 +247,12 @@ func (p *Profiles) clusterResources() (runtimeClasses, storageClasses []string) 
 	}
 	runtimes := make(map[string]struct{}, len(p.byName))
 	storage := make(map[string]struct{}, len(p.byName))
+	for _, revisions := range p.revisions {
+		for _, template := range revisions {
+			runtimes[template.Spec.RuntimeClassName] = struct{}{}
+			storage[template.Spec.StorageClass] = struct{}{}
+		}
+	}
 	for _, profile := range p.byName {
 		runtimes[profile.Spec.RuntimeClassName] = struct{}{}
 		storage[profile.Spec.StorageClass] = struct{}{}

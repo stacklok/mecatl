@@ -1,0 +1,77 @@
+# Input to the tagged fixture renderer; never pass directly to Helm.
+recipes:
+  go:
+    storageClass: standard
+    storageSize: 1Gi
+    cpuRequest: 50m
+    memoryRequest: 64Mi
+    cpuLimit: "1"
+    memoryLimit: 512Mi
+    ephemeralStorageRequest: 64Mi
+    ephemeralStorageLimit: 1Gi
+    tmpSizeLimit: 256Mi
+    runtimeClassName: qualification-runc
+    maxFileBytes: 5242880
+    maxCommandBytes: 1048576
+    maxCommandDuration: 5m
+    maxEnvironments: 20
+  incompatible-derivative:
+    storageClass: standard
+    storageSize: 1Gi
+    cpuRequest: 50m
+    memoryRequest: 64Mi
+    cpuLimit: "1"
+    memoryLimit: 512Mi
+    ephemeralStorageRequest: 64Mi
+    ephemeralStorageLimit: 1Gi
+    tmpSizeLimit: 256Mi
+    runtimeClassName: qualification-runc
+    maxFileBytes: 5242880
+    maxCommandBytes: 1048576
+    maxCommandDuration: 5m
+    maxEnvironments: 1
+  operator-utility:
+    storageClass: standard
+    storageSize: 1Gi
+    cpuRequest: 50m
+    memoryRequest: 64Mi
+    cpuLimit: "1"
+    memoryLimit: 512Mi
+    ephemeralStorageRequest: 64Mi
+    ephemeralStorageLimit: 1Gi
+    tmpSizeLimit: 256Mi
+    runtimeClassName: qualification-runc
+    maxFileBytes: 5242880
+    maxCommandBytes: 1048576
+    maxCommandDuration: 5m
+    maxEnvironments: 20
+  quota-cas:
+    storageClass: standard
+    storageSize: 1Gi
+    cpuRequest: 50m
+    memoryRequest: 64Mi
+    cpuLimit: "1"
+    memoryLimit: 512Mi
+    ephemeralStorageRequest: 64Mi
+    ephemeralStorageLimit: 1Gi
+    tmpSizeLimit: 256Mi
+    runtimeClassName: qualification-runc
+    maxFileBytes: 5242880
+    maxCommandBytes: 1048576
+    maxCommandDuration: 5m
+    maxEnvironments: 1
+  quota-kube:
+    storageClass: standard
+    storageSize: 1Gi
+    cpuRequest: 50m
+    memoryRequest: 64Mi
+    cpuLimit: "1"
+    memoryLimit: 512Mi
+    ephemeralStorageRequest: 64Mi
+    ephemeralStorageLimit: 1Gi
+    tmpSizeLimit: 256Mi
+    runtimeClassName: qualification-runc
+    maxFileBytes: 5242880
+    maxCommandBytes: 1048576
+    maxCommandDuration: 5m
+    maxEnvironments: 4

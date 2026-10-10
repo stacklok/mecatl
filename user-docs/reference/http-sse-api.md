@@ -64,7 +64,8 @@ forward compatibility. `build_id` is not a semantic-version API.
 
 |Method & path|Body|Response|
 |-|-|-|
-|`POST /v1/sessions`|`{mode?, limits?, provider_id?, model_id?, profile?, mcp_servers?}`; `profile` omitted = server default, `"no-fs"` = explicit attenuation|`201` `{session_id, placement}` where placement is bounded display metadata; no path or exact private ref|
+|`POST /v1/sessions`|`{mode?, limits?, provider_id?, model_id?, execution?, mcp_servers?}`; `execution` omitted = server default, `{none:{}}` = no filesystem, `{template:{id,revision}}` = exact operator-approved revision|`201` `{session_id, placement, session_capabilities}` where placement is bounded display metadata; no path or exact private ref|
+|`GET /v1/execution-templates`|Authenticated, enabled catalog only|`200` `{items:[{template:{id,revision},name,description,display_token,extensions}],inventory_revision}`; at most 64 eligible rows|
 |`GET /v1/sessions`|No body|`200` `{sessions: [...]}` with path-free stored-session inventory|
 |`GET /v1/sessions/{id}`|No body|`200` authoritative session snapshot, including title/provenance, title-generation lifecycle, and canonical durable token usage when present|
 |`GET /v1/sessions/{id}/events`|No body|`200` SSE durable event replay; empty for an unknown ID, `501` without durable storage. See [Durable event replay](#durable-event-replay).|
@@ -291,24 +292,31 @@ A `workspace`, `cwd`, placement ID, or exact environment ref is an unknown field
 and the strict decoder returns `400`; configure local `--workspace` on the
 server.
 
-### Create a no-filesystem session (`profile: "no-fs"`)
+### Create a no-filesystem session (`execution: {none:{}}`)
 
 The `no-fs` profile creates a session without filesystem tools, suitable for
 research or coordination through MCP, memory, and web tools:
 
 ```sh
 $ curl -s -X POST http://127.0.0.1:8081/v1/sessions \
-       -d '{"profile":"no-fs"}'
+       -d '{"execution":{"none":{}}}'
 {"session_id":"..."}
 ```
 
-The gRPC `CreateSessionRequest` accepts the same profile strings: `""` selects
-the deployment default and `"no-fs"` selects the filesystem-free profile. The
-server enforces these rules:
+The same `execution` union exists on gRPC `CreateSessionRequest`. The server enforces:
 
-- `"no-fs"` binds the server's filesystem-free placement; no workspace field
-  exists. Omitted profile binds the server's deployment default.
-- The server rejects every other profile value.
+- `{ "none": {} }` creates a file-less session. Omission binds the deployment
+  default. `{ "template": { "id": "coding", "revision":
+  "v1-<64 lowercase hex characters>" } }` selects an exact eligible operator
+  revision; list `GET /v1/execution-templates` first. The example revision is
+  illustrative, not a deployable identifier.
+- The request accepts one complete `execution` variant. Invalid variants return
+  `400`. Unauthorized and absent templates both return `404`; disabled catalog
+  returns `501`, and a temporarily unavailable catalog returns `503`. `features`
+  must include `execution_templates` and `capabilities.execution_templates` must
+  be true to offer a picker.
+- `session_capabilities.execution_files` and `built_in_shell` on create and get
+  report effective registered tools, separately from image/audio media input.
 - The no-FS session excludes
   Read/ListDir/Edit/Write/Copy/Move/Remove/Grep/Glob/Shell/ShellStatus,
   Parallel, and SkillDraft. It keeps MCP tools (server-global + resource
@@ -318,7 +326,7 @@ server enforces these rules:
   shell or worktree/fork isolation.
 - A system-prompt posture note and the Subagent tool description explain the
   available MCP, memory, and web tools to the model.
-- The profile composes with `provider_id`/`model_id` and remains fixed for the
+- The execution selection composes with `provider_id`/`model_id` and remains fixed for the
   session lifetime.
 
 ### Inspect a session

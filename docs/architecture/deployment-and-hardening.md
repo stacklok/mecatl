@@ -62,6 +62,33 @@ another caller's record exists. Each verb re-runs the check instead of trusting 
 earlier one. Caller-partitioned memory (`memory.CallerStore`) derives its namespace from
 the context principal on every call.
 
+### Kubernetes execution environments
+
+The Kubernetes execution provider is a separate mTLS service used by `mecak8s`.
+A session selects the deployment default, no filesystem, or an exact
+operator-owned template ID and revision. The authenticated catalog returns only
+bounded display metadata that the caller may select. Listing does not reserve an
+environment; the provider and host policy reauthorize the exact template and
+owner when the session binds.
+
+The provider persists an exact environment reference, owner binding, execution
+epoch, run claim, and revocation generation. A resumed session reattaches that
+same reference rather than using the current default. Provider replicas use
+Kubernetes compare-and-swap operations and claims to serialize environment work.
+A lost claim or unprovable executor state fences the environment. Recovery and
+retirement require the administrator to supply the recorded environment, epoch,
+Pod UID, and PVC UID. Workspace PVCs remain retained until the separate delete
+operation succeeds.
+
+Provider TLS and client authorization are separate controls. Platform PKI issues
+and projects the provider and client certificates and trust bundles. The provider
+reloads valid projected TLS files independently of the client-policy manifest.
+The manifest generation changes only for authorization policy updates. A valid
+mTLS client still needs the manifest's exact client URI, template scope, owner
+binding, run epoch, claim, and revocation checks for each operation. See
+[Configure the Kubernetes execution provider](../../user-docs/operating/mecak8s/native-execution.md)
+for the operator workflow.
+
 **The classification guard.** Every boundary touching owned data is classified as
 caller-owned, derived (follows from the current authorized run), shared-infrastructure,
 or exempt, with a written rationale. `classification.go` covers the service and system

@@ -356,6 +356,10 @@ type Config struct {
 	// PlacementScope is the trusted deployment scope supplied to every provider
 	// Bind. It must be non-empty when PlacementProvider is configured.
 	PlacementScope PlacementScope
+	// ExecutionTemplateAllowed is an operator-owned per-principal grant. A nil
+	// function denies all public template selection even if the shared provider
+	// mTLS client has a broader allowlist.
+	ExecutionTemplateAllowed func(*session.Principal, string, string) bool
 	// ExecutionAccess is an optional host-only run-ownership seam. Local and no-FS
 	// placements leave it nil and perform no lifecycle RPCs.
 	ExecutionAccess ExecutionAccess
@@ -1787,8 +1791,9 @@ type CreateSessionOption func(*createSessionOpts)
 // "WithSessionID was called (possibly with an empty id, which is rejected)" from
 // "WithSessionID was never called" — both leave id == "".
 type createSessionOpts struct {
-	id    session.SessionID
-	idSet bool
+	execution ExecutionSelection
+	id        session.SessionID
+	idSet     bool
 	// sourceSessionID, when non-empty, seeds the new session's conversation
 	// history from the named source session (issue #20, model-switch carryover).
 	// Validated + snapshotted in createSession via validateCarryover BEFORE the
@@ -2160,13 +2165,14 @@ type createRequest struct {
 	limits         session.Limits
 	selector       ProviderSelector
 	profile        SessionProfile
+	execution      ExecutionSelection
 	sourceID       session.SessionID
 	kind           session.SessionKind
 	relationship   session.SessionRelationship
 }
 
 func newCreateRequest(ref session.EnvironmentRef, mode session.PermissionMode, limits session.Limits, selector ProviderSelector, profile SessionProfile, sourceID session.SessionID, opts createSessionOpts) createRequest {
-	request := createRequest{environmentRef: ref, mode: mode, limits: limits, selector: selector, profile: profile, sourceID: sourceID, kind: session.SessionKindMain}
+	request := createRequest{environmentRef: ref, mode: mode, limits: limits, selector: selector, profile: profile, execution: opts.execution, sourceID: sourceID, kind: session.SessionKindMain}
 	switch {
 	case opts.debugTargetID != "":
 		request.kind = session.SessionKindDebug
@@ -2182,7 +2188,7 @@ func (r createRequest) matches(sess *session.Session) bool {
 	return r.sourceID == "" && sess.EnvironmentRef == r.environmentRef && sess.Mode == r.mode &&
 		sess.Limits == r.limits && sess.ProviderID == r.selector.ProviderID &&
 		sess.ModelID == r.selector.ModelID && sess.ReasoningEffort == r.selector.ReasoningEffort &&
-		sess.Profile == string(r.profile) && sess.Kind == r.kind && sess.Relationship == r.relationship
+		sess.Profile == string(r.profile) && sess.ExecutionTemplateID == r.execution.ID && sess.ExecutionTemplateRevision == r.execution.Revision && sess.Kind == r.kind && sess.Relationship == r.relationship
 }
 
 func sameCreateOwner(a, b *session.Principal) bool {
@@ -2382,8 +2388,38 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 	if profile != ProfileDefault && profile != ProfileNoFS {
 		return nil, fmt.Errorf("%w: unknown session profile %q", ErrInvalidArgument, profile)
 	}
+	placementSelector, selectedProfile, selectionErr := opts.execution.placement()
+	if selectionErr != nil {
+		return nil, selectionErr
+	}
+	if opts.execution.Kind != "" {
+		if profile != ProfileDefault && profile != selectedProfile {
+			return nil, ErrInvalidArgument
+		}
+		profile = selectedProfile
+	}
+	if placementSelector.IsTemplate() && (!s.cfg.OwnershipEnforced || session.PrincipalFromContext(ctx) == nil || opts.ownerSet && !sameCreateOwner(opts.owner, session.PrincipalFromContext(ctx)) || opts.sourceSessionID != "" || opts.placement != nil) {
+		return nil, ErrInvalidPlacementSelection
+	}
 	if err := s.validateDebugCreate(ctx, profile, specs, opts); err != nil {
 		return nil, err
+	}
+	if opts.sourceSessionID != "" && opts.placement == nil {
+		selectedSource, sourceErr := s.GetSession(ctx, opts.sourceSessionID)
+		if sourceErr != nil {
+			return nil, sourceErr
+		}
+		if selectedSource.ExecutionTemplateRevision != "" || selectedSource.EnvironmentRef.Kind == session.EnvironmentKind("kubernetes") {
+			return nil, fmt.Errorf("%w: remote carryover requires an exact source placement", ErrInvalidPlacementSelection)
+		}
+	}
+	if placementSelector.IsTemplate() {
+		if !s.executionCatalogAvailable() {
+			return nil, ErrExecutionTemplatesDisabled
+		}
+		if !s.cfg.ExecutionTemplateAllowed(session.PrincipalFromContext(ctx), opts.execution.ID, opts.execution.Revision) {
+			return nil, ErrPlacementNotFound
+		}
 	}
 	definitelyPerSession := s.cfg.MCPBroker != nil || sel.ProviderID != "" || sel.ModelID != "" || sel.ReasoningEffort != "" || len(specs) != 0 || profile == ProfileNoFS || s.cfg.LearnedSkills != nil
 	if definitelyPerSession {
@@ -2478,7 +2514,11 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 			return nil, ErrInvalidPlacementBinding
 		}
 	} else {
-		workspace, placement, err = s.bindPlacementForCreate(ctx, profile, owner, finalID)
+		selectorForBind := placementSelector
+		if profile == ProfileNoFS {
+			selectorForBind = NoFSPlacement()
+		}
+		workspace, placement, err = s.bindPlacementForCreate(ctx, selectorForBind, profile, owner, finalID)
 		if err != nil {
 			return nil, err
 		}
@@ -2547,12 +2587,17 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 		if err := setSessionLabels(sess, sel, profile, owner, s.rootAuthority(sess.Kind, carriedAuthority, carriedAuthorityBound)); err != nil {
 			return nil, err
 		}
+		if opts.execution.Kind == PlacementSelectorTemplate {
+			sess.ExecutionTemplateID, sess.ExecutionTemplateRevision = opts.execution.ID, opts.execution.Revision
+		}
 		s.setTitleGenerationEligibility(sess, sel)
+		stampExecutionCapabilities(sess, s.cfg.Engine, placement.Environment)
 		if err := seedCarryover(sess, carrySnap); err != nil {
 			return nil, err
 		}
 		created, err := s.persistPlacedCreatedSession(ctx, sess, owner, retryRequest, placement)
-		if err == nil && created == sess {
+		if created == sess {
+			// A lost reference-commit response does not unpublish the session.
 			s.installSessionPlacement(sess.ID, *placement, opts.placementEnvironmentOverride)
 			publishedPlacement = true
 		}
@@ -2688,6 +2733,9 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		}
 		return nil, err
 	}
+	if opts.execution.Kind == PlacementSelectorTemplate {
+		sess.ExecutionTemplateID, sess.ExecutionTemplateRevision = opts.execution.ID, opts.execution.Revision
+	}
 	if debugTarget != nil {
 		sess.DebugTargetFingerprint = session.DebugTargetFingerprint(debugTarget)
 	}
@@ -2695,6 +2743,7 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		sess.Placement = canonicalPlacementMetadata(*placement)
 	}
 	s.setTitleGenerationEligibility(sess, sel)
+	stampExecutionCapabilities(sess, eng, placement.Environment)
 	if err := seedCarryover(sess, carrySnap); err != nil {
 		if closeFn != nil {
 			_ = closeFn()
@@ -2848,6 +2897,7 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		DebugMcp:            s.cfg.DebugMCP != nil && s.cfg.DebugMCP(),
 		WorkspaceEnrollment: s.cfg.WorkspaceEnrollment,
 		McpRefresh:          s.cfg.MCPRefresh != nil,
+		ExecutionTemplates:  s.cfg.OwnershipEnforced && s.executionCatalogAvailable(),
 	}
 }
 

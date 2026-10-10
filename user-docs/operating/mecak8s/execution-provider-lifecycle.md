@@ -13,49 +13,24 @@ operation.
 
 ## Rotate execution-provider authority
 
-Give every changed material file a new, generation-specific basename. This
-applies to signing keys, server certificates, server private keys, and client-CA
-bundles. For example, a second bundle can use `grant-k2.pem`, `server-g2.crt`,
-`server-g2.key`, and `clients-g2.pem`. Keep each name's bytes immutable.
-
-1. Stage the new files before changing `provider.securityManifest`, retaining
-   files referenced by the current manifest. With `securitySecretName`, add them
-   to the single operator-managed Secret. With `securitySources`, first populate
-   the new Secret keys, then add their destination mappings in a quiesced chart
-   upgrade while the old manifest remains in place. Kubernetes requires every
-   projected key to exist, even when the current manifest does not reference it.
-2. Publish a higher-generation manifest whose existing `file`,
-   `certificateFile`, `privateKeyFile`, and `clientCAFile` fields reference
-   those names. For CA rotation, first publish a separately named overlap
-   bundle, move clients and server trust, then publish another higher generation
-   that removes old trust.
-3. Verify that the authority ConfigMap has reached the intended generation and
-   use a current claim to read known workspace content. Pod readiness alone can
-   still reflect the previous generation. A replica whose snapshot lags the
-   ledger rejects requests before dispatch with structured `not_ready` and
-   `retryable=true`. Bound any read-only verification poll and stop on wrong
-   content, a nonretryable error, or another error code.
-4. Retain overlap files until no live or in-flight manifest references them.
-   Retain verification keys through their grant windows before revoking them.
-   Never reuse a retired name for different bytes.
-
-Kubernetes projects Secret and ConfigMap updates independently. A manifest that
-arrives before its new files fails closed until they arrive; staged files leave
-an older manifest unchanged. Overwriting referenced TLS or CA files can instead
-publish a mixed bundle's digest permanently at the new generation. If that has
-happened, publish a complete, immutable bundle at a **higher** generation.
-Repeated requests or a restart cannot repair same-generation digest drift;
-preserve the authority ledger rather than resetting it. The provider confines
-file access to the mounted security directory, but immutable publication remains
-your secret-management procedure's responsibility.
+Client authorization policy and TLS materials rotate independently. Publish a
+higher `provider.securityManifest` generation for changed client URI, owner, or
+template scope. A policy update is durable only after provider replicas agree on
+the new generation; a lagging replica fails closed. For provider/client
+certificates and CA bundles, use platform PKI and projected Secrets. Stage trust
+overlap, renew identities, and withdraw old trust only after the new chain is
+accepted. Valid TLS renewals need no policy-generation increment; expiry or
+trust withdrawal aborts affected in-flight RPCs. Do not reuse a policy
+generation for different policy bytes or reset the authority ConfigMap to
+bypass a failed check. Verify readiness and a known authorized operation after
+each change without logging private keys or credential values.
 
 ## Upgrade, uninstall, and reinstall the execution provider
 
 The supported lifecycle keeps the **same Helm release name, namespace, resource
-names, profiles, network policy configuration, and security Secret name or
-source mode**. Keep `execution-values.yaml` and the current nonsecret authority
-manifest in your operator configuration store. Retain operator-owned Secrets and
-their key history independently; the chart neither owns nor reads Secret
+names, retained template definitions, network policy configuration, and security Secret
+source mode**. Keep `execution-values.yaml` and the current nonsecret client-policy
+manifest in your operator configuration store. Keep operator-owned Secrets and TLS trust overlap independently; the chart neither owns nor reads Secret
 contents.
 
 Finish and verify any external authority rotation before starting a chart
@@ -66,8 +41,8 @@ leaves the value empty. Continue to use reviewed current values and the
 quiescence procedure below. Do not use `--force-conflicts` or `--take-ownership`
 as a blanket takeover.
 
-Before upgrading, verify that the retained profiles ConfigMap contains a
-nonempty `data["lifetime.json"]`, the authority and capacity ledgers are intact,
+Before upgrading, verify that the retained templates ConfigMap contains a
+nonempty `data["lifetime.json"]`, the policy authority and capacity ledgers are intact,
 and the release still owns its retained executor ServiceAccount. That account
 must have token automount disabled and no inherited pull Secrets. Stop if any of
 these checks fails; do not synthesize missing history or reset authority.
@@ -116,6 +91,62 @@ For a compatible provider upgrade:
    supported; old objects are not automatically upgraded, reset, or deleted.
    Mixed-version provider operation is unsupported.
 
+### Reuse a full template history
+
+A template ID holds at most 32 revisions, and the entire release holds at most
+64. To publish beyond either limit, remove a retired historical definition in
+the same upgrade that adds the next revision. Keep every definition still used
+by an environment. The chart requires explicit `maintenance.pruneRevisions`
+consent for each removed ID/revision pair; ordinary upgrades reject any
+removal.
+
+1. While the provider is running, complete `RetireEnvironment` and
+   `DeleteRetiredEnvironment` for **every** environment in the release. Wait
+   for deletion to finish, including PVC deletion and capacity release. Stop
+   client traffic and scale the provider to zero as in the upgrade procedure.
+   Keep it stopped through the Helm upgrade; Helm lookup and apply do not form
+   a transaction.
+2. Verify that the existing Deployment has observed its zero-replica
+   generation and that the namespace contains no Pods or PVCs. Confirm there
+   are no `ExecutionEnvironment` CRs, including terminating CRs. Inspect the
+   retained `mecatl-execution-profile-allocations` ConfigMap: its data must be
+   empty or contain only `profile-<32 lowercase hex>.json` entries with the
+   exact value `[]`. A reservation can exist before a CR is created. For
+   example, inspect the live resources before continuing:
+
+   ```sh
+   kubectl --namespace <NAMESPACE> get deployment mecatl-execution \
+     -o jsonpath='{.metadata.generation}{" "}{.status.observedGeneration}{" "}{.spec.replicas}{" "}{.status.replicas}{"\n"}'
+   kubectl --namespace <NAMESPACE> get executionenvironments,pods,pvc
+   kubectl --namespace <NAMESPACE> get configmap mecatl-execution-profile-allocations \
+     -o jsonpath='{.data}{"\n"}'
+   ```
+
+   If any check fails, finish the supported lifecycle operations or recover
+   the trusted ledger; do not reset or delete retained resources.
+3. Back up the existing `data["lifetime.json"]` and reviewed Helm values in
+   your operator configuration store. Remove only the selected retired
+   revision from `templates.<ID>.revisions` in `execution-values.yaml`, add
+   the next revision, and select an eligible default. Preserve the remaining
+   recipes and network policy configuration. For the single upgrade that
+   removes it, pass the exact removed revision as consent:
+
+   ```sh
+   helm upgrade mecatl-execution oci://ghcr.io/stacklok/mecatl/charts/mecatl-execution \
+     --version <VERSION> --namespace <NAMESPACE> --values execution-values.yaml \
+     --set-json 'maintenance.pruneRevisions.<ID>=["<RETIRED_TEMPLATE_REVISION>"]' \
+     --wait --timeout=4m $HELM_APPLY_MODE
+   ```
+
+   Set `HELM_APPLY_MODE` as in the compatible-upgrade procedure. Omit the
+   prune setting on subsequent upgrades; it is valid only when the named
+   definition exists in the previous retained history and is absent from the
+   candidate. Verify the new `lifetime.json` and provider readiness before
+   resuming traffic. If the upgrade fails, keep writers stopped and restore
+   the trusted values/history or resolve the reported state mismatch before
+   retrying. Do not use a rollback that would reintroduce a pruned definition
+   in place of a subsequently published revision.
+
 ### Uninstall and reinstall with retained state
 
 Default uninstall removes the provider but keeps runtime CRs, PVCs, surviving
@@ -141,13 +172,14 @@ helm install mecatl-execution oci://ghcr.io/stacklok/mecatl/charts/mecatl-execut
 ```
 
 Helm adopts retained resources only when their managed-by label and release-name
-and release-namespace annotations match. The chart rejects missing or empty
-ledgers while allocations or capacity reservations survive, and rejects changes
-to its retained lifetime configuration. Profile removal or egress edits are
-deliberately outside this upgrade path: retained allow policies are additive, so
-leaving an obsolete policy could widen access. The provider rejects an older
-authority manifest against the retained high-water generation and key history;
-never reset that ledger to make readiness pass.
+and release-namespace annotations match. The chart rejects missing or empty ledgers while allocations or capacity
+reservations survive, and rejects unconsented changes to retained execution definitions.
+Use the [full-history procedure](#reuse-a-full-template-history) for a
+retired definition.
+Template removal or egress edits require careful retention and quiescence:
+retained allow policies are additive, so leaving an obsolete policy could widen
+access. The provider rejects an older policy manifest against the retained
+high-water generation; never reset that ledger to make readiness pass.
 
 Use live Helm install/upgrade for this lifecycle. Offline `helm template` cannot
 perform ownership or history lookups and is not an adoption mechanism. Keep
@@ -265,11 +297,12 @@ grpcurl -cacert "$CA_FILE" -cert "$CERT_FILE" -key "$KEY_FILE" \
   "$EXECUTION_ENDPOINT" mecatl.execution.v1.ExecutionProviderService/DeleteRetiredEnvironment
 ```
 
-### Revoke grants
+### Revoke an environment
 
-Revoke grants with the current generation and a stable operation ID. The
+Revoke an environment using its durable `grantGeneration` fence (the wire name),
+not a signed grant. Supply the current generation and a stable operation ID. The
 response returns the new generation; retrying the identical request returns the
-same receipt. An old grant is denied after this CAS succeeds.
+same receipt. Earlier operations cannot renew after this CAS succeeds.
 
 ```sh
 grpcurl -cacert "$CA_FILE" -cert "$CERT_FILE" -key "$KEY_FILE" \

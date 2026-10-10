@@ -149,6 +149,13 @@ type Config struct {
 	// PlacementScope is the trusted authorization scope passed to the provider.
 	// Empty defaults to the process deployment scope.
 	PlacementScope server.PlacementScope
+	// ExecutionTemplateAllowed is the operator-owned per-caller policy. Nil
+	// denies all public template selection, independent of provider mTLS grants.
+	ExecutionTemplateAllowed func(*session.Principal, string, string) bool
+	// ExecutionOwnerAllowed authorizes continued use of an existing allocation,
+	// independently of eligibility for any new template selection. When either
+	// callback is configured, both are required for new remote binds.
+	ExecutionOwnerAllowed func(*session.Principal) bool
 	// DefaultPlacement and MicroVMGuestEgress are command-root overrides for the
 	// operator execution policy. Their Set bits preserve omission so settings.yaml
 	// remains authoritative unless a serve flag was actually supplied.
@@ -2359,7 +2366,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if placementProvider == nil {
 		placementProvider = localProvider
 	} else if cfg.RemoteExecution {
-		profiledProvider := &profilePlacementProvider{remote: placementProvider, local: localProvider}
+		profiledProvider := &profilePlacementProvider{remote: placementProvider, local: localProvider, allowed: cfg.ExecutionTemplateAllowed, ownerAllowed: cfg.ExecutionOwnerAllowed}
 		if err := profiledProvider.ValidatePlacement(ctx); err != nil {
 			return nil, fmt.Errorf("validate default placement: %w", err)
 		}
@@ -2444,11 +2451,12 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		StorageMaintenanceStatus: cfg.storageMaintenance.snapshot,
 		StorageMaintenanceUpdate: cfg.storageMaintenance.update,
 
-		PlacementProvider: placementProvider,
-		PlacementScope:    placementScope,
-		ExecutionAccess:   executionAccess(placementProvider),
-		ReferenceIntents:  referenceIntentLifecycle(placementProvider),
-		SessionReadLedger: sessionReadLedger,
+		PlacementProvider:        placementProvider,
+		PlacementScope:           placementScope,
+		ExecutionTemplateAllowed: cfg.ExecutionTemplateAllowed,
+		ExecutionAccess:          executionAccess(placementProvider),
+		ReferenceIntents:         referenceIntentLifecycle(placementProvider),
+		SessionReadLedger:        sessionReadLedger,
 		RootAuthority: func(kind session.SessionKind) session.Authority {
 			return mintRuntimeRootAuthority(assets.rootCatalog, assets.mcpRuntimes, kind)
 		},
@@ -3522,12 +3530,12 @@ func sessionEngineFactoryWithTools(
 		learningCfg.automaticAdmissionLedger = runtimeAssets.automaticAdmissionLedger
 		learningCfg.learningSourceStore = store
 		deps := engineDepsForProvider(cfg, resolvedProvider, session.ProviderModelID{ProviderID: resolvedProviderID, ModelID: resolvedModel}, windowFn, store, sessionPolicy, hooks, mcpProvider, sessionInstructions)
-		deps = applyRemoteExecutionPosture(deps, remote)
 
 		attachOperatorProfile(&deps, runtimeAssets.userModelStore)
 		deps.LearningMode = learningCfg.LearningMode
 		deps.LearningObserver = bindMaterializationLifecycle(buildReflectionObserver(learningCfg, resolvedProvider, session.ProviderModelID{ProviderID: resolvedProviderID, ModelID: learningCfg.Model}, runtimeAssets.userModelStore, runtimeAssets.memStore, runtimeAssets.reflectionRepository, runtimeAssets.reflectionCoordinator, runtimeAssets.learningAdmissionGate, buildProcedureProcessor(learningCfg, runtimeAssets)), runtimeAssets.reflectionLifecycle)
 		deps.Catalog = cat
+		deps = applyRemoteExecutionPosture(deps, remote)
 		// Fire-result delivery drain: the per-session engine's Step 2a
 		// drain reads the SAME durable queue as the main engine. nil (no
 		// schedule-capable store) is the byte-identical no-delivery path.
@@ -5698,7 +5706,7 @@ func registerCoreTools(cfg Config, cat *tool.Catalog, log, noFS, remote bool, se
 	}
 	cat.MustRegister(refsearch.NewWebSearchTool(searchProvider))
 	runner := buildCommandRunner(cfg)
-	if runner != nil || remote {
+	if runner != nil || remote && !cfg.NoShell {
 		// The AGENT-loop Shell tool (not the fstools one): foreground byte-identical,
 		// plus the `background: true` detach over the run's child registry. Its
 		// companion ShellStatus — the SOLE status/collect/cancel channel for those
@@ -8753,11 +8761,18 @@ func applyRemoteExecutionPosture(deps agent.Deps, enabled bool) agent.Deps {
 		return deps
 	}
 	pc := &deps.PromptConfig
-	pc.Env.Cwd, pc.Env.Shell, pc.Env.GitStatus = workspaceRootForPrompt, "remote foreground shell", ""
+	pc.Env.Cwd, pc.Env.Shell, pc.Env.GitStatus = workspaceRootForPrompt, "", ""
 	if pc.Role == "" {
 		pc.Role = prompt.DefaultRole()
 	}
-	pc.Role += "\n\n" + remoteExecutionPostureNote
+	if deps.Catalog != nil {
+		if _, ok := deps.Catalog.Lookup(tool.ShellToolName); ok {
+			pc.Env.Shell = "remote foreground shell"
+			pc.Role += "\n\n" + remoteExecutionPostureNote
+			return deps
+		}
+	}
+	pc.Role += "\n\n" + strings.Replace(remoteExecutionPostureNote, "filesystem tools and foreground Shell", "filesystem tools (no built-in Shell is registered)", 1)
 	return deps
 }
 

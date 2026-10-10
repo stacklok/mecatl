@@ -108,6 +108,8 @@ func (m Model) renderBody() string {
 		return (&m).renderModalSurface()
 	case m.reflections.view != reflectionsNone:
 		return renderReflectionsOverlay(m.deps.Theme, m.reflections, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
+	case m.executionPicker.open:
+		return m.renderExecutionPicker()
 	case m.worktrees.view != worktreesNone:
 		return renderWorktreesOverlay(m.deps.Theme, m.worktrees, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.schedule.view != scheduleNone:

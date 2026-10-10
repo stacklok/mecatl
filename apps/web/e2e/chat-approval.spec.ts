@@ -83,7 +83,7 @@ test("approves and denies exact asks through the browser journey", async ({
 }) => {
   test.setTimeout(120_000);
   const created = await booted.app.request("/api/v1/sessions", {
-    body: JSON.stringify({ mode: "default", reasoningEffort: "default", toolAccess: "all" }),
+    body: JSON.stringify({ mode: "default", reasoningEffort: "default" }),
     headers: csrf,
     method: "POST",
   });
@@ -386,7 +386,6 @@ test("accepts real ordinary and plan asks once, then rejects their exact duplica
           body: JSON.stringify({
             mode: kind === "plan" ? "plan" : "default",
             reasoningEffort: "default",
-            toolAccess: "all",
           }),
           headers: csrf,
           method: "POST",

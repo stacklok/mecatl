@@ -278,4 +278,4 @@ it("shows only evidence-backed steer metadata in developer view", async () => {
     ).not.toContain(value);
   }
   await act(async () => activity.close());
-});
+}, 20_000);

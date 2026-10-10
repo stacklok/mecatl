@@ -32,6 +32,7 @@ the bidi Converse stream that drives one agent run.
 | RPC details | Client streaming | Server streaming | Description |
 |---|---|---|---|
 | **RPC:** `GetCompatibilityInfo`<br />**Request:** `GetCompatibilityInfoRequest`<br />**Response:** `GetCompatibilityInfoResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="GetCompatibilityInfo">GetCompatibilityInfo returns the deployment&#39;s compatibility descriptor: the API major, the operator-enabled ServerCapabilities, the build&#39;s supported feature identifiers, and an optional operator-set deployment label. It is the FIRST call a client makes — it answers &#34;what may I do with this server?&#34; WITHOUT creating a probe session (the ServerCapabilities echo otherwise rides CreateSessionResponse only).  DISTINCT FROM GetServerInfo below, deliberately. That RPC answers &#34;which BUILD is this?&#34; and sits behind an explicit privacy boundary: its response must never carry capabilities, configuration, or auth details. This one is exactly those things — negotiation input, not identity — so folding the two would either breach that boundary or overload one message with two audiences. Build identity therefore lives ONLY on GetServerInfo, and a client that wants both makes both calls.  A server that does not implement this RPC (UNIMPLEMENTED) is below the SDK compatibility floor; a client fails loudly rather than inferring a legacy mode. Authenticated like every other RPC, so UNAUTHENTICATED and UNIMPLEMENTED stay distinguishable.</GrpcDescription> |
+| **RPC:** `ListExecutionTemplates`<br />**Request:** `ListExecutionTemplatesRequest`<br />**Response:** `ListExecutionTemplatesResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="ListExecutionTemplates">ListExecutionTemplates returns the authenticated caller&#39;s bounded eligible catalog. It allocates nothing; CreateSession rechecks exact eligibility.</GrpcDescription> |
 | **RPC:** `CreateSession`<br />**Request:** `CreateSessionRequest`<br />**Response:** `CreateSessionResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="CreateSession">CreateSession allocates a new server-side session and returns its id.</GrpcDescription> |
 | **RPC:** `GetServerInfo`<br />**Request:** `GetServerInfoRequest`<br />**Response:** `GetServerInfoResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="GetServerInfo">GetServerInfo returns only the composed server build identity. It is authenticated like every HarnessService operation and does not inspect configuration or state.</GrpcDescription> |
 | **RPC:** `GetSession`<br />**Request:** `GetSessionRequest`<br />**Response:** `GetSessionResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="GetSession">GetSession returns a snapshot of an existing session.</GrpcDescription> |
@@ -731,8 +732,8 @@ CreateSessionRequest opens a new session.
 | `limits` | `Limits` |  |  | limits are the optional stop conditions. |
 | `provider_id` | `string` |  |  | provider_id selects which configured provider backs this session, by its stable registry id (&#34;openai&#34; / &#34;openrouter&#34;). Empty =&gt; the server default provider (today&#39;s behaviour). An unknown/unavailable id is a loud InvalidArgument, never a silent fallback. The provider is FIXED for the session lifetime (reasoning-replay + byte-stable prefix are provider-private); &#34;switch provider&#34; = new session. Keys are NEVER on the wire — only this id. (multi-provider Phase 0, S3.) |
 | `model_id` | `string` |  |  | model_id is the opaque model selector within provider_id. Empty =&gt; the provider&#39;s default model. An id ListModels did not advertise is passed through to the provider VERBATIM (a power-user escape hatch for a model the embedded catalog doesn&#39;t yet know). NOT slash-joined with provider_id — two distinct fields by design. Setting model_id WITHOUT provider_id is a loud InvalidArgument (a bare model on an env-derived default provider is ambiguous). |
-| `profile` | `string` |  |  | profile selects the session&#39;s TOOL-SURFACE profile. Empty binds the deployment default; &#34;no-fs&#34; explicitly attenuates filesystem access. |
-| `reasoning_effort` | `string` |  |  | reasoning_effort sets this session&#39;s reasoning-effort tier, enum-as-string (the profile / Result.stop idiom — NO proto enum, additive values):   - &#34;&#34; or &#34;auto&#34;: UNSET — do not send a reasoning-effort field; the operator default (and ultimately the provider default) applies. - &#34;low&#34; / &#34;medium&#34; / &#34;high&#34; / &#34;xhigh&#34; / &#34;max&#34;: the neutral effort tiers.  The server NORMALISES and per-provider CLAMPS the value (OpenAI supports low/medium/high only, so xhigh/max clamp DOWN to high; Anthropic maps all five) and CAPABILITY-GATES it (a model with no reasoning support drops it). An unknown value falls back to the operator default with a WARN (it never 400s the request). It OUT-RANKS the operator default; unlike model_id it is meaningful WITHOUT a provider_id (it rides the server-default provider). The EFFECTIVE resolved value is echoed back on resolved_model.reasoning_effort. |
+| `execution` | `ExecutionSelection` |  |  | execution selects the deployment default when omitted, explicit no-filesystem attenuation, or one exact operator-owned template revision. |
+| `reasoning_effort` | `string` |  |  | reasoning_effort sets this session&#39;s reasoning-effort tier, enum-as-string (the Result.stop string idiom — NO proto enum, additive values):   - &#34;&#34; or &#34;auto&#34;: UNSET — do not send a reasoning-effort field; the operator default (and ultimately the provider default) applies. - &#34;low&#34; / &#34;medium&#34; / &#34;high&#34; / &#34;xhigh&#34; / &#34;max&#34;: the neutral effort tiers.  The server NORMALISES and per-provider CLAMPS the value (OpenAI supports low/medium/high only, so xhigh/max clamp DOWN to high; Anthropic maps all five) and CAPABILITY-GATES it (a model with no reasoning support drops it). An unknown value falls back to the operator default with a WARN (it never 400s the request). It OUT-RANKS the operator default; unlike model_id it is meaningful WITHOUT a provider_id (it rides the server-default provider). The EFFECTIVE resolved value is echoed back on resolved_model.reasoning_effort. |
 | `debug_target_session_id` | `string` |  |  | debug_target_session_id creates a separate diagnostic no-FS session. |
 | `debug_mcp_servers` | `string` | repeated |  | debug_mcp_servers explicitly selects already-configured server-global streaming-HTTP MCP servers for this debug session. Legal only with a debug target; names are bounded and unique. No URL, header, or inline MCP config is accepted, and selection never implies publication authority. |
 | `mcp_servers` | `McpServerSpec` | repeated |  | mcp_servers are CLIENT-PROVIDED streaming-HTTP MCP servers to mount for the lifetime of this session, via a per-session engine. Empty (the default) is byte-identical to today: the session takes the shared-engine path.  LISTENER-SCOPED: accepting an MCP endpoint plus its auth headers from an API caller combines a remote principal with the server&#39;s ambient outbound network authority, so it is a DEPLOYMENT policy, not an inference from the request. A deployment whose API listeners are all local (a UNIX socket, a disabled HTTP listener) permits this field; a deployment with any network-facing API listener refuses every non-empty value with the typed `client_mcp_unsupported` error (UNIMPLEMENTED / 501) rather than mounting it. The refusal is the SERVER&#39;s, so it holds against a client that never checked. A client discovers whether the field is usable from `mcp_servers_on_create` in GetCompatibilityInfo.features.  Transport is streaming-HTTP ONLY, on EVERY listener and regardless of that policy: a stdio entry and an sse entry are hard-rejected as such (AGENTS.md: &#34;No stdio MCP, ever&#34; — mecatl never spawns an MCP server process). |
@@ -1000,6 +1001,67 @@ event kind; the structured submessages are populated per kind.
 | `authorization` | `Authorization` |  |  | authorization is set on authorization.required and authorization.resolved events. It is safe durable correlation only; the live presentation URL and private continuation state never enter this payload. |
 | `control_refused` | `ControlRefused` |  |  | control_refused is set on control.refused events. It identifies the exact approval ask whose submitted control was rejected and carries only a stable machine category; raw arguments and refusal rationale never enter it. |
 | `plan_continuation_failure` | `PlanContinuationFailure` |  |  | plan_continuation_failure is a session-scoped, content-safe indication that an accepted plan allow could not start its proceed run. |
+
+
+
+
+#### `mecatl.v1.ExecutionNone`
+
+
+
+This message has no fields.
+
+
+
+#### `mecatl.v1.ExecutionSelection`
+
+ExecutionSelection is an exclusive choice; absence means deployment default.
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `none` | `ExecutionNone` |  |  |  |
+| `template` | `ExecutionTemplate` |  |  |  |
+
+
+
+
+#### `mecatl.v1.ExecutionTemplate`
+
+
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `id` | `string` |  |  |  |
+| `revision` | `string` |  |  |  |
+
+
+
+
+#### `mecatl.v1.ExecutionTemplateInfo`
+
+
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `template` | `ExecutionTemplate` |  |  |  |
+| `name` | `string` |  |  |  |
+| `description` | `string` |  |  |  |
+| `display_token` | `string` |  |  |  |
+| `extensions` | `ExecutionTemplateInfo.ExtensionsEntry` | repeated |  |  |
+| `declared_execution_files` | `bool` |  |  | Declared provider affordances; effective session capabilities may be narrower. |
+| `declared_built_in_shell` | `bool` |  |  |  |
+
+
+
+
+#### `mecatl.v1.ExecutionTemplateInfo.ExtensionsEntry`
+
+
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `key` | `string` |  |  |  |
+| `value` | `string` |  |  |  |
 
 
 
@@ -1701,6 +1763,27 @@ ListCommandsResponse carries the discovered slash commands.
 | Field | Type | Label | Oneof | Description |
 |---|---|---|---|---|
 | `commands` | `Command` | repeated |  | commands are the (possibly empty) discovered commands, name-sorted. |
+
+
+
+
+#### `mecatl.v1.ListExecutionTemplatesRequest`
+
+ListExecutionTemplates is authenticated and returns only eligible, bounded
+display metadata. An empty list is distinct from an unavailable backend.
+
+This message has no fields.
+
+
+
+#### `mecatl.v1.ListExecutionTemplatesResponse`
+
+
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `items` | `ExecutionTemplateInfo` | repeated |  |  |
+| `inventory_revision` | `string` |  |  |  |
 
 
 
@@ -2929,6 +3012,7 @@ old clients ignore and new clients reading an old server see as false.
 | `workspace_enrollment` | `bool` |  |  | workspace_enrollment is true when protected workspace services must be admitted as one complete bundle before the first prompt. |
 | `mcp_connector_status` | `bool` |  |  | mcp_connector_status requires a wired broker inspector, enforced ownership and a verified caller. It does not enable direct MCP resources or prompts. |
 | `mcp_refresh` | `bool` |  |  | mcp_refresh is true when direct/global MCP source reconciliation is wired. It is mutually exclusive with workspace_enrollment in a valid deployment. |
+| `execution_templates` | `bool` |  |  | execution_templates is true only when an authenticated template catalog is wired; an eligible inventory may still be empty. |
 
 
 
@@ -2974,19 +3058,18 @@ Session is a snapshot of server-side session state.
 
 #### `mecatl.v1.SessionCapabilities`
 
-SessionCapabilities is the per-session resolved input capability: ONLY the
-model-varying input bits (image/audio). A dedicated message (not a reuse of
-ServerCapabilities) keeps the per-session surface MINIMAL — the other
-ServerCapabilities bits (mcp/skills/teams/...) are server-wide and would be
-misleading per session. Reasoning is intentionally EXCLUDED: it is discoverable
-via ListModels for the selected id and is not a per-session input-gating
-concern (no adapter &#34;can replay reasoning&#34; authority bit exists). The value is
-the catalog ∩ adapter intersection computed in composition. (Phase 0, S5.)
+SessionCapabilities is the per-session effective capability projection.
+Image/audio are the resolved model&#39;s media input support (catalog ∩ adapter);
+execution_files/built_in_shell report actual session environment, tool catalog
+and authority instead. Unlike ServerCapabilities these bits may differ for
+two sessions on the same deployment. Reasoning is discovered via ListModels.
 
 | Field | Type | Label | Oneof | Description |
 |---|---|---|---|---|
 | `image` | `bool` |  |  | image is true when the resolved provider+model can consume image prompt parts. |
 | `audio` | `bool` |  |  | audio is true when the resolved provider+model can consume audio prompt parts. |
+| `execution_files` | `bool` |  |  | execution_files and built_in_shell are effective session tool affordances, separate from the provider&#39;s image/audio input modalities. |
+| `built_in_shell` | `bool` |  |  |  |
 
 
 

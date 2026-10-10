@@ -521,6 +521,9 @@ func (m Model) updateInventoryMsgs(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	if mm, handled := m.updateReflectionsMsg(msg); handled {
 		return mm, nil, true
 	}
+	if mm, cmd, handled := m.updateExecutionMsg(msg); handled {
+		return mm, cmd, true
+	}
 	if mm, handled := m.updateWorktreesMsg(msg); handled {
 		return mm, nil, true
 	}
@@ -2360,7 +2363,7 @@ func (m Model) clearAnySelection(msg tea.KeyPressMsg) (Model, bool) {
 	if !key.Matches(msg, m.keys.Cancel) || (!m.sel.active && !m.prompt.HasSelection()) ||
 		m.modal != nil || m.team.view != teamNone || m.agentsInv.view != agentsInvNone ||
 		m.reflections.view != reflectionsNone ||
-		m.worktrees.view != worktreesNone {
+		m.executionPicker.open || m.worktrees.view != worktreesNone {
 		return m, false
 	}
 	m = m.clearSelection()
@@ -2422,6 +2425,7 @@ func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		m.onAgentsInvKey,
 		m.onReflectionsKey,
 		m.onConnectKey,
+		m.onExecutionKey,
 		m.onWorktreesKey,
 		m.onScheduleKey,
 	}

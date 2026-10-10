@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -98,6 +99,49 @@ func TestRemoteDeploymentNoFSUsesLocalAttenuationWithoutProviderCall(t *testing.
 		if spec.Name == "Read" || spec.Name == "Shell" {
 			t.Fatalf("no-fs catalog exposed %q", spec.Name)
 		}
+	}
+}
+
+func TestRemoteExecutionWithoutShellPromptMatchesCatalog(t *testing.T) {
+	fakeRulesEnv(t, t.TempDir(), t.TempDir())
+	ref := session.EnvironmentRef{Kind: "kubernetes", ID: "env-no-shell", Revision: "rev-1"}
+	env := tool.MustEnvironment(ref, memfs.NewWorkspace("/workspace"), memledger.New(), nil)
+	var captured port.LLMRequest
+	provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { captured = req })}, mockllm.TextTurn("done"))
+	built, err := buildIsolated(t, t.Context(), Config{MockProvider: provider, PlacementProvider: remoteFactoryPlacement{env: env}, PlacementScope: "remote", RemoteExecution: true, NoShell: true, NoSoul: true, SchedulerEnabled: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer built.Close()
+	ctx := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser})
+	created, err := server.NewHarnessServer(built.Service).CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created.GetSessionCapabilities().GetExecutionFiles() || created.GetSessionCapabilities().GetBuiltInShell() {
+		t.Fatalf("effective capabilities=%v", created.GetSessionCapabilities())
+	}
+	run, err := built.Service.StartRun(ctx, session.SessionID(created.GetSessionId()), "inspect files")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range run.Events() {
+	}
+	built.Service.FinishRun(session.SessionID(created.GetSessionId()), run)
+	if !strings.Contains(captured.System.StablePrefix, "no built-in Shell is registered") || strings.Contains(captured.System.StablePrefix, remoteExecutionPostureNote) || strings.Contains(captured.System.StablePrefix, "remote foreground shell") {
+		t.Fatalf("remote no-shell model prompt=%q", captured.System.StablePrefix)
+	}
+	readPresent := false
+	for _, spec := range captured.Tools {
+		if spec.Name == tool.ShellToolName {
+			t.Fatal("Shell tool exposed")
+		}
+		if spec.Name == "Read" {
+			readPresent = true
+		}
+	}
+	if !readPresent {
+		t.Fatal("filesystem tools missing without Shell")
 	}
 }
 

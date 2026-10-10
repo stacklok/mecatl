@@ -1,0 +1,78 @@
+# Optional, dedicated Kind fixture PKI. The task-owned generator creates the
+# CA issuer Secret; cert-manager alone issues and renews workload leaf Secrets.
+# No CA private key is mounted into a workload Pod.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: execution-fixture-ca
+  namespace: execution-qualification
+spec:
+  ca: {secretName: execution-fixture-ca}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: execution-provider-tls
+  namespace: execution-qualification
+spec:
+  secretName: execution-security
+  duration: 1h
+  renewBefore: 50m
+  dnsNames:
+    - mecatl-execution
+    - mecatl-execution.execution-qualification.svc
+    - mecatl-execution.execution-qualification.svc.cluster.local
+  usages: [digital signature, server auth]
+  issuerRef: {name: execution-fixture-ca, kind: Issuer}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: execution-client-tls
+  namespace: execution-qualification
+spec:
+  secretName: execution-client-tls
+  duration: 1h
+  renewBefore: 50m
+  uris: [spiffe://mecatl.test/client/mecak8s]
+  usages: [digital signature, client auth]
+  issuerRef: {name: execution-fixture-ca, kind: Issuer}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: execution-intruder-tls
+  namespace: execution-qualification
+spec:
+  secretName: execution-intruder-tls
+  duration: 1h
+  renewBefore: 50m
+  uris: [spiffe://mecatl.test/client/intruder]
+  usages: [digital signature, client auth]
+  issuerRef: {name: execution-fixture-ca, kind: Issuer}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: execution-operations-tls
+  namespace: execution-qualification
+spec:
+  secretName: execution-operations-tls
+  duration: 1h
+  renewBefore: 50m
+  uris: [spiffe://mecatl.test/client/operations]
+  usages: [digital signature, client auth]
+  issuerRef: {name: execution-fixture-ca, kind: Issuer}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: execution-wrong-scope-tls
+  namespace: execution-qualification
+spec:
+  secretName: execution-wrong-scope-tls
+  duration: 1h
+  renewBefore: 50m
+  uris: [spiffe://mecatl.test/client/wrong-scope]
+  usages: [digital signature, client auth]
+  issuerRef: {name: execution-fixture-ca, kind: Issuer}

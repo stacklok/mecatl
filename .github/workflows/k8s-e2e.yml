@@ -207,7 +207,8 @@ jobs:
   execution-production-e2e:
     name: execution provider production profile (kind)
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    # Serial tests (45m) + real expiry/in-flight renewal (105m) + build/setup and cleanup.
+    timeout-minutes: 210
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
