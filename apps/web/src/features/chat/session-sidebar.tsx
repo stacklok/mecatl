@@ -1,19 +1,49 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SessionSummaryResponse } from "@mecatl-studio/contracts";
-import { Check, FolderInput, Menu, Pencil, Plus, SquarePen, Trash2, X } from "lucide-react";
+import {
+  Ellipsis,
+  Eye,
+  EyeOff,
+  FolderInput,
+  Menu,
+  Pencil,
+  Plus,
+  SquarePen,
+  Trash2,
+  X,
+} from "lucide-react";
 import {
   type CSSProperties,
-  type MouseEvent,
   type PointerEvent as ReactPointerEvent,
+  useRef,
   useState,
 } from "react";
+import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "../../components/ui/dropdown-menu";
 import { Input } from "../../components/ui/input";
+import { formatRelativeTime } from "../../lib/formatters";
 import { maxPanelWidth, minPanelWidth, usePanelWidth } from "../../lib/panel-width";
+import { capabilityReasonLabel, sessionKindLabel } from "../../lib/session-kinds";
+import { useIsMobile } from "../../lib/use-mobile";
 import { cn } from "../../lib/utils";
 import { type ChatFolder, type ChatFolderState, groupSessions } from "./chat-folders";
+import { CopyDebugTargetMenuItem, CopySessionIdMenuItem } from "./session-copy-menu-items";
 import { isInspectOnlySession } from "./session-inspection";
+import { ForkChatMenuItem, ViewTranscriptMenuItem } from "./session-row-action-items";
 
 interface SessionSidebarProps {
   collapsed: boolean;
@@ -26,10 +56,14 @@ interface SessionSidebarProps {
   onCreateFolder: (sessionId: string) => void;
   onDelete: (session: SessionSummaryResponse) => void;
   onDeleteFolder: (folder: ChatFolder) => void;
+  /** Forks a row as-is, without opening it first; absent hides the row's Fork chat. */
+  onFork?: (session: SessionSummaryResponse) => void;
   onMoveToFolder: (sessionId: string, folderId?: string) => void;
   onRename: (session: SessionSummaryResponse, title: string) => void;
   onRenameFolder: (folder: ChatFolder) => void;
   onSelect: (id: string) => void;
+  /** Opens a row's saved transcript read-only; absent hides the row's View transcript. */
+  onViewTranscript?: (session: SessionSummaryResponse) => void;
   open: boolean;
   renamingId?: string;
   selectedId?: string;
@@ -167,21 +201,34 @@ export function SessionSidebar(props: SessionSidebarProps) {
                       No chats in this folder
                     </p>
                   ) : (
-                    group.items.map((session) => (
-                      <SessionRow
-                        deleting={props.deletingId === session.id}
-                        folders={props.folders}
-                        key={session.id}
-                        onCreateFolder={() => props.onCreateFolder(session.id)}
-                        onDelete={() => props.onDelete(session)}
-                        onMoveToFolder={(folderId) => props.onMoveToFolder(session.id, folderId)}
-                        onRename={(title) => props.onRename(session, title)}
-                        onSelect={() => props.onSelect(session.id)}
-                        renaming={props.renamingId === session.id}
-                        selected={props.selectedId === session.id}
-                        session={session}
-                      />
-                    ))
+                    group.items.map((session) =>
+                      isInspectOnlySession(session) ? (
+                        <InspectSessionRow
+                          key={session.id}
+                          onSelect={() => props.onSelect(session.id)}
+                          selected={props.selectedId === session.id}
+                          session={session}
+                        />
+                      ) : (
+                        <SessionRow
+                          deleting={props.deletingId === session.id}
+                          folders={props.folders}
+                          key={session.id}
+                          onCreateFolder={() => props.onCreateFolder(session.id)}
+                          onDelete={() => props.onDelete(session)}
+                          onFork={props.onFork && (() => props.onFork?.(session))}
+                          onMoveToFolder={(folderId) => props.onMoveToFolder(session.id, folderId)}
+                          onRename={(title) => props.onRename(session, title)}
+                          onSelect={() => props.onSelect(session.id)}
+                          onViewTranscript={
+                            props.onViewTranscript && (() => props.onViewTranscript?.(session))
+                          }
+                          renaming={props.renamingId === session.id}
+                          selected={props.selectedId === session.id}
+                          session={session}
+                        />
+                      ),
+                    )
                   )}
                 </section>
               );
@@ -193,14 +240,25 @@ export function SessionSidebar(props: SessionSidebarProps) {
   );
 }
 
+/** A disabled item's reason: its description, so the item's name stays the action. */
+function ReasonLine({ reason }: { reason: string }) {
+  return (
+    <span aria-hidden="true" className="block truncate text-xs text-muted-foreground">
+      {reason}
+    </span>
+  );
+}
+
 function SessionRow({
   deleting,
   folders,
   onCreateFolder,
   onDelete,
+  onFork,
   onMoveToFolder,
   onRename,
   onSelect,
+  onViewTranscript,
   renaming,
   selected,
   session,
@@ -209,15 +267,45 @@ function SessionRow({
   folders: ChatFolderState;
   onCreateFolder: () => void;
   onDelete: () => void;
+  onFork?: () => void;
   onMoveToFolder: (folderId?: string) => void;
   onRename: (title: string) => void;
   onSelect: () => void;
+  onViewTranscript?: () => void;
   renaming: boolean;
   selected: boolean;
   session: SessionSummaryResponse;
 }) {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(session.title);
+  const [menuOpen, setMenuOpen] = useState(false);
+  // The inline editor takes focus when Rename closes the menu; the menu must not take it back.
+  const keepFocus = useRef(false);
+  const current = folders.assignments[session.id];
+  const canRename = session.capabilities.rename && !renaming;
+  const canDelete = session.capabilities.delete && !deleting;
+  const isMobile = useIsMobile();
+  const folderItems = (
+    <>
+      {folders.folders.map((folder) => (
+        <DropdownMenuCheckboxItem
+          checked={current === folder.id}
+          key={folder.id}
+          onSelect={() => onMoveToFolder(folder.id)}
+        >
+          <span className="truncate">{folder.name}</span>
+        </DropdownMenuCheckboxItem>
+      ))}
+      <DropdownMenuCheckboxItem checked={!current} onSelect={() => onMoveToFolder()}>
+        No folder
+      </DropdownMenuCheckboxItem>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem onSelect={onCreateFolder}>
+        <Plus aria-hidden="true" />
+        New folder…
+      </DropdownMenuItem>
+    </>
+  );
 
   if (editing) {
     return (
@@ -262,108 +350,175 @@ function SessionRow({
           {session.state || "idle"}
         </span>
       </button>
-      <div className="flex opacity-100 min-[760px]:opacity-0 min-[760px]:group-hover:opacity-100 min-[760px]:group-focus-within:opacity-100">
-        {!isInspectOnlySession(session) && (
-          <FolderPicker
-            folders={folders}
-            onCreate={onCreateFolder}
-            onMove={onMoveToFolder}
-            session={session}
-          />
-        )}
-        {!isInspectOnlySession(session) && (
+      <DropdownMenu modal={false} onOpenChange={setMenuOpen}>
+        <DropdownMenuTrigger asChild>
           <button
-            aria-label={`Rename ${session.title}`}
-            className="rounded-full p-1.5 text-muted-foreground hover:bg-background hover:text-foreground disabled:opacity-40"
-            disabled={!session.capabilities.rename || renaming}
-            onClick={() => setEditing(true)}
-            title={session.capabilities.renameReason || "Rename chat"}
+            aria-label={`Options for chat: ${session.title}`}
+            className={cn(
+              "flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-background hover:text-foreground",
+              menuOpen
+                ? "opacity-100"
+                : "opacity-100 min-[760px]:opacity-0 min-[760px]:group-hover:opacity-100 min-[760px]:group-focus-within:opacity-100",
+            )}
             type="button"
           >
-            <Pencil aria-hidden="true" className="size-3.5" />
+            <Ellipsis aria-hidden="true" className="size-4" />
           </button>
-        )}
-        {!isInspectOnlySession(session) && (
-          <button
-            aria-label={`Delete ${session.title}`}
-            className="rounded-full p-1.5 text-muted-foreground hover:bg-background hover:text-destructive disabled:opacity-40"
-            disabled={!session.capabilities.delete || deleting}
-            onClick={onDelete}
-            title={session.capabilities.deleteReason || "Delete chat"}
-            type="button"
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="end"
+          className="w-56"
+          onCloseAutoFocus={(event) => {
+            if (!keepFocus.current) return;
+            keepFocus.current = false;
+            event.preventDefault();
+          }}
+          side="bottom"
+          sideOffset={4}
+        >
+          <CopySessionIdMenuItem session={session} />
+          <CopyDebugTargetMenuItem session={session} />
+          {onViewTranscript && (
+            <ViewTranscriptMenuItem onSelect={onViewTranscript} session={session} />
+          )}
+          {onFork && <ForkChatMenuItem onSelect={onFork} session={session} />}
+          {isMobile ? (
+            // A submenu has no room beside the menu on a phone, so the folders sit inline.
+            <DropdownMenuGroup aria-label="Move to folder">
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">
+                Move to folder
+              </DropdownMenuLabel>
+              {folderItems}
+            </DropdownMenuGroup>
+          ) : (
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <FolderInput aria-hidden="true" />
+                Move to folder
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="w-52">{folderItems}</DropdownMenuSubContent>
+            </DropdownMenuSub>
+          )}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            aria-description={
+              !session.capabilities.rename ? session.capabilities.renameReason : undefined
+            }
+            disabled={!canRename}
+            onSelect={() => {
+              keepFocus.current = true;
+              setTitle(session.title);
+              setEditing(true);
+            }}
+            title={session.capabilities.renameReason || undefined}
           >
-            <Trash2 aria-hidden="true" className="size-3.5" />
-          </button>
-        )}
-      </div>
+            <Pencil aria-hidden="true" />
+            <span className="min-w-0">
+              Rename
+              {!session.capabilities.rename && session.capabilities.renameReason && (
+                <ReasonLine reason={capabilityReasonLabel(session.capabilities.renameReason)} />
+              )}
+            </span>
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            aria-description={
+              !session.capabilities.delete ? session.capabilities.deleteReason : undefined
+            }
+            className="text-destructive focus:text-destructive"
+            disabled={!canDelete}
+            onSelect={onDelete}
+            title={session.capabilities.deleteReason || undefined}
+          >
+            <Trash2 aria-hidden="true" />
+            <span className="min-w-0">
+              Delete
+              {!session.capabilities.delete && session.capabilities.deleteReason && (
+                <ReasonLine reason={capabilityReasonLabel(session.capabilities.deleteReason)} />
+              )}
+            </span>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }
 
-function FolderPicker({
-  folders,
-  onCreate,
-  onMove,
+/**
+ * One inspect-only row (a subagent, parallel branch, team member, scheduled
+ * fire, or unknown kind), ported from the prototype's
+ * `inspect-session-list.tsx`: the title, a kind chip, a Read-only badge
+ * whose tooltip carries the daemon's reason, and the relative time. It has
+ * no chat actions; opening it shows the session read-only with its details.
+ */
+function InspectSessionRow({
+  onSelect,
+  selected,
   session,
 }: {
-  folders: ChatFolderState;
-  onCreate: () => void;
-  onMove: (folderId?: string) => void;
+  onSelect: () => void;
+  selected: boolean;
   session: SessionSummaryResponse;
 }) {
-  const current = folders.assignments[session.id];
-  const choose = (event: MouseEvent<HTMLButtonElement>, folderId?: string) => {
-    onMove(folderId);
-    event.currentTarget.closest("details")?.removeAttribute("open");
-  };
-
+  const title = session.title || sessionKindLabel(session.kind);
+  const readOnlyReason =
+    capabilityReasonLabel(session.capabilities.publicChatReason) || "Read-only run";
+  const transcriptDenied = !session.capabilities.viewTranscript;
+  const updated = Date.parse(session.updatedAt);
+  const Icon = transcriptDenied ? EyeOff : Eye;
   return (
-    <details className="relative">
-      <summary
-        aria-label={`Move ${session.title} to folder`}
-        className="flex cursor-pointer list-none rounded-full p-1.5 text-muted-foreground hover:bg-background hover:text-foreground"
-        title="Move to folder"
+    <div
+      className={cn(
+        "group my-0.5 flex items-center rounded-lg border-l-2 pr-2 transition-colors",
+        selected ? "border-brand-ink bg-brand/10" : "border-transparent hover:bg-accent",
+      )}
+    >
+      <button
+        aria-current={selected ? "page" : undefined}
+        aria-label={`Inspect run: ${title}`}
+        className="min-w-0 flex-1 px-2.5 py-2 text-left"
+        onClick={onSelect}
+        title={
+          transcriptDenied
+            ? capabilityReasonLabel(session.capabilities.viewTranscriptReason) ||
+              "Transcript unavailable"
+            : "Open read-only"
+        }
+        type="button"
       >
-        <FolderInput aria-hidden="true" className="size-3.5" />
-      </summary>
-      <div className="absolute right-0 top-8 z-50 w-52 rounded-xl border bg-popover p-1 text-popover-foreground shadow-xl">
-        <p className="px-2 py-1.5 text-xs font-medium text-muted-foreground">Move to folder</p>
-        {folders.folders.map((folder) => (
-          <button
-            className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
-            key={folder.id}
-            onClick={(event) => choose(event, folder.id)}
-            type="button"
+        <span className="flex min-w-0 items-center gap-1.5">
+          <Icon aria-hidden="true" className="size-3 shrink-0 text-muted-foreground/60" />
+          <span
+            className={cn(
+              "block truncate text-sm font-medium",
+              selected ? "text-foreground" : "text-muted-foreground group-hover:text-foreground",
+            )}
           >
-            <Check
-              aria-hidden="true"
-              className={cn("size-3.5", current !== folder.id && "invisible")}
-            />
-            <span className="truncate">{folder.name}</span>
-          </button>
-        ))}
-        <button
-          className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
-          onClick={(event) => choose(event)}
-          type="button"
-        >
-          <Check aria-hidden="true" className={cn("size-3.5", current && "invisible")} />
-          No folder
-        </button>
-        <div className="my-1 border-t" />
-        <button
-          className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
-          onClick={(event) => {
-            event.currentTarget.closest("details")?.removeAttribute("open");
-            onCreate();
-          }}
-          type="button"
-        >
-          <Plus aria-hidden="true" className="size-3.5" />
-          New folder…
-        </button>
-      </div>
-    </details>
+            {title}
+          </span>
+        </span>
+        <span className="mt-0.5 flex min-w-0 items-center gap-1.5 pl-[18px]">
+          <Badge
+            className="h-4 shrink-0 px-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+            variant="outline"
+          >
+            {sessionKindLabel(session.kind)}
+          </Badge>
+          <Badge
+            className="h-4 shrink-0 px-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+            title={readOnlyReason}
+            variant="outline"
+          >
+            Read-only
+          </Badge>
+        </span>
+      </button>
+      {!Number.isNaN(updated) && (
+        <span className="ml-1 shrink-0 text-xs tabular-nums text-muted-foreground/60">
+          {formatRelativeTime(updated)}
+        </span>
+      )}
+    </div>
   );
 }
 

@@ -40,7 +40,10 @@ import {
   Bug,
   Copy,
   Eraser,
+  FoldVertical,
+  GitBranch,
   GitFork,
+  Info,
   ListTodo,
   ListTree,
   LoaderCircle,
@@ -48,6 +51,8 @@ import {
   NotebookPen,
   Pencil,
   RotateCcw,
+  ScrollText,
+  Sparkles,
   Square,
   Trash2,
   Wrench,
@@ -82,8 +87,13 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "../../components/ui/dropdown-menu";
 import { Input } from "../../components/ui/input";
@@ -153,7 +163,8 @@ import {
   restoreActivityOpenerFocus,
 } from "./content-preview-panel";
 import { ContinueLatestChip } from "./continue-latest-chip";
-import { DEBUG_OPENING_PROMPT, DEBUG_SESSION_CONSENT } from "./debug-session";
+import { DEBUG_OPENING_PROMPT } from "./debug-session";
+import { DebugSessionDialog, type DebugSessionTarget } from "./debug-session-dialog";
 import { DelegationCardRow, type DelegationFocus } from "./delegation-card";
 import {
   applyDelegationDelivery,
@@ -203,7 +214,13 @@ import {
   type RunTarget,
   runStreamEnd,
 } from "./run-stream";
-import { isInspectOnlySession, isProvenChatSession, SessionInspection } from "./session-inspection";
+import { CopyDebugTargetMenuItem, CopySessionIdMenuItem } from "./session-copy-menu-items";
+import {
+  type InspectionView,
+  isInspectOnlySession,
+  isProvenChatSession,
+  SessionInspection,
+} from "./session-inspection";
 import { ChatsMenuButton, SessionSidebar } from "./session-sidebar";
 import {
   adoptSessionTitle,
@@ -232,6 +249,8 @@ import {
 } from "./thread-map";
 import type { ToolActivity } from "./tool-activity";
 import { ToolCallList } from "./tool-call-list";
+import { TranscriptMenuItems } from "./transcript-actions";
+import { selectElementContents } from "./transcript-text";
 import { formatTurnStat, usageMenuLines } from "./turn-stats";
 import { useChatMessages } from "./use-chat-messages";
 import { shouldRefreshTranscriptAfterInventory } from "./use-delivery-follow";
@@ -403,7 +422,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   );
   const [, setAuthorizationUncertainEpoch] = useState(0);
   const [authorizationBusy, setAuthorizationBusy] = useState<string>();
-  const [inspectionOpen, setInspectionOpen] = useState(false);
+  const [inspection, setInspection] = useState<{ sessionId: string; view: InspectionView }>();
+  const inspectionOpen = Boolean(inspection);
+  const [debugTarget, setDebugTarget] = useState<DebugSessionTarget>();
   const [selectionAction, setSelectionAction] = useState<SelectionAction>();
   const [appendText, setAppendText] = useState<string>();
   const [confirmPrompt, setConfirmPrompt] = useState<ConfirmPrompt>();
@@ -475,7 +496,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   // image) must not leave a reader who sits at the bottom behind it.
   const followTranscriptBottom = useRef(true);
   const transcriptContentObserver = useRef<ResizeObserver | null>(null);
+  const transcriptContent = useRef<HTMLDivElement | null>(null);
   const observeTranscriptContent = useCallback((node: HTMLDivElement | null) => {
+    transcriptContent.current = node;
     transcriptContentObserver.current?.disconnect();
     transcriptContentObserver.current = null;
     if (!node || typeof ResizeObserver === "undefined") return;
@@ -611,7 +634,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     setSteerTrace([]);
     setShowSteerTrace(false);
     setContentPreview(undefined);
-    setInspectionOpen(false);
+    setInspection(undefined);
+    setDebugTarget(undefined);
     setConfirmPrompt(undefined);
     setTextPrompt(undefined);
     setSelectionAction(undefined);
@@ -648,10 +672,17 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
 
   const selectedSession =
     titledSessionItems.find((session) => session.id === sessionId) ?? inventorySession;
+  const inspectionSession = inspection
+    ? (titledSessionItems.find((session) => session.id === inspection.sessionId) ??
+      (inspection.sessionId === sessionId ? selectedSession : undefined))
+    : undefined;
+  function openInspection(targetId: string, view: InspectionView) {
+    setInspection({ sessionId: targetId, view });
+  }
   const inspectOnlySelected = Boolean(selectedSession && isInspectOnlySession(selectedSession));
   const inspectOnlyTarget = inspectOnlySelected ? sessionId : undefined;
   useEffect(() => {
-    if (inspectOnlyTarget) setInspectionOpen(true);
+    if (inspectOnlyTarget) setInspection({ sessionId: inspectOnlyTarget, view: "details" });
   }, [inspectOnlyTarget]);
   const chatStatus = deriveChatStatus({
     ...statusFacts,
@@ -1216,6 +1247,39 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     setSidebarOpen(false);
     setSeedRequiresConfirmation(false);
     await navigate({ search: { sessionId: undefined }, to: "/workspace/chat" });
+  }
+
+  /** A list row's Fork chat: the open chat forks as before; another row forks with its own model. */
+  async function forkListedChat(row: SessionSummaryResponse) {
+    if (row.id === sessionId) {
+      await forkStandaloneChat();
+      return;
+    }
+    if (!row.capabilities.fork || row.debugTargetSessionId || forkSession.isPending) return;
+    setError(undefined);
+    setNotice("Forking this conversation…");
+    try {
+      const detail = await queryClient.fetchQuery(
+        getSessionDetailOptions({ path: { sessionId: row.id } }),
+      );
+      if (!detail.model) {
+        setError("This chat has no resolved model to carry into a fork.");
+        return;
+      }
+      const successor = await forkSession.mutateAsync({
+        body: {
+          model: { id: detail.model.id, providerId: detail.model.providerId },
+          reasoningEffort: detail.model.reasoningEffort,
+        },
+        path: { sessionId: row.id },
+      });
+      await queryClient.invalidateQueries({ queryKey: listSessionsQueryKey() });
+      await selectSession(successor.id);
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setNotice(undefined);
+    }
   }
 
   async function forkStandaloneChat() {
@@ -2615,7 +2679,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     if (selectedSession && isProvenChatSession(selectedSession)) void clearStandaloneChat();
   });
   useShortcut("chat.expandDetails", () => setExpandDetails(!expandDetails));
-  useShortcutSuppression(inspectionOpen || Boolean(confirmPrompt) || Boolean(textPrompt));
+  useShortcutSuppression(
+    inspectionOpen || Boolean(debugTarget) || Boolean(confirmPrompt) || Boolean(textPrompt),
+  );
   const escapeAsk =
     approvals.find((candidate) => {
       const target = candidate.controlTarget;
@@ -2674,7 +2740,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           !(node instanceof Element && node.closest('[data-chat-surface="thread"]')),
       );
     },
-    overlayOpen: inspectionOpen || Boolean(confirmPrompt) || Boolean(textPrompt),
+    overlayOpen:
+      inspectionOpen || Boolean(debugTarget) || Boolean(confirmPrompt) || Boolean(textPrompt),
     panelOpen: Boolean(contentPreview || sidebarOpen),
     pendingAsk: escapeAsk?.tool === "PresentPlan" ? "plan" : escapeAsk ? "ordinary" : "none",
     planAvailable: escapeAsk?.tool === "PresentPlan" && !planUnavailableReason(escapeAsk),
@@ -2703,6 +2770,29 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   useEffect(() => {
     if (contentPreview?.kind === "approval" && !detailApproval) setContentPreview(undefined);
   }, [contentPreview, detailApproval]);
+
+  const copyItems = sessionId ? (
+    <>
+      <TranscriptMenuItems
+        agentName={agentName}
+        messages={messages}
+        onSelectTranscript={() => {
+          const content = transcriptContent.current;
+          if (content) selectElementContents(content);
+        }}
+        userName={userName}
+      />
+      {selectedSession ? (
+        <CopySessionIdMenuItem session={selectedSession} />
+      ) : (
+        <DropdownMenuItem onSelect={() => void copyToClipboard(sessionId, "Session ID")}>
+          <Copy aria-hidden="true" />
+          Copy session ID
+        </DropdownMenuItem>
+      )}
+      {selectedSession && <CopyDebugTargetMenuItem session={selectedSession} />}
+    </>
+  ) : null;
 
   return (
     <div className="relative flex h-full min-w-0" data-chat-surface="workspace" ref={workspaceRoot}>
@@ -2747,7 +2837,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             title: `Delete folder “${folder.name}”?`,
           });
         }}
+        onFork={(row) => void forkListedChat(row)}
         onMoveToFolder={chatFolders.move}
+        onViewTranscript={(row) => openInspection(row.id, "transcript")}
         onRename={(session, title) => {
           void renameChat(session.id, title);
         }}
@@ -2784,7 +2876,10 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           {selectedSession && isInspectOnlySession(selectedSession) ? (
             <div className="m-auto flex flex-col items-center gap-3 p-6 text-center">
               <p className="text-sm text-muted-foreground">Inspect-only session · Read-only</p>
-              <Button onClick={() => setInspectionOpen(true)} variant="outline">
+              <Button
+                onClick={() => sessionId && openInspection(sessionId, "details")}
+                variant="outline"
+              >
                 Session details
               </Button>
             </div>
@@ -2887,10 +2982,6 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                     }
                   }}
                 >
-                  <DropdownMenuItem onSelect={() => setInspectionOpen(true)}>
-                    <ListTree aria-hidden="true" />
-                    Inspect session
-                  </DropdownMenuItem>
                   {usageLines.length > 0 && (
                     <div className="mb-1 border-b px-2 py-1.5">
                       <p className="text-xs font-medium text-muted-foreground">Token usage</p>
@@ -2914,9 +3005,21 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                     {showSteerTrace ? "Hide developer steer trace" : "Show developer steer trace"}
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onSelect={() => void copyToClipboard(sessionId, "Session ID")}>
-                    <Copy aria-hidden="true" />
-                    Copy session ID
+                  {displayedDetail?.capabilities.manualCompaction && (
+                    <DropdownMenuItem
+                      disabled={liveControlsDisabled}
+                      onSelect={() => void compactConversation()}
+                    >
+                      <FoldVertical aria-hidden="true" />
+                      Compact conversation
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem
+                    disabled={clearSession.isPending || !selectedSession?.capabilities.fork}
+                    onSelect={() => void clearStandaloneChat()}
+                  >
+                    <Eraser aria-hidden="true" />
+                    Clear conversation
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     disabled={
@@ -2929,13 +3032,6 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                     <GitFork aria-hidden="true" />
                     Fork chat
                   </DropdownMenuItem>
-                  <DropdownMenuItem
-                    disabled={clearSession.isPending || !selectedSession?.capabilities.fork}
-                    onSelect={() => void clearStandaloneChat()}
-                  >
-                    <Eraser aria-hidden="true" />
-                    Clear conversation
-                  </DropdownMenuItem>
                   {isMobile && (
                     <DropdownMenuItem
                       onSelect={() => {
@@ -2946,17 +3042,57 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                       Open local canvas
                     </DropdownMenuItem>
                   )}
+                  {runtime.data?.connection === "online" &&
+                    runtime.data.capabilities.worktrees &&
+                    selectedSession?.capabilities.fork &&
+                    selectedSession.capabilities.inspect && (
+                      <DropdownMenuItem onSelect={() => openInspection(sessionId, "worktrees")}>
+                        <GitBranch aria-hidden="true" />
+                        Switch worktree…
+                      </DropdownMenuItem>
+                    )}
+                  <DropdownMenuSeparator />
+                  {isMobile ? (
+                    // A submenu has no room beside the menu on a phone, so its items sit inline.
+                    <DropdownMenuGroup aria-label="Copy">
+                      <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">
+                        Copy
+                      </DropdownMenuLabel>
+                      {copyItems}
+                    </DropdownMenuGroup>
+                  ) : (
+                    <DropdownMenuSub>
+                      <DropdownMenuSubTrigger>
+                        <Copy aria-hidden="true" />
+                        Copy
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent className="w-52">{copyItems}</DropdownMenuSubContent>
+                    </DropdownMenuSub>
+                  )}
+                  {selectedSession?.capabilities.viewTranscript &&
+                    selectedSession.capabilities.inspect &&
+                    runtime.data?.connection === "online" && (
+                      <DropdownMenuItem onSelect={() => openInspection(sessionId, "transcript")}>
+                        <ScrollText aria-hidden="true" />
+                        View transcript
+                      </DropdownMenuItem>
+                    )}
+                  <DropdownMenuItem onSelect={() => openInspection(sessionId, "details")}>
+                    <Info aria-hidden="true" />
+                    Inspect session
+                  </DropdownMenuItem>
+                  {runtime.data?.connection === "online" && runtime.data.capabilities.soul && (
+                    <DropdownMenuItem onSelect={() => openInspection(sessionId, "soul")}>
+                      <Sparkles aria-hidden="true" />
+                      Soul
+                    </DropdownMenuItem>
+                  )}
                   {runtime.data?.capabilities.sessionDebug && (
                     <DropdownMenuItem
                       disabled={createSession.isPending}
-                      onSelect={() => {
-                        setConfirmPrompt({
-                          confirmLabel: "Send evidence & debug",
-                          description: DEBUG_SESSION_CONSENT,
-                          onConfirm: () => void startDebugSession(sessionId),
-                          title: `Debug with AI: “${selectedSession?.title}”?`,
-                        });
-                      }}
+                      onSelect={() =>
+                        setDebugTarget({ id: sessionId, title: selectedSession?.title ?? "" })
+                      }
                     >
                       <Bug aria-hidden="true" />
                       Debug with AI
@@ -3388,24 +3524,32 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           />
         </section>
       )}
-      {selectedSession && inspectionOpen && (
+      {inspection && inspectionSession && (
         <SessionInspection
-          key={selectedSession.id}
-          onClose={() => setInspectionOpen(false)}
-          onDebug={(targetId) => {
-            if (targetId !== sessionId || !runtime.data?.capabilities.sessionDebug) return;
-            setConfirmPrompt({
-              confirmLabel: "Send evidence & debug",
-              description: DEBUG_SESSION_CONSENT,
-              onConfirm: () => void startDebugSession(targetId),
-              title: `Debug with AI: “${selectedSession.title}”?`,
-            });
-          }}
+          initialView={inspection.view}
+          key={`${inspectionSession.id}\u0000${inspection.view}`}
+          onClose={() => setInspection(undefined)}
+          onDebug={
+            inspectionSession.id === sessionId
+              ? (targetId) => {
+                  if (targetId !== sessionId || !runtime.data?.capabilities.sessionDebug) return;
+                  setDebugTarget({ id: targetId, title: inspectionSession.title });
+                }
+              : undefined
+          }
           onOpenSuccessor={(id) => void selectSession(id)}
           runtime={runtime.data}
-          session={selectedSession}
+          session={inspectionSession}
         />
       )}
+      <DebugSessionDialog
+        onConfirm={(target) => {
+          setDebugTarget(undefined);
+          if (target.id === sessionId) void startDebugSession(target.id);
+        }}
+        onOpenChange={(open) => !open && setDebugTarget(undefined)}
+        target={debugTarget}
+      />
       {displayedPreview && provenChat && (
         <EscapeHintContext.Provider value={escapeAsk}>
           <ContentPreviewPanel

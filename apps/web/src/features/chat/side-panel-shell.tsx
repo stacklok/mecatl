@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { Maximize2, PanelRightClose } from "lucide-react";
+import { Fullscreen, Minimize2, X } from "lucide-react";
 import {
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -13,6 +13,7 @@ import {
 } from "react";
 import { Button } from "../../components/ui/button";
 import { maxPanelWidth, minPanelWidth, usePanelWidth } from "../../lib/panel-width";
+import { cn } from "../../lib/utils";
 
 /** Presentation only: each feature owns its content, actions, and delivery state. */
 export function SidePanelShell({
@@ -126,7 +127,13 @@ export function SidePanelShell({
             type="button"
           />
         )}
-        <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
+        {/* The header sits on the chat header's seam: 64px beside the chat, 56px as a phone's sheet. */}
+        <header
+          className={cn(
+            "@container/panel-header flex h-14 shrink-0 items-center gap-3 border-b px-4",
+            !maximized && "min-[760px]:h-16",
+          )}
+        >
           {icon}
           <h2
             className="min-w-0 flex-1 truncate text-sm font-semibold"
@@ -136,26 +143,39 @@ export function SidePanelShell({
             {title}
           </h2>
           {actions}
-          {escapeHint && <span className="text-xs text-muted-foreground">Esc to Close</span>}
-          {maximizable && (
+          {escapeHint && (
+            // A narrow panel keeps its title; the hint returns once there is room.
+            <span className="shrink-0 text-xs text-muted-foreground @max-[22rem]/panel-header:hidden">
+              Esc to Close
+            </span>
+          )}
+          <div className="flex shrink-0 items-center gap-1">
+            {maximizable && (
+              <Button
+                aria-label={maximized ? "Restore panel" : "Maximize panel"}
+                className="size-8 text-muted-foreground"
+                onClick={() => setMaximized((current) => !current)}
+                size="icon"
+                variant="ghost"
+              >
+                {maximized ? (
+                  <Minimize2 aria-hidden="true" className="size-4" />
+                ) : (
+                  <Fullscreen aria-hidden="true" className="size-4" />
+                )}
+              </Button>
+            )}
             <Button
-              aria-label={maximized ? "Restore panel" : "Maximize panel"}
-              onClick={() => setMaximized((current) => !current)}
+              aria-label={closeLabel}
+              className="ml-1 size-8 text-muted-foreground"
+              onClick={onClose}
+              ref={closeButton}
               size="icon"
               variant="ghost"
             >
-              <Maximize2 aria-hidden="true" className={maximized ? "rotate-180" : undefined} />
+              <X aria-hidden="true" className="size-4" />
             </Button>
-          )}
-          <Button
-            aria-label={closeLabel}
-            onClick={onClose}
-            ref={closeButton}
-            size="icon"
-            variant="ghost"
-          >
-            <PanelRightClose aria-hidden="true" />
-          </Button>
+          </div>
         </header>
         <div
           className={`min-h-0 min-w-0 flex-1 ${bodyClassName ?? "overflow-auto"}`}
