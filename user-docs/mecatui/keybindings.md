@@ -31,6 +31,7 @@ bindings and dims features that the connected server does not provide.
 |`f6` / `f7` / `f8`|Open Agents / Effort / MCP Prompts.|
 |Agents overlay controls|Select and inspect delegated work. See [Navigate the Agents overlay](#navigate-the-agents-overlay).|
 |Models picker controls|The mouse wheel scrolls the visible model list without moving its cursor. A primary click on a visible model row moves the cursor without switching models; press `enter` to activate the cursor row.|
+|Effort picker controls|The mouse wheel scrolls the list without changing the selected tier.|
 |`pgup` / `pgdn`|Scroll the conversation.|
 |`home` / `end`|Jump to the top or bottom; `end` resumes auto-follow.|
 |`/`|Open the slash-command palette.|
@@ -67,18 +68,6 @@ the active context and `esc` action. Below 24 rows, a compact line identifies
 the active tab, child, group, member, Tasks, or Findings view. Only `esc`
 remains active; wheel input is consumed without scrolling the hidden
 conversation.
-
-### Navigate the effort picker
-
-In the `/effort` picker, `↑` and `↓` move the selected tier. `pgup` and `pgdn`
-move by a page, and `home` and `end` select the first and last tiers. These
-controls use the remappable `Up`, `Down`, `ScrollU`, `ScrollD`, `ScrollTop`, and
-`ScrollBottom` actions. The mouse wheel scrolls the visible list without moving
-the selected tier. Press `enter` to apply the selected tier or `esc` to close
-the picker.
-
-When the terminal cannot fit a list row, the picker is close-only. Press `esc`
-to close it, then resize the terminal to select a tier.
 
 ## Newline chords and your terminal
 
