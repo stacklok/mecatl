@@ -48,3 +48,30 @@ describe("MarkdownMessage code", () => {
     expect(html).not.toContain('node="');
   });
 });
+
+describe("MarkdownMessage lists", () => {
+  it("keeps an ordered list's start number", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownMessage>{"1. first\n\n```\nstep\n```\n\n2. second\n3. third"}</MarkdownMessage>,
+    );
+    const lists = [...html.matchAll(/<ol[^>]*>/gu)].map((match) => match[0]);
+    expect(lists).toHaveLength(2);
+    expect(lists[0]).not.toContain("start=");
+    expect(lists[1]).toContain('start="2"');
+    expect(lists[1]).toContain("list-decimal");
+  });
+
+  it("renders a task list with its checkboxes and no bullets", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownMessage>{"- [x] done\n- [ ] open\n\nNext:\n\n- plain"}</MarkdownMessage>,
+    );
+    const lists = [...html.matchAll(/<ul[^>]*>/gu)].map((match) => match[0]);
+    expect(lists).toHaveLength(2);
+    expect(lists[0]).toContain("contains-task-list");
+    expect(lists[0]).not.toContain("list-disc");
+    expect(lists[1]).toContain("list-disc");
+    expect(html).toMatch(/<li class="[^"]*task-list-item[^"]*">/u);
+    expect(html.match(/type="checkbox"/gu)).toHaveLength(2);
+    expect(html).not.toContain('node="');
+  });
+});

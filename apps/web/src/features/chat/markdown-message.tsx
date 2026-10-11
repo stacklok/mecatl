@@ -4,6 +4,7 @@ import { type ComponentProps, createContext, useContext } from "react";
 import type { Components, ExtraProps } from "react-markdown";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { cn } from "@/lib/utils";
 import { HighlightedCode, langForClassName } from "./code-highlight";
 
 /** True inside a fenced or indented code block's `<pre>` panel. */
@@ -74,8 +75,17 @@ const mdComponents: Components = {
   h3: ({ children }) => <h3 className="mt-5 mb-1.5 text-base font-semibold">{children}</h3>,
   h4: ({ children }) => <h4 className="mt-4 mb-1 text-sm font-semibold">{children}</h4>,
   hr: () => <hr className="my-4 border-t border-border" />,
-  li: ({ children }) => <li className="ml-1">{children}</li>,
-  ol: ({ children }) => <ol className="my-2 ml-4 list-decimal space-y-0.5">{children}</ol>,
+  // Lists keep react-markdown's attributes: an ordered list's `start`, and GFM's
+  // task-list classes, whose items carry their own checkbox instead of a bullet.
+  li: ({ className, node: _node, ...props }) => (
+    <li
+      className={cn("ml-1", className?.includes("task-list-item") && "list-none", className)}
+      {...props}
+    />
+  ),
+  ol: ({ className, node: _node, ...props }) => (
+    <ol className={cn("my-2 ml-4 list-decimal space-y-0.5", className)} {...props} />
+  ),
   p: ({ children }) => <p className="my-0.5">{children}</p>,
   // The prototype's code panel: dark in both themes, so its tokens take the
   // dark theme's colours (HighlightedCode's "dark" tone).
@@ -101,7 +111,16 @@ const mdComponents: Components = {
   ),
   thead: ({ children }) => <thead>{children}</thead>,
   tr: ({ children }) => <tr className="border-b last:border-0 hover:bg-muted/50">{children}</tr>,
-  ul: ({ children }) => <ul className="my-2 ml-4 list-disc space-y-0.5">{children}</ul>,
+  ul: ({ className, node: _node, ...props }) => (
+    <ul
+      className={cn(
+        "my-2 ml-4 space-y-0.5",
+        className?.includes("contains-task-list") ? "list-none" : "list-disc",
+        className,
+      )}
+      {...props}
+    />
+  ),
 };
 
 export function MarkdownMessage({ children }: { children: string }) {
