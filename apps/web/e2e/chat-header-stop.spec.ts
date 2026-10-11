@@ -269,3 +269,137 @@ test("the running chat header fits from 500px, beside the chat list too", async 
     );
   }
 });
+
+/** One delegation event on the live run. */
+function delegation(seq: number, kind: string, payload: Record<string, unknown>): RunStreamEvent {
+  return {
+    event: { kind, payload, runId: "run-a", seq: String(seq), text: "", turn: 1, unknown: false },
+    type: "run.event",
+  } as RunStreamEvent;
+}
+
+test("a non-default mode, the debug badge, and the agents chip fit the running header", async ({
+  offlineBff,
+  page,
+}) => {
+  // The widest running header: the Accept edits badge, the Debug badge, and a fleet of all
+  // three families. The agents chip follows the header's own content width (52rem).
+  frames = [
+    ...runningFrames,
+    delegation(1, "subagent.start", { childId: "c1", goal: "Read", parentCallId: "call-1" }),
+    delegation(2, "parallel.start", { parentCallId: "call-2" }),
+    delegation(3, "team.start", {
+      parentCallId: "call-3",
+      roster: [{ lead: true, name: "lead" }, { name: "worker" }],
+      teamId: "team-a",
+    }),
+  ];
+  try {
+    runningSession(offlineBff);
+    offlineBff.json("GET", "/api/v1/sessions", {
+      complete: true,
+      items: [
+        {
+          capabilities: {
+            delete: false,
+            deleteReason: "",
+            publicChat: true,
+            publicChatReason: "",
+            rename: false,
+            renameReason: "",
+          },
+          createdAt: "2026-09-24T00:00:00Z",
+          debugTargetSessionId: "target-chat",
+          id: sessionId,
+          kind: "debug",
+          modelId: "offline",
+          state: "running",
+          title: "A running chat with a long title that should truncate first",
+          turns: 1,
+          updatedAt: "2026-09-24T00:00:00Z",
+        },
+      ],
+    });
+    offlineBff.json("GET", prefix, {
+      capabilities: { image: false, manualCompaction: false, modelSelection: false },
+      id: sessionId,
+      mode: "acceptEdits",
+      state: "running",
+      usage: {
+        cacheReadTokens: "0",
+        cacheWriteTokens: "0",
+        inputTokens: "0",
+        outputTokens: "0",
+        reasoningTokens: "0",
+      },
+    });
+    await page.setViewportSize({ height: 800, width: 1280 });
+    await page.goto(`/workspace/chat?sessionId=${sessionId}`);
+    const header = page
+      .locator("header")
+      .filter({ has: page.getByRole("button", { name: "Stop" }) });
+    const stop = header.getByRole("button", { exact: true, name: "Stop" });
+    const chip = header.getByRole("list", { name: "Agents in this chat" });
+    const badges = [
+      header.locator("[title='Permission mode: Accept edits']"),
+      header.getByText("Debug", { exact: true }),
+    ];
+    for (const badge of badges) await expect(badge).toBeVisible();
+    await expect(chip.getByRole("button")).toHaveCount(3);
+
+    const shown: number[] = [];
+    const hidden: number[] = [];
+    // Every 34px from the 500px pivot, plus the widths around the chip's own 52rem threshold.
+    const widths = Array.from({ length: 33 }, (_, index) => 500 + index * 34);
+    for (const width of [...widths, 1150, 1160, 1170, 1180]) {
+      await page.setViewportSize({ height: 800, width });
+      await expect(stop).toBeVisible();
+      const fit = await header.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return {
+          client: element.clientWidth,
+          // The container query reads the content box, inside the header's padding.
+          content:
+            element.clientWidth -
+            Number.parseFloat(style.paddingLeft) -
+            Number.parseFloat(style.paddingRight),
+          right: element.getBoundingClientRect().right,
+          scroll: element.scrollWidth,
+        };
+      });
+      const at = `in a ${fit.client}px header (${width}px viewport)`;
+      expect(fit.scroll, `the header's content fits it ${at}`).toBeLessThanOrEqual(fit.client);
+      const box = await stop.boundingBox();
+      expect(box, `Stop has a box ${at}`).not.toBeNull();
+      expect((box?.x ?? 0) + (box?.width ?? 0), `Stop ends inside ${at}`).toBeLessThanOrEqual(
+        fit.right,
+      );
+      // The badges keep their room; the title is what gives way.
+      for (const badge of badges) {
+        await expect(badge, `a badge stays visible ${at}`).toBeVisible();
+        const badgeBox = await badge.boundingBox();
+        expect(
+          (badgeBox?.x ?? 0) + (badgeBox?.width ?? 0),
+          `a badge ends inside ${at}`,
+        ).toBeLessThanOrEqual(fit.right);
+      }
+      if (fit.content >= 832) {
+        await expect(chip, `the agents chip shows ${at}`).toBeVisible();
+        const chipBox = await chip.boundingBox();
+        expect(
+          (chipBox?.x ?? 0) + (chipBox?.width ?? 0),
+          `the agents chip ends inside ${at}`,
+        ).toBeLessThanOrEqual(fit.right);
+        shown.push(fit.client);
+      } else {
+        await expect(chip, `the agents chip hides ${at}`).toBeHidden();
+        hidden.push(fit.client);
+      }
+    }
+    // The sweep crosses the chip's threshold inside an 832–900px header.
+    expect(shown.some((width) => width >= 832 && width <= 900)).toBe(true);
+    expect(hidden.some((width) => width >= 832 && width <= 900)).toBe(true);
+  } finally {
+    frames = runningFrames;
+  }
+});
