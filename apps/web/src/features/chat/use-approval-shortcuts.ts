@@ -39,7 +39,7 @@ export function approvalOwnsKey(scope: Element, target: EventTarget | null): boo
  * deny, and the arrow keys step focus between the verdict buttons
  * (`onBarKeyDown`, bound on the bar itself).
  *
- * Studio keeps three rules the prototype doesn't:
+ * Studio keeps four rules the prototype doesn't:
  * - Escape stays with `useChatEscape`, which already denies the surface's
  *   active ask (or iterates a plan) with its overlay, selection, and IME rules.
  * - The caller enables this only for the surface's active ask while the
@@ -50,8 +50,11 @@ export function approvalOwnsKey(scope: Element, target: EventTarget | null): boo
  *   (`approvalOwnsKey`), and never while typing, with a modifier, on a held
  *   key, or under an open overlay. Arrows act only on a focused verdict
  *   button, so they never take over chat navigation elsewhere.
- * - A new ask takes focus on Deny, never Allow once, so a stray Enter can only
- *   deny it.
+ * - A new ask never takes focus. The prototype focuses Allow once; Studio
+ *   leaves focus where it is, so a key typed blind when an ask arrives (a W
+ *   meant for something else would grant a persistent rule) answers nothing.
+ *   The keys and Enter act only after the reader puts focus in the card or
+ *   panel, by Tab or click.
  */
 export function useApprovalShortcuts({
   active,
@@ -70,18 +73,6 @@ export function useApprovalShortcuts({
   const denyRef = useRef<HTMLButtonElement>(null);
   const latestRespond = useRef(onRespond);
   latestRespond.current = onRespond;
-  const focused = useRef(false);
-
-  // Focus Deny once when the ask becomes answerable, but only when nothing
-  // else holds focus: never take it from the composer. Never Allow once: a
-  // stray Enter meant for something else must not approve an unseen ask.
-  useEffect(() => {
-    if (!active || focused.current) return;
-    focused.current = true;
-    const current = document.activeElement;
-    if (current && current !== document.body) return;
-    denyRef.current?.focus({ preventScroll: true });
-  }, [active]);
 
   useEffect(() => {
     if (!active) return;

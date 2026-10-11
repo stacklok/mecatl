@@ -245,14 +245,14 @@ the arguments are unavailable, only **Deny** is enabled. In a chat, **Open in
 detail panel** shows the same request in the side panel with its complete diff,
 and you can decide there too.
 
-On the chat's active request, with focus in its card or detail panel, press Y
-or A to allow it once, W to always allow it, or N or D to deny it. The arrow
-keys move between the verdict buttons. When a request arrives and nothing else
-has focus, **Deny** takes focus, so a stray Enter can only deny it. These keys
-never act from outside the request's card or panel, while you type in the
-composer or another field, while a verdict is being sent, or when its outcome
-is uncertain. Escape denies the active request; in a detail panel showing a
-different request, Escape closes the panel instead.
+On the chat's active request, with focus in its card or detail panel, press Y or
+A to allow it once, W to always allow it, or N or D to deny it. The arrow keys
+move between the verdict buttons. A new request never takes focus, so a key you
+type as it arrives answers nothing: press Tab or click to move focus into its
+card first. These keys never act from outside the request's card or panel, while
+you type in the composer or another field, while a verdict is being sent, or
+when its outcome is uncertain. Escape denies the active request; in a detail
+panel showing a different request, Escape closes the panel instead.
 
 The card is red when a word in the tool name is delete, remove, drop, revoke,
 destroy, purge, rm, or rmdir, in any naming style, such as `delete_file` or

@@ -121,7 +121,8 @@ export function ShortcutReference() {
           With focus in the active tool request's card or detail panel, Y or A allows once, W always
           allows, and N or D denies. The arrow keys move between its verdict buttons. These keys
           pause while you type, and while a verdict is being sent or its outcome is uncertain. A
-          detail panel showing another request closes on Escape.
+          detail panel showing another request closes on Escape. A new request never takes focus:
+          Tab or click into its card first.
         </p>
       </section>
 

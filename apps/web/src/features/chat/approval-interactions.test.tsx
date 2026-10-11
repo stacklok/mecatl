@@ -1023,9 +1023,9 @@ describe("prototype approval UI on the workspace ledger", () => {
       const sessionId = side ? "thread-a" : "chat-a";
       (document.activeElement as HTMLElement | null)?.blur();
       const card = await startAsk(fixture, sessionId, "run-k", "Keyboard ask");
-      await waitFor(() =>
-        expect(document.activeElement).toBe(within(card).getByRole("button", { name: "Deny" })),
-      );
+      // The ask never takes focus; the reader puts it in the card.
+      expect(document.activeElement).toBe(document.body);
+      within(card).getByRole("button", { name: "Raw arguments" }).focus();
       let answer!: (response: Response) => void;
       fixture.verdicts.push(new Promise<Response>((resolve) => (answer = resolve)));
       await userEvent.setup().keyboard("y");
@@ -1116,7 +1116,7 @@ describe("prototype approval UI on the workspace ledger", () => {
 });
 
 // #2251 review: letter keys answer only the card or panel that holds focus,
-// a new ask takes focus on Deny, and Escape in a detail panel never denies a
+// a new ask never takes focus, and Escape in a detail panel never denies a
 // different ask.
 describe("approval focus scope", () => {
   async function sendAsks(
@@ -1169,7 +1169,32 @@ describe("approval focus scope", () => {
       ).toEqual([false, false, false]);
   });
 
-  it("focuses Deny on the next ask after a keyboard verdict, so a stray Enter denies it", async () => {
+  it("never takes focus for a new ask, so a blind W or Enter grants nothing", async () => {
+    const fixture = new Fixture();
+    await mount(fixture);
+    (document.activeElement as HTMLElement | null)?.blur();
+    const user = userEvent.setup();
+    const [card] = (await sendAsks(fixture, "run-w", [
+      { askId: "ask-w", reason: "Blind ask" },
+    ])) as [HTMLElement];
+    expect(within(card).getByText("Esc to Deny")).toBeTruthy();
+    await user.keyboard("W");
+    await user.keyboard("{Enter}y");
+    expect(fixture.posts()).toEqual([]);
+    expect(document.activeElement).toBe(document.body);
+    // Once the reader focuses the card, the keys answer it through the exact route.
+    within(card).getByRole("button", { name: "Raw arguments" }).focus();
+    fixture.verdicts.push(Promise.resolve(new Response(null, { status: 204 })));
+    await user.keyboard("n");
+    await waitFor(() => expect(fixture.posts()).toHaveLength(1));
+    expect(fixture.posts()[0]).toEqual({
+      body: { verdict: "deny" },
+      method: "POST",
+      pathname: "/api/v1/sessions/chat-a/runs/run-w/permissions/ask-w",
+    });
+  });
+
+  it("leaves focus alone for the next ask after a keyboard verdict, so stray keys answer nothing", async () => {
     const fixture = new Fixture();
     await mount(fixture);
     (document.activeElement as HTMLElement | null)?.blur();
@@ -1177,9 +1202,7 @@ describe("approval focus scope", () => {
     const [first] = (await sendAsks(fixture, "run-k", [
       { askId: "ask-k", reason: "Keyboard ask" },
     ])) as [HTMLElement];
-    await waitFor(() =>
-      expect(document.activeElement).toBe(within(first).getByRole("button", { name: "Deny" })),
-    );
+    within(first).getByRole("button", { name: "Raw arguments" }).focus();
     fixture.verdicts.push(Promise.resolve(new Response(null, { status: 204 })));
     await user.keyboard("y");
     await waitFor(() => expect(screen.queryByText("Keyboard ask")).toBeNull());
@@ -1187,24 +1210,20 @@ describe("approval focus scope", () => {
     const [next] = (await sendAsks(fixture, "run-m", [{ askId: "ask-m", reason: "Next ask" }])) as [
       HTMLElement,
     ];
-    await waitFor(() =>
-      expect(document.activeElement).toBe(within(next).getByRole("button", { name: "Deny" })),
-    );
-    fixture.verdicts.push(Promise.resolve(new Response(null, { status: 204 })));
-    await user.keyboard("{Enter}");
-    await waitFor(() => expect(fixture.posts()).toHaveLength(2));
+    expect(next.contains(document.activeElement)).toBe(false);
+    await user.keyboard("{Enter}wyn");
     expect(fixture.posts()).toEqual([
       {
         body: { verdict: "allow_once" },
         method: "POST",
         pathname: "/api/v1/sessions/chat-a/runs/run-k/permissions/ask-k",
       },
-      {
-        body: { verdict: "deny" },
-        method: "POST",
-        pathname: "/api/v1/sessions/chat-a/runs/run-m/permissions/ask-m",
-      },
     ]);
+    expect(
+      ["Allow once", "Always allow", "Deny"].map(
+        (name) => (within(next).getByRole("button", { name }) as HTMLButtonElement).disabled,
+      ),
+    ).toEqual([false, false, false]);
   });
 
   it("answers the detail panel's ask once from focus anywhere in its frame", async () => {

@@ -144,7 +144,7 @@ describe("approval shortcuts", () => {
     press("n", {}, deny);
     expect(respond.mock.calls).toEqual([["deny"]]);
     expect([...card.querySelectorAll("kbd")].map((kbd) => kbd.textContent)).toEqual(["N"]);
-    expect(document.activeElement).toBe(within(card).getByRole("button", { name: "Deny" }));
+    expect(document.activeElement).toBe(document.body);
   });
 
   it("yields to an open dialog or menu", () => {
@@ -214,7 +214,7 @@ describe("approval shortcuts", () => {
     const [once, always, deny] = ["Allow once", "Always allow", "Deny"].map((name) =>
       within(card).getByRole("button", { name }),
     );
-    expect(document.activeElement).toBe(deny);
+    expect(document.activeElement).toBe(document.body);
     once?.focus();
     const steps: Array<[string, HTMLElement | undefined]> = [
       ["ArrowRight", always],
@@ -245,7 +245,7 @@ describe("approval shortcuts", () => {
     expect(document.activeElement).toBe(raw);
   });
 
-  it("focuses Deny for a new ask only when nothing else holds focus", () => {
+  it("never takes focus for a new ask, from the composer or from nothing", () => {
     const composer = document.createElement("textarea");
     document.body.append(composer);
     composer.focus();
@@ -255,7 +255,7 @@ describe("approval shortcuts", () => {
     composer.remove();
 
     renderActive();
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Deny" }));
+    expect(document.activeElement).toBe(document.body);
   });
 
   it("shows keycaps that match the keys", () => {
@@ -357,12 +357,32 @@ describe("approval shortcut focus", () => {
     expect(respondFirst).not.toHaveBeenCalled();
   });
 
-  it("focuses Deny for a new ask, so a stray Enter denies and never allows", async () => {
+  it("grants nothing when W is typed right after an ask arrives with no user focus", async () => {
+    expect(document.activeElement).toBe(document.body);
+    const respond = renderActive();
+    const user = userEvent.setup();
+    await user.keyboard("W");
+    expect(respond).not.toHaveBeenCalled();
+    await user.keyboard("w{Enter}y {Enter}n");
+    expect(respond).not.toHaveBeenCalled();
+    // A new ask never takes focus, so a blind W can't grant a persistent rule.
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("answers only once the user puts focus inside the card", async () => {
     const respond = renderActive();
     const card = screen.getByRole("region", { name: "Permission required: Bash" });
-    expect(document.activeElement).toBe(within(card).getByRole("button", { name: "Deny" }));
-    await userEvent.setup().keyboard("{Enter}");
+    const user = userEvent.setup();
+    await user.keyboard("yw{Enter}");
+    expect(respond).not.toHaveBeenCalled();
+    // Tab moves focus into the card: its first control, then the keys work.
+    await user.tab();
+    expect(card.contains(document.activeElement)).toBe(true);
+    await user.keyboard("n");
     expect(respond.mock.calls).toEqual([["deny"]]);
+    // Clicking a verdict button focuses it (in Chromium) and answers as clicked.
+    await user.click(within(card).getByRole("button", { name: "Deny" }));
+    expect(respond.mock.calls).toEqual([["deny"], ["deny"]]);
   });
 });
 
