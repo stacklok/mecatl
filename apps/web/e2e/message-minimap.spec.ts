@@ -188,6 +188,11 @@ test("a message row's actions are touch-size on a coarse pointer", async ({
     if (coarse) {
       expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
       expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+      // The bigger target doesn't push the author line, or the body, down.
+      const line = await action.evaluate(
+        (button) => button.parentElement?.parentElement?.getBoundingClientRect().height ?? 0,
+      );
+      expect(line).toBeLessThan(44);
     } else {
       // A mouse keeps the prototype's compact 24px actions.
       expect(box?.width).toBe(24);
