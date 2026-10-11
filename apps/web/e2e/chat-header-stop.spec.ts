@@ -6,7 +6,29 @@ import { expect, type OfflineBff, test } from "./fixtures";
 
 const sessionId = "s1";
 const prefix = `/api/v1/sessions/${sessionId}`;
-const frames: RunStreamEvent[] = [{ runId: "run-a", sessionId, type: "run.started" }];
+const runningFrames: RunStreamEvent[] = [{ runId: "run-a", sessionId, type: "run.started" }];
+// The run parks on a connector that needs the user to authorize it.
+const authorizationFrames = [
+  ...runningFrames,
+  {
+    event: {
+      kind: "authorization.required",
+      payload: {
+        authorizationId: "auth-1",
+        callId: "call-1",
+        displayName: "Calendar connector",
+        status: "pending",
+      },
+      runId: "run-a",
+      seq: "1",
+      text: "",
+      turn: 1,
+      unknown: false,
+    },
+    type: "run.event",
+  },
+] as RunStreamEvent[];
+let frames: RunStreamEvent[] = runningFrames;
 
 let activityServer: Server | undefined;
 let activityPort = 0;
@@ -23,6 +45,10 @@ test.beforeAll(async () => {
   const address = activityServer.address();
   if (!address || typeof address === "string") throw new Error("activity server has no port");
   activityPort = address.port;
+});
+
+test.afterEach(() => {
+  frames = runningFrames;
 });
 
 test.afterAll(() => {
@@ -168,4 +194,46 @@ test("the running chat header keeps its desktop layout", async ({ offlineBff, pa
   await header.getByRole("button", { name: "Chat options" }).click();
   await expect(page.getByRole("menuitem", { name: "Inspect session" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Open local canvas" })).toHaveCount(0);
+});
+
+test("a phone keeps a distinct cue while the run waits for authorization", async ({
+  offlineBff,
+  page,
+}) => {
+  runningSession(offlineBff);
+  await page.setViewportSize({ height: 844, width: 390 });
+  await page.goto(`/workspace/chat?sessionId=${sessionId}`);
+  const header = page.locator("header").filter({ has: page.getByRole("button", { name: "Stop" }) });
+  // A working run shows the spinner.
+  await expect(header.locator(".animate-spin")).toBeVisible();
+
+  frames = authorizationFrames;
+  await page.goto(`/workspace/chat?sessionId=${sessionId}`);
+  const parkedHeader = page
+    .locator("header")
+    .filter({ has: page.getByText("Waiting for authorization") });
+  const parkedCue = parkedHeader.locator('[data-slot="run-status-cue"]');
+  // The header has parked on authorization before anything is measured.
+  await expect(parkedHeader).toHaveCount(1);
+  for (const width of [320, 390, 430]) {
+    await page.setViewportSize({ height: 844, width });
+    // Not the working spinner: a still, amber key that tells the user to act.
+    await expect(parkedHeader.locator(".animate-spin"), `no spinner at ${width}px`).toHaveCount(0);
+    await expect(parkedCue, `cue visible at ${width}px`).toBeVisible();
+    await expect(parkedCue).toHaveAttribute("data-cue", "authorization");
+    const box = await parkedCue.boundingBox();
+    expect(box && box.x + box.width, `cue inside the viewport at ${width}px`).toBeLessThanOrEqual(
+      width,
+    );
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+      width,
+    );
+  }
+  // The status text stays available to screen readers.
+  await expect(parkedHeader.getByText("Waiting for authorization")).toBeAttached();
+
+  // Desktop keeps the labelled pill and shows no phone cue.
+  await page.setViewportSize({ height: 800, width: 1280 });
+  await expect(parkedHeader.getByText("Waiting for authorization")).toBeVisible();
+  await expect(parkedCue).toBeHidden();
 });

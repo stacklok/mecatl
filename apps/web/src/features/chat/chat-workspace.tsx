@@ -44,6 +44,7 @@ import {
   Eraser,
   ExternalLink,
   GitFork,
+  KeyRound,
   ListTodo,
   ListTree,
   LoaderCircle,
@@ -2929,12 +2930,24 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             {(isRunning ||
               (statusFacts.phase === "closed" && controlTarget(runTarget, sessionId))) && (
               <div className="flex items-center gap-2">
-                {isRunning && (
-                  <LoaderCircle
-                    aria-hidden="true"
-                    className="size-4 shrink-0 animate-spin text-brand min-[500px]:hidden"
-                  />
-                )}
+                {/* Phones hide the pill's text, so the icon carries the state: a spinner
+                    while the agent works, a still amber key when the user must authorize. */}
+                {isRunning &&
+                  (statusFacts.authorizationPending ? (
+                    <KeyRound
+                      aria-hidden="true"
+                      className="size-4 shrink-0 text-warning min-[500px]:hidden"
+                      data-cue="authorization"
+                      data-slot="run-status-cue"
+                    />
+                  ) : (
+                    <LoaderCircle
+                      aria-hidden="true"
+                      className="size-4 shrink-0 animate-spin text-brand min-[500px]:hidden"
+                      data-cue="working"
+                      data-slot="run-status-cue"
+                    />
+                  ))}
                 {isRunning && (
                   <Badge className="max-[499px]:sr-only" variant="success">
                     {statusFacts.authorizationPending
