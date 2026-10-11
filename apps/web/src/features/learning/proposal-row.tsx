@@ -151,11 +151,12 @@ export function ProposalRow({
     const base = listed.current;
     try {
       // Never from cache: the app keeps reads fresh for 30 seconds, and an older
-      // read would show stale sources and hand the list an older version.
-      const current = await queryClient.fetchQuery({
-        ...getLearningProposalOptions({ path: { proposalId: base.id } }),
-        staleTime: 0,
-      });
+      // read would show stale sources and hand the list an older version. Nor
+      // from a read still in flight: a remounted row would adopt it, and it
+      // started before the list it is checked against.
+      const options = getLearningProposalOptions({ path: { proposalId: base.id } });
+      await queryClient.cancelQueries({ exact: true, queryKey: options.queryKey });
+      const current = await queryClient.fetchQuery({ ...options, staleTime: 0 });
       // An unmounted row's list may have moved on; only a mounted row can check.
       if (!mounted.current) return;
       const latest = listed.current;
