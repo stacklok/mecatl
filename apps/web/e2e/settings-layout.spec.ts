@@ -148,7 +148,10 @@ test("settings sections fit between the 500px pivot and a tablet", async ({
           .filter((excess) => excess > 0);
         const spill: string[] = [];
         for (const card of document.querySelectorAll<HTMLElement>("main section")) {
-          const right = card.getBoundingClientRect().right;
+          // The card's content edge: a control may not run into its padding.
+          const right =
+            card.getBoundingClientRect().right -
+            Number.parseFloat(getComputedStyle(card).paddingRight);
           for (const element of card.querySelectorAll<HTMLElement>("*")) {
             const box = element.getBoundingClientRect();
             if (box.width > 0 && box.right > right + 1) {

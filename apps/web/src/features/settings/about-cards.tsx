@@ -20,7 +20,8 @@ const docsUrl = "https://mecatl.dev/docs/building/deployment/studio";
 /** Where a problem with this app (not the connected agent) is reported. */
 const supportUrl = "https://github.com/stacklok/mecatl/issues";
 
-const actionClass = "min-h-11 rounded-full";
+// A long label wraps instead of running past a narrow card's edge.
+const actionClass = "min-h-11 max-w-full rounded-full whitespace-normal";
 
 export function reported(value: string | undefined): string {
   return value?.trim() || "Not reported";
