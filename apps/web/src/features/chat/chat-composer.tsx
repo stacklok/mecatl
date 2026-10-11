@@ -373,7 +373,9 @@ export function ChatComposer({
   /**
    * A send that settles after the composer swapped to another chat. Its text
    * stays stored under the chat it was typed in: an accepted send spends that
-   * copy, and a refused one keeps it. A copy the user has since edited stays.
+   * copy, and a refused one keeps it. A copy the user has since edited or
+   * cleared stays as it is, and nothing is written back: by now storage may
+   * belong to another account.
    */
   function settleSwappedSend(sending: InFlightSend, accepted: boolean) {
     const home = sending.home;
@@ -382,9 +384,7 @@ export function ChatComposer({
       if (accepted) setPrompt((current) => (current === sending.text ? "" : current));
       return;
     }
-    const stored = readDraft(home);
-    if (accepted && stored === sending.text) writeDraft(home, "");
-    if (!accepted && stored === "") writeDraft(home, sending.text);
+    if (accepted && readDraft(home) === sending.text) writeDraft(home, "");
   }
 
   async function addFiles(files: File[]) {

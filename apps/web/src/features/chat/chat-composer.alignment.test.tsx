@@ -159,6 +159,52 @@ describe("persisted composer draft", () => {
     expect(sessionDraftKeys()).toEqual([]);
   });
 
+  it("never writes a refused send back into the next account's drafts", async () => {
+    let accept: ((accepted: boolean) => void) | undefined;
+    const onSend = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          accept = resolve;
+        }),
+    );
+    reconcileAccount("alice");
+    const alice = render(<ChatComposer draftKey="new" onSend={onSend} />);
+    fireEvent.change(composerInput(), { target: { value: "Alice's secret" } });
+    fireEvent.keyDown(composerInput(), { key: "Enter" });
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    // Alice opens another chat mid-send, then Bob's account takes over.
+    alice.rerender(<ChatComposer draftKey="chat-y" onSend={onSend} />);
+    expect(reconcileAccount("bob")).toBe(true);
+    alice.unmount();
+
+    await act(async () => accept?.(false));
+    expect(sessionDraftKeys()).toEqual([]);
+    render(<ChatComposer draftKey="new" onSend={onSend} />);
+    expect(composerInput().value).toBe("");
+  });
+
+  it("keeps a draft the user cleared when its refused send settles elsewhere", async () => {
+    let accept: ((accepted: boolean) => void) | undefined;
+    const onSend = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          accept = resolve;
+        }),
+    );
+    const view = render(<ChatComposer draftKey="chat-a" onSend={onSend} />);
+    fireEvent.change(composerInput(), { target: { value: "for chat-a" } });
+    fireEvent.keyDown(composerInput(), { key: "Enter" });
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    // Away and back mid-send; the user clears chat-a's copy, then leaves again.
+    view.rerender(<ChatComposer draftKey="chat-b" onSend={onSend} />);
+    view.rerender(<ChatComposer draftKey="chat-a" onSend={onSend} />);
+    fireEvent.change(composerInput(), { target: { value: "" } });
+    view.rerender(<ChatComposer draftKey="chat-b" onSend={onSend} />);
+
+    await act(async () => accept?.(false));
+    expect(readDraft("chat-a")).toBe("");
+  });
+
   it("keeps the draft in memory only without a draft key", () => {
     writeDraft("new", "stored");
     render(<ChatComposer onSend={vi.fn().mockResolvedValue(true)} />);
