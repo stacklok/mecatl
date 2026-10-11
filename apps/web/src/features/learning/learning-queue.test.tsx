@@ -411,9 +411,9 @@ describe("learning queue rows", () => {
     });
     await user().click(screen.getByRole("button", { name: "Refresh suggestions" }));
     await waitFor(() => expect(calls()).toHaveLength(2));
-    await user().click(screen.getByRole("button", { name: "Deferred" }));
+    await user().click(screen.getByRole("radio", { name: "Deferred" }));
     await screen.findByText("No deferred suggestions.");
-    await user().click(screen.getByRole("button", { name: "Pending" }));
+    await user().click(screen.getByRole("radio", { name: "Pending" }));
     item = await row("Title of p1");
     expect(item.getByRole("button", { name: "Details" }).getAttribute("aria-expanded")).toBe(
       "false",
@@ -459,9 +459,9 @@ describe("learning queue rows", () => {
     await waitFor(() => expect(state.detailCalls).toEqual(["p1"]));
 
     // A filter round trip unmounts the row, and Refresh then loads v3.
-    await user().click(screen.getByRole("button", { name: "Deferred" }));
+    await user().click(screen.getByRole("radio", { name: "Deferred" }));
     await screen.findByText("No deferred suggestions.");
-    await user().click(screen.getByRole("button", { name: "Pending" }));
+    await user().click(screen.getByRole("radio", { name: "Pending" }));
     await row("Title of p1");
     state.pages = { "staged|": { items: [proposal("p1", { version: "v3" })] } };
     await user().click(screen.getByRole("button", { name: "Refresh suggestions" }));
