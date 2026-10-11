@@ -44,6 +44,10 @@ describe("describeAskArgs for Shell", () => {
     '{"command":"ls","timeout_ms":"5"}',
     '{"command":"ls","timeout_ms":1.5}',
     '{"command":"ls","temp_scope":1}',
+    '{"command":"ls","background":"yes"}',
+    '{"command":"ls","background":1}',
+    '{"command":"ls","BACKGROUND":true}',
+    '{"command":"ls","background":false,"background":true}',
   ])("falls back to the JSON view for %s", (args) => {
     expect(describeAskArgs("Shell", args).kind).toBe("json");
   });
@@ -65,9 +69,34 @@ describe("describeAskArgs for Shell", () => {
       command: "make",
       kind: "shell",
     });
+    expect(
+      describeAskArgs("Shell", '{"command":"make","background":false,"temp_scope":null}'),
+    ).toEqual({ command: "make", kind: "shell" });
+    expect(describeAskArgs("Shell", '{"command":"make","background":null}')).toEqual({
+      command: "make",
+      kind: "shell",
+    });
     expect(describeAskArgs("Shell", ' {\n "command" : "make" } ')).toEqual({
       command: "make",
       kind: "shell",
+    });
+  });
+});
+
+describe("describeAskArgs for a system temp-scope Shell ask", () => {
+  it("shows a background run with its command, timeout, and scope", () => {
+    // The engine projects a system temp-scope ask as {command, timeout_ms?, background?, temp_scope}.
+    expect(
+      describeAskArgs(
+        "Shell",
+        '{"command":"make serve","timeout_ms":5000,"background":true,"temp_scope":"system"}',
+      ),
+    ).toEqual({
+      background: true,
+      command: "make serve",
+      kind: "shell",
+      tempScope: "system",
+      timeoutMs: 5000,
     });
   });
 });

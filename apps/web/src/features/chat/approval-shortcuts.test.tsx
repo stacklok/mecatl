@@ -445,6 +445,26 @@ describe("approval card arguments", () => {
     ]);
   });
 
+  it("shows that a command runs in the background", () => {
+    renderActive(
+      ask({
+        args: '{"command":"make serve","background":true,"temp_scope":"system"}',
+        tool: "Shell",
+      }),
+      { active: false },
+    );
+    const card = screen.getByRole("region", { name: "Permission required: Shell" });
+    expect(within(card).getByText("make serve", { exact: true }).tagName).toBe("PRE");
+    const terms = [...card.querySelectorAll("dt")].map((term) => [
+      term.textContent,
+      term.nextElementSibling?.textContent,
+    ]);
+    expect(terms).toEqual([
+      ["Background", "true"],
+      ["Temporary storage", "system"],
+    ]);
+  });
+
   it("refuses an Edit diff when a folded name changes what the engine writes", () => {
     renderActive(
       ask({

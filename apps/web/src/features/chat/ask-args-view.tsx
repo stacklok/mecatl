@@ -90,12 +90,20 @@ export function AskArgsView({
         ) : parsed.kind === "shell" ? (
           <>
             <pre className={PRE_CLASS}>{parsed.command}</pre>
-            {(parsed.timeoutMs !== undefined || parsed.tempScope !== undefined) && (
+            {(parsed.timeoutMs !== undefined ||
+              parsed.background ||
+              parsed.tempScope !== undefined) && (
               <dl className="flex flex-wrap gap-x-4 gap-y-1 border-t px-3 py-1.5 text-xs">
                 {parsed.timeoutMs !== undefined && (
                   <div className="flex gap-1">
                     <dt className="text-muted-foreground">Timeout</dt>
                     <dd className="font-mono">{parsed.timeoutMs} ms</dd>
+                  </div>
+                )}
+                {parsed.background && (
+                  <div className="flex gap-1">
+                    <dt className="text-muted-foreground">Background</dt>
+                    <dd className="font-mono">true</dd>
                   </div>
                 )}
                 {parsed.tempScope !== undefined && (
