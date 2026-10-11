@@ -73,6 +73,9 @@ type authorizationExpiry struct {
 // authorization and an authoritative lock/lease protected reload.
 func (s *Service) MCPAuthorizationPresentation(ctx context.Context, id session.SessionID, control MCPAuthorizationControl) (string, error) {
 	if _, err := s.GetSession(ctx, id); err != nil { // before caller-selected lock
+		if errors.Is(err, ErrInternal) {
+			return "", ErrInternal
+		}
 		return "", errAuthorizationSessionUnavailable
 	}
 	unlock := s.runEntryMu.lock(id)
@@ -111,6 +114,9 @@ func (s *Service) MCPAuthorizationPresentation(ctx context.Context, id session.S
 func (s *Service) RecheckMCPAuthorization(ctx context.Context, id session.SessionID, control MCPAuthorizationControl) (MCPAuthorizationResult, error) {
 	recheckStart := time.Now()
 	if _, err := s.GetSession(ctx, id); err != nil { // owner check before lock
+		if errors.Is(err, ErrInternal) {
+			return MCPAuthorizationResult{}, ErrInternal
+		}
 		return MCPAuthorizationResult{}, errAuthorizationSessionUnavailable
 	}
 	lockWaitStart := time.Now()
@@ -183,6 +189,9 @@ func errString(err error) string {
 // CancelMCPAuthorization precisely cancels and resolves one pending control.
 func (s *Service) CancelMCPAuthorization(ctx context.Context, id session.SessionID, control MCPAuthorizationControl) (MCPAuthorizationResult, error) {
 	if _, err := s.GetSession(ctx, id); err != nil { // owner check before lock
+		if errors.Is(err, ErrInternal) {
+			return MCPAuthorizationResult{}, ErrInternal
+		}
 		return MCPAuthorizationResult{}, errAuthorizationSessionUnavailable
 	}
 	unlock := s.runEntryMu.lock(id)
@@ -217,7 +226,7 @@ func (s *Service) CancelMCPAuthorization(ctx context.Context, id session.Session
 	return s.applyAuthorizationStatusLocked(ctx, sess, pending, status)
 }
 
-func mcpAuthorizationResult(pending session.PendingAuthorization, status session.AuthorizationStatus, run *agent.Run) MCPAuthorizationResult {
+func mcpAuthorizationResult(id session.SessionID, pending session.PendingAuthorization, status session.AuthorizationStatus, run *agent.Run) MCPAuthorizationResult {
 	typ := session.EvAuthorizationResolved
 	if status == session.AuthorizationPending {
 		typ = session.EvAuthorizationRequired
@@ -226,6 +235,8 @@ func mcpAuthorizationResult(pending session.PendingAuthorization, status session
 		AuthorizationID: pending.Authorization.ID,
 		DisplayName:     pending.Authorization.DisplayName,
 		Call:            pending.Call.ID,
+		InvocationID:    pending.Call.InvocationID,
+		SessionID:       id,
 		ExpiresAt:       pending.Authorization.ExpiresAt,
 		Status:          status,
 	}}, Run: run}
@@ -237,7 +248,7 @@ func (s *Service) applyAuthorizationStatusLocked(ctx context.Context, sess *sess
 	}
 	switch status {
 	case session.AuthorizationPending:
-		return mcpAuthorizationResult(pending, status, nil), nil
+		return mcpAuthorizationResult(sess.ID, pending, status, nil), nil
 	case session.AuthorizationGranted:
 		return s.continueGrantedAuthorizationLocked(ctx, sess)
 	case session.AuthorizationDenied, session.AuthorizationCancelled, session.AuthorizationExpired,
@@ -251,6 +262,9 @@ func (s *Service) applyAuthorizationStatusLocked(ctx context.Context, sess *sess
 func (s *Service) loadMatchingAuthorization(ctx context.Context, id session.SessionID, control MCPAuthorizationControl) (*session.Session, session.PendingAuthorization, error) {
 	sess, err := s.GetSession(ctx, id)
 	if err != nil {
+		if errors.Is(err, ErrInternal) {
+			return nil, session.PendingAuthorization{}, ErrInternal
+		}
 		return nil, session.PendingAuthorization{}, errAuthorizationSessionUnavailable
 	}
 	pending, ok := sess.PendingAuthorization()
@@ -334,6 +348,9 @@ func (s *Service) authorizationAttachment(ctx context.Context, sess *session.Ses
 }
 
 func (s *Service) continueGrantedAuthorizationLocked(ctx context.Context, sess *session.Session) (MCPAuthorizationResult, error) {
+	if err := s.admitHookPublication(ctx, sess); err != nil {
+		return MCPAuthorizationResult{}, err
+	}
 	s.cfg.Diagnostics.Log(ctx, port.LevelDebug, "MCP authorization: granted, starting continuation", "session", string(sess.ID), "state", string(sess.State))
 	resolution, err := session.NewAuthorizationResolution(session.AuthorizationGranted)
 	if err != nil {
@@ -410,7 +427,7 @@ func (s *Service) continueGrantedAuthorizationLocked(ctx context.Context, sess *
 	if err := s.registerAndStartGrantedAuthorization(ctx, sess, claimed, prepared); err != nil {
 		return MCPAuthorizationResult{}, err
 	}
-	return mcpAuthorizationResult(claimed, session.AuthorizationGranted, prepared.Run()), nil
+	return mcpAuthorizationResult(sess.ID, claimed, session.AuthorizationGranted, prepared.Run()), nil
 }
 
 // rebuildGrantedAuthorizationEngine rebuilds the parked session from the exact
@@ -598,6 +615,9 @@ func (s *Service) resolveAuthorizationWithoutContinuationLocked(ctx context.Cont
 // resolveAuthorizationWithFailureLocked retains the authorization status while
 // allowing a closed local continuation failure to replace only the primary result.
 func (s *Service) resolveAuthorizationWithFailureLocked(ctx context.Context, sess *session.Session, pending session.PendingAuthorization, status session.AuthorizationStatus, primaryFailure string, allowContinuation bool) (MCPAuthorizationResult, error) {
+	if err := s.admitHookPublication(ctx, sess); err != nil {
+		return MCPAuthorizationResult{}, err
+	}
 	s.cfg.Diagnostics.Log(ctx, port.LevelDebug, "MCP authorization: resolving to terminal status",
 		"session", string(sess.ID), "authorization", pending.Authorization.ID, "status", string(status), "state", string(sess.State))
 	reason := string(status)
@@ -651,7 +671,7 @@ func (s *Service) resolveAuthorizationWithFailureLocked(ctx context.Context, ses
 		if err := s.appendAuthorizationResolution(ctx, sess.ID, pending, results, status); err != nil {
 			return MCPAuthorizationResult{}, fmt.Errorf("%w: persist terminal authorization lifecycle", ErrInternal)
 		}
-		return mcpAuthorizationResult(pending, status, nil), nil
+		return mcpAuthorizationResult(sess.ID, pending, status, nil), nil
 	}
 	engine, env, governanceRoot, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
@@ -664,7 +684,7 @@ func (s *Service) resolveAuthorizationWithFailureLocked(ctx context.Context, ses
 				"session", string(sess.ID), "status", string(status), "continuation_err", err.Error(), "err", appendErr.Error())
 			return MCPAuthorizationResult{}, fmt.Errorf("%w: continuation unavailable (%v); persist terminal authorization lifecycle: %v", ErrInternal, err, appendErr)
 		}
-		return mcpAuthorizationResult(pending, status, nil), nil
+		return mcpAuthorizationResult(sess.ID, pending, status, nil), nil
 	}
 	continuationCtx := memory.WithWorkspace(port.WithRootSessionID(ctx, sess.ID), governanceRoot)
 	prepared, err := engine.PrepareAfterAuthorization(continuationCtx, sess, env, pending.Authorization, pending.Call.ID, results, resolution)
@@ -675,7 +695,7 @@ func (s *Service) resolveAuthorizationWithFailureLocked(ctx context.Context, ses
 		return MCPAuthorizationResult{}, err
 	}
 	owned = true
-	return mcpAuthorizationResult(pending, status, prepared.Run()), nil
+	return mcpAuthorizationResult(sess.ID, pending, status, prepared.Run()), nil
 }
 
 // registerAndStartAuthorizationResolution registers and starts the prepared
@@ -791,6 +811,8 @@ func (s *Service) ensureAuthorizationRequiredLogged(ctx context.Context, id sess
 		AuthorizationID: pending.Authorization.ID,
 		DisplayName:     pending.Authorization.DisplayName,
 		Call:            pending.Call.ID,
+		InvocationID:    pending.Call.InvocationID,
+		SessionID:       id,
 		ExpiresAt:       pending.Authorization.ExpiresAt,
 		Status:          session.AuthorizationPending,
 	}}
@@ -864,6 +886,8 @@ func (s *Service) appendAuthorizationResolution(ctx context.Context, id session.
 		AuthorizationID: pending.Authorization.ID,
 		DisplayName:     pending.Authorization.DisplayName,
 		Call:            pending.Call.ID,
+		InvocationID:    pending.Call.InvocationID,
+		SessionID:       id,
 		ExpiresAt:       pending.Authorization.ExpiresAt,
 		Status:          status,
 	}}
@@ -1111,6 +1135,9 @@ func (s *Service) interruptRestoredAuthorizationLocked(ctx context.Context, sess
 		return nil, false, ErrNotFound
 	}
 	sess = loaded
+	if err := s.admitHookPublication(ctx, sess); err != nil {
+		return nil, false, err
+	}
 	if sess.State != session.StateAuthorizing {
 		return sess, false, nil
 	}

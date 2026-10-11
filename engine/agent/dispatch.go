@@ -650,6 +650,7 @@ func (e *Engine) driveFromAwaiting(ctx context.Context, r *Run, sess *session.Se
 	}
 	msgs := sess.Conversation.Messages
 	calls := msgs[lastAssistant].ToolCalls
+	r.rememberTurnCalls(calls)
 	turnIdx := sess.Counters.Turns - 1
 
 	// Step 2: leave StateAwaiting via the awaiting-only ResumeWith seam (clears
@@ -746,8 +747,8 @@ func (e *Engine) driveFromAwaiting(ctx context.Context, r *Run, sess *session.Se
 // carry the call id directly, but on a well-formed awaiting turn the trailing
 // assistant message's calls and the ask agree on Tool; when exactly one call
 // matches the ask's Tool that call's id is authoritative. With multiple same-named
-// calls the caller falls back to the Tool match (first wins) — a benign ambiguity:
-// the multi-tool gate test parks on a UNIQUELY-named middle call, the real shape.
+// When multiple same-named calls exist it returns empty; the caller rejects
+// the ambiguity rather than choosing a sibling.
 func pendingCallID(ask session.PendingAsk, calls []session.ToolCall) string {
 	var match string
 	n := 0
@@ -767,9 +768,8 @@ func pendingCallID(ask session.PendingAsk, calls []session.ToolCall) string {
 // pending tool call within it for the awaiting re-entry. It returns the trailing
 // assistant message index, the pending call's index in that message's ToolCalls, and
 // ok=false when there is no trailing assistant message or no call matching the ask.
-// It prefers the call-id heuristic (a single same-named call is authoritative) and
-// falls back to the first Tool match (a benign ambiguity for multiple same-named
-// calls; the gate test parks on a uniquely-named call, the real shape).
+// Locate by the recorded pairing ID when present, otherwise by tool name;
+// ambiguous matches fail closed rather than choosing an arbitrary sibling.
 func locatePendingCall(msgs []session.Message, ask session.PendingAsk) (lastAssistant, pendingIdx int, ok bool) {
 	lastAssistant = -1
 	for i := len(msgs) - 1; i >= 0; i-- {
@@ -799,10 +799,23 @@ func locatePendingCall(msgs []session.Message, ask session.PendingAsk) (lastAssi
 			}
 		}
 	}
-	if pendingIdx < 0 {
+	if pendingIdx < 0 || !matchesPendingCall(calls, pendingIdx, ask) {
 		return -1, -1, false
 	}
 	return lastAssistant, pendingIdx, true
+}
+
+func matchesPendingCall(calls []session.ToolCall, pendingIdx int, ask session.PendingAsk) bool {
+	if ask.Call != "" && calls[pendingIdx].ID != ask.Call ||
+		ask.InvocationID != "" && calls[pendingIdx].InvocationID != ask.InvocationID {
+		return false
+	}
+	for i, c := range calls {
+		if i != pendingIdx && (ask.Call != "" && c.ID == ask.Call || ask.Call == "" && c.Name == ask.Tool) {
+			return false
+		}
+	}
+	return true
 }
 
 func validatePendingApproval(ask session.PendingAsk) error {
@@ -865,12 +878,14 @@ func (e *Engine) resolvePendingCall(ctx context.Context, r *Run, sess *session.S
 	// opaque gated call id only — no raw args, no deny-reason body (gauntlet #7).
 	// AllowAlways mirrors the verdict, not the policy outcome.
 	e.emit(r, session.Event{Type: session.EvApproval, Turn: turnIdx, Approval: &session.ApprovalPayload{
-		AskID:       ask.AskID,
-		Verdict:     session.VerdictString(verdict),
-		Tool:        pendingCall.Name,
-		Call:        pendingCall.ID,
-		AllowAlways: verdict == session.VerdictAllowAlways,
-		Origin:      ask.Origin,
+		AskID:        ask.AskID,
+		Verdict:      session.VerdictString(verdict),
+		Tool:         pendingCall.Name,
+		Call:         pendingCall.ID,
+		InvocationID: ask.InvocationID,
+		ReviewID:     approvalReviewID(ask),
+		AllowAlways:  verdict == session.VerdictAllowAlways,
+		Origin:       ask.Origin,
 	}})
 	recordValidatedApproval(r, sess.ID, ask, verdict)
 	if verdict == session.VerdictDeny {
@@ -881,6 +896,9 @@ func (e *Engine) resolvePendingCall(ctx context.Context, r *Run, sess *session.S
 		// PlanOriginated marker is the durable signal that this was a plan ask.
 		if ask.Origin == session.ApprovalOriginPlan {
 			r.planIterateRequested = true
+		}
+		if ask.Guardrail != nil && ask.Guardrail.Kind == session.GuardrailApprovalAction && ask.Guardrail.ReviewID != "" && ask.Guardrail.ReviewID != reviewRecordID(sess.ID, pendingCall, ReviewJobAction) {
+			e.emit(r, session.Event{Type: session.EvHook, Turn: turnIdx, Hook: &session.HookPayload{Phase: string(governance.PhasePreToolUse), Tool: pendingCall.Name, Decision: session.HookInfo, CallID: pendingCall.ID, InvocationID: pendingCall.InvocationID, Guardrail: &session.GuardrailReviewPayload{ReviewID: ask.Guardrail.ReviewID, Job: string(ReviewJobAction), Disposition: "deny"}}})
 		}
 		e.openCard(r, turnIdx, pendingCall)
 		res := denyResult(pendingCall, fmt.Sprintf("denied by user: %s", ask.Reason))
@@ -897,18 +915,26 @@ func (e *Engine) resolvePendingCall(ctx context.Context, r *Run, sess *session.S
 		e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
 		return res, nil, false
 	}
-	// HOOK-ORIGINATED resume: a hook-blocked call that the human authorized
-	// while parked AWAITING must EXECUTE WITHOUT re-running the PreToolUse hook —
-	// re-running it would re-block (re-ask), and a fresh process has no in-memory
-	// waiver to short-circuit it. The serialized HookOriginated marker is the only
-	// durable signal that this exact blocked call was already approved, so on Allow we
-	// skip preHook and execute directly (a deny was handled above). This mirrors
-	// askHookApproval's live-path allow tail.
+	// HOOK-ORIGINATED resume skips the already-approved configured PreToolUse
+	// hook, but a contextual review has lost its live dependencies across restart
+	// and must be re-evaluated before this call can execute. A deny was handled
+	// above; either path still rechecks permission and authority here.
 	if ask.Origin == session.ApprovalOriginHookGuardrail {
-		if ask.Guardrail == nil || ask.Guardrail.ReviewID != "" {
+		if ask.Guardrail == nil || ask.Guardrail.Kind != session.GuardrailApprovalAction || ask.Guardrail.ReviewID != "" && (r.reviewRoot == nil || r.reviewRoot.reviewer == nil) {
 			res := session.NewToolError(pendingCall.ID, "contextual guardrail approval state is unavailable; the action must be reviewed again")
 			e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
 			return res, nil, false
+		}
+		if ask.Guardrail.ReviewID != "" {
+			if applies, _ := reviewPolicy(r.reviewRoot.reviewer, pendingCall.Name, ReviewJobAction, false); !applies {
+				res := session.NewToolError(pendingCall.ID, "contextual guardrail approval state is unavailable; the action must be reviewed again")
+				e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
+				return res, nil, false
+			}
+			// The persisted scope is the acknowledgement key for this outstanding
+			// review, even if the call gained a public ID when its snapshot loaded.
+			r.pendingReviewID = ask.Guardrail.ReviewID
+			defer func() { r.pendingReviewID = "" }()
 		}
 		decision, auth, cancelled := e.authorizeBound(ctx, r, sess, env, turnIdx, pendingCall)
 		if cancelled {
@@ -1128,6 +1154,12 @@ func (e *Engine) postPreToolUse(ctx context.Context, r *Run, sess *session.Sessi
 // be ignored. The EvApproval is emitted here ONLY on a real verdict (ok), exactly as
 // before — a cancelled await emits none.
 func (e *Engine) surfaceAsk(ctx context.Context, r *Run, sess *session.Session, turnIdx int, ask session.PendingAsk) (res approval, ok, paused bool) {
+	r.results.mu.Lock()
+	if ask.InvocationID == "" {
+		ask.InvocationID = r.turnCalls[ask.Call]
+	}
+	r.results.mu.Unlock()
+	ask.SessionID = sess.ID
 	ch := r.asks.registerAsk(ask)
 	if err := sess.PauseForApproval(ask); err != nil {
 		r.asks.discard(ask.AskID)
@@ -1155,12 +1187,14 @@ func (e *Engine) surfaceAsk(ctx context.Context, r *Run, sess *session.Session, 
 	// deny-reason body (gauntlet #7; see ApprovalPayload). AllowAlways mirrors the
 	// verdict, not the policy outcome.
 	e.emit(r, session.Event{Type: session.EvApproval, Turn: turnIdx, Approval: &session.ApprovalPayload{
-		AskID:       ask.AskID,
-		Verdict:     session.VerdictString(verdictResult.verdict),
-		Tool:        ask.Tool,
-		Call:        ask.Call,
-		AllowAlways: verdictResult.verdict == session.VerdictAllowAlways,
-		Origin:      ask.Origin,
+		AskID:        ask.AskID,
+		Verdict:      session.VerdictString(verdictResult.verdict),
+		Tool:         ask.Tool,
+		Call:         ask.Call,
+		InvocationID: ask.InvocationID,
+		ReviewID:     approvalReviewID(ask),
+		AllowAlways:  verdictResult.verdict == session.VerdictAllowAlways,
+		Origin:       ask.Origin,
 	}})
 	recordValidatedApproval(r, sess.ID, ask, verdictResult.verdict)
 	return verdictResult, true, true
@@ -1316,12 +1350,13 @@ func (e *Engine) authorizeDecision(ctx context.Context, r *Run, sess *session.Se
 		args = systemScopeApprovalArgs(c)
 	}
 	ask := session.PendingAsk{
-		AskID:  askID,
-		Tool:   c.Name,
-		Args:   args,
-		Reason: decision.Reason,
-		Call:   c.ID,
-		Origin: session.ApprovalOriginPermission,
+		AskID:        askID,
+		Tool:         c.Name,
+		Args:         args,
+		Reason:       decision.Reason,
+		Call:         c.ID,
+		InvocationID: c.InvocationID,
+		Origin:       session.ApprovalOriginPermission,
 		// The two child-ask decision bits ride the PendingAsk verbatim (issue #32)
 		// so resolveChildAsk can honour a configured Ask (never auto-approved) and
 		// resolve a substitution-floored configured Allow without surfacing.
@@ -1479,7 +1514,7 @@ func (e *Engine) preHook(ctx context.Context, r *Run, sess *session.Session, tur
 			return preHookResult{askApproval: true, msg: m, effective: c}, nil
 		}
 		e.emit(r, session.Event{Type: session.EvHook, Turn: turnIdx, Text: m,
-			Hook: &session.HookPayload{Phase: string(governance.PhasePreToolUse), Tool: c.Name, Decision: session.HookBlocked, CallID: c.ID}})
+			Hook: &session.HookPayload{Phase: string(governance.PhasePreToolUse), Tool: c.Name, Decision: session.HookBlocked, CallID: c.ID, InvocationID: c.InvocationID}})
 		return preHookResult{blocked: true, msg: m}, nil
 	}
 	if len(outcome.Mutated) > 0 {
@@ -1488,19 +1523,19 @@ func (e *Engine) preHook(ctx context.Context, r *Run, sess *session.Session, tur
 		// re-authorize these args before execution — see the trust note above.
 		if json.Valid(outcome.Mutated) {
 			e.emit(r, session.Event{Type: session.EvHook, Turn: turnIdx, Text: "PreToolUse hook rewrote tool arguments for " + c.Name,
-				Hook: &session.HookPayload{Phase: string(governance.PhasePreToolUse), Tool: c.Name, Decision: session.HookModified, CallID: c.ID}})
+				Hook: &session.HookPayload{Phase: string(governance.PhasePreToolUse), Tool: c.Name, Decision: session.HookModified, CallID: c.ID, InvocationID: c.InvocationID}})
 			effective := c
 			effective.Args = append(json.RawMessage(nil), outcome.Mutated...)
 			return preHookResult{effective: effective}, nil
 		}
 		e.emit(r, session.Event{Type: session.EvHook, Turn: turnIdx, Text: "PreToolUse hook returned a malformed argument mutation (ignored)",
-			Hook: &session.HookPayload{Phase: string(governance.PhasePreToolUse), Tool: c.Name, Decision: session.HookInfo, CallID: c.ID}})
+			Hook: &session.HookPayload{Phase: string(governance.PhasePreToolUse), Tool: c.Name, Decision: session.HookInfo, CallID: c.ID, InvocationID: c.InvocationID}})
 	}
 	if outcome.Message != "" && !outcome.Block && len(outcome.Mutated) == 0 {
 		// An advisory (message-only) outcome: the call proceeds unchanged, but the
 		// hook flagged content — surface a client-visible EvHook (model-invisible).
 		e.emit(r, session.Event{Type: session.EvHook, Turn: turnIdx, Text: outcome.Message,
-			Hook: &session.HookPayload{Phase: string(governance.PhasePreToolUse), Tool: c.Name, Decision: session.HookAdvisory, CallID: c.ID}})
+			Hook: &session.HookPayload{Phase: string(governance.PhasePreToolUse), Tool: c.Name, Decision: session.HookAdvisory, CallID: c.ID, InvocationID: c.InvocationID}})
 	}
 	return preHookResult{effective: c}, nil
 }
@@ -1520,12 +1555,13 @@ func (e *Engine) preHook(ctx context.Context, r *Run, sess *session.Session, tur
 // in Phase 1, never from the parallel fan-out), so two asks never surface at once.
 func (e *Engine) askHookApproval(ctx context.Context, r *Run, sess *session.Session, turnIdx int, c session.ToolCall, reason string, resultEvent session.EventType) (session.ToolResult, bool, bool) {
 	ask := session.PendingAsk{
-		AskID:  r.issueAskID(sess.ID, sess.Counters.ToolCalls, c.ID),
-		Tool:   c.Name,
-		Args:   c.Args,
-		Reason: reason,
-		Call:   c.ID,
-		Origin: session.ApprovalOriginHookGuardrail,
+		AskID:        r.issueAskID(sess.ID, sess.Counters.ToolCalls, c.ID),
+		Tool:         c.Name,
+		Args:         c.Args,
+		Reason:       reason,
+		Call:         c.ID,
+		InvocationID: c.InvocationID,
+		Origin:       session.ApprovalOriginHookGuardrail,
 		Guardrail: &session.GuardrailPendingScope{
 			Kind:            session.GuardrailApprovalAction,
 			SessionOnly:     true,
@@ -1606,12 +1642,13 @@ func (e *Engine) surfacePlanAsk(ctx context.Context, r *Run, sess *session.Sessi
 		return res, false
 	}
 	ask := session.PendingAsk{
-		AskID:  r.issueAskID(sess.ID, sess.Counters.ToolCalls, c.ID),
-		Tool:   presentPlanToolName,
-		Args:   c.Args,
-		Reason: "plan ready for operator approval",
-		Call:   c.ID,
-		Origin: session.ApprovalOriginPlan,
+		AskID:        r.issueAskID(sess.ID, sess.Counters.ToolCalls, c.ID),
+		Tool:         presentPlanToolName,
+		Args:         c.Args,
+		Reason:       "plan ready for operator approval",
+		Call:         c.ID,
+		InvocationID: c.InvocationID,
+		Origin:       session.ApprovalOriginPlan,
 	}
 
 	// Run the SHARED ask spine (register → pause → emit → await → resume → EvApproval);
@@ -1733,6 +1770,7 @@ func (e *Engine) executePrivate(ctx context.Context, r *Run, sess *session.Sessi
 }
 
 func (e *Engine) finalizeToolResult(r *Run, sess *session.Session, turnIdx int, c session.ToolCall, record executionRecord, result session.ToolResult, available, originalReleased, canonical bool) {
+	result.InvocationID = c.InvocationID
 	// A held assessment suppresses PostToolUse annotation prose even after a
 	// release: a hook is allowed to quote its input, and no annotation may become
 	// a side channel around the held-result decision. A stale principal revision
@@ -1765,6 +1803,7 @@ func (e *Engine) execute(ctx context.Context, r *Run, sess *session.Session, env
 	if !cancelled && !record.result.IsError && !result.IsError && r.instructionScopes != nil {
 		r.noteInstructionTargets(env.Workspace().Root(), c)
 	}
+	result.InvocationID = c.InvocationID
 	e.finalizeToolResult(r, sess, turnIdx, c, record, result, !cancelled && ctx.Err() == nil, originalReleased, true)
 	return result, cancelled
 }
@@ -2218,6 +2257,7 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int, reporter
 		caps.surfaceAsk = func(askID, childID string, child *Run, ask session.PendingAsk, requesterLabel string) {
 			// Register BEFORE emitting so a fast ResumeApproval cannot race ahead of
 			// registration (mirror askRegistry.register-before-emit).
+			ask.SessionID = session.SessionID(childID)
 			r.registerChildAsk(ask, child, turnIdx)
 			// Record ask OWNERSHIP at this single surfacing seam (all three delegation
 			// families thread their child session id through childPosture.childID), so
@@ -2247,9 +2287,11 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int, reporter
 				// engine's own authorize populated ask.Call, so the surfaced ask
 				// carries the same opaque correlation id (no new leak — see
 				// PendingAsk.Call).
-				Call:      ask.Call,
-				Origin:    ask.Origin,
-				Guardrail: ask.Guardrail,
+				Call:         ask.Call,
+				InvocationID: ask.InvocationID,
+				SessionID:    session.SessionID(childID),
+				Origin:       ask.Origin,
+				Guardrail:    ask.Guardrail,
 				// Clamp/redact the command: a subagent's Shell args can contain peer-injected
 				// untrusted text. Frame it explicitly as a quoted subagent REQUEST so the
 				// human reads it as "the subagent wants to run X", never as a trusted
@@ -2469,14 +2511,14 @@ func (e *Engine) postHook(ctx context.Context, sess *session.Session, turnIdx in
 	var events []session.Event
 	if outcome.Block && outcome.Message != "" {
 		events = append(events, session.Event{Type: session.EvHook, Turn: turnIdx, Text: outcome.Message,
-			Hook: &session.HookPayload{Phase: string(governance.PhasePostToolUse), Tool: c.Name, Decision: session.HookBlocked, CallID: c.ID}})
+			Hook: &session.HookPayload{Phase: string(governance.PhasePostToolUse), Tool: c.Name, Decision: session.HookBlocked, CallID: c.ID, InvocationID: c.InvocationID}})
 	}
 	if len(outcome.Mutated) > 0 {
 		if json.Valid(outcome.Mutated) {
 			var p resultPayload
 			if jerr := json.Unmarshal(outcome.Mutated, &p); jerr == nil {
 				events = append(events, session.Event{Type: session.EvHook, Turn: turnIdx, Text: "PostToolUse hook rewrote the tool result for " + c.Name,
-					Hook: &session.HookPayload{Phase: string(governance.PhasePostToolUse), Tool: c.Name, Decision: session.HookModified, CallID: c.ID}})
+					Hook: &session.HookPayload{Phase: string(governance.PhasePostToolUse), Tool: c.Name, Decision: session.HookModified, CallID: c.ID, InvocationID: c.InvocationID}})
 				if p.IsError {
 					return session.NewToolError(res.CallID, p.Content), events
 				}
@@ -2484,11 +2526,11 @@ func (e *Engine) postHook(ctx context.Context, sess *session.Session, turnIdx in
 			}
 		}
 		events = append(events, session.Event{Type: session.EvHook, Turn: turnIdx, Text: "PostToolUse hook returned a malformed result mutation (ignored)",
-			Hook: &session.HookPayload{Phase: string(governance.PhasePostToolUse), Tool: c.Name, Decision: session.HookInfo, CallID: c.ID}})
+			Hook: &session.HookPayload{Phase: string(governance.PhasePostToolUse), Tool: c.Name, Decision: session.HookInfo, CallID: c.ID, InvocationID: c.InvocationID}})
 	}
 	if outcome.Message != "" && !outcome.Block && len(outcome.Mutated) == 0 {
 		events = append(events, session.Event{Type: session.EvHook, Turn: turnIdx, Text: outcome.Message,
-			Hook: &session.HookPayload{Phase: string(governance.PhasePostToolUse), Tool: c.Name, Decision: session.HookAdvisory, CallID: c.ID}})
+			Hook: &session.HookPayload{Phase: string(governance.PhasePostToolUse), Tool: c.Name, Decision: session.HookAdvisory, CallID: c.ID, InvocationID: c.InvocationID}})
 	}
 	return res, events
 }
@@ -2512,14 +2554,21 @@ func (e *Engine) openCard(r *Run, turnIdx int, c session.ToolCall) {
 type toolResultPublisher struct {
 	mu sync.Mutex
 	// Short runs keep their IDs inline; longer runs retain additional IDs in the map.
-	inline    [8]session.ToolCallID
+	inline    [8]string
 	inlineLen int
-	available map[session.ToolCallID]struct{}
+	available map[string]struct{}
 }
 
 // emit publishes a generic event to the run and its optional sink.
 func (e *Engine) emit(r *Run, ev session.Event) {
-	sequenced := r.emit(ev)
+	if ev.Type == session.EvHook {
+		r.hookMu.Lock()
+		defer r.hookMu.Unlock()
+	}
+	sequenced, delivered := r.emitChecked(ev)
+	if !delivered && ev.Type == session.EvHook && r.sess != nil && r.sess.HookRevision() == ^uint64(0) {
+		return
+	}
 	e.mirrorEvent(r, sequenced)
 }
 
@@ -2528,7 +2577,16 @@ func (e *Engine) emit(r *Run, ev session.Event) {
 func (e *Engine) publishToolResult(r *Run, ev session.Event) {
 	r.results.mu.Lock()
 	defer r.results.mu.Unlock()
-	id := ev.ToolResult.CallID
+	privateID := ev.ToolResult.CallID
+	if ev.ToolResult.InvocationID == "" {
+		resultCopy := *ev.ToolResult
+		resultCopy.InvocationID = r.turnCalls[privateID]
+		ev.ToolResult = &resultCopy
+	}
+	id := "provider:" + string(privateID)
+	if ev.ToolResult.InvocationID != "" {
+		id = "invocation:" + string(ev.ToolResult.InvocationID)
+	}
 	_, published := r.results.available[id]
 	published = published || slices.Contains(r.results.inline[:r.results.inlineLen], id)
 	if ev.Type == session.EvToolResultAvailable && published {
@@ -2540,7 +2598,7 @@ func (e *Engine) publishToolResult(r *Run, ev session.Event) {
 			r.results.inlineLen++
 		} else {
 			if r.results.available == nil {
-				r.results.available = make(map[session.ToolCallID]struct{})
+				r.results.available = make(map[string]struct{})
 			}
 			r.results.available[id] = struct{}{}
 		}

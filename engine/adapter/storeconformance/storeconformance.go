@@ -704,8 +704,13 @@ func authorizingSession(t *testing.T, id session.SessionID) *session.Session {
 		session.NewToolCall("parked", "external_create", json.RawMessage(`{"title":"review"}`)),
 		session.NewToolCall("later", "external_list", json.RawMessage(`{"after":"today"}`)),
 	}
+	for i := range calls {
+		calls[i].InvocationID = session.NewInvocationID()
+	}
 	mustOK(t, "RecordAssistant", s.RecordAssistant(session.NewAssistantMessage("", "", calls)))
-	mustOK(t, "RecordToolResults", s.RecordToolResults([]session.ToolResult{session.NewToolResult("done", "ok")}))
+	result := session.NewToolResult("done", "ok")
+	result.InvocationID = calls[0].InvocationID
+	mustOK(t, "RecordToolResults", s.RecordToolResults([]session.ToolResult{result}))
 	effectiveCall := calls[1]
 	effectiveCall.Args = json.RawMessage(`{ "effective" : true }`)
 	mustOK(t, "PauseForAuthorization", s.PauseForAuthorization(session.PendingAuthorization{
@@ -773,12 +778,16 @@ func representativeSession(t *testing.T, id session.SessionID) *session.Session 
 		session.NewToolCall("call-1", "Read", json.RawMessage(`{"path":"a.txt"}`)),
 		session.NewToolCall("call-2", "Grep", json.RawMessage(`{"pattern":"TODO"}`)),
 	}
+	for i := range calls {
+		calls[i].InvocationID = session.NewInvocationID()
+	}
 	mustOK(t, "RecordAssistant", s.RecordAssistant(session.NewAssistantMessage(
 		"reading two files", "opaque-reasoning-replay-blob", calls)))
-	mustOK(t, "RecordToolResults", s.RecordToolResults([]session.ToolResult{
-		session.NewToolResult("call-1", "contents of a.txt"),
-		session.NewToolError("call-2", "grep failed: no matches"),
-	}))
+	result1 := session.NewToolResult("call-1", "contents of a.txt")
+	result1.InvocationID = calls[0].InvocationID
+	result2 := session.NewToolError("call-2", "grep failed: no matches")
+	result2.InvocationID = calls[1].InvocationID
+	mustOK(t, "RecordToolResults", s.RecordToolResults([]session.ToolResult{result1, result2}))
 	return s
 }
 

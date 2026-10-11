@@ -54,11 +54,11 @@ import (
 // runProjector owns the short-lived state for one session/prompt relay. Availability
 // is live-only, so it is deliberately neither shared across runs nor used by replay.
 type runProjector struct {
-	available map[session.ToolCallID]session.ToolResult
+	available map[session.InvocationID]session.ToolResult
 }
 
 func newRunProjector() *runProjector {
-	return &runProjector{available: make(map[session.ToolCallID]session.ToolResult)}
+	return &runProjector{available: make(map[session.InvocationID]session.ToolResult)}
 }
 
 // project maps ordinary events directly and correlates a transient availability
@@ -72,7 +72,7 @@ func (p *runProjector) project(ev session.Event) (any, bool) {
 		}
 		update, ok := projectUpdate(ev)
 		if ok {
-			p.available[ev.ToolResult.CallID] = *ev.ToolResult
+			p.available[ev.ToolResult.InvocationID] = *ev.ToolResult
 		}
 		return update, ok
 
@@ -80,9 +80,9 @@ func (p *runProjector) project(ev session.Event) (any, bool) {
 		if ev.ToolResult == nil {
 			return nil, false
 		}
-		available, seen := p.available[ev.ToolResult.CallID]
+		available, seen := p.available[ev.ToolResult.InvocationID]
 		if seen {
-			delete(p.available, ev.ToolResult.CallID)
+			delete(p.available, ev.ToolResult.InvocationID)
 			if reflect.DeepEqual(available, *ev.ToolResult) {
 				return nil, false
 			}
@@ -119,7 +119,7 @@ func projectUpdate(ev session.Event) (any, bool) {
 		}
 		return toolCallUpdate{
 			SessionUpdate: updateToolCall,
-			ToolCallID:    string(ev.ToolCall.ID),
+			ToolCallID:    string(ev.ToolCall.InvocationID),
 			Title:         ev.ToolCall.Name,
 			Kind:          toolKindFor(ev.ToolCall.Name),
 			RawInput:      rawInput(ev.ToolCall.Args),
@@ -136,7 +136,7 @@ func projectUpdate(ev session.Event) (any, bool) {
 			return nil, false
 		}
 		text := "MCP authorization" + authorizationDisplayTarget(ev.Authorization) + " is unavailable for ACP sessions"
-		return toolCallUpdate{SessionUpdate: updateToolCallUpdate, ToolCallID: string(ev.Authorization.Call), Status: toolStatusFailed, Content: textToolContent(text)}, true
+		return toolCallUpdate{SessionUpdate: updateToolCallUpdate, ToolCallID: string(ev.Authorization.InvocationID), Status: toolStatusFailed, Content: textToolContent(text)}, true
 
 	case session.EvAuthorizationResolved:
 		if ev.Authorization == nil {
@@ -155,7 +155,7 @@ func projectUpdate(ev session.Event) (any, bool) {
 		}
 		return toolCallUpdate{
 			SessionUpdate: updateToolCallUpdate,
-			ToolCallID:    string(ev.ToolResult.CallID),
+			ToolCallID:    string(ev.ToolResult.InvocationID),
 			Status:        status,
 			Content:       textToolContent(ev.ToolResult.Content),
 		}, true
@@ -251,10 +251,10 @@ func projectHook(ev session.Event) (any, bool) {
 	if ev.Hook == nil {
 		return nil, false
 	}
-	if ev.Hook.Decision == session.HookBlocked && ev.Hook.CallID != "" && ev.Hook.Phase == "PreToolUse" {
+	if ev.Hook.Decision == session.HookBlocked && ev.Hook.InvocationID != "" && ev.Hook.Phase == "PreToolUse" {
 		return toolCallUpdate{
 			SessionUpdate: updateToolCallUpdate,
-			ToolCallID:    string(ev.Hook.CallID),
+			ToolCallID:    string(ev.Hook.InvocationID),
 			Status:        toolStatusFailed,
 			Content:       textToolContent(hookNote(ev.Hook, ev.Text)),
 		}, true
@@ -286,7 +286,7 @@ func hookNote(h *session.HookPayload, text string) string {
 // content beyond the already-redacted metadata on the payload.
 func projectSubagent(ev session.Event) (any, bool) {
 	p := ev.Subagent
-	if p == nil || p.ParentCallID == "" {
+	if p == nil || p.ParentInvocationID == "" {
 		return nil, false
 	}
 	switch ev.Type {
@@ -297,7 +297,7 @@ func projectSubagent(ev session.Event) (any, bool) {
 		}
 		return toolCallUpdate{
 			SessionUpdate: updateToolCallUpdate,
-			ToolCallID:    p.ParentCallID,
+			ToolCallID:    string(p.ParentInvocationID),
 			Status:        toolStatusInProgress,
 			Content:       textToolContent(line),
 		}, true
@@ -319,7 +319,7 @@ func projectSubagent(ev session.Event) (any, bool) {
 		}
 		return toolCallUpdate{
 			SessionUpdate: updateToolCallUpdate,
-			ToolCallID:    p.ParentCallID,
+			ToolCallID:    string(p.ParentInvocationID),
 			Status:        status,
 			Content:       textToolContent(line),
 		}, true
@@ -335,7 +335,7 @@ func projectSubagent(ev session.Event) (any, bool) {
 // preview is already bounded/redacted at source (see TeamPayload).
 func projectTeam(ev session.Event) (any, bool) {
 	p := ev.Team
-	if p == nil || p.ParentCallID == "" {
+	if p == nil || p.ParentInvocationID == "" {
 		return nil, false
 	}
 	switch ev.Type {
@@ -346,7 +346,7 @@ func projectTeam(ev session.Event) (any, bool) {
 		}
 		return toolCallUpdate{
 			SessionUpdate: updateToolCallUpdate,
-			ToolCallID:    p.ParentCallID,
+			ToolCallID:    string(p.ParentInvocationID),
 			Status:        toolStatusInProgress,
 			Content:       textToolContent(line),
 		}, true
@@ -358,7 +358,7 @@ func projectTeam(ev session.Event) (any, bool) {
 		line := fmt.Sprintf("team finished: %d round(s), %s", p.Rounds, p.Stop)
 		return toolCallUpdate{
 			SessionUpdate: updateToolCallUpdate,
-			ToolCallID:    p.ParentCallID,
+			ToolCallID:    string(p.ParentInvocationID),
 			Status:        status,
 			Content:       textToolContent(line),
 		}, true
@@ -465,10 +465,14 @@ func stopReasonFor(r session.StopReason) string {
 // the editor can show what is about to run. The toolCall has no sessionUpdate
 // field (it is the request's toolCall, not a notification).
 func permissionRequestFor(sessionID string, ask session.PendingAsk) requestPermissionRequest {
+	id := string(ask.InvocationID)
+	if id == "" {
+		id = ask.AskID
+	} // Legacy asks have no invocation to attach.
 	return requestPermissionRequest{
 		SessionID: sessionID,
 		ToolCall: toolCallUpdate{
-			ToolCallID: ask.AskID,
+			ToolCallID: id,
 			Title:      ask.Tool,
 			Kind:       toolKindFor(ask.Tool),
 			Status:     toolStatusPending,

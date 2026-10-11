@@ -30,7 +30,7 @@ type GuardrailCoverageMsg struct {
 }
 
 // GuardrailReviewDetail is bounded owner-authorized live display detail.
-type GuardrailReviewDetail struct{ ReviewID, Concern, SourceDisplay, NextAction string }
+type GuardrailReviewDetail struct{ ReviewID, Concern, SourceDisplay, NextAction, OriginSessionID, ToolCallID string }
 
 // GuardrailReviewDetailMsg carries an asynchronous detail response.
 type GuardrailReviewDetailMsg struct {
@@ -59,7 +59,7 @@ func (c *Client) GetGuardrailReviewDetail(ctx context.Context, sessionID, review
 	if err != nil {
 		return GuardrailReviewDetail{}, err
 	}
-	return GuardrailReviewDetail{ReviewID: resp.GetReviewId(), Concern: resp.GetConcern(), SourceDisplay: resp.GetSourceDisplay(), NextAction: resp.GetNextAction()}, nil
+	return GuardrailReviewDetail{ReviewID: resp.GetReviewId(), Concern: resp.GetConcern(), SourceDisplay: resp.GetSourceDisplay(), NextAction: resp.GetNextAction(), OriginSessionID: resp.GetOriginSessionId(), ToolCallID: resp.GetToolCallId()}, nil
 }
 
 // GuardrailClient is the TUI's contextual guardrail status surface.

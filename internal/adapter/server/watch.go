@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"reflect"
 	"sync"
 	"time"
 
@@ -296,6 +297,15 @@ func (s *Service) WatchSessionEvents(ctx context.Context, id session.SessionID, 
 	if err != nil {
 		return nil, err
 	}
+	// Only the currently parked ask can borrow provenance from the verified
+	// snapshot. Historical log asks remain unchanged, including child relays.
+	var pending session.PendingAsk
+	if stored, loadErr := s.cfg.Store.Load(ctx, id); loadErr == nil && stored != nil && stored.ID == id {
+		pending, _ = stored.PendingAsk()
+		if pending.SessionID == "" {
+			pending.SessionID = id // this snapshot is the parked root, not a child relay
+		}
+	}
 	return func(yield func(WatchEnvelope, error) bool) {
 		// The pump's context is a child of the caller's, so a client disconnect
 		// stops the follow, AND faultWatchers can stop it independently.
@@ -315,6 +325,13 @@ func (s *Service) WatchSessionEvents(ctx context.Context, id session.SessionID, 
 		go pumpWatch(pumpCtx, log, id, after, runID, reg, out, term)
 
 		for env := range out {
+			if env.Phase == WatchPhaseReplay && matchesPendingReplayAsk(env.Event, pending) {
+				ask := *env.Event.Ask
+				ask.SessionID, ask.InvocationID = pending.SessionID, pending.InvocationID
+				projected := *env.Event
+				projected.Ask = &ask
+				env.Event = &projected
+			}
 			if !yield(env, nil) {
 				return
 			}
@@ -327,6 +344,17 @@ func (s *Service) WatchSessionEvents(ctx context.Context, id session.SessionID, 
 		default:
 		}
 	}, nil
+}
+
+func matchesPendingReplayAsk(ev *session.Event, pending session.PendingAsk) bool {
+	if ev == nil || ev.Type != session.EvPermissionAsk || ev.Ask == nil || pending.AskID == "" {
+		return false
+	}
+	ask := ev.Ask
+	return ask.AskID == pending.AskID && ask.Tool == pending.Tool && ask.Call == pending.Call &&
+		string(ask.Args) == string(pending.Args) && reflect.DeepEqual(ask.Guardrail, pending.Guardrail) &&
+		(ask.SessionID == "" || ask.SessionID == pending.SessionID) &&
+		(ask.InvocationID == "" || ask.InvocationID == pending.InvocationID)
 }
 
 // watchLog resolves the cursor-capable log for a watch, applying every

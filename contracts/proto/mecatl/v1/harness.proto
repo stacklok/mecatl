@@ -1114,6 +1114,7 @@ message SessionSummary {
 // SessionRelationship carries the validated links appropriate to a session kind.
 message SessionRelationship {
   string parent_session_id = 1;
+  // Parent delegation invocation, not the provider's replay pairing ID.
   string call_id = 2;
   optional int32 branch_index = 3;
   string schedule_name = 4;
@@ -1870,6 +1871,7 @@ message Authorization {
   google.protobuf.Timestamp expires_at = 3;
   string status = 4;
   string display_name = 5;
+  string origin_session_id = 6;
 }
 
 // PlanContinuationFailure correlates a known failed server-owned proceed start.
@@ -2138,6 +2140,9 @@ message GetGuardrailReviewDetailResponse {
   string concern = 2;
   string source_display = 3;
   string next_action = 4;
+  // Origin and occurrence are explicit; absent for legacy details.
+  string origin_session_id = 5;
+  string tool_call_id = 6;
 }
 
 // Approval is the proto projection of session.ApprovalPayload (EvApproval):
@@ -2152,13 +2157,16 @@ message Approval {
   // tool is the NAME of the tool the ask gated. It is the tool name ALONE — never
   // the call's args.
   string tool = 3;
-  // call_id is the opaque id of the gated ToolCall (the durable, grammar-free
-  // correlation handle a 3b consumer uses to find the call in the conversation).
+  // call_id is the public invocation ID of the gated ToolCall; it is not
+  // the provider's replay pairing ID and never authorizes a verdict by itself.
   string call_id = 4;
   // verdict is the typed resolution of the permission ask.
   ApprovalVerdict verdict = 6;
   // origin is the explicit approval provenance. Empty/unknown origins fail closed.
   string origin = 7;
+  string origin_session_id = 8;
+  // Exact review record when this ask was a contextual review.
+  string review_id = 9;
 }
 
 // UserPrompt is the proto projection of session.UserPromptPayload (EvUserPrompt):
@@ -2213,9 +2221,9 @@ message ConversationMessage {
   string provider_phase = 6;
   // parts carries non-text media (image/audio) on a USER message; nil otherwise.
   repeated Content parts = 7;
-  // reasoning_item_id is the OpenAI Responses reasoning-item id carrier
-  // (session.Message.ReasoningItemID), replayed verbatim and never
-  // interpreted/displayed by the harness. Opaque, provider-private.
+  // reasoning_item_id is retained for wire compatibility. Current public
+  // projections leave it empty; the opaque provider item ID remains in private
+  // session replay state only.
   string reasoning_item_id = 8;
 }
 
@@ -2280,11 +2288,14 @@ message Hook {
   string tool = 2;
   // decision is the hook outcome (info / blocked / modified).
   HookDecision decision = 3;
-  // call_id is the id of the tool call this hook fired against, for the per-tool
-  // phases (PreToolUse / PostToolUse); empty otherwise. Lets a client address the
-  // hook notice to the originating tool card. Mirrors session.HookPayload.CallID.
+  // call_id is the public invocation ID for this hook's tool occurrence;
+  // empty for session-wide hooks. The provider replay ID is private.
   string call_id = 4;
   GuardrailReview guardrail = 5;
+  // One logical published record; updates have increasing session-wide revisions.
+  string hook_id = 6;
+  uint64 revision = 7;
+  string origin_session_id = 8;
 }
 
 // RoutingDecision is bounded configured-router evidence attached to a delegation
@@ -2314,8 +2325,7 @@ message RoutingDecision {
 //   - subagent.tool:  parent_call_id, child_id, tool_name, is_error, tool_count.
 //   - subagent.end:   parent_call_id, child_id, tool_count, usage, stop, duration_ms.
 message Subagent {
-  // parent_call_id is the parent's Task tool-call id, attributing the event to
-  // the originating Task card.
+  // parent_call_id is the parent's public Task invocation ID.
   string parent_call_id = 1;
   // child_id is the child session id, distinguishing concurrent subagents.
   string child_id = 2;
@@ -2394,6 +2404,7 @@ message Subagent {
   // on subagent.start. Historical events and deployments without a router omit it.
   optional RoutingDecision routing_decision = 19;
   // Exact child tool.call/tool.result ID, scoped by child_id; empty otherwise.
+  // Originating child invocation, distinct from parent_call_id.
   string child_tool_call_id = 20;
   // provider is the concrete provider that actually ran the child.
   string provider = 21;
@@ -2468,8 +2479,8 @@ message TeamMemberSpec {
 //     {text, tool_name, detail, is_error, usage} relevant to inner_kind.
 //   - team.end:    parent_call_id, team_id, rounds, stop, usage (cumulative).
 message Team {
-  // parent_call_id is the parent's Team tool-call id, attributing the event to the
-  // originating Team card.
+  // parent_call_id is the parent's public Team invocation ID, attributing the
+  // event to the originating Team card.
   string parent_call_id = 1;
   // team_id is the team id, distinguishing concurrent teams.
   string team_id = 2;
@@ -2540,6 +2551,7 @@ message Team {
   // Subagent.cause (field 17).
   string cause = 19;
   // Exact member tool.call/tool.result ID, scoped by member_session_id; empty otherwise.
+  // Originating child invocation, distinct from parent_call_id.
   string child_tool_call_id = 20;
 }
 
@@ -2565,8 +2577,8 @@ message Team {
 //   - parallel.branch (branch_end):    parent_call_id, kind, branch_index, tool_count, stop, usage, duration_ms, failed.
 //   - parallel.end:                    parent_call_id, join, branch_count, winner, usage (run total), stop.
 message Parallel {
-  // parent_call_id is the parent's Parallel tool-call id and the GROUP key (one
-  // Parallel call = one group); attributes the event to the originating card.
+  // parent_call_id is the parent's public Parallel invocation ID and GROUP key;
+  // it attributes the event to the originating card, not to a child invocation.
   string parent_call_id = 1;
   // kind discriminates the per-branch lifecycle transition on a parallel.branch event
   // (branch_start / branch_tool / branch_end); empty on the run-level start/end events.
@@ -2612,8 +2624,8 @@ message Parallel {
   // branch_index for first/judge, or -1 for all / none-succeeded.
   int32 winner = 16;
   // child_id is the branch's child SESSION id ("parallel-<callID>-<i>") on
-  // branch_start/branch_end — the CancelChild handle, carried explicitly so a
-  // client never derives ids from the (internal) id grammar.
+  // branch_start/branch_tool/branch_end — the CancelChild handle and explicit
+  // origin of child-tool previews; never derive ids from the internal grammar.
   string child_id = 18;
   // routed_category is the OPT-IN semantic model router's chosen CATEGORY label for
   // this branch (branch_start only), set when the router was wired AND classified this
@@ -2658,7 +2670,8 @@ message Parallel {
   // routing_decision is the optional bounded configured-router evidence captured
   // on branch_start. Historical events and deployments without a router omit it.
   optional RoutingDecision routing_decision = 26;
-  // Exact branch tool.call/tool.result ID, scoped by branch_index; empty otherwise.
+  // Child's public tool invocation ID, distinct from parent_call_id; empty
+  // outside branch_tool projections. The provider pairing ID remains private.
   string child_tool_call_id = 27;
   // provider is the concrete provider that actually ran the branch.
   string provider = 28;
@@ -2670,7 +2683,7 @@ message Parallel {
 // ToolCall is a request from the model to invoke a named tool. Mirrors
 // session.ToolCall.
 message ToolCall {
-  // id pairs this call with its tool_result.
+  // Public invocation ID; provider pairing ID is never projected.
   string id = 1;
   // name is the tool name as registered in the catalog.
   string name = 2;
@@ -2681,7 +2694,7 @@ message ToolCall {
 // ToolResult is the outcome of executing a ToolCall. Mirrors
 // session.ToolResult.
 message ToolResult {
-  // call_id is the id of the ToolCall this result answers.
+  // call_id is the public invocation ID of the ToolCall this result answers.
   string call_id = 1;
   // content is the legacy/default model-facing string result body, already
   // token-shaped by the tool.
@@ -2711,9 +2724,11 @@ message PermissionAsk {
   // reason explains why approval is required.
   string reason = 4;
   GuardrailApprovalScope guardrail = 5;
-  // call_id is the exact durable tool-call ID for presentation correlation.
+  // call_id is the public invocation ID for presentation correlation.
   // Absence means no tool-row attachment can be proven.
   optional string call_id = 6;
+  // Origin must not be inferred from ask_id (which remains the authorization key).
+  string origin_session_id = 7;
 }
 
 // RetryDisposition is the neutral causal retry classification of a failed model

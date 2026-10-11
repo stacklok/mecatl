@@ -79,8 +79,11 @@ func TestAuthorizationPayloadSafeShape(t *testing.T) {
 		"AuthorizationID": reflect.TypeOf(""),
 		"DisplayName":     reflect.TypeOf(""),
 		"Call":            reflect.TypeOf(ToolCallID("")),
-		"ExpiresAt":       reflect.TypeOf(time.Time{}),
-		"Status":          reflect.TypeOf(AuthorizationStatus("")),
+		// Opaque origin/occurrence metadata; no credentials or effective args.
+		"SessionID":    reflect.TypeOf(SessionID("")),
+		"InvocationID": reflect.TypeOf(InvocationID("")),
+		"ExpiresAt":    reflect.TypeOf(time.Time{}),
+		"Status":       reflect.TypeOf(AuthorizationStatus("")),
 	}
 	if typ.NumField() != len(want) {
 		t.Fatalf("AuthorizationPayload has %d fields, want exactly %d", typ.NumField(), len(want))

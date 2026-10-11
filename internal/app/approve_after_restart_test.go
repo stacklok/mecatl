@@ -85,17 +85,18 @@ func TestApproveAfterRestartE2E(t *testing.T) {
 		built1.Close()
 		t.Fatalf("StartRun (pre-restart): %v", err)
 	}
-	var askID, runID string
+	var askID, runID, callID string
 	for ev := range run1.Events() {
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && askID == "" {
 			askID = ev.Ask.AskID
+			callID = string(ev.Ask.InvocationID)
 			runID = ev.RunID
 			// Model the relay's Persist-on-ask: a durable StateAwaiting snapshot.
 			built1.Service.Persist(ctx, sess.ID)
 			break // stop ranging; DO NOT approve. The parked run dies with built1.
 		}
 	}
-	if askID == "" || runID == "" {
+	if askID == "" || runID == "" || callID == "" || callID == "w1" {
 		built1.Close()
 		t.Fatalf("the pre-restart run never raised an exact-run permission ask for Write (run_id=%q ask_id=%q)", runID, askID)
 	}
@@ -172,7 +173,7 @@ func TestApproveAfterRestartE2E(t *testing.T) {
 			if ev.RunID != runID {
 				continue
 			}
-			if ev.Type == "tool.result" && ev.ToolResult != nil && ev.ToolResult.CallID == "w1" {
+			if ev.Type == "tool.result" && ev.ToolResult != nil && ev.ToolResult.CallID == callID {
 				totalResults++
 				if !ev.ToolResult.IsError {
 					nonErrorResults++
@@ -192,7 +193,7 @@ func TestApproveAfterRestartE2E(t *testing.T) {
 	}
 
 	if nonErrorResults != 1 || totalResults != 1 {
-		t.Fatalf("EvToolResult for w1: non-error=%d total=%d, want exactly 1 non-error / 1 total (exactly-once)", nonErrorResults, totalResults)
+		t.Fatalf("EvToolResult for %s: non-error=%d total=%d, want exactly 1 non-error / 1 total (exactly-once)", callID, nonErrorResults, totalResults)
 	}
 	if stop != session.StopEndTurn {
 		t.Fatalf("resumed run stop = %q, want %q", stop, session.StopEndTurn)

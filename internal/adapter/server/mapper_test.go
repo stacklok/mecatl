@@ -41,15 +41,15 @@ func TestDelegationChildToolCallIDBackstop(t *testing.T) {
 				ev   session.Event
 				get  func(*mecatlv1.Event) (string, string, string)
 			}{
-				{"subagent", session.Event{Type: session.EvSubagentTool, Subagent: &session.SubagentPayload{InnerKind: kind, ChildToolCallID: id, ToolName: "Read", Detail: "secret"}}, func(e *mecatlv1.Event) (string, string, string) {
+				{"subagent", session.Event{Type: session.EvSubagentTool, Subagent: &session.SubagentPayload{InnerKind: kind, ChildInvocationID: session.InvocationID(id), ToolName: "Read", Detail: "secret"}}, func(e *mecatlv1.Event) (string, string, string) {
 					p := e.GetSubagent()
 					return p.GetChildToolCallId(), p.GetInnerKind(), p.GetToolName()
 				}},
-				{"parallel", session.Event{Type: session.EvParallelBranch, Parallel: &session.ParallelPayload{Kind: session.ParallelBranchTool, InnerKind: kind, ChildToolCallID: id, ToolName: "Read", Detail: "secret"}}, func(e *mecatlv1.Event) (string, string, string) {
+				{"parallel", session.Event{Type: session.EvParallelBranch, Parallel: &session.ParallelPayload{Kind: session.ParallelBranchTool, InnerKind: kind, ChildInvocationID: session.InvocationID(id), ToolName: "Read", Detail: "secret"}}, func(e *mecatlv1.Event) (string, string, string) {
 					p := e.GetParallel()
 					return p.GetChildToolCallId(), p.GetInnerKind(), p.GetToolName()
 				}},
-				{"team", session.Event{Type: session.EvTeamMember, Team: &session.TeamPayload{InnerKind: kind, ChildToolCallID: id, ToolName: "Read", Detail: "secret"}}, func(e *mecatlv1.Event) (string, string, string) {
+				{"team", session.Event{Type: session.EvTeamMember, Team: &session.TeamPayload{InnerKind: kind, ChildInvocationID: session.InvocationID(id), ToolName: "Read", Detail: "secret"}}, func(e *mecatlv1.Event) (string, string, string) {
 					p := e.GetTeam()
 					return p.GetChildToolCallId(), p.GetInnerKind(), p.GetToolName()
 				}},
@@ -84,9 +84,9 @@ func TestDelegationChildToolCallIDMapping(t *testing.T) {
 			ev   session.Event
 			get  func(*mecatlv1.Event) string
 		}{
-			{"subagent", session.Event{Type: session.EvSubagentTool, Subagent: &session.SubagentPayload{InnerKind: inner, ChildToolCallID: id}}, func(p *mecatlv1.Event) string { return p.GetSubagent().GetChildToolCallId() }},
-			{"parallel", session.Event{Type: session.EvParallelBranch, Parallel: &session.ParallelPayload{Kind: session.ParallelBranchTool, InnerKind: inner, ChildToolCallID: id}}, func(p *mecatlv1.Event) string { return p.GetParallel().GetChildToolCallId() }},
-			{"team", session.Event{Type: session.EvTeamMember, Team: &session.TeamPayload{InnerKind: inner, ChildToolCallID: id}}, func(p *mecatlv1.Event) string { return p.GetTeam().GetChildToolCallId() }},
+			{"subagent", session.Event{Type: session.EvSubagentTool, Subagent: &session.SubagentPayload{InnerKind: inner, ChildInvocationID: session.InvocationID(id)}}, func(p *mecatlv1.Event) string { return p.GetSubagent().GetChildToolCallId() }},
+			{"parallel", session.Event{Type: session.EvParallelBranch, Parallel: &session.ParallelPayload{Kind: session.ParallelBranchTool, InnerKind: inner, ChildInvocationID: session.InvocationID(id)}}, func(p *mecatlv1.Event) string { return p.GetParallel().GetChildToolCallId() }},
+			{"team", session.Event{Type: session.EvTeamMember, Team: &session.TeamPayload{InnerKind: inner, ChildInvocationID: session.InvocationID(id)}}, func(p *mecatlv1.Event) string { return p.GetTeam().GetChildToolCallId() }},
 		} {
 			t.Run(tc.name+"/"+string(inner), func(t *testing.T) {
 				pb := toProto(tc.ev)
@@ -113,15 +113,15 @@ func TestDelegationAvailableResultWirePayload(t *testing.T) {
 		ev   session.Event
 		get  func(*mecatlv1.Event) (string, string, string, bool)
 	}{
-		{"subagent", session.Event{Type: session.EvSubagentTool, Subagent: &session.SubagentPayload{InnerKind: session.EvToolResultAvailable, ChildToolCallID: "call", ToolName: "Read", Detail: detail, IsError: true}}, func(p *mecatlv1.Event) (string, string, string, bool) {
+		{"subagent", session.Event{Type: session.EvSubagentTool, Subagent: &session.SubagentPayload{InnerKind: session.EvToolResultAvailable, ChildToolCallID: "call", ChildInvocationID: "tc_child", ToolName: "Read", Detail: detail, IsError: true}}, func(p *mecatlv1.Event) (string, string, string, bool) {
 			s := p.GetSubagent()
 			return s.GetChildToolCallId(), s.GetInnerKind(), s.GetDetail(), s.GetIsError()
 		}},
-		{"parallel", session.Event{Type: session.EvParallelBranch, Parallel: &session.ParallelPayload{Kind: session.ParallelBranchTool, InnerKind: session.EvToolResultAvailable, ChildToolCallID: "call", ToolName: "Read", Detail: detail, IsError: true}}, func(p *mecatlv1.Event) (string, string, string, bool) {
+		{"parallel", session.Event{Type: session.EvParallelBranch, Parallel: &session.ParallelPayload{Kind: session.ParallelBranchTool, InnerKind: session.EvToolResultAvailable, ChildToolCallID: "call", ChildInvocationID: "tc_child", ToolName: "Read", Detail: detail, IsError: true}}, func(p *mecatlv1.Event) (string, string, string, bool) {
 			s := p.GetParallel()
 			return s.GetChildToolCallId(), s.GetInnerKind(), s.GetDetail(), s.GetIsError()
 		}},
-		{"team", session.Event{Type: session.EvTeamMember, Team: &session.TeamPayload{InnerKind: session.EvToolResultAvailable, ChildToolCallID: "call", ToolName: "Read", Detail: detail, IsError: true}}, func(p *mecatlv1.Event) (string, string, string, bool) {
+		{"team", session.Event{Type: session.EvTeamMember, Team: &session.TeamPayload{InnerKind: session.EvToolResultAvailable, ChildToolCallID: "call", ChildInvocationID: "tc_child", ToolName: "Read", Detail: detail, IsError: true}}, func(p *mecatlv1.Event) (string, string, string, bool) {
 			s := p.GetTeam()
 			return s.GetChildToolCallId(), s.GetInnerKind(), s.GetDetail(), s.GetIsError()
 		}},
@@ -136,7 +136,7 @@ func TestDelegationAvailableResultWirePayload(t *testing.T) {
 				t.Fatal(err)
 			}
 			id, inner, gotDetail, failed := tc.get(&decoded)
-			if id != "call" || inner != string(session.EvToolResultAvailable) || gotDetail != detail || !failed {
+			if id != "tc_child" || inner != string(session.EvToolResultAvailable) || gotDetail != detail || !failed {
 				t.Fatalf("wire availability = %q %q %q %t", id, inner, gotDetail, failed)
 			}
 		})
@@ -502,10 +502,10 @@ func TestToProtoTable(t *testing.T) {
 		{
 			name: "tool.call",
 			in: session.Event{Type: session.EvToolCall, Seq: 4, Turn: 1,
-				ToolCall: &session.ToolCall{ID: "c1", Name: "Read", Args: json.RawMessage(`{"path":"a.go"}`)}},
+				ToolCall: &session.ToolCall{ID: "c1", InvocationID: "tc_call", Name: "Read", Args: json.RawMessage(`{"path":"a.go"}`)}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
 				tc := got.GetToolCall()
-				if tc == nil || tc.GetId() != "c1" || tc.GetName() != "Read" || tc.GetArgs() != `{"path":"a.go"}` {
+				if tc == nil || tc.GetId() != "tc_call" || tc.GetName() != "Read" || tc.GetArgs() != `{"path":"a.go"}` {
 					t.Fatalf("got %+v", got)
 				}
 			},
@@ -513,10 +513,10 @@ func TestToProtoTable(t *testing.T) {
 		{
 			name: "tool.result",
 			in: session.Event{Type: session.EvToolResult, Seq: 5, Turn: 1,
-				ToolResult: &session.ToolResult{CallID: "c1", Content: "body", IsError: true}},
+				ToolResult: &session.ToolResult{CallID: "c1", InvocationID: "tc_call", Content: "body", IsError: true}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
 				tr := got.GetToolResult()
-				if tr == nil || tr.GetCallId() != "c1" || tr.GetContent() != "body" || !tr.GetIsError() {
+				if tr == nil || tr.GetCallId() != "tc_call" || tr.GetContent() != "body" || !tr.GetIsError() {
 					t.Fatalf("got %+v", got)
 				}
 			},
@@ -536,7 +536,7 @@ func TestToProtoTable(t *testing.T) {
 		{
 			name: "hook",
 			in: session.Event{Type: session.EvHook, Seq: 7, Turn: 1, Text: "blocked-by-policy",
-				Hook: &session.HookPayload{Phase: "PreToolUse", Tool: "Shell", Decision: session.HookBlocked, CallID: "call-7"}},
+				Hook: &session.HookPayload{Phase: "PreToolUse", Tool: "Shell", Decision: session.HookBlocked, CallID: "call-7", InvocationID: "tc_hook_7"}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
 				if got.GetType() != "hook" || got.GetText() != "blocked-by-policy" {
 					t.Fatalf("got %+v", got)
@@ -544,7 +544,7 @@ func TestToProtoTable(t *testing.T) {
 				h := got.GetHook()
 				if h == nil || h.GetPhase() != "PreToolUse" || h.GetTool() != "Shell" ||
 					h.GetDecision() != mecatlv1.HookDecision_HOOK_DECISION_BLOCKED ||
-					h.GetCallId() != "call-7" {
+					h.GetCallId() != "tc_hook_7" {
 					t.Fatalf("hook payload mismatch: %+v", h)
 				}
 			},
@@ -565,11 +565,11 @@ func TestToProtoTable(t *testing.T) {
 		{
 			name: "hook advisory",
 			in: session.Event{Type: session.EvHook, Seq: 8, Turn: 1, Text: "guardrail advisory: borderline",
-				Hook: &session.HookPayload{Phase: "PostToolUse", Tool: "WebFetch", Decision: session.HookAdvisory, CallID: "call-8"}},
+				Hook: &session.HookPayload{Phase: "PostToolUse", Tool: "WebFetch", Decision: session.HookAdvisory, CallID: "call-8", InvocationID: "tc_hook_8"}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
 				h := got.GetHook()
 				if h == nil || h.GetDecision() != mecatlv1.HookDecision_HOOK_DECISION_ADVISORY ||
-					h.GetPhase() != "PostToolUse" || h.GetTool() != "WebFetch" || h.GetCallId() != "call-8" {
+					h.GetPhase() != "PostToolUse" || h.GetTool() != "WebFetch" || h.GetCallId() != "tc_hook_8" {
 					t.Fatalf("advisory hook payload mismatch: %+v", h)
 				}
 			},
@@ -577,7 +577,7 @@ func TestToProtoTable(t *testing.T) {
 		{
 			name: "subagent.start",
 			in: session.Event{Type: session.EvSubagentStart, Seq: 20, Turn: 1,
-				Subagent: &session.SubagentPayload{ParentCallID: "p1", ChildID: "subagent-p1", Goal: "investigate main.go"}},
+				Subagent: &session.SubagentPayload{ParentCallID: "p1", ParentInvocationID: "p1", ChildID: "subagent-p1", Goal: "investigate main.go"}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
 				s := got.GetSubagent()
 				if s == nil || s.GetParentCallId() != "p1" || s.GetChildId() != "subagent-p1" || s.GetGoal() != "investigate main.go" {
@@ -593,7 +593,7 @@ func TestToProtoTable(t *testing.T) {
 			// equals RoutedModel when routed.
 			name: "subagent.start routed",
 			in: session.Event{Type: session.EvSubagentStart, Seq: 200, Turn: 1,
-				Subagent: &session.SubagentPayload{ParentCallID: "p1", ChildID: "subagent-p1", Goal: "investigate main.go",
+				Subagent: &session.SubagentPayload{ParentCallID: "p1", ParentInvocationID: "p1", ChildID: "subagent-p1", Goal: "investigate main.go",
 					RoutedCategory: "small", RoutedModel: "openai/gpt-4.1-mini", Model: "openai/gpt-4.1-mini"}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
 				s := got.GetSubagent()
@@ -611,7 +611,7 @@ func TestToProtoTable(t *testing.T) {
 			// It must round-trip verbatim; bare metadata, gauntlet #7.
 			name: "subagent.start inherited model",
 			in: session.Event{Type: session.EvSubagentStart, Seq: 201, Turn: 1,
-				Subagent: &session.SubagentPayload{ParentCallID: "p1", ChildID: "subagent-p1", Goal: "investigate main.go",
+				Subagent: &session.SubagentPayload{ParentCallID: "p1", ParentInvocationID: "p1", ChildID: "subagent-p1", Goal: "investigate main.go",
 					Model: "openai/gpt-4.5", RoutingReason: session.RoutingReasonRouterDisabled}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
 				s := got.GetSubagent()
@@ -629,7 +629,7 @@ func TestToProtoTable(t *testing.T) {
 		{
 			name: "subagent.tool",
 			in: session.Event{Type: session.EvSubagentTool, Seq: 21, Turn: 1,
-				Subagent: &session.SubagentPayload{ParentCallID: "p1", ChildID: "subagent-p1", ToolName: "Grep", IsError: true, ToolCount: 3}},
+				Subagent: &session.SubagentPayload{ParentCallID: "p1", ParentInvocationID: "p1", ChildID: "subagent-p1", ToolName: "Grep", IsError: true, ToolCount: 3}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
 				s := got.GetSubagent()
 				if s == nil || s.GetToolName() != "Grep" || !s.GetIsError() || s.GetToolCount() != 3 {
@@ -645,7 +645,7 @@ func TestToProtoTable(t *testing.T) {
 			// passthrough, mirroring Team.inner_kind.
 			name: "subagent.tool with bounded previews",
 			in: session.Event{Type: session.EvSubagentTool, Seq: 23, Turn: 1,
-				Subagent: &session.SubagentPayload{ParentCallID: "p1", ChildID: "subagent-p1",
+				Subagent: &session.SubagentPayload{ParentCallID: "p1", ParentInvocationID: "p1", ChildID: "subagent-p1",
 					ToolName: "Grep", ToolCount: 2, InnerKind: session.EvToolCall,
 					Detail: `{"pattern":"foo","path":"main.go"}`}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
@@ -662,7 +662,7 @@ func TestToProtoTable(t *testing.T) {
 		{
 			name: "subagent.tool message preview",
 			in: session.Event{Type: session.EvSubagentTool, Seq: 24, Turn: 1,
-				Subagent: &session.SubagentPayload{ParentCallID: "p1", ChildID: "subagent-p1",
+				Subagent: &session.SubagentPayload{ParentCallID: "p1", ParentInvocationID: "p1", ChildID: "subagent-p1",
 					ToolCount: 2, InnerKind: session.EvMessageDelta, Text: "scanning src/…"}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
 				s := got.GetSubagent()
@@ -677,7 +677,7 @@ func TestToProtoTable(t *testing.T) {
 		{
 			name: "subagent.end",
 			in: session.Event{Type: session.EvSubagentEnd, Seq: 22, Turn: 1,
-				Subagent: &session.SubagentPayload{ParentCallID: "p1", ChildID: "subagent-p1", ToolCount: 5,
+				Subagent: &session.SubagentPayload{ParentCallID: "p1", ParentInvocationID: "p1", ChildID: "subagent-p1", ToolCount: 5,
 					Usage: session.Usage{InputTokens: 90, OutputTokens: 12, CacheReadTokens: 40, CacheWriteTokens: 8},
 					Stop:  session.StopMaxToolCalls, DurationMs: 1234}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
@@ -697,7 +697,7 @@ func TestToProtoTable(t *testing.T) {
 			// (and every gRPC consumer) can only ever show "stop:error" with no WHY.
 			name: "subagent.end carries the failure cause",
 			in: session.Event{Type: session.EvSubagentEnd, Seq: 23, Turn: 1,
-				Subagent: &session.SubagentPayload{ParentCallID: "p1", ChildID: "subagent-p1",
+				Subagent: &session.SubagentPayload{ParentCallID: "p1", ParentInvocationID: "p1", ChildID: "subagent-p1",
 					Stop:  session.StopError,
 					Cause: "agent: stream: upstream 503 model overloaded"}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
@@ -715,7 +715,7 @@ func TestToProtoTable(t *testing.T) {
 			// treat a non-empty cause as "this delegation failed".
 			name: "subagent.end clean terminal carries no cause",
 			in: session.Event{Type: session.EvSubagentEnd, Seq: 24, Turn: 1,
-				Subagent: &session.SubagentPayload{ParentCallID: "p1", ChildID: "subagent-p1",
+				Subagent: &session.SubagentPayload{ParentCallID: "p1", ParentInvocationID: "p1", ChildID: "subagent-p1",
 					Stop: session.StopEndTurn}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
 				if c := got.GetSubagent().GetCause(); c != "" {
@@ -726,7 +726,7 @@ func TestToProtoTable(t *testing.T) {
 		{
 			name: "team.start",
 			in: session.Event{Type: session.EvTeamStart, Seq: 30, Turn: 1,
-				Team: &session.TeamPayload{ParentCallID: "p1", TeamID: "team-p1",
+				Team: &session.TeamPayload{ParentCallID: "p1", ParentInvocationID: "p1", TeamID: "team-p1",
 					Roster: []session.TeamMemberSpec{
 						{Name: "lead", Role: "coordinate", Lead: true, Model: "openai/gpt-4.5",
 							RoutingReason: session.RoutingReasonAgentDefPinned},
@@ -770,7 +770,7 @@ func TestToProtoTable(t *testing.T) {
 		{
 			name: "team.member",
 			in: session.Event{Type: session.EvTeamMember, Seq: 31, Turn: 1,
-				Team: &session.TeamPayload{ParentCallID: "p1", TeamID: "team-p1", Member: "worker",
+				Team: &session.TeamPayload{ParentCallID: "p1", ParentInvocationID: "p1", TeamID: "team-p1", Member: "worker",
 					MemberSessionID: "team-p1-worker",
 					InnerKind:       session.EvToolResult, ToolName: "Read", Detail: "capped body", IsError: true}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
@@ -788,7 +788,7 @@ func TestToProtoTable(t *testing.T) {
 		{
 			name: "team.member turn.end context meter",
 			in: session.Event{Type: session.EvTeamMember, Seq: 33, Turn: 1,
-				Team: &session.TeamPayload{ParentCallID: "p1", TeamID: "team-p1", Member: "worker",
+				Team: &session.TeamPayload{ParentCallID: "p1", ParentInvocationID: "p1", TeamID: "team-p1", Member: "worker",
 					InnerKind:     session.EvTurnEnd,
 					Usage:         session.Usage{InputTokens: 40000, OutputTokens: 80},
 					ContextUsed:   40000,
@@ -807,7 +807,7 @@ func TestToProtoTable(t *testing.T) {
 			// #319 subagent.end cause case.
 			name: "team.member result carries the failure cause on StopError",
 			in: session.Event{Type: session.EvTeamMember, Seq: 35, Turn: 1,
-				Team: &session.TeamPayload{ParentCallID: "p1", TeamID: "team-p1", Member: "worker",
+				Team: &session.TeamPayload{ParentCallID: "p1", ParentInvocationID: "p1", TeamID: "team-p1", Member: "worker",
 					MemberSessionID: "team-p1-worker",
 					InnerKind:       session.EvResult, Stop: session.StopError,
 					Cause: "agent: stream: upstream 503 model overloaded"}},
@@ -825,7 +825,7 @@ func TestToProtoTable(t *testing.T) {
 			// The negative half: a clean per-round result leaves cause empty.
 			name: "team.member clean result carries no cause",
 			in: session.Event{Type: session.EvTeamMember, Seq: 36, Turn: 1,
-				Team: &session.TeamPayload{ParentCallID: "p1", TeamID: "team-p1", Member: "worker",
+				Team: &session.TeamPayload{ParentCallID: "p1", ParentInvocationID: "p1", TeamID: "team-p1", Member: "worker",
 					InnerKind: session.EvResult, Stop: session.StopEndTurn, Text: "done"}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
 				if c := got.GetTeam().GetCause(); c != "" {
@@ -836,7 +836,7 @@ func TestToProtoTable(t *testing.T) {
 		{
 			name: "team.end",
 			in: session.Event{Type: session.EvTeamEnd, Seq: 32, Turn: 1,
-				Team: &session.TeamPayload{ParentCallID: "p1", TeamID: "team-p1", Rounds: 3,
+				Team: &session.TeamPayload{ParentCallID: "p1", ParentInvocationID: "p1", TeamID: "team-p1", Rounds: 3,
 					Stop:  session.StopEndTurn,
 					Usage: session.Usage{InputTokens: 50, OutputTokens: 9}}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
@@ -852,7 +852,7 @@ func TestToProtoTable(t *testing.T) {
 		{
 			name: "team.tasks snapshot",
 			in: session.Event{Type: session.EvTeamTasks, Seq: 34, Turn: 1,
-				Team: &session.TeamPayload{ParentCallID: "p1", TeamID: "team-p1",
+				Team: &session.TeamPayload{ParentCallID: "p1", ParentInvocationID: "p1", TeamID: "team-p1",
 					Tasks: []session.TeamTaskSnapshot{
 						{ID: "task-1", Description: "investigate", State: "completed", Assignee: "scout"},
 						{ID: "task-2", Description: "fix", State: "pending", Deps: []string{"task-1"}},
@@ -882,7 +882,7 @@ func TestToProtoTable(t *testing.T) {
 		{
 			name: "team.findings snapshot",
 			in: session.Event{Type: session.EvTeamFindings, Seq: 35, Turn: 1,
-				Team: &session.TeamPayload{ParentCallID: "p1", TeamID: "team-p1",
+				Team: &session.TeamPayload{ParentCallID: "p1", ParentInvocationID: "p1", TeamID: "team-p1",
 					Findings: []session.TeamFindingSnapshot{
 						{Member: "scout", Body: "the cache key omits the tenant id"},
 						{Member: "fixer", Body: "patched the key"},
@@ -910,7 +910,7 @@ func TestToProtoTable(t *testing.T) {
 		{
 			name: "team.end disposition snapshot",
 			in: session.Event{Type: session.EvTeamEnd, Seq: 36, Turn: 1,
-				Team: &session.TeamPayload{ParentCallID: "p1", TeamID: "team-p1", Rounds: 2,
+				Team: &session.TeamPayload{ParentCallID: "p1", ParentInvocationID: "p1", TeamID: "team-p1", Rounds: 2,
 					Stop: session.StopEndTurn,
 					Dispositions: []session.TeamMemberDisposition{
 						{Name: "lead", Disposition: "done"},
@@ -960,7 +960,7 @@ func TestToProtoTable(t *testing.T) {
 		{
 			name: "parallel.start",
 			in: session.Event{Type: session.EvParallelStart, Seq: 40, Turn: 1,
-				Parallel: &session.ParallelPayload{ParentCallID: "p1", Join: "judge", BranchCount: 3}},
+				Parallel: &session.ParallelPayload{ParentCallID: "p1", ParentInvocationID: "p1", Join: "judge", BranchCount: 3}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
 				p := got.GetParallel()
 				if got.GetType() != "parallel.start" {
@@ -974,7 +974,7 @@ func TestToProtoTable(t *testing.T) {
 		{
 			name: "parallel.branch branch_start",
 			in: session.Event{Type: session.EvParallelBranch, Seq: 41, Turn: 1,
-				Parallel: &session.ParallelPayload{ParentCallID: "p1", Kind: session.ParallelBranchStart,
+				Parallel: &session.ParallelPayload{ParentCallID: "p1", ParentInvocationID: "p1", Kind: session.ParallelBranchStart,
 					BranchIndex: 1, ChildID: "parallel-p1-1", BranchLabel: "branch-2", Goal: "explore beta",
 					RoutedCategory: "small", RoutedModel: "openai/gpt-4.1-mini", Model: "openai/gpt-4.1-mini"}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
@@ -1005,7 +1005,7 @@ func TestToProtoTable(t *testing.T) {
 			// branch case (no router fired, routed fields empty). Round-trips verbatim.
 			name: "parallel.branch branch_start inherited model",
 			in: session.Event{Type: session.EvParallelBranch, Seq: 41, Turn: 1,
-				Parallel: &session.ParallelPayload{ParentCallID: "p1", Kind: session.ParallelBranchStart,
+				Parallel: &session.ParallelPayload{ParentCallID: "p1", ParentInvocationID: "p1", Kind: session.ParallelBranchStart,
 					BranchIndex: 0, ChildID: "parallel-p1-0", BranchLabel: "branch-1", Goal: "explore alpha",
 					Model: "anthropic/claude-3.5", RoutingReason: session.RoutingReasonTargetUnavailable}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
@@ -1024,7 +1024,7 @@ func TestToProtoTable(t *testing.T) {
 		{
 			name: "parallel.branch branch_tool",
 			in: session.Event{Type: session.EvParallelBranch, Seq: 42, Turn: 1,
-				Parallel: &session.ParallelPayload{ParentCallID: "p1", Kind: session.ParallelBranchTool,
+				Parallel: &session.ParallelPayload{ParentCallID: "p1", ParentInvocationID: "p1", Kind: session.ParallelBranchTool,
 					BranchIndex: 0, ToolName: "Grep", IsError: true, ToolCount: 2}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
 				p := got.GetParallel()
@@ -1040,7 +1040,7 @@ func TestToProtoTable(t *testing.T) {
 			// upstream in engine/agent). inner_kind is a STRING passthrough.
 			name: "parallel.branch branch_tool with bounded previews",
 			in: session.Event{Type: session.EvParallelBranch, Seq: 46, Turn: 1,
-				Parallel: &session.ParallelPayload{ParentCallID: "p1", Kind: session.ParallelBranchTool,
+				Parallel: &session.ParallelPayload{ParentCallID: "p1", ParentInvocationID: "p1", Kind: session.ParallelBranchTool,
 					BranchIndex: 1, ToolName: "Read", ToolCount: 3, InnerKind: session.EvToolResult,
 					Detail: "package main …"}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
@@ -1057,7 +1057,7 @@ func TestToProtoTable(t *testing.T) {
 		{
 			name: "parallel.branch branch_tool message preview",
 			in: session.Event{Type: session.EvParallelBranch, Seq: 47, Turn: 1,
-				Parallel: &session.ParallelPayload{ParentCallID: "p1", Kind: session.ParallelBranchTool,
+				Parallel: &session.ParallelPayload{ParentCallID: "p1", ParentInvocationID: "p1", Kind: session.ParallelBranchTool,
 					BranchIndex: 1, ToolCount: 3, InnerKind: session.EvResult, Text: "branch summary"}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
 				p := got.GetParallel()
@@ -1072,7 +1072,7 @@ func TestToProtoTable(t *testing.T) {
 		{
 			name: "parallel.branch branch_end",
 			in: session.Event{Type: session.EvParallelBranch, Seq: 43, Turn: 1,
-				Parallel: &session.ParallelPayload{ParentCallID: "p1", Kind: session.ParallelBranchEnd,
+				Parallel: &session.ParallelPayload{ParentCallID: "p1", ParentInvocationID: "p1", Kind: session.ParallelBranchEnd,
 					BranchIndex: 2, ChildID: "parallel-p1-2", ToolCount: 4, Failed: true,
 					Stop: session.StopError, DurationMs: 555,
 					Usage: session.Usage{InputTokens: 12, OutputTokens: 3}}},
@@ -1094,7 +1094,7 @@ func TestToProtoTable(t *testing.T) {
 		{
 			name: "parallel.end winner",
 			in: session.Event{Type: session.EvParallelEnd, Seq: 44, Turn: 1,
-				Parallel: &session.ParallelPayload{ParentCallID: "p1", Join: "judge", BranchCount: 3,
+				Parallel: &session.ParallelPayload{ParentCallID: "p1", ParentInvocationID: "p1", Join: "judge", BranchCount: 3,
 					Winner: 1, Stop: session.StopEndTurn,
 					Usage: session.Usage{InputTokens: 100, OutputTokens: 20}}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
@@ -1114,7 +1114,7 @@ func TestToProtoTable(t *testing.T) {
 		{
 			name: "parallel.end join=all no winner",
 			in: session.Event{Type: session.EvParallelEnd, Seq: 45, Turn: 1,
-				Parallel: &session.ParallelPayload{ParentCallID: "p1", Join: "all", BranchCount: 2, Winner: -1}},
+				Parallel: &session.ParallelPayload{ParentCallID: "p1", ParentInvocationID: "p1", Join: "all", BranchCount: 2, Winner: -1}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
 				p := got.GetParallel()
 				if p == nil || p.GetWinner() != -1 {
@@ -1207,18 +1207,20 @@ func TestToProtoLogOnlyPayloads(t *testing.T) {
 	apr := toProto(session.Event{
 		Type: session.EvApproval,
 		Approval: &session.ApprovalPayload{
-			AskID:       "s1:1:c1:r0",
-			Verdict:     session.VerdictStringAllowAlways,
-			Tool:        "Shell",
-			Call:        session.ToolCallID("c1"),
-			AllowAlways: true,
+			AskID:        "s1:1:c1:r0",
+			Verdict:      session.VerdictStringAllowAlways,
+			Tool:         "Shell",
+			Call:         session.ToolCallID("c1"),
+			InvocationID: "tc_approval",
+			SessionID:    "s1",
+			AllowAlways:  true,
 		},
 	}).GetApproval()
 	if apr == nil {
 		t.Fatal("approval submessage not projected")
 	}
 	if apr.GetAskId() != "s1:1:c1:r0" || apr.GetVerdict() != mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS ||
-		apr.GetTool() != "Shell" || apr.GetCallId() != "c1" {
+		apr.GetTool() != "Shell" || apr.GetCallId() != "tc_approval" || apr.GetOriginSessionId() != "s1" {
 		t.Fatalf("approval projected wrong: %+v", apr)
 	}
 
@@ -1245,9 +1247,11 @@ func TestToProtoLogOnlyPayloads(t *testing.T) {
 	// CompactionArchive with a full message slice (assistant w/ tool calls, tool-role
 	// w/ result, user w/ media).
 	tr := session.NewToolResult("c1", "ok")
+	tr.InvocationID = "tc_archived"
 	assistantMsg := session.NewAssistantMessage("calling", "reason", []session.ToolCall{
 		session.NewToolCall("c1", "Shell", json.RawMessage(`{"cmd":"ls"}`)),
 	})
+	assistantMsg.ToolCalls[0].InvocationID = "tc_archived"
 	assistantMsg.ReasoningItemID = "rs_1"
 	arch := toProto(session.Event{
 		Type: session.EvCompactionArchive,
@@ -1274,15 +1278,15 @@ func TestToProtoLogOnlyPayloads(t *testing.T) {
 	if arch.GetReplaced()[1].GetRole() != "assistant" || arch.GetReplaced()[1].GetReasoning() != "reason" {
 		t.Errorf("replaced[1] wrong: %+v", arch.GetReplaced()[1])
 	}
-	if arch.GetReplaced()[1].GetReasoningItemId() != "rs_1" {
-		t.Errorf("replaced[1].ReasoningItemId = %q, want rs_1 (the reasoning-item id must project alongside Reasoning/ProviderPhase)", arch.GetReplaced()[1].GetReasoningItemId())
+	if arch.GetReplaced()[1].GetReasoningItemId() != "" {
+		t.Errorf("provider-private reasoning item leaked: %q", arch.GetReplaced()[1].GetReasoningItemId())
 	}
 	if len(arch.GetReplaced()[1].GetToolCalls()) != 1 ||
 		arch.GetReplaced()[1].GetToolCalls()[0].GetName() != "Shell" {
 		t.Errorf("replaced[1].ToolCalls wrong: %+v", arch.GetReplaced()[1].GetToolCalls())
 	}
 	if arch.GetReplaced()[2].GetRole() != "tool" || arch.GetReplaced()[2].GetToolResult() == nil ||
-		arch.GetReplaced()[2].GetToolResult().GetCallId() != "c1" {
+		arch.GetReplaced()[2].GetToolResult().GetCallId() != "tc_archived" {
 		t.Errorf("replaced[2] wrong: %+v", arch.GetReplaced()[2])
 	}
 
@@ -1593,10 +1597,11 @@ func TestToProtoToolResultWithBlocks(t *testing.T) {
 		session.NewStructuredContentBlock(`{"k":"v"}`),
 	}
 	r := session.NewToolResultWithParts("c1", "summary", parts)
+	r.InvocationID = "tc_blocks"
 
 	pb := toProtoToolResult(r)
 
-	if pb.GetCallId() != "c1" || pb.GetContent() != "summary" || pb.GetIsError() {
+	if pb.GetCallId() != "tc_blocks" || pb.GetContent() != "summary" || pb.GetIsError() {
 		t.Fatalf("legacy fields mismatch: %+v", pb)
 	}
 	// structured_content is derived from the BlockStructuredContent block's Text.
@@ -1750,18 +1755,18 @@ func TestToProtoNeverFailsMarshalOnInvalidUTF8(t *testing.T) {
 			Replaced: []session.Message{msg},
 		}},
 		"subagent": {Type: session.EvSubagentEnd, Subagent: &session.SubagentPayload{
-			ParentCallID: "p1", ChildID: "ch1", Goal: "g " + badUTF8, Text: "t " + badUTF8,
+			ParentCallID: "p1", ParentInvocationID: "p1", ChildID: "ch1", Goal: "g " + badUTF8, Text: "t " + badUTF8,
 			Detail: "d " + badUTF8, Cause: "c " + badUTF8, Stop: session.StopError,
 		}},
 		"team": {Type: session.EvTeamEnd, Team: &session.TeamPayload{
-			ParentCallID: "p1", TeamID: "t1", Member: "m " + badUTF8, Text: "t " + badUTF8, Detail: "d " + badUTF8,
+			ParentCallID: "p1", ParentInvocationID: "p1", TeamID: "t1", Member: "m " + badUTF8, Text: "t " + badUTF8, Detail: "d " + badUTF8,
 			Roster:       []session.TeamMemberSpec{{Name: "n " + badUTF8, Role: "r " + badUTF8}},
 			Tasks:        []session.TeamTaskSnapshot{{ID: "1", Description: "desc " + badUTF8, Assignee: "as " + badUTF8, Deps: []string{badUTF8}}},
 			Findings:     []session.TeamFindingSnapshot{{Member: "m " + badUTF8, Body: "b " + badUTF8}},
 			Dispositions: []session.TeamMemberDisposition{{Name: "n " + badUTF8, Disposition: "stopped", Reason: "error"}},
 		}},
 		"parallel": {Type: session.EvParallelBranch, Parallel: &session.ParallelPayload{
-			ParentCallID: "p1", Kind: session.ParallelBranchTool, BranchLabel: "bl " + badUTF8, Goal: "g " + badUTF8,
+			ParentCallID: "p1", ParentInvocationID: "p1", Kind: session.ParallelBranchTool, BranchLabel: "bl " + badUTF8, Goal: "g " + badUTF8,
 			Text: "t " + badUTF8, Detail: "d " + badUTF8,
 		}},
 		"schedule": {Type: session.EvScheduleFired, Schedule: &session.SchedulePayload{

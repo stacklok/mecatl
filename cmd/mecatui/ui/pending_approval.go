@@ -203,7 +203,7 @@ func (m Model) updatePendingApprovalWatchOpened(msg pendingApprovalWatchOpenedMs
 	recovery.watch = msg.watch
 	m.phase = phaseRunning
 	ask := recovery.approval
-	mm, cmd := m.applyPermissionAsk(client.PermissionAskMsg{RunID: ask.RunID, AskID: ask.AskID, Tool: ask.Tool, Args: ask.Args, Reason: ask.Reason, ExpectedRunID: ask.RunID, Recovery: true})
+	mm, cmd := m.applyPermissionAsk(client.PermissionAskMsg{RunID: ask.RunID, AskID: ask.AskID, CallID: ask.ToolCallID, OriginSessionID: ask.OriginSessionID, Tool: ask.Tool, Args: ask.Args, Reason: ask.Reason, ExpectedRunID: ask.RunID, Recovery: true})
 	m = mm.(Model)
 	return m, tea.Batch(cmd, pendingApprovalRecvCmd(recovery.generation, msg.watch)), true
 }
@@ -261,7 +261,7 @@ func (m Model) updatePendingApprovalWatch(msg pendingApprovalWatchMsg) (tea.Mode
 		recovery.resolved = false
 		recovery.resolving = false
 		recovery.cancelled = false
-		mm, cmd := m.applyPermissionAsk(client.PermissionAskMsg{RunID: ask.RunID, AskID: ask.AskID, Tool: ask.Tool, Args: ask.Args, Reason: ask.Reason, ExpectedRunID: ask.RunID, Recovery: true})
+		mm, cmd := m.applyPermissionAsk(client.PermissionAskMsg{RunID: ask.RunID, AskID: ask.AskID, CallID: ask.ToolCallID, OriginSessionID: ask.OriginSessionID, Tool: ask.Tool, Args: ask.Args, Reason: ask.Reason, ExpectedRunID: ask.RunID, Recovery: true})
 		m = mm.(Model)
 		return m, tea.Batch(cmd, pendingApprovalRecvCmd(recovery.generation, recovery.watch)), true
 	}

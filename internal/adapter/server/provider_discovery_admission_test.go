@@ -82,6 +82,7 @@ func TestProviderModelDiscovery_Scenario3_ServiceRunEntryPaths(t *testing.T) {
 				var calls []session.ToolCall
 				if name == "cancelled" || name == "failed" || name == "orphaned-running" || name == "restart-approval" {
 					calls = []session.ToolCall{session.NewToolCall("pending-call", "Write", []byte(`{}`))}
+					calls[0].InvocationID = session.NewInvocationID()
 				}
 				if err := seed.RecordAssistant(session.NewAssistantMessage("genuine assistant history", "", calls)); err != nil {
 					t.Fatal(err)
@@ -99,7 +100,7 @@ func TestProviderModelDiscovery_Scenario3_ServiceRunEntryPaths(t *testing.T) {
 						transition = seed.PrepareFailedStepRetry()
 					}
 				case "restart-approval":
-					transition = seed.PauseForApproval(session.PendingAsk{AskID: "persisted-ask", Tool: "Write", Call: "pending-call", Origin: session.ApprovalOriginPermission})
+					transition = seed.PauseForApproval(session.PendingAsk{AskID: "persisted-ask", Tool: "Write", Call: "pending-call", InvocationID: calls[0].InvocationID, Origin: session.ApprovalOriginPermission})
 				case "orphaned-running":
 				default:
 					transition = seed.Complete()
@@ -183,6 +184,9 @@ func TestProviderModelDiscovery_Scenario3_ServiceRunEntryPaths(t *testing.T) {
 				}
 			case "restart-approval":
 				gotAsk, hasAsk := after.PendingAsk()
+				if gotAsk.InvocationID == "" || gotAsk.InvocationID != after.Conversation.Messages[len(after.Conversation.Messages)-1].ToolCalls[0].InvocationID {
+					t.Errorf("translated pending occurrence unpaired: %+v", gotAsk)
+				}
 				if after.State != session.StateAwaiting || hasAsk != hadAsk || !reflect.DeepEqual(gotAsk, pendingAsk) {
 					t.Errorf("approval consumed: state=%s pending=%+v", after.State, gotAsk)
 				}

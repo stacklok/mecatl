@@ -36,6 +36,8 @@ type GuardrailCoverageEntry struct {
 // GuardrailReviewDetail is bounded live-only human display data.
 type GuardrailReviewDetail struct {
 	ReviewID, Concern, SourceDisplay, NextAction string
+	OriginSessionID                              session.SessionID
+	ToolCallID                                   session.InvocationID
 }
 
 type reviewDetailKey struct {
@@ -80,14 +82,22 @@ func (r *ReviewDetailRegistry) publishReviewDetailForRoot(root session.SessionID
 		return
 	}
 	safe := GuardrailReviewDetail{
-		ReviewID: detail.ReviewID,
-		Concern:  safeReviewDetail(detail.Concern), SourceDisplay: safeReviewDetail(detail.SourceDisplay), NextAction: safeReviewDetail(detail.NextAction),
+		ReviewID:        detail.ReviewID,
+		OriginSessionID: detail.SessionID,
+		ToolCallID:      detail.ToolCallID,
+		Concern:         safeReviewDetail(detail.Concern), SourceDisplay: safeReviewDetail(detail.SourceDisplay), NextAction: safeReviewDetail(detail.NextAction),
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	key := reviewDetailKey{session: detail.SessionID, review: detail.ReviewID}
 	old, replacing := r.details[key]
 	if replacing && old.root == root {
+		if old.detail.ToolCallID != "" && safe.ToolCallID != "" && old.detail.ToolCallID != safe.ToolCallID {
+			return
+		}
+		if safe.ToolCallID == "" {
+			safe.ToolCallID = old.detail.ToolCallID
+		}
 		safe.Concern = joinReviewDetail(old.detail.Concern, safe.Concern)
 		safe.SourceDisplay = joinReviewDetail(old.detail.SourceDisplay, safe.SourceDisplay)
 	}
@@ -110,7 +120,7 @@ func (r *ReviewDetailRegistry) publishReviewDetailForRoot(root session.SessionID
 }
 
 func reviewDetailSize(key reviewDetailKey, entry reviewDetailEntry) int64 {
-	return int64(len(key.session) + len(key.review) + len(entry.root) + len(entry.detail.ReviewID) + len(entry.detail.Concern) + len(entry.detail.SourceDisplay) + len(entry.detail.NextAction))
+	return int64(len(key.session) + len(key.review) + len(entry.root) + len(entry.detail.ReviewID) + len(entry.detail.ToolCallID) + len(entry.detail.Concern) + len(entry.detail.SourceDisplay) + len(entry.detail.NextAction))
 }
 
 func joinReviewDetail(left, right string) string {

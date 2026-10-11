@@ -269,6 +269,10 @@ type PendingAsk struct {
 	Reason string
 	// Call is the id of the gated ToolCall this ask pauses on.
 	Call ToolCallID `json:"call,omitempty"`
+	// InvocationID is the accepted occurrence; Call retains its private pairing ID.
+	InvocationID InvocationID `json:"invocation_id,omitempty"`
+	// SessionID is the originating session (not necessarily the relay session).
+	SessionID SessionID `json:"session_id,omitempty"`
 	// Guardrail carries the exact guardrail approval class and repeat scope.
 	Guardrail *GuardrailPendingScope `json:"guardrail,omitempty"`
 	// Origin is serialized approval provenance. Unknown is fail-closed.
@@ -312,6 +316,8 @@ type Session struct {
 	// tokenUsage is the aggregate-owned canonical durable accounting ledger.
 	// TokenUsageSnapshot returns an owned external view.
 	tokenUsage map[UsageKind]TokenUsage
+	// hookRevision is the highest hook update published or recovered for this session.
+	hookRevision uint64
 	// latestContextOccupancy is the optional display-only input-token numerator
 	// from the latest completed agent-loop turn. It is distinct from tokenUsage
 	// and must not participate in accounting or run-budget decisions.
@@ -549,7 +555,29 @@ func (s *Session) RecordToolResults(results []ToolResult) error {
 	if s.State != StateRunning {
 		return fmt.Errorf("%w: RecordToolResults from %q", ErrIllegalTransition, s.State)
 	}
-	for _, r := range results {
+	open := make(map[ToolCallID]InvocationID)
+	for _, m := range s.Conversation.Messages {
+		for _, c := range m.ToolCalls {
+			open[c.ID] = c.InvocationID
+		}
+		if m.ToolResult != nil {
+			delete(open, m.ToolResult.CallID)
+		}
+	}
+	normalized := make([]ToolResult, len(results))
+	for i, r := range results {
+		if id, ok := open[r.CallID]; ok {
+			if r.InvocationID != "" && id != "" && r.InvocationID != id {
+				return fmt.Errorf("RecordToolResults: conflicting invocation ID for provider call %q", r.CallID)
+			}
+			if r.InvocationID == "" {
+				r.InvocationID = id
+			}
+		}
+		delete(open, r.CallID)
+		normalized[i] = r
+	}
+	for _, r := range normalized {
 		s.Conversation.Append(NewToolMessage(r))
 		s.Counters.ToolCalls++
 		if r.IsError {
@@ -892,6 +920,26 @@ func (s *Session) LastError() string {
 	return s.lastError
 }
 
+// HookRevision reports the session-wide hook publication high-water mark.
+func (s *Session) HookRevision() uint64 { return s.hookRevision }
+
+// RestoreHookRevision advances the high-water mark from a snapshot or committed log.
+func (s *Session) RestoreHookRevision(revision uint64) {
+	if revision > s.hookRevision {
+		s.hookRevision = revision
+	}
+}
+
+// NextHookRevision assigns the next update version at the serialized publication boundary.
+// Zero signals exhaustion rather than wrapping to a conflicting revision.
+func (s *Session) NextHookRevision() uint64 {
+	if s.hookRevision == ^uint64(0) {
+		return 0
+	}
+	s.hookRevision++
+	return s.hookRevision
+}
+
 // BeginRun stamps the opaque, host-minted identity of the run this session is
 // about to drive.
 //
@@ -1044,7 +1092,9 @@ func (s *Session) closeOutInterruptedTurn(message string) {
 		if _, ok := answered[call.ID]; ok {
 			continue
 		}
-		s.Conversation.Append(NewToolMessage(NewToolError(call.ID, message)))
+		result := NewToolError(call.ID, message)
+		result.InvocationID = call.InvocationID
+		s.Conversation.Append(NewToolMessage(result))
 	}
 }
 

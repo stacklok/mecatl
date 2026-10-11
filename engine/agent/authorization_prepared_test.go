@@ -40,6 +40,25 @@ func mustPrepareAfterAuthorization(t *testing.T, engine *agent.Engine, sess *ses
 	return prepared
 }
 
+func TestAuthorizationContinuationRejectsAmbiguousLegacyProviderPairing(t *testing.T) {
+	sess := newSession(t, session.Limits{})
+	if err := sess.BeginTurn(); err != nil {
+		t.Fatal(err)
+	}
+	call := session.NewToolCall("duplicate", "Read", []byte(`{}`))
+	if err := sess.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{call, call})); err != nil {
+		t.Fatal(err)
+	}
+	resolution, err := session.NewAuthorizationResolution(session.AuthorizationGranted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := newEngine(agent.Deps{}).PrepareAuthorizationContinuation(context.Background(), sess, agent.MemEnv("/ws"), session.PendingAuthorization{Call: call}, resolution)
+	if err == nil || prepared != nil {
+		t.Fatalf("ambiguous continuation admitted: run=%v err=%v", prepared, err)
+	}
+}
+
 func TestPreparedAuthorizationContinuationsRejectInvalidResolution(t *testing.T) {
 	engine := &agent.Engine{}
 	if prepared, err := engine.PrepareAuthorizationContinuation(context.Background(), nil, tool.Environment{}, session.PendingAuthorization{}, session.AuthorizationResolution{}); err == nil || prepared != nil {
@@ -56,9 +75,12 @@ func TestPreparedAuthorizationContinuationGatesExecutionAndStartsOnce(t *testing
 		executed.Add(1)
 		return session.NewToolResult(call.ID, "ok"), nil
 	}}
-	engine := newEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: catalogWith(t, protected)})
+	var order []string
+	reviewer := &scenario1Reviewer{order: &order}
+	engine := newEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: catalogWith(t, protected), ToolReviewer: reviewer})
 	sess := newSession(t, session.Limits{})
 	call := session.NewToolCall("call", protected.Spec().Name, nil)
+	call.InvocationID = "tc_continued"
 	authorization := session.ExternalAuthorization{ID: "authorization", DisplayName: "Calendar", Binding: "binding", ExpiresAt: time.Now().Add(time.Hour)}
 	if err := sess.BeginTurn(); err != nil {
 		t.Fatal(err)
@@ -92,7 +114,11 @@ func TestPreparedAuthorizationContinuationGatesExecutionAndStartsOnce(t *testing
 	}
 	events := drain(run)
 	resultAt, resolvedAt := -1, -1
+	var review *session.HookPayload
 	for i, ev := range events {
+		if ev.Type == session.EvHook && ev.Hook != nil && ev.Hook.Guardrail != nil {
+			review = ev.Hook
+		}
 		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == call.ID {
 			resultAt = i
 		}
@@ -102,6 +128,9 @@ func TestPreparedAuthorizationContinuationGatesExecutionAndStartsOnce(t *testing
 			}
 			resolvedAt = i
 		}
+	}
+	if review == nil || review.HookID != "review_tc_continued_action" || review.Guardrail.ReviewID != review.HookID || review.InvocationID != call.InvocationID || len(reviewer.requests) != 1 || reviewer.requests[0].ReviewID != review.HookID {
+		t.Fatalf("continued review identity: hook=%+v requests=%+v", review, reviewer.requests)
 	}
 	if resultAt < 0 || resolvedAt <= resultAt {
 		t.Fatalf("authorization event order: result=%d resolved=%d", resultAt, resolvedAt)

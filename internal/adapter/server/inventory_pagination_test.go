@@ -111,7 +111,7 @@ func (s *saveLoadOnlyStore) Load(ctx context.Context, id session.SessionID) (*se
 
 func TestSessionContinuityUX_Scenario3_TransportParity(t *testing.T) {
 	st := memstore.New(memstore.WithNow(func() time.Time { return time.Unix(2_000, 0) }))
-	rel := session.SessionRelationship{ParentSessionID: "parent", CallID: "call-1"}
+	rel := session.SessionRelationship{ParentSessionID: "parent", CallID: "call-1", ParentInvocationID: "tc_parent"}
 	saveInventorySession(t, st, "child", nil, session.SessionKindSubagent, rel)
 	svc := inventoryService(t, st, false)
 
@@ -159,7 +159,7 @@ func TestSessionContinuityUX_Scenario3_TransportParity(t *testing.T) {
 		row.GetReasonCode() != string(server.CapabilityReasonInspectOnlyKind) {
 		t.Fatalf("inventory taxonomy/workspace/capability projection incomplete: %+v", row)
 	}
-	if grpcTranscript.GetKind() != string(session.SessionKindSubagent) || grpcTranscript.GetRelationship().GetCallId() != "call-1" {
+	if grpcTranscript.GetKind() != string(session.SessionKindSubagent) || grpcTranscript.GetRelationship().GetCallId() != "tc_parent" {
 		t.Fatalf("transcript taxonomy projection incomplete: %+v", grpcTranscript)
 	}
 

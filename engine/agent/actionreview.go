@@ -83,6 +83,15 @@ func reviewFailureConcern(code ReviewFailureCode) string {
 	}
 }
 
+// reviewRecordID keeps legacy test/old-call behavior only when the occurrence has
+// no public identity. New invocations use a namespace disjoint from ordinary hooks.
+func reviewRecordID(sess session.SessionID, call session.ToolCall, job ReviewJob) string {
+	if call.InvocationID == "" {
+		return fmt.Sprintf("%s:%s:%s", sess, call.ID, job)
+	}
+	return fmt.Sprintf("review_%s_%s", call.InvocationID, job)
+}
+
 func reviewMachinePayload(reviewer ToolReviewer, req ToolReviewRequest, result ToolReviewResult, reviewErr error, disposition string) *session.GuardrailReviewPayload {
 	payload := &session.GuardrailReviewPayload{ReviewID: req.ReviewID, Job: string(req.Job), Assessment: string(result.Assessment), Inspection: "complete", Disposition: disposition}
 	if reviewErr != nil {
@@ -371,8 +380,13 @@ func (e *Engine) prepareActionReview(ctx context.Context, r *Run, sess *session.
 	effectiveArgs := append(json.RawMessage(nil), call.Args...)
 	eventInput := append(json.RawMessage(nil), call.Args...)
 	effectiveCall := session.NewToolCall(call.ID, call.Name, effectiveArgs)
+	effectiveCall.InvocationID = call.InvocationID
+	reviewID := reviewRecordID(sess.ID, call, ReviewJobAction)
+	if r.pendingReviewID != "" {
+		reviewID = r.pendingReviewID
+	}
 	req := ToolReviewRequest{
-		ReviewID: fmt.Sprintf("%s:%s:action", sess.ID, call.ID), Job: ReviewJobAction,
+		ReviewID: reviewID, Job: ReviewJobAction,
 		Event:         governance.HookEvent{Phase: governance.PhasePreToolUse, Tool: call.Name, Input: eventInput, SessionID: string(sess.ID), CallID: string(call.ID)},
 		EffectiveCall: effectiveCall, PrincipalFacts: facts, PrincipalFactsComplete: complete,
 		Caller: reviewCaller(e, r, sess), Environment: env.Ref(), Target: target,
@@ -599,7 +613,7 @@ func reviewConcernDisplay(concern ReviewConcern) string {
 func reviewSourceDisplay(req ToolReviewRequest, sourceRef string) string {
 	switch sourceRef {
 	case "call":
-		return fmt.Sprintf("effective call %s (%s)", req.EffectiveCall.ID, req.EffectiveCall.Name)
+		return fmt.Sprintf("effective call (%s)", req.EffectiveCall.Name)
 	case "":
 		return ""
 	}
@@ -630,24 +644,24 @@ func (r *Run) publishActionDetail(ctx context.Context, sessionID session.Session
 	}
 	next := "No human action is required."
 	if reviewErr != nil {
-		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sessionID, ReviewID: reviewID, Concern: reviewFailureConcern(reviewFailureCode(reviewErr)), NextAction: "Run once or cancel when enforcement requires a human decision."})
+		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sessionID, ToolCallID: req.EffectiveCall.InvocationID, ReviewID: reviewID, Concern: reviewFailureConcern(reviewFailureCode(reviewErr)), NextAction: "Run once or cancel when enforcement requires a human decision."})
 		return
 	}
 	if result.Assessment == ReviewAcceptable {
-		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sessionID, ReviewID: reviewID, Concern: "Inspection completed; no attempted authority crossing was found.", NextAction: next})
+		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sessionID, ToolCallID: req.EffectiveCall.InvocationID, ReviewID: reviewID, Concern: "Inspection completed; no attempted authority crossing was found.", NextAction: next})
 		return
 	}
 	if result.Assessment == ReviewUnresolved {
 		next = "Run once or cancel; missing evidence is not itself an unsafe finding."
 	}
 	for _, concern := range result.Concerns {
-		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sessionID, ReviewID: reviewID, Concern: reviewConcernDisplay(concern), SourceDisplay: reviewSourceDisplay(req, concern.SourceRef), NextAction: "Run once, approve this exact repeatable action for this session when available, or cancel."})
+		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sessionID, ToolCallID: req.EffectiveCall.InvocationID, ReviewID: reviewID, Concern: reviewConcernDisplay(concern), SourceDisplay: reviewSourceDisplay(req, concern.SourceRef), NextAction: "Run once, approve this exact repeatable action for this session when available, or cancel."})
 	}
 	for _, missing := range result.Missing {
-		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sessionID, ReviewID: reviewID, Concern: "Inspection was unresolved because required evidence was unavailable.", SourceDisplay: missing.Ref, NextAction: next})
+		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sessionID, ToolCallID: req.EffectiveCall.InvocationID, ReviewID: reviewID, Concern: "Inspection was unresolved because required evidence was unavailable.", SourceDisplay: missing.Ref, NextAction: next})
 	}
 	if len(result.Concerns) == 0 && len(result.Missing) == 0 {
-		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sessionID, ReviewID: reviewID, Concern: "Inspection was unresolved without a specific unsafe finding.", NextAction: next})
+		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sessionID, ToolCallID: req.EffectiveCall.InvocationID, ReviewID: reviewID, Concern: "Inspection was unresolved without a specific unsafe finding.", NextAction: next})
 	}
 }
 
@@ -690,6 +704,7 @@ func (e *Engine) reviewChildPermissionAsk(ctx context.Context, r *Run, sess *ses
 		return nil
 	}
 	call := session.NewToolCall(ask.Call, ask.Tool, append(json.RawMessage(nil), ask.Args...))
+	call.InvocationID = ask.InvocationID
 	if shellSystemScope(call) {
 		return nil
 	}
@@ -702,7 +717,7 @@ func (e *Engine) reviewChildPermissionAsk(ctx context.Context, r *Run, sess *ses
 	principal, principalComplete, revision := r.reviewRoot.principalSnapshotWithRevision()
 	trajectory, trajectoryComplete := r.reviewRoot.snapshot()
 	req := ToolReviewRequest{
-		ReviewID: fmt.Sprintf("%s:%s:permission", sess.ID, call.ID), Job: ReviewJobPermission,
+		ReviewID: reviewRecordID(sess.ID, call, ReviewJobPermission), Job: ReviewJobPermission,
 		Event:         governance.HookEvent{Phase: governance.PhasePreToolUse, Tool: call.Name, Input: append(json.RawMessage(nil), call.Args...), SessionID: string(sess.ID), CallID: string(call.ID)},
 		EffectiveCall: call, PrincipalFacts: principal, PrincipalFactsComplete: principalComplete,
 		Caller: reviewCaller(e, r, sess), Environment: env.Ref(), EvidenceComplete: true,
@@ -737,13 +752,13 @@ func (e *Engine) reviewChildPermissionAsk(ctx context.Context, r *Run, sess *ses
 	if err == nil && result.Assessment == ReviewAcceptable {
 		disposition = "allow_once"
 	}
-	e.emit(r, session.Event{Type: session.EvHook, Turn: sess.Counters.Turns - 1, Hook: &session.HookPayload{Phase: string(governance.PhasePreToolUse), Tool: call.Name, Decision: session.HookInfo, CallID: call.ID, Guardrail: reviewMachinePayload(r.reviewRoot.reviewer, req, result, err, disposition)}})
+	e.emit(r, session.Event{Type: session.EvHook, Turn: sess.Counters.Turns - 1, Hook: &session.HookPayload{Phase: string(governance.PhasePreToolUse), Tool: call.Name, Decision: session.HookInfo, CallID: call.ID, InvocationID: call.InvocationID, Guardrail: reviewMachinePayload(r.reviewRoot.reviewer, req, result, err, disposition)}})
 	if err != nil {
-		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sess.ID, ReviewID: req.ReviewID, Concern: reviewFailureConcern(reviewFailureCode(err)), NextAction: "The existing permission path remains in effect."})
+		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sess.ID, ToolCallID: req.EffectiveCall.InvocationID, ReviewID: req.ReviewID, Concern: reviewFailureConcern(reviewFailureCode(err)), NextAction: "The existing permission path remains in effect."})
 	} else if result.Assessment == ReviewAcceptable {
-		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sess.ID, ReviewID: req.ReviewID, Concern: "Permission inspection completed and authorized this exact execution once.", NextAction: "No durable permission was learned."})
+		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sess.ID, ToolCallID: req.EffectiveCall.InvocationID, ReviewID: req.ReviewID, Concern: "Permission inspection completed and authorized this exact execution once.", NextAction: "No durable permission was learned."})
 	} else {
-		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sess.ID, ReviewID: req.ReviewID, Concern: "Permission inspection did not authorize this execution.", NextAction: "The existing permission path remains in effect."})
+		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sess.ID, ToolCallID: req.EffectiveCall.InvocationID, ReviewID: req.ReviewID, Concern: "Permission inspection did not authorize this execution.", NextAction: "The existing permission path remains in effect."})
 	}
 	if err == nil && result.Assessment == ReviewAcceptable {
 		return &revision
@@ -836,7 +851,7 @@ func (e *Engine) resolveActionAssessment(ctx context.Context, r *Run, sess *sess
 	if result.Assessment != ReviewAcceptable && enforce && !e.deps.Interactive {
 		disposition = "deny"
 	}
-	e.emit(r, session.Event{Type: session.EvHook, Turn: turnIdx, Hook: &session.HookPayload{Phase: string(governance.PhasePreToolUse), Tool: call.Name, Decision: session.HookInfo, CallID: call.ID, Guardrail: reviewMachinePayload(r.reviewRoot.reviewer, assessment.action.request, result, assessment.err, disposition)}})
+	e.emit(r, session.Event{Type: session.EvHook, Turn: turnIdx, Hook: &session.HookPayload{Phase: string(governance.PhasePreToolUse), Tool: call.Name, Decision: session.HookInfo, CallID: call.ID, InvocationID: call.InvocationID, Guardrail: reviewMachinePayload(r.reviewRoot.reviewer, assessment.action.request, result, assessment.err, disposition)}})
 	if result.Assessment == ReviewAcceptable || !enforce {
 		return session.ToolResult{}, false, true, false
 	}
@@ -855,7 +870,7 @@ func (e *Engine) resolveActionAssessment(ctx context.Context, r *Run, sess *sess
 func (e *Engine) resolveActionAsk(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, auth *permissionAuthorization, assessment actionReviewAssessment, reason string, resultEvent session.EventType) (session.ToolResult, bool, bool, bool) {
 	ask := session.PendingAsk{
 		AskID: r.issueAskID(sess.ID, sess.Counters.ToolCalls, call.ID), Tool: call.Name, Args: call.Args,
-		Reason: reason, Call: call.ID, Origin: session.ApprovalOriginHookGuardrail,
+		Reason: reason, Call: call.ID, InvocationID: call.InvocationID, Origin: session.ApprovalOriginHookGuardrail,
 		Guardrail: &session.GuardrailPendingScope{ReviewID: assessment.action.request.ReviewID, Kind: session.GuardrailApprovalAction, GrantDigest: assessment.action.digest, SessionOnly: true, RepeatAvailable: assessment.action.repeat},
 	}
 	answer, ok, paused := e.surfaceAsk(ctx, r, sess, turnIdx, ask)
@@ -867,6 +882,7 @@ func (e *Engine) resolveActionAsk(ctx context.Context, r *Run, sess *session.Ses
 		return session.ToolResult{}, true, false, false
 	}
 	if answer.verdict != session.VerdictAllowOnce && answer.verdict != session.VerdictAllowAlways {
+		e.emit(r, session.Event{Type: session.EvHook, Turn: turnIdx, Hook: &session.HookPayload{Phase: string(governance.PhasePreToolUse), Tool: call.Name, Decision: session.HookInfo, CallID: call.ID, InvocationID: call.InvocationID, Guardrail: reviewMachinePayload(r.reviewRoot.reviewer, assessment.action.request, assessment.result, assessment.err, "deny")}})
 		res := session.NewToolError(call.ID, reason)
 		e.publishToolResult(r, session.Event{Type: resultEvent, Turn: turnIdx, ToolResult: ptr(res)})
 		r.reviewRoot.record(reviewFact(call, assessment.action.request.Target, "denied"))
@@ -890,6 +906,7 @@ func (e *Engine) resolveActionAsk(ctx context.Context, r *Run, sess *session.Ses
 		return res, false, false, false
 	}
 	r.reviewRoot.record(reviewFact(call, assessment.action.request.Target, "approved"))
+	e.emit(r, session.Event{Type: session.EvHook, Turn: turnIdx, Hook: &session.HookPayload{Phase: string(governance.PhasePreToolUse), Tool: call.Name, Decision: session.HookInfo, CallID: call.ID, InvocationID: call.InvocationID, Guardrail: reviewMachinePayload(r.reviewRoot.reviewer, assessment.action.request, assessment.result, assessment.err, "execute")}})
 	return session.ToolResult{}, false, true, answer.verdict == session.VerdictAllowAlways
 }
 

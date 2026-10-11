@@ -21,7 +21,11 @@ func approvalModel(t *testing.T, ask pendingAsk) Model {
 	m.sessionID = "sess-test-0001"
 	m.stream = client.NewStream(&fakeRecver{}, &fakeSender{})
 	m.phase = phaseRunning
-	return applyAll(m, client.PermissionAskMsg{AskID: ask.AskID, Tool: ask.Tool, Args: ask.Args, Reason: ask.Reason})
+	origin := "child"
+	if ask.offerAlways {
+		origin = m.sessionID
+	}
+	return applyAll(m, client.PermissionAskMsg{AskID: ask.AskID, OriginSessionID: origin, Tool: ask.Tool, Args: ask.Args, Reason: ask.Reason})
 }
 
 // lastNotice returns the raw text of the last notice block, or "".
@@ -34,47 +38,42 @@ func lastNotice(m Model) string {
 	return ""
 }
 
-// TestIsChildAsk is the table for the client-side child detection. The askID
-// namespace is "<sessionID>:<n>:<callID>": a main-agent ask is prefixed with the
-// live session id; a child ask is prefixed with the CHILD session id; a colon-free
-// fixture id is fail-safe classified as the main agent.
-func TestIsChildAsk(t *testing.T) {
+// AskID grammar must not identify the origin, even for legacy events.
+func TestRootAskRequiresExplicitOrigin(t *testing.T) {
 	const sess = "sess-abc"
-	tests := []struct {
-		name      string
-		askID     string
-		sessionID string
-		want      bool
+	for _, tc := range []struct {
+		origin, askID string
+		want          bool
 	}{
-		{"parent-prefixed is main", "sess-abc:1:call-9", sess, false},
-		{"child-namespaced is child", "subagent-call-9:1:k1", sess, true},
-		{"colon-free fixture is main (fail-safe)", "ask-write-1", sess, false},
-		{"empty session classifies colon id as child (fail-safe withhold)", "x:1:y", "", true},
-		{"empty session colon-free is main", "askid", "", false},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := isChildAsk(tc.askID, tc.sessionID); got != tc.want {
-				t.Errorf("isChildAsk(%q, %q) = %v, want %v", tc.askID, tc.sessionID, got, tc.want)
-			}
-		})
+		{sess, "child:1:call", true},
+		{"child", "sess-abc:1:call", false},
+		{"", "sess-abc:1:call", false},
+		{"", "ask-write-1", false},
+		{sess, "opaque", true},
+	} {
+		if got := rootAsk(tc.origin, sess); got != tc.want {
+			t.Errorf("origin=%q askID=%q: root=%v, want %v", tc.origin, tc.askID, got, tc.want)
+		}
 	}
 }
 
-// TestPermissionAskMsgSetsOfferAlways: a main-agent ask (session-prefixed askID)
-// offers always-allow; a surfaced child ask does not.
+// Explicit root origin offers always-allow; explicit child and unknown origins do not.
 func TestPermissionAskMsgSetsOfferAlways(t *testing.T) {
 	m := newTestModelFromDeps(Deps{Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background()})
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
 	m.sessionID = "sess-abc"
 
-	m1 := applyAll(m, client.PermissionAskMsg{AskID: "sess-abc:1:c1", Tool: "Shell"})
+	m1 := applyAll(m, client.PermissionAskMsg{AskID: "child:1:c1", OriginSessionID: "sess-abc", Tool: "Shell"})
 	if !approvalSurfaceOf(t, m1).ask.offerAlways {
 		t.Error("a main-agent ask should offer always-allow")
 	}
-	m2 := applyAll(m, client.PermissionAskMsg{AskID: "subagent-c1:1:k1", Tool: "Shell"})
+	m2 := applyAll(m, client.PermissionAskMsg{AskID: "sess-abc:1:k1", OriginSessionID: "child", Tool: "Shell"})
 	if approvalSurfaceOf(t, m2).ask.offerAlways {
 		t.Error("a surfaced child ask must NOT offer always-allow")
+	}
+	m3 := applyAll(m, client.PermissionAskMsg{AskID: "sess-abc:1:c1", Tool: "Shell"})
+	if approvalSurfaceOf(t, m3).ask.offerAlways {
+		t.Error("unknown origin must not offer always-allow")
 	}
 }
 

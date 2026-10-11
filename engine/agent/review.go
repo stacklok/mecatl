@@ -262,6 +262,7 @@ type ToolReviewer interface {
 // child to be its own root.
 type ReviewDetail struct {
 	RootSessionID, SessionID                     session.SessionID
+	ToolCallID                                   session.InvocationID
 	ReviewID, Concern, SourceDisplay, NextAction string
 }
 

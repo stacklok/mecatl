@@ -84,7 +84,7 @@ func TestContextualGuardrails_FactoryPrompts(t *testing.T) {
 		if ev.Type == session.EvPermissionAsk {
 			reviewID = ev.Ask.Guardrail.ReviewID
 			detail, detailErr := built.Service.GetGuardrailReviewDetail(context.Background(), sess.ID, reviewID)
-			if detailErr != nil || !strings.Contains(detail.Concern, "merges a PR unattended") || strings.Contains(detail.Concern, "DETAIL_SECRET_CANARY") || strings.Contains(detail.Concern, "<<<UNTRUSTED") || detail.SourceDisplay != "effective call c1 (Shell)" {
+			if detailErr != nil || !strings.Contains(detail.Concern, "merges a PR unattended") || strings.Contains(detail.Concern, "DETAIL_SECRET_CANARY") || strings.Contains(detail.Concern, "<<<UNTRUSTED") || detail.SourceDisplay != "effective call (Shell)" {
 				t.Fatalf("live detail=%+v err=%v", detail, detailErr)
 			}
 			run.Cancel()
@@ -197,10 +197,22 @@ func TestContextualWorkerReviewDetailUsesLiveRootOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartInteractiveRunContent: %v", err)
 	}
-	childID := session.SessionID("subagent-" + string(sess.ID) + "-delegate")
-	reviewID := string(childID) + ":child-shell:inbound"
-	for range run.Events() {
+	var childID session.SessionID
+	var childCallID session.InvocationID
+	for ev := range run.Events() {
+		if ev.Subagent != nil {
+			if ev.Type == session.EvSubagentStart {
+				childID = session.SessionID(ev.Subagent.ChildID)
+			}
+			if ev.Type == session.EvSubagentTool && ev.Subagent.ToolName == "Shell" && ev.Subagent.InnerKind == session.EvToolCall {
+				childCallID = ev.Subagent.ChildInvocationID
+			}
+		}
 	}
+	if childID == "" || childCallID == "" || childCallID == "child-shell" {
+		t.Fatalf("child origin/invocation not projected: child=%q call=%q", childID, childCallID)
+	}
+	reviewID := "review_" + string(childCallID) + "_inbound"
 	if _, err := built.Service.GetGuardrailReviewDetail(ownerCtx, childID, reviewID); err != nil {
 		t.Fatalf("owner child detail before root FinishRun: %v", err)
 	}

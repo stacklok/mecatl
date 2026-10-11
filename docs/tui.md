@@ -153,6 +153,24 @@ session mode; the server posture badge is separate, and its high-risk variant us
 a fixed, contrast-checked danger style rather than a theme color.
 
 Durable facts go in scrollback; advisories and transient activity go in the footer.
+The scrollback conversation owns one hook-record store for attached and standalone
+hook evidence. New records use the server's `HookID` and revision directly. A higher
+revision advances the record, an identical revision is idempotent, and a conflicting
+identity or payload remains visible as standalone evidence. The client attaches a
+record only when its explicit origin session and public tool-call ID identify a retained
+root card; it never derives an attachment from a provider ID, event order, or ask ID.
+
+Tool, Subagent, and Team snapshots expose detached hook records attached by an exact
+call ID that identifies one retained root card. Notices and approval explanations read
+the same record; unknown or conflicting identities remain standalone. Replay
+restores machine review fields and associates historical approval receipts with a
+review only when the receipt explicitly matches the review ID, origin session, and
+public tool-call ID. Receipts without that evidence remain standalone notices.
+Review explanations are live-only. Hook attachments are data for these snapshots;
+compact cards and `/toolcalls` retain their existing presentation.
+Live-detail persistence, child-hook forwarding, and a new attached-hook layout remain
+outside this client boundary.
+
 A failed action needs visible feedback, never a silent reset or an optimistic
 success claim, and a notice never shows raw transport or credential material.
 

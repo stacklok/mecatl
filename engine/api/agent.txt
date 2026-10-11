@@ -314,7 +314,7 @@ type ReviewAssessment string
 type ReviewCaller struct{Role string; Isolated bool; Capabilities []string}
 type ReviewCapacity struct{MaxEvidenceHandles int; MaxEvidenceBytes int64; MaxTrajectoryFacts int; MaxTrajectoryBytes int64}
 type ReviewConcern struct{Ref string; Category string; Rationale string; SourceRef string}
-type ReviewDetail struct{RootSessionID session.SessionID; SessionID session.SessionID; ReviewID string; Concern string; SourceDisplay string; NextAction string}
+type ReviewDetail struct{RootSessionID session.SessionID; SessionID session.SessionID; ToolCallID session.InvocationID; ReviewID string; Concern string; SourceDisplay string; NextAction string}
 type ReviewDetailSink interface{PublishReviewDetail(context.Context, ReviewDetail)}
 type ReviewEvidence struct{Handle string; Kind string; Version string; Continuation string; Complete bool; Content string}
 type ReviewEvidenceMeta struct{Handle string; Kind string; Display string; Version string; Continuation string; Complete bool}

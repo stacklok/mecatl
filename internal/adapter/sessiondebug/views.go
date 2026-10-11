@@ -123,7 +123,7 @@ func handleEqual(a, b string) bool {
 }
 
 func relationshipEqual(a, b session.SessionRelationship) bool {
-	if a.ScheduleName != b.ScheduleName || a.OriginSessionID != b.OriginSessionID || a.OriginIncarnation != b.OriginIncarnation || a.ParentSessionID != b.ParentSessionID || a.ParentIncarnation != b.ParentIncarnation || a.CallID != b.CallID || a.TeamID != b.TeamID || a.MemberName != b.MemberName || a.DebugTargetID != b.DebugTargetID || a.DebugTargetIncarnation != b.DebugTargetIncarnation {
+	if a.ScheduleName != b.ScheduleName || a.OriginSessionID != b.OriginSessionID || a.OriginIncarnation != b.OriginIncarnation || a.ParentSessionID != b.ParentSessionID || a.ParentIncarnation != b.ParentIncarnation || a.CallID != b.CallID || a.ParentInvocationID != b.ParentInvocationID || a.TeamID != b.TeamID || a.MemberName != b.MemberName || a.DebugTargetID != b.DebugTargetID || a.DebugTargetIncarnation != b.DebugTargetIncarnation {
 		return false
 	}
 	if a.BranchIndex == nil || b.BranchIndex == nil {

@@ -42,6 +42,7 @@ type SessionRelationship struct {
 	ParentSessionID        SessionID     `json:"parent_session_id,omitempty"`
 	ParentIncarnation      IncarnationID `json:"parent_incarnation,omitempty"`
 	CallID                 ToolCallID    `json:"call_id,omitempty"`
+	ParentInvocationID     InvocationID  `json:"parent_invocation_id,omitempty"`
 	BranchIndex            *int          `json:"branch_index,omitempty"`
 	TeamID                 string        `json:"team_id,omitempty"`
 	MemberName             string        `json:"member_name,omitempty"`
@@ -105,6 +106,7 @@ func validSubagentRelationship(rel SessionRelationship) bool {
 	forbidden.ParentSessionID = ""
 	forbidden.ParentIncarnation = ""
 	forbidden.CallID = ""
+	forbidden.ParentInvocationID = ""
 	return rel.ParentSessionID != "" && rel.CallID != "" && validRelatedIncarnation(rel.ParentSessionID, rel.ParentIncarnation) && forbidden == (SessionRelationship{})
 }
 
@@ -113,6 +115,7 @@ func validParallelBranchRelationship(rel SessionRelationship) bool {
 	forbidden.ParentSessionID = ""
 	forbidden.ParentIncarnation = ""
 	forbidden.CallID = ""
+	forbidden.ParentInvocationID = ""
 	forbidden.BranchIndex = nil
 	return rel.ParentSessionID != "" && rel.CallID != "" && rel.BranchIndex != nil && *rel.BranchIndex >= 0 && validRelatedIncarnation(rel.ParentSessionID, rel.ParentIncarnation) && forbidden == (SessionRelationship{})
 }
@@ -124,7 +127,8 @@ func validTeamMemberRelationship(rel SessionRelationship) bool {
 	forbidden.ParentSessionID = ""
 	forbidden.ParentIncarnation = ""
 	forbidden.CallID = ""
-	callValid := rel.CallID == "" || rel.ParentSessionID != "" && rel.ParentIncarnation.Valid()
+	forbidden.ParentInvocationID = ""
+	callValid := (rel.CallID == "" && rel.ParentInvocationID == "") || rel.CallID != "" && rel.ParentSessionID != "" && rel.ParentIncarnation.Valid()
 	return rel.TeamID != "" && rel.MemberName != "" && callValid && validRelatedIncarnation(rel.ParentSessionID, rel.ParentIncarnation) && forbidden == (SessionRelationship{})
 }
 
@@ -163,6 +167,19 @@ func cloneSessionRelationship(rel SessionRelationship) SessionRelationship {
 // NewScheduled constructs a validated scheduler-fire session.
 func NewScheduled(id SessionID, mode PermissionMode, ref EnvironmentRef, limits Limits, createdAt time.Time, scheduleName string, origin SessionID, originIncarnation IncarnationID) (*Session, error) {
 	return newRelated(id, mode, ref, limits, createdAt, SessionKindScheduled, SessionRelationship{ScheduleName: scheduleName, OriginSessionID: origin, OriginIncarnation: originIncarnation})
+}
+
+// BindParentInvocation links a freshly created delegated session to the exact
+// accepted parent occurrence, leaving the private parent pairing ID unchanged.
+func (s *Session) BindParentInvocation(id InvocationID) error {
+	if s.State != StateIdle || s.Relationship.CallID == "" || id == "" {
+		return fmt.Errorf("%w: cannot bind parent invocation", ErrInvalidSessionMetadata)
+	}
+	if s.Relationship.ParentInvocationID != "" && s.Relationship.ParentInvocationID != id {
+		return fmt.Errorf("%w: parent invocation already bound", ErrInvalidSessionMetadata)
+	}
+	s.Relationship.ParentInvocationID = id
+	return nil
 }
 
 // NewSubagent constructs a validated Subagent child session.

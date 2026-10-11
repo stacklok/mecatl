@@ -31,8 +31,12 @@ func planAskModel(t *testing.T, offerAlways bool) Model {
 	if !offerAlways {
 		askID = "subagent-plan:1:presentplan-1"
 	}
+	origin := "subagent-plan"
+	if offerAlways {
+		origin = m.sessionID
+	}
 	return applyAll(m, client.PermissionAskMsg{
-		AskID: askID, Tool: "PresentPlan", Reason: "Plan mode requires approval to execute.",
+		AskID: askID, OriginSessionID: origin, Tool: "PresentPlan", Reason: "Plan mode requires approval to execute.",
 	})
 }
 

@@ -149,6 +149,11 @@ release to the client or model. Configure a checker model to enable them. See
 [Permissions and posture](/features/security-and-execution/permissions-and-posture.md#guardrails)
 for coverage, enforcement modes, and approval behavior.
 
+Guardrail events include a stable review record ID, the originating session, and
+the public tool-call ID when a tool is in scope. Clients use these explicit fields to
+associate updates with a visible action. They do not derive a relationship from a
+provider ID, event order, or a permission `ask_id`.
+
 ## Next steps
 
 - [Permissions and posture](/features/security-and-execution/permissions-and-posture.md)

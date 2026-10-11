@@ -416,6 +416,25 @@ message Event {
 }
 ```
 
+### Event correlation
+
+`ToolCall.id` is the public identity of one accepted tool invocation.
+`ToolResult.call_id`, `Hook.call_id`, and a `PermissionAsk.call_id` refer to that
+same occurrence. A call that pauses and resumes keeps its ID; a later invocation
+receives a new ID even when its provider repeats a private replay pairing ID.
+
+`Hook.hook_id` identifies a logical hook outcome, and `Hook.revision` orders
+updates within its `origin_session_id`. Revisions are positive and can have gaps.
+For a contextual guardrail review, `Hook.hook_id` and `GuardrailReview.review_id`
+are the same record ID. Permission asks expose `origin_session_id`, `call_id`, and
+the optional contextual review reference. Replayed `Approval` records expose the
+same origin and call correlation plus an optional `review_id`.
+
+Use only explicit matching origin, call, and review fields to associate these
+records. `ask_id` remains the exact authorization key for `ResumeApproval`; tool
+and hook IDs do not authorize a verdict. Provider replay IDs are private and do
+not appear in this API.
+
 The three delegation families (`subagent.*`, `team.*`, `parallel.*`) project a
 child loop's lifecycle without leaking its content: all three carry the same
 bounded previews: IDs, tool names/counts, usage, stop, and capped,

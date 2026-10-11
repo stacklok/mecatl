@@ -14,6 +14,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	uiClient "github.com/stacklok/mecatl/cmd/mecatui/client"
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/eventsource"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
@@ -175,13 +176,34 @@ func TestToolResultLiveOnlyProjection(t *testing.T) {
 			subscriptionDone:
 			}
 			available, canonical := 0, 0
+			callID := ""
+			for _, ev := range live {
+				if ev.GetType() == string(session.EvToolCall) {
+					callID = ev.GetToolCall().GetId()
+				}
+			}
+			if callID == "" || callID == "c1" {
+				t.Fatalf("missing public call identity: %v", live)
+			}
+			for _, ev := range live {
+				switch msg := uiClient.EventToMsg(ev).(type) {
+				case uiClient.ToolCallMsg:
+					if msg.ID != callID {
+						t.Fatalf("client call identity = %q, want %q", msg.ID, callID)
+					}
+				case uiClient.ToolResultMsg:
+					if msg.CallID != callID {
+						t.Fatalf("client result identity = %q, want %q", msg.CallID, callID)
+					}
+				}
+			}
 			var availableResult, canonicalResult *mecatlv1.ToolResult
 			for _, ev := range live {
 				if ev.GetType() != string(session.EvToolResultAvailable) && ev.GetType() != string(session.EvToolResult) {
 					continue
 				}
 				r := ev.GetToolResult()
-				if r.GetCallId() != "c1" || r.GetContent() != "visible result" || r.GetIsError() || r.GetStructuredContent() != `{"ok":true}` || len(r.GetBlocks()) != 3 || r.GetBlocks()[2].GetKind() != mecatlv1.ContentBlock_KIND_IMAGE || string(r.GetBlocks()[2].GetData()) != string([]byte{1, 2, 3}) {
+				if r.GetCallId() != callID || r.GetContent() != "visible result" || r.GetIsError() || r.GetStructuredContent() != `{"ok":true}` || len(r.GetBlocks()) != 3 || r.GetBlocks()[2].GetKind() != mecatlv1.ContentBlock_KIND_IMAGE || string(r.GetBlocks()[2].GetData()) != string([]byte{1, 2, 3}) {
 					t.Fatalf("%s projection: %+v", ev.GetType(), r)
 				}
 				if ev.GetType() == string(session.EvToolResultAvailable) {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
@@ -76,10 +75,12 @@ func (e *Engine) prepareInboundAssessment(ctx context.Context, r *Run, sess *ses
 		IsError bool            `json:"is_error"`
 	}{Args: call.Args, Content: postHookContent(result), IsError: result.IsError})
 	target, _ := reviewTarget(call)
+	effectiveCall := call
+	effectiveCall.Args = append(json.RawMessage(nil), call.Args...)
 	assessment.request = ToolReviewRequest{
-		ReviewID: fmt.Sprintf("%s:%s:inbound", sess.ID, call.ID), Job: ReviewJobInbound,
+		ReviewID: reviewRecordID(sess.ID, call, ReviewJobInbound), Job: ReviewJobInbound,
 		Event:          governance.HookEvent{Phase: governance.PhasePostToolUse, Tool: call.Name, Input: input, SessionID: string(sess.ID), CallID: string(call.ID)},
-		EffectiveCall:  session.NewToolCall(call.ID, call.Name, append(json.RawMessage(nil), call.Args...)),
+		EffectiveCall:  effectiveCall,
 		PrincipalFacts: principal, PrincipalFactsComplete: principalComplete,
 		Caller: reviewCaller(e, r, sess), Environment: env.Ref(), Target: target,
 		Trajectory: trajectory, TrajectoryComplete: trajectoryComplete,
@@ -149,22 +150,22 @@ func (r *Run) publishInboundDetail(ctx context.Context, sessID session.SessionID
 		return
 	}
 	if assessment.err != nil {
-		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sessID, ReviewID: assessment.request.ReviewID, Concern: reviewFailureConcern(reviewFailureCode(assessment.err)), NextAction: "Release this already-produced result once or cancel. The tool is not run again."})
+		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sessID, ToolCallID: assessment.request.EffectiveCall.InvocationID, ReviewID: assessment.request.ReviewID, Concern: reviewFailureConcern(reviewFailureCode(assessment.err)), NextAction: "Release this already-produced result once or cancel. The tool is not run again."})
 		return
 	}
 	if assessment.result.Assessment == ReviewAcceptable {
-		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sessID, ReviewID: assessment.request.ReviewID, Concern: "Inspection completed; no attempted redirection or authority crossing was found.", NextAction: "The existing result is released without running the tool again."})
+		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sessID, ToolCallID: assessment.request.EffectiveCall.InvocationID, ReviewID: assessment.request.ReviewID, Concern: "Inspection completed; no attempted redirection or authority crossing was found.", NextAction: "The existing result is released without running the tool again."})
 		return
 	}
 	if len(assessment.result.Concerns) == 0 && len(assessment.result.Missing) == 0 {
-		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sessID, ReviewID: assessment.request.ReviewID, Concern: "Inspection was unresolved without a specific unsafe finding.", NextAction: "Release this already-produced result once or cancel. The tool is not run again."})
+		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sessID, ToolCallID: assessment.request.EffectiveCall.InvocationID, ReviewID: assessment.request.ReviewID, Concern: "Inspection was unresolved without a specific unsafe finding.", NextAction: "Release this already-produced result once or cancel. The tool is not run again."})
 		return
 	}
 	for _, concern := range assessment.result.Concerns {
-		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sessID, ReviewID: assessment.request.ReviewID, Concern: reviewConcernDisplay(concern), SourceDisplay: reviewSourceDisplay(assessment.request, concern.SourceRef), NextAction: "Release this already-produced result once or cancel. The tool is not run again."})
+		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sessID, ToolCallID: assessment.request.EffectiveCall.InvocationID, ReviewID: assessment.request.ReviewID, Concern: reviewConcernDisplay(concern), SourceDisplay: reviewSourceDisplay(assessment.request, concern.SourceRef), NextAction: "Release this already-produced result once or cancel. The tool is not run again."})
 	}
 	for _, missing := range assessment.result.Missing {
-		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sessID, ReviewID: assessment.request.ReviewID, Concern: "Inspection was unresolved because required evidence was unavailable.", SourceDisplay: missing.Ref, NextAction: "Release this already-produced result once or cancel. The tool is not run again."})
+		r.publishReviewDetail(ctx, ReviewDetail{SessionID: sessID, ToolCallID: assessment.request.EffectiveCall.InvocationID, ReviewID: assessment.request.ReviewID, Concern: "Inspection was unresolved because required evidence was unavailable.", SourceDisplay: missing.Ref, NextAction: "Release this already-produced result once or cancel. The tool is not run again."})
 	}
 }
 
@@ -260,7 +261,7 @@ func (e *Engine) emitInboundReview(r *Run, turnIdx int, call session.ToolCall, a
 		return
 	}
 	machine := reviewMachinePayload(r.reviewRoot.reviewer, assessment.request, assessment.result, assessment.err, disposition)
-	e.emit(r, session.Event{Type: session.EvHook, Turn: turnIdx, Hook: &session.HookPayload{Phase: string(governance.PhasePostToolUse), Tool: call.Name, Decision: session.HookInfo, CallID: call.ID, Guardrail: machine}})
+	e.emit(r, session.Event{Type: session.EvHook, Turn: turnIdx, Hook: &session.HookPayload{Phase: string(governance.PhasePostToolUse), Tool: call.Name, Decision: session.HookInfo, CallID: call.ID, InvocationID: call.InvocationID, Guardrail: machine}})
 }
 
 // resolveInbound returns whether the effective tool result was released, distinct
@@ -303,7 +304,7 @@ func (e *Engine) resolveInbound(ctx context.Context, r *Run, sess *session.Sessi
 	}
 	ask := session.PendingAsk{
 		AskID: r.issueAskID(sess.ID, sess.Counters.ToolCalls, call.ID), Tool: call.Name,
-		Reason: "contextual guardrail withheld this already-produced result pending Release once or Deny", Call: call.ID,
+		Reason: "contextual guardrail withheld this already-produced result pending Release once or Deny", Call: call.ID, InvocationID: call.InvocationID,
 		Origin:    session.ApprovalOriginHookGuardrail,
 		Guardrail: &session.GuardrailPendingScope{ReviewID: assessment.request.ReviewID, Kind: session.GuardrailApprovalResultRelease, SessionOnly: true},
 	}
@@ -311,6 +312,7 @@ func (e *Engine) resolveInbound(ctx context.Context, r *Run, sess *session.Sessi
 		r.reviewRoot.dropHeld(key)
 		return session.NewToolError(call.ID, withheldResultText+": live hold binding unavailable"), false, false
 	}
+	e.emitInboundReview(r, turnIdx, call, assessment, "hold_result")
 	answer, ok, paused := e.surfaceAsk(ctx, r, sess, turnIdx, ask)
 	if !paused || !ok {
 		r.reviewRoot.dropHeld(key)

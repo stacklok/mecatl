@@ -333,6 +333,9 @@ func TestParallelNoContentLeakBehavioral(t *testing.T) {
 	var sawTool, sawClampedPreview bool
 	for _, p := range collectParallel(evs) {
 		if p.Kind == session.ParallelBranchTool && p.ToolName == "Read" {
+			if p.ChildID == "" || p.ChildInvocationID == "" || p.ParentInvocationID == "" {
+				t.Fatalf("branch preview missing explicit child origin or distinct parent/child invocation: %+v", p)
+			}
 			sawTool = true
 		}
 		if p.Kind == session.ParallelBranchTool && strings.Contains(p.Detail, "TOPSECRETCANARY-hhh") && !strings.Contains(p.Detail, canaryTail) {
@@ -393,6 +396,9 @@ func TestParallelPayloadHasNoContentFields(t *testing.T) {
 		// drainChildObserved chokepoint (re-tagged by branchTool), are client-only,
 		// and never enter the parent's Conversation — the behavioral canary suite
 		// (TestParallelNoContentLeakBehavioral) proves the raw body never crosses.
+		// ParentInvocationID and ChildInvocationID are opaque harness-minted handles,
+		// never branch-authored content or provider replay identifiers.
+		"ParentInvocationID": true, "ChildInvocationID": true,
 		"Text": true, "Detail": true, "InnerKind": true, "ChildToolCallID": true,
 	}
 	rt := reflect.TypeOf(session.ParallelPayload{})

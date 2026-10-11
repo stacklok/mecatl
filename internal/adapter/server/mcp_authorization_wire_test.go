@@ -20,6 +20,8 @@ func TestAuthorizationWireEventIsSafeCorrelationOnly(t *testing.T) {
 			AuthorizationID: "authorization-1",
 			DisplayName:     "GitHub Enterprise",
 			Call:            "call-1",
+			InvocationID:    "tc_authorized",
+			SessionID:       "origin-session",
 			ExpiresAt:       time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC),
 			Status:          session.AuthorizationPending,
 		},
@@ -27,7 +29,7 @@ func TestAuthorizationWireEventIsSafeCorrelationOnly(t *testing.T) {
 	if got == nil {
 		t.Fatal("authorization payload is nil")
 	}
-	if got.GetAuthorizationId() != "authorization-1" || got.GetDisplayName() != "GitHub Enterprise" || got.GetCallId() != "call-1" || got.GetStatus() != "pending" {
+	if got.GetAuthorizationId() != "authorization-1" || got.GetDisplayName() != "GitHub Enterprise" || got.GetCallId() != "tc_authorized" || got.GetOriginSessionId() != "origin-session" || got.GetStatus() != "pending" {
 		t.Fatalf("authorization correlation = %+v", got)
 	}
 	if got.GetExpiresAt() == nil || !got.GetExpiresAt().AsTime().Equal(time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)) {
@@ -35,11 +37,12 @@ func TestAuthorizationWireEventIsSafeCorrelationOnly(t *testing.T) {
 	}
 
 	assertExactProtoFields(t, got.ProtoReflect().Descriptor(), map[protoreflect.Name]protoreflect.FieldNumber{
-		"authorization_id": 1,
-		"call_id":          2,
-		"expires_at":       3,
-		"status":           4,
-		"display_name":     5,
+		"authorization_id":  1,
+		"call_id":           2,
+		"expires_at":        3,
+		"status":            4,
+		"display_name":      5,
+		"origin_session_id": 6,
 	})
 	for _, forbidden := range []string{"url", "argument", "binding", "code", "verifier", "token", "credential", "secret"} {
 		fields := got.ProtoReflect().Descriptor().Fields()

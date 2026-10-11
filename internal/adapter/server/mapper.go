@@ -207,7 +207,8 @@ func toProtoAuthorization(p session.AuthorizationPayload) *mecatlv1.Authorizatio
 	return &mecatlv1.Authorization{
 		AuthorizationId: valid(p.AuthorizationID),
 		DisplayName:     valid(p.DisplayName),
-		CallId:          valid(string(p.Call)),
+		CallId:          valid(string(p.InvocationID)),
+		OriginSessionId: string(p.SessionID),
 		ExpiresAt:       timestamppb.New(p.ExpiresAt),
 		Status:          string(p.Status),
 	}
@@ -291,11 +292,11 @@ func invalidChildPreview(id session.ToolCallID) bool {
 // inner_kind a STRING passthrough, mirroring toProtoTeam) — never unbounded branch
 // content — preserving gauntlet #7.
 func toProtoParallel(p session.ParallelPayload) *mecatlv1.Parallel {
-	if invalidChildPreview(p.ChildToolCallID) {
+	if invalidChildPreview(session.ToolCallID(p.ChildInvocationID)) {
 		p.InnerKind, p.ToolName, p.Detail = "", "", ""
 	}
 	return &mecatlv1.Parallel{
-		ParentCallId:           p.ParentCallID,
+		ParentCallId:           string(p.ParentInvocationID),
 		Kind:                   string(p.Kind),
 		Join:                   valid(p.Join), // model-authored arg, not a harness token: normalizeJoin passes unknown values through
 		BranchCount:            ClampInt32(p.BranchCount),
@@ -311,7 +312,7 @@ func toProtoParallel(p session.ParallelPayload) *mecatlv1.Parallel {
 		Provider:               routingEvidenceString(p.Provider),
 		ExplicitRouterCategory: routingEvidenceString(p.ExplicitRouterCategory),
 		ToolName:               valid(p.ToolName),
-		ChildToolCallId:        childPreviewID(p.ChildToolCallID),
+		ChildToolCallId:        childPreviewID(session.ToolCallID(p.ChildInvocationID)),
 		IsError:                p.IsError,
 		ToolCount:              ClampInt32(p.ToolCount),
 		InnerKind:              string(p.InnerKind),
@@ -349,11 +350,13 @@ func toProtoSchedule(p session.SchedulePayload) *mecatlv1.SchedulePayload {
 // exists so the WatchSessionEvents replay surfaces it.
 func toProtoApproval(p session.ApprovalPayload) *mecatlv1.Approval {
 	return &mecatlv1.Approval{
-		AskId:   p.AskID,
-		Verdict: approvalVerdictToProto(p.Verdict),
-		Tool:    valid(p.Tool),
-		CallId:  string(p.Call),
-		Origin:  string(p.Origin),
+		AskId:           p.AskID,
+		Verdict:         approvalVerdictToProto(p.Verdict),
+		Tool:            valid(p.Tool),
+		CallId:          string(p.InvocationID),
+		OriginSessionId: string(p.SessionID),
+		ReviewId:        valid(p.ReviewID),
+		Origin:          string(p.Origin),
 	}
 }
 
@@ -454,14 +457,11 @@ func toProtoConversationMessage(m session.Message) *mecatlv1.ConversationMessage
 	out := &mecatlv1.ConversationMessage{
 		Role: string(m.Role),
 		Text: valid(m.Text),
-		// Reasoning / ProviderPhase / ReasoningItemId are opaque provider-minted
-		// blobs, but this is the CLIENT-facing projection only — the provider
-		// replay reads the DOMAIN Message, never this proto — so repairing here
-		// cannot corrupt the byte-exact round-trip those values rely on.
-		Reasoning:       valid(m.Reasoning),
-		ProviderPhase:   valid(m.ProviderPhase),
-		ReasoningItemId: valid(m.ReasoningItemID),
-		Parts:           contentToProto(m.Parts),
+		// Reasoning / ProviderPhase are existing replay metadata projections.
+		// Provider item IDs remain private to model replay.
+		Reasoning:     valid(m.Reasoning),
+		ProviderPhase: valid(m.ProviderPhase),
+		Parts:         contentToProto(m.Parts),
 	}
 	if len(m.ToolCalls) > 0 {
 		calls := make([]*mecatlv1.ToolCall, 0, len(m.ToolCalls))
@@ -482,7 +482,7 @@ func toProtoConversationMessage(m session.Message) *mecatlv1.ConversationMessage
 // contract. The previews are already capped in the domain (projectTeamEvent /
 // clampPreview); this mapper copies them verbatim — it adds no further redaction.
 func toProtoTeam(p session.TeamPayload) *mecatlv1.Team {
-	if invalidChildPreview(p.ChildToolCallID) {
+	if invalidChildPreview(session.ToolCallID(p.ChildInvocationID)) {
 		p.InnerKind, p.ToolName, p.Detail = "", "", ""
 	}
 	roster := make([]*mecatlv1.TeamMemberSpec, 0, len(p.Roster))
@@ -519,7 +519,7 @@ func toProtoTeam(p session.TeamPayload) *mecatlv1.Team {
 		})
 	}
 	return &mecatlv1.Team{
-		ParentCallId:    p.ParentCallID,
+		ParentCallId:    string(p.ParentInvocationID),
 		TeamId:          p.TeamID,
 		Roster:          roster,
 		Member:          valid(p.Member),
@@ -527,7 +527,7 @@ func toProtoTeam(p session.TeamPayload) *mecatlv1.Team {
 		InnerKind:       string(p.InnerKind),
 		Text:            valid(p.Text),
 		ToolName:        valid(p.ToolName),
-		ChildToolCallId: childPreviewID(p.ChildToolCallID),
+		ChildToolCallId: childPreviewID(session.ToolCallID(p.ChildInvocationID)),
 		Detail:          valid(p.Detail),
 		IsError:         p.IsError,
 		Rounds:          ClampInt32(p.Rounds),
@@ -616,11 +616,11 @@ func toProtoTeamTaskSnapshot(t session.TeamTaskSnapshot) *mecatlv1.TeamTask {
 // inner_kind a STRING passthrough, mirroring toProtoTeam) are copied verbatim:
 // already clamped by the single redaction chokepoint upstream in engine/agent.
 func toProtoSubagent(p session.SubagentPayload) *mecatlv1.Subagent {
-	if invalidChildPreview(p.ChildToolCallID) {
+	if invalidChildPreview(session.ToolCallID(p.ChildInvocationID)) {
 		p.InnerKind, p.ToolName, p.Detail = "", "", ""
 	}
 	return &mecatlv1.Subagent{
-		ParentCallId:           p.ParentCallID,
+		ParentCallId:           string(p.ParentInvocationID),
 		ChildId:                p.ChildID,
 		Goal:                   valid(p.Goal),
 		Background:             p.Background,
@@ -632,7 +632,7 @@ func toProtoSubagent(p session.SubagentPayload) *mecatlv1.Subagent {
 		Provider:               routingEvidenceString(p.Provider),
 		ExplicitRouterCategory: routingEvidenceString(p.ExplicitRouterCategory),
 		ToolName:               valid(p.ToolName),
-		ChildToolCallId:        childPreviewID(p.ChildToolCallID),
+		ChildToolCallId:        childPreviewID(session.ToolCallID(p.ChildInvocationID)),
 		IsError:                p.IsError,
 		ToolCount:              ClampInt32(p.ToolCount),
 		InnerKind:              string(p.InnerKind),
@@ -648,7 +648,7 @@ func toProtoSubagent(p session.SubagentPayload) *mecatlv1.Subagent {
 // toProtoToolCall maps a session.ToolCall to its proto form.
 func toProtoToolCall(c session.ToolCall) *mecatlv1.ToolCall {
 	return &mecatlv1.ToolCall{
-		Id:   string(c.ID),
+		Id:   string(c.InvocationID),
 		Name: valid(c.Name),
 		Args: valid(string(c.Args)),
 	}
@@ -666,7 +666,7 @@ func toProtoToolCall(c session.ToolCall) *mecatlv1.ToolCall {
 // byte-identical to the pre-Parts shape.
 func toProtoToolResult(r session.ToolResult) *mecatlv1.ToolResult {
 	out := &mecatlv1.ToolResult{
-		CallId:  string(r.CallID),
+		CallId:  string(r.InvocationID),
 		Content: valid(r.Content),
 		IsError: r.IsError,
 		Blocks:  blocksToProto(r.Parts),
@@ -814,14 +814,15 @@ func mediaKindFromBlock(k mecatlv1.ContentBlock_Kind) session.MediaKind {
 // toProtoAsk maps a session.PendingAsk to its proto PermissionAsk form.
 func toProtoAsk(a session.PendingAsk) *mecatlv1.PermissionAsk {
 	out := &mecatlv1.PermissionAsk{
-		AskId:     a.AskID,
-		Tool:      valid(a.Tool),
-		Args:      valid(string(a.Args)),
-		Reason:    valid(a.Reason),
-		Guardrail: toProtoGuardrailApprovalScope(a.Guardrail),
+		AskId:           a.AskID,
+		Tool:            valid(a.Tool),
+		Args:            valid(string(a.Args)),
+		Reason:          valid(a.Reason),
+		Guardrail:       toProtoGuardrailApprovalScope(a.Guardrail),
+		OriginSessionId: string(a.SessionID),
 	}
-	if a.Call != "" {
-		callID := valid(string(a.Call))
+	if a.InvocationID != "" {
+		callID := valid(string(a.InvocationID))
 		out.CallId = &callID
 	}
 	return out
@@ -962,11 +963,14 @@ func toProtoTurnEnd(p session.TurnEndPayload) *mecatlv1.TurnEnd {
 // toProtoHook maps a session.HookPayload to its proto Hook form.
 func toProtoHook(h session.HookPayload) *mecatlv1.Hook {
 	return &mecatlv1.Hook{
-		Phase:     valid(h.Phase),
-		Tool:      valid(h.Tool),
-		Decision:  hookDecisionToProto(h.Decision),
-		CallId:    string(h.CallID),
-		Guardrail: toProtoGuardrailReview(h.Guardrail),
+		Phase:           valid(h.Phase),
+		Tool:            valid(h.Tool),
+		Decision:        hookDecisionToProto(h.Decision),
+		CallId:          string(h.InvocationID),
+		HookId:          valid(h.HookID),
+		Revision:        h.Revision,
+		OriginSessionId: string(h.SessionID),
+		Guardrail:       toProtoGuardrailReview(h.Guardrail),
 	}
 }
 
@@ -1307,7 +1311,7 @@ func toProtoSessionSummary(s SessionSummary) *mecatlv1.SessionSummary {
 
 func toProtoSessionRelationship(r session.SessionRelationship) *mecatlv1.SessionRelationship {
 	out := &mecatlv1.SessionRelationship{
-		ParentSessionId: string(r.ParentSessionID), CallId: string(r.CallID),
+		ParentSessionId: string(r.ParentSessionID), CallId: string(r.ParentInvocationID),
 		ScheduleName: r.ScheduleName, OriginSessionId: string(r.OriginSessionID),
 		TeamId: r.TeamID, MemberName: r.MemberName, DebugTargetSessionId: valid(string(r.DebugTargetID)),
 	}

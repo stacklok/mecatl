@@ -75,6 +75,21 @@ abandons a `running` session, after it holds the session lock. Non-error stops s
 `no_progress`, `budget`, and `plan_approved` end in `completed`, so they stay
 reopenable.
 
+## Tool occurrence identities
+
+The session keeps two identities for a tool occurrence. A public invocation ID is
+minted when the loop accepts a model call. It identifies that one occurrence across
+calls, results, approvals, hook evidence, delegation projections, and clients. A
+provider pairing ID and item ID remain private replay metadata. Providers may reuse a
+completed pairing ID; the public invocation ID never does.
+
+Before recording an assistant message, the loop validates all calls in the model turn
+against one another and against retained outstanding provider pairings. A duplicate
+rejects the whole turn before history changes or dispatch. A completed provider pairing
+can appear in a later invocation. On legacy snapshot load, the aggregate can assign
+stable, session-namespaced invocation IDs in memory to retained occurrences. A normal
+save can retain those IDs, but loading itself neither saves nor rewrites history.
+
 ## Tool call and result pairing
 
 Every assistant tool call needs a following result, and every result must answer an

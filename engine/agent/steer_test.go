@@ -350,7 +350,19 @@ func TestSteer_EmptyInboxNoOp(t *testing.T) {
 		t.Fatalf("empty-inbox history length %d differs from no-steer %d (the drain must be a no-op)", len(sessOn.Conversation.Messages), len(sessOff.Conversation.Messages))
 	}
 	for i := range sessOn.Conversation.Messages {
-		if !reflect.DeepEqual(sessOn.Conversation.Messages[i], sessOff.Conversation.Messages[i]) {
+		on, off := sessOn.Conversation.Messages[i], sessOff.Conversation.Messages[i]
+		if len(on.ToolCalls) > 0 {
+			on.ToolCalls = append([]session.ToolCall(nil), on.ToolCalls...)
+			for j := range on.ToolCalls {
+				on.ToolCalls[j].InvocationID = off.ToolCalls[j].InvocationID
+			}
+		}
+		if on.ToolResult != nil {
+			result := *on.ToolResult
+			result.InvocationID = off.ToolResult.InvocationID
+			on.ToolResult = &result
+		}
+		if !reflect.DeepEqual(on, off) {
 			t.Fatalf("empty-inbox history message %d differs from no-steer run — the drain must be a strict no-op", i)
 		}
 	}

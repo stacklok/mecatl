@@ -142,7 +142,53 @@ func TestFoldAuthorizationRejectsHistoricalIDReuse(t *testing.T) {
 	requireFoldError(t, events, eventsource.ErrReconstruct)
 }
 
+func TestFoldAuthorizationAcceptsCompletedProviderCallReuse(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		first := authorizationCall("auth-1", "call-1")
+		second := authorizationCall("auth-2", "call-1")
+		if explicit {
+			for _, tc := range []struct {
+				events []session.Event
+				id     session.InvocationID
+			}{{first, "inv-1"}, {second, "inv-2"}} {
+				tc.events[1].ToolCall.InvocationID = tc.id
+				tc.events[2].Authorization.InvocationID = tc.id
+				tc.events[3].ToolResult.InvocationID = tc.id
+				tc.events[4].Authorization.InvocationID = tc.id
+			}
+		}
+		folded, err := eventsource.Fold(meta(), seq(append(first, second...)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		msgs := folded.Conversation.Messages
+		if len(msgs) != 4 || msgs[0].ToolCalls[0].InvocationID == "" || msgs[0].ToolCalls[0].InvocationID == msgs[2].ToolCalls[0].InvocationID || msgs[1].ToolResult.InvocationID != msgs[0].ToolCalls[0].InvocationID || msgs[3].ToolResult.InvocationID != msgs[2].ToolCalls[0].InvocationID {
+			t.Fatalf("reused provider call lost occurrences: %+v", msgs)
+		}
+		if explicit && (msgs[0].ToolCalls[0].InvocationID != "inv-1" || msgs[2].ToolCalls[0].InvocationID != "inv-2") {
+			t.Fatalf("explicit occurrence IDs changed: %+v", msgs)
+		}
+	}
+}
+
+func TestFoldAuthorizationRejectsOverlappingReuseAndMismatchedOccurrence(t *testing.T) {
+	first := authorizationCall("auth-1", "call-1")
+	second := authorizationCall("auth-2", "call-1")
+	requireFoldError(t, append(append([]session.Event{}, first[:3]...), second[:3]...), eventsource.ErrReconstruct)
+	first[2].Authorization.InvocationID = "inv-1"
+	first[3].ToolResult.InvocationID = "inv-2"
+	requireFoldError(t, first, eventsource.ErrReconstruct)
+	first[3].ToolResult.InvocationID = "inv-1"
+	first[4].Authorization.InvocationID = "inv-2"
+	requireFoldError(t, first, eventsource.ErrReconstruct)
+	first[2].Authorization.InvocationID = "inv-2"
+	first[4].Authorization.InvocationID = "inv-2"
+	first[1].ToolCall.InvocationID = "inv-1"
+	requireFoldError(t, first, eventsource.ErrReconstruct)
+}
+
 func TestFoldAuthorizationRejectsHistoricalCallReuse(t *testing.T) {
+	// A completed provider pairing ID may be reused only for a new call occurrence.
 	events := append(authorizationCall("auth-1", "call-1"), authorizationRequired("auth-2", "call-1"))
 	requireFoldError(t, events, eventsource.ErrReconstruct)
 }

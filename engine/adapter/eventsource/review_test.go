@@ -271,9 +271,9 @@ func TestFoldContractDocMatchesSessionFields(t *testing.T) {
 	assertExportedFields(t, reflect.TypeOf(session.Message{}), wantMessageFields,
 		"session.Message — classify the new field in COMPATIBILITY.md's reconstruction contract")
 
-	// ToolCall.ItemID is the third documented replay-only limitation.
+	// ToolCall.ItemID remains replay-only; InvocationID is retained by new events.
 	wantToolCallFields := map[string]struct{}{
-		"ID": {}, "Name": {}, "Args": {}, "ItemID": {},
+		"ID": {}, "InvocationID": {}, "Name": {}, "Args": {}, "ItemID": {},
 	}
 	assertExportedFields(t, reflect.TypeOf(session.ToolCall{}), wantToolCallFields,
 		"session.ToolCall — classify the new field in COMPATIBILITY.md's reconstruction contract")

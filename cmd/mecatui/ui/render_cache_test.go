@@ -263,6 +263,30 @@ var oracleSteps = []struct {
 	{"addBenignGuardrailHook", func(c *conversation) {
 		c.addGuardrailHook(guardrailTestHook("oracle-benign", "complete", "acceptable", "execute"), false)
 	}},
+	{"addHistoricalApproval", func(c *conversation) {
+		c.addHistoricalApproval(client.ApprovalMsg{AskID: "oracle-ask", Verdict: "deny"})
+	}},
+	{"attachHistoricalReceipt", func(c *conversation) {
+		c.scrollback.SetOriginSession("root")
+		c.addTool("oracle-receipt-call", "Read", "{}")
+		hook := scrollback.HookSnapshot{SourceID: "oracle-receipt", Revision: 1, OriginSessionID: "root", CallID: "oracle-receipt-call", Review: &scrollback.HookReview{ReviewID: "oracle-receipt"}}
+		c.scrollback.Tools().RecordHookEvent(hook)
+		stored, _ := c.scrollback.Hook("oracle-receipt")
+		c.attachHistoricalReceipt(stored, client.ApprovalMsg{AskID: "receipt-ask", CallID: "oracle-receipt-call", OriginSessionID: "root", ReviewID: "oracle-receipt", Verdict: "allow_once"})
+	}},
+	{"identifiedReviewForAsk", func(c *conversation) {
+		c.scrollback.SetOriginSession("root")
+		c.addTool("oracle-identity-call", "Read", `{}`)
+		c.identifiedReviewForAsk("oracle-identity-review", "root", "root", "oracle-identity-call")
+		msg := guardrailTestHook("oracle-identity-review", "complete", "unresolved", "ask_action")
+		msg.HookID, msg.Revision, msg.OriginSessionID, msg.CallID = "oracle-identity-review", 1, "root", "oracle-identity-call"
+		c.addGuardrailHook(msg, false)
+	}},
+	{"presentationForHook", func(c *conversation) {
+		msg := guardrailTestHook("oracle-identity-review", "complete", "prohibited", "deny")
+		msg.HookID, msg.Revision, msg.OriginSessionID, msg.CallID = "oracle-identity-review", 2, "root", "oracle-identity-call"
+		c.addGuardrailHook(msg, false)
+	}},
 	{"addError", func(c *conversation) { c.addError("stream failed: boom") }},
 	{"addPermanentError", func(c *conversation) { c.addPermanentError("permanent provider error: auth failed") }},
 	{"addRecoverNotice", func(c *conversation) { c.addRecoverNotice("permanent failure recovered; start a new session") }},
@@ -274,7 +298,10 @@ var oracleSteps = []struct {
 // method fails TestConversationMutatorsCoveredByOracle until it is either added
 // as an oracle step or consciously listed here.
 var oracleNonMutators = map[string]string{
+	"attachPendingHooks":    "attachment driven by addTool and reconcileUnresolvedTool",
+	"clearPendingHooks":     "drops only pending association candidates at run end; no rendered change",
 	"guardrailReview":       "lazy accessor, driven via addGuardrailHook and detail update steps",
+	"guardrailReviewForAsk": "lazy accessor, driven via approval tests",
 	"subagentCard":          "typed snapshot lookup",
 	"teamCard":              "typed snapshot lookup",
 	"latestPendingToolName": "pure read",
@@ -315,8 +342,33 @@ func TestBlockCacheOutputMatchesFreshRender(t *testing.T) {
 	}
 	check("(empty)")
 	for _, step := range oracleSteps {
+		before := cachedCollapsed.renderConversation(c, false)
 		step.fn(c)
 		check(step.name)
+		if step.name == "identifiedReviewForAsk" || step.name == "presentationForHook" {
+			if before == cachedCollapsed.renderConversation(c, false) {
+				t.Fatalf("step %q did not change the cached conversation render", step.name)
+			}
+			wantRevision := uint64(1)
+			if step.name == "presentationForHook" {
+				wantRevision = 2
+			}
+			hook, ok := c.scrollback.Hook("oracle-identity-review")
+			if !ok || hook.Revision != wantRevision || hook.CallID != "oracle-identity-call" || hook.OriginSessionID != "root" {
+				t.Fatalf("step %q lost identified review: %+v present=%v", step.name, hook, ok)
+			}
+			attached := 0
+			if card, found := c.scrollback.SnapshotForCall("oracle-identity-call"); found {
+				for _, review := range card.Payload.(scrollback.ToolCardSnapshot).Hooks {
+					if review.ID == hook.ID && review.Revision == wantRevision {
+						attached++
+					}
+				}
+			}
+			if attached != 1 {
+				t.Fatalf("step %q attached %d matching reviews to the original tool card, want one", step.name, attached)
+			}
+		}
 	}
 }
 

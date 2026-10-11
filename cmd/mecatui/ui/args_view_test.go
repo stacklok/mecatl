@@ -39,7 +39,7 @@ func shellAskModel(t *testing.T, args string) Model {
 	m.stream = client.NewStream(&fakeRecver{}, &fakeSender{})
 	m.phase = phaseRunning
 	return applyAll(m, client.PermissionAskMsg{
-		AskID: "sess-test-0001:1:bash-1", Tool: "Shell", Args: args, Reason: "Shell requires approval",
+		AskID: "sess-test-0001:1:bash-1", OriginSessionID: m.sessionID, Tool: "Shell", Args: args, Reason: "Shell requires approval",
 	})
 }
 

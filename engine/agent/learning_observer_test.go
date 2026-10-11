@@ -94,11 +94,14 @@ func TestLearningTrajectoryNestedMutationCannotChangeLiveOrPersistedHistory(t *t
 		session.NewToolMessage(session.NewToolResultWithParts("call", "result", []session.Content{{Data: []byte("result-data"), Audience: []string{"result-audience"}}})),
 		session.NewUserMessageWithParts("user", []session.Content{{Data: []byte("user-data"), Audience: []string{"user-audience"}}}),
 	}
-	expected := learning.NewTrajectory("expected", "/ws", session.StopEndTurn, session.Usage{}, seed).Messages
 	sess := newSession(t, session.Limits{})
 	if err := sess.SeedHistory(seed); err != nil {
 		t.Fatal(err)
 	}
+	if err := sess.RestoreInvocationIDs(nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	expected := learning.NewTrajectory("expected", "/ws", session.StopEndTurn, session.Usage{}, sess.Conversation.Messages).Messages
 	store := memstore.New()
 	observer := &nestedMutatingObserver{store: store}
 	e := newEngine(agent.Deps{

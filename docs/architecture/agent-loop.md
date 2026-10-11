@@ -71,6 +71,13 @@ tree. Inside a read batch, a sibling `Read` or `Grep` could see the parent
 half-written, so that call runs alone like any mutating tool. The barrier orders
 sibling calls within one run only; state shared across runs needs its own locking.
 
+Each accepted call receives a public invocation ID before the assistant message is
+recorded or dispatch starts. The loop validates provider-private pairing IDs for the
+whole turn first, including calls that remain outstanding in history. A duplicate
+rejects the malformed turn through the ordinary failure path, so it cannot create
+cards, history, or tool effects. The public ID stays with a parked or resumed call;
+a later call receives a new ID even if the provider reuses its completed pairing ID.
+
 Each call passes the permission policy, then the `PreToolUse` hook (a rewritten call
 is evaluated again), then the delegated-authority check at execution. A read batch
 clears every call's gates first, asking at most one permission at a time, and only

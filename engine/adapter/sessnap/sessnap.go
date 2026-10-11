@@ -130,7 +130,8 @@ type Snapshot struct {
 	// purely additive, no format-tag bump (the Profile/ProviderID/Usage
 	// precedent). A legacy session restores with no run id and is stamped on its
 	// next run; there is no migration sweep.
-	RunID string `json:"run_id,omitempty"`
+	HookRevision uint64 `json:"hook_revision,omitempty"`
+	RunID        string `json:"run_id,omitempty"`
 	// Owner is the verified caller the session is attributed to. A
 	// POINTER for true omitempty: an ownerless session emits no "owner" key, so a
 	// pre-ship snapshot decodes to a nil owner and an ownerless snapshot stays
@@ -206,10 +207,11 @@ type externalAuthorizationDTO struct {
 }
 
 type authorizationCallDTO struct {
-	ID     session.ToolCallID `json:"id"`
-	Name   string             `json:"name"`
-	Args   []byte             `json:"args,omitempty"`
-	ItemID string             `json:"item_id,omitempty"`
+	ID           session.ToolCallID   `json:"id"`
+	Name         string               `json:"name"`
+	Args         []byte               `json:"args,omitempty"`
+	ItemID       string               `json:"item_id,omitempty"`
+	InvocationID session.InvocationID `json:"invocation_id,omitempty"`
 }
 
 func toPendingAuthorizationDTO(p session.PendingAuthorization) *pendingAuthorizationDTO {
@@ -231,10 +233,11 @@ func toPendingAuthorizationDTO(p session.PendingAuthorization) *pendingAuthoriza
 
 func toAuthorizationCallDTO(call session.ToolCall) authorizationCallDTO {
 	return authorizationCallDTO{
-		ID:     call.ID,
-		Name:   call.Name,
-		Args:   append([]byte(nil), call.Args...),
-		ItemID: call.ItemID,
+		ID:           call.ID,
+		Name:         call.Name,
+		Args:         append([]byte(nil), call.Args...),
+		ItemID:       call.ItemID,
+		InvocationID: call.InvocationID,
 	}
 }
 
@@ -260,10 +263,11 @@ func fromPendingAuthorizationDTO(dto *pendingAuthorizationDTO) *session.PendingA
 
 func fromAuthorizationCallDTO(dto authorizationCallDTO) session.ToolCall {
 	return session.ToolCall{
-		ID:     dto.ID,
-		Name:   dto.Name,
-		Args:   append([]byte(nil), dto.Args...),
-		ItemID: dto.ItemID,
+		ID:           dto.ID,
+		Name:         dto.Name,
+		Args:         append([]byte(nil), dto.Args...),
+		ItemID:       dto.ItemID,
+		InvocationID: dto.InvocationID,
 	}
 }
 
@@ -311,6 +315,7 @@ func Of(s *session.Session) (Snapshot, error) {
 		Relationship:           relationship,
 		CreatedAt:              s.CreatedAt,
 		Incarnation:            s.Incarnation(),
+		HookRevision:           s.HookRevision(),
 		// Owner is a pointer for true omitempty; Clone so the snapshot cannot
 		// alias (and later mutate) the aggregate's own principal.
 		Owner: s.Owner.Clone(),
@@ -387,6 +392,7 @@ func (s Snapshot) Restore() (*session.Session, error) {
 	// inert stored label, not lifecycle state, so it does not belong in
 	// RestoreState's state-machine parameter list.
 	restored.BeginRun(s.RunID)
+	restored.RestoreHookRevision(s.HookRevision)
 	restored.RestoreTitleMetadata(s.Title, s.TitleProvenance, s.TitleRevision, s.TitleGeneration, s.TitleSourcePrompts, s.TitleAttempts)
 	// The identity labels go through the WRITE-ONCE aggregate method rather than a
 	// field poke (Session is an aggregate) and rather than a RestoreState
@@ -399,10 +405,18 @@ func (s Snapshot) Restore() (*session.Session, error) {
 	}
 
 	pendingAuthorization := fromPendingAuthorizationDTO(s.PendingAuthorization)
+	pendingAsk := s.Pending
+	if pendingAsk != nil {
+		pendingCopy := *pendingAsk
+		pendingAsk = &pendingCopy
+	}
+	if err := restored.RestoreInvocationIDs(pendingAsk, pendingAuthorization); err != nil {
+		return nil, fmt.Errorf("sessnap: restore invocation IDs: %w", err)
+	}
 	data := RestoreData{
 		State:                s.State,
 		Stop:                 s.StopReason,
-		Pending:              s.Pending,
+		Pending:              pendingAsk,
 		PendingAuthorization: pendingAuthorization,
 		Counters:             s.Counters,
 		TokenUsage:           s.TokenUsage,

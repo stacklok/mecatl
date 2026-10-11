@@ -661,13 +661,21 @@ func (c *runInstructionContributor) Assemble(ctx context.Context, dirs []string,
 
 // Run is an asynchronous agent execution.
 type Run struct {
-	events  chan session.Event
+	events chan session.Event
+	// hookMu serializes version assignment, stream delivery and sink mirroring.
+	hookMu  sync.Mutex
+	sess    *session.Session
 	asks    *askRegistry
 	cancel  context.CancelFunc
 	seq     atomic.Int64
 	outcome atomic.Int32
 
 	results toolResultPublisher
+	// turnCalls is read by concurrent result publishers and replaced only between turns.
+	turnCalls map[session.ToolCallID]session.InvocationID
+	// Only the restored pending action review uses its persisted legacy key while
+	// being re-evaluated; subsequent invocations derive keys from their public IDs.
+	pendingReviewID string
 
 	// closureMu linearizes the final authorization.required publication against
 	// Cancel. That publication is the one nonterminal way an event stream closes.
@@ -1408,7 +1416,9 @@ func (e *Engine) ResumeApprovalWith(ctx context.Context, sess *session.Session, 
 	// never read the id off the session: a reused session still carries the id of
 	// the run that just ended, and inheriting it would silently attribute a brand
 	// new run's events to the previous one.
-	return e.startRun(ctx, sess, RunRequest{RunID: sess.RunID(), CanPresentAuthorization: opts.CanPresentAuthorization}, session.Usage{}, func(ctx context.Context, r *Run) {
+	// A resumed attempt retains the original RunID for event correlation, but
+	// newly surfaced asks need a fresh discriminator across process restarts.
+	return e.startRun(ctx, sess, RunRequest{RunID: sess.RunID(), AskIDDiscriminator: string(session.NewIncarnationID()), CanPresentAuthorization: opts.CanPresentAuthorization}, session.Usage{}, func(ctx context.Context, r *Run) {
 		// Reject malformed internal callers before inspecting the environment or
 		// clearing the pending ask. Wire mappers already fail unknown enum values to
 		// deny, but the public engine seam must not treat a future value as an allow.
@@ -1537,9 +1547,18 @@ func (e *Engine) PrepareAuthorizationContinuation(ctx context.Context, sess *ses
 	if !resolution.Valid() {
 		return nil, errors.New("agent: authorization continuation requires a terminal resolution")
 	}
+	if err := sess.ValidateIncomingCalls(nil); err != nil {
+		return nil, fmt.Errorf("agent: ambiguous authorization continuation: %w", err)
+	}
 	status := resolution.Status()
 	return e.prepareRun(ctx, sess, RunRequest{RunID: sess.RunID(), CanPresentAuthorization: true}, session.Usage{}, func(ctx context.Context, r *Run) {
 		e.emit(r, session.Event{Type: session.EvSessionInit})
+		r.results.mu.Lock()
+		r.turnCalls = map[session.ToolCallID]session.InvocationID{pending.Call.ID: pending.Call.InvocationID}
+		for _, call := range pending.Deferred {
+			r.turnCalls[call.ID] = call.InvocationID
+		}
+		r.results.mu.Unlock()
 		reject := func(callReason, resultReason string) {
 			results := []session.ToolResult{session.NewToolError(pending.Call.ID, resultReason)}
 			for _, deferred := range pending.Deferred {
@@ -1634,8 +1653,14 @@ func (e *Engine) emitAuthorizationResolution(r *Run, turn int, authorization ses
 	for i := range results {
 		e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turn, ToolResult: ptr(results[i])})
 	}
+	id := session.InvocationID("")
+	if len(results) > 0 {
+		id = results[0].InvocationID
+	}
 	e.emit(r, session.Event{Type: session.EvAuthorizationResolved, Authorization: &session.AuthorizationPayload{
 		AuthorizationID: authorization.ID, DisplayName: authorization.DisplayName, Call: callID, ExpiresAt: authorization.ExpiresAt, Status: status,
+		InvocationID: id,
+		SessionID:    r.sess.ID,
 	}})
 }
 
@@ -1690,6 +1715,7 @@ func (e *Engine) prepareRun(ctx context.Context, sess *session.Session, req RunR
 	}
 	ctx = tool.WithMemoryAttribution(ctx, attribution)
 	r := &Run{
+		sess:           sess,
 		events:         make(chan session.Event, 64),
 		asks:           newAskRegistry(),
 		cancel:         cancel,
@@ -2003,7 +2029,7 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, env
 				InterTokenMaxMs:  timing.interTokenMaxMs,
 			}})
 
-		if err := sess.RecordAssistant(asst); err != nil {
+		if err := acceptTurnCalls(sess, &asst); err != nil {
 			e.terminate(ctx, r, sess, session.StopError, lastText, total, err, false)
 			return
 		}
@@ -2031,8 +2057,30 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, env
 	}
 }
 
+func acceptTurnCalls(sess *session.Session, asst *session.Message) error {
+	if err := sess.ValidateIncomingCalls(asst.ToolCalls); err != nil {
+		return err
+	}
+	for i := range asst.ToolCalls {
+		asst.ToolCalls[i].InvocationID = session.NewInvocationID()
+	}
+	return sess.RecordAssistant(*asst)
+}
+
+func (r *Run) rememberTurnCalls(calls []session.ToolCall) {
+	// Publishers may run concurrently with dispatch and need the same occurrence.
+	r.results.mu.Lock()
+	defer r.results.mu.Unlock()
+	r.turnCalls = make(map[session.ToolCallID]session.InvocationID, len(calls))
+	for _, call := range calls {
+		r.turnCalls[call.ID] = call.InvocationID
+	}
+}
+
 // dispatchTurn owns the dispatch-to-record tail and reports whether the run ended.
 func (e *Engine) dispatchTurn(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, calls []session.ToolCall, lastText string, total session.Usage) bool {
+	// Step 6: dispatch the tool calls, then loop back to step 2.
+	r.rememberTurnCalls(calls)
 	results, park, cancelled := e.dispatch(ctx, r, sess, env, turnIdx, calls)
 	if cancelled {
 		if len(results) > 0 {
@@ -2178,6 +2226,8 @@ func (e *Engine) parkAuthorization(ctx context.Context, r *Run, sess *session.Se
 		AuthorizationID: park.authorization.ID,
 		DisplayName:     park.authorization.DisplayName,
 		Call:            park.call.ID,
+		InvocationID:    park.call.InvocationID,
+		SessionID:       sess.ID,
 		ExpiresAt:       park.authorization.ExpiresAt,
 		Status:          session.AuthorizationPending,
 	}
@@ -3557,6 +3607,38 @@ func (r *Run) emitAuthorizationRequired(ev session.Event) (session.Event, bool, 
 }
 
 func (r *Run) emitChecked(ev session.Event) (session.Event, bool) {
+	if r.sess != nil {
+		if ev.Ask != nil && ev.Ask.SessionID == "" && ev.Type == session.EvPermissionAsk {
+			ask := *ev.Ask
+			ask.SessionID = r.sess.ID
+			ev.Ask = &ask
+		}
+		if ev.Approval != nil && ev.Approval.SessionID == "" {
+			approval := *ev.Approval
+			approval.SessionID = r.sess.ID
+			ev.Approval = &approval
+		}
+		if ev.Authorization != nil && ev.Authorization.SessionID == "" {
+			authorization := *ev.Authorization
+			authorization.SessionID = r.sess.ID
+			ev.Authorization = &authorization
+		}
+	}
+	if ev.Type == session.EvHook && ev.Hook != nil && r.sess != nil {
+		hook := *ev.Hook
+		if hook.Guardrail != nil {
+			hook.HookID = hook.Guardrail.ReviewID
+		} else if hook.HookID == "" {
+			hook.HookID = "hook_" + string(session.NewIncarnationID())
+		}
+		hook.SessionID = r.sess.ID
+		hook.Revision = r.sess.NextHookRevision()
+		if hook.Revision == 0 {
+			r.diag.Log(r.ctx, port.LevelError, "hook revision exhausted", "session", string(r.sess.ID))
+			return ev, false
+		}
+		ev.Hook = &hook
+	}
 	ev.Seq = r.seq.Add(1)
 	// The run labels its own events with run-scoped identity. Seq answers "where
 	// in this run", RunID answers "which run" — Seq restarts every run, so it

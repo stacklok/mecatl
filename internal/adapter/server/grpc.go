@@ -240,7 +240,7 @@ func (h *HarnessServer) GetGuardrailReviewDetail(ctx context.Context, req *mecat
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	return &mecatlv1.GetGuardrailReviewDetailResponse{ReviewId: valid(detail.ReviewID), Concern: valid(detail.Concern), SourceDisplay: valid(detail.SourceDisplay), NextAction: valid(detail.NextAction)}, nil
+	return &mecatlv1.GetGuardrailReviewDetailResponse{ReviewId: valid(detail.ReviewID), Concern: valid(detail.Concern), SourceDisplay: valid(detail.SourceDisplay), NextAction: valid(detail.NextAction), OriginSessionId: string(detail.OriginSessionID), ToolCallId: string(detail.ToolCallID)}, nil
 }
 
 // GetSessionTranscript returns the owned session's snapshot-derived transcript.

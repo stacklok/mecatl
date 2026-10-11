@@ -603,15 +603,14 @@ func (m Model) runDebugAsk() (tea.Model, tea.Cmd) {
 		m.statusMsg = m.deps.Theme.Style("warning").Render("debug-ask: marshal failed")
 		return m, nil
 	}
-	// The askID embeds the monotonic invocation counter so a re-injection after a
-	// resolve is never swallowed by the resolvedAsks dedupe. It is colon-free up
-	// to the trailing counter, so isChildAsk classifies it as a MAIN ask (the
-	// always button is offered — the modal shows all three buttons).
+	// The counter prevents a re-injection from being swallowed by ask dedupe.
 	return m.applyPermissionAsk(client.PermissionAskMsg{
-		AskID:  fmt.Sprintf("sess-debug-ask-%d", n),
-		Tool:   "Shell",
-		Args:   string(args),
-		Reason: "debug ask (client debug mode) — not from the model",
+		// This synthetic ask is created by this model for its own session.
+		AskID:           fmt.Sprintf("sess-debug-ask-%d", n),
+		OriginSessionID: m.sessionID,
+		Tool:            "Shell",
+		Args:            string(args),
+		Reason:          "debug ask (client debug mode) — not from the model",
 	})
 }
 

@@ -383,7 +383,7 @@ func truncateToolBody(m session.Message, budget int) session.Message {
 	}
 	truncated := fmt.Sprintf("%s\n... [%d bytes elided by compaction]",
 		body[:budget], len(body)-budget)
-	tr := session.NewToolResultWithParts(m.ToolResult.CallID, truncated, m.ToolResult.Parts)
-	tr.IsError = m.ToolResult.IsError
+	tr := *m.ToolResult
+	tr.Content = truncated
 	return session.NewToolMessage(tr)
 }

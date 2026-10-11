@@ -652,7 +652,7 @@ func TestInspectSessionLineageIsolation_ParallelAndTeamEvidenceJoinExactLifetime
 	}
 	parallelRow := rows[0].(map[string]any)
 	teamRow := rows[1].(map[string]any)
-	if parallelRow["type"] != "parallel" || parallelRow["call_id"] != "parallel-call" || parallelRow["branch_index"] != float64(2) || !strings.HasPrefix(parallelRow["scope_handle"].(string), "v2.") {
+	if parallelRow["type"] != "parallel" || parallelRow["call_id"] != nil || parallelRow["branch_index"] != float64(2) || !strings.HasPrefix(parallelRow["scope_handle"].(string), "v2.") {
 		t.Fatalf("parallel join omitted exact branch metadata: %#v", parallelRow)
 	}
 	if teamRow["type"] != "team" || teamRow["member"] != "reviewer" || !strings.HasPrefix(teamRow["scope_handle"].(string), "v2.") || len(teamRow["tasks"].([]any)) != 1 || len(teamRow["findings"].([]any)) != 1 {

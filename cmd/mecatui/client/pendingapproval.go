@@ -18,13 +18,16 @@ import (
 // complete durable replay. Cursor remains scoped to the unfiltered watch that
 // issued it; continuation filtering is therefore performed locally by RunID.
 type PendingApproval struct {
-	SessionID string
-	RunID     string
-	AskID     string
-	Tool      string
-	Args      string
-	Reason    string
-	Cursor    string
+	SessionID       string
+	OriginSessionID string
+	ToolCallID      string
+	ReviewID        string
+	RunID           string
+	AskID           string
+	Tool            string
+	Args            string
+	Reason          string
+	Cursor          string
 }
 
 // PendingApprovalFailure is a closed, proto-free refusal category.
@@ -262,13 +265,16 @@ func approvalFromEvent(sessionID, cursor string, ev *mecatlv1.Event) (PendingApp
 		return PendingApproval{}, false, pendingApprovalFailure(PendingApprovalMalformed)
 	}
 	approval := PendingApproval{
-		SessionID: sessionID,
-		RunID:     ev.GetRunId(),
-		AskID:     ask.GetAskId(),
-		Tool:      ask.GetTool(),
-		Args:      ask.GetArgs(),
-		Reason:    ask.GetReason(),
-		Cursor:    cursor,
+		SessionID:       sessionID,
+		OriginSessionID: ask.GetOriginSessionId(),
+		ToolCallID:      ask.GetCallId(),
+		ReviewID:        ask.GetGuardrail().GetReviewId(),
+		RunID:           ev.GetRunId(),
+		AskID:           ask.GetAskId(),
+		Tool:            ask.GetTool(),
+		Args:            ask.GetArgs(),
+		Reason:          ask.GetReason(),
+		Cursor:          cursor,
 	}
 	return approval, ask.GetGuardrail() == nil && ask.GetTool() != "PresentPlan", nil
 }

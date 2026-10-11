@@ -3774,6 +3774,38 @@ func (s *Service) GetSession(ctx context.Context, id session.SessionID) (*sessio
 	return sess, nil
 }
 
+// admitHookPublication reconciles the loaded snapshot with committed hook evidence
+// only when an operation can resume publication, never on read-only lookup.
+func (s *Service) admitHookPublication(ctx context.Context, sess *session.Session) error {
+	if err := s.restoreHookHighWater(ctx, sess); err != nil {
+		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "hook revision recovery failed", "session", string(sess.ID), "err", err.Error())
+		return ErrInternal
+	}
+	return nil
+}
+
+// restoreHookHighWater reads committed events without saving or rewriting the snapshot.
+func (s *Service) restoreHookHighWater(ctx context.Context, sess *session.Session) error {
+	if s.cfg.EventLog != nil {
+		for ev, err := range s.cfg.EventLog.Read(ctx, sess.ID) {
+			if err != nil {
+				return err
+			}
+			if ev.Type != session.EvHook || ev.Hook == nil || ev.Hook.Revision == 0 {
+				continue
+			}
+			if ev.Hook.HookID == "" || ev.Hook.SessionID != sess.ID {
+				return fmt.Errorf("invalid hook revision record for session %q", sess.ID)
+			}
+			sess.RestoreHookRevision(ev.Hook.Revision)
+		}
+	}
+	if sess.HookRevision() == ^uint64(0) {
+		return fmt.Errorf("hook revision exhausted for session %q", sess.ID)
+	}
+	return nil
+}
+
 // WithAuthorizedSession serializes a caller-owned side effect with session run
 // entry. It performs an ownership-only preflight before taking caller-selected
 // coordination, then reloads and reauthorizes under runEntryMu immediately
@@ -4945,6 +4977,9 @@ func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*ag
 		}
 	}()
 	ctx = admissionCtx
+	if err := s.admitHookPublication(ctx, sess); err != nil {
+		return nil, err
+	}
 	engine, env, governanceRoot, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
 		return nil, err
@@ -5514,6 +5549,9 @@ func (s *Service) resolvePersistedRunAsk(ctx context.Context, id session.Session
 		return RunAskAcknowledgement{}, err
 	}
 	if err := s.validatePersistedRunAsk(sess, expectedRunID, resolution, scoped); err != nil {
+		return RunAskAcknowledgement{}, err
+	}
+	if err := s.admitHookPublication(requestLeaseCtx, sess); err != nil {
 		return RunAskAcknowledgement{}, err
 	}
 	st.persistMu.Lock()
@@ -6978,6 +7016,9 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 		}
 	}()
 	ctx = admissionCtx
+	if err := s.admitHookPublication(ctx, sess); err != nil {
+		return nil, err
+	}
 	if err := s.attachLiveInstructions(sess, true); err != nil {
 		return nil, err
 	}

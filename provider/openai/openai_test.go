@@ -1181,7 +1181,7 @@ func TestItemIDRoundTrip(t *testing.T) {
 				{ID: "call_abc", Name: "read_file",
 					Args: json.RawMessage(`{"path":"a.go"}`), ItemID: "fc_3"},
 			}),
-			session.NewToolMessage(session.NewToolResult("call_abc", "content of a")),
+			session.NewToolMessage(session.ToolResult{CallID: "call_abc", Content: "content of a"}),
 			session.NewAssistantMessage("done", "", nil),
 		},
 	}
@@ -1212,6 +1212,16 @@ func TestItemIDRoundTrip(t *testing.T) {
 	}
 	if got := fcItem["call_id"]; got != "call_abc" {
 		t.Errorf("function_call item[call_id] = %v, want %q", got, "call_abc")
+	}
+	for _, item := range items {
+		if item["type"] == "function_call" || item["type"] == "function_call_output" {
+			if item["call_id"] != "call_abc" {
+				t.Fatalf("provider pairing changed: %+v", item)
+			}
+			if _, leaked := item["invocation_id"]; leaked {
+				t.Fatalf("harness identity leaked to provider: %+v", item)
+			}
+		}
 	}
 
 	// Part 2: empty ItemID (via NewToolCall) omits the "id" key entirely.

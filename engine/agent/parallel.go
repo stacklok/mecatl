@@ -534,8 +534,9 @@ func (t *ParallelTool) ExecuteWithParent(ctx context.Context, call session.ToolC
 // (the plain Execute / silent path) makes every method a no-op, so a Parallel call with
 // no observer behaves exactly as before.
 type branchEmitter struct {
-	emit         func(session.Event)
-	parentCallID string
+	emit               func(session.Event)
+	parentCallID       string
+	parentInvocationID session.InvocationID
 	// childID derives branch i's child SESSION id ("parallel-<callID>-<i>") for the
 	// branch_start/branch_end events, so a client can ADDRESS a branch (CancelChild)
 	// without deriving the id grammar (D16). It is deterministic (childSessionID), so
@@ -557,12 +558,21 @@ func (e branchEmitter) branchChildID(i int) string {
 // active reports whether emission is wired (an observing parent supplied a closure).
 func (e branchEmitter) active() bool { return e.emit != nil }
 
+func (e branchEmitter) publish(ev session.Event) {
+	if ev.Parallel != nil {
+		payload := *ev.Parallel
+		payload.ParentInvocationID = e.parentInvocationID
+		ev.Parallel = &payload
+	}
+	e.emit(ev)
+}
+
 // start emits the run-level parallel.start event.
 func (e branchEmitter) start(join string, branchCount int) {
 	if !e.active() {
 		return
 	}
-	e.emit(session.Event{Type: session.EvParallelStart, Parallel: &session.ParallelPayload{
+	e.publish(session.Event{Type: session.EvParallelStart, Parallel: &session.ParallelPayload{
 		ParentCallID: e.parentCallID,
 		Join:         join,
 		BranchCount:  branchCount,
@@ -581,7 +591,7 @@ func (e branchEmitter) branchStart(i int, incarnation session.IncarnationID, goa
 	if !e.active() {
 		return
 	}
-	e.emit(session.Event{Type: session.EvParallelBranch, Parallel: &session.ParallelPayload{
+	e.publish(session.Event{Type: session.EvParallelBranch, Parallel: &session.ParallelPayload{
 		ParentCallID:           e.parentCallID,
 		Kind:                   session.ParallelBranchStart,
 		BranchIndex:            i,
@@ -606,7 +616,7 @@ func (e branchEmitter) branchEnd(res branchResult, stop session.StopReason, usag
 	if !e.active() {
 		return
 	}
-	e.emit(session.Event{Type: session.EvParallelBranch, Parallel: &session.ParallelPayload{
+	e.publish(session.Event{Type: session.EvParallelBranch, Parallel: &session.ParallelPayload{
 		ParentCallID:     e.parentCallID,
 		Kind:             session.ParallelBranchEnd,
 		BranchIndex:      res.index,
@@ -626,7 +636,7 @@ func (e branchEmitter) end(join string, branchCount, winner int, usage session.U
 	if !e.active() {
 		return
 	}
-	e.emit(session.Event{Type: session.EvParallelEnd, Parallel: &session.ParallelPayload{
+	e.publish(session.Event{Type: session.EvParallelEnd, Parallel: &session.ParallelPayload{
 		ParentCallID: e.parentCallID,
 		Join:         join,
 		BranchCount:  branchCount,
@@ -652,17 +662,19 @@ func (e branchEmitter) branchTool(i int) func(session.Event) {
 		if ev.Type != session.EvSubagentTool || ev.Subagent == nil {
 			return
 		}
-		e.emit(session.Event{Type: session.EvParallelBranch, Parallel: &session.ParallelPayload{
-			ParentCallID:    e.parentCallID,
-			Kind:            session.ParallelBranchTool,
-			BranchIndex:     i,
-			ToolName:        ev.Subagent.ToolName,
-			ChildToolCallID: ev.Subagent.ChildToolCallID,
-			IsError:         ev.Subagent.IsError,
-			ToolCount:       ev.Subagent.ToolCount,
-			Text:            ev.Subagent.Text,
-			Detail:          ev.Subagent.Detail,
-			InnerKind:       ev.Subagent.InnerKind,
+		e.publish(session.Event{Type: session.EvParallelBranch, Parallel: &session.ParallelPayload{
+			ParentCallID:      e.parentCallID,
+			Kind:              session.ParallelBranchTool,
+			BranchIndex:       i,
+			ChildID:           e.branchChildID(i),
+			ToolName:          ev.Subagent.ToolName,
+			ChildToolCallID:   ev.Subagent.ChildToolCallID,
+			ChildInvocationID: ev.Subagent.ChildInvocationID,
+			IsError:           ev.Subagent.IsError,
+			ToolCount:         ev.Subagent.ToolCount,
+			Text:              ev.Subagent.Text,
+			Detail:            ev.Subagent.Detail,
+			InnerKind:         ev.Subagent.InnerKind,
 		}})
 	}
 }
@@ -754,7 +766,8 @@ func (t *ParallelTool) run(ctx context.Context, call session.ToolCall, env tool.
 		return *selectorErr, nil
 	}
 
-	be := branchEmitter{emit: emit, parentCallID: string(call.ID), skipRoute: caps.skipRoute,
+	caps.parentInvocationID = call.InvocationID
+	be := branchEmitter{emit: emit, parentCallID: string(call.ID), parentInvocationID: call.InvocationID, skipRoute: caps.skipRoute,
 		childID: func(i int) string { return string(t.childSessionID(caps.parentSessionID, call.ID, i)) }}
 	be.start(join, len(tasks))
 
@@ -1187,6 +1200,9 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 			t.childSessionID(caps.parentSessionID, callID, i), t.childMode,
 			childEnv, t.limits, branchEngine.now(),
 			caps.parentSessionID, caps.parentIncarnation, callID, i)
+	}
+	if err == nil && caps.parentSessionID != "" && caps.parentInvocationID != "" {
+		err = childSess.BindParentInvocation(caps.parentInvocationID)
 	}
 	if err != nil {
 		res.failed = true

@@ -481,10 +481,10 @@ func collapseToolBody(m session.Message, budget int) (session.Message, bool) {
 	}
 	pointer := fmt.Sprintf("<<tool_result_collapsed id=%s size=%dB; re-run the tool to retrieve it>>",
 		m.ToolResult.CallID, len(m.ToolResult.Content))
-	if m.ToolResult.IsError {
-		return session.NewToolMessage(session.NewToolError(m.ToolResult.CallID, pointer)), true
-	}
-	return session.NewToolMessage(session.NewToolResult(m.ToolResult.CallID, pointer)), true
+	result := *m.ToolResult
+	result.Content = pointer
+	result.Parts = nil
+	return session.NewToolMessage(result), true
 }
 
 // summaryNote renders the per-tier notes into a single human-readable compaction

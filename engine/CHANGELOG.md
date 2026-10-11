@@ -13,6 +13,11 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Public invocation and hook correlation** — adds `session.InvocationID`,
+  occurrence IDs on tool calls/results, asks, reviews and delegation, and
+  session-scoped hook revisions and origin metadata. Provider replay pairing
+  remains private. Added (minor).
+
 - **File-backed hierarchy prompt flag** — adds `prompt.Config.ProjectInstructionHierarchy`
   to render the next-request discovery limitation through the default builder,
   without appending to host-owned prompts. Added (minor).
@@ -375,6 +380,10 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 - **`port.SessionLease.Renew` doc comment narrowed (issue #1333)** — clarifies that bare expiry of the caller's own owner/token, with nothing else having taken the lease over, is not by itself one of the definitive-loss conditions `ErrLeaseHeld` documents; loss is specifically a holder or token change. An implementation that can prove no one else could have raced it (e.g. a single-host backend re-checking its own durable record under its stable transition lock) may reclaim instead of declaring loss — `internal/adapter/flocklease.Lease.Renew` now does exactly this. This narrows, never widens, when `ErrLeaseHeld` may be returned, so it is a documentation clarification, not a contract change; no exported signature changed. No `task api:update` needed.
 
 ### Changed
+
+- **Public identity projection** — client-facing tool and delegation IDs now
+  denote the engine invocation rather than the provider replay ID. Changed
+  (breaking, pre-v1 minor).
 
 - **Target-scoped project guidance and ephemeral snapshot** — `prompt.InstructionAssembler`
   now requires `Assemble(context.Context, []string, *session.InstructionSnapshot, int)`

@@ -68,7 +68,18 @@ func TestContextualGuardrails_EffectiveCallOrder(t *testing.T) {
 	cat.MustRegister(act)
 	call := session.NewToolCall("call-1", "Act", []byte(`{"value":"requested"}`))
 	eng := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.ToolCallTurn(call), mockllm.TextTurn("done")), Catalog: cat, Policy: scenario1Policy{order: &order}, Hooks: scenario1Hook{order: &order}, ToolReviewer: reviewer})
-	drain(eng.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "do it", CanPresentAuthorization: true}))
+	sess := newSession(t, session.Limits{})
+	var hooks []session.HookPayload
+	for ev := range eng.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "do it", CanPresentAuthorization: true}).Events() {
+		if ev.Type == session.EvHook && ev.Hook != nil {
+			hooks = append(hooks, *ev.Hook)
+		}
+	}
+	if len(reviewer.requests) != 1 || len(hooks) != 2 || hooks[0].HookID == hooks[1].HookID || hooks[0].Revision == 0 || hooks[1].Revision <= hooks[0].Revision ||
+		hooks[0].InvocationID == "" || hooks[0].InvocationID != hooks[1].InvocationID || hooks[1].SessionID != sess.ID ||
+		hooks[1].Guardrail == nil || hooks[1].HookID != hooks[1].Guardrail.ReviewID || hooks[1].HookID != reviewer.requests[0].ReviewID {
+		t.Fatalf("ordinary and review records: %+v", hooks)
+	}
 	want := []string{"permission", "mutation", "permission", "review", "authorization", "execute", "post"}
 	if !reflect.DeepEqual(order, want) {
 		t.Fatalf("order = %v, want %v", order, want)
@@ -182,14 +193,24 @@ func TestActionApprovalWaitOutlivesReviewBudgetAndArmsGrant(t *testing.T) {
 		env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, workspace, memledger.New(), nil)
 		run := engine.Run(parent, newSession(t, session.Limits{}), env, agent.RunRequest{Text: "write it"})
 		asks := 0
+		var reviews []session.HookPayload
 		for ev := range run.Events() {
+			if ev.Type == session.EvHook && ev.Hook != nil && ev.Hook.Guardrail != nil {
+				reviews = append(reviews, *ev.Hook)
+			}
 			if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
+				if len(reviews) != 1 || ev.Ask.Guardrail == nil || ev.Ask.Guardrail.ReviewID != reviews[0].HookID || ev.Ask.InvocationID != reviews[0].InvocationID {
+					t.Fatalf("ask does not reference action review: %+v, %+v", ev.Ask, reviews)
+				}
 				asks++
 				<-time.After(91 * time.Second)
 				if err := run.Approve(ev.Ask.AskID, session.VerdictAllowAlways); err != nil {
 					t.Fatal(err)
 				}
 			}
+		}
+		if len(reviews) != 2 || reviews[0].HookID != reviews[1].HookID || reviews[0].Revision >= reviews[1].Revision || reviews[1].Guardrail.Disposition != "execute" {
+			t.Fatalf("action assessment and approval update: %+v", reviews)
 		}
 		if asks != 1 || reviewer.reviews != 1 || executions != 2 || prepares != 3 || workspace.bounded < 4 || !reviewer.AllowsGrant("Write:"+string(args)+":"+env.Ref().Revision) {
 			t.Fatalf("asks=%d reviews=%d executions=%d prepares=%d dependency reads=%d grants=%v", asks, reviewer.reviews, executions, prepares, workspace.bounded, reviewer.armed)

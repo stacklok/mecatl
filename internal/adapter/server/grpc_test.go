@@ -125,6 +125,52 @@ func TestGRPCGetServerInfoReturnsSafeDiagnosticsSnapshot(t *testing.T) {
 	}
 }
 
+func TestGRPCConverseHookRecoveryFailureConcealsBackend(t *testing.T) {
+	const marker = "private storage path /secret/log"
+	store := memstore.New()
+	diag := &recordingDiagnostics{}
+	svc, err := newPlacementTestService(server.Config{
+		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("done")), Model: "mock"}),
+		Store:  store, EventLog: brokenRecoveryLog{cause: errors.New(marker)}, Diagnostics: diag,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, cleanup := dialGRPC(t, svc)
+	defer cleanup()
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	created, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.GetSession(ctx, &mecatlv1.GetSessionRequest{SessionId: created.GetSessionId()}); err != nil {
+		t.Fatalf("read-only lookup depended on broken log: %v", err)
+	}
+	stream, err := client.Converse(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(&mecatlv1.ConverseRequest{Kind: &mecatlv1.ConverseRequest_Prompt{Prompt: &mecatlv1.Prompt{SessionId: created.GetSessionId(), Text: "go"}}}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = stream.Recv()
+	if status.Code(err) != codes.Internal || strings.Contains(err.Error(), marker) || !diag.contains(marker) {
+		t.Fatalf("wire = %v; backend diagnostic retained = %v", err, diag.contains(marker))
+	}
+	loaded, err := store.Load(ctx, session.SessionID(created.GetSessionId()))
+	if err != nil || loaded.HookRevision() != 0 || len(loaded.Conversation.Messages) != 0 {
+		t.Fatalf("rejected admission mutated session: %+v, %v", loaded, err)
+	}
+}
+
+type brokenRecoveryLog struct{ cause error }
+
+func (brokenRecoveryLog) Append(context.Context, session.SessionID, session.Event) error { return nil }
+func (l brokenRecoveryLog) Read(context.Context, session.SessionID) iter.Seq2[session.Event, error] {
+	return func(yield func(session.Event, error) bool) { yield(session.Event{}, l.cause) }
+}
+
 func TestGRPCGetSessionProjectsContextOccupancy(t *testing.T) {
 	svc := newService(t, mockllm.New(mockllm.TextTurn("done")), allowRules())
 	client, cleanup := dialGRPC(t, svc)
@@ -265,14 +311,17 @@ func TestGRPCConverseInvalidUTF8ToolResult(t *testing.T) {
 
 	// The tool.result event crossed the wire with its text repaired.
 	var tr *mecatlv1.ToolResult
+	callID := ""
 	for _, e := range events {
-		if e.GetType() == "tool.result" && e.GetToolResult().GetCallId() == "c1" {
+		if e.GetType() == "tool.call" && e.GetToolCall().GetName() == "Shell" {
+			callID = e.GetToolCall().GetId()
+		}
+		if e.GetType() == "tool.result" {
 			tr = e.GetToolResult()
-			break
 		}
 	}
-	if tr == nil {
-		t.Fatalf("no tool.result event for c1 in %v", typesOf(events))
+	if callID == "" || callID == "c1" || tr == nil || tr.GetCallId() != callID {
+		t.Fatalf("call/result occurrence not paired on wire: %v", typesOf(events))
 	}
 	if !strings.ContainsRune(tr.GetContent(), '�') {
 		t.Fatalf("tool.result content not repaired to U+FFFD: %q", tr.GetContent())

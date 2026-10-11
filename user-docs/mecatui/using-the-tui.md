@@ -43,6 +43,12 @@ action or released a result; findings, failures, unresolved reviews, and
 approvals remain visible. To keep benign notices visible, configure
 [`hook_notices.show_benign`](./customization.md#show-benign-guardrail-notices).
 
+`mecatui` keeps hook and guardrail notices in the conversation even when it cannot
+attach them to a tool row. It uses the explicit origin session, tool-call ID, hook ID,
+and revision from the server to correlate a notice or approval with a top-level card.
+Conflicting or incomplete identities remain standalone, so they do not overwrite a
+visible notice. `f9` and `hook_notices.show_benign` keep their existing behavior.
+
 ## Attach a local file
 
 Type `@` to find a file on the machine running `mecatui`. Use `↑` or `↓` to

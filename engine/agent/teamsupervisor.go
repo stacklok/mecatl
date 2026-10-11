@@ -932,6 +932,9 @@ func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
 		rel := sess.Relationship
 		rel.CallID = s.parentCallID
 		err = sess.RestoreSessionMetadata(session.SessionKindTeamMember, rel)
+		if err == nil && s.caps.parentInvocationID != "" {
+			err = sess.BindParentInvocation(s.caps.parentInvocationID)
+		}
 	}
 	if err != nil {
 		if cleanup != nil {

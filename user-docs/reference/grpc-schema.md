@@ -205,9 +205,11 @@ StreamSessionEvents replay.
 |---|---|---|---|---|
 | `ask_id` | `string` |  |  | ask_id is the id of the resolved permission ask (mirrors PermissionAsk.ask_id). |
 | `tool` | `string` |  |  | tool is the NAME of the tool the ask gated. It is the tool name ALONE — never the call&#39;s args. |
-| `call_id` | `string` |  |  | call_id is the opaque id of the gated ToolCall (the durable, grammar-free correlation handle a 3b consumer uses to find the call in the conversation). |
+| `call_id` | `string` |  |  | call_id is the public invocation ID of the gated ToolCall; it is not the provider&#39;s replay pairing ID and never authorizes a verdict by itself. |
 | `verdict` | `ApprovalVerdict` |  |  | verdict is the typed resolution of the permission ask. |
 | `origin` | `string` |  |  | origin is the explicit approval provenance. Empty/unknown origins fail closed. |
+| `origin_session_id` | `string` |  |  |  |
+| `review_id` | `string` |  |  | Exact review record when this ask was a contextual review. |
 
 
 
@@ -242,6 +244,7 @@ URL, OAuth code, credential, private binding, topology, or tool arguments.
 | `expires_at` | `google.protobuf.Timestamp` |  |  |  |
 | `status` | `string` |  |  |  |
 | `display_name` | `string` |  |  |  |
+| `origin_session_id` | `string` |  |  |  |
 
 
 
@@ -682,7 +685,7 @@ provider replay blobs (Reasoning / ProviderPhase) + the user-role media Parts.
 | `reasoning` | `string` |  |  | reasoning is the provider&#39;s opaque reasoning REPLAY blob, replayed back verbatim and never interpreted/displayed by the harness. |
 | `provider_phase` | `string` |  |  | provider_phase is the OpenAI Responses opaque phase marker on an assistant message, replayed verbatim and never interpreted/displayed. |
 | `parts` | `Content` | repeated |  | parts carries non-text media (image/audio) on a USER message; nil otherwise. |
-| `reasoning_item_id` | `string` |  |  | reasoning_item_id is the OpenAI Responses reasoning-item id carrier (session.Message.ReasoningItemID), replayed verbatim and never interpreted/displayed by the harness. Opaque, provider-private. |
+| `reasoning_item_id` | `string` |  |  | reasoning_item_id is retained for wire compatibility. Current public projections leave it empty; the opaque provider item ID remains in private session replay state only. |
 
 
 
@@ -1112,6 +1115,8 @@ operator toggle will call an RPC the server has never heard of.
 | `concern` | `string` |  |  |  |
 | `source_display` | `string` |  |  |  |
 | `next_action` | `string` |  |  |  |
+| `origin_session_id` | `string` |  |  | Origin and occurrence are explicit; absent for legacy details. |
+| `tool_call_id` | `string` |  |  |  |
 
 
 
@@ -1515,8 +1520,11 @@ human-readable Event.text. Mirrors session.HookPayload.
 | `phase` | `string` |  |  | phase is the lifecycle point the hook fired at (e.g. &#34;PreToolUse&#34;); empty when not applicable. |
 | `tool` | `string` |  |  | tool is the tool the hook relates to for per-tool phases; empty otherwise. |
 | `decision` | `HookDecision` |  |  | decision is the hook outcome (info / blocked / modified). |
-| `call_id` | `string` |  |  | call_id is the id of the tool call this hook fired against, for the per-tool phases (PreToolUse / PostToolUse); empty otherwise. Lets a client address the hook notice to the originating tool card. Mirrors session.HookPayload.CallID. |
+| `call_id` | `string` |  |  | call_id is the public invocation ID for this hook&#39;s tool occurrence; empty for session-wide hooks. The provider replay ID is private. |
 | `guardrail` | `GuardrailReview` |  |  |  |
+| `hook_id` | `string` |  |  | One logical published record; updates have increasing session-wide revisions. |
+| `revision` | `uint64` |  |  |  |
+| `origin_session_id` | `string` |  |  |  |
 
 
 
@@ -2345,7 +2353,7 @@ Which fields are set depends on the event kind:
 
 | Field | Type | Label | Oneof | Description |
 |---|---|---|---|---|
-| `parent_call_id` | `string` |  |  | parent_call_id is the parent&#39;s Parallel tool-call id and the GROUP key (one Parallel call = one group); attributes the event to the originating card. |
+| `parent_call_id` | `string` |  |  | parent_call_id is the parent&#39;s public Parallel invocation ID and GROUP key; it attributes the event to the originating card, not to a child invocation. |
 | `kind` | `string` |  |  | kind discriminates the per-branch lifecycle transition on a parallel.branch event (branch_start / branch_tool / branch_end); empty on the run-level start/end events. |
 | `join` | `string` |  |  | join is the normalized join strategy (all / first / judge); set on parallel.start and parallel.end. |
 | `branch_count` | `int32` |  |  | branch_count is the number of branches in the run; set on parallel.start and parallel.end. |
@@ -2360,7 +2368,7 @@ Which fields are set depends on the event kind:
 | `usage` | `Usage` |  |  | usage is the branch&#39;s cumulative usage (branch_end) or the run TOTAL summed across branches (parallel.end). |
 | `duration_ms` | `int64` |  |  | duration_ms is the branch&#39;s wall-clock duration in milliseconds (branch_end). |
 | `winner` | `int32` |  |  | winner is the branch index of the selected winner on parallel.end — a real branch_index for first/judge, or -1 for all / none-succeeded. |
-| `child_id` | `string` |  |  | child_id is the branch&#39;s child SESSION id (&#34;parallel-&lt;callID&gt;-&lt;i&gt;&#34;) on branch_start/branch_end — the CancelChild handle, carried explicitly so a client never derives ids from the (internal) id grammar. |
+| `child_id` | `string` |  |  | child_id is the branch&#39;s child SESSION id (&#34;parallel-&lt;callID&gt;-&lt;i&gt;&#34;) on branch_start/branch_tool/branch_end — the CancelChild handle and explicit origin of child-tool previews; never derive ids from the internal grammar. |
 | `routed_category` | `string` |  |  | routed_category is the OPT-IN semantic model router&#39;s chosen CATEGORY label for this branch (branch_start only), set when the router was wired AND classified this branch (empty otherwise — no router, a fail-soft miss that inherited the default branch model, or a branch cancelled before it started). BARE METADATA — a label, never the branch prompt or classifier reasoning — so it is context-isolation safe (gauntlet #7: no branch content crosses). Mirrors session.ParallelPayload.RoutedCategory. |
 | `routed_model` | `string` |  |  | routed_model is the concrete MODEL id the routed branch was minted on (branch_start only), paired with routed_category. BARE METADATA — a model id, never model-influenced free text — so it is context-isolation safe (gauntlet #7). Mirrors session.ParallelPayload.RoutedModel. |
 | `model` | `string` |  |  | model is the concrete MODEL id this branch ACTUALLY ran on (branch_start only), regardless of how it was chosen — inherited default branch model or the opt-in router. BARE METADATA — a model id, never branch content — so it is context-isolation safe (gauntlet #7: no branch content crosses). When the router classified this branch, model == routed_model. Mirrors session.ParallelPayload.Model. |
@@ -2369,7 +2377,7 @@ Which fields are set depends on the event kind:
 | `detail` | `string` |  |  | detail is a BOUNDED preview of a branch tool call&#39;s args (tool.call) or a tool result&#39;s body (tool.result) — control-byte scrubbed and rune-capped upstream, never the raw, unbounded args/result body (branch_tool). |
 | `routing_reason` | `string` |  |  | routing_reason is a BOUNDED harness/composition reason string explaining WHY this branch was NOT routed by the semantic model router (branch_start only) — empty on a routed HIT (routed_category/routed_model carry the hit). A short label (e.g. &#34;router-disabled&#34;, &#34;route-target-unavailable&#34;, &#34;aborted&#34;, or a RouterMiss* classifier miss) — BARE METADATA, never the branch prompt or classifier reasoning — so it is context-isolation safe (gauntlet #7: no branch content crosses). Clamped at the emit site. Mirrors session.ParallelPayload.RoutingReason. |
 | `routing_decision` | `RoutingDecision` | optional |  | routing_decision is the optional bounded configured-router evidence captured on branch_start. Historical events and deployments without a router omit it. |
-| `child_tool_call_id` | `string` |  |  | Exact branch tool.call/tool.result ID, scoped by branch_index; empty otherwise. |
+| `child_tool_call_id` | `string` |  |  | Child&#39;s public tool invocation ID, distinct from parent_call_id; empty outside branch_tool projections. The provider pairing ID remains private. |
 | `provider` | `string` |  |  | provider is the concrete provider that actually ran the branch. |
 | `explicit_router_category` | `string` |  |  | explicit_router_category is the requested router category only for an explicit provider:&#34;model-router&#34; selection. Classifier-originated routing leaves it empty. |
 
@@ -2389,7 +2397,8 @@ Mirrors session.PendingAsk.
 | `args` | `string` |  |  | args is the proposed tool-call argument payload (raw JSON). |
 | `reason` | `string` |  |  | reason explains why approval is required. |
 | `guardrail` | `GuardrailApprovalScope` |  |  |  |
-| `call_id` | `string` | optional |  | call_id is the exact durable tool-call ID for presentation correlation. Absence means no tool-row attachment can be proven. |
+| `call_id` | `string` | optional |  | call_id is the public invocation ID for presentation correlation. Absence means no tool-row attachment can be proven. |
+| `origin_session_id` | `string` |  |  | Origin must not be inferred from ask_id (which remains the authorization key). |
 
 
 
@@ -3036,7 +3045,7 @@ SessionRelationship carries the validated links appropriate to a session kind.
 | Field | Type | Label | Oneof | Description |
 |---|---|---|---|---|
 | `parent_session_id` | `string` |  |  |  |
-| `call_id` | `string` |  |  |  |
+| `call_id` | `string` |  |  | Parent delegation invocation, not the provider&#39;s replay pairing ID. |
 | `branch_index` | `int32` | optional |  |  |
 | `schedule_name` | `string` |  |  |  |
 | `origin_session_id` | `string` |  |  |  |
@@ -3371,7 +3380,7 @@ Which fields are set depends on the event kind:
 
 | Field | Type | Label | Oneof | Description |
 |---|---|---|---|---|
-| `parent_call_id` | `string` |  |  | parent_call_id is the parent&#39;s Task tool-call id, attributing the event to the originating Task card. |
+| `parent_call_id` | `string` |  |  | parent_call_id is the parent&#39;s public Task invocation ID. |
 | `child_id` | `string` |  |  | child_id is the child session id, distinguishing concurrent subagents. |
 | `goal` | `string` |  |  | goal is a short, plain-text label for the delegated task (subagent.start). |
 | `tool_name` | `string` |  |  | tool_name is the name of a child tool that just ran (subagent.tool) — the name alone, never the child&#39;s args or result. |
@@ -3390,7 +3399,7 @@ Which fields are set depends on the event kind:
 | `cause` | `string` |  |  | cause is the child run&#39;s FAILURE DETAIL (subagent.end only, and only when stop is &#34;error&#34; — empty otherwise): the harness/provider error the loop recorded on the terminal result. METADATA about how the delegation failed — a transport/loop error string, never child-authored model output — so it is context-isolation safe (gauntlet #7: no child content crosses). Clamped at the emit site. Mirrors session.SubagentPayload.Cause. |
 | `routing_reason` | `string` |  |  | routing_reason is a BOUNDED harness/composition reason string explaining WHY this delegation was NOT routed by the semantic model router (subagent.start only) — empty on a routed HIT (routed_category/routed_model carry the hit). A short label (e.g. &#34;pinned-model&#34;, &#34;agent-def-pinned-model&#34;, &#34;resume&#34;, &#34;fork&#34;, &#34;router-disabled&#34;, &#34;route-target-unavailable&#34;, &#34;breaker-open&#34;, &#34;aborted&#34;, &#34;empty-model&#34;, or a RouterMiss* classifier miss) — BARE METADATA, never the task prompt or classifier reasoning — so it is context-isolation safe (gauntlet #7). Clamped at the emit site. Mirrors session.SubagentPayload.RoutingReason. |
 | `routing_decision` | `RoutingDecision` | optional |  | routing_decision is the optional bounded configured-router evidence captured on subagent.start. Historical events and deployments without a router omit it. |
-| `child_tool_call_id` | `string` |  |  | Exact child tool.call/tool.result ID, scoped by child_id; empty otherwise. |
+| `child_tool_call_id` | `string` |  |  | Exact child tool.call/tool.result ID, scoped by child_id; empty otherwise. Originating child invocation, distinct from parent_call_id. |
 | `provider` | `string` |  |  | provider is the concrete provider that actually ran the child. |
 | `explicit_router_category` | `string` |  |  | explicit_router_category is the requested router category only for an explicit provider:&#34;model-router&#34; selection. Classifier-originated routing leaves it empty. |
 
@@ -3415,7 +3424,7 @@ Which fields are set depends on the event kind:
 
 | Field | Type | Label | Oneof | Description |
 |---|---|---|---|---|
-| `parent_call_id` | `string` |  |  | parent_call_id is the parent&#39;s Team tool-call id, attributing the event to the originating Team card. |
+| `parent_call_id` | `string` |  |  | parent_call_id is the parent&#39;s public Team invocation ID, attributing the event to the originating Team card. |
 | `team_id` | `string` |  |  | team_id is the team id, distinguishing concurrent teams. |
 | `roster` | `TeamMemberSpec` | repeated |  | roster is the team&#39;s membership as the model formed it (team.start). Metadata only, never member content. |
 | `member` | `string` |  |  | member is the name of the member whose activity this event projects (team.member). |
@@ -3434,7 +3443,7 @@ Which fields are set depends on the event kind:
 | `dispositions` | `TeamMemberDisposition` | repeated |  | dispositions is the per-member TERMINAL disposition snapshot, set ONLY on team.end (parallel to the terminal tasks/findings snapshots). Lets a client render a stopped member distinctly from a clean &#34;done&#34; instead of recomputing it. Closed-enum supervisor verdicts only, never member content. |
 | `member_session_id` | `string` |  |  | member_session_id is the member&#39;s child SESSION id (&#34;team-&lt;teamID&gt;-&lt;member&gt;&#34;) on member-tagged (team.member) events — the CancelChild handle, carried explicitly so a client never derives ids from the (internal) id grammar. (17 is taken by dispositions.) |
 | `cause` | `string` |  |  | cause is the member run&#39;s per-round FAILURE DETAIL (team.member, result inner kind only) when that round ended in StopError — the harness/provider error string, never member-authored output (gauntlet #7, same footing as stop). LINE-ORIENTED: whitespace-collapsed and rune-clamped at the emit site so a client renders it as-is. Empty on every other team.member inner kind and on team.end (the terminal disposition stays the closed-enum reason). Mirrors Subagent.cause (field 17). |
-| `child_tool_call_id` | `string` |  |  | Exact member tool.call/tool.result ID, scoped by member_session_id; empty otherwise. |
+| `child_tool_call_id` | `string` |  |  | Exact member tool.call/tool.result ID, scoped by member_session_id; empty otherwise. Originating child invocation, distinct from parent_call_id. |
 
 
 
@@ -3619,7 +3628,7 @@ session.ToolCall.
 
 | Field | Type | Label | Oneof | Description |
 |---|---|---|---|---|
-| `id` | `string` |  |  | id pairs this call with its tool_result. |
+| `id` | `string` |  |  | Public invocation ID; provider pairing ID is never projected. |
 | `name` | `string` |  |  | name is the tool name as registered in the catalog. |
 | `args` | `string` |  |  | args is the raw, tool-specific JSON argument payload. |
 
@@ -3633,7 +3642,7 @@ session.ToolResult.
 
 | Field | Type | Label | Oneof | Description |
 |---|---|---|---|---|
-| `call_id` | `string` |  |  | call_id is the id of the ToolCall this result answers. |
+| `call_id` | `string` |  |  | call_id is the public invocation ID of the ToolCall this result answers. |
 | `content` | `string` |  |  | content is the legacy/default model-facing string result body, already token-shaped by the tool. |
 | `is_error` | `bool` |  |  | is_error reports whether the tool failed. |
 | `blocks` | `ContentBlock` | repeated |  | blocks are the typed content blocks (text/image/audio/resource-link/ embedded-resource/structured-content) mirroring session.ToolResult.Parts. Both content and blocks may be present; consumers prefer blocks when non-empty, falling back to content. |

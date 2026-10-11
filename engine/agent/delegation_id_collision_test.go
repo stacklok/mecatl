@@ -257,8 +257,11 @@ func TestParallelBranchSessionIDsDoNotCollideAcrossOwnersWithEqualCallID(t *test
 	if conversationContainsIn(branchA, "BRANCH_B_ANSWER") || conversationContainsIn(branchB, "BRANCH_A_ANSWER") {
 		t.Fatalf("one owner's branch was overwritten by the other's: A=%+v B=%+v", branchA.Conversation.Messages, branchB.Conversation.Messages)
 	}
-	wantA := session.SessionRelationship{ParentSessionID: "owner-a-session", ParentIncarnation: branchA.Relationship.ParentIncarnation, CallID: "p1", BranchIndex: intPtr(0)}
-	wantB := session.SessionRelationship{ParentSessionID: "owner-b-session", ParentIncarnation: branchB.Relationship.ParentIncarnation, CallID: "p1", BranchIndex: intPtr(0)}
+	wantA := session.SessionRelationship{ParentSessionID: "owner-a-session", ParentIncarnation: branchA.Relationship.ParentIncarnation, CallID: "p1", ParentInvocationID: branchA.Relationship.ParentInvocationID, BranchIndex: intPtr(0)}
+	wantB := session.SessionRelationship{ParentSessionID: "owner-b-session", ParentIncarnation: branchB.Relationship.ParentIncarnation, CallID: "p1", ParentInvocationID: branchB.Relationship.ParentInvocationID, BranchIndex: intPtr(0)}
+	if wantA.ParentInvocationID == "" || wantB.ParentInvocationID == "" || wantA.ParentInvocationID == wantB.ParentInvocationID {
+		t.Fatalf("parent occurrences not distinguished: %q, %q", wantA.ParentInvocationID, wantB.ParentInvocationID)
+	}
 	if branchA.Kind != session.SessionKindParallelBranch || !reflect.DeepEqual(branchA.Relationship, wantA) {
 		t.Errorf("branch A metadata = (%q, %+v), want (%q, %+v)", branchA.Kind, branchA.Relationship, session.SessionKindParallelBranch, wantA)
 	}

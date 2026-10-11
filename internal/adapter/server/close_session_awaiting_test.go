@@ -227,6 +227,10 @@ func TestCloseGRPCAndHTTPPreservePersistedAwaitingResumePoint(t *testing.T) {
 				t.Fatalf("Load after close: %v", err)
 			}
 			gotAsk, ok := got.PendingAsk()
+			if gotAsk.InvocationID == "" || gotAsk.InvocationID != got.Conversation.Messages[1].ToolCalls[0].InvocationID {
+				t.Fatalf("pending occurrence lost: %+v", gotAsk)
+			}
+			gotAsk.InvocationID = "" // Legacy snapshot gains only an in-memory occurrence identity.
 			if got.State != session.StateAwaiting || !ok || !reflect.DeepEqual(gotAsk, wantAsk) {
 				t.Fatalf("durable resume point changed: state=%q ask=%+v ok=%t, want awaiting %+v", got.State, gotAsk, ok, wantAsk)
 			}

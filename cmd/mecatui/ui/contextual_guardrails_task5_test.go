@@ -7,6 +7,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 func TestGuardrailPostureStatusStates(t *testing.T) {
@@ -64,10 +65,14 @@ func TestContextualGuardrailApprovalChoicesAndCoverage(t *testing.T) {
 }
 
 func TestGuardrailDetailFailureIsVisibleWithoutInventingFinding(t *testing.T) {
-	s := &approvalSurface{sessionID: "session", ask: pendingAsk{guardrailDetailState: guardrailDetailState{requestID: 1}, guardrail: &client.GuardrailApprovalScope{ReviewID: "r", Kind: "result_release"}}}
-	_, handled, _ := s.HandleMsg(client.GuardrailReviewDetailMsg{SessionID: "session", ReviewID: "r", RequestID: 1, Err: errors.New("expired private detail")})
-	if !handled || !s.ask.unavailable || s.ask.detail.Concern != "" {
-		t.Fatalf("detail failure state = %+v handled=%v", s.ask, handled)
+	m := guardrailTestModel(t, &guardrailDetailRecorder{}, false)
+	ask := client.PermissionAskMsg{AskID: "session:1:r", Tool: "Read", Guardrail: &client.GuardrailApprovalScope{ReviewID: "r", Kind: "result_release"}}
+	reply := updateGuardrail(&m, ask)[0]
+	reply.Err = errors.New("expired private detail")
+	m = applyAll(m, reply)
+	s := approvalSurfaceOf(t, m)
+	if s.ask.review.snapshot().Detail.State != scrollback.HookDetailUnavailable || s.ask.review.snapshot().Detail.Concern != "" {
+		t.Fatalf("detail failure state = %+v", s.ask)
 	}
 	var b strings.Builder
 	writeGuardrailApprovalDetail(&b, theme.New("aztec", theme.AztecPalette()), s.ask, 80)

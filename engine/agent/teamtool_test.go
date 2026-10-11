@@ -717,7 +717,7 @@ func TestMemberSessionIDRoundTripsTeamToolPath(t *testing.T) {
 		if got.ID != id {
 			t.Errorf("loaded session id = %q, want %q", got.ID, id)
 		}
-		wantRelationship := session.SessionRelationship{TeamID: publishedTeamID, MemberName: name, ParentSessionID: sess.ID, ParentIncarnation: sess.Incarnation(), CallID: "p1"}
+		wantRelationship := session.SessionRelationship{TeamID: publishedTeamID, MemberName: name, ParentSessionID: sess.ID, ParentIncarnation: sess.Incarnation(), CallID: "p1", ParentInvocationID: sess.Conversation.Messages[1].ToolCalls[0].InvocationID}
 		if got.Kind != session.SessionKindTeamMember || got.Relationship != wantRelationship {
 			t.Errorf("member metadata = (%q, %+v), want (%q, %+v)", got.Kind, got.Relationship, session.SessionKindTeamMember, wantRelationship)
 		}

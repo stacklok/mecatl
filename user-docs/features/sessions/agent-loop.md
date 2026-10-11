@@ -32,6 +32,13 @@ Events you will see, roughly in order:
 |`permission.ask`|The loop has paused for approval|
 |`result`|The run ended; includes usage and the stop reason|
 
+The loop assigns a public tool-call ID when it accepts a model-requested call.
+`tool.call.id`, `tool.result.call_id`, and an approval ask's optional `call_id` refer
+to that same invocation. Use these IDs to correlate events. They are not provider
+replay identifiers, and clients must not infer a match from event order or `ask_id`.
+An ask also includes `origin_session_id`; use it with the call ID when an event can
+come from delegated work.
+
 The sequence for a single turn with one tool call looks like this:
 
 ```mermaid

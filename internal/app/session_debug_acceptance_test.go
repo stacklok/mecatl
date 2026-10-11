@@ -84,7 +84,7 @@ func debugAcceptanceGRPC(t *testing.T, svc *server.Service) (mecatlv1.HarnessSer
 	return mecatlv1.NewHarnessServiceClient(conn), func() { _ = conn.Close(); grpcServer.Stop() }
 }
 
-func converseDebugAcceptance(t *testing.T, client mecatlv1.HarnessServiceClient, id, prompt string, verdict mecatlv1.ApprovalVerdict) (map[string]string, int) {
+func converseDebugAcceptance(t *testing.T, client mecatlv1.HarnessServiceClient, id, prompt string, verdict mecatlv1.ApprovalVerdict, calls ...string) (map[string]string, int) {
 	t.Helper()
 	stream, err := client.Converse(context.Background())
 	if err != nil {
@@ -94,18 +94,62 @@ func converseDebugAcceptance(t *testing.T, client mecatlv1.HarnessServiceClient,
 		t.Fatal(err)
 	}
 	results := map[string]string{}
+	callNames := map[string]string{}
 	asks := 0
 	for {
 		response, err := stream.Recv()
 		if err == io.EOF {
+			if len(callNames) != len(calls) || len(results) != len(calls) {
+				t.Fatalf("tool calls/results = %d/%d, want %d", len(callNames), len(results), len(calls))
+			}
 			return results, asks
 		}
 		if err != nil {
 			t.Fatal(err)
 		}
 		ev := response.GetEvent()
-		if result := ev.GetToolResult(); result != nil {
-			results[result.GetCallId()] = result.GetContent()
+		if call := ev.GetToolCall(); call != nil {
+			if len(callNames) >= len(calls) || call.GetId() == "" || call.GetId() == calls[len(callNames)] {
+				t.Fatalf("unexpected public call %+v, expected %v", call, calls)
+			}
+			name := calls[len(callNames)]
+			if strings.HasPrefix(name, "publish-") {
+				if call.GetName() != "mcp__github__echo" {
+					t.Fatalf("publication call changed: %+v", call)
+				}
+			} else if call.GetName() != "InspectSession" {
+				t.Fatalf("inspection call changed: %+v", call)
+			} else {
+				var args struct {
+					View string `json:"view"`
+				}
+				if err := json.Unmarshal([]byte(call.GetArgs()), &args); err != nil {
+					t.Fatal(err)
+				}
+				expectedView := name
+				switch name {
+				case "child":
+					expectedView = "transcript"
+				case "history-page":
+					expectedView = "history"
+				case "probe":
+					expectedView = "status"
+				}
+				if args.View != expectedView {
+					t.Fatalf("inspection view = %q, want %q", args.View, expectedView)
+				}
+			}
+			if _, exists := callNames[call.GetId()]; exists {
+				t.Fatalf("duplicate public call ID %q", call.GetId())
+			}
+			callNames[call.GetId()] = name
+		}
+		if result := ev.GetToolResult(); result != nil && ev.GetType() == "tool.result" {
+			name, ok := callNames[result.GetCallId()]
+			if !ok || results[name] != "" {
+				t.Fatalf("result without unique emitted call: %q", result.GetCallId())
+			}
+			results[name] = result.GetContent()
 		}
 		if ask := ev.GetAsk(); ask != nil {
 			asks++
@@ -255,7 +299,7 @@ func TestSessionDebuggerCrossBoundaryAcceptance(t *testing.T) {
 		t.Fatal(err)
 	}
 	debugID := created.GetSessionId()
-	root, _ := converseDebugAcceptance(t, client, debugID, "Diagnose and draft a GitHub issue; do not publish it.", mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_UNSPECIFIED)
+	root, _ := converseDebugAcceptance(t, client, debugID, "Diagnose and draft a GitHub issue; do not publish it.", mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_UNSPECIFIED, "status", "related", "delegation", "history", "manifest", "network")
 	for call, wants := range map[string][]string{
 		"status":  {`"latest_run_counters"`, `"lifetime_event_log"`},
 		"related": {`"subagent"`, `"parallel"`, `"team"`, `"schedule"`, `"pruned"`},
@@ -290,7 +334,7 @@ func TestSessionDebuggerCrossBoundaryAcceptance(t *testing.T) {
 		),
 		mockllm.TextTurn("child evidence checked"),
 	)
-	scoped, _ := converseDebugAcceptance(t, client, debugID, "Inspect the retained child and verify isolation.", mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_UNSPECIFIED)
+	scoped, _ := converseDebugAcceptance(t, client, debugID, "Inspect the retained child and verify isolation.", mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_UNSPECIFIED, "child", "history-page", "probe")
 	if !strings.Contains(scoped["child"], "retained child finding") || !strings.Contains(scoped["history-page"], `"view":"transcript"`) || !strings.Contains(scoped["probe"], "scope handle is unsupported, malformed, or stale") {
 		t.Fatalf("scoped evidence/isolation failed: %+v", scoped)
 	}
@@ -301,7 +345,7 @@ func TestSessionDebuggerCrossBoundaryAcceptance(t *testing.T) {
 		t.Fatalf("remote mutations before publication approval = %d", got)
 	}
 	debugProvider.enqueue(mockllm.ToolCallTurn(session.NewToolCall("publish-1", "mcp__github__echo", json.RawMessage(`{"text":"publish issue"}`))), mockllm.TextTurn("published once"))
-	_, asks := converseDebugAcceptance(t, client, debugID, "Publish the current issue draft now.", mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE)
+	_, asks := converseDebugAcceptance(t, client, debugID, "Publish the current issue draft now.", mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE, "publish-1")
 	if asks != 1 {
 		t.Fatalf("first remote mutation approval asks = %d, want 1", asks)
 	}
@@ -309,7 +353,7 @@ func TestSessionDebuggerCrossBoundaryAcceptance(t *testing.T) {
 		t.Fatalf("approved remote mutations = %d, want 1", got)
 	}
 	debugProvider.enqueue(mockllm.ToolCallTurn(session.NewToolCall("publish-2", "mcp__github__echo", json.RawMessage(`{"text":"publish follow-up"}`))), mockllm.TextTurn("follow-up denied"))
-	_, asks = converseDebugAcceptance(t, client, debugID, "Publish a follow-up.", mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_DENY)
+	_, asks = converseDebugAcceptance(t, client, debugID, "Publish a follow-up.", mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_DENY, "publish-2")
 	if asks != 1 {
 		t.Fatalf("second remote mutation approval asks = %d, want 1", asks)
 	}

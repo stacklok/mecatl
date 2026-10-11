@@ -425,6 +425,7 @@ func TestDebugSessionConverseAdvertisesAndExecutesInspectSession(t *testing.T) {
 			}
 
 			results := map[string]string{}
+			callViews := map[string]string{}
 			for {
 				response, err := stream.Recv()
 				if err == io.EOF {
@@ -433,8 +434,21 @@ func TestDebugSessionConverseAdvertisesAndExecutesInspectSession(t *testing.T) {
 				if err != nil {
 					t.Fatalf("receive Converse event: %v", err)
 				}
-				if result := response.GetEvent().GetToolResult(); result != nil {
-					results[result.GetCallId()] = result.GetContent()
+				if call := response.GetEvent().GetToolCall(); call != nil {
+					var args struct {
+						View string `json:"view"`
+					}
+					if err := json.Unmarshal([]byte(call.GetArgs()), &args); err != nil || call.GetName() != sessiondebug.ToolName || call.GetId() == "" || args.View == "" || callViews[call.GetId()] != "" {
+						t.Fatalf("invalid InspectSession call: %+v err=%v", call, err)
+					}
+					callViews[call.GetId()] = args.View
+				}
+				if result := response.GetEvent().GetToolResult(); result != nil && response.GetEvent().GetType() == "tool.result" {
+					view := callViews[result.GetCallId()]
+					if view == "" || results[view] != "" {
+						t.Fatalf("result without unique InspectSession call: %q", result.GetCallId())
+					}
+					results[view] = result.GetContent()
 				}
 			}
 			for callID, evidence := range map[string][]string{

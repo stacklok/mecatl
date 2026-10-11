@@ -103,6 +103,8 @@ type SessionMeta struct {
 	DebugMCPServers        []string
 	DebugMCPTools          []string
 	DebugTargetFingerprint string
+	// HookRevision is the high-water mark from stored metadata when available.
+	HookRevision uint64
 	// Title and TitleProvenance are authoritative creation/discovery metadata when
 	// supplied. A legacy empty title is derived from the first genuine user event.
 	Title           string
@@ -178,6 +180,12 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 			return nil, fmt.Errorf("%w: %v", ErrReconstruct, f.reconstructErr)
 		}
 	}
+	if f.hookOrigin != "" && f.hookOrigin != meta.ID {
+		return nil, fmt.Errorf("%w: hook revision origin mismatch", ErrReconstruct)
+	}
+	if meta.HookRevision == ^uint64(0) || f.hookRevision == ^uint64(0) {
+		return nil, fmt.Errorf("%w: hook revision exhausted", ErrReconstruct)
+	}
 	if len(f.authorizations) != 0 {
 		return nil, ErrPrivateStateRequired
 	}
@@ -211,6 +219,8 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	s.DebugMCPServers = append([]string(nil), meta.DebugMCPServers...)
 	s.DebugMCPTools = append([]string(nil), meta.DebugMCPTools...)
 	s.DebugTargetFingerprint = meta.DebugTargetFingerprint
+	s.RestoreHookRevision(meta.HookRevision)
+	s.RestoreHookRevision(f.hookRevision)
 	s.RestoreTitleMetadata(meta.Title, meta.TitleProvenance, meta.TitleRevision, meta.TitleGeneration, meta.TitleSourcePrompts, meta.TitleAttempts)
 	if meta.LatestContextOccupancy != nil {
 		s.RecordLatestContextOccupancy(*meta.LatestContextOccupancy)
@@ -227,6 +237,9 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	}
 
 	if err := s.SeedHistory(f.messages); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
+	}
+	if err := s.RestoreEventInvocationIDs(nil); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
 	}
 	// Drive the lifecycle (idle / terminal) and seed the cumulative usage + counters
@@ -313,6 +326,9 @@ func (f *folder) reconstructAwaiting(s *session.Session, meta SessionMeta) (*ses
 	if err := s.RecordAssistant(session.NewAssistantMessage(f.curText, "", f.curCalls)); err != nil {
 		return nil, fmt.Errorf("%w: awaiting assistant: %w", ErrReconstruct, err)
 	}
+	if err := s.RestoreEventInvocationIDs(f.pending); err != nil {
+		return nil, fmt.Errorf("%w: awaiting invocation IDs: %w", ErrReconstruct, err)
+	}
 	s.RestoreTokenUsage(foldedTokenUsage(meta.TokenUsage, f.usage))
 	if err := s.PauseForApproval(*f.pending); err != nil {
 		return nil, fmt.Errorf("%w: awaiting pause: %w", ErrReconstruct, err)
@@ -325,6 +341,8 @@ func (f *folder) reconstructAwaiting(s *session.Session, meta SessionMeta) (*ses
 
 type authorizationLifecycle struct {
 	call        session.ToolCallID
+	invocation  session.InvocationID
+	sessionID   session.SessionID
 	displayName string
 	expiresAt   time.Time
 	answered    bool
@@ -377,15 +395,16 @@ type folder struct {
 	retryDisposition session.RetryDisposition
 	retryProgress    session.StreamProgress
 
-	// authorizations contains only currently open lifecycles. The seen sets retain
-	// full-stream uniqueness after resolution; openAuthorizationCalls gives each
-	// durable tool.result at most one open lifecycle to answer.
+	// Authorization IDs are unique for the stream; provider pairing IDs are only
+	// unique while an occurrence is open. A new tool.call starts another occurrence.
 	authorizations         map[string]authorizationLifecycle
 	openAuthorizationCalls map[session.ToolCallID]string
+	activeCallIDs          map[session.ToolCallID]session.InvocationID
 	seenAuthorizationIDs   map[string]struct{}
-	seenAuthorizationCalls map[session.ToolCallID]struct{}
 	toolResultCalls        map[session.ToolCallID]struct{}
 	reconstructErr         error
+	hookRevision           uint64
+	hookOrigin             session.SessionID
 
 	// counters of the CURRENT run segment (reset on each terminal, so the final
 	// values reflect the latest run — mirroring resetToIdle on Reopen).
@@ -400,6 +419,9 @@ type folder struct {
 
 // consume folds one event into the accumulator.
 func (f *folder) consume(ev session.Event) {
+	if !f.recordHookRevision(ev) {
+		return
+	}
 	switch ev.Type {
 	case session.EvAuthorizationRequired:
 		f.requireAuthorization(ev.Authorization)
@@ -430,6 +452,7 @@ func (f *folder) consume(ev session.Event) {
 		// A new turn begins: flush the previous assistant turn (if any) and start a
 		// fresh one. Each turn-start is a model call (mirrors BeginTurn's Turns++).
 		f.flushTurn()
+		f.toolResultCalls = nil
 		f.curOpen = true
 		f.curTurns++
 		if f.retryPending {
@@ -439,17 +462,17 @@ func (f *folder) consume(ev session.Event) {
 		f.curOpen = true
 		f.curText += ev.Text
 	case session.EvToolCall:
-		if ev.ToolCall != nil {
-			f.curOpen = true
-			f.curCalls = append(f.curCalls, *ev.ToolCall)
-		}
+		f.recordToolCall(ev.ToolCall)
 	case session.EvToolResult:
 		// A tool result answers a call on the just-assembled assistant turn. Flush the
 		// assistant message first (so the assistant message precedes its tool results),
 		// then append the tool-role message. Mirrors RecordToolResults' counter updates.
 		f.flushTurn()
 		if ev.ToolResult != nil {
-			f.recordAuthorizationResult(ev.ToolResult.CallID)
+			f.recordAuthorizationResult(ev.ToolResult)
+			if f.reconstructErr != nil {
+				return
+			}
 			f.messages = append(f.messages, session.NewToolMessage(*ev.ToolResult))
 			f.curToolCalls++
 			if ev.ToolResult.IsError {
@@ -477,6 +500,38 @@ func (f *folder) consume(ev session.Event) {
 	}
 }
 
+func (f *folder) recordToolCall(call *session.ToolCall) {
+	if call == nil {
+		return
+	}
+	if _, open := f.activeCallIDs[call.ID]; open {
+		f.reconstructErr = errors.New("duplicate open tool.call provider id")
+		return
+	}
+	f.curOpen = true
+	f.curCalls = append(f.curCalls, *call)
+	if f.activeCallIDs == nil {
+		f.activeCallIDs = make(map[session.ToolCallID]session.InvocationID)
+	}
+	f.activeCallIDs[call.ID] = call.InvocationID
+	delete(f.toolResultCalls, call.ID)
+}
+
+func (f *folder) recordHookRevision(ev session.Event) bool {
+	if ev.Type != session.EvHook || ev.Hook == nil || ev.Hook.Revision == 0 {
+		return true
+	}
+	if ev.Hook.HookID == "" || ev.Hook.SessionID == "" || f.hookOrigin != "" && ev.Hook.SessionID != f.hookOrigin {
+		f.reconstructErr = errors.New("invalid hook revision record")
+		return false
+	}
+	f.hookOrigin = ev.Hook.SessionID
+	if ev.Hook.Revision > f.hookRevision {
+		f.hookRevision = ev.Hook.Revision
+	}
+	return true
+}
+
 func (f *folder) requireAuthorization(p *session.AuthorizationPayload) {
 	if f.reconstructErr != nil {
 		return
@@ -489,8 +544,12 @@ func (f *folder) requireAuthorization(p *session.AuthorizationPayload) {
 		f.reconstructErr = errors.New("reused authorization id")
 		return
 	}
-	if _, exists := f.seenAuthorizationCalls[p.Call]; exists {
-		f.reconstructErr = errors.New("reused authorization call id")
+	if _, exists := f.openAuthorizationCalls[p.Call]; exists {
+		f.reconstructErr = errors.New("reused open authorization call id")
+		return
+	}
+	if callID := f.activeCallIDs[p.Call]; callID != "" && p.InvocationID != "" && callID != p.InvocationID {
+		f.reconstructErr = errors.New("authorization.required invocation does not match tool.call")
 		return
 	}
 	if _, exists := f.toolResultCalls[p.Call]; exists {
@@ -501,12 +560,12 @@ func (f *folder) requireAuthorization(p *session.AuthorizationPayload) {
 		f.authorizations = make(map[string]authorizationLifecycle)
 		f.openAuthorizationCalls = make(map[session.ToolCallID]string)
 		f.seenAuthorizationIDs = make(map[string]struct{})
-		f.seenAuthorizationCalls = make(map[session.ToolCallID]struct{})
 	}
 	f.seenAuthorizationIDs[p.AuthorizationID] = struct{}{}
-	f.seenAuthorizationCalls[p.Call] = struct{}{}
 	f.authorizations[p.AuthorizationID] = authorizationLifecycle{
 		call:        p.Call,
+		invocation:  p.InvocationID,
+		sessionID:   p.SessionID,
 		displayName: p.DisplayName,
 		expiresAt:   p.ExpiresAt,
 	}
@@ -526,8 +585,8 @@ func (f *folder) resolveAuthorization(p *session.AuthorizationPayload) {
 		f.reconstructErr = errors.New("authorization.resolved has no matching open lifecycle")
 		return
 	}
-	if open.call != p.Call {
-		f.reconstructErr = errors.New("authorization.resolved call does not match required call")
+	if open.call != p.Call || open.invocation != "" && p.InvocationID != "" && open.invocation != p.InvocationID || open.sessionID != "" && p.SessionID != "" && open.sessionID != p.SessionID {
+		f.reconstructErr = errors.New("authorization.resolved identity does not match required call")
 		return
 	}
 	if open.displayName != p.DisplayName {
@@ -546,7 +605,13 @@ func (f *folder) resolveAuthorization(p *session.AuthorizationPayload) {
 	delete(f.openAuthorizationCalls, p.Call)
 }
 
-func (f *folder) recordAuthorizationResult(call session.ToolCallID) {
+func (f *folder) recordAuthorizationResult(result *session.ToolResult) {
+	call := result.CallID
+	if callID := f.activeCallIDs[call]; callID != "" && result.InvocationID != "" && callID != result.InvocationID {
+		f.reconstructErr = errors.New("tool.result invocation does not match tool.call")
+		return
+	}
+	delete(f.activeCallIDs, call)
 	if f.toolResultCalls == nil {
 		f.toolResultCalls = make(map[session.ToolCallID]struct{})
 	}
@@ -556,6 +621,10 @@ func (f *folder) recordAuthorizationResult(call session.ToolCallID) {
 		return
 	}
 	open := f.authorizations[id]
+	if open.answered || open.invocation != "" && result.InvocationID != "" && open.invocation != result.InvocationID {
+		f.reconstructErr = errors.New("authorization tool.result does not match open call")
+		return
+	}
 	open.answered = true
 	f.authorizations[id] = open
 }

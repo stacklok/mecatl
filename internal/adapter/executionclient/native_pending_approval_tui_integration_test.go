@@ -398,13 +398,18 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 			if !transcript.Complete || transcript.SessionID != string(sessionID) || len(transcript.Messages) == 0 {
 				t.Fatalf("actual transcript = %+v", transcript)
 			}
-			var foundOriginalCall bool
+			var originalCallID string
 			for _, message := range transcript.Messages {
 				for _, call := range message.ToolCalls {
-					foundOriginalCall = foundOriginalCall || call.ID == "native-shell" && call.Name == "Shell" && strings.Contains(call.Args, "bridge-command")
+					if call.Name == "Shell" && strings.Contains(call.Args, "bridge-command") {
+						if originalCallID != "" || call.ID == "" || call.ID == "native-shell" || call.ID != pending.ToolCallID {
+							t.Fatalf("pending call identity mismatch: call=%+v pending=%+v", call, pending)
+						}
+						originalCallID = call.ID
+					}
 				}
 			}
-			if !foundOriginalCall {
+			if originalCallID == "" {
 				t.Fatalf("original pending tool call absent from transcript: %+v", transcript.Messages)
 			}
 
@@ -547,7 +552,7 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 				observedKinds = append(observedKinds, event.Kind)
 				observedNil = observedNil || event.Kind == mecatuiclient.PendingApprovalEventOther && event.Message == nil
 				if result, ok := event.Message.(mecatuiclient.ToolResultMsg); ok {
-					if result.CallID != "native-shell" || result.IsError == tc.wantRun {
+					if result.CallID != originalCallID || result.IsError == tc.wantRun {
 						t.Fatal("resumed tool result identity/outcome mismatch")
 					}
 					toolResult = result

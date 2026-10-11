@@ -48,6 +48,9 @@ func runningSession(t *testing.T) *session.Session {
 	}); err != nil {
 		t.Fatalf("RecordToolResults: %v", err)
 	}
+	if err := s.RestoreInvocationIDs(nil, nil); err != nil {
+		t.Fatalf("RestoreInvocationIDs: %v", err)
+	}
 	return s
 }
 

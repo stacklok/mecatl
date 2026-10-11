@@ -158,10 +158,14 @@ func TestTranscriptDisclosesInvalidUTF8Repair(t *testing.T) {
 }
 
 func TestTranscriptDisclosesInvalidUTF8ToolIdentifiers(t *testing.T) {
-	id := session.ToolCallID("call-\xff")
+	id := session.ToolCallID("provider-id")
+	invocation := session.NewToolCall(id, "Tool", []byte(`{}`))
+	invocation.InvocationID = "tc_\xff"
+	resultValue := session.NewToolResult(id, "ok")
+	resultValue.InvocationID = invocation.InvocationID
 	messages := []session.Message{
-		session.NewAssistantMessage("", "", []session.ToolCall{session.NewToolCall(id, "Tool", []byte(`{}`))}),
-		session.NewToolMessage(session.NewToolResult(id, "ok")),
+		session.NewAssistantMessage("", "", []session.ToolCall{invocation}),
+		session.NewToolMessage(resultValue),
 	}
 	store, target := seededTarget(t, messages)
 

@@ -261,8 +261,10 @@ func (s *sessionsState) applyReplayEvent(msg tea.Msg) {
 			c.addNotice("orphan tool result for " + msg.CallID)
 		}
 	case client.HookMsg:
+		c.scrollback.SetOriginSession(s.selected.ID)
 		c.addGuardrailHook(msg, s.debug)
 	case client.ResultMsg:
+		c.clearPendingHooks()
 		if msg.Stop == stopError && msg.Error != "" {
 			if msg.Permanent {
 				c.addPermanentError(msg.Error)
@@ -279,7 +281,9 @@ func (s *sessionsState) applyReplayEventSecondary(msg tea.Msg) {
 	c := &s.transcript
 	switch msg := msg.(type) {
 	case client.ApprovalMsg:
-		c.addNotice(approvalNotice(msg))
+		c.addHistoricalApproval(msg)
+	case client.StreamErrMsg, client.StreamClosedMsg:
+		c.clearPendingHooks()
 	case client.CompactionArchiveMsg:
 		c.addNotice(compactionArchiveNotice(msg))
 	case client.ModelRetryMsg, client.CompactionMsg, client.NoProgressMsg:

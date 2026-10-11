@@ -217,9 +217,9 @@ type statusEvidence struct {
 }
 
 type pendingAskEvidence struct {
-	Tool   string             `json:"tool"`
-	CallID session.ToolCallID `json:"call_id,omitempty"`
-	Origin string             `json:"origin"`
+	Tool   string               `json:"tool"`
+	CallID session.InvocationID `json:"call_id,omitempty"`
+	Origin string               `json:"origin"`
 }
 
 func (t *inspectTool) statusView(ctx context.Context, s *session.Session, scope string) statusEvidence {
@@ -243,7 +243,7 @@ func (t *inspectTool) statusView(ctx context.Context, s *session.Session, scope 
 	}
 	if ask, ok := s.PendingAsk(); ok {
 		toolName, toolRepaired := safeLineRepair(ask.Tool)
-		out.PendingAsk = &pendingAskEvidence{Tool: toolName, CallID: ask.Call, Origin: string(ask.Origin)}
+		out.PendingAsk = &pendingAskEvidence{Tool: toolName, CallID: ask.InvocationID, Origin: string(ask.Origin)}
 		if toolRepaired {
 			out.RepairedFields = append(out.RepairedFields, "pending_ask.tool")
 		}
@@ -414,14 +414,14 @@ func projectMessage(index int, m session.Message) (transcriptMessage, bool) {
 			break
 		}
 		args, omitted, reason := projectArgs(c.Args)
-		id, idTruncated, idRepaired, idBytes := projectText(string(c.ID), maxProjectedPartText)
+		id, idTruncated, idRepaired, idBytes := projectText(string(c.InvocationID), maxProjectedPartText)
 		name, repaired := safeLineRepair(c.Name)
 		row.ToolCalls = append(row.ToolCalls, transcriptToolCall{ID: id, IDTruncated: idTruncated, IDRepaired: idRepaired, IDBytes: idBytes, Name: name, NameRepaired: repaired, Args: args, ArgsOmitted: omitted, ArgsReason: reason, ArgsBytes: len(c.Args)})
 		complete = complete && !omitted && !idTruncated && !idRepaired && !repaired
 	}
 	if m.ToolResult != nil {
 		r := m.ToolResult
-		callID, callIDTruncated, callIDRepaired, callIDBytes := projectText(string(r.CallID), maxProjectedPartText)
+		callID, callIDTruncated, callIDRepaired, callIDBytes := projectText(string(r.InvocationID), maxProjectedPartText)
 		content, truncated, repaired, contentBytes := projectText(r.Content, maxProjectedText)
 		parts, omitted, partsComplete := projectParts(r.Parts, true)
 		row.ToolResult = &transcriptToolResult{CallID: callID, CallIDTruncated: callIDTruncated, CallIDRepaired: callIDRepaired, CallIDBytes: callIDBytes, FallbackContent: content, FallbackContentTruncated: truncated, FallbackContentRepaired: repaired, FallbackContentBytes: contentBytes, Parts: parts, PartsOmitted: omitted, PartsSupersedeFallback: len(r.Parts) > 0, IsError: r.IsError}

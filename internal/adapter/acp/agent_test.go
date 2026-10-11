@@ -505,9 +505,18 @@ func TestACPToolAvailabilityRelay(t *testing.T) {
 		"prompt": []any{map[string]any{"type": "text", "text": "run"}}})
 
 	updates := drainUpdates(e.notes)
+	callID := ""
+	for _, update := range updates {
+		if update["sessionUpdate"] == "tool_call" && update["title"] == "Read" {
+			callID, _ = update["toolCallId"].(string)
+		}
+	}
+	if callID == "" || callID == "c-availability" {
+		t.Fatalf("missing public invocation: %v", updates)
+	}
 	settled := 0
 	for _, update := range updates {
-		if update["sessionUpdate"] == "tool_call_update" && update["toolCallId"] == "c-availability" {
+		if update["sessionUpdate"] == "tool_call_update" && update["toolCallId"] == callID {
 			settled++
 			if update["status"] != "completed" {
 				t.Fatalf("availability settlement status = %v, want completed", update["status"])
@@ -1538,16 +1547,21 @@ func TestSessionLoadReplaysTranscript(t *testing.T) {
 
 	// At least one agent_message_chunk (the "first done" reply).
 	assertHasUpdate(t, updates, "agent_message_chunk", "")
-	// A tool_call card for c1 and a completed tool_call_update for c1.
+	// A public invocation card and its matching completed update.
 	callIdx, updateIdx := -1, -1
+	callID := ""
 	for i, u := range updates {
 		switch u["sessionUpdate"] {
 		case "tool_call":
-			if u["toolCallId"] == "c1" && callIdx < 0 {
+			if u["title"] == "Read" && callIdx < 0 {
+				callID, _ = u["toolCallId"].(string)
+				if callID == "" || callID == "c1" {
+					t.Fatalf("missing public invocation: %v", u)
+				}
 				callIdx = i
 			}
 		case "tool_call_update":
-			if u["toolCallId"] == "c1" && u["status"] == "completed" && updateIdx < 0 {
+			if u["toolCallId"] == callID && u["status"] == "completed" && updateIdx < 0 {
 				updateIdx = i
 			}
 		}

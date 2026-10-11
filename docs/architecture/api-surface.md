@@ -75,6 +75,31 @@ loop gives up. A busy run therefore never blocks behind a dead consumer, while a
 still receives the terminal result. Cancel leaves a run durably parked on an
 authorization handoff untouched, so its resume point survives.
 
+## Correlation records
+
+The wire contract exposes a public tool-call ID for each accepted invocation. On
+`ToolCall`, `id` is that ID, and `ToolResult.call_id` answers the same invocation.
+Provider pairing and item identifiers remain private replay metadata. `Hook.call_id`,
+delegation parent/child call references, and approval correlation use the same public
+identity.
+
+A hook event is a versioned record. `hook_id` identifies its logical outcome and
+`revision` is a positive session-wide ordering value; revisions can have gaps. A
+contextual review uses its review ID as its hook ID. `origin_session_id` identifies
+the session where the occurrence happened, including a child whose event is surfaced
+elsewhere. `PermissionAsk` and replayed `Approval` records carry explicit origin and
+call fields, with the exact review ID when applicable. These fields support display
+correlation only. Existing ownership, active-run, ask token, acknowledgement, and
+review checks still decide whether a control is authorized.
+
+At an operation that can publish hooks, the service restores the hook revision
+high-water mark from the loaded snapshot and committed hook events before it
+publishes more updates. Read-only session lookup does not scan the event log for
+this purpose. A durable log can therefore contain revision gaps when an append
+fails. Legacy records without these fields remain legacy records; clients must keep
+them separate instead of deriving identities from provider IDs, event sequence, or
+ask IDs.
+
 ## Durable watch
 
 - `StreamSessionEvents` replays the whole durable log once and stops.

@@ -126,8 +126,10 @@ func TestContextualGuardrails_InboundFailureMatrix(t *testing.T) {
 		enforce     bool
 		wantAsk     bool
 		wantRaw     bool
+		verdict     session.ApprovalVerdict
 	}{
-		{name: "completed_unresolved_enforcing_interactive", interactive: true, enforce: true, wantAsk: true, wantRaw: true},
+		{name: "completed_unresolved_enforcing_interactive", interactive: true, enforce: true, wantAsk: true, wantRaw: true, verdict: session.VerdictAllowOnce},
+		{name: "completed_unresolved_enforcing_deny", interactive: true, enforce: true, wantAsk: true, verdict: session.VerdictDeny},
 		{name: "completed_unresolved_enforcing_headless", enforce: true},
 		{name: "completed_unresolved_advisory", wantRaw: true},
 	} {
@@ -143,18 +145,31 @@ func TestContextualGuardrails_InboundFailureMatrix(t *testing.T) {
 			asks := 0
 			raw := false
 			actualSource := false
+			var reviews []session.HookPayload
 			for ev := range run.Events() {
 				if ev.Type == session.EvPermissionAsk {
 					asks++
-					_ = resolveScoped(t, run, ev.Ask, session.VerdictAllowOnce)
+					if err := resolveScoped(t, run, ev.Ask, tc.verdict); err != nil {
+						t.Fatal(err)
+					}
 				}
 				if ev.ToolResult != nil && ev.ToolResult.Content == "raw-result" {
 					raw = true
 				}
 				if ev.Hook != nil && ev.Hook.Guardrail != nil {
+					reviews = append(reviews, *ev.Hook)
 					for _, source := range ev.Hook.Guardrail.Sources {
 						actualSource = actualSource || source.Ref == "actual-source"
 					}
+				}
+			}
+			if tc.wantAsk {
+				wantDisposition := "release_result"
+				if tc.verdict == session.VerdictDeny {
+					wantDisposition = "deny"
+				}
+				if len(reviews) != 2 || reviews[0].HookID != reviews[1].HookID || reviews[0].Revision >= reviews[1].Revision || reviews[1].Guardrail.Disposition != wantDisposition {
+					t.Fatalf("hold and disposition update: %+v", reviews)
 				}
 			}
 			if (asks == 1) != tc.wantAsk || raw != tc.wantRaw || !actualSource {
@@ -181,8 +196,12 @@ func TestContextualGuardrails_ExactResultRelease(t *testing.T) {
 	eng := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.ToolCallTurn(call), mockllm.TextTurn("done")), Catalog: cat, Policy: staticAllowPolicy{}, Hooks: hook, ToolReviewer: reviewer, ToolCallRecorder: recorder, Interactive: true})
 	run := eng.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "read"})
 	var streamed []session.ToolResult
+	var reviews []session.HookPayload
 	asks := 0
 	for ev := range run.Events() {
+		if ev.Type == session.EvHook && ev.Hook != nil && ev.Hook.Guardrail != nil {
+			reviews = append(reviews, *ev.Hook)
+		}
 		if ev.Type == session.EvPermissionAsk {
 			asks++
 			if ev.Ask.Guardrail == nil || ev.Ask.Guardrail.Kind != session.GuardrailApprovalResultRelease {
@@ -216,6 +235,13 @@ func TestContextualGuardrails_ExactResultRelease(t *testing.T) {
 		if ev.Type == session.EvToolResult && ev.ToolResult != nil {
 			streamed = append(streamed, *ev.ToolResult)
 		}
+	}
+	if len(reviews) != 2 || reviews[0].HookID == "" || reviews[0].HookID != reviews[1].HookID ||
+		reviews[0].HookID != reviews[0].Guardrail.ReviewID || reviews[1].HookID != reviews[1].Guardrail.ReviewID ||
+		reviews[0].InvocationID == "" || reviews[0].InvocationID != reviews[1].InvocationID ||
+		reviews[0].SessionID != sess.ID || reviews[1].Revision <= reviews[0].Revision ||
+		reviews[1].Guardrail.Disposition != "release_result" {
+		t.Fatalf("held and released review updates: %+v", reviews)
 	}
 	if executions != 1 || reviewer.calls != 1 || hook.posts != 1 || asks != 1 {
 		t.Fatalf("executions=%d reviews=%d posts=%d asks=%d", executions, reviewer.calls, hook.posts, asks)

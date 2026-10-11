@@ -374,6 +374,9 @@ func TestToolResultAvailability_ExactRelease(t *testing.T) {
 			if asks != 1 || executions != 1 || hooks.posts != 1 || reviewer.calls != 1 || policy.learns != 0 || len(available) != 1 || len(canonical) != 1 || len(recorder.results) != 1 || !reflect.DeepEqual(available[0], canonical[0]) || !reflect.DeepEqual(available[0], recorder.results[0]) {
 				t.Fatalf("asks=%d executions=%d posts=%d reviews=%d learns=%d available=%+v canonical=%+v recorded=%+v", asks, executions, hooks.posts, reviewer.calls, policy.learns, available, canonical, recorder.results)
 			}
+			if tc.want {
+				payload.InvocationID = available[0].InvocationID
+			}
 			if tc.want && !reflect.DeepEqual(available[0], payload) {
 				t.Fatalf("released payload = %+v, want %+v", available[0], payload)
 			}

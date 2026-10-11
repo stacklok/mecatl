@@ -9,17 +9,19 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-func TestPermissionAskCallIDProjectionUsesDurableCallOnly(t *testing.T) {
+func TestPermissionAskCallIDProjectionUsesInvocationOnly(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		call session.ToolCallID
-		want string
+		name       string
+		call       session.ToolCallID
+		invocation session.InvocationID
+		want       string
 	}{
-		{name: "correlated", call: "call-7", want: "call-7"},
+		{name: "correlated", call: "provider-7", invocation: "tc_7", want: "tc_7"},
+		{name: "legacy unproven", call: "provider-7", want: ""},
 		{name: "unattached", call: "", want: ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ask := session.PendingAsk{AskID: "ask-call-7", Call: tc.call, Tool: "Write"}
+			ask := session.PendingAsk{AskID: "ask-call-7", Call: tc.call, InvocationID: tc.invocation, Tool: "Write"}
 			pb := toProto(session.Event{Type: session.EvPermissionAsk, Ask: &ask})
 			if got := pb.GetAsk().GetCallId(); got != tc.want {
 				t.Fatalf("call_id = %q, want %q", got, tc.want)

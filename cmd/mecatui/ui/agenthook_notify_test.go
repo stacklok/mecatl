@@ -98,7 +98,7 @@ func TestAgentHookPermissionRequestFiresOnMainAsk(t *testing.T) {
 	m, fake := modelWithNotifier(t)
 	m = applyAll(m,
 		client.TurnStartMsg{Turn: 1},
-		client.PermissionAskMsg{AskID: "sess-super-1:1:call-1:r0", Tool: "Shell", Args: `{"command":"ls"}`, Reason: "run ls?"},
+		client.PermissionAskMsg{AskID: "sess-super-1:1:call-1:r0", OriginSessionID: "sess-super-1", Tool: "Shell", Args: `{"command":"ls"}`, Reason: "run ls?"},
 	)
 	kinds := fake.kinds()
 	if len(kinds) != 2 || kinds[0] != "start" || kinds[1] != "permission" {
@@ -118,7 +118,7 @@ func TestAgentHookPermissionResultFiresWhenMainAskIsAnswered(t *testing.T) {
 	m, fake := modelWithNotifier(t)
 	m = applyAll(m,
 		client.TurnStartMsg{Turn: 1},
-		client.PermissionAskMsg{AskID: "sess-super-1:1:call-1:r0", Tool: "Shell", Args: `{"command":"ls"}`, Reason: "run ls?"},
+		client.PermissionAskMsg{AskID: "sess-super-1:1:call-1:r0", OriginSessionID: "sess-super-1", Tool: "Shell", Args: `{"command":"ls"}`, Reason: "run ls?"},
 	)
 	m.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
 
@@ -140,7 +140,7 @@ func TestAgentHookPermissionRequestSkippedForChildAsk(t *testing.T) {
 	// A child ask is prefixed with the CHILD session id, not the live session id.
 	m = applyAll(m,
 		client.TurnStartMsg{Turn: 1},
-		client.PermissionAskMsg{AskID: "subagent-child-9:1:call-1:r0", Tool: "Shell", Args: `{"command":"ls"}`, Reason: "child wants ls"},
+		client.PermissionAskMsg{AskID: "subagent-child-9:1:call-1:r0", OriginSessionID: "subagent-child-9", Tool: "Shell", Args: `{"command":"ls"}`, Reason: "child wants ls"},
 	)
 	for _, c := range fake.snapshot() {
 		if c.kind == "permission" {
@@ -157,7 +157,7 @@ func TestAgentHookPermissionResultSkippedForChildAnswer(t *testing.T) {
 	m, fake := modelWithNotifier(t)
 	m = applyAll(m,
 		client.TurnStartMsg{Turn: 1},
-		client.PermissionAskMsg{AskID: "subagent-child-9:1:call-1:r0", Tool: "Shell", Args: `{"command":"ls"}`, Reason: "child wants ls"},
+		client.PermissionAskMsg{AskID: "subagent-child-9:1:call-1:r0", OriginSessionID: "subagent-child-9", Tool: "Shell", Args: `{"command":"ls"}`, Reason: "child wants ls"},
 	)
 	m.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
 
@@ -205,7 +205,7 @@ func TestAgentHookFullLifecycleOrder(t *testing.T) {
 	m, fake := modelWithNotifier(t)
 	applyAll(m,
 		client.TurnStartMsg{Turn: 1},
-		client.PermissionAskMsg{AskID: "sess-super-1:1:call-1:r0", Tool: "Shell", Args: `{"command":"ls"}`, Reason: "?"},
+		client.PermissionAskMsg{AskID: "sess-super-1:1:call-1:r0", OriginSessionID: "sess-super-1", Tool: "Shell", Args: `{"command":"ls"}`, Reason: "?"},
 		client.ResultMsg{Stop: "end_turn"},
 	)
 	want := []string{"start", "permission", "stop"}
@@ -228,7 +228,7 @@ func TestAgentHookNilNotifierIsInert(t *testing.T) {
 	// Drive a full lifecycle; the nil interface must be a no-op.
 	applyAll(m,
 		client.TurnStartMsg{Turn: 1},
-		client.PermissionAskMsg{AskID: "sess-x:1:call-1:r0", Tool: "Shell", Args: `{"command":"ls"}`, Reason: "?"},
+		client.PermissionAskMsg{AskID: "sess-x:1:call-1:r0", OriginSessionID: "sess-x", Tool: "Shell", Args: `{"command":"ls"}`, Reason: "?"},
 		client.ResultMsg{Stop: "end_turn"},
 	)
 }
@@ -412,9 +412,9 @@ func TestAgentHookPermissionRequestOnQueuedMainAskPromotion(t *testing.T) {
 	m = applyAll(m,
 		client.TurnStartMsg{Turn: 1},
 		// A detached child's ask takes the visible slot: filtered, no notification.
-		client.PermissionAskMsg{AskID: childAsk, Tool: "Shell", Args: `{"command":"ls"}`, Reason: "child wants ls"},
+		client.PermissionAskMsg{AskID: childAsk, OriginSessionID: "subagent-child-9", Tool: "Shell", Args: `{"command":"ls"}`, Reason: "child wants ls"},
 		// The MAIN session then asks; it queues behind the child's card.
-		client.PermissionAskMsg{AskID: "sess-super-1:1:call-2:r0", Tool: "Write", Args: `{"path":"x"}`, Reason: "main wants write"},
+		client.PermissionAskMsg{AskID: "sess-super-1:1:call-2:r0", OriginSessionID: "sess-super-1", Tool: "Write", Args: `{"path":"x"}`, Reason: "main wants write"},
 	)
 	for _, c := range fake.snapshot() {
 		if c.kind == "permission" {
@@ -453,8 +453,8 @@ func TestAgentHookNoPermissionRequestPromotingChildAsk(t *testing.T) {
 	m, fake := modelWithNotifier(t)
 	m = applyAll(m,
 		client.TurnStartMsg{Turn: 1},
-		client.PermissionAskMsg{AskID: "subagent-a:1:call-1:r0", Tool: "Shell", Args: `{"command":"ls"}`, Reason: "child a"},
-		client.PermissionAskMsg{AskID: "subagent-b:1:call-1:r0", Tool: "Shell", Args: `{"command":"pwd"}`, Reason: "child b"},
+		client.PermissionAskMsg{AskID: "subagent-a:1:call-1:r0", OriginSessionID: "subagent-a", Tool: "Shell", Args: `{"command":"ls"}`, Reason: "child a"},
+		client.PermissionAskMsg{AskID: "subagent-b:1:call-1:r0", OriginSessionID: "subagent-b", Tool: "Shell", Args: `{"command":"pwd"}`, Reason: "child b"},
 	)
 	m.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
 	for _, c := range fake.snapshot() {

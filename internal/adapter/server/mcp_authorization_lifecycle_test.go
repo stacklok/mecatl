@@ -790,10 +790,18 @@ func TestMCPAuthorizationTerminalFallbackIsFullyReconstructable(t *testing.T) {
 				trailing[2].Type != session.EvAuthorizationResolved || trailing[2].Authorization == nil || trailing[2].Authorization.Status != tc.wantStatus {
 				t.Fatalf("ordered fallback events = %+v", trailing)
 			}
-			if _, err := eventsource.Fold(eventsource.SessionMeta{
+			if !strings.HasPrefix(string(trailing[0].ToolResult.InvocationID), "legacy_tc_") || seed[1].ToolCall.InvocationID != "" {
+				t.Fatalf("continuation did not retain the snapshot occurrence distinct from old log: %+v", trailing[0])
+			}
+			folded, err := eventsource.Fold(eventsource.SessionMeta{
 				ID: loaded.ID, Mode: loaded.Mode, Limits: loaded.Limits, EnvironmentRef: loaded.EnvironmentRef, CreatedAt: loaded.CreatedAt,
-			}, log.Read(t.Context(), loaded.ID)); err != nil {
+			}, log.Read(t.Context(), loaded.ID))
+			if err != nil {
 				t.Fatalf("eventsource remains private-state-required: %v", err)
+			}
+			logID := folded.Conversation.Messages[0].ToolCalls[0].InvocationID
+			if !strings.HasPrefix(string(logID), "legacy_event_tc_") || logID == trailing[0].ToolResult.InvocationID || folded.Conversation.Messages[1].ToolResult.InvocationID != trailing[0].ToolResult.InvocationID {
+				t.Fatalf("mixed log/snapshot anchors were collapsed: log=%q snapshot=%q", logID, trailing[0].ToolResult.InvocationID)
 			}
 		})
 	}

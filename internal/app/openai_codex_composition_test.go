@@ -158,6 +158,53 @@ func TestOpenAICodexCompositionScenario(t *testing.T) {
 	if !bytes.Contains(bodies[1], []byte("tool-result-from-workspace")) {
 		t.Fatalf("continuation request omitted the real Read result: %s", bodies[1])
 	}
+	completed, err := built.Service.GetSession(ctx, codexSession.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var publicCall session.InvocationID
+	for _, message := range completed.Conversation.Messages {
+		for _, call := range message.ToolCalls {
+			if call.Name != "Read" || call.ID != "call_read" || call.ItemID != "item_read" || call.InvocationID == "" || call.InvocationID == session.InvocationID(call.ID) || publicCall != "" {
+				t.Fatalf("provider/public call identity was not preserved: %+v", call)
+			}
+			publicCall = call.InvocationID
+		}
+		if result := message.ToolResult; result != nil && result.CallID == "call_read" && result.InvocationID != publicCall {
+			t.Fatalf("provider/public result identity did not pair: %+v", result)
+		}
+	}
+	if publicCall == "" {
+		t.Fatal("no retained public Read invocation")
+	}
+	var replay struct {
+		Input []map[string]any `json:"input"`
+	}
+	if err := json.Unmarshal(bodies[1], &replay); err != nil {
+		t.Fatal(err)
+	}
+	var calls, outputs int
+	for _, item := range replay.Input {
+		if item["type"] == "function_call" || item["type"] == "function_call_output" {
+			if item["call_id"] != "call_read" {
+				t.Fatalf("provider pairing changed: %+v", item)
+			}
+			if _, leaked := item["invocation_id"]; leaked {
+				t.Fatal("harness identity leaked to provider")
+			}
+			if item["type"] == "function_call" {
+				calls++
+				if item["id"] != "item_read" {
+					t.Fatalf("provider item ID lost: %+v", item)
+				}
+			} else {
+				outputs++
+			}
+		}
+	}
+	if calls != 1 || outputs != 1 {
+		t.Fatalf("provider replay calls/outputs = %d/%d, want 1/1", calls, outputs)
+	}
 
 	apiSession, err := built.Service.CreateSessionWithProvider(ctx, session.ModeDefault, defaultLimits(),
 		server.ProviderSelector{ProviderID: providerOpenAI, ModelID: "gpt-5"})

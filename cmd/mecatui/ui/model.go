@@ -1165,6 +1165,7 @@ func New(deps Deps) Model {
 		if resume.Pending != nil {
 			m.pendingRecoveryGeneration++
 			recoveryCtx, recoveryCancel := context.WithCancel(deps.Ctx)
+			m.adoptPendingRecoveryCall(*resume.Pending)
 			snapshotCalls := make(map[string]struct{})
 			for i := 0; i < m.conv.scrollback.Len(); i++ {
 				toolCard, ok := m.conv.scrollback.SnapshotAt(i).Payload.(scrollback.ToolCardSnapshot)
@@ -1189,6 +1190,15 @@ func New(deps Deps) Model {
 		m.refreshView()
 	}
 	return m
+}
+
+func (m *Model) adoptPendingRecoveryCall(pending client.PendingApproval) {
+	if pending.OriginSessionID != m.sessionID || pending.ToolCallID == "" {
+		return
+	}
+	if _, exists := m.conv.scrollback.SnapshotForCall(pending.ToolCallID); !exists {
+		m.conv.addTool(pending.ToolCallID, pending.Tool, pending.Args)
+	}
 }
 
 // resetDocumentProjection drops state tied to the current conversation document.

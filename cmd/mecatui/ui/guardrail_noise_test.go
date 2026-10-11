@@ -44,9 +44,22 @@ func guardrailTestHook(id, inspection, assessment, disposition string) client.Ho
 // updateGuardrail runs the real reducer and its commands, leaving detail replies
 // unapplied so each test controls their ordering and correlation.
 func updateGuardrail(m *Model, msg tea.Msg) []client.GuardrailReviewDetailMsg {
+	if ask, ok := msg.(client.PermissionAskMsg); ok {
+		if ask.OriginSessionID == "" {
+			ask.OriginSessionID = m.sessionID // This fixture injects a known local ask.
+		}
+		msg = ask
+	}
 	next, cmd := m.Update(msg)
 	*m = next.(Model)
-	return guardrailReplies(cmd)
+	replies := guardrailReplies(cmd)
+	if ask, ok := msg.(client.PermissionAskMsg); ok {
+		for i := range replies {
+			replies[i].Detail.OriginSessionID = ask.OriginSessionID
+			replies[i].Detail.ToolCallID = ask.CallID
+		}
+	}
+	return replies
 }
 
 func guardrailReplies(cmd tea.Cmd) []client.GuardrailReviewDetailMsg {
@@ -209,7 +222,7 @@ func TestGuardrailApprovalOwnsExplanationAndQueuedReplies(t *testing.T) {
 	if r.calls != 1 || m.conv.scrollback.Len() != 0 {
 		t.Fatal("approval did not take exclusive ownership")
 	}
-	queued := client.PermissionAskMsg{AskID: "child:2:result", Tool: "Read", Guardrail: &client.GuardrailApprovalScope{ReviewID: "result", Kind: "result_release"}}
+	queued := client.PermissionAskMsg{AskID: "child:2:result", OriginSessionID: "child", Tool: "Read", Guardrail: &client.GuardrailApprovalScope{ReviewID: "result", Kind: "result_release"}}
 	resultReply := updateGuardrail(&m, queued)[0]
 	if resultReply.SessionID != "child" {
 		t.Fatalf("child detail request = %+v", resultReply)
@@ -219,12 +232,12 @@ func TestGuardrailApprovalOwnsExplanationAndQueuedReplies(t *testing.T) {
 	bad.Err = errors.New("wrong child failure")
 	m = applyAll(m, bad)
 	s := approvalSurfaceOf(t, m)
-	if s.ask.unavailable || s.queue[0].unavailable {
+	if s.ask.review.snapshot().Detail.State == scrollback.HookDetailUnavailable || s.queue[0].review.snapshot().Detail.State == scrollback.HookDetailUnavailable {
 		t.Fatal("wrong-session failure affected approval")
 	}
 	m = applyAll(m, resultReply, actionReply, actionReply)
 	s = approvalSurfaceOf(t, m)
-	if s.ask.detail.ReviewID != "action" || s.queue[0].detail.ReviewID != "result" {
+	if s.ask.review.snapshot().Review.ReviewID != "action" || s.queue[0].review.snapshot().Review.ReviewID != "result" {
 		t.Fatal("queued detail lost or sent to wrong approval")
 	}
 	body, _ := s.permissionModalBodyParts(100, 80)
@@ -247,7 +260,7 @@ func TestGuardrailApprovalOwnsExplanationAndQueuedReplies(t *testing.T) {
 	late.Err = errors.New("late failure")
 	m = applyAll(m, late)
 	s = approvalSurfaceOf(t, m)
-	if s.ask.guardrail.ReviewID != "result" || s.ask.unavailable {
+	if s.ask.guardrail.ReviewID != "result" || s.ask.review.snapshot().Detail.State == scrollback.HookDetailUnavailable {
 		t.Fatal("resolved prompt failure affected successor")
 	}
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -269,14 +282,14 @@ func TestGuardrailApprovalDetailFailureCorrelation(t *testing.T) {
 	wrong = reply
 	wrong.RequestID++
 	m = applyAll(m, wrong)
-	if approvalSurfaceOf(t, m).ask.unavailable {
+	if approvalSurfaceOf(t, m).ask.review.snapshot().Detail.State == scrollback.HookDetailUnavailable {
 		t.Fatal("uncorrelated error changed prompt")
 	}
 	m = applyAll(m, reply)
 	s := approvalSurfaceOf(t, m)
 	body, _ := s.permissionModalBodyParts(100, 80)
 	body = stripANSIstr(body)
-	if !s.ask.unavailable || !strings.Contains(body, "unavailable or expired") || !strings.Contains(body, "withheld from the model") || strings.Contains(body, "private outage detail") || strings.Contains(body, "Concern:") {
+	if s.ask.review.snapshot().Detail.State != scrollback.HookDetailUnavailable || !strings.Contains(body, "unavailable or expired") || !strings.Contains(body, "withheld from the model") || strings.Contains(body, "private outage detail") || strings.Contains(body, "Concern:") {
 		t.Fatalf("failure prompt = %q", body)
 	}
 
@@ -298,11 +311,11 @@ func TestGuardrailApprovalDetailFailureCorrelation(t *testing.T) {
 	reply.Err = nil
 	reply.Detail = client.GuardrailReviewDetail{ReviewID: "result", Concern: "stale"}
 	m = applyAll(m, reply)
-	if s = approvalSurfaceOf(t, m); s.ask.unavailable || s.ask.detail.Concern != "" {
+	if s = approvalSurfaceOf(t, m); s.ask.review.snapshot().Detail.State == scrollback.HookDetailUnavailable || s.ask.review.snapshot().Detail.Concern != "" {
 		t.Fatal("previous prompt changed reopened approval")
 	}
 	m = applyAll(m, fresh)
-	if !approvalSurfaceOf(t, m).ask.unavailable {
+	if approvalSurfaceOf(t, m).ask.review.snapshot().Detail.State != scrollback.HookDetailUnavailable {
 		t.Fatal("current prompt error not applied")
 	}
 }
@@ -326,7 +339,7 @@ func TestGuardrailApprovalVerdictsKeepExactScope(t *testing.T) {
 			recorder := &authorizationControlRecorder{}
 			m.authorization = mcpAuthorizationState{controlStream: client.NewAuthorizationEventStream(client.NewFakeEventStream(), recorder), controlGen: 1, runningControlGen: 1}
 			scope := &client.GuardrailApprovalScope{ReviewID: "review", Kind: tc.kind, RepeatAvailable: tc.repeat, SessionOnly: true, GrantDigest: "exact-action"}
-			m = applyAll(m, client.PermissionAskMsg{AskID: "session:1:call", Tool: "Shell", Guardrail: scope, ExpectedRunID: "run"})
+			m = applyAll(m, client.PermissionAskMsg{AskID: "session:1:call", OriginSessionID: "session", Tool: "Shell", Guardrail: scope, ExpectedRunID: "run"})
 			s := approvalSurfaceOf(t, m)
 			if got := len(approvalButtons(s.deps.theme, s.deps.marks, s.ask, false)); got != tc.buttons {
 				t.Fatalf("buttons=%d", got)

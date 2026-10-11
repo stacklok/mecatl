@@ -169,9 +169,9 @@ func (s *Session) resolveAuthorization(reason string) ([]ToolResult, error) {
 	message := authorizationAbortMessage(reason)
 	pending := s.pendingAuthorization.Clone()
 	results := make([]ToolResult, 0, len(pending.Deferred)+1)
-	results = append(results, NewToolError(pending.Call.ID, message))
+	results = append(results, ToolResult{CallID: pending.Call.ID, InvocationID: pending.Call.InvocationID, Content: message, IsError: true})
 	for _, call := range pending.Deferred {
-		results = append(results, NewToolError(call.ID, "authorization deferred sibling was not executed"))
+		results = append(results, ToolResult{CallID: call.ID, InvocationID: call.InvocationID, Content: "authorization deferred sibling was not executed", IsError: true})
 	}
 	s.pendingAuthorization = nil
 	s.State = StateRunning
@@ -321,7 +321,7 @@ func validatePendingAuthorization(messages []Message, pending PendingAuthorizati
 }
 
 func sameAuthorizationCallIdentity(original, effective ToolCall) bool {
-	return original.ID == effective.ID && original.Name == effective.Name && original.ItemID == effective.ItemID
+	return original.ID == effective.ID && original.InvocationID == effective.InvocationID && original.Name == effective.Name && original.ItemID == effective.ItemID
 }
 
 func sameDeferredAuthorizationCall(original, pending ToolCall) bool {

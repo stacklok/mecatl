@@ -370,9 +370,14 @@ data: {"type":"result","seq":3,"result":{"stop":"end_turn","text":"Mock provider
 
 `-N` disables curl buffering so events arrive as they stream. The mock provider
 returns one text turn. A real model can also emit `tool.call`, `tool.result`,
-and `permission.ask` for calls that need approval. JSON field names include
-`tool_call`, `tool_result`, `ask` (`{ask_id, tool, args, reason}`), `is_error`,
-and `call_id`.
+`permission.ask`, and `hook`. `tool_call.id` is the public ID of one accepted tool
+invocation; `tool_result.call_id` and `hook.call_id` refer to it. A hook also carries
+`hook_id`, a positive `revision`, and `origin_session_id`. JSON field names include
+`tool_call`, `tool_result`, and `ask` (`{ask_id, tool, args, reason, call_id?,
+origin_session_id}`).
+
+Use explicit IDs to correlate events. Provider replay identifiers are not exposed, and
+clients must not derive a match from event sequence or `ask_id`.
 
 Disconnecting the client (closing the curl connection) cancels the run. `text`
 is required; omitting it returns `400` `{"error":"text is required"}`.

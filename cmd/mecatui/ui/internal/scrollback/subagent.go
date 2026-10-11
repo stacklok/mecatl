@@ -56,6 +56,7 @@ type SubagentUpdate struct {
 // card, including its call lifecycle and child state.
 type SubagentCardSnapshot struct {
 	Call      ToolCall
+	Hooks     []HookSnapshot // detached from conversation-owned hook records
 	Resolved  bool
 	Result    ToolResult
 	available bool // provisional result awaiting canonical confirmation

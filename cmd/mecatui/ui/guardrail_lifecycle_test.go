@@ -242,7 +242,7 @@ func TestGuardrailWithheldResultDoesNotSuggestRerunningTool(t *testing.T) {
 
 func TestGuardrailHookWhileApprovalActive(t *testing.T) {
 	m := guardrailTestModel(t, &guardrailDetailRecorder{}, false)
-	ask := client.PermissionAskMsg{AskID: "session:1:action", Tool: "Shell", Guardrail: &client.GuardrailApprovalScope{ReviewID: "action", Kind: "action"}}
+	ask := client.PermissionAskMsg{AskID: "session:1:action", OriginSessionID: "session", Tool: "Shell", Guardrail: &client.GuardrailApprovalScope{ReviewID: "action", Kind: "action"}}
 	m = applyAll(m, ask)
 	hook := guardrailTestHook("action", "operational_failure", "unresolved", "ask_action")
 	hook.Guardrail.Job = "action"
@@ -297,14 +297,14 @@ func TestGuardrailSessionReadyInvalidatesPendingDetails(t *testing.T) {
 				m = applyAll(m, old)
 				if approval {
 					s := approvalSurfaceOf(t, m)
-					if s.ask.unavailable || s.ask.detail.Concern != "" {
+					if s.ask.review.snapshot().Detail.State == scrollback.HookDetailUnavailable || s.ask.review.snapshot().Detail.Concern != "" {
 						t.Fatal("old reply affected new prompt")
 					}
 				}
 				m = applyAll(m, current)
 				if approval {
 					s := approvalSurfaceOf(t, m)
-					if s.ask.unavailable != failed || (!failed && s.ask.detail.Concern == "") {
+					if s.ask.review.snapshot().Detail.State == scrollback.HookDetailUnavailable != failed || (!failed && s.ask.review.snapshot().Detail.Concern == "") {
 						t.Fatal("current prompt detail not applied")
 					}
 				} else if text := lastNotice(m); !strings.Contains(text, "Test explanation") && !strings.Contains(text, "unavailable or expired") {
@@ -340,7 +340,7 @@ func TestGuardrailRetractedReceiptKeepsReviewIdentity(t *testing.T) {
 	for _, retract := range []string{"head", "queued"} {
 		m := guardrailTestModel(t, &guardrailDetailRecorder{}, false)
 		ask := func(id string) client.PermissionAskMsg {
-			return client.PermissionAskMsg{AskID: "session:1:" + id, Tool: "Read", Guardrail: &client.GuardrailApprovalScope{ReviewID: id, Kind: "result_release"}}
+			return client.PermissionAskMsg{AskID: "session:1:" + id, OriginSessionID: "session", Tool: "Read", Guardrail: &client.GuardrailApprovalScope{ReviewID: id, Kind: "result_release"}}
 		}
 		m = applyAll(m, ask("head"), ask("queued"), client.PermissionRetractMsg{AskID: ask(retract).AskID})
 		before := m.conv.scrollback.SnapshotAt(0)
@@ -359,7 +359,7 @@ func TestGuardrailQueuedFailureStaysWithPromotedPrompt(t *testing.T) {
 	r := &guardrailDetailRecorder{}
 	m := guardrailTestModel(t, r, false)
 	ask := func(id string) client.PermissionAskMsg {
-		return client.PermissionAskMsg{AskID: "session:1:" + id, Tool: "Read", Guardrail: &client.GuardrailApprovalScope{ReviewID: id, Kind: "result_release"}}
+		return client.PermissionAskMsg{AskID: "session:1:" + id, OriginSessionID: "session", Tool: "Read", Guardrail: &client.GuardrailApprovalScope{ReviewID: id, Kind: "result_release"}}
 	}
 	head := updateGuardrail(&m, ask("head"))[0]
 	queued := updateGuardrail(&m, ask("queued"))[0]
@@ -368,7 +368,7 @@ func TestGuardrailQueuedFailureStaysWithPromotedPrompt(t *testing.T) {
 	m = applyAll(m, head, failure)
 	s := approvalSurfaceOf(t, m)
 	body, _ := s.permissionModalBodyParts(100, 80)
-	if s.ask.unavailable || !s.queue[0].unavailable || strings.Contains(stripANSIstr(body), "unavailable or expired") {
+	if s.ask.review.snapshot().Detail.State == scrollback.HookDetailUnavailable || s.queue[0].review.snapshot().Detail.State != scrollback.HookDetailUnavailable || strings.Contains(stripANSIstr(body), "unavailable or expired") {
 		t.Fatal("queued error leaked into head prompt")
 	}
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter}, queued, head)
@@ -376,7 +376,7 @@ func TestGuardrailQueuedFailureStaysWithPromotedPrompt(t *testing.T) {
 	m = applyAll(m, head)
 	s = approvalSurfaceOf(t, m)
 	body, _ = s.permissionModalBodyParts(100, 80)
-	if s.ask.guardrail.ReviewID != "queued" || !s.ask.unavailable || s.ask.detail.Concern != "" || !strings.Contains(stripANSIstr(body), "unavailable or expired") {
+	if s.ask.guardrail.ReviewID != "queued" || s.ask.review.snapshot().Detail.State != scrollback.HookDetailUnavailable || s.ask.review.snapshot().Detail.Concern != "" || !strings.Contains(stripANSIstr(body), "unavailable or expired") {
 		t.Fatalf("promoted prompt changed by stale reply: %q", body)
 	}
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter})

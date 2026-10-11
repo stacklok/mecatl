@@ -496,7 +496,7 @@ func askFrameMsgs() []tea.Msg {
 		client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 1200, OutputTokens: 340}, DurationMs: 4100},
 		client.TurnStartMsg{Turn: 2},
 		client.AssistantDeltaMsg{Turn: 2, Text: "Now saving a note, which needs approval."},
-		client.PermissionAskMsg{AskID: "ask-write-1", Tool: "Write", Args: `{"path":"note.txt","content":"reviewed"}`, Reason: "Write requires approval"},
+		client.PermissionAskMsg{AskID: "ask-write-1", OriginSessionID: "sess-test-0001", Tool: "Write", Args: `{"path":"note.txt","content":"reviewed"}`, Reason: "Write requires approval"},
 	}
 }
 

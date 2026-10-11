@@ -332,6 +332,17 @@ func (t *TeamTool) ExecuteObserved(ctx context.Context, call session.ToolCall, e
 //
 //nolint:gocyclo // Team validation, enrolment, observation, and teardown remain one transaction.
 func (t *TeamTool) run(ctx context.Context, call session.ToolCall, env tool.Environment, emit func(session.Event), caps parentCaps) (session.ToolResult, error) {
+	if emit != nil {
+		publish := emit
+		emit = func(ev session.Event) {
+			if ev.Team != nil {
+				payload := *ev.Team
+				payload.ParentInvocationID = call.InvocationID
+				ev.Team = &payload
+			}
+			publish(ev)
+		}
+	}
 	var args teamArgs
 	if msg, ok := session.ParseArgs(call, &args); !ok {
 		return session.NewToolError(call.ID, "Team: "+msg), nil
@@ -402,6 +413,7 @@ func (t *TeamTool) run(ctx context.Context, call session.ToolCall, env tool.Envi
 	// Thread the parent's caps and exact Team call so an unresolved member permission
 	// ask can surface and each member's durable relationship is correlated before it
 	// is registered, persisted, or projected.
+	caps.parentInvocationID = call.InvocationID
 	opts = append(opts, withParentCaps(caps), withParentTeamCall(call.ID))
 	sup := NewSupervisor(tm, env, factory, opts...)
 
@@ -662,6 +674,7 @@ func projectTeamEvent(parentCallID, teamID string, te TeamEvent) (session.Event,
 		}
 		base.ToolName = ev.ToolCall.Name
 		base.ChildToolCallID = ev.ToolCall.ID
+		base.ChildInvocationID = ev.ToolCall.InvocationID
 		base.Detail = clampPreview(string(ev.ToolCall.Args))
 	case session.EvToolResultAvailable, session.EvToolResult:
 		if ev.ToolResult == nil || !previewChildToolCallID(ev.ToolResult.CallID) {
@@ -669,6 +682,7 @@ func projectTeamEvent(parentCallID, teamID string, te TeamEvent) (session.Event,
 		}
 		base.IsError = ev.ToolResult.IsError
 		base.ChildToolCallID = ev.ToolResult.CallID
+		base.ChildInvocationID = ev.ToolResult.InvocationID
 		base.Detail = clampPreview(ev.ToolResult.Content)
 	case session.EvTurnEnd:
 		if ev.TurnEnd != nil {

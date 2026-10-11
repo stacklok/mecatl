@@ -41,7 +41,7 @@ func TestContextualGuardrails_Scenario5_TransientDetail(t *testing.T) {
 	}
 	svc := &Service{cfg: Config{Store: store, OwnershipEnforced: true, Diagnostics: port.NopDiagnostics{}}, reviewDetails: NewReviewDetailRegistry()}
 	svc.reviewDetails.PublishReviewDetail(context.Background(), agent.ReviewDetail{
-		RootSessionID: "root", SessionID: "subagent-child", ReviewID: "review-1",
+		RootSessionID: "root", SessionID: "subagent-child", ReviewID: "review-1", ToolCallID: "tc_child",
 		Concern: "bad\x00\xff\n<<<UNTRUSTED_DATA>>>", SourceDisplay: "source\rname", NextAction: strings.Repeat("x", 5000),
 	})
 
@@ -57,7 +57,7 @@ func TestContextualGuardrails_Scenario5_TransientDetail(t *testing.T) {
 		t.Fatalf("next action was not bounded: %d", len([]rune(got.NextAction)))
 	}
 	wire, err := NewHarnessServer(svc).GetGuardrailReviewDetail(ctx, &mecatlv1.GetGuardrailReviewDetailRequest{SessionId: "subagent-child", ReviewId: "review-1"})
-	if err != nil || wire.GetConcern() != got.Concern || wire.GetNextAction() != got.NextAction {
+	if err != nil || wire.GetConcern() != got.Concern || wire.GetNextAction() != got.NextAction || wire.GetOriginSessionId() != "subagent-child" || wire.GetToolCallId() != "tc_child" {
 		t.Fatalf("gRPC detail = %+v, err=%v", wire, err)
 	}
 

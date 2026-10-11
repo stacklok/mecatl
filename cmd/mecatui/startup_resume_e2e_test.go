@@ -573,6 +573,25 @@ func TestPendingApprovalStartupRecovery(t *testing.T) {
 			if selection.Pending == nil || selection.Pending.RunID != originalRun || selection.Pending.AskID != originalAsk {
 				t.Fatalf("recovered correlation = %+v, want run %q ask %q", selection.Pending, originalRun, originalAsk)
 			}
+			if selection.Pending.ToolCallID == "" || selection.Pending.OriginSessionID != created.GetSessionId() {
+				t.Fatalf("recovered invocation identity/origin = %+v", selection.Pending)
+			}
+			var transcriptCallID string
+			for _, message := range selection.Transcript.Messages {
+				for _, call := range message.ToolCalls {
+					if call.Name == "Write" {
+						transcriptCallID = call.ID
+					}
+				}
+			}
+			if transcriptCallID != selection.Pending.ToolCallID {
+				t.Fatalf("snapshot/log continuation identity: transcript=%q pending=%q", transcriptCallID, selection.Pending.ToolCallID)
+			}
+			presentation := ui.New(ui.Deps{Theme: theme.New("aztec", theme.AztecPalette()), Ctx: ctx, Resume: selection, NoAltScreen: true, NoBanner: true})
+			presentationModel, _ := presentation.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+			if !strings.Contains(presentationModel.(ui.Model).View().Content, "Write") {
+				t.Fatal("restarted transcript lost pending tool card in UI")
+			}
 			if _, err := os.Stat(filepath.Join(workspace, "approved.txt")); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("tool ran before owner verdict: %v", err)
 			}

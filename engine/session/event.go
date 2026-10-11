@@ -367,9 +367,17 @@ type GuardrailReviewPayload struct {
 // to the human-readable Event.Text. It lets a client render a hook notice
 // distinctly from a compaction notice — labelling the lifecycle Phase and
 // colouring the Decision (e.g. a blocked hook in an error colour) — instead of
-// string-parsing the free text. All fields are optional; a zero value renders as
-// a generic informational hook.
+// string-parsing the free text. Legacy records may omit identity fields; newly
+// published records carry an ID, origin and positive revision.
 type HookPayload struct {
+	// HookID identifies a published outcome or the logical review record.
+	HookID string
+	// Revision orders updates within the originating session; zero is legacy.
+	Revision uint64
+	// SessionID is the originating session, even when a child event is relayed.
+	SessionID SessionID
+	// InvocationID identifies the accepted tool occurrence, not its provider pairing ID.
+	InvocationID InvocationID
 	// Phase is the lifecycle point the hook fired at (e.g. "PreToolUse"); empty
 	// when not applicable.
 	Phase string
@@ -402,6 +410,11 @@ type HookPayload struct {
 // child and parent provider call IDs can collide, and parent replay must not
 // learn a rule from an unrelated parent call.
 type ApprovalPayload struct {
+	// SessionID and InvocationID identify the originating occurrence, including relayed child asks.
+	SessionID    SessionID
+	InvocationID InvocationID
+	// ReviewID is the exact contextual review record, when present.
+	ReviewID string
 	// AskID is the id of the resolved permission ask (the same id carried on the
 	// EvPermissionAsk that preceded this verdict and on the wire ResumeApproval).
 	AskID string
@@ -860,7 +873,8 @@ type RoutingDecision struct {
 type SubagentPayload struct {
 	// ParentCallID is the parent's Subagent tool-call id, used by clients to attribute
 	// this event to the originating Subagent card. Set on all three kinds.
-	ParentCallID string
+	ParentCallID       string
+	ParentInvocationID InvocationID
 	// ChildID is the child session id, distinguishing concurrent subagents. Set on
 	// all three kinds.
 	ChildID string
@@ -920,7 +934,8 @@ type SubagentPayload struct {
 	// ChildToolCallID is the exact child call, available-result, or canonical-result ID
 	// for tool projections only. It is scoped by ChildID; older and non-tool events leave it empty.
 	// IDs longer than 256 bytes or invalid UTF-8 are omitted with their previews.
-	ChildToolCallID ToolCallID
+	ChildToolCallID   ToolCallID
+	ChildInvocationID InvocationID
 	// IsError reports whether the child tool call failed. Set on EvSubagentTool
 	// only.
 	IsError bool
@@ -1005,7 +1020,8 @@ type ParallelPayload struct {
 	// ParentCallID is the parent's Parallel tool-call id; it is the GROUP key (one
 	// Parallel call = one group) and attributes every parallel.* event to the
 	// originating Parallel card. Set on all kinds.
-	ParentCallID string
+	ParentCallID       string
+	ParentInvocationID InvocationID
 	// Kind discriminates the per-branch lifecycle transition (branch_start /
 	// branch_tool / branch_end). Set on EvParallelBranch only; empty on the run-level
 	// start/end events.
@@ -1026,7 +1042,7 @@ type ParallelPayload struct {
 	// per-child cancel/inspect handle (the same single-handle convention as
 	// SubagentPayload.ChildID / the Team member session id), surfaced so a client can
 	// address a branch (CancelChild) WITHOUT deriving the id grammar. Set on the
-	// branch_start and branch_end kinds. It is an id, never branch content.
+	// branch_start, branch_tool and branch_end kinds. It is an id, never branch content.
 	ChildID string
 	// ChildIncarnation is internal durable correlation metadata, never projected.
 	ChildIncarnation IncarnationID
@@ -1079,7 +1095,8 @@ type ParallelPayload struct {
 	// ChildToolCallID is the exact branch call/result ID for tool.call/tool.result
 	// projections only, scoped by the branch lane. Otherwise it is empty.
 	// IDs longer than 256 bytes or invalid UTF-8 are omitted with their previews.
-	ChildToolCallID ToolCallID
+	ChildToolCallID   ToolCallID
+	ChildInvocationID InvocationID
 	// IsError reports whether that branch tool call failed. Set on branch_tool only.
 	IsError bool
 	// ToolCount is the running (branch_tool) or final (branch_end) number of a branch's
@@ -1361,7 +1378,8 @@ type TeamMemberDisposition struct {
 type TeamPayload struct {
 	// ParentCallID is the parent's Team tool-call id, attributing every team.*
 	// event to the originating Team card. Set on all three kinds.
-	ParentCallID string
+	ParentCallID       string
+	ParentInvocationID InvocationID
 	// TeamID is the team id, distinguishing concurrent teams. Set on all kinds.
 	TeamID string
 	// Roster is the team's membership as the model formed it. Set on EvTeamStart
@@ -1391,7 +1409,8 @@ type TeamPayload struct {
 	// ChildToolCallID is the exact member call/result ID for tool.call/tool.result
 	// projections only, scoped by the member lane. Otherwise it is empty.
 	// IDs longer than 256 bytes or invalid UTF-8 are omitted with their previews.
-	ChildToolCallID ToolCallID
+	ChildToolCallID   ToolCallID
+	ChildInvocationID InvocationID
 	// Detail is a BOUNDED preview of a member tool call's args (tool.call) or
 	// result body (tool.result.available or tool.result) — capped at maxTeamPreview runes. It is never the
 	// raw, unbounded args/result body. Set on EvTeamMember for tool.* inner kinds.
@@ -1483,6 +1502,8 @@ const (
 // AuthorizationPayload is the safe correlation carried by authorization events.
 // DisplayName is an optional bounded human-facing authority or service label.
 type AuthorizationPayload struct {
+	SessionID       SessionID
+	InvocationID    InvocationID
 	AuthorizationID string
 	DisplayName     string
 	Call            ToolCallID

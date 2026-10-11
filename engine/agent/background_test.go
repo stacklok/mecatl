@@ -186,6 +186,20 @@ func TestBackgroundSubagentHappyPath(t *testing.T) {
 	if !sawEnd {
 		t.Fatalf("subagent.end must be emitted for a background child")
 	}
+	var parentInvocation session.InvocationID
+	for _, ev := range evs {
+		if ev.Type == session.EvToolCall && ev.ToolCall != nil && ev.ToolCall.ID == "p1" {
+			parentInvocation = ev.ToolCall.InvocationID
+		}
+	}
+	if parentInvocation == "" {
+		t.Fatal("parent invocation absent")
+	}
+	for _, ev := range evs {
+		if ev.Subagent != nil && ev.Subagent.ParentCallID == "p1" && ev.Subagent.ParentInvocationID != parentInvocation {
+			t.Fatalf("background event lost original parent invocation after next turn: %+v", ev.Subagent)
+		}
+	}
 
 	// A5 ordering pin: the SYNCHRONOUS subagent.start{background:true} must
 	// precede the started ToolResult on the stream (the start is emitted inside

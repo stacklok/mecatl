@@ -42,6 +42,7 @@ func TestProjectUpdateReasoningDelta(t *testing.T) {
 
 func TestProjectUpdateToolCall(t *testing.T) {
 	call := session.NewToolCall("call-1", "Read", json.RawMessage(`{"path":"/x"}`))
+	call.InvocationID = "tc_public"
 	got, ok := projectUpdate(session.Event{Type: session.EvToolCall, ToolCall: &call})
 	if !ok {
 		t.Fatal("expected a projection")
@@ -50,7 +51,7 @@ func TestProjectUpdateToolCall(t *testing.T) {
 	if tc.SessionUpdate != updateToolCall {
 		t.Errorf("sessionUpdate = %q", tc.SessionUpdate)
 	}
-	if tc.ToolCallID != "call-1" {
+	if tc.ToolCallID != "tc_public" {
 		t.Errorf("toolCallId = %q", tc.ToolCallID)
 	}
 	if tc.Title != "Read" || tc.Kind != "read" {
@@ -75,7 +76,9 @@ func TestProjectUpdateToolResult(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := projectUpdate(session.Event{Type: session.EvToolResult, ToolResult: &tc.result})
+			result := tc.result
+			result.InvocationID = "tc_" + session.InvocationID(result.CallID)
+			got, ok := projectUpdate(session.Event{Type: session.EvToolResult, ToolResult: &result})
 			if !ok {
 				t.Fatal("expected a projection")
 			}
@@ -83,7 +86,7 @@ func TestProjectUpdateToolResult(t *testing.T) {
 			if u.SessionUpdate != updateToolCallUpdate {
 				t.Errorf("sessionUpdate = %q", u.SessionUpdate)
 			}
-			if u.ToolCallID != string(tc.result.CallID) {
+			if u.ToolCallID != string(result.InvocationID) {
 				t.Errorf("toolCallId = %q", u.ToolCallID)
 			}
 			if u.Status != tc.wantStatus {
@@ -101,18 +104,20 @@ func TestProjectUpdateToolResult(t *testing.T) {
 func TestToolCallConfirmationAndReplacement(t *testing.T) {
 	projector := newRunProjector()
 	call := session.NewToolCall("call-availability", "Read", json.RawMessage(`{}`))
+	call.InvocationID = "tc_available"
 	opened, ok := projector.project(session.Event{Type: session.EvToolCall, ToolCall: &call})
-	if !ok || opened.(toolCallUpdate).ToolCallID != "call-availability" || opened.(toolCallUpdate).Status != toolStatusPending {
+	if !ok || opened.(toolCallUpdate).ToolCallID != "tc_available" || opened.(toolCallUpdate).Status != toolStatusPending {
 		t.Fatalf("pending call = %+v, projected=%v", opened, ok)
 	}
 	available := session.NewToolResult("call-availability", "available")
+	available.InvocationID = call.InvocationID
 
 	got, ok := projector.project(session.Event{Type: session.EvToolResultAvailable, ToolResult: &available})
 	if !ok {
 		t.Fatal("availability did not settle the tool call")
 	}
 	update := got.(toolCallUpdate)
-	if update.ToolCallID != "call-availability" || update.Status != toolStatusCompleted || update.Content[0].Content.Text != "available" {
+	if update.ToolCallID != "tc_available" || update.Status != toolStatusCompleted || update.Content[0].Content.Text != "available" {
 		t.Fatalf("availability update = %+v", update)
 	}
 
@@ -121,7 +126,9 @@ func TestToolCallConfirmationAndReplacement(t *testing.T) {
 	}
 
 	cancelled := session.NewToolError("call-cancelled", "cancelled")
+	cancelled.InvocationID = "tc_cancelled"
 	prior := session.NewToolResult("call-cancelled", "available")
+	prior.InvocationID = cancelled.InvocationID
 	if _, ok := projector.project(session.Event{Type: session.EvToolResultAvailable, ToolResult: &prior}); !ok {
 		t.Fatal("second availability did not settle its call")
 	}
@@ -130,7 +137,7 @@ func TestToolCallConfirmationAndReplacement(t *testing.T) {
 		t.Fatal("differing canonical result did not replace availability")
 	}
 	update = got.(toolCallUpdate)
-	if update.ToolCallID != "call-cancelled" || update.Status != toolStatusFailed || update.Content[0].Content.Text != "cancelled" {
+	if update.ToolCallID != "tc_cancelled" || update.Status != toolStatusFailed || update.Content[0].Content.Text != "cancelled" {
 		t.Fatalf("replacement update = %+v", update)
 	}
 
@@ -305,7 +312,7 @@ func TestProjectHookBlockedWithCallID(t *testing.T) {
 	ev := session.Event{
 		Type: session.EvHook,
 		Text: "blocked by PreToolUse hook",
-		Hook: &session.HookPayload{Phase: "PreToolUse", Tool: "Shell", Decision: session.HookBlocked, CallID: "call-7"},
+		Hook: &session.HookPayload{Phase: "PreToolUse", Tool: "Shell", Decision: session.HookBlocked, InvocationID: "call-7"},
 	}
 	got, ok := projectUpdate(ev)
 	if !ok {
@@ -381,7 +388,7 @@ func TestProjectHookPostToolUseBlockedWithCallID(t *testing.T) {
 	ev := session.Event{
 		Type: session.EvHook,
 		Text: "PostToolUse flagged the output",
-		Hook: &session.HookPayload{Phase: "PostToolUse", Tool: "Shell", Decision: session.HookBlocked, CallID: "call-7"},
+		Hook: &session.HookPayload{Phase: "PostToolUse", Tool: "Shell", Decision: session.HookBlocked, InvocationID: "call-7"},
 	}
 	got, ok := projectUpdate(ev)
 	if !ok {
@@ -401,7 +408,7 @@ func TestProjectHookPostToolUseBlockedWithCallID(t *testing.T) {
 func TestProjectSubagent(t *testing.T) {
 	toolEv := session.Event{
 		Type:     session.EvSubagentTool,
-		Subagent: &session.SubagentPayload{ParentCallID: "task-1", ChildID: "child-9", ToolName: "Read", ToolCount: 2},
+		Subagent: &session.SubagentPayload{ParentCallID: "task-1", ParentInvocationID: "task-1", ChildID: "child-9", ToolName: "Read", ToolCount: 2},
 	}
 	got, ok := projectUpdate(toolEv)
 	if !ok {
@@ -420,7 +427,7 @@ func TestProjectSubagent(t *testing.T) {
 
 	endEv := session.Event{
 		Type:     session.EvSubagentEnd,
-		Subagent: &session.SubagentPayload{ParentCallID: "task-1", ToolCount: 3, Stop: session.StopEndTurn},
+		Subagent: &session.SubagentPayload{ParentCallID: "task-1", ParentInvocationID: "task-1", ToolCount: 3, Stop: session.StopEndTurn},
 	}
 	endGot, _ := projectUpdate(endEv)
 	eu := endGot.(toolCallUpdate)
@@ -434,7 +441,7 @@ func TestProjectSubagent(t *testing.T) {
 func TestProjectSubagentEndError(t *testing.T) {
 	got, _ := projectUpdate(session.Event{
 		Type:     session.EvSubagentEnd,
-		Subagent: &session.SubagentPayload{ParentCallID: "task-2", Stop: session.StopError},
+		Subagent: &session.SubagentPayload{ParentCallID: "task-2", ParentInvocationID: "task-2", Stop: session.StopError},
 	})
 	if u := got.(toolCallUpdate); u.Status != toolStatusFailed {
 		t.Errorf("status = %q, want failed", u.Status)
@@ -462,7 +469,7 @@ func TestProjectSubagentEndCarriesCause(t *testing.T) {
 	got, _ := projectUpdate(session.Event{
 		Type: session.EvSubagentEnd,
 		Subagent: &session.SubagentPayload{
-			ParentCallID: "task-3", ToolCount: 4, Stop: session.StopError,
+			ParentCallID: "task-3", ParentInvocationID: "task-3", ToolCount: 4, Stop: session.StopError,
 			Cause: "upstream 503: model overloaded",
 		},
 	})
@@ -481,7 +488,7 @@ func TestProjectSubagentEndCarriesCause(t *testing.T) {
 	// Benign terminal: no cause, so the line is unchanged from the pre-#319 shape.
 	benign, _ := projectUpdate(session.Event{
 		Type:     session.EvSubagentEnd,
-		Subagent: &session.SubagentPayload{ParentCallID: "task-4", ToolCount: 2, Stop: session.StopEndTurn},
+		Subagent: &session.SubagentPayload{ParentCallID: "task-4", ParentInvocationID: "task-4", ToolCount: 2, Stop: session.StopEndTurn},
 	})
 	bl := benign.(toolCallUpdate).Content[0].Content.Text
 	if bl != "subagent finished: 2 tool call(s), end_turn" {
@@ -495,7 +502,7 @@ func TestProjectTeam(t *testing.T) {
 	memberEv := session.Event{
 		Type: session.EvTeamMember,
 		Team: &session.TeamPayload{
-			ParentCallID: "team-1", TeamID: "t9", Member: "alice",
+			ParentCallID: "team-1", ParentInvocationID: "team-1", TeamID: "t9", Member: "alice",
 			InnerKind: session.EvToolCall, ToolName: "Grep", Detail: "{q}",
 		},
 	}
@@ -514,7 +521,7 @@ func TestProjectTeam(t *testing.T) {
 	// A message.delta member event surfaces the member's text.
 	msgEv := session.Event{
 		Type: session.EvTeamMember,
-		Team: &session.TeamPayload{ParentCallID: "team-1", Member: "bob", InnerKind: session.EvMessageDelta, Text: "hi"},
+		Team: &session.TeamPayload{ParentCallID: "team-1", ParentInvocationID: "team-1", Member: "bob", InnerKind: session.EvMessageDelta, Text: "hi"},
 	}
 	mg, _ := projectUpdate(msgEv)
 	if mu := mg.(toolCallUpdate); !strings.Contains(mu.Content[0].Content.Text, "hi") {
@@ -524,14 +531,14 @@ func TestProjectTeam(t *testing.T) {
 	// An empty-text non-tool member event is dropped (nothing to show).
 	if _, ok := projectUpdate(session.Event{
 		Type: session.EvTeamMember,
-		Team: &session.TeamPayload{ParentCallID: "team-1", Member: "bob", InnerKind: session.EvTurnEnd},
+		Team: &session.TeamPayload{ParentCallID: "team-1", ParentInvocationID: "team-1", Member: "bob", InnerKind: session.EvTurnEnd},
 	}); ok {
 		t.Error("empty member event should not project")
 	}
 
 	endGot, _ := projectUpdate(session.Event{
 		Type: session.EvTeamEnd,
-		Team: &session.TeamPayload{ParentCallID: "team-1", Rounds: 2, Stop: session.StopEndTurn},
+		Team: &session.TeamPayload{ParentCallID: "team-1", ParentInvocationID: "team-1", Rounds: 2, Stop: session.StopEndTurn},
 	})
 	if eu := endGot.(toolCallUpdate); eu.ToolCallID != "team-1" {
 		t.Errorf("team end update = %+v", eu)
@@ -546,7 +553,7 @@ func TestProjectTeamMemberResultCarriesCause(t *testing.T) {
 	got, _ := projectUpdate(session.Event{
 		Type: session.EvTeamMember,
 		Team: &session.TeamPayload{
-			ParentCallID: "team-1", TeamID: "t9", Member: "worker",
+			ParentCallID: "team-1", ParentInvocationID: "team-1", TeamID: "t9", Member: "worker",
 			InnerKind: session.EvResult, Stop: session.StopError,
 			Cause: "upstream 503: model overloaded",
 			Text:  "partial",
@@ -567,7 +574,7 @@ func TestProjectTeamMemberResultCarriesCause(t *testing.T) {
 	// Benign empty result: no cause, no text → dropped (nothing to show).
 	if _, ok := projectUpdate(session.Event{
 		Type: session.EvTeamMember,
-		Team: &session.TeamPayload{ParentCallID: "team-1", Member: "worker", InnerKind: session.EvResult, Stop: session.StopEndTurn},
+		Team: &session.TeamPayload{ParentCallID: "team-1", ParentInvocationID: "team-1", Member: "worker", InnerKind: session.EvResult, Stop: session.StopEndTurn},
 	}); ok {
 		t.Error("a clean empty result must not project (no cause, no text)")
 	}
@@ -652,6 +659,7 @@ func TestProjectUpdateAuthorizationIsSafeStatusOnly(t *testing.T) {
 		AuthorizationID: "auth-1",
 		DisplayName:     "GitHub Enterprise",
 		Call:            "call-1",
+		InvocationID:    "tc_auth",
 		ExpiresAt:       time.Unix(1, 0),
 		Status:          session.AuthorizationPending,
 	}
@@ -660,7 +668,7 @@ func TestProjectUpdateAuthorizationIsSafeStatusOnly(t *testing.T) {
 		t.Fatal("required authorization was not projected")
 	}
 	card := got.(toolCallUpdate)
-	if card.ToolCallID != "call-1" || card.Status != toolStatusFailed || len(card.Content) != 1 {
+	if card.ToolCallID != "tc_auth" || card.Status != toolStatusFailed || len(card.Content) != 1 {
 		t.Fatalf("required projection = %+v", card)
 	}
 	if card.Content[0].Content.Text != "MCP authorization for GitHub Enterprise is unavailable for ACP sessions" {
