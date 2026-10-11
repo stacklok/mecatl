@@ -24,7 +24,10 @@ export default defineConfig({
   expect: { timeout: 5_000 },
   forbidOnly: Boolean(process.env.CI),
   fullyParallel: false,
-  globalTimeout: 300_000,
+  // A backstop for a hung run, not a pace target: each test has its own 60s
+  // timeout. The serial suite (one worker) grew from 54 to over 100 journeys,
+  // and a CI runner takes about 1.5x a local run, so 300s left no headroom.
+  globalTimeout: 600_000,
   outputDir: join(repositoryRoot, ".scratch", "studio-browser-playwright"),
   projects: [
     {

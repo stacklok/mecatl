@@ -6,20 +6,21 @@ import { expect, type OfflineBff, test } from "./fixtures";
 // content, so a fixed-width control or a two-column grid has little room.
 const WIDTHS = [500, 568, 640] as const;
 
+// The nav's own labels, so a section opens the way a person opens it.
 const SECTIONS = [
-  "profile",
-  "appearance",
-  "agent",
-  "permissions",
-  "providers",
-  "models",
-  "mcp-tools",
-  "storage",
-  "memory",
-  "learning",
-  "diagnostics",
-  "labs",
-  "about",
+  ["profile", "You"],
+  ["appearance", "Personalise"],
+  ["agent", "Agent"],
+  ["permissions", "Permissions"],
+  ["providers", "Providers"],
+  ["models", "Models"],
+  ["mcp-tools", "MCP tools"],
+  ["storage", "Storage"],
+  ["memory", "Memory"],
+  ["learning", "Learning"],
+  ["diagnostics", "Diagnostics"],
+  ["labs", "Labs"],
+  ["about", "About"],
 ] as const;
 
 /**
@@ -120,21 +121,30 @@ function stub(bff: OfflineBff) {
   });
 }
 
-test("settings sections fit between the 500px pivot and a tablet", async ({
-  offlineBff,
-  page,
-}, testInfo) => {
-  test.skip(testInfo.project.name !== "chromium-desktop", "sets its own viewport widths");
-  await page.addInitScript(() => localStorage.setItem("studio.account", "opaque-a"));
-  stub(offlineBff);
+// One test per width, and one page load per test: the sections open from the
+// nav in the app, so 39 full reloads don't outrun the test and suite budgets.
+for (const width of WIDTHS) {
+  test(`settings sections fit at ${width}px, between the 500px pivot and a tablet`, async ({
+    offlineBff,
+    page,
+  }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium-desktop", "sets its own viewport widths");
+    await page.addInitScript(() => localStorage.setItem("studio.account", "opaque-a"));
+    stub(offlineBff);
 
-  for (const width of WIDTHS) {
     await page.setViewportSize({ width, height: 800 });
-    for (const section of SECTIONS) {
-      await page.goto(`/workspace/settings/${section}`);
-      await expect(page.getByRole("navigation", { name: "Settings sections" })).toBeVisible();
+    await page.goto(`/workspace/settings/${SECTIONS[0][0]}`);
+    await page.waitForLoadState("networkidle");
+    const nav = page.getByRole("navigation", { name: "Settings sections" });
+    for (const [section, label] of SECTIONS) {
+      await nav.getByRole("button", { name: label, exact: true }).click();
+      await expect(page).toHaveURL(new RegExp(`/workspace/settings/${section}$`, "u"));
+      await expect(nav.getByRole("button", { name: label, exact: true })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+      await expect(nav).toBeVisible();
       await expect(page.locator("main section").first()).toBeVisible();
-      await page.waitForLoadState("networkidle");
       // Wait out the runtime reads so the facts, not a loading line, are measured.
       await expect(page.getByText(/^Loading\b.*…$/u)).toHaveCount(0);
 
@@ -173,7 +183,8 @@ test("settings sections fit between the 500px pivot and a tablet", async ({
         .toEqual({ broken: [], scroll: [], spill: [] });
     }
 
-    await page.goto("/workspace/settings/models");
+    await nav.getByRole("button", { name: "Models", exact: true }).click();
+    await expect(page).toHaveURL(/\/workspace\/settings\/models$/u);
     const cards = page.locator("main article");
     await expect(cards).toHaveCount(2);
     for (const card of await cards.all()) {
@@ -198,8 +209,8 @@ test("settings sections fit between the 500px pivot and a tablet", async ({
       fullPage: true,
       path: testInfo.outputPath(`settings-models-${width}.png`),
     });
-  }
-});
+  });
+}
 
 test("the settings nav keeps the current section on screen at 1280x800", async ({
   offlineBff,
@@ -210,7 +221,7 @@ test("the settings nav keeps the current section on screen at 1280x800", async (
   stub(offlineBff);
   await page.setViewportSize({ width: 1280, height: 800 });
 
-  for (const section of SECTIONS) {
+  for (const [section] of SECTIONS) {
     await page.goto(`/workspace/settings/${section}`);
     const nav = page.getByRole("navigation", { name: "Settings sections" });
     const current = nav.locator('button[aria-current="page"]');
