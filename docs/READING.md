@@ -41,7 +41,7 @@ Also for contributors:
 - [Qualify local microVM source builds](architecture/microvm-environments.md#qualify-local-microvm-source-builds):
   contributor procedure for the macOS development path.
 - The [formal domain model](architecture/mecatl.modelith.md), generated from its `.yaml`.
-- [User-docs authoring contract](../user-docs/_README.md) and
+- [User-docs authoring contract](../user-docs/AGENTS.md) and
   [style guide](../user-docs/_STYLE.md), for public documentation.
 
 ## Operators

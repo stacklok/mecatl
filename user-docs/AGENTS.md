@@ -1,18 +1,20 @@
 # Writing Mecatl user documentation
 
-This directory contains the public documentation for [Mecatl](../README.md). It
-helps people use Mecatl through `mecatui`, helps operators deploy Mecatl, and helps
-builders integrate Mecatl into applications. The Docusaurus site renders this
-directory; keep site infrastructure in `website/`. For Docusaurus mechanics, see
-[`website/AGENTS.md`](../website/AGENTS.md).
+Public documentation for [Mecatl](../README.md) lives here. Keep site
+infrastructure in `website/`; see [`website/AGENTS.md`](../website/AGENTS.md)
+for Docusaurus mechanics.
 
-Before drafting or substantively editing a page, use the repository's
-[style guide](_STYLE.md). It is the
-canonical source for prose, voice, terminology, and formatting. This file
-remains canonical for information architecture, content ownership, links, and
-verification. Coding agents should also use the repository's
-[`tech-writer` skill](../.claude/skills/tech-writer/SKILL.md) for Diataxis mode
-guidance and write-time anti-patterns.
+Before editing a page, read the repository's [style guide](_STYLE.md) and this
+authoring contract. Coding agents must use the
+[`tech-writer` skill](../.claude/skills/tech-writer/SKILL.md) when editing
+user documentation. The style guide owns prose, voice, and terminology; this
+file owns information architecture, content ownership, links, and verification.
+
+Document what readers need but cannot reasonably infer from the interface.
+Omit routine navigation, self-evident actions, and instructions already shown
+in UI hints or help. Keep non-obvious behavior, prerequisites, consequences,
+and limitations that affect the reader's task. A UI change does not require
+another walkthrough of its controls.
 
 ## Find the right place
 

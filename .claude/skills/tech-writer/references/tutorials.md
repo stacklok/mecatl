@@ -32,7 +32,7 @@ Tutorials are typically the quickstarts inside each product section and any end-
 
 ## Structure
 
-Follow the [authoring contract](../../../../user-docs/_README.md) for Mecatl-specific page and closing-section requirements. A typical tutorial has:
+Follow the [authoring contract](../../../../user-docs/AGENTS.md) for Mecatl-specific page and closing-section requirements. A typical tutorial has:
 
 1. Front matter: `title` and `description`, then a matching H1
 2. What you'll do and what you'll have at the end, in a sentence or two

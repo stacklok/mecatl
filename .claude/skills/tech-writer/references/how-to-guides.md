@@ -32,7 +32,7 @@ How-to guides are usually the bulk of a documentation set: the task-oriented gui
 
 ## Structure
 
-Follow the [authoring contract](../../../../user-docs/_README.md) for Mecatl-specific page and closing-section requirements. A typical guide has:
+Follow the [authoring contract](../../../../user-docs/AGENTS.md) for Mecatl-specific page and closing-section requirements. A typical guide has:
 
 1. Front matter: `title` and `description`, then a matching H1
 2. A sentence or two on what the guide accomplishes and when you'd want it

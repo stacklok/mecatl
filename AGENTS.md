@@ -84,9 +84,13 @@ for that area from [`docs/READING.md`](docs/READING.md).
 - Generated files change only via `task generate`, never by hand.
 - `docs/drafts/` holds proposals and work records, not current behavior; don't rely
   on it for how Mecatl works.
+- Before editing `user-docs/`, use the `tech-writer` skill and read
+  [`user-docs/AGENTS.md`](user-docs/AGENTS.md). It owns documentation scope
+  and authoring guidance.
 - Markdown changes run `task docs`. User-facing changes update the owning
-  `user-docs/` page named in [`user-docs/_README.md`](user-docs/_README.md).
-  Changing behavior a `docs/` chapter describes updates that chapter.
+  `user-docs/` page when documentation adds information beyond UI hints or
+  self-evident behavior. Changing behavior a `docs/` chapter describes updates
+  that chapter.
 
 Path-scoped invariants live in `.claude/rules/*.md`, including test isolation
 (composition helpers and a test-owned `UserModelDir`).
