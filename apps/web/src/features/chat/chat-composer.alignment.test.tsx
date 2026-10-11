@@ -335,6 +335,37 @@ describe("seed confirmation and the stored draft", () => {
     expect(readDraft("chat-a")).toBe("my own draft");
   });
 
+  it("keeps the confirmation open and the user's draft while a confirmed seed is sending", async () => {
+    const user = userEvent.setup();
+    writeDraft("chat-a", "my own draft");
+    let accept: ((accepted: boolean) => void) | undefined;
+    const onSend = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          accept = resolve;
+        }),
+    );
+    render(
+      <ChatComposer
+        draftKey="chat-a"
+        onSend={onSend}
+        seedRequiresConfirmation
+        seedText="seeded prompt"
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Send prompt" }));
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    const edit = screen.getByRole<HTMLButtonElement>("button", { name: "Edit prompt" });
+    expect(edit.disabled).toBe(true);
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("dialog", { name: "Send this prompt?" })).toBeTruthy();
+    expect(readDraft("chat-a")).toBe("my own draft");
+
+    await act(async () => accept?.(true));
+    await waitFor(() => expect(composerInput().value).toBe("my own draft"));
+    expect(readDraft("chat-a")).toBe("my own draft");
+  });
+
   it("stores the seed as the draft once the user chooses to edit it", async () => {
     const user = userEvent.setup();
     writeDraft("chat-a", "my own draft");

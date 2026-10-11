@@ -834,7 +834,9 @@ export function ChatComposer({
       </div>
       <Dialog
         onOpenChange={(open) => {
-          if (!open) setSeedConfirmation(undefined);
+          // Closing during the confirmed send would store the seed over the
+          // user's draft, and an accepted send would then restore the seed.
+          if (!open && !submittingRef.current) setSeedConfirmation(undefined);
         }}
         open={seedConfirmation !== undefined}
       >
@@ -869,7 +871,12 @@ export function ChatComposer({
             {seedConfirmation}
           </p>
           <DialogFooter>
-            <Button onClick={() => setSeedConfirmation(undefined)} type="button" variant="outline">
+            <Button
+              disabled={submitting}
+              onClick={() => setSeedConfirmation(undefined)}
+              type="button"
+              variant="outline"
+            >
               Edit prompt
             </Button>
             <Button
