@@ -96,6 +96,9 @@ func (s *Store) AcquireRun(ctx context.Context, ref executionenv.EnvironmentRef,
 		if s.profiles.isRevoked(o) {
 			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: templateRevokedMessage}
 		}
+		if !s.operationPolicyCurrent(ctx, operationLeaseAuthority{client: client}, o) {
+			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: "client policy is unavailable or revoked"}
+		}
 		if textNested(o.Object, "status", "lifecycleOperation", "id") != "" {
 			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: transitioningMessage}
 		}
@@ -209,6 +212,9 @@ func (s *Store) RenewRun(ctx context.Context, ref executionenv.EnvironmentRef, c
 		}
 		if s.profiles.isRevoked(o) {
 			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: templateRevokedMessage}
+		}
+		if !s.operationPolicyCurrent(ctx, operationLeaseAuthority{client: client}, o) {
+			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: "client policy is unavailable or revoked"}
 		}
 		cur, _, expiry, ok := activeRunFrom(o)
 		if !ok || cur.Environment != ref || cur.BindingID != req.BindingID || cur.RunID != req.RunID || cur.ClaimID != req.ClaimID || cur.Epoch != req.Epoch || cur.GrantGeneration != req.GrantGeneration || !generationMatches(o, req.GrantGeneration) {

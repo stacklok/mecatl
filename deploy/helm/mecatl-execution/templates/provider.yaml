@@ -1,13 +1,17 @@
 {{- include "mecatl-execution.securitySources" . -}}
+{{- $lifetime := include "mecatl-execution.lifetimeConfig" . -}}
+{{- $renderedTemplates := printf "templates:\n%s\n" (toYaml .Values.templates | indent 2) -}}
+{{- if gt (add (len $lifetime) (len $renderedTemplates)) 1048576 -}}
+{{- fail "execution templates ConfigMap data (templates.yaml + lifetime.json) exceeds Kubernetes 1 MiB limit; retire unused history or reduce display metadata before publishing" -}}
+{{- end -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
   {{- include "mecatl-execution.retainedMetadata" (dict "root" . "apiVersion" "v1" "kind" "ConfigMap" "name" (printf "%s-templates" (include "mecatl-execution.fullname" .))) | nindent 2 }}
 data:
-  lifetime.json: {{ include "mecatl-execution.lifetimeConfig" . | quote }}
+  lifetime.json: {{ $lifetime | quote }}
   templates.yaml: |
-    templates:
-{{ toYaml .Values.templates | indent 6 }}
+{{ $renderedTemplates | indent 4 }}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -17,12 +21,28 @@ data:
   manifest.json: |
 {{ required "provider.securityManifest is required" .Values.provider.securityManifest | indent 4 }}
 ---
-{{- range $name := list (printf "%s-security-authority" (include "mecatl-execution.fullname" .)) "mecatl-execution-profile-allocations" }}
+{{- range $name := list (printf "%s-security-authority" (include "mecatl-execution.fullname" .)) }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
   {{- include "mecatl-execution.retainedMetadata" (dict "root" $ "apiVersion" "v1" "kind" "ConfigMap" "name" $name) | nindent 2 }}
 data: {{ (lookup "v1" "ConfigMap" $.Release.Namespace $name).data | default dict | toJson }}
+---
+{{- end }}
+{{- range $id, $_ := .Values.templates }}
+{{- $name := printf "mecatl-exec-alloc-%s" (sha256sum $id | trunc 32) }}
+{{- $live := lookup "v1" "ConfigMap" $.Release.Namespace $name }}
+{{- if and $live (or (not (hasKey ($live.data | default dict) "slots.json")) (ne (len ($live.data | default dict)) 1)) }}
+{{- fail (printf "retained capacity ledger %s is missing slots.json or contains unknown data; recover it before retrying" $name) }}
+{{- end }}
+{{- $slots := dig "slots.json" "[]" ($live.data | default dict) }}
+{{- $_ := include "mecatl-execution.capacitySlots" $slots }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  {{- include "mecatl-execution.retainedMetadata" (dict "root" $ "apiVersion" "v1" "kind" "ConfigMap" "name" $name) | nindent 2 }}
+data:
+  slots.json: {{ $slots | quote }}
 ---
 {{- end }}
 apiVersion: apps/v1

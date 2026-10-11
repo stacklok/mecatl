@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -62,7 +63,7 @@ func newAdminScopeFixture(t *testing.T, route, actor string) *adminScopeFixture 
 	}
 	_ = unstructured.SetNestedField(env.Object, int64(4), "status", "grantGeneration")
 	d := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-	k := kubefake.NewSimpleClientset(terminalExecutor(), retainedPVC())
+	k := kubefake.NewSimpleClientset(terminalExecutor(), retainedPVC(), &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap("go"), Namespace: "ns"}, Data: map[string]string{profileAllocationKey("go"): "[]"}})
 	store := NewStore(d, "ns", testProfiles(), nil).WithKubeClient(k)
 	dir, now := t.TempDir(), time.Now().UTC()
 	ca, cert, key, clientCert := rpcSecurityPKI(t, now, actor)

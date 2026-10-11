@@ -403,7 +403,7 @@ fi
 # Render one operator-approved revision per fixture recipe using the provider's
 # canonical encoding and validate the result with its real loader before install.
 template_values="$state/templates-values-$run_id.yaml"
-go_revision=$(dev go run -tags kind_execution_e2e ./deploy/mecatl-execution-kind/fixture/templates \
+go_revision=$(dev go run ./deploy/execution-templates \
   "$root/deploy/mecatl-execution-kind/template-recipes.yaml" "$workload_image" "$derivative_image" "$incompatible_image" "$template_values")
 case "$go_revision" in v1-*) ;; *) echo "missing generated go template revision" >&2; exit 1 ;; esac
 printf '%s\n' "$go_revision" >"$state/go-template-revision"

@@ -96,6 +96,13 @@ leave your draft unsent. A chat's displayed **files** and **built-in Shell** sta
 comes from the bound session's capabilities, not from the template label or the
 server-wide Shell setting. Diagnostic chats always choose none.
 
+For an operator's image smoke test, select the exact ID and revision supplied
+by the operator. After the run finishes, reload Studio and reopen the same chat
+from history to check retained files. Creating a new chat selects a new session;
+it does not reattach the workspace of the chat you tested. See the
+[deployed-image smoke test](/operating/mecak8s/native-execution.md#smoke-test-the-deployed-image)
+for the file and utility checks.
+
 ### Inspect delegated activity
 ### Browse and review skills
 

@@ -13,11 +13,11 @@ import (
 	"slices"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/util/retry"
@@ -171,30 +171,43 @@ func definitiveCreateRejection(err error) bool {
 	return apierrors.IsInvalid(err) || apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) || apierrors.IsBadRequest(err) || apierrors.IsMethodNotSupported(err) || apierrors.IsRequestEntityTooLargeError(err)
 }
 
-const profileAllocationConfigMap = "mecatl-execution-profile-allocations"
-
-func profileAllocationKey(profile string) string {
+func profileAllocationConfigMap(profile string) string {
 	keySum := sha256.Sum256([]byte(profile))
-	return "profile-" + hex.EncodeToString(keySum[:16]) + ".json"
+	return "mecatl-exec-alloc-" + hex.EncodeToString(keySum[:16])
+}
+
+func profileAllocationKey(_ string) string { return "slots.json" }
+
+func decodeProfileSlots(raw string) ([]string, error) {
+	var slots []string
+	invalid := &executionenv.Error{Code: executionenv.CodeNotReady, Message: "profile allocation authority is invalid"}
+	if err := executionenv.DecodeStrict([]byte(raw), &slots); err != nil || slots == nil {
+		return nil, invalid
+	}
+	seen := make(map[string]bool, len(slots))
+	for _, slot := range slots {
+		if len(validation.IsDNS1123Subdomain(slot)) != 0 || seen[slot] {
+			return nil, invalid
+		}
+		seen[slot] = true
+	}
+	return slots, nil
 }
 
 func (s *Store) reserveProfileSlot(ctx context.Context, profile, allocationID string, limit int) error { //nolint:gocyclo // Durable capacity CAS and CR reconciliation are intentionally one transaction loop.
 	cms := s.kube.CoreV1().ConfigMaps(s.namespace)
 	key := profileAllocationKey(profile)
 	for range 8 {
-		cm, err := cms.Get(ctx, profileAllocationConfigMap, metav1.GetOptions{})
-		exists := true
+		cm, err := cms.Get(ctx, profileAllocationConfigMap(profile), metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
-			exists = false
-			cm = &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap, Namespace: s.namespace}, Data: map[string]string{}}
-		} else if err != nil {
+			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: "profile allocation authority is missing; restore retained ConfigMap before retrying"}
+		}
+		if err != nil {
 			return fmt.Errorf("read profile allocation authority: %w", err)
 		}
-		var slots []string
-		if raw := cm.Data[key]; raw != "" {
-			if err := executionenv.DecodeStrict([]byte(raw), &slots); err != nil || len(slots) > limit {
-				return &executionenv.Error{Code: executionenv.CodeNotReady, Message: "profile allocation authority is invalid"}
-			}
+		slots, err := decodeProfileSlots(cm.Data[key])
+		if err != nil {
+			return err
 		}
 		if slices.Contains(slots, allocationID) {
 			return nil
@@ -203,11 +216,16 @@ func (s *Store) reserveProfileSlot(ctx context.Context, profile, allocationID st
 		if err != nil {
 			return fmt.Errorf("list profile allocations: %w", err)
 		}
+		occupied := make(map[string]bool, len(slots)+len(all.Items))
+		for _, slot := range slots {
+			occupied[slot] = true
+		}
 		for i := range all.Items {
 			item := &all.Items[i]
 			deallocating := conditionTrue(item, "Retired") && conditionTrue(item, "ExecutorTerminated") && textNested(item.Object, "status", "lifecycleOperation", "type") == "DeleteRetiredEnvironment" && textNested(item.Object, "status", "lifecycleOperation", "phase") == "ReleasingSlot"
-			if textNested(item.Object, "spec", "templateID") == profile && !deallocating && !slices.Contains(slots, item.GetName()) {
+			if textNested(item.Object, "spec", "templateID") == profile && !deallocating && !occupied[item.GetName()] {
 				slots = append(slots, item.GetName())
+				occupied[item.GetName()] = true
 			}
 		}
 		if len(slots) >= limit {
@@ -223,15 +241,14 @@ func (s *Store) reserveProfileSlot(ctx context.Context, profile, allocationID st
 			cm.Data = map[string]string{}
 		}
 		cm.Data[key] = string(raw)
-		if exists {
-			_, err = cms.Update(ctx, cm, metav1.UpdateOptions{})
-		} else {
-			_, err = cms.Create(ctx, cm, metav1.CreateOptions{})
+		if len(raw) > 1<<20 {
+			return &executionenv.Error{Code: executionenv.CodeResourceExhausted, Message: "template ID allocation ConfigMap exceeds Kubernetes 1 MiB data limit; retire environments before reserving more"}
 		}
+		_, err = cms.Update(ctx, cm, metav1.UpdateOptions{})
 		if err == nil {
 			return nil
 		}
-		if !apierrors.IsConflict(err) && !apierrors.IsAlreadyExists(err) {
+		if !apierrors.IsConflict(err) {
 			return fmt.Errorf("reserve profile allocation: %w", err)
 		}
 	}
@@ -242,16 +259,16 @@ func releaseProfileSlot(ctx context.Context, kube kubernetes.Interface, namespac
 	cms := kube.CoreV1().ConfigMaps(namespace)
 	key := profileAllocationKey(profile)
 	for range 8 {
-		cm, err := cms.Get(ctx, profileAllocationConfigMap, metav1.GetOptions{})
+		cm, err := cms.Get(ctx, profileAllocationConfigMap(profile), metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
-			return nil
+			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: "profile allocation authority is missing; restore retained ConfigMap before retrying"}
 		}
 		if err != nil {
 			return err
 		}
-		var slots []string
-		if err := executionenv.DecodeStrict([]byte(cm.Data[key]), &slots); err != nil {
-			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: "profile allocation authority is invalid"}
+		slots, err := decodeProfileSlots(cm.Data[key])
+		if err != nil {
+			return err
 		}
 		index := slices.Index(slots, allocationID)
 		if index < 0 {
@@ -389,15 +406,15 @@ func (s *Store) Attach(ctx context.Context, ref executionenv.EnvironmentRef, cli
 // ReleaseReference removes one binding reference without deleting the environment.
 func (s *Store) ReleaseReference(ctx context.Context, ref executionenv.EnvironmentRef, client, owner, binding string) error {
 	return s.retryUpdateStatus(ctx, ref.ID, func(o *unstructured.Unstructured) error {
-		if textNested(o.Object, "status", "lifecycleOperation", "id") != "" {
-			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: transitioningMessage}
-		}
 		a, err := exactAllocation(o, client, owner, binding)
 		if err != nil {
 			return err
 		}
 		if a.Environment != ref {
 			return &executionenv.Error{Code: executionenv.CodeNotFound, Message: environmentNotFoundMessage}
+		}
+		if textNested(o.Object, "status", "lifecycleOperation", "id") != "" {
+			return &executionenv.Error{Code: executionenv.CodeNotReady, Message: transitioningMessage}
 		}
 		refs, refsErr := referenceRecords(o)
 		if refsErr != nil {

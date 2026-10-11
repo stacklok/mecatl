@@ -140,7 +140,12 @@ func TestKindExecutionProductionHelmLifetime(t *testing.T) {
 		}
 		t.Logf("stage=helm_cleanup elapsed=%s", time.Since(cleanupStarted).Round(time.Millisecond))
 	})
-	capacityBefore := lifetimeConfigMap(ctx, t, kubeconfig, "mecatl-execution-profile-allocations")
+	capacityBefore := make(map[string]corev1.ConfigMap)
+	for id := range values["templates"].(map[string]any) {
+		sum := sha256.Sum256([]byte(id))
+		name := "mecatl-exec-alloc-" + hex.EncodeToString(sum[:16])
+		capacityBefore[name] = lifetimeConfigMap(ctx, t, kubeconfig, name)
+	}
 	authorityBefore := lifetimeConfigMap(ctx, t, kubeconfig, "mecatl-execution-security-authority")
 	var beforePolicy struct {
 		Generation uint64 `json:"generation"`
@@ -150,7 +155,10 @@ func TestKindExecutionProductionHelmLifetime(t *testing.T) {
 		t.Fatal("missing pre-upgrade policy authority")
 	}
 	policiesBefore := lifetimePolicies(ctx, t, kubeconfig)
-	liveLedgers := map[string]corev1.ConfigMap{capacityBefore.Name: capacityBefore, authorityBefore.Name: authorityBefore, current.Name: current}
+	liveLedgers := map[string]corev1.ConfigMap{authorityBefore.Name: authorityBefore, current.Name: current}
+	for name, ledger := range capacityBefore {
+		liveLedgers[name] = ledger
+	}
 	liveLedgers["mecatl-execution-templates"] = lifetimeConfigMap(ctx, t, kubeconfig, "mecatl-execution-templates")
 	waitProviderReadyReplicas(t, ctx, kubeconfig, 2)
 	logQualificationStage(t, &stageStarted, "prepare_upgrade_fixture", "live_upgrade_rejection")
@@ -169,7 +177,7 @@ func TestKindExecutionProductionHelmLifetime(t *testing.T) {
 	waitSecurityGeneration(ctx, t, kubeconfig, uint64(generation+1))
 	waitProviderReadyReplicas(t, ctx, kubeconfig, 2)
 	ledgers := map[string]corev1.ConfigMap{}
-	for _, name := range []string{"mecatl-execution-security-authority", "mecatl-execution-profile-allocations", "mecatl-execution-templates", "mecatl-execution-security-manifest"} {
+	for name := range liveLedgers {
 		ledgers[name] = lifetimeConfigMap(ctx, t, kubeconfig, name)
 	}
 	var highWater struct {
@@ -179,8 +187,10 @@ func TestKindExecutionProductionHelmLifetime(t *testing.T) {
 	if err := json.Unmarshal([]byte(ledgers["mecatl-execution-security-authority"].Data["state.json"]), &highWater); err != nil || highWater.Generation != uint64(generation+1) || highWater.Digest == "" || highWater.Digest == beforePolicy.Digest {
 		t.Fatal("upgrade did not advance the generation-bound client policy authority")
 	}
-	if capacityAfter := ledgers[capacityBefore.Name]; capacityAfter.UID != capacityBefore.UID || !reflect.DeepEqual(capacityAfter.Data, capacityBefore.Data) {
-		t.Fatal("compatible upgrade changed capacity reservations")
+	for name, before := range capacityBefore {
+		if after := ledgers[name]; after.UID != before.UID || !reflect.DeepEqual(after.Data, before.Data) {
+			t.Fatalf("compatible upgrade changed capacity reservations for %s", name)
+		}
 	}
 	policies := lifetimePolicies(ctx, t, kubeconfig)
 	if len(policies) < 2 {
@@ -210,7 +220,7 @@ func TestKindExecutionProductionHelmLifetime(t *testing.T) {
 	// A changed historical recipe is refused before any resource can be adopted.
 	goTemplate := values["templates"].(map[string]any)["go"].(map[string]any)
 	oldRevision := goTemplate["default"].(string)
-	if _, err := helmLifetime(ctx, kubeconfig, "install", "mecatl-execution", chart, "-f", valuesPath, "--set", "templates.go.revisions."+oldRevision+".execution.maxEnvironments=30", "--dry-run=server"); err == nil {
+	if _, err := helmLifetime(ctx, kubeconfig, "install", "mecatl-execution", chart, "-f", valuesPath, "--set", "templates.go.revisions."+oldRevision+".execution.maxCommandDuration=4m", "--dry-run=server"); err == nil {
 		t.Fatal("incompatible reinstall was accepted")
 	}
 	// Refusal must happen without adopting another release or bootstrapping a

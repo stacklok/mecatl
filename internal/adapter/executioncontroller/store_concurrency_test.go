@@ -2,8 +2,12 @@ package executioncontroller
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"reflect"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -24,7 +28,7 @@ import (
 
 func profileSlots(t *testing.T, kube *kubefake.Clientset) []string {
 	t.Helper()
-	cm, err := kube.CoreV1().ConfigMaps("ns").Get(t.Context(), profileAllocationConfigMap, metav1.GetOptions{})
+	cm, err := kube.CoreV1().ConfigMaps("ns").Get(t.Context(), profileAllocationConfigMap("go"), metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,12 +39,76 @@ func profileSlots(t *testing.T, kube *kubefake.Clientset) []string {
 	return slots
 }
 
+func TestProfileSlotsRejectMalformedAuthorityWithoutMutation(t *testing.T) {
+	for _, raw := range []string{"null", "{}", `"exec-existing"`, "true", "1", "[", "[null]", "[1]", "[{}]", `[""]`, `["Bad-ID"]`, `["../exec"]`, `["exec-existing","exec-existing"]`, `["` + strings.Repeat("a", 254) + `"]`} {
+		for _, operation := range []string{"reserve", "release"} {
+			t.Run(operation+"/"+raw, func(t *testing.T) {
+				original := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap("go"), Namespace: "ns", ResourceVersion: "7"}, Data: map[string]string{profileAllocationKey("go"): raw}}
+				kube := kubefake.NewSimpleClientset(original.DeepCopy())
+				client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{ExecutionEnvironmentGVR: "ExecutionEnvironmentList"})
+				store := NewStore(client, "ns", testProfiles(), nil).WithKubeClient(kube)
+				var err error
+				if operation == "reserve" {
+					err = store.reserveProfileSlot(t.Context(), "go", "exec-existing", 20)
+				} else {
+					err = releaseProfileSlot(t.Context(), kube, "ns", "go", "exec-existing")
+				}
+				var authorityErr *executionenv.Error
+				if !errors.As(err, &authorityErr) || authorityErr.Code != executionenv.CodeNotReady {
+					t.Fatalf("malformed authority accepted: %v", err)
+				}
+				if len(client.Actions()) != 0 {
+					t.Fatal("malformed ledger reached allocation reconciliation")
+				}
+				for _, action := range kube.Actions() {
+					if action.GetVerb() != "get" {
+						t.Fatalf("malformed authority mutated: %v", action)
+					}
+				}
+				got, err := kube.CoreV1().ConfigMaps("ns").Get(t.Context(), original.Name, metav1.GetOptions{})
+				if err != nil || !reflect.DeepEqual(got, original) {
+					t.Fatalf("authority changed: got %v, error %v", got, err)
+				}
+			})
+		}
+	}
+}
+
+func TestProfileSlotsEmptyAndValidAuthority(t *testing.T) {
+	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{ExecutionEnvironmentGVR: "ExecutionEnvironmentList"})
+	kube := kubefake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap("go"), Namespace: "ns"}, Data: map[string]string{profileAllocationKey("go"): "[]"}})
+	store := NewStore(client, "ns", testProfiles(), nil).WithKubeClient(kube)
+	if err := releaseProfileSlot(t.Context(), kube, "ns", "go", "exec-existing"); err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range kube.Actions() {
+		if action.GetVerb() != "get" {
+			t.Fatalf("empty release mutated authority: %v", action)
+		}
+	}
+	for range 2 {
+		if err := store.reserveProfileSlot(t.Context(), "go", "exec-existing", 20); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := profileSlots(t, kube); !reflect.DeepEqual(got, []string{"exec-existing"}) {
+		t.Fatalf("reservation = %v", got)
+	}
+	if err := releaseProfileSlot(t.Context(), kube, "ns", "go", "exec-existing"); err != nil {
+		t.Fatal(err)
+	}
+	cm, err := kube.CoreV1().ConfigMaps("ns").Get(t.Context(), profileAllocationConfigMap("go"), metav1.GetOptions{})
+	if err != nil || cm.Data[profileAllocationKey("go")] != "[]" {
+		t.Fatalf("released authority = %v, %v", cm, err)
+	}
+}
+
 func TestDefinitiveEnvironmentCreateFailureReleasesProfileSlot(t *testing.T) {
 	dynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{ExecutionEnvironmentGVR: "ExecutionEnvironmentList"})
 	dynamicClient.PrependReactor("create", "executionenvironments", func(k8stesting.Action) (bool, runtime.Object, error) {
 		return true, nil, apierrors.NewForbidden(schema.GroupResource{Group: ExecutionEnvironmentGVR.Group, Resource: ExecutionEnvironmentGVR.Resource}, "env", errors.New("policy"))
 	})
-	kube := kubefake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap, Namespace: "ns"}, Data: map[string]string{}})
+	kube := kubefake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap("go"), Namespace: "ns"}, Data: map[string]string{profileAllocationKey("go"): "[]"}})
 	store := NewStore(dynamicClient, "ns", testProfiles(), nil).WithKubeClient(kube)
 	owner := executionenv.Owner{Issuer: "issuer", Subject: "subject"}
 	if _, err := store.EnsurePendingOwnedRevision(t.Context(), "client", ownerHash(owner), owner, "binding", "go", testProfiles().defaultRevision["go"], "fp", "op"); err == nil {
@@ -56,7 +124,7 @@ func TestAmbiguousEnvironmentCreateFailureRetainsProfileSlot(t *testing.T) {
 	dynamicClient.PrependReactor("create", "executionenvironments", func(k8stesting.Action) (bool, runtime.Object, error) {
 		return true, nil, errors.New("transport outcome unknown")
 	})
-	kube := kubefake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap, Namespace: "ns"}, Data: map[string]string{}})
+	kube := kubefake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap("go"), Namespace: "ns"}, Data: map[string]string{profileAllocationKey("go"): "[]"}})
 	store := NewStore(dynamicClient, "ns", testProfiles(), nil).WithKubeClient(kube)
 	owner := executionenv.Owner{Issuer: "issuer", Subject: "subject"}
 	if _, err := store.EnsurePendingOwnedRevision(t.Context(), "client", ownerHash(owner), owner, "binding", "go", testProfiles().defaultRevision["go"], "fp", "op"); err == nil {
@@ -76,12 +144,12 @@ func TestCompetingTemplateBindingReleasesLosingReservation(t *testing.T) {
 	profiles.defaultRevision[other] = profiles.defaultRevision["go"]
 	for _, id := range []string{"go", other} {
 		p := profiles.byName[id]
-		p.Spec.MaxEnvironments = 1
+		profiles.capacityLimit[id] = 1
 		profiles.byName[id] = p
 		profiles.revisions[id][profiles.defaultRevision[id]] = p
 	}
 	dynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{ExecutionEnvironmentGVR: "ExecutionEnvironmentList"})
-	kube := kubefake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap, Namespace: "ns"}, Data: map[string]string{}})
+	kube := kubefake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap("go"), Namespace: "ns"}, Data: map[string]string{profileAllocationKey("go"): "[]"}}, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap(other), Namespace: "ns"}, Data: map[string]string{profileAllocationKey(other): "[]"}})
 	store := NewStore(dynamicClient, "ns", profiles, nil).WithKubeClient(kube)
 	owner := executionenv.Owner{Issuer: "issuer", Subject: "subject"}
 	bind := func(binding, id string) error {
@@ -104,7 +172,7 @@ func TestCompetingTemplateBindingReleasesLosingReservation(t *testing.T) {
 	if err := bind("shared", other); !errors.As(err, &conflict) || conflict.Code != executionenv.CodeAlreadyExists {
 		t.Fatalf("competing template = %v", err)
 	}
-	cm, err := kube.CoreV1().ConfigMaps("ns").Get(t.Context(), profileAllocationConfigMap, metav1.GetOptions{})
+	cm, err := kube.CoreV1().ConfigMaps("ns").Get(t.Context(), profileAllocationConfigMap(other), metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,12 +196,12 @@ func TestRetainedDeleteWaitsForSlotReleaseBeforeRemovingCRFinalizer(t *testing.T
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
 	allocationID := env.GetName()
 	raw := `["` + allocationID + `"]`
-	kube := kubefake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap, Namespace: "ns"}, Data: map[string]string{profileAllocationKey("go"): raw}})
+	kube := kubefake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap("go"), Namespace: "ns"}, Data: map[string]string{profileAllocationKey("go"): raw}})
 	var fail atomic.Bool
 	fail.Store(true)
 	kube.PrependReactor("get", "configmaps", func(k8stesting.Action) (bool, runtime.Object, error) {
 		if fail.Load() {
-			return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "configmaps"}, profileAllocationConfigMap, errors.New("outage"))
+			return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "configmaps"}, profileAllocationConfigMap("go"), errors.New("outage"))
 		}
 		return false, nil, nil
 	})
@@ -157,9 +225,102 @@ func TestRetainedDeleteWaitsForSlotReleaseBeforeRemovingCRFinalizer(t *testing.T
 	}
 }
 
+func TestMissingTemplateLedgerNeverBootstraps(t *testing.T) {
+	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{ExecutionEnvironmentGVR: "ExecutionEnvironmentList"})
+	kube := kubefake.NewSimpleClientset()
+	store := NewStore(client, "ns", testProfiles(), nil).WithKubeClient(kube)
+	var unavailable *executionenv.Error
+	if err := store.reserveProfileSlot(t.Context(), "go", "pending", 1000); !errors.As(err, &unavailable) || unavailable.Code != executionenv.CodeNotReady {
+		t.Fatalf("missing ledger reservation: %v", err)
+	}
+	if err := releaseProfileSlot(t.Context(), kube, "ns", "go", "pending"); !errors.As(err, &unavailable) || unavailable.Code != executionenv.CodeNotReady {
+		t.Fatalf("missing ledger release: %v", err)
+	}
+	cms, err := kube.CoreV1().ConfigMaps("ns").List(t.Context(), metav1.ListOptions{})
+	if err != nil || len(cms.Items) != 0 {
+		t.Fatalf("missing ledger was recreated: %v %v", cms, err)
+	}
+}
+
+func TestSlotLedgerRejectsKubernetesDataOverflow(t *testing.T) {
+	slots := make([]string, 21845)
+	for i := range slots {
+		slots[i] = fmt.Sprintf("exec-%040x", i)
+	}
+	body, err := json.Marshal(slots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(body) >= 1<<20 {
+		t.Fatalf("fixture already exceeds ConfigMap limit: %d", len(body))
+	}
+	kube := kubefake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap("go"), Namespace: "ns"}, Data: map[string]string{profileAllocationKey("go"): string(body)}})
+	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{ExecutionEnvironmentGVR: "ExecutionEnvironmentList"})
+	store := NewStore(client, "ns", testProfiles(), nil).WithKubeClient(kube)
+	// Use an ID near the Kubernetes limit to exercise the byte check, not an arbitrary slot cap.
+	var exhausted *executionenv.Error
+	if err := store.reserveProfileSlot(t.Context(), "go", fmt.Sprintf("exec-%040x", 999999), 50000); !errors.As(err, &exhausted) || exhausted.Code != executionenv.CodeResourceExhausted {
+		t.Fatalf("oversized ledger admission: %v", err)
+	}
+	cm, err := kube.CoreV1().ConfigMaps("ns").Get(t.Context(), profileAllocationConfigMap("go"), metav1.GetOptions{})
+	if err != nil || cm.Data[profileAllocationKey("go")] != string(body) {
+		t.Fatalf("overflow modified retained authority: %v", err)
+	}
+}
+
+func TestIndependentTemplateLedgers(t *testing.T) {
+	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{ExecutionEnvironmentGVR: "ExecutionEnvironmentList"})
+	kube := kubefake.NewSimpleClientset(
+		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap("go"), Namespace: "ns"}, Data: map[string]string{profileAllocationKey("go"): "[]"}},
+		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap("python"), Namespace: "ns"}, Data: map[string]string{profileAllocationKey("python"): "[]"}},
+	)
+	store := NewStore(client, "ns", testProfiles(), nil).WithKubeClient(kube)
+	if err := store.reserveProfileSlot(t.Context(), "go", "go-allocation", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.reserveProfileSlot(t.Context(), "python", "python-allocation", 1); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]string{"go": "go-allocation", "python": "python-allocation"} {
+		cm, err := kube.CoreV1().ConfigMaps("ns").Get(t.Context(), profileAllocationConfigMap(id), metav1.GetOptions{})
+		if err != nil || cm.Data[profileAllocationKey(id)] != `["`+want+`"]` {
+			t.Fatalf("%s ledger: %v %v", id, cm, err)
+		}
+	}
+}
+
+func TestSlotPolicyGrowAndShrinkRetainsAuthority(t *testing.T) {
+	slots := make([]string, 1000)
+	for i := range slots {
+		slots[i] = fmt.Sprintf("exec-%040x", i)
+	}
+	raw, err := json.Marshal(slots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kube := kubefake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap("go"), Namespace: "ns"}, Data: map[string]string{profileAllocationKey("go"): string(raw)}})
+	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{ExecutionEnvironmentGVR: "ExecutionEnvironmentList"})
+	store := NewStore(client, "ns", testProfiles(), nil).WithKubeClient(kube)
+	if err := store.reserveProfileSlot(t.Context(), "go", slots[0], 1); err != nil {
+		t.Fatalf("idempotent retry after shrink: %v", err)
+	}
+	for _, limit := range []int{1000, 1} {
+		var exhausted *executionenv.Error
+		if err := store.reserveProfileSlot(t.Context(), "go", "extra", limit); !errors.As(err, &exhausted) || exhausted.Code != executionenv.CodeResourceExhausted {
+			t.Fatalf("limit %d: %v", limit, err)
+		}
+	}
+	if err := store.reserveProfileSlot(t.Context(), "go", "extra", 1001); err != nil {
+		t.Fatalf("quota increase from 1000 to 1001: %v", err)
+	}
+	if len(profileSlots(t, kube)) != 1001 {
+		t.Fatal("increased quota did not preserve prior reservations")
+	}
+}
+
 func TestConcurrentProfileReservationsEnforceHardLimit(t *testing.T) {
 	dynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{ExecutionEnvironmentGVR: "ExecutionEnvironmentList"})
-	ledger := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap, Namespace: "ns", ResourceVersion: "1"}, Data: map[string]string{}}
+	ledger := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap("go"), Namespace: "ns", ResourceVersion: "1"}, Data: map[string]string{profileAllocationKey("go"): "[]"}}
 	kubes := []*kubefake.Clientset{kubefake.NewSimpleClientset(ledger), kubefake.NewSimpleClientset(ledger)}
 	var mu sync.Mutex
 	current := ledger.DeepCopy()
@@ -193,10 +354,9 @@ func TestConcurrentProfileReservationsEnforceHardLimit(t *testing.T) {
 	}
 	profiles := testProfiles()
 	profile := profiles.byName["go"]
-	profile.Spec.MaxEnvironments = 1
+	profiles.capacityLimit["go"] = 1
 	profiles.revisions["go"][profiles.defaultRevision["go"]] = profile
 	newer := profile
-	newer.Spec.MaxEnvironments = 2
 	profiles.revisions["go"]["v1-other-revision"] = newer
 	profiles.eligibility["go"]["v1-other-revision"] = TemplatePolicy{}
 	stores := []*Store{NewStore(dynamicClient, "ns", profiles, nil).WithKubeClient(kubes[0]), NewStore(dynamicClient, "ns", profiles, nil).WithKubeClient(kubes[1])}

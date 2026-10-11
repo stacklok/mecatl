@@ -39,7 +39,7 @@ func TestRevokedCrashExpiresOperationAndStopsExecutor(t *testing.T) {
 			pod := terminalExecutor()
 			pod.Status = corev1.PodStatus{Phase: corev1.PodRunning}
 			pod.ResourceVersion = "42"
-			kube := kubefake.NewSimpleClientset(pod, retainedPVC())
+			kube := kubefake.NewSimpleClientset(pod, retainedPVC(), &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap("go"), Namespace: "ns"}, Data: map[string]string{profileAllocationKey("go"): `["env"]`}})
 			kube.PrependReactor("delete", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
 				current, err := kube.Tracker().Get(corev1.SchemeGroupVersion.WithResource("pods"), "ns", action.(k8stesting.DeleteAction).GetName())
 				if err != nil {
@@ -101,7 +101,7 @@ func TestRevokedCrashWithTerminalPodCanRecoverAndRetire(t *testing.T) {
 			pod := terminalExecutor()
 			pod.Status = corev1.PodStatus{Phase: corev1.PodRunning}
 			pod.ResourceVersion = "42"
-			kube := kubefake.NewSimpleClientset(pod, retainedPVC())
+			kube := kubefake.NewSimpleClientset(pod, retainedPVC(), &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap("go"), Namespace: "ns"}, Data: map[string]string{profileAllocationKey("go"): `["env"]`}})
 			kube.PrependReactor("delete", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
 				current, err := kube.Tracker().Get(corev1.SchemeGroupVersion.WithResource("pods"), "ns", action.(k8stesting.DeleteAction).GetName())
 				if err != nil {

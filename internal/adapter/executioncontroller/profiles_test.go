@@ -42,7 +42,7 @@ func loadTemplateProfileFixture(path string) (*Profiles, error) {
 		}
 		sum := sha256.Sum256(append([]byte("mecatl/execution-template/v1\x00"), canonical...))
 		revision := "v1-" + hex.EncodeToString(sum[:])
-		file.Templates[id] = TemplateDefinition{Default: revision, Revisions: map[string]TemplateRevision{revision: {Execution: spec}}}
+		file.Templates[id] = TemplateDefinition{Default: revision, MaxEnvironments: 100, Revisions: map[string]TemplateRevision{revision: {Execution: spec}}}
 	}
 	body, err = yaml.Marshal(file)
 	if err != nil {
@@ -251,6 +251,5 @@ func validProfileYAML() string {
     maxFileBytes: 1048576
     maxCommandBytes: 65536
     maxCommandDuration: 1m
-    maxEnvironments: 100
 `
 }

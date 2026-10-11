@@ -164,9 +164,10 @@ provider workflow is unsupported. Do not remove the retention or executor
 finalizers manually; follow the operator's external-fencing runbook when the
 provider cannot independently observe terminal compute.
 
-Only execution-environment schema version 2 is supported. Old, missing, unknown,
-or mismatched schema versions are rejected; no migration is provided. Unsupported
-objects and their workspace data are not automatically upgraded, reset, or deleted.
+Execution environments require schema version 2 in both spec and status. Missing,
+unsupported, or mismatched versions fail closed. Preserve the objects, PVCs, and
+authority records when diagnosing a schema rejection; do not edit version fields,
+reset ledgers, or delete workspace data to bypass validation.
 
 ### Production security material
 
@@ -203,7 +204,11 @@ client authorization policy and names the TLS files:
 
 The provider checks the original peer certificate and current client policy at
 admission, renewal, and completion. A policy change increments `generation`;
-TLS certificate or trust renewal is independent of that generation.
+TLS certificate or trust renewal is independent of that generation. Service
+mTLS identifies `mecak8s` or an administrator; the session owner remains the
+user's verified OIDC issuer and subject. The workload helper receives no client
+credentials or Kubernetes API token. For certificate SANs, EKUs, and trust
+bundles, follow the [PKI prerequisites](/operating/mecak8s/native-execution.md#prepare-platform-managed-tls-and-client-policy).
 
 ### Administrator scope
 
@@ -237,6 +242,15 @@ aborts affected in-flight operations; old RPCs drain only while their original
 peer identity remains authorized. See the
 [policy and TLS rotation procedure](/operating/mecak8s/execution-provider-lifecycle.md#rotate-execution-provider-authority).
 
+### Template policy
+
+Deprecation removes a revision from new selection while permitting existing
+allocations to use it. Revocation blocks use as well as selection. Run acquisition,
+renewal, and exact replay check current template and client policy; a retained
+claim cannot bypass withdrawn authority. Reference release and authorized
+administrative cleanup remain available, subject to their identity and fencing
+checks. Policy withdrawal does not prove that an executor has stopped.
+
 ### Revocation
 
 `RevokeEnvironment` is an administrator-only, exact-reference CAS. Supply the
@@ -262,7 +276,20 @@ API-server, provider, or peer access. Each profile requires an explicit
 RuntimeClass supplied by the cluster, but do not treat a RuntimeClass name alone
 as a hostile-workload isolation guarantee. CPU, memory, ephemeral storage, and
 `/tmp` are explicitly bounded per profile. Each profile also requires
-`maxEnvironments`; the namespace quota is the final global bound.
+`templates.<ID>.maxEnvironments`, an adjustable admission policy pooled across
+retained revisions; the explicit namespace quota is the final global bound.
+Lowering an ID quota below current usage blocks new reservations without
+interrupting existing allocations. Each ID's retained ConfigMap is the CAS
+capacity authority, including pending reservations. Its data must fit within
+1 MiB; the combined catalog/history ConfigMap has its own 1 MiB limit. The
+public catalog accepts at most 64 selectable revisions, while retained-only
+history is limited by storage bytes.
+
+Startup checks RuntimeClasses and StorageClasses for selectable revisions and
+all existing allocations. Ineligible, unallocated history is skipped. A missing
+required class blocks the whole provider's startup. Follow the
+[class dependency troubleshooting](/operating/mecak8s/native-execution.md#verify-allocation-and-diagnose-failures)
+without substituting a different runtime or changing a retained recipe.
 
 ### Upgrade state
 

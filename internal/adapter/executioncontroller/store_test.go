@@ -3,6 +3,7 @@ package executioncontroller
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -13,6 +14,68 @@ import (
 
 	"github.com/stacklok/mecatl/internal/executionenv"
 )
+
+func TestReleaseReferenceChecksIdentityBeforeLifecycle(t *testing.T) {
+	for _, transitioning := range []bool{false, true} {
+		for _, identity := range []string{"absent", "foreign client", "foreign owner", "stale revision", "exact owner"} {
+			name := "ready/" + identity
+			if transitioning {
+				name = "transitioning/" + identity
+			}
+			t.Run(name, func(t *testing.T) {
+				env := runFixtureEnvironment(7, 3)
+				unstructured.RemoveNestedField(env.Object, "status", "activeRun")
+				if transitioning {
+					if err := unstructured.SetNestedMap(env.Object, map[string]any{"id": "retire", "kind": "retire"}, "status", "lifecycleOperation"); err != nil {
+						t.Fatal(err)
+					}
+				}
+				dynamic := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+				store := NewStore(dynamic, "ns", testProfiles(), nil)
+				ref := executionenv.EnvironmentRef{ID: "env", Revision: "rev"}
+				client, owner := "client", "owner"
+				switch identity {
+				case "absent":
+					ref.ID = "absent"
+				case "foreign client":
+					client = "other-client"
+				case "foreign owner":
+					owner = "other-owner"
+				case "stale revision":
+					ref.Revision = "stale"
+				}
+				err := store.ReleaseReference(t.Context(), ref, client, owner, "binding")
+				after, getErr := dynamic.Tracker().Get(ExecutionEnvironmentGVR, "ns", "env")
+				if getErr != nil {
+					t.Fatal(getErr)
+				}
+				if identity == "exact owner" && !transitioning {
+					refs, refsErr := referenceRecords(after.(*unstructured.Unstructured))
+					if err != nil || refsErr != nil || len(refs) != 0 {
+						t.Fatalf("authorized release failed: %v, %v", err, refsErr)
+					}
+					return
+				}
+				want := &executionenv.Error{Code: executionenv.CodeNotFound, Message: environmentNotFoundMessage}
+				if identity == "exact owner" {
+					want = &executionenv.Error{Code: executionenv.CodeNotReady, Message: transitioningMessage}
+				}
+				var controlled *executionenv.Error
+				if !errors.As(err, &controlled) || !reflect.DeepEqual(controlled, want) {
+					t.Fatalf("release disclosed lifecycle or returned wrong owner error: got %v, want %v", err, want)
+				}
+				if !reflect.DeepEqual(env, after) {
+					t.Fatal("rejected release mutated environment")
+				}
+				for _, action := range dynamic.Actions() {
+					if action.GetVerb() != "get" {
+						t.Fatalf("rejected release attempted mutation: %v", action)
+					}
+				}
+			})
+		}
+	}
+}
 
 func TestRenewRunRejectsActiveRunOwnerClientTupleDrift(t *testing.T) {
 	for _, tc := range []struct {

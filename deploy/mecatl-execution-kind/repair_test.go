@@ -96,7 +96,7 @@ func TestCanonicalTemplateFixtureTracksWorkloadDigest(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "templates.yaml")
 		derivative := "example.invalid/derivative@sha256:" + strings.Repeat("c", 64)
 		incompatible := "example.invalid/incompatible@sha256:" + strings.Repeat("d", 64)
-		cmd := exec.Command("go", "run", "-tags", "kind_execution_e2e", "./fixture/templates", "template-recipes.yaml", image, derivative, incompatible, path)
+		cmd := exec.Command("go", "run", "../execution-templates", "template-recipes.yaml", image, derivative, incompatible, path)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("render template fixture: %v: %s", err, out)

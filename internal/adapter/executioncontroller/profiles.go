@@ -35,7 +35,6 @@ type ProfileSpec struct {
 	MaxFileBytes            int64               `yaml:"maxFileBytes"`
 	MaxCommandBytes         int64               `yaml:"maxCommandBytes"`
 	MaxCommandDuration      time.Duration       `yaml:"maxCommandDuration"`
-	MaxEnvironments         int                 `yaml:"maxEnvironments"`
 }
 
 // Profiles is a validated immutable profile registry.
@@ -46,6 +45,7 @@ type Profiles struct {
 	// definitions no longer eligible for new bindings.
 	revisions              map[string]map[string]resolvedProfile
 	eligibility            map[string]map[string]TemplatePolicy
+	capacityLimit          map[string]int
 	catalog                map[string]map[string]TemplateDisplay
 	executorServiceAccount string
 }
@@ -217,8 +217,7 @@ func resolveProfileQuantities(name string, s ProfileSpec) (resolvedProfile, erro
 func validExecutionBounds(s ProfileSpec) bool {
 	return s.MaxFileBytes > 0 && s.MaxFileBytes <= 5<<20 &&
 		s.MaxCommandBytes > 0 && s.MaxCommandBytes <= 1<<20 &&
-		s.MaxCommandDuration > 0 && s.MaxCommandDuration <= 30*time.Minute &&
-		s.MaxEnvironments > 0 && s.MaxEnvironments <= 10_000
+		s.MaxCommandDuration > 0 && s.MaxCommandDuration <= 30*time.Minute
 }
 
 func positiveQuantity(profile, field, value string) (resource.Quantity, error) {
@@ -247,8 +246,11 @@ func (p *Profiles) clusterResources() (runtimeClasses, storageClasses []string) 
 	}
 	runtimes := make(map[string]struct{}, len(p.byName))
 	storage := make(map[string]struct{}, len(p.byName))
-	for _, revisions := range p.revisions {
-		for _, template := range revisions {
+	for id, revisions := range p.revisions {
+		for revision, template := range revisions {
+			if p.eligibility[id][revision] != (TemplatePolicy{}) {
+				continue
+			}
 			runtimes[template.Spec.RuntimeClassName] = struct{}{}
 			storage[template.Spec.StorageClass] = struct{}{}
 		}

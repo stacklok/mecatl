@@ -53,7 +53,11 @@ execution. Template rows show operator-provided display names and exact pinned
 revisions, not paths or container settings. The server checks the selected revision
 and your access again at creation time; a stale or full template never falls back
 to the default. The success status and `/session` details report whether the new
-session actually has execution files and a built-in Shell.
+session actually has execution files and a built-in Shell. For an operator's
+image smoke test, match both template ID and exact revision, then record the
+session ID with `/session`. To check retained files, [resume that exact
+session](sessions.md#resume-a-chat); `/execution` creates another session
+rather than changing the existing workspace.
 
 When catalog discovery is disabled or temporarily unavailable, the picker still
 allows default and none. An empty catalog has no templates eligible for your
@@ -219,7 +223,7 @@ for the available modes and their behavior.
 |`/compact`|Reduces model history while keeping the session and visible scrollback. Run it without arguments while idle. Creating a cascade summary can use model tokens.|
 |`/clear`|Creates an empty-history session with the same placement. It does not roll back workspace changes.|
 |`/session`|Shows path-free details for the active session.|
-|`/posture`|Shows the server's operator posture and the independent effective checker state. Off includes setup guidance; unavailable or older-server status is unknown. See [Permissions and posture](/features/security-and-execution/permissions-and-posture.md).|
+|`/posture`|Shows the server's operator posture and the independent effective checker state. Off includes setup guidance; unavailable posture status is unknown. See [Permissions and posture](/features/security-and-execution/permissions-and-posture.md).|
 
 If `/clear` cancels an active run or approval and then fails to create the
 replacement, the original session remains selected and may be cancelled. Wait

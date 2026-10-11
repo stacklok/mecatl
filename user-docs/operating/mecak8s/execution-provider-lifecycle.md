@@ -29,9 +29,15 @@ each change without logging private keys or credential values.
 
 The supported lifecycle keeps the **same Helm release name, namespace, resource
 names, retained template definitions, network policy configuration, and security Secret
-source mode**. Keep `execution-values.yaml` and the current nonsecret client-policy
-manifest in your operator configuration store. Keep operator-owned Secrets and TLS trust overlap independently; the chart neither owns nor reads Secret
-contents.
+source mode**. Keep both values files in your operator configuration store:
+
+- `execution-values.yaml` owns provider settings, the nonsecret client-policy
+  manifest, network policy, and namespace resource budgets.
+- `template-values.yaml` owns `templates`, including ID quotas, defaults,
+  retained execution recipes, and revision policy.
+
+Pass both files to every install or upgrade. Keep operator-owned Secrets and
+TLS trust overlap independently; the chart neither owns nor reads Secret contents.
 
 Finish and verify any external authority rotation before starting a chart
 upgrade. Do not rotate the authority ConfigMap while Helm is writing chart
@@ -42,10 +48,19 @@ quiescence procedure below. Do not use `--force-conflicts` or `--take-ownership`
 as a blanket takeover.
 
 Before upgrading, verify that the retained templates ConfigMap contains a
-nonempty `data["lifetime.json"]`, the policy authority and capacity ledgers are intact,
-and the release still owns its retained executor ServiceAccount. That account
-must have token automount disabled and no inherited pull Secrets. Stop if any of
-these checks fails; do not synthesize missing history or reset authority.
+nonempty `data["lifetime.json"]`, the policy authority and **per-template-ID**
+capacity ledgers are intact, and the release still owns its retained executor
+ServiceAccount. That account must have token automount disabled and no inherited
+pull Secrets. Stop if any check fails; do not synthesize missing history or
+reset authority. `templates.<ID>.maxEnvironments` and explicit namespace
+`resourceGovernance` budgets can change with reviewed values without changing
+recipe digests; shrinking an ID quota below current use prevents only new
+reservations. Capacity reservations are retained authority: preserve each ID's
+ledger and recover trusted state if it is missing or inconsistent. `slots.json`
+must contain an array of unique allocation names valid as Kubernetes DNS
+subdomains. An empty array (`[]`) is valid; `null`, non-array values, and invalid
+or duplicate names block reservations, releases, and Helm rendering without
+rewriting the ledger. Never reset or copy reservations to make an upgrade pass.
 
 ### Upgrade a compatible release
 
@@ -83,65 +98,86 @@ For a compatible provider upgrade:
    helm upgrade mecatl-execution oci://ghcr.io/stacklok/mecatl/charts/mecatl-execution \
      --version <VERSION> \
      --namespace <NAMESPACE> --values execution-values.yaml \
+     --values template-values.yaml \
      --wait --timeout=4m $HELM_APPLY_MODE
    ```
 
 4. Verify readiness, exact environment/PVC UIDs, data, and network confinement
-   before resuming traffic. Only execution-environment schema version 2 is
-   supported; old objects are not automatically upgraded, reset, or deleted.
-   Mixed-version provider operation is unsupported.
+   before resuming traffic. Every environment requires schema version 2 in spec
+   and status. Preserve rejected objects and their data while diagnosing a
+   mismatch; do not reset or delete them to bypass validation. Run the same
+   provider version on all replicas.
 
-### Reuse a full template history
+<span id="reuse-a-full-template-history"></span>
 
-A template ID holds at most 32 revisions, and the entire release holds at most
-64. To publish beyond either limit, remove a retired historical definition in
+### Prune an unused retained revision
+
+The selectable catalog holds at most 64 ID/revision entries; retained-only
+historical definitions do not consume those slots. The combined ConfigMap data
+limit, rather than an arbitrary history count, bounds retained definitions. To
+publish beyond that physical limit, remove an unused historical definition in
 the same upgrade that adds the next revision. Keep every definition still used
 by an environment. The chart requires explicit `maintenance.pruneRevisions`
 consent for each removed ID/revision pair; ordinary upgrades reject any
-removal.
+removal. The combined rendered `templates.yaml` and `lifetime.json` must also
+fit within Kubernetes's 1 MiB ConfigMap data limit. This procedure requires
+storage deletion for allocations of the revision being pruned. If that data
+must remain, keep the definition instead.
 
-1. While the provider is running, complete `RetireEnvironment` and
-   `DeleteRetiredEnvironment` for **every** environment in the release. Wait
-   for deletion to finish, including PVC deletion and capacity release. Stop
-   client traffic and scale the provider to zero as in the upgrade procedure.
-   Keep it stopped through the Helm upgrade; Helm lookup and apply do not form
-   a transaction.
+1. While the provider is running, finish `RetireEnvironment` and
+   `DeleteRetiredEnvironment` for every allocation of the **specific revision**
+   being removed. Keep unrelated workspaces, including surviving revisions of
+   the same ID. Stop client traffic and scale the provider to zero as in the
+   upgrade procedure; keep it stopped through Helm apply. Lookup and apply do
+   not form a transaction.
 2. Verify that the existing Deployment has observed its zero-replica
-   generation and that the namespace contains no Pods or PVCs. Confirm there
-   are no `ExecutionEnvironment` CRs, including terminating CRs. Inspect the
-   retained `mecatl-execution-profile-allocations` ConfigMap: its data must be
-   empty or contain only `profile-<32 lowercase hex>.json` entries with the
-   exact value `[]`. A reservation can exist before a CR is created. For
-   example, inspect the live resources before continuing:
+   generation. For each affected template ID, inspect the retained per-ID
+   `mecatl-exec-alloc-<first 32 hex of SHA-256 of ID>` ConfigMap. Its
+   `slots.json` must be a canonical JSON array; each entry must resolve to an
+   environment with a surviving revision. An unresolved pending reservation,
+   missing ledger, orphan executor/PVC without an identifiable allocation, or
+   reference to the removed revision blocks pruning. A Pod or PVC with execution
+   labels or an `ExecutionEnvironment` owner reference must have a nonempty
+   `execution.mecatl.dev/environment` label and verifiable allocation identity.
+   Ordinary resources without execution evidence and verified allocations of
+   other IDs do not block pruning. Inspect the live resources before continuing:
 
    ```sh
    kubectl --namespace <NAMESPACE> get deployment mecatl-execution \
      -o jsonpath='{.metadata.generation}{" "}{.status.observedGeneration}{" "}{.spec.replicas}{" "}{.status.replicas}{"\n"}'
    kubectl --namespace <NAMESPACE> get executionenvironments,pods,pvc
-   kubectl --namespace <NAMESPACE> get configmap mecatl-execution-profile-allocations \
-     -o jsonpath='{.data}{"\n"}'
+   kubectl --namespace <NAMESPACE> get configmap <AFFECTED_ID_LEDGER_NAME> \
+     -o jsonpath='{.data.slots\.json}{"\n"}'
    ```
 
-   If any check fails, finish the supported lifecycle operations or recover
-   the trusted ledger; do not reset or delete retained resources.
+   If an affected check fails, finish supported lifecycle operations or recover
+   trusted state; do not reset or delete retained resources.
 3. Back up the existing `data["lifetime.json"]` and reviewed Helm values in
    your operator configuration store. Remove only the selected retired
-   revision from `templates.<ID>.revisions` in `execution-values.yaml`, add
+   revision from `templates.<ID>.revisions` in `template-values.yaml`, add
    the next revision, and select an eligible default. Preserve the remaining
-   recipes and network policy configuration. For the single upgrade that
-   removes it, pass the exact removed revision as consent:
+   recipes and network policy configuration. Validate the complete candidate
+   template file before applying it:
+
+   ```sh
+   go run ./deploy/execution-templates -validate template-values.yaml
+   ```
+
+   For the single upgrade that removes it, pass the exact removed revision as
+   consent:
 
    ```sh
    helm upgrade mecatl-execution oci://ghcr.io/stacklok/mecatl/charts/mecatl-execution \
      --version <VERSION> --namespace <NAMESPACE> --values execution-values.yaml \
+     --values template-values.yaml \
      --set-json 'maintenance.pruneRevisions.<ID>=["<RETIRED_TEMPLATE_REVISION>"]' \
      --wait --timeout=4m $HELM_APPLY_MODE
    ```
 
    Set `HELM_APPLY_MODE` as in the compatible-upgrade procedure. Omit the
    prune setting on subsequent upgrades; it is valid only when the named
-   definition exists in the previous retained history and is absent from the
-   candidate. Verify the new `lifetime.json` and provider readiness before
+   definition exists in retained history and is absent from the candidate
+   values. Verify the new `lifetime.json` and provider readiness before
    resuming traffic. If the upgrade fails, keep writers stopped and restore
    the trusted values/history or resolve the reported state mismatch before
    retrying. Do not use a rollback that would reintroduce a pruned definition
@@ -150,8 +186,8 @@ removal.
 ### Uninstall and reinstall with retained state
 
 Default uninstall removes the provider but keeps runtime CRs, PVCs, surviving
-executors, workload default-deny and profile NetworkPolicies, both authority and
-capacity ledgers, and the profile/security-manifest ConfigMaps. Uninstall is not
+executors, workload default-deny and profile NetworkPolicies, security authority
+and per-template-ID capacity ledgers, and the template/security-manifest ConfigMaps. Uninstall is not
 executor termination proof or storage disposal:
 
 ```sh
@@ -168,13 +204,14 @@ esac
 helm install mecatl-execution oci://ghcr.io/stacklok/mecatl/charts/mecatl-execution \
   --version <VERSION> \
   --namespace <NAMESPACE> --values execution-values.yaml \
+  --values template-values.yaml \
   --wait --timeout=4m $HELM_APPLY_MODE
 ```
 
 Helm adopts retained resources only when their managed-by label and release-name
 and release-namespace annotations match. The chart rejects missing or empty ledgers while allocations or capacity
 reservations survive, and rejects unconsented changes to retained execution definitions.
-Use the [full-history procedure](#reuse-a-full-template-history) for a
+Use the [pruning procedure](#prune-an-unused-retained-revision) for a
 retired definition.
 Template removal or egress edits require careful retention and quiescence:
 retained allow policies are additive, so leaving an obsolete policy could widen
@@ -211,12 +248,34 @@ identity; administrative scope confers no filesystem, Shell, attach, run, or
 reference access. See the
 [scope constraints](/features/security-and-execution/execution-environments.md#production-security-material).
 
-Before first publishing `administratorFor`, quiesce client traffic and upgrade
-all provider replicas to a version that understands the field. Older strict
-manifest decoders reject it; mixed-version rolling operation is unsupported.
-Preserve the authority high-water ConfigMap throughout the upgrade. Publish the
-reviewed manifest with a higher `generation`, verify provider readiness, then
-resume client traffic.
+Publish administrator scope changes in a reviewed manifest with a higher
+`generation`, preserve the authority high-water ConfigMap, and verify provider
+readiness. All provider replicas must use the same version.
+
+Run the RPC examples from an operator-managed administration Pod inside the
+cluster, not from an executor Pod. In `execution-values.yaml`, include an ingress
+selector for its namespace and Pod labels alongside the `mecak8s` selector:
+
+```yaml
+provider:
+  clientIngressSelectors:
+    - namespaceLabels: { kubernetes.io/metadata.name: <CLIENT_NAMESPACE> }
+      podLabels: { app.kubernetes.io/name: mecak8s }
+    - namespaceLabels: { kubernetes.io/metadata.name: <ADMIN_NAMESPACE> }
+      podLabels: { app.kubernetes.io/name: execution-admin }
+```
+
+Provision the administration Pod with that label, `grpcurl`, version-matched
+protocol source, and a read-only mount of its client mTLS Secret. Its namespace
+must permit DNS resolution and egress to the provider Service on TCP 8443 (or
+your configured `service.port`). Apply these selectors through the quiesced
+upgrade procedure with both values files. A certificate alone does not grant
+network access, and a network selector alone does not authorize an RPC. Keep
+execution workloads default-deny; do not give them administration credentials.
+
+The `kubectl` inventory commands can run from a separate authorized operator
+workstation with access to the execution namespace. The in-cluster RPC examples
+use Service DNS and need no Kubernetes API token.
 
 Every administrative request still requires the original exact owner and
 revision plus the operation's epoch, UID, or generation preconditions.

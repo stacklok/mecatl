@@ -78,14 +78,46 @@ Kubernetes compare-and-swap operations and claims to serialize environment work.
 A lost claim or unprovable executor state fences the environment. Recovery and
 retirement require the administrator to supply the recorded environment, epoch,
 Pod UID, and PVC UID. Workspace PVCs remain retained until the separate delete
-operation succeeds.
+operation succeeds. The immutable recipe digest excludes the adjustable
+`templates.<ID>.maxEnvironments` quota. Capacity is pooled across revisions of
+one ID and persisted by CAS in its own retained ConfigMap; pending reservations
+count before CR publication, and missing or malformed authority fails closed.
+Ledgers contain JSON arrays of unique allocation names; `[]` is valid, while
+`null`, invalid names, and duplicate names block reservation, release, and chart
+rendering without rewriting retained state. Namespace
+ResourceQuota budgets are explicit operator configuration. Both the per-ID ledger
+and combined template/history
+ConfigMap have a Kubernetes 1 MiB data limit. The selectable catalog remains
+bounded to 64 items while retained-only history is bounded by storage bytes.
+Startup validates every retained allocation's exact template and digest, then
+checks each distinct RuntimeClass and StorageClass required by selectable recipes
+or existing allocations once, including allocations of ineligible revisions.
+Unused ineligible history is skipped. A missing required class blocks global
+provider startup; there is no
+per-allocation startup isolation or runtime fallback. Pruning checks the removed
+revision against retained CRs and
+resolved PVC/Pod identities under observed provider quiescence. Execution labels
+or an `ExecutionEnvironment` owner reference without an environment label block
+pruning; ordinary resources without execution evidence and verified unrelated
+workspaces remain intact. The offline `deploy/execution-templates` generator and
+provider loader share `CanonicalTemplateRevision` as the v1 recipe hash source.
+It computes `v1-` followed by SHA-256 of `mecatl/execution-template/v1`, a NUL
+byte, and Go's `encoding/json` representation of the typed `ProfileSpec`, not
+the YAML text. Generation validates before creating a new values file;
+validation of merged history uses the same loader without contacting Kubernetes.
+The provider's ID-level default does not rewrite `mecak8s`'s explicitly pinned
+`execution.templateRevision` or an existing session's binding.
 
 Provider TLS and client authorization are separate controls. Platform PKI issues
 and projects the provider and client certificates and trust bundles. The provider
 reloads valid projected TLS files independently of the client-policy manifest.
 The manifest generation changes only for authorization policy updates. A valid
 mTLS client still needs the manifest's exact client URI, template scope, owner
-binding, run epoch, claim, and revocation checks for each operation. See
+binding, run epoch, claim, and revocation checks for each operation. Run acquire,
+renew, and replay recheck template revocation and current client policy;
+reference release and authorized lifecycle cleanup remain possible. The helper
+has no service credentials or Kubernetes API token. mTLS authenticates services;
+the verified OIDC issuer/subject still supplies the session owner. See
 [Configure the Kubernetes execution provider](../../user-docs/operating/mecak8s/native-execution.md)
 for the operator workflow.
 

@@ -23,7 +23,6 @@ provider:
   resources:
     requests: {cpu: 100m, memory: 128Mi, ephemeral-storage: 64Mi}
     limits: {cpu: "1", memory: 512Mi, ephemeral-storage: 256Mi}
-  # Deprecated single-key/TLS settings are intentionally unsupported.
 service:
   port: 8443
 networkPolicy:
@@ -33,20 +32,33 @@ networkPolicy:
   workloadProfiles: {}
 resourceGovernance:
   enabled: true
-  pods: "200"
-  persistentVolumeClaims: "100"
-  executionEnvironments: "100"
-  requestsCPU: "20"
-  requestsMemory: 40Gi
-  requestsStorage: 500Gi
-  requestsEphemeralStorage: 40Gi
-  limitsCPU: "40"
-  limitsMemory: 80Gi
-  limitsEphemeralStorage: 80Gi
+  # Required operator-owned namespace budgets when governance is enabled.
+  # Example for 1000 1Gi/100m/128Mi environments plus provider headroom.
+  # This budgets resources; it is not a measured throughput guarantee:
+  # pods: "1100"
+  # persistentVolumeClaims: "1000"
+  # executionEnvironments: "1000"
+  # requestsCPU: "120"
+  # requestsMemory: 150Gi
+  # requestsStorage: 1100Gi
+  # requestsEphemeralStorage: 100Gi
+  # limitsCPU: "1100"
+  # limitsMemory: 1100Gi
+  # limitsEphemeralStorage: 1100Gi
+  pods: ""
+  persistentVolumeClaims: ""
+  executionEnvironments: ""
+  requestsCPU: ""
+  requestsMemory: ""
+  requestsStorage: ""
+  requestsEphemeralStorage: ""
+  limitsCPU: ""
+  limitsMemory: ""
+  limitsEphemeralStorage: ""
 templates: {}
-# One-upgrade opt-in: name only definitions removed from the previous lifetime.json.
-# Requires an empty provider namespace, no CRs or capacity reservations, and
-# an observed scaled-to-zero provider. Remove this value after the upgrade.
+# One-upgrade opt-in: name only definitions removed from retained lifetime.json.
+# Requires no affected-revision allocations or unresolved affected-ID reservations,
+# and an observed scaled-to-zero provider. Other IDs' workspaces may remain.
 maintenance:
   pruneRevisions: {}
 
@@ -54,14 +66,21 @@ maintenance:
 # "mecatl/execution-template/v1\0" followed by encoding/json of the
 # validated Go ProfileSpec. Keep historical execution definitions for retained
 # allocations; display and deprecation/revocation policy may change independently.
+# maxEnvironments is a positive ID-level quota outside the recipe hash. Lowering
+# it below current usage blocks new reservations without evicting allocations.
+# Copy complete output from deploy/execution-templates into template-values.yaml;
+# pass it alongside provider/network/resource budgets in execution-values.yaml.
 # Only an ID with no eligible revisions may omit default while keeping its
 # deprecated or revoked history. The mecak8s deployment pins its own eligible
 # default ID/revision and checks it at startup; no other ID is substituted.
 # templates:
 #   go:
-#     default: v1-<canonical execution digest>
+#     maxEnvironments: 1000
+#     default: v1-<CANONICAL_EXECUTION_DIGEST>
 #     revisions:
-#       v1-<canonical execution digest>:
+#       v1-<CANONICAL_EXECUTION_DIGEST>:
+#         deprecated: false
+#         revoked: false
 #         execution:
 #           image: registry.example/workload@sha256:<image digest>
 #           storageClass: standard
@@ -77,4 +96,3 @@ maintenance:
 #           maxFileBytes: 5242880
 #           maxCommandBytes: 1048576
 #           maxCommandDuration: 5m
-#           maxEnvironments: 100

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -91,7 +92,22 @@ func (r *Reconciler) Initialize(ctx context.Context) error {
 
 func (r *Reconciler) preflightProfiles(ctx context.Context) error {
 	runtimeClasses, storageClasses := r.profiles.clusterResources()
-	for _, name := range runtimeClasses {
+	allocations, err := r.dynamic.Resource(ExecutionEnvironmentGVR).Namespace(r.namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("profile preflight: list retained allocations: %w", err)
+	}
+	for i := range allocations.Items {
+		env := &allocations.Items[i]
+		profile, ok := r.profiles.getRevision(textNested(env.Object, "spec", "templateID"), textNested(env.Object, "spec", "templateRevision"))
+		if !ok || profile.Digest != textNested(env.Object, "spec", "templateDigest") {
+			return fmt.Errorf("profile preflight: retained allocation %q has no matching template definition", env.GetName())
+		}
+		runtimeClasses = append(runtimeClasses, profile.Spec.RuntimeClassName)
+		storageClasses = append(storageClasses, profile.Spec.StorageClass)
+	}
+	slices.Sort(runtimeClasses)
+	slices.Sort(storageClasses)
+	for _, name := range slices.Compact(runtimeClasses) {
 		runtimeClass, err := r.kube.NodeV1().RuntimeClasses().Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			return fmt.Errorf("profile preflight: RuntimeClass %q unavailable: %w", name, err)
@@ -100,7 +116,7 @@ func (r *Reconciler) preflightProfiles(ctx context.Context) error {
 			return fmt.Errorf("profile preflight: RuntimeClass %q must not define scheduling", name)
 		}
 	}
-	for _, name := range storageClasses {
+	for _, name := range slices.Compact(storageClasses) {
 		if _, err := r.kube.StorageV1().StorageClasses().Get(ctx, name, metav1.GetOptions{}); err != nil {
 			return fmt.Errorf("profile preflight: StorageClass %q unavailable: %w", name, err)
 		}

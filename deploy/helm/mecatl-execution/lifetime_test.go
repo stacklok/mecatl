@@ -24,7 +24,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/executioncontroller"
 )
 
-const goFixtureRevision = "v1-5ba40f3d97f3bab366ee704db599b033d26d725e88f796ef956b74cb929a6102"
+const goFixtureRevision = "v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7"
 
 // Exercise Helm's actual lookup/render path, with a loopback API containing only
 // synthetic nonsecret objects. No ambient kubeconfig or cluster is consulted.
@@ -35,8 +35,53 @@ func TestChartRejectsLegacyProfileValues(t *testing.T) {
 	}
 }
 
+func TestChartRequiresExplicitNamespaceBudgets(t *testing.T) {
+	if _, err := renderLifetime(t, nil, "--set", "resourceGovernance.persistentVolumeClaims="); err == nil || !strings.Contains(err.Error(), "persistentVolumeClaims") {
+		t.Fatalf("missing operator-owned PVC budget accepted: %v", err)
+	}
+	objects, err := renderLifetime(t, nil, "--set-string", "resourceGovernance.persistentVolumeClaims=1000", "--set-string", "resourceGovernance.executionEnvironments=1000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hard := objects["ResourceQuota/test-mecatl-execution"]["spec"].(map[string]any)["hard"].(map[string]any)
+	if hard["persistentvolumeclaims"] != "1000" || hard["count/executionenvironments.execution.mecatl.dev"] != "1000" {
+		t.Fatalf("explicit budgets not preserved: %v", hard)
+	}
+}
+
+func TestChartPolicyIncreasePreservesRecipesAndLedgers(t *testing.T) {
+	fresh, err := renderLifetime(t, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retained := map[string]map[string]any{}
+	for _, obj := range fresh {
+		u := &unstructured.Unstructured{Object: obj}
+		if u.GetAnnotations()["helm.sh/resource-policy"] == "keep" {
+			retained[u.GetKind()+"/"+u.GetName()] = obj
+		}
+	}
+	retained["ConfigMap/test-mecatl-execution-security-authority"]["data"] = map[string]any{"state.json": `{"generation":1}`}
+	ledger := "ConfigMap/mecatl-exec-alloc-4cd0e21a9a0795a14ec9aa5f0e7d1abf"
+	retained[ledger]["data"] = map[string]any{"slots.json": `["exec-existing"]`}
+	updated, err := renderLifetime(t, retained, "--set", "templates.go.maxEnvironments=1000")
+	if err != nil {
+		t.Fatalf("ID-wide capacity increase rejected: %v", err)
+	}
+	if !reflect.DeepEqual(retained[ledger]["data"], updated[ledger]["data"]) || retained["ConfigMap/test-mecatl-execution-templates"]["data"].(map[string]any)["lifetime.json"] != updated["ConfigMap/test-mecatl-execution-templates"]["data"].(map[string]any)["lifetime.json"] {
+		t.Fatal("quota increase changed retained recipe or allocation authority")
+	}
+	if _, err := renderLifetime(t, retained, "--set", "templates.go.maxEnvironments=1"); err != nil {
+		t.Fatalf("shrink below use must not invalidate existing allocations: %v", err)
+	}
+	retained["ConfigMap/mecatl-execution-profile-allocations"] = map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "mecatl-execution-profile-allocations", "namespace": "ns"}, "data": map[string]any{"profile-go": `["exec-existing"]`}}
+	if _, err := renderLifetime(t, retained); err == nil || !strings.Contains(err.Error(), "legacy shared capacity ledger") {
+		t.Fatalf("shared ledger accepted without migration: %v", err)
+	}
+}
+
 func TestChartTemplateRevisionLifetime(t *testing.T) {
-	spec := executioncontroller.ProfileSpec{Image: "example.invalid/workload@sha256:" + strings.Repeat("a", 64), StorageClass: "standard", StorageSize: "1Gi", CPURequest: "50m", MemoryRequest: "64Mi", CPULimit: "1", MemoryLimit: "512Mi", EphemeralStorageRequest: "64Mi", EphemeralStorageLimit: "1Gi", TmpSizeLimit: "256Mi", RuntimeClassName: "runc", MaxFileBytes: 1024, MaxCommandBytes: 1024, MaxCommandDuration: 5 * time.Minute, MaxEnvironments: 20}
+	spec := executioncontroller.ProfileSpec{Image: "example.invalid/workload@sha256:" + strings.Repeat("a", 64), StorageClass: "standard", StorageSize: "1Gi", CPURequest: "50m", MemoryRequest: "64Mi", CPULimit: "1", MemoryLimit: "512Mi", EphemeralStorageRequest: "64Mi", EphemeralStorageLimit: "1Gi", TmpSizeLimit: "256Mi", RuntimeClassName: "runc", MaxFileBytes: 1024, MaxCommandBytes: 1024, MaxCommandDuration: 5 * time.Minute}
 	revisionOf := func(s executioncontroller.ProfileSpec) string {
 		t.Helper()
 		body, err := json.Marshal(s)
@@ -47,13 +92,13 @@ func TestChartTemplateRevisionLifetime(t *testing.T) {
 		return "v1-" + hex.EncodeToString(sum[:])
 	}
 	execution := func(s executioncontroller.ProfileSpec) map[string]any {
-		return map[string]any{"image": s.Image, "storageClass": s.StorageClass, "storageSize": s.StorageSize, "cpuRequest": s.CPURequest, "memoryRequest": s.MemoryRequest, "cpuLimit": s.CPULimit, "memoryLimit": s.MemoryLimit, "ephemeralStorageRequest": s.EphemeralStorageRequest, "ephemeralStorageLimit": s.EphemeralStorageLimit, "tmpSizeLimit": s.TmpSizeLimit, "runtimeClassName": s.RuntimeClassName, "maxFileBytes": s.MaxFileBytes, "maxCommandBytes": s.MaxCommandBytes, "maxCommandDuration": "5m", "maxEnvironments": s.MaxEnvironments}
+		return map[string]any{"image": s.Image, "storageClass": s.StorageClass, "storageSize": s.StorageSize, "cpuRequest": s.CPURequest, "memoryRequest": s.MemoryRequest, "cpuLimit": s.CPULimit, "memoryLimit": s.MemoryLimit, "ephemeralStorageRequest": s.EphemeralStorageRequest, "ephemeralStorageLimit": s.EphemeralStorageLimit, "tmpSizeLimit": s.TmpSizeLimit, "runtimeClassName": s.RuntimeClassName, "maxFileBytes": s.MaxFileBytes, "maxCommandBytes": s.MaxCommandBytes, "maxCommandDuration": "5m"}
 	}
 	old := revisionOf(spec)
 	oldDefinition := map[string]any{"execution": execution(spec)}
 	values := func(revisions map[string]any, def string) string {
 		t.Helper()
-		content, err := json.Marshal(map[string]any{"provider": map[string]any{"clientIngressSelectors": []any{map[string]any{"namespaceLabels": map[string]string{"kubernetes.io/metadata.name": "ns"}, "podLabels": map[string]string{"app.kubernetes.io/name": "mecak8s"}}}, "apiServerCIDRs": []string{"172.16.0.0/12"}, "dnsCIDRs": []string{"10.96.0.10/32"}}, "templates": map[string]any{"go": map[string]any{"default": def, "revisions": revisions}}})
+		content, err := json.Marshal(map[string]any{"provider": map[string]any{"clientIngressSelectors": []any{map[string]any{"namespaceLabels": map[string]string{"kubernetes.io/metadata.name": "ns"}, "podLabels": map[string]string{"app.kubernetes.io/name": "mecak8s"}}}, "apiServerCIDRs": []string{"172.16.0.0/12"}, "dnsCIDRs": []string{"10.96.0.10/32"}}, "templates": map[string]any{"go": map[string]any{"maxEnvironments": 20, "default": def, "revisions": revisions}}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -76,8 +121,8 @@ func TestChartTemplateRevisionLifetime(t *testing.T) {
 		}
 	}
 	retained["ConfigMap/test-mecatl-execution-security-authority"]["data"] = map[string]any{"state.json": `{"generation":1}`}
-	retained["ConfigMap/mecatl-execution-profile-allocations"]["data"] = map[string]any{"profile-go": `["alloc"]`}
-	spec.MaxEnvironments = 10
+	retained["ConfigMap/mecatl-exec-alloc-4cd0e21a9a0795a14ec9aa5f0e7d1abf"]["data"] = map[string]any{"slots.json": `["alloc"]`}
+	spec.Image = "example.invalid/workload@sha256:" + strings.Repeat("b", 64)
 	newRevision := revisionOf(spec)
 	additive := values(map[string]any{old: oldDefinition, newRevision: map[string]any{"execution": execution(spec)}}, newRevision)
 	if _, err := renderLifetimeWithFile(t, retained, additive); err != nil {
@@ -104,7 +149,7 @@ func TestChartTemplateRevisionLifetime(t *testing.T) {
 	if _, err := renderLifetimeWithFile(t, retained, values(map[string]any{old: oldDefinition, newRevision: metadata}, newRevision)); err == nil || !strings.Contains(err.Error(), "metadata key exceeds 253") {
 		t.Fatalf("oversized flattened metadata key accepted: %v", err)
 	}
-	retainedOnly := map[string]any{"provider": map[string]any{"clientIngressSelectors": []any{map[string]any{"namespaceLabels": map[string]string{"kubernetes.io/metadata.name": "ns"}, "podLabels": map[string]string{"app.kubernetes.io/name": "mecak8s"}}}, "apiServerCIDRs": []string{"172.16.0.0/12"}, "dnsCIDRs": []string{"10.96.0.10/32"}}, "templates": map[string]any{"go": map[string]any{"default": newRevision, "revisions": map[string]any{old: oldDefinition, newRevision: map[string]any{"execution": execution(spec)}}}, "retained": map[string]any{"revisions": map[string]any{old: map[string]any{"execution": execution(spec), "revoked": true}}}}}
+	retainedOnly := map[string]any{"provider": map[string]any{"clientIngressSelectors": []any{map[string]any{"namespaceLabels": map[string]string{"kubernetes.io/metadata.name": "ns"}, "podLabels": map[string]string{"app.kubernetes.io/name": "mecak8s"}}}, "apiServerCIDRs": []string{"172.16.0.0/12"}, "dnsCIDRs": []string{"10.96.0.10/32"}}, "templates": map[string]any{"go": map[string]any{"maxEnvironments": 20, "default": newRevision, "revisions": map[string]any{old: oldDefinition, newRevision: map[string]any{"execution": execution(spec)}}}, "retained": map[string]any{"maxEnvironments": 20, "revisions": map[string]any{old: map[string]any{"execution": execution(spec), "revoked": true}}}}}
 	retainedFile := filepath.Join(t.TempDir(), "retained.json")
 	body, err := json.Marshal(retainedOnly)
 	if err != nil {
@@ -128,7 +173,7 @@ func TestChartTemplateRevisionLifetime(t *testing.T) {
 		t.Fatalf("unselected eligible revision accepted: %v", err)
 	}
 	retained["ConfigMap/test-mecatl-execution-security-authority"]["data"] = map[string]any{"state.json": `{"generation":1}`}
-	retained["ConfigMap/mecatl-execution-profile-allocations"]["data"] = map[string]any{"profile-go": `["alloc"]`}
+	retained["ConfigMap/mecatl-exec-alloc-4cd0e21a9a0795a14ec9aa5f0e7d1abf"]["data"] = map[string]any{"slots.json": `["alloc"]`}
 	addPolicy := []string{"--set-json", `networkPolicy.workloadProfiles.python={"egress":[{"cidr":"10.10.0.0/16","ports":[{"port":443}]}]}`}
 	base, err := os.ReadFile(initial)
 	if err != nil {
@@ -139,7 +184,7 @@ func TestChartTemplateRevisionLifetime(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The new ID uses the original immutable recipe, not the modified go revision.
-	withNewID["templates"].(map[string]any)["python"] = map[string]any{"default": old, "revisions": map[string]any{old: map[string]any{"execution": oldDefinition["execution"]}}}
+	withNewID["templates"].(map[string]any)["python"] = map[string]any{"maxEnvironments": 20, "default": old, "revisions": map[string]any{old: map[string]any{"execution": oldDefinition["execution"]}}}
 	additiveValues := filepath.Join(t.TempDir(), "new-id.json")
 	encodedNewID, err := json.Marshal(withNewID)
 	if err != nil {
@@ -159,12 +204,12 @@ func TestChartTemplateRevisionLifetime(t *testing.T) {
 	}
 }
 
-func TestChartPrunesRetiredRevisionAtCapacity(t *testing.T) {
+func TestChartPrunesUnusedRevisionWhileWorkspacesSurvive(t *testing.T) {
 	spec := executioncontroller.ProfileSpec{Image: "example.invalid/workload@sha256:" + strings.Repeat("a", 64), StorageClass: "standard", StorageSize: "1Gi", CPURequest: "50m", MemoryRequest: "64Mi", CPULimit: "1", MemoryLimit: "512Mi", EphemeralStorageRequest: "64Mi", EphemeralStorageLimit: "1Gi", TmpSizeLimit: "256Mi", RuntimeClassName: "runc", MaxFileBytes: 1024, MaxCommandBytes: 1024, MaxCommandDuration: 5 * time.Minute}
 	revisions := map[string]any{}
 	var first, last, next string
 	for i := 1; i <= 33; i++ {
-		spec.MaxEnvironments = i
+		spec.Image = fmt.Sprintf("example.invalid/workload@sha256:%064x", i)
 		body, err := json.Marshal(spec)
 		if err != nil {
 			t.Fatal(err)
@@ -177,7 +222,7 @@ func TestChartPrunesRetiredRevisionAtCapacity(t *testing.T) {
 			"ephemeralStorageRequest": spec.EphemeralStorageRequest, "ephemeralStorageLimit": spec.EphemeralStorageLimit,
 			"tmpSizeLimit": spec.TmpSizeLimit, "runtimeClassName": spec.RuntimeClassName,
 			"maxFileBytes": spec.MaxFileBytes, "maxCommandBytes": spec.MaxCommandBytes,
-			"maxCommandDuration": "5m", "maxEnvironments": i,
+			"maxCommandDuration": "5m",
 		}}
 		if i == 1 {
 			first = revision
@@ -193,7 +238,7 @@ func TestChartPrunesRetiredRevisionAtCapacity(t *testing.T) {
 	}
 	values := func(definitions map[string]any, selected string) string {
 		t.Helper()
-		body, err := json.Marshal(map[string]any{"provider": map[string]any{"clientIngressSelectors": []any{map[string]any{"namespaceLabels": map[string]string{"kubernetes.io/metadata.name": "ns"}, "podLabels": map[string]string{"app.kubernetes.io/name": "mecak8s"}}}, "apiServerCIDRs": []string{"172.16.0.0/12"}, "dnsCIDRs": []string{"10.96.0.10/32"}}, "templates": map[string]any{"go": map[string]any{"default": selected, "revisions": definitions}}})
+		body, err := json.Marshal(map[string]any{"provider": map[string]any{"clientIngressSelectors": []any{map[string]any{"namespaceLabels": map[string]string{"kubernetes.io/metadata.name": "ns"}, "podLabels": map[string]string{"app.kubernetes.io/name": "mecak8s"}}}, "apiServerCIDRs": []string{"172.16.0.0/12"}, "dnsCIDRs": []string{"10.96.0.10/32"}}, "templates": map[string]any{"go": map[string]any{"maxEnvironments": 20, "default": selected, "revisions": definitions}}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -215,8 +260,7 @@ func TestChartPrunesRetiredRevisionAtCapacity(t *testing.T) {
 		}
 	}
 	retained["ConfigMap/test-mecatl-execution-security-authority"]["data"] = map[string]any{"state.json": `{"generation":1}`}
-	key := sha256.Sum256([]byte("go"))
-	retained["ConfigMap/mecatl-execution-profile-allocations"]["data"] = map[string]any{"profile-" + hex.EncodeToString(key[:16]) + ".json": "[]"}
+	retained["ConfigMap/mecatl-exec-alloc-4cd0e21a9a0795a14ec9aa5f0e7d1abf"]["data"] = map[string]any{"slots.json": "[]"}
 	retained["Deployment/test-mecatl-execution"] = map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": "test-mecatl-execution", "namespace": "ns", "generation": int64(2), "labels": map[string]any{"app.kubernetes.io/managed-by": "Helm"}, "annotations": map[string]any{"meta.helm.sh/release-name": "test", "meta.helm.sh/release-namespace": "ns"}}, "spec": map[string]any{"replicas": int64(0)}, "status": map[string]any{"observedGeneration": int64(2), "replicas": int64(0)}}
 	updated := make(map[string]any, len(revisions))
 	for k, v := range revisions {
@@ -224,9 +268,8 @@ func TestChartPrunesRetiredRevisionAtCapacity(t *testing.T) {
 			updated[k] = v
 		}
 	}
-	// The 33rd revision takes the retired one's slot; the other 31 stay immutable.
-	spec.MaxEnvironments = 33
-	updated[next] = map[string]any{"execution": map[string]any{"image": spec.Image, "storageClass": spec.StorageClass, "storageSize": spec.StorageSize, "cpuRequest": spec.CPURequest, "memoryRequest": spec.MemoryRequest, "cpuLimit": spec.CPULimit, "memoryLimit": spec.MemoryLimit, "ephemeralStorageRequest": spec.EphemeralStorageRequest, "ephemeralStorageLimit": spec.EphemeralStorageLimit, "tmpSizeLimit": spec.TmpSizeLimit, "runtimeClassName": spec.RuntimeClassName, "maxFileBytes": spec.MaxFileBytes, "maxCommandBytes": spec.MaxCommandBytes, "maxCommandDuration": "5m", "maxEnvironments": 33}}
+	// The next definition is published alongside unchanged surviving history.
+	updated[next] = map[string]any{"execution": map[string]any{"image": spec.Image, "storageClass": spec.StorageClass, "storageSize": spec.StorageSize, "cpuRequest": spec.CPURequest, "memoryRequest": spec.MemoryRequest, "cpuLimit": spec.CPULimit, "memoryLimit": spec.MemoryLimit, "ephemeralStorageRequest": spec.EphemeralStorageRequest, "ephemeralStorageLimit": spec.EphemeralStorageLimit, "tmpSizeLimit": spec.TmpSizeLimit, "runtimeClassName": spec.RuntimeClassName, "maxFileBytes": spec.MaxFileBytes, "maxCommandBytes": spec.MaxCommandBytes, "maxCommandDuration": "5m"}}
 	file := values(updated, next)
 	optIn := []string{"--set-json", "maintenance.pruneRevisions.go=[\"" + first + "\"]"}
 	if _, err := renderLifetimeWithFile(t, retained, file); err == nil || !strings.Contains(err.Error(), "retained execution template definition") {
@@ -234,7 +277,108 @@ func TestChartPrunesRetiredRevisionAtCapacity(t *testing.T) {
 	}
 	pruned, err := renderLifetimeWithFile(t, retained, file, optIn...)
 	if err != nil {
-		t.Fatalf("retired revision could not be pruned at capacity: %v", err)
+		t.Fatalf("unused revision could not be pruned: %v", err)
+	}
+	currentFile := values(revisions, last)
+	ledgerKey := "ConfigMap/mecatl-exec-alloc-4cd0e21a9a0795a14ec9aa5f0e7d1abf"
+	for _, raw := range []string{"null", "{}", `"alloc"`, "true", "1", "[", "[null]", "[1]", "[{}]", `[""]`, `["Bad-ID"]`, `["../alloc"]`, `["alloc","alloc"]`, `["` + strings.Repeat("a", 254) + `"]`} {
+		for _, prune := range []bool{false, true} {
+			t.Run(fmt.Sprintf("invalid ledger/%s/prune=%t", raw, prune), func(t *testing.T) {
+				objects := map[string]map[string]any{}
+				for key, obj := range retained {
+					objects[key] = (&unstructured.Unstructured{Object: obj}).DeepCopy().Object
+				}
+				objects[ledgerKey]["data"] = map[string]any{"slots.json": raw}
+				input := currentFile
+				var flags []string
+				if prune {
+					input, flags = file, optIn
+				}
+				rendered, err := renderLifetimeWithFile(t, objects, input, flags...)
+				want := "retained capacity ledger"
+				if raw == "[" {
+					want = "mustFromJson"
+				}
+				if err == nil || len(rendered) != 0 || !strings.Contains(err.Error(), want) {
+					t.Fatalf("malformed ledger rendered or pruned: %v, %v", rendered, err)
+				}
+				if objects[ledgerKey]["data"].(map[string]any)["slots.json"] != raw {
+					t.Fatal("malformed ledger was rewritten")
+				}
+			})
+		}
+	}
+	if pruned[ledgerKey]["data"].(map[string]any)["slots.json"] != "[]" {
+		t.Fatal("pruning changed the empty capacity ledger")
+	}
+	for _, kind := range []string{"Pod", "PersistentVolumeClaim"} {
+		for _, labelPresent := range []bool{false, true} {
+			for _, hint := range []string{"ordinary", "owner", "template-id", "allocation-uid", "revision"} {
+				t.Run(fmt.Sprintf("identity/%s/empty-label=%t/%s", kind, labelPresent, hint), func(t *testing.T) {
+					objects := map[string]map[string]any{}
+					for key, obj := range retained {
+						objects[key] = (&unstructured.Unstructured{Object: obj}).DeepCopy().Object
+					}
+					labels := map[string]any{"app": "ordinary-workspace"}
+					if labelPresent {
+						labels["execution.mecatl.dev/environment"] = ""
+					}
+					metadata := map[string]any{"name": "workspace", "namespace": "ns", "labels": labels}
+					switch hint {
+					case "ordinary":
+						metadata["ownerReferences"] = []any{map[string]any{"apiVersion": "apps/v1", "kind": "ReplicaSet", "name": "ordinary", "uid": "ordinary-uid"}}
+					case "owner":
+						metadata["ownerReferences"] = []any{map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "name": "allocation", "uid": "allocation-uid"}}
+					default:
+						labels["execution.mecatl.dev/"+hint] = "allocation-evidence"
+					}
+					objects[kind+"/workspace"] = map[string]any{"apiVersion": "v1", "kind": kind, "metadata": metadata}
+					rendered, err := renderLifetimeWithFile(t, objects, file, optIn...)
+					if hint == "ordinary" && !labelPresent {
+						if err != nil || !reflect.DeepEqual(rendered[ledgerKey]["data"], retained[ledgerKey]["data"]) {
+							t.Fatalf("ordinary resource prevented pruning or changed capacity: %v", err)
+						}
+					} else if err == nil || len(rendered) != 0 || !strings.Contains(err.Error(), "without an environment label") {
+						t.Fatalf("unidentified execution resource allowed pruning: %v", err)
+					}
+				})
+			}
+		}
+	}
+	// A surviving environment from another ID does not consume this history slot.
+	unrelated := make(map[string]map[string]any, len(retained)+2)
+	for key, obj := range retained {
+		unrelated[key] = (&unstructured.Unstructured{Object: obj}).DeepCopy().Object
+	}
+	unrelated["ExecutionEnvironment/python-workspace"] = map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "python-workspace", "namespace": "ns", "uid": "python-uid"}, "spec": map[string]any{"templateID": "python", "templateRevision": last, "revision": "allocation-revision"}}
+	unrelated["PersistentVolumeClaim/python-workspace"] = map[string]any{"apiVersion": "v1", "kind": "PersistentVolumeClaim", "metadata": map[string]any{"name": "python-workspace", "namespace": "ns", "labels": map[string]any{"execution.mecatl.dev/environment": "python-workspace", "execution.mecatl.dev/allocation-uid": "python-uid", "execution.mecatl.dev/revision": "allocation-revision"}}}
+	unrelated["Pod/python-executor"] = map[string]any{"apiVersion": "v1", "kind": "Pod", "metadata": map[string]any{"name": "python-executor", "namespace": "ns", "labels": map[string]any{"execution.mecatl.dev/environment": "python-workspace", "execution.mecatl.dev/template-id": fmt.Sprintf("%x", sha256.Sum256([]byte("python")))[:16]}, "ownerReferences": []any{map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "name": "python-workspace", "uid": "python-uid"}}}}
+	if _, err := renderLifetimeWithFile(t, unrelated, file, optIn...); err != nil {
+		t.Fatalf("unrelated retained workspace prevented pruning: %v", err)
+	}
+	podOwner := unrelated["Pod/python-executor"]["metadata"].(map[string]any)["ownerReferences"].([]any)[0].(map[string]any)
+	podOwner["uid"] = "foreign-uid"
+	if _, err := renderLifetimeWithFile(t, unrelated, file, optIn...); err == nil || !strings.Contains(err.Error(), "cannot verify Pod") {
+		t.Fatalf("unverifiable executor bypassed pruning guard: %v", err)
+	}
+	podOwner["uid"] = "python-uid"
+	unrelated["PersistentVolumeClaim/python-workspace"]["metadata"].(map[string]any)["labels"].(map[string]any)["execution.mecatl.dev/allocation-uid"] = "foreign-uid"
+	if _, err := renderLifetimeWithFile(t, unrelated, file, optIn...); err == nil || !strings.Contains(err.Error(), "cannot verify PVC") {
+		t.Fatalf("unverifiable workspace bypassed pruning guard: %v", err)
+	}
+	// A retained reference to the removed revision must block even with an intact ledger.
+	referenced := make(map[string]map[string]any, len(retained)+1)
+	for key, obj := range retained {
+		referenced[key] = (&unstructured.Unstructured{Object: obj}).DeepCopy().Object
+	}
+	referenced["ExecutionEnvironment/referenced"] = map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "referenced", "namespace": "ns"}, "spec": map[string]any{"templateID": "go", "templateRevision": first}}
+	referenced["ConfigMap/mecatl-exec-alloc-4cd0e21a9a0795a14ec9aa5f0e7d1abf"]["data"] = map[string]any{"slots.json": `["referenced"]`}
+	if _, err := renderLifetimeWithFile(t, referenced, file, optIn...); err == nil || !strings.Contains(err.Error(), "no retained allocation") {
+		t.Fatalf("referenced revision was pruned: %v", err)
+	}
+	referenced["ExecutionEnvironment/referenced"]["spec"].(map[string]any)["templateRevision"] = last
+	if _, err := renderLifetimeWithFile(t, referenced, file, optIn...); err != nil {
+		t.Fatalf("surviving revision of affected ID prevented pruning: %v", err)
 	}
 	var history struct {
 		Definitions map[string]map[string]json.RawMessage `json:"definitions"`
@@ -247,7 +391,7 @@ func TestChartPrunesRetiredRevisionAtCapacity(t *testing.T) {
 		t.Fatal("pruned revision remains in rendered durable history")
 	}
 	if len(history.Definitions["go"]) != 32 || len(history.Definitions["go"][next]) == 0 {
-		t.Fatal("pruning failed to free one durable history slot for the new revision")
+		t.Fatal("pruning did not publish the next revision with surviving history")
 	}
 	prunedRetained := make(map[string]map[string]any, len(retained))
 	for k, obj := range retained {
@@ -261,35 +405,37 @@ func TestChartPrunesRetiredRevisionAtCapacity(t *testing.T) {
 	for k, obj := range retained {
 		emptyLedger[k] = (&unstructured.Unstructured{Object: obj}).DeepCopy().Object
 	}
-	emptyLedger["ConfigMap/mecatl-execution-profile-allocations"]["data"] = map[string]any{}
-	if _, err := renderLifetimeWithFile(t, emptyLedger, file, optIn...); err != nil {
-		t.Fatalf("empty retained ledger rejected: %v", err)
+	emptyLedger["ConfigMap/mecatl-exec-alloc-4cd0e21a9a0795a14ec9aa5f0e7d1abf"]["data"] = map[string]any{}
+	if _, err := renderLifetimeWithFile(t, emptyLedger, file, optIn...); err == nil || !strings.Contains(err.Error(), "missing slots.json") {
+		t.Fatalf("missing ID ledger entry was accepted: %v", err)
 	}
 	for _, tc := range []struct {
 		name, want string
 		change     func(map[string]map[string]any)
 	}{
-		{"pending reservation", "empty, valid capacity ledger", func(m map[string]map[string]any) {
-			m["ConfigMap/mecatl-execution-profile-allocations"]["data"] = map[string]any{"profile-" + hex.EncodeToString(key[:16]) + ".json": `["pending"]`}
+		{"pending reservation", "resolution of pending or orphan reservations", func(m map[string]map[string]any) {
+			m["ConfigMap/mecatl-exec-alloc-4cd0e21a9a0795a14ec9aa5f0e7d1abf"]["data"] = map[string]any{"slots.json": `["pending"]`}
 		}},
-		{"unknown ledger data", "empty, valid capacity ledger", func(m map[string]map[string]any) {
-			m["ConfigMap/mecatl-execution-profile-allocations"]["data"] = map[string]any{"unknown": "[]"}
+		{"missing affected ledger", "missing slots.json", func(m map[string]map[string]any) {
+			m["ConfigMap/mecatl-exec-alloc-4cd0e21a9a0795a14ec9aa5f0e7d1abf"]["data"] = map[string]any{"unknown": "[]"}
 		}},
-		{"missing ledger", "recover it", func(m map[string]map[string]any) { delete(m, "ConfigMap/mecatl-execution-profile-allocations") }},
+		{"missing ledger", "recover it", func(m map[string]map[string]any) {
+			delete(m, "ConfigMap/mecatl-exec-alloc-4cd0e21a9a0795a14ec9aa5f0e7d1abf")
+		}},
 		{"missing templates", "trusted retained lifetime.json history", func(m map[string]map[string]any) { delete(m, "ConfigMap/test-mecatl-execution-templates") }},
 		{"missing authority", "bootstrap is forbidden", func(m map[string]map[string]any) { delete(m, "ConfigMap/test-mecatl-execution-security-authority") }},
 		{"missing executor account", "ServiceAccount", func(m map[string]map[string]any) { delete(m, "ServiceAccount/test-mecatl-execution-executor") }},
 		{"missing retained network policy", "existing workload NetworkPolicies", func(m map[string]map[string]any) {
 			delete(m, "NetworkPolicy/test-mecatl-execution-workload-default-deny")
 		}},
-		{"retained CR", "all execution environments", func(m map[string]map[string]any) {
+		{"retained CR", "ambiguous execution environment", func(m map[string]map[string]any) {
 			m["ExecutionEnvironment/existing"] = map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "existing", "namespace": "ns"}}
 		}},
-		{"retained PVC", "no Pods or PersistentVolumeClaims", func(m map[string]map[string]any) {
-			m["PersistentVolumeClaim/workspace"] = map[string]any{"apiVersion": "v1", "kind": "PersistentVolumeClaim", "metadata": map[string]any{"name": "workspace", "namespace": "ns"}}
+		{"orphan PVC", "cannot identify orphan", func(m map[string]map[string]any) {
+			m["PersistentVolumeClaim/workspace"] = map[string]any{"apiVersion": "v1", "kind": "PersistentVolumeClaim", "metadata": map[string]any{"name": "workspace", "namespace": "ns", "labels": map[string]any{"execution.mecatl.dev/environment": "missing"}}}
 		}},
-		{"orphan pod", "no Pods or PersistentVolumeClaims", func(m map[string]map[string]any) {
-			m["Pod/orphan"] = map[string]any{"apiVersion": "v1", "kind": "Pod", "metadata": map[string]any{"name": "orphan", "namespace": "ns"}}
+		{"orphan pod", "cannot identify orphan", func(m map[string]map[string]any) {
+			m["Pod/orphan"] = map[string]any{"apiVersion": "v1", "kind": "Pod", "metadata": map[string]any{"name": "orphan", "namespace": "ns", "labels": map[string]any{"execution.mecatl.dev/environment": "missing"}}}
 		}},
 		{"missing deployment", "observed, scaled-to-zero", func(m map[string]map[string]any) { delete(m, "Deployment/test-mecatl-execution") }},
 		{"stale deployment", "observed, scaled-to-zero", func(m map[string]map[string]any) {
@@ -302,7 +448,7 @@ func TestChartPrunesRetiredRevisionAtCapacity(t *testing.T) {
 			m["Deployment/test-mecatl-execution"]["spec"].(map[string]any)["replicas"] = int64(1)
 		}},
 		{"drifting ledger ownership", "foreign or ambiguous", func(m map[string]map[string]any) {
-			m["ConfigMap/mecatl-execution-profile-allocations"]["metadata"].(map[string]any)["annotations"].(map[string]any)["meta.helm.sh/release-name"] = "foreign"
+			m["ConfigMap/mecatl-exec-alloc-4cd0e21a9a0795a14ec9aa5f0e7d1abf"]["metadata"].(map[string]any)["annotations"].(map[string]any)["meta.helm.sh/release-name"] = "foreign"
 		}},
 		{"missing history", "missing lifetime.json history", func(m map[string]map[string]any) {
 			delete(m["ConfigMap/test-mecatl-execution-templates"]["data"].(map[string]any), "lifetime.json")
@@ -337,10 +483,75 @@ func TestChartPrunesRetiredRevisionAtCapacity(t *testing.T) {
 	for field, value := range revisions[last].(map[string]any)["execution"].(map[string]any) {
 		changed[field] = value
 	}
-	changed["maxEnvironments"] = 999
+	changed["image"] = "example.invalid/changed@sha256:" + strings.Repeat("a", 64)
 	modified[last] = map[string]any{"execution": changed}
 	if _, err := renderLifetimeWithFile(t, retained, values(modified, next), optIn...); err == nil || !strings.Contains(err.Error(), "retained execution template definition") {
 		t.Fatalf("modified surviving history accepted: %v", err)
+	}
+}
+
+func TestChartBoundsRenderedTemplateConfigMap(t *testing.T) {
+	execution := map[string]any{"image": "example.invalid/workload@sha256:" + strings.Repeat("a", 64), "storageClass": "standard", "storageSize": "1Gi", "cpuRequest": "50m", "memoryRequest": "64Mi", "cpuLimit": "1", "memoryLimit": "512Mi", "ephemeralStorageRequest": "64Mi", "ephemeralStorageLimit": "1Gi", "tmpSizeLimit": "256Mi", "runtimeClassName": "runc", "maxFileBytes": 1024, "maxCommandBytes": 1024, "maxCommandDuration": "5m"}
+	extensions := map[string]any{}
+	for i := range 8 {
+		fields := map[string]any{"schema_version": "1"}
+		for j := range 15 {
+			fields[fmt.Sprintf("field%02d", j)] = strings.Repeat("x", 256)
+		}
+		extensions[fmt.Sprintf("example.com/meta%d", i)] = fields
+	}
+	values := func(count int) string {
+		t.Helper()
+		templates := map[string]any{}
+		for _, id := range []string{"go", "python"} {
+			revisions := map[string]any{}
+			for i := range count / 2 {
+				revisions[fmt.Sprintf("v1-%064x", i+1)] = map[string]any{"execution": execution, "display": map[string]any{"extensions": extensions}}
+			}
+			templates[id] = map[string]any{"maxEnvironments": 1000, "default": fmt.Sprintf("v1-%064x", 1), "revisions": revisions}
+		}
+		body, err := json.Marshal(map[string]any{"provider": map[string]any{"clientIngressSelectors": []any{map[string]any{"namespaceLabels": map[string]string{"kubernetes.io/metadata.name": "ns"}, "podLabels": map[string]string{"app.kubernetes.io/name": "mecak8s"}}}, "apiServerCIDRs": []string{"172.16.0.0/12"}, "dnsCIDRs": []string{"10.96.0.10/32"}}, "templates": templates})
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(t.TempDir(), "values.json")
+		if err := os.WriteFile(path, body, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	objects, err := renderLifetimeWithFile(t, nil, values(24))
+	if err != nil {
+		t.Fatalf("valid near-limit metadata rejected: %v", err)
+	}
+	data := objects["ConfigMap/test-mecatl-execution-templates"]["data"].(map[string]any)
+	dataBytes := len(data["templates.yaml"].(string)) + len(data["lifetime.json"].(string))
+	if dataBytes < 700000 || dataBytes > 1<<20 {
+		t.Fatalf("positive fixture size %d outside near-limit range", dataBytes)
+	}
+	if _, err := renderLifetimeWithFile(t, nil, values(64)); err == nil || !strings.Contains(err.Error(), "exceeds Kubernetes 1 MiB limit") {
+		t.Fatalf("64 x 8 x 15 x 256 metadata witness accepted: %v", err)
+	}
+}
+
+func TestChartAcceptsSixtyFiveHistoricalRevisionsWithinConfigMap(t *testing.T) {
+	spec := map[string]any{"image": "example.invalid/workload@sha256:" + strings.Repeat("a", 64), "storageClass": "standard", "storageSize": "1Gi", "cpuRequest": "50m", "memoryRequest": "64Mi", "cpuLimit": "1", "memoryLimit": "512Mi", "ephemeralStorageRequest": "64Mi", "ephemeralStorageLimit": "1Gi", "tmpSizeLimit": "256Mi", "runtimeClassName": "runc", "maxFileBytes": 1024, "maxCommandBytes": 1024, "maxCommandDuration": "5m"}
+	revisions := map[string]any{}
+	for i := range 65 {
+		key := fmt.Sprintf("v1-%064x", i+1)
+		revisions[key] = map[string]any{"execution": spec, "deprecated": i != 64}
+	}
+	values := map[string]any{"provider": map[string]any{"clientIngressSelectors": []any{map[string]any{"namespaceLabels": map[string]string{"kubernetes.io/metadata.name": "ns"}, "podLabels": map[string]string{"app.kubernetes.io/name": "mecak8s"}}}, "apiServerCIDRs": []string{"172.16.0.0/12"}, "dnsCIDRs": []string{"10.96.0.10/32"}}, "templates": map[string]any{"go": map[string]any{"default": fmt.Sprintf("v1-%064x", 65), "maxEnvironments": 1000, "revisions": revisions}}}
+	body, err := json.Marshal(values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "values.json")
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := renderLifetimeWithFile(t, nil, path); err != nil {
+		t.Fatalf("65 historical definitions rejected by chart: %v", err)
 	}
 }
 
@@ -357,10 +568,10 @@ func TestChartRejectsOversizedAggregateInventory(t *testing.T) {
 				"image": "example.invalid/workload@sha256:" + strings.Repeat("a", 64), "storageClass": "standard", "storageSize": "1Gi",
 				"cpuRequest": "50m", "memoryRequest": "64Mi", "cpuLimit": "1", "memoryLimit": "512Mi",
 				"ephemeralStorageRequest": "64Mi", "ephemeralStorageLimit": "1Gi", "tmpSizeLimit": "256Mi", "runtimeClassName": "runc",
-				"maxFileBytes": 1024, "maxCommandBytes": 1024, "maxCommandDuration": "5m", "maxEnvironments": 20,
+				"maxFileBytes": 1024, "maxCommandBytes": 1024, "maxCommandDuration": "5m",
 			}}
 		}
-		templates[id] = map[string]any{"default": fmt.Sprintf("v1-%064x", group*32), "revisions": revisions}
+		templates[id] = map[string]any{"maxEnvironments": 20, "default": fmt.Sprintf("v1-%064x", group*32), "revisions": revisions}
 	}
 	data, err := json.Marshal(map[string]any{"provider": map[string]any{"clientIngressSelectors": []any{map[string]any{"namespaceLabels": map[string]string{"kubernetes.io/metadata.name": "ns"}, "podLabels": map[string]string{"app.kubernetes.io/name": "mecak8s"}}}, "apiServerCIDRs": []string{"172.16.0.0/12"}, "dnsCIDRs": []string{"10.96.0.10/32"}}, "templates": templates})
 	if err != nil {
@@ -370,7 +581,7 @@ func TestChartRejectsOversizedAggregateInventory(t *testing.T) {
 	if err := os.WriteFile(file, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := renderLifetimeWithFile(t, nil, file); err == nil || !strings.Contains(err.Error(), "inventory exceeds 64 revisions") {
+	if _, err := renderLifetimeWithFile(t, nil, file); err == nil || !strings.Contains(err.Error(), "inventory exceeds 64 selectable revisions") {
 		t.Fatalf("oversized inventory accepted before provider startup: %v", err)
 	}
 }
@@ -387,13 +598,13 @@ func TestChartRetainedLifetime(t *testing.T) {
 			retained[u.GetKind()+"/"+u.GetName()] = obj
 		}
 	}
-	if len(retained) != 7 {
-		t.Fatalf("retained resources=%d, want four ConfigMaps, two workload policies, and executor ServiceAccount", len(retained))
+	if len(retained) != 11 {
+		t.Fatalf("retained resources=%d, want eight ConfigMaps, two workload policies, and executor ServiceAccount", len(retained))
 	}
 	authority := "ConfigMap/test-mecatl-execution-security-authority"
-	capacity := "ConfigMap/mecatl-execution-profile-allocations"
+	capacity := "ConfigMap/mecatl-exec-alloc-4cd0e21a9a0795a14ec9aa5f0e7d1abf"
 	retained[authority]["data"] = map[string]any{"state.json": `{"generation":7,"digest":"synthetic"}`}
-	retained[capacity]["data"] = map[string]any{"profile-go": `["allocation-uid"]`}
+	retained[capacity]["data"] = map[string]any{"slots.json": `["allocation-uid"]`}
 	retained["ExecutionEnvironment/exec-test"] = map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "exec-test", "namespace": "ns"}}
 	for _, upgrade := range []bool{false, true} {
 		t.Run(fmt.Sprintf("reuse-upgrade-%t", upgrade), func(t *testing.T) {
@@ -482,16 +693,16 @@ func TestChartRetainedLifetime(t *testing.T) {
 		}, want: "foreign or ambiguous"},
 		{name: "removed profile policy", args: []string{"--set-json", "networkPolicy.workloadProfiles={}"}, want: "configuration is incompatible"},
 		{name: "changed egress", args: []string{"--set", "networkPolicy.workloadProfiles.go.egress[0].cidr=10.3.0.0/16"}, want: "configuration is incompatible"},
-		{name: "changed profile", args: []string{"--set", "templates.go.revisions.v1-5ba40f3d97f3bab366ee704db599b033d26d725e88f796ef956b74cb929a6102.execution.maxEnvironments=30"}, want: "retained execution template definition"},
-		{name: "changed profile scheduling", args: []string{"--set", "templates.go.revisions.v1-5ba40f3d97f3bab366ee704db599b033d26d725e88f796ef956b74cb929a6102.execution.nodeSelector.pool=workers"}, want: "retained execution template definition"},
-		{name: "changed profile tolerations", args: []string{"--set", "templates.go.revisions.v1-5ba40f3d97f3bab366ee704db599b033d26d725e88f796ef956b74cb929a6102.execution.tolerations[0].key=dedicated", "--set", "templates.go.revisions.v1-5ba40f3d97f3bab366ee704db599b033d26d725e88f796ef956b74cb929a6102.execution.tolerations[0].operator=Exists"}, want: "retained execution template definition"},
-		{name: "changed profile pulls", args: []string{"--set-json", `templates.go.revisions.v1-5ba40f3d97f3bab366ee704db599b033d26d725e88f796ef956b74cb929a6102.execution.imagePullSecrets=["registry"]`}, want: "retained execution template definition"},
+		{name: "changed profile", args: []string{"--set", "templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.maxFileBytes=30"}, want: "retained execution template definition"},
+		{name: "changed profile scheduling", args: []string{"--set", "templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.nodeSelector.pool=workers"}, want: "retained execution template definition"},
+		{name: "changed profile tolerations", args: []string{"--set", "templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.tolerations[0].key=dedicated", "--set", "templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.tolerations[0].operator=Exists"}, want: "retained execution template definition"},
+		{name: "changed profile pulls", args: []string{"--set-json", `templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.imagePullSecrets=["registry"]`}, want: "retained execution template definition"},
 		{name: "changed fullname", args: []string{"--set", "fullnameOverride=other"}, want: "ServiceAccount other-executor with token automount disabled"},
 		{name: "missing profiles with orphan policies", mutate: func(m map[string]map[string]any) {
 			delete(m, "ExecutionEnvironment/exec-test")
 			delete(m, "ConfigMap/test-mecatl-execution-templates")
 			delete(m, capacity)
-		}, want: "original release templates"},
+		}, want: "authority/capacity bootstrap is forbidden"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -521,7 +732,7 @@ func TestChartPullIdentity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var args []string
 			if tc.provider != "" {
-				args = []string{"--set-json", "provider.imagePullSecrets=" + tc.provider, "--set-json", "templates.go.revisions.v1-5ba40f3d97f3bab366ee704db599b033d26d725e88f796ef956b74cb929a6102.execution.imagePullSecrets=" + tc.profile}
+				args = []string{"--set-json", "provider.imagePullSecrets=" + tc.provider, "--set-json", "templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.imagePullSecrets=" + tc.profile}
 			}
 			objects, err := renderLifetime(t, nil, args...)
 			if err != nil {
@@ -604,23 +815,23 @@ func TestChartRejectsInvalidPullSecrets(t *testing.T) {
 		{"provider.imagePullSecrets", `[""]`}, {"provider.imagePullSecrets", `["reg","reg"]`},
 		{"provider.imagePullSecrets", `["REG"]`}, {"provider.imagePullSecrets", `["` + strings.Repeat("a", 64) + `"]`},
 		{"provider.imagePullSecrets", `["a","b","c","d","e","f","g","h","i"]`},
-		{"templates.go.revisions.v1-5ba40f3d97f3bab366ee704db599b033d26d725e88f796ef956b74cb929a6102.execution.imagePullSecrets", `["ns/reg"]`}, {"templates.go.revisions.v1-5ba40f3d97f3bab366ee704db599b033d26d725e88f796ef956b74cb929a6102.execution.imagePullSecrets", `["a","a"]`},
-		{"templates.go.revisions.v1-5ba40f3d97f3bab366ee704db599b033d26d725e88f796ef956b74cb929a6102.execution.imagePullSecrets", `["a","b","c","d","e","f","g","h","i"]`},
-		{"templates.go.revisions.v1-5ba40f3d97f3bab366ee704db599b033d26d725e88f796ef956b74cb929a6102.execution.imagePullSecret", `["reg"]`},
+		{"templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.imagePullSecrets", `["ns/reg"]`}, {"templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.imagePullSecrets", `["a","a"]`},
+		{"templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.imagePullSecrets", `["a","b","c","d","e","f","g","h","i"]`},
+		{"templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.imagePullSecret", `["reg"]`},
 	} {
 		if _, err := renderLifetime(t, nil, "--set-json", tc.key+"="+tc.value); err == nil {
 			t.Fatalf("invalid chart value accepted: %s=%s", tc.key, tc.value)
 		}
 	}
-	if _, err := renderLifetime(t, nil, "--set-json", `provider.imagePullSecrets=["a","b","c","d","e","f","g","h"]`, "--set-json", `templates.go.revisions.v1-5ba40f3d97f3bab366ee704db599b033d26d725e88f796ef956b74cb929a6102.execution.imagePullSecrets=["a","b","c","d","e","f","g","h"]`); err != nil {
+	if _, err := renderLifetime(t, nil, "--set-json", `provider.imagePullSecrets=["a","b","c","d","e","f","g","h"]`, "--set-json", `templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.imagePullSecrets=["a","b","c","d","e","f","g","h"]`); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestChartSchedulingSchema(t *testing.T) {
 	objects, err := renderLifetime(t, nil,
-		"--set-json", `templates.go.revisions.v1-5ba40f3d97f3bab366ee704db599b033d26d725e88f796ef956b74cb929a6102.execution.nodeSelector={"node.kubernetes.io/instance-type":"worker"}`,
-		"--set-json", `templates.go.revisions.v1-5ba40f3d97f3bab366ee704db599b033d26d725e88f796ef956b74cb929a6102.execution.tolerations=[{"key":"dedicated","operator":"Equal","value":"build","effect":"NoSchedule"}]`)
+		"--set-json", `templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.nodeSelector={"node.kubernetes.io/instance-type":"worker"}`,
+		"--set-json", `templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.tolerations=[{"key":"dedicated","operator":"Equal","value":"build","effect":"NoSchedule"}]`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -635,15 +846,15 @@ func TestChartSchedulingSchema(t *testing.T) {
 		t.Fatalf("rendered profile scheduling: %v", profile)
 	}
 	for _, tc := range []struct{ key, value string }{
-		{"templates.go.revisions.v1-5ba40f3d97f3bab366ee704db599b033d26d725e88f796ef956b74cb929a6102.execution.nodeSelector", `{}`},
-		{"templates.go.revisions.v1-5ba40f3d97f3bab366ee704db599b033d26d725e88f796ef956b74cb929a6102.execution.tolerations", `[]`},
-		{"templates.go.revisions.v1-5ba40f3d97f3bab366ee704db599b033d26d725e88f796ef956b74cb929a6102.execution.tolerations", `[{"key":"dedicated"}]`},
-		{"templates.go.revisions.v1-5ba40f3d97f3bab366ee704db599b033d26d725e88f796ef956b74cb929a6102.execution.tolerations", `[{"key":"dedicated","operator":"Exists"},{"key":"dedicated","operator":"Exists"}]`},
-		{"templates.go.revisions.v1-5ba40f3d97f3bab366ee704db599b033d26d725e88f796ef956b74cb929a6102.execution.nodeSelector", `{"bad/key/again":"worker"}`},
-		{"templates.go.revisions.v1-5ba40f3d97f3bab366ee704db599b033d26d725e88f796ef956b74cb929a6102.execution.tolerations", `[{"operator":"Exists","value":"build"}]`},
-		{"templates.go.revisions.v1-5ba40f3d97f3bab366ee704db599b033d26d725e88f796ef956b74cb929a6102.execution.tolerations", `[{"key":"dedicated","operator":"Exists","effect":"NoSchedule","tolerationSeconds":1}]`},
-		{"templates.go.revisions.v1-5ba40f3d97f3bab366ee704db599b033d26d725e88f796ef956b74cb929a6102.execution.tolerations", `[{"key":"dedicated","operator":"Exists","effect":"NoExecute","tolerationSeconds":86401}]`},
-		{"templates.go.revisions.v1-5ba40f3d97f3bab366ee704db599b033d26d725e88f796ef956b74cb929a6102.execution.tolerations", `[{"key":"dedicated","operator":"Exists","unknown":true}]`},
+		{"templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.nodeSelector", `{}`},
+		{"templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.tolerations", `[]`},
+		{"templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.tolerations", `[{"key":"dedicated"}]`},
+		{"templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.tolerations", `[{"key":"dedicated","operator":"Exists"},{"key":"dedicated","operator":"Exists"}]`},
+		{"templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.nodeSelector", `{"bad/key/again":"worker"}`},
+		{"templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.tolerations", `[{"operator":"Exists","value":"build"}]`},
+		{"templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.tolerations", `[{"key":"dedicated","operator":"Exists","effect":"NoSchedule","tolerationSeconds":1}]`},
+		{"templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.tolerations", `[{"key":"dedicated","operator":"Exists","effect":"NoExecute","tolerationSeconds":86401}]`},
+		{"templates.go.revisions.v1-b43267b9000cbc1f423785585c4b9f5dbfc07d5ab8acf9426c68b38c23276cd7.execution.tolerations", `[{"key":"dedicated","operator":"Exists","unknown":true}]`},
 	} {
 		if _, err := renderLifetime(t, nil, "--set-json", tc.key+"="+tc.value); err == nil {
 			t.Fatalf("invalid scheduling accepted: %s=%s", tc.key, tc.value)
@@ -710,7 +921,7 @@ func TestChartSecuritySources(t *testing.T) {
 		}
 	}
 	retained["ConfigMap/test-mecatl-execution-security-authority"]["data"] = map[string]any{"state.json": `{"generation":1,"digest":"synthetic"}`}
-	retained["ConfigMap/mecatl-execution-profile-allocations"]["data"] = map[string]any{"profile-go": `["allocation-uid"]`}
+	retained["ConfigMap/mecatl-exec-alloc-4cd0e21a9a0795a14ec9aa5f0e7d1abf"]["data"] = map[string]any{"slots.json": `["allocation-uid"]`}
 	retained["ExecutionEnvironment/exec-test"] = map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "exec-test", "namespace": "ns"}}
 	rotated := strings.Replace(manifest, `"generation":1`, `"generation":2`, 1)
 	rotated = strings.Replace(rotated, `"tls.crt"`, `"next.crt"`, 1)
@@ -723,7 +934,7 @@ func TestChartSecuritySources(t *testing.T) {
 func renderLifetime(t *testing.T, objects map[string]map[string]any, extra ...string) (map[string]map[string]any, error) {
 	t.Helper()
 	values := filepath.Join(t.TempDir(), "templates.yaml")
-	cmd := exec.Command("go", "run", "-tags", "kind_execution_e2e", "../../mecatl-execution-kind/fixture/templates", "../../mecatl-execution-kind/template-recipes.yaml", "example.invalid/workload@sha256:"+strings.Repeat("a", 64), "example.invalid/derivative@sha256:"+strings.Repeat("b", 64), "example.invalid/incompatible@sha256:"+strings.Repeat("c", 64), values)
+	cmd := exec.Command("go", "run", "../../execution-templates", "../../mecatl-execution-kind/template-recipes.yaml", "example.invalid/workload@sha256:"+strings.Repeat("a", 64), "example.invalid/derivative@sha256:"+strings.Repeat("b", 64), "example.invalid/incompatible@sha256:"+strings.Repeat("c", 64), values)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("render canonical fixture templates: %v: %s", err, out)
 	}
@@ -753,6 +964,11 @@ func renderLifetimeWithFile(t *testing.T, objects map[string]map[string]any, val
 		}
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("render attempted mutation: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		var response any
 		switch r.URL.Path {
@@ -816,7 +1032,7 @@ func renderLifetimeWithFile(t *testing.T, objects map[string]map[string]any, val
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	args := []string{"template", "test", ".", "--dry-run=server", "--disable-openapi-validation", "--kubeconfig", config, "--kube-context", "offline", "--namespace", "ns", "-f", values, "--set-string", "provider.image=example.invalid/provider@sha256:" + strings.Repeat("a", 64), "--set", "provider.securitySecretName=synthetic", "--set-literal", `provider.securityManifest={"version":1,"generation":1,"tls":{"certificateFile":"tls.crt","privateKeyFile":"tls.key","clientCAFile":"clients.pem"},"clients":[{"uri":"spiffe://mecatl.test/client/test","mayAttestOwner":true}]}`, "--set-json", `networkPolicy.workloadProfiles={"go":{"egress":[{"cidr":"10.2.0.0/16","ports":[{"port":8080}]}]}}`}
+	args := []string{"template", "test", ".", "--dry-run=server", "--disable-openapi-validation", "--kubeconfig", config, "--kube-context", "offline", "--namespace", "ns", "-f", values, "--set-string", "provider.image=example.invalid/provider@sha256:" + strings.Repeat("a", 64), "--set", "provider.securitySecretName=synthetic", "--set-literal", `provider.securityManifest={"version":1,"generation":1,"tls":{"certificateFile":"tls.crt","privateKeyFile":"tls.key","clientCAFile":"clients.pem"},"clients":[{"uri":"spiffe://mecatl.test/client/test","mayAttestOwner":true}]}`, "--set-json", `networkPolicy.workloadProfiles={"go":{"egress":[{"cidr":"10.2.0.0/16","ports":[{"port":8080}]}]}}`, "--set-json", `resourceGovernance={"enabled":true,"pods":"30","persistentVolumeClaims":"25","executionEnvironments":"25","requestsCPU":"5","requestsMemory":"8Gi","requestsStorage":"30Gi","requestsEphemeralStorage":"8Gi","limitsCPU":"25","limitsMemory":"30Gi","limitsEphemeralStorage":"30Gi"}`}
 	cmd := exec.CommandContext(ctx, "helm", append(args, extra...)...)
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "KUBECONFIG=" + config}
 	var stderr bytes.Buffer

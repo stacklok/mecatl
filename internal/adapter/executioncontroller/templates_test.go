@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,9 +18,13 @@ import (
 	"github.com/stacklok/mecatl/internal/executionenv"
 )
 
-func templateFixture(t *testing.T, entries map[string]TemplateRevision, defaultRevision string) (*Profiles, string) {
+func templateFixture(t *testing.T, entries map[string]TemplateRevision, defaultRevision string, capacity ...int) (*Profiles, string) {
 	t.Helper()
-	file := TemplatesFile{Templates: map[string]TemplateDefinition{"go": {Default: defaultRevision, Revisions: entries}}}
+	limit := 100
+	if len(capacity) != 0 {
+		limit = capacity[0]
+	}
+	file := TemplatesFile{Templates: map[string]TemplateDefinition{"go": {Default: defaultRevision, MaxEnvironments: limit, Revisions: entries}}}
 	body, err := yaml.Marshal(file)
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +54,6 @@ func TestExecutionTemplateHistoryAcrossRestart(t *testing.T) {
 	oldSpec := testProfiles().byName["go"].Spec
 	newSpec := oldSpec
 	newSpec.Image = strings.Replace(oldSpec.Image, "aaaa", "bbbb", 1)
-	newSpec.MaxEnvironments = oldSpec.MaxEnvironments - 1
 	oldRev, newRev := fixtureRevision(t, oldSpec), fixtureRevision(t, newSpec)
 	old := TemplateRevision{Execution: oldSpec, Display: TemplateDisplay{Name: "Old", Extensions: map[string]map[string]string{"example.com/catalog": {"schema_version": "1", "category": "docs"}}}}
 	newer := TemplateRevision{Execution: newSpec}
@@ -66,8 +70,8 @@ func TestExecutionTemplateHistoryAcrossRestart(t *testing.T) {
 		t.Fatalf("allocation lacks exact revision: %v: %v", env, err)
 	}
 	updated, _ := templateFixture(t, map[string]TemplateRevision{oldRev: {Execution: oldSpec, Deprecated: true, Display: TemplateDisplay{Name: "Renamed"}}, newRev: newer}, newRev)
-	if updated.capacity("go") != newSpec.MaxEnvironments {
-		t.Fatal("template revisions do not share the strictest ID-wide capacity")
+	if updated.capacity("go") != 100 {
+		t.Fatal("template revisions do not share the ID-wide policy capacity")
 	}
 	oldLoaded, ok := updated.forEnvironment(env)
 	if !ok || oldLoaded.Spec.Image != oldSpec.Image || oldLoaded.Digest != initial.revisions["go"][oldRev].Digest {
@@ -99,11 +103,45 @@ func TestExecutionTemplateHistoryAcrossRestart(t *testing.T) {
 	}
 }
 
+func TestHistoricalDefinitionsDoNotConsumeSelectableSlots(t *testing.T) {
+	base := testProfiles().byName["go"].Spec
+	revisions := make(map[string]TemplateRevision)
+	var current string
+	for i := range 65 {
+		spec := base
+		spec.Image = fmt.Sprintf("example.invalid/workload@sha256:%064x", i+1)
+		revision := fixtureRevision(t, spec)
+		entry := TemplateRevision{Execution: spec, Deprecated: true}
+		if i == 64 {
+			entry.Deprecated = false
+			current = revision
+		}
+		revisions[revision] = entry
+	}
+	profiles, _ := templateFixture(t, revisions, current)
+	items := NewStore(dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()), "ns", profiles, nil).CatalogTemplates()
+	if len(profiles.revisions["go"]) != 65 || len(items) != 1 || items[0].GetTemplate().GetRevision() != current {
+		t.Fatal("historical revisions consumed public selectable catalog slots")
+	}
+}
+
+func TestTemplateQuotaPolicyDoesNotChangeRecipe(t *testing.T) {
+	spec := testProfiles().byName["go"].Spec
+	revision := fixtureRevision(t, spec)
+	entries := map[string]TemplateRevision{revision: {Execution: spec}}
+	old, _ := templateFixture(t, entries, revision, 100)
+	grown, _ := templateFixture(t, entries, revision, 1000)
+	shrunk, _ := templateFixture(t, entries, revision, 1)
+	if old.revisions["go"][revision].Digest != grown.revisions["go"][revision].Digest || grown.revisions["go"][revision].Digest != shrunk.revisions["go"][revision].Digest || old.capacity("go") != 100 || grown.capacity("go") != 1000 || shrunk.capacity("go") != 1 {
+		t.Fatal("quota changed immutable recipe or did not follow current policy")
+	}
+}
+
 func TestExecutionTemplateDisplayDoesNotChangeRevision(t *testing.T) {
 	spec := testProfiles().byName["go"].Spec
 	revision := fixtureRevision(t, spec)
 	p, path := templateFixture(t, map[string]TemplateRevision{revision: {Execution: spec, Display: TemplateDisplay{Name: "Display"}}}, revision)
-	if p.capacity("go") != spec.MaxEnvironments {
+	if p.capacity("go") != 100 {
 		t.Fatal("capacity is not pooled by template ID")
 	}
 	display := NewStore(dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()), "ns", p, nil).CatalogTemplates()[0]
@@ -137,7 +175,7 @@ func TestExecutionTemplateRetainedOnlyLastRevisionReload(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, policy := range []TemplateRevision{{Execution: spec, Deprecated: true}, {Execution: spec, Revoked: true}} {
-		encoded, err := yaml.Marshal(TemplatesFile{Templates: map[string]TemplateDefinition{"go": {Revisions: map[string]TemplateRevision{revision: policy}}}})
+		encoded, err := yaml.Marshal(TemplatesFile{Templates: map[string]TemplateDefinition{"go": {MaxEnvironments: 100, Revisions: map[string]TemplateRevision{revision: policy}}}})
 		if err != nil {
 			t.Fatal(err)
 		}

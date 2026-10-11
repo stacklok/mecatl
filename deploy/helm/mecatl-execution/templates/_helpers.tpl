@@ -29,6 +29,24 @@ annotations:
   meta.helm.sh/release-namespace: {{ .root.Release.Namespace | quote }}
 {{- end -}}
 
+{{- define "mecatl-execution.capacitySlots" -}}
+{{- $slots := mustFromJson . -}}
+{{- if not (kindIs "slice" $slots) -}}
+{{- fail "retained capacity ledger must contain an array of unique allocation IDs" -}}
+{{- end -}}
+{{- $seen := dict -}}
+{{- range $slot := $slots -}}
+{{- if not (kindIs "string" $slot) -}}
+{{- fail "retained capacity ledger must contain string allocation IDs" -}}
+{{- end -}}
+{{- if or (gt (len $slot) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" $slot)) (hasKey $seen $slot) -}}
+{{- fail "retained capacity ledger contains an invalid or duplicate allocation ID" -}}
+{{- end -}}
+{{- $_ := set $seen $slot true -}}
+{{- end -}}
+{{- toJson $slots -}}
+{{- end -}}
+
 {{/* Frozen workload identity prevents orphan allow policies from widening egress. */}}
 {{- define "mecatl-execution.lifetimeConfig" -}}
 {{- $definitions := dict -}}
@@ -55,9 +73,11 @@ annotations:
 {{- end -}}
 {{- end -}}
 {{- end -}}
+{{- if and (not ($definition.deprecated | default false)) (not ($definition.revoked | default false)) -}}
 {{- $total = add1 $total -}}
 {{- if gt $total 64 -}}
-{{- fail "execution template inventory exceeds 64 revisions" -}}
+{{- fail "execution template inventory exceeds 64 selectable revisions" -}}
+{{- end -}}
 {{- end -}}
 {{- $_ := set $revisions $revision $definition.execution -}}
 {{- end -}}

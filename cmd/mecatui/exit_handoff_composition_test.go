@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -117,11 +118,11 @@ func TestMecatuiExitHandoff_Scenario1_EmbeddedComposition(t *testing.T) {
 	_, _ = os.Stderr.WriteString("handoff-child-cleaned\n")
 }
 
-func compositionChildEnv(t *testing.T, scenario string) []string {
+func compositionChildEnv(t *testing.T, root, scenario string) []string {
 	t.Helper()
-	root := compositionScratchRoot(t)
 	paths := map[string]string{
 		"HOME":                                filepath.Join(root, "home"),
+		"TMPDIR":                              filepath.Join(root, "tmp"),
 		"XDG_CONFIG_HOME":                     filepath.Join(root, "config"),
 		"XDG_STATE_HOME":                      filepath.Join(root, "state"),
 		"XDG_DATA_HOME":                       filepath.Join(root, "data"),
@@ -134,8 +135,14 @@ func compositionChildEnv(t *testing.T, scenario string) []string {
 			t.Fatalf("create %s: %v", name, err)
 		}
 	}
+	if runtime.GOOS == "linux" {
+		// The child cwd is the managed fixture root; the alias stays absolute
+		// and short without allocating sockets outside that fixture.
+		paths["XDG_RUNTIME_DIR"] = "/proc/self/cwd/runtime"
+	}
 	return []string{
 		"HOME=" + paths["HOME"],
+		"TMPDIR=" + paths["TMPDIR"],
 		"XDG_CONFIG_HOME=" + paths["XDG_CONFIG_HOME"],
 		"XDG_STATE_HOME=" + paths["XDG_STATE_HOME"],
 		"XDG_DATA_HOME=" + paths["XDG_DATA_HOME"],
@@ -150,12 +157,12 @@ func compositionChildEnv(t *testing.T, scenario string) []string {
 func compositionScratchRoot(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	if len(filepath.Join(root, "runtime", "mecatui-0123456789", "mecated.sock")) < 100 {
+	if runtime.GOOS == "linux" || len(filepath.Join(root, "runtime", "mecatui-0123456789", "mecated.sock")) < 100 {
 		return root
 	}
 
-	// Managed temp roots can exceed the Unix socket-path limit; use the OS tmpfs only then.
-	root, err := os.MkdirTemp("/dev/shm", "mecatui-")
+	// Drop testing's long test-name prefix, but keep the platform/managed temp base.
+	root, err := os.MkdirTemp("", "mh-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +177,8 @@ func checkEmbeddedCompositionChild(t *testing.T, scenario string) {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(exe, "-test.run=^TestMecatuiExitHandoff_Scenario1_EmbeddedComposition$")
-	cmd.Env = compositionChildEnv(t, scenario)
+	cmd.Dir = compositionScratchRoot(t)
+	cmd.Env = compositionChildEnv(t, cmd.Dir, scenario)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {

@@ -27,7 +27,9 @@ rules:
   resources: ["configmaps"]
   resourceNames:
   - {{ printf "%s-security-authority" (include "mecatl-execution.fullname" .) | quote }}
-  - "mecatl-execution-profile-allocations"
+  {{- range $id, $_ := .Values.templates }}
+  - {{ printf "mecatl-exec-alloc-%s" (sha256sum $id | trunc 32) | quote }}
+  {{- end }}
   verbs: ["get", "update"]
 - apiGroups: [""]
   resources: ["pods"]

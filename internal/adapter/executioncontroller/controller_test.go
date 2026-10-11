@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -18,6 +19,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	kubefake "k8s.io/client-go/kubernetes/fake"
@@ -635,9 +637,94 @@ func TestStartupDoesNotFenceLivePeerOperation(t *testing.T) {
 		t.Fatalf("startup mutated a potentially live peer operation: status=%v", got.Object["status"])
 	}
 }
+func TestProfilePreflightSkipsUnusedHistoricalClass(t *testing.T) {
+	registry := testProfiles()
+	revision := registry.defaultRevision["go"]
+	historical := registry.revisions["go"][revision]
+	historical.Spec.RuntimeClassName = "retired-runtime"
+	historical.Spec.StorageClass = "retired-storage"
+	registry.revisions["go"]["historical"] = historical
+	registry.eligibility["go"]["historical"] = TemplatePolicy{Deprecated: true}
+	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{ExecutionEnvironmentGVR: "ExecutionEnvironmentList"})
+	if err := NewReconciler(client, profileResourceClient(), "ns", registry).preflightProfiles(t.Context()); err != nil {
+		t.Fatalf("unused history prevented startup: %v", err)
+	}
+	env := testEnvironment()
+	if err := unstructured.SetNestedField(env.Object, "historical", "spec", "templateRevision"); err != nil {
+		t.Fatal(err)
+	}
+	client = dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+	if err := NewReconciler(client, profileResourceClient(), "ns", registry).preflightProfiles(t.Context()); err == nil || !strings.Contains(err.Error(), `RuntimeClass "retired-runtime" unavailable`) {
+		t.Fatalf("allocated history missing runtime class: %v", err)
+	}
+}
+
+func TestProfilePreflightDeduplicatesClassesAfterValidatingEveryAllocation(t *testing.T) {
+	for _, failure := range []string{"", "runtimeclasses", "storageclasses", "templateDigest", "templateRevision"} {
+		t.Run("failure="+failure, func(t *testing.T) {
+			registry := testProfiles()
+			historical := registry.byName["go"]
+			historical.Spec.RuntimeClassName = "retired-runtime"
+			historical.Spec.StorageClass = "retired-storage"
+			registry.revisions["go"]["historical"] = historical
+			registry.eligibility["go"]["historical"] = TemplatePolicy{Deprecated: true}
+			objects := make([]runtime.Object, 1000)
+			for i := range objects {
+				env := testEnvironment()
+				env.SetName(fmt.Sprintf("exec-%04d", i))
+				if i >= 500 {
+					if err := unstructured.SetNestedField(env.Object, "historical", "spec", "templateRevision"); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if i == len(objects)-1 && strings.HasPrefix(failure, "template") {
+					if err := unstructured.SetNestedField(env.Object, "invalid", "spec", failure); err != nil {
+						t.Fatal(err)
+					}
+				}
+				objects[i] = env
+			}
+			kube := profileResourceClient()
+			if failure != "runtimeclasses" {
+				if err := kube.Tracker().Add(&nodev1.RuntimeClass{ObjectMeta: metav1.ObjectMeta{Name: "retired-runtime"}}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if failure != "storageclasses" {
+				if err := kube.Tracker().Add(&storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: "retired-storage"}}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), objects...)
+			err := NewReconciler(client, kube, "ns", registry).preflightProfiles(t.Context())
+			want := map[string]string{"runtimeclasses": `RuntimeClass "retired-runtime" unavailable`, "storageclasses": `StorageClass "retired-storage" unavailable`, "templateDigest": `retained allocation "exec-0999" has no matching template definition`, "templateRevision": `retained allocation "exec-0999" has no matching template definition`}[failure]
+			if failure == "" && err != nil || failure != "" && (err == nil || !strings.Contains(err.Error(), want)) {
+				t.Fatalf("preflight = %v, want %q", err, want)
+			}
+			gets := map[string]int{}
+			for _, action := range kube.Actions() {
+				get, ok := action.(k8stesting.GetAction)
+				if !ok {
+					t.Fatalf("unexpected action: %v", action)
+				}
+				gets[get.GetResource().Resource+"/"+get.GetName()]++
+			}
+			if failure == "" {
+				wantGets := map[string]int{"runtimeclasses/sandboxed": 1, "runtimeclasses/retired-runtime": 1, "storageclasses/standard": 1, "storageclasses/retired-storage": 1}
+				if !reflect.DeepEqual(gets, wantGets) {
+					t.Fatalf("class GETs = %v, want %v", gets, wantGets)
+				}
+			}
+			if strings.HasPrefix(failure, "template") && len(gets) != 0 {
+				t.Fatalf("classes queried before validating all allocations: %v", gets)
+			}
+		})
+	}
+}
+
 func TestInitializeRefusesMissingRuntimeClassBeforeCreatingPods(t *testing.T) {
 	kube := kubefake.NewSimpleClientset(&storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: "standard"}})
-	r := NewReconciler(dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()), kube, "ns", testProfiles())
+	r := NewReconciler(dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{ExecutionEnvironmentGVR: "ExecutionEnvironmentList"}), kube, "ns", testProfiles())
 	err := r.Initialize(t.Context())
 	if err == nil || !strings.Contains(err.Error(), `profile preflight: RuntimeClass "sandboxed" unavailable`) {
 		t.Fatalf("Initialize error = %v", err)
@@ -714,7 +801,7 @@ func TestRevokedTemplateStopsExecutorWithoutDeletingRetainedPVC(t *testing.T) {
 }
 
 func testProfiles() *Profiles {
-	spec := ProfileSpec{Image: "example@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", StorageClass: "standard", StorageSize: "1Gi", CPURequest: "100m", MemoryRequest: "64Mi", CPULimit: "1", MemoryLimit: "1Gi", EphemeralStorageRequest: "64Mi", EphemeralStorageLimit: "1Gi", TmpSizeLimit: "256Mi", RuntimeClassName: "sandboxed", MaxFileBytes: 1024, MaxCommandBytes: 1024, MaxCommandDuration: time.Minute, MaxEnvironments: 100}
+	spec := ProfileSpec{Image: "example@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", StorageClass: "standard", StorageSize: "1Gi", CPURequest: "100m", MemoryRequest: "64Mi", CPULimit: "1", MemoryLimit: "1Gi", EphemeralStorageRequest: "64Mi", EphemeralStorageLimit: "1Gi", TmpSizeLimit: "256Mi", RuntimeClassName: "sandboxed", MaxFileBytes: 1024, MaxCommandBytes: 1024, MaxCommandDuration: time.Minute}
 	profile, err := validateProfile("go", spec)
 	if err != nil {
 		panic(err)
@@ -727,7 +814,7 @@ func testProfiles() *Profiles {
 	revision := "v1-" + hex.EncodeToString(sum[:])
 	profile.Spec = spec
 	profile.Digest = "sha256:" + hex.EncodeToString(sum[:])
-	return &Profiles{byName: map[string]resolvedProfile{"go": profile}, defaultRevision: map[string]string{"go": revision}, revisions: map[string]map[string]resolvedProfile{"go": {revision: profile}}, eligibility: map[string]map[string]TemplatePolicy{"go": {revision: {}}}, executorServiceAccount: "test-mecatl-execution-executor"}
+	return &Profiles{byName: map[string]resolvedProfile{"go": profile}, defaultRevision: map[string]string{"go": revision}, revisions: map[string]map[string]resolvedProfile{"go": {revision: profile}}, eligibility: map[string]map[string]TemplatePolicy{"go": {revision: {}}}, capacityLimit: map[string]int{"go": 100}, executorServiceAccount: "test-mecatl-execution-executor"}
 }
 func testEnvironment() *unstructured.Unstructured {
 	registry := testProfiles()

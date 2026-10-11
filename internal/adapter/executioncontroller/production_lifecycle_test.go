@@ -252,7 +252,7 @@ func TestAdmittedRetireAndDeleteIgnoreLaterProfileDrift(t *testing.T) {
 			_ = unstructured.SetNestedField(env.Object, pod.Name, "status", "pod", "name")
 			_ = unstructured.SetNestedField(env.Object, pvc.Name, "status", "pvc", "name")
 			dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-			allocations := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap, Namespace: "ns"}, Data: map[string]string{profileAllocationKey("go"): `["env"]`}}
+			allocations := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap("go"), Namespace: "ns"}, Data: map[string]string{profileAllocationKey("go"): `["env"]`}}
 			kube := kubefake.NewSimpleClientset(pod, pvc, allocations)
 			kube.PrependReactor("delete", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
 				obj, err := kube.Tracker().Get(corev1.SchemeGroupVersion.WithResource("pods"), "ns", action.(k8stesting.DeleteAction).GetName())

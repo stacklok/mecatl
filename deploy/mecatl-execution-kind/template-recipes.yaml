@@ -1,4 +1,4 @@
-# Input to the tagged fixture renderer; never pass directly to Helm.
+# Input to deploy/execution-templates; never pass directly to Helm.
 recipes:
   go:
     storageClass: standard

@@ -22,8 +22,9 @@ type TemplatesFile struct {
 
 // TemplateDefinition is the operator-owned template and revision declaration.
 type TemplateDefinition struct {
-	Default   string                      `yaml:"default"`
-	Revisions map[string]TemplateRevision `yaml:"revisions"`
+	Default         string                      `yaml:"default"`
+	MaxEnvironments int                         `yaml:"maxEnvironments"`
+	Revisions       map[string]TemplateRevision `yaml:"revisions"`
 }
 
 // TemplateRevision is one immutable execution definition and its lifecycle policy.
@@ -50,10 +51,15 @@ type TemplatePolicy struct {
 
 // LoadTemplates rejects unknown fields and any revision not matching its v1
 // canonical execution digest. Display and policy edits do not change revisions.
+//
+//nolint:gocyclo // Keep definition validation and catalog bounds in one auditable load path.
 func LoadTemplates(path string) (*Profiles, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read execution templates: %w", err)
+	}
+	if len(b) > 1<<20 {
+		return nil, errors.New("execution templates file exceeds Kubernetes 1 MiB ConfigMap data limit")
 	}
 	var f TemplatesFile
 	if err := yaml.UnmarshalWithOptions(b, &f, yaml.DisallowUnknownField()); err != nil {
@@ -62,16 +68,13 @@ func LoadTemplates(path string) (*Profiles, error) {
 	if len(f.Templates) == 0 || len(f.Templates) > 64 {
 		return nil, errors.New("execution templates require 1..64 IDs")
 	}
-	p := &Profiles{byName: make(map[string]resolvedProfile), defaultRevision: make(map[string]string), revisions: make(map[string]map[string]resolvedProfile), eligibility: make(map[string]map[string]TemplatePolicy), catalog: make(map[string]map[string]TemplateDisplay)}
+	p := &Profiles{byName: make(map[string]resolvedProfile), defaultRevision: make(map[string]string), revisions: make(map[string]map[string]resolvedProfile), eligibility: make(map[string]map[string]TemplatePolicy), capacityLimit: make(map[string]int), catalog: make(map[string]map[string]TemplateDisplay)}
 	total := 0
 	for id, t := range f.Templates {
-		total += len(t.Revisions)
-		if total > 64 {
-			return nil, errors.New("execution template inventory exceeds 64 revisions")
+		if len(validation.IsDNS1123Label(id)) != 0 || len(t.Revisions) == 0 || t.MaxEnvironments <= 0 {
+			return nil, fmt.Errorf("invalid execution template %q: require revisions and positive maxEnvironments", id)
 		}
-		if len(validation.IsDNS1123Label(id)) != 0 || len(t.Revisions) == 0 || len(t.Revisions) > 32 {
-			return nil, fmt.Errorf("invalid execution template %q", id)
-		}
+		p.capacityLimit[id] = t.MaxEnvironments
 		p.revisions[id] = make(map[string]resolvedProfile)
 		p.eligibility[id] = make(map[string]TemplatePolicy)
 		p.catalog[id] = make(map[string]TemplateDisplay)
@@ -80,21 +83,25 @@ func LoadTemplates(path string) (*Profiles, error) {
 			if err != nil {
 				return nil, err
 			}
-			canonical, err := json.Marshal(definition.Execution)
+			want, err := CanonicalTemplateRevision(definition.Execution)
 			if err != nil {
 				return nil, err
 			}
-			sum := sha256.Sum256(append([]byte("mecatl/execution-template/v1\x00"), canonical...))
-			want := "v1-" + hex.EncodeToString(sum[:])
 			if revision != want {
 				return nil, fmt.Errorf("execution template %q revision does not match canonical execution definition: expected %s", id, want)
 			}
 			if err := validateTemplateDisplay(definition.Display); err != nil {
 				return nil, fmt.Errorf("execution template %q display: %w", id, err)
 			}
-			resolved.Spec, resolved.Digest = definition.Execution, "sha256:"+hex.EncodeToString(sum[:])
+			resolved.Spec, resolved.Digest = definition.Execution, "sha256:"+strings.TrimPrefix(want, "v1-")
 			p.revisions[id][revision] = resolved
 			p.eligibility[id][revision] = TemplatePolicy{Deprecated: definition.Deprecated, Revoked: definition.Revoked}
+			if !definition.Deprecated && !definition.Revoked {
+				total++
+				if total > 64 {
+					return nil, errors.New("execution template inventory exceeds 64 selectable revisions")
+				}
+			}
 			p.catalog[id][revision] = definition.Display
 		}
 		if t.Default != "" {
@@ -113,6 +120,18 @@ func LoadTemplates(path string) (*Profiles, error) {
 		}
 	}
 	return p, nil
+}
+
+// CanonicalTemplateRevision returns the v1 identity of the execution recipe.
+// Admission policy and display metadata are deliberately outside ProfileSpec.
+// Call LoadTemplates to validate the complete definition before publishing it.
+func CanonicalTemplateRevision(spec ProfileSpec) (string, error) {
+	canonical, err := json.Marshal(spec)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(append([]byte("mecatl/execution-template/v1\x00"), canonical...))
+	return "v1-" + hex.EncodeToString(sum[:]), nil
 }
 
 func validateTemplateDisplay(d TemplateDisplay) error {
@@ -173,11 +192,5 @@ func (p *Profiles) isRevoked(env *unstructured.Unstructured) bool {
 }
 
 func (p *Profiles) capacity(id string) int {
-	limit := 10000
-	for _, v := range p.revisions[id] {
-		if v.Spec.MaxEnvironments < limit {
-			limit = v.Spec.MaxEnvironments
-		}
-	}
-	return limit
+	return p.capacityLimit[id]
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -65,9 +66,9 @@ func TestProfileEnvironmentAdmissionLimit(t *testing.T) {
 	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{ExecutionEnvironmentGVR: "ExecutionEnvironmentList"}, env)
 	profiles := testProfiles()
 	profile := profiles.byName["go"]
-	profile.Spec.MaxEnvironments = 1
+	profiles.capacityLimit["go"] = 1
 	profiles.revisions["go"][profiles.defaultRevision["go"]] = profile
-	store := NewStore(client, "ns", profiles, nil).WithKubeClient(kubernetesfake.NewSimpleClientset())
+	store := NewStore(client, "ns", profiles, nil).WithKubeClient(kubernetesfake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap("go"), Namespace: "ns"}, Data: map[string]string{profileAllocationKey("go"): "[]"}}))
 	owner := executionenv.Owner{Issuer: "issuer", Subject: "subject"}
 	_, err := store.EnsurePendingOwnedRevision(t.Context(), "client", ownerHash(owner), owner, "new-binding", "go", profiles.defaultRevision["go"], "new-fingerprint", "new-operation")
 	var controlled *executionenv.Error
