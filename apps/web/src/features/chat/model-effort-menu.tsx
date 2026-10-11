@@ -60,6 +60,7 @@ export function modelLabel(
  * session's model or effort.
  */
 export function ModelEffortMenu({
+  className,
   disabled,
   effort,
   groupedModels,
@@ -68,6 +69,8 @@ export function ModelEffortMenu({
   onModelChange,
   onReset,
 }: {
+  /** Extra trigger classes, such as letting the pill shrink in a narrow row. */
+  className?: string;
   disabled?: boolean;
   effort: string;
   groupedModels: Map<string, ComposerModelOption[]>;
@@ -86,9 +89,14 @@ export function ModelEffortMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild disabled={disabled}>
-        <button className={GHOST_TRIGGER_CLASS} type="button">
+        <button
+          className={cn(GHOST_TRIGGER_CLASS, className)}
+          title={`Model: ${label} · ${effortLabel(effort)}`}
+          type="button"
+        >
           <span>Model</span>
-          <span className="text-muted-foreground @max-md:hidden">
+          {/* Truncates when the trigger may shrink; the title keeps the whole choice. */}
+          <span className="min-w-0 truncate text-muted-foreground @max-md:hidden">
             {label} · {effortLabel(effort)}
           </span>
           <ChevronDown aria-hidden="true" className="size-3.5 text-muted-foreground" />

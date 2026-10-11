@@ -402,8 +402,9 @@ export function SideThreadPanel({
             {/* Hidden without a deployment model inventory: see the note in
                 chat-composer.tsx. */}
             {models.length > 0 ? (
-              <div className="-mt-4 flex items-center gap-1 rounded-b-2xl border border-t-0 border-zinc-300 bg-zinc-50 px-2 pt-5 pb-1.5 dark:border-zinc-700 dark:bg-zinc-900">
+              <div className="-mt-4 flex min-w-0 items-center gap-1 rounded-b-2xl border border-t-0 border-zinc-300 bg-zinc-50 px-2 pt-5 pb-1.5 dark:border-zinc-700 dark:bg-zinc-900">
                 <ModelEffortMenu
+                  className="min-w-0 shrink"
                   disabled={busy || !sessionDetail.data?.capabilities.modelSelection}
                   effort={model?.reasoningEffort ?? "default"}
                   groupedModels={groupModels(models)}
