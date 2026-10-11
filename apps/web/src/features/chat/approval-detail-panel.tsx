@@ -28,11 +28,16 @@ export interface ApprovalDetail {
  */
 export function ApprovalDetailPanel({
   approval,
+  closeHint = false,
   disabled,
   onRespond,
   scope,
   uncertain,
-}: Omit<ApprovalDetail, "position" | "total"> & { scope: RefObject<HTMLElement | null> }) {
+}: Omit<ApprovalDetail, "position" | "total"> & {
+  /** Escape closes this panel: it shows an ask other than the surface's active one. */
+  closeHint?: boolean;
+  scope: RefObject<HTMLElement | null>;
+}) {
   const destructive = isDestructiveToolName(approval.tool);
   const active = useActiveEscapeAsk(approval) && !disabled && !uncertain;
 
@@ -62,7 +67,11 @@ export function ApprovalDetailPanel({
           shortcuts={active}
         />
       </div>
-      {active && <p className="mt-2 text-xs text-muted-foreground">Esc to Deny</p>}
+      {active ? (
+        <p className="mt-2 text-xs text-muted-foreground">Esc to Deny</p>
+      ) : (
+        closeHint && <p className="mt-2 text-xs text-muted-foreground">Esc to Close</p>
+      )}
     </div>
   );
 }

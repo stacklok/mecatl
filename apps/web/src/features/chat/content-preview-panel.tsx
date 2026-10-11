@@ -215,7 +215,9 @@ function GenericPreviewPanel({
           <FileText aria-hidden="true" className="size-4 text-brand-ink" />
         )
       }
-      escapeHint={escapeHint}
+      // An ask's panel shows its Escape hint under its verdicts, beside "Esc to
+      // Deny", so the header never squeezes the tool name the reader approves.
+      escapeHint={preview.kind !== "approval" && escapeHint}
       onClose={close}
       onKeyDown={handleKeyDown}
       restoreFocusOnClose={preview.kind !== "activity"}
@@ -234,6 +236,7 @@ function GenericPreviewPanel({
           key={`${preview.runId}\u0000${preview.askId}`}
           approval={approval.approval}
           disabled={approval.disabled}
+          closeHint={escapeHint}
           onRespond={approval.onRespond}
           scope={frame}
           uncertain={approval.uncertain}

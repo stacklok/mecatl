@@ -1253,6 +1253,8 @@ describe("approval focus scope", () => {
     fireEvent.click(within(second).getByRole("button", { name: "Open in detail panel" }));
     panel = await screen.findByRole("complementary", { name: "Edit" });
     expect(within(panel).getByText("Esc to Close")).toBeTruthy();
+    // Under the verdicts, not in the header, where it would squeeze the tool name.
+    expect(panel.querySelector("header")?.textContent).not.toContain("Esc to Close");
     expect(within(panel).queryByText("Esc to Deny")).toBeNull();
     expect(panel.querySelector("kbd")).toBeNull();
     fireEvent.click(within(panel).getByRole("button", { name: "Close panel" }));
