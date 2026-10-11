@@ -3023,7 +3023,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
               variant="ghost"
             >
               <ListTodo aria-hidden="true" />
-              <span className="hidden @min-[38.5rem]/chat-header:inline">Activity</span>
+              {/* 35.5rem is the header's content box at a 640px viewport (less the
+                  main margins and the header's padding), where the labels started. */}
+              <span className="hidden @min-[35.5rem]/chat-header:inline">Activity</span>
             </Button>
             {!(isMobile && sessionId) && (
               <Button
@@ -3033,7 +3035,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                 variant="ghost"
               >
                 <NotebookPen aria-hidden="true" />
-                <span className="hidden @min-[38.5rem]/chat-header:inline">Canvas</span>
+                <span className="hidden @min-[35.5rem]/chat-header:inline">Canvas</span>
               </Button>
             )}
             {sessionId && (

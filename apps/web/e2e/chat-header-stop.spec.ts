@@ -270,6 +270,34 @@ test("the running chat header fits from 500px, beside the chat list too", async 
   }
 });
 
+test("the Activity and Canvas labels show from 640px without the chat list, as before", async ({
+  offlineBff,
+  page,
+}) => {
+  runningSession(offlineBff);
+  await page.setViewportSize({ height: 800, width: 1280 });
+  await page.goto(`/workspace/chat?sessionId=${sessionId}`);
+  const header = page.locator("header").filter({ has: page.getByRole("button", { name: "Stop" }) });
+  await expect(header.getByRole("button", { exact: true, name: "Stop" })).toBeVisible();
+  const labels = [
+    header.getByText("Activity", { exact: true }),
+    header.getByText("Canvas", { exact: true }),
+  ];
+  // Below 760px the chat list is not beside the chat; 640px was the first width with labels.
+  for (const [width, shown] of [
+    [639, false],
+    [640, true],
+    [700, true],
+    [759, true],
+  ] as const) {
+    await page.setViewportSize({ height: 800, width });
+    for (const label of labels) {
+      if (shown) await expect(label, `label at ${width}px`).toBeVisible();
+      else await expect(label, `label at ${width}px`).toBeHidden();
+    }
+  }
+});
+
 /** One delegation event on the live run. */
 function delegation(seq: number, kind: string, payload: Record<string, unknown>): RunStreamEvent {
   return {
