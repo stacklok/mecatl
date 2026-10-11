@@ -167,6 +167,12 @@ patterns use shell-style glob matching. The `permissions:` section parses
 strictly, so a misspelled key causes the file to be skipped rather than silently
 changing the policy.
 
+A pattern matches the argument value that the tool runs with. Mecatl rejects a
+tool call whose arguments repeat a key, or spell an argument in a different
+letter case, before any rule, hook, or approval request sees the call. The model
+receives an error and can resend the call with each argument spelled as in the
+tool schema.
+
 The configuration scopes, from highest to lowest precedence, are:
 
 1. managed policy;

@@ -118,6 +118,9 @@ func (e *Evaluator) Evaluate(tool string, args json.RawMessage, planMode bool) P
 // The static rules are never mutated: a fresh slice (static followed by extra) is
 // resolved per call, preserving the Evaluator's immutability.
 func (e *Evaluator) EvaluateWith(tool string, args json.RawMessage, planMode bool, extra []Rule) PermissionDecision {
+	if d, ambiguous := ambiguousArgsDecision(args); ambiguous {
+		return d
+	}
 	if planMode {
 		if d, blocked := planModeDecision(tool, args); blocked {
 			return d
@@ -130,6 +133,24 @@ func (e *Evaluator) EvaluateWith(tool string, args json.RawMessage, planMode boo
 	merged = append(merged, e.rules...)
 	merged = append(merged, extra...)
 	return e.resolve(merged, tool, args)
+}
+
+// ambiguousArgsDecision denies a call whose arguments are not in the canonical
+// form CheckToolArgs requires. It runs before plan mode and every rule, so no
+// rule, learned allow or posture can admit a call whose fields different readers
+// would decode differently.
+func ambiguousArgsDecision(args json.RawMessage) (PermissionDecision, bool) {
+	err := CheckToolArgs(args)
+	if err == nil {
+		return PermissionDecision{}, false
+	}
+	return PermissionDecision{Effect: Deny, Reason: AmbiguousArgsReason(err)}, true
+}
+
+// AmbiguousArgsReason renders the model-facing reason for a call refused by
+// CheckToolArgs, telling the model how to resend it.
+func AmbiguousArgsReason(err error) string {
+	return err.Error() + "; send each argument once, spelled exactly as in the tool schema"
 }
 
 // LearnableRule derives the per-session allow rule the Evaluator WOULD learn for
@@ -176,6 +197,9 @@ func (*Evaluator) LearnableRule(tool string, args json.RawMessage) (Rule, bool) 
 // every other tool it reuses nonShellPattern (the path/target field). An empty
 // derived pattern is returned as-is so the caller refuses a tool-wide grant.
 func learnablePattern(tool string, args json.RawMessage) (string, bool) {
+	if CheckToolArgs(args) != nil {
+		return "", false
+	}
 	if tool == "Shell" {
 		cmd, _ := ShellCommandFromArgs(args)
 		if cmd == "" {
@@ -556,9 +580,10 @@ func describeTarget(tool, rulePattern, pattern string) string {
 	return tool
 }
 
-// copyMovePatterns extracts both resource operands from a Copy or Move call.
-// Both must be strings; malformed shapes return false and fall back to the safe
-// ordinary no-pattern evaluation.
+// copyMovePatterns extracts both resource operands from a Copy or Move call
+// through DecodeToolArgs, the decode the tools execute. Both must be strings;
+// malformed or ambiguous shapes return false and fall back to the safe ordinary
+// no-pattern evaluation.
 func copyMovePatterns(args json.RawMessage) ([]string, bool) {
 	if len(args) == 0 {
 		return nil, false
@@ -567,59 +592,79 @@ func copyMovePatterns(args json.RawMessage) ([]string, bool) {
 		Source      string `json:"source"`
 		Destination string `json:"destination"`
 	}
-	if err := json.Unmarshal(args, &values); err != nil {
+	if err := DecodeToolArgs(args, &values); err != nil {
 		return nil, false
 	}
 	return []string{values.Source, values.Destination}, true
 }
 
+// resourceArgs is the policy view of a single-resource call's arguments, decoded
+// through DecodeToolArgs with the field names the built-in tools declare.
+type resourceArgs struct {
+	Path     json.RawMessage `json:"path"`
+	FilePath json.RawMessage `json:"file_path"`
+	Pattern  json.RawMessage `json:"pattern"`
+	URL      json.RawMessage `json:"url"`
+	Query    json.RawMessage `json:"query"`
+}
+
 // nonShellPattern derives the pattern string to match a single-resource non-Shell tool call
 // against. It uses the most common path/target field of the built-in tools so
-// rules can target specific files; unknown shapes fall back to the empty string
-// (which only matches tool-wide rules).
+// rules can target specific files; unknown or ambiguous shapes fall back to the
+// empty string (which only matches tool-wide rules).
 func nonShellPattern(_ string, args json.RawMessage) string {
 	if len(args) == 0 {
 		return ""
 	}
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(args, &m); err != nil {
+	var fields resourceArgs
+	if err := DecodeToolArgs(args, &fields); err != nil {
 		return ""
 	}
-	for _, key := range []string{"path", "file_path", "pattern", "url", "query"} {
-		if raw, ok := m[key]; ok {
-			var s string
-			if json.Unmarshal(raw, &s) == nil {
-				return s
-			}
+	for _, raw := range []json.RawMessage{fields.Path, fields.FilePath, fields.Pattern, fields.URL, fields.Query} {
+		if raw == nil {
+			continue
+		}
+		var s string
+		if json.Unmarshal(raw, &s) == nil {
+			return s
 		}
 	}
 	return ""
 }
 
+// shellCommandArgs is the policy view of a Shell call's arguments, decoded
+// through DecodeToolArgs with the Shell tool's field name plus the cmd alias.
+type shellCommandArgs struct {
+	Command json.RawMessage `json:"command"`
+	Cmd     json.RawMessage `json:"cmd"`
+}
+
 // ShellCommandFromArgs extracts the command string from a Shell tool call's raw
-// args JSON. It reads the "command" field, then "cmd" as a fallback, returning
-// the first non-empty (after TrimSpace) string. It is FAIL-SAFE: a JSON parse
-// error OR neither field carrying a non-empty string returns ("", false), so a
-// caller that gates a safety decision on the result INSPECTS rather than skips
-// (an unreadable args object must never be presumed read-only). This is the
-// single shared extraction for the Shell tool-call args schema — the governance
+// args JSON. It decodes through DecodeToolArgs, the decode the Shell tool
+// executes, and reads the "command" field, then "cmd" as a fallback, returning
+// the first non-empty (after TrimSpace) string. The Shell tool runs only
+// "command", so a call that reaches execution was evaluated on the command it
+// runs. It is FAIL-SAFE: a JSON parse error, an ambiguous argument object, OR
+// neither field carrying a non-empty string returns ("", false), so a caller
+// that gates a safety decision on the result INSPECTS rather than skips (an
+// unreadable args object must never be presumed read-only). This is the single
+// shared extraction for the Shell tool-call args schema — the governance
 // evaluator, the Subagent isolation gate, and the guardrail Shell pre-filter all
 // call it, so a schema change lands in one place.
 func ShellCommandFromArgs(args json.RawMessage) (string, bool) {
 	if len(args) == 0 {
 		return "", false
 	}
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(args, &m); err != nil {
+	var fields shellCommandArgs
+	if err := DecodeToolArgs(args, &fields); err != nil {
 		return "", false
 	}
-	for _, key := range []string{"command", "cmd"} {
-		rawVal, present := m[key]
-		if !present {
+	for _, raw := range []json.RawMessage{fields.Command, fields.Cmd} {
+		if raw == nil {
 			continue
 		}
 		var s string
-		if err := json.Unmarshal(rawVal, &s); err != nil {
+		if err := json.Unmarshal(raw, &s); err != nil {
 			continue
 		}
 		if strings.TrimSpace(s) != "" {

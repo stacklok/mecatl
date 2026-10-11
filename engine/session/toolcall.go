@@ -3,6 +3,8 @@ package session
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/stacklok/mecatl/engine/governance"
 )
 
 // ToolCallID uniquely identifies a tool invocation within a session. It is
@@ -49,6 +51,11 @@ func NewToolCall(id ToolCallID, name string, args json.RawMessage) ToolCall {
 // both repeat. It lives on the domain ToolCall (which both layers already import)
 // so neither has to depend on the other.
 //
+// It decodes through governance.DecodeToolArgs, the same decode permission
+// evaluation uses, so a tool executes the values the policy evaluated. An
+// ambiguous argument object (a repeated key, keys equal under case folding, or
+// a key that names a tagged field of dst only under case folding) is refused.
+//
 // An empty payload (no args) is treated as an empty object: dst is left at its
 // zero value and ok=true, so a tool with all-optional arguments works without the
 // model having to send an explicit "{}". On malformed JSON it returns a
@@ -59,7 +66,7 @@ func ParseArgs(call ToolCall, dst any) (msg string, ok bool) {
 	if len(call.Args) == 0 {
 		return "", true
 	}
-	if err := json.Unmarshal(call.Args, dst); err != nil {
+	if err := governance.DecodeToolArgs(call.Args, dst); err != nil {
 		return fmt.Sprintf("invalid arguments: %v", err), false
 	}
 	return "", true

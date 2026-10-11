@@ -592,6 +592,7 @@ func TestReviewEvidencePathsSkipsListDirDirectoryOperand(t *testing.T) {
 }
 
 type conflictingReadEvidenceProvider struct {
+	readArgs                  json.RawMessage
 	mu                        sync.Mutex
 	readResult                *session.ToolResult
 	mainCalls, reviewCalls    int
@@ -631,7 +632,7 @@ func (p *conflictingReadEvidenceProvider) Stream(_ context.Context, req port.LLM
 		}
 	} else if p.mainCalls == 0 {
 		p.mainCalls++
-		chunks = toolCallChunks(session.NewToolCall("read-conflict", "Read", json.RawMessage(`{"path":"website/a.ts","Path":"services/a.ts"}`)))
+		chunks = toolCallChunks(session.NewToolCall("read-conflict", "Read", p.readArgs))
 	} else {
 		p.mainCalls++
 		for _, message := range req.Messages {
@@ -651,48 +652,72 @@ func (p *conflictingReadEvidenceProvider) Stream(_ context.Context, req port.LLM
 	}, nil
 }
 
+// TestBuildContextualEvidenceMatchesBuiltinReadPathDecoding pins that the
+// guardrail reviewer's evidence and the built-in Read share one decode: the
+// reviewed file is the file read, and a path given in two spellings is refused
+// before review or execution.
 func TestBuildContextualEvidenceMatchesBuiltinReadPathDecoding(t *testing.T) {
-	ctx := context.Background()
-	cfg := guardrailE2ECfg(t, false, PostureYolo, "")
-	cfg.GuardrailsRules = []GuardrailRule{{Match: "Read", Phases: []string{"pre"}, Mode: "block"}}
-	if err := os.MkdirAll(cfg.Workspace+"/website", 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(cfg.Workspace+"/services", 0o700); err != nil {
-		t.Fatal(err)
-	}
-	for path, marker := range map[string]string{
-		"website/a.ts":  "WEBSITE_READ_MARKER",
-		"services/a.ts": "SERVICES_READ_MARKER",
+	for _, tc := range []struct {
+		name      string
+		args      string
+		ambiguous bool
+	}{
+		{name: "canonical path", args: `{"path":"services/a.ts"}`},
+		{name: "path in two spellings", args: `{"path":"website/a.ts","Path":"services/a.ts"}`, ambiguous: true},
 	} {
-		if err := os.WriteFile(cfg.Workspace+"/"+path, []byte(marker), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	provider := &conflictingReadEvidenceProvider{}
-	cfg.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider { return provider }
-	built, err := buildIsolated(t, ctx, cfg)
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	defer built.Close()
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{MaxTurns: 2})
-	if err != nil {
-		t.Fatal(err)
-	}
-	run, err := built.Service.StartRunContent(ctx, sess.ID, "read the service", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for range run.Events() {
-	}
-	built.Service.FinishRun(sess.ID, run)
-	provider.mu.Lock()
-	defer provider.mu.Unlock()
-	if provider.readResult == nil || provider.readResult.IsError || !strings.Contains(provider.readResult.Content, "SERVICES_READ_MARKER") || strings.Contains(provider.readResult.Content, "WEBSITE_READ_MARKER") {
-		t.Fatalf("main Read result=%+v", provider.readResult)
-	}
-	if provider.reviewCalls < 2 || !strings.Contains(provider.evidence, "SERVICES_READ_MARKER") || strings.Contains(provider.evidence, "WEBSITE_READ_MARKER") {
-		t.Fatalf("review calls=%d evidence=%q", provider.reviewCalls, provider.evidence)
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			cfg := guardrailE2ECfg(t, false, PostureYolo, "")
+			cfg.GuardrailsRules = []GuardrailRule{{Match: "Read", Phases: []string{"pre"}, Mode: "block"}}
+			if err := os.MkdirAll(cfg.Workspace+"/website", 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(cfg.Workspace+"/services", 0o700); err != nil {
+				t.Fatal(err)
+			}
+			for path, marker := range map[string]string{
+				"website/a.ts":  "WEBSITE_READ_MARKER",
+				"services/a.ts": "SERVICES_READ_MARKER",
+			} {
+				if err := os.WriteFile(cfg.Workspace+"/"+path, []byte(marker), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			provider := &conflictingReadEvidenceProvider{readArgs: json.RawMessage(tc.args)}
+			cfg.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider { return provider }
+			built, err := buildIsolated(t, ctx, cfg)
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			defer built.Close()
+			sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{MaxTurns: 2})
+			if err != nil {
+				t.Fatal(err)
+			}
+			run, err := built.Service.StartRunContent(ctx, sess.ID, "read the service", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range run.Events() {
+			}
+			built.Service.FinishRun(sess.ID, run)
+			provider.mu.Lock()
+			defer provider.mu.Unlock()
+			if tc.ambiguous {
+				if provider.readResult == nil || !provider.readResult.IsError || !strings.Contains(provider.readResult.Content, "ambiguous tool arguments") {
+					t.Fatalf("main Read result=%+v, want an ambiguous-arguments error", provider.readResult)
+				}
+				if provider.reviewCalls != 0 || provider.evidence != "" {
+					t.Fatalf("ambiguous Read reached review: calls=%d evidence=%q", provider.reviewCalls, provider.evidence)
+				}
+				return
+			}
+			if provider.readResult == nil || provider.readResult.IsError || !strings.Contains(provider.readResult.Content, "SERVICES_READ_MARKER") || strings.Contains(provider.readResult.Content, "WEBSITE_READ_MARKER") {
+				t.Fatalf("main Read result=%+v", provider.readResult)
+			}
+			if provider.reviewCalls < 2 || !strings.Contains(provider.evidence, "SERVICES_READ_MARKER") || strings.Contains(provider.evidence, "WEBSITE_READ_MARKER") {
+				t.Fatalf("review calls=%d evidence=%q", provider.reviewCalls, provider.evidence)
+			}
+		})
 	}
 }
