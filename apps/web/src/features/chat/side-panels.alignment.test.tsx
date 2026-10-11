@@ -7,6 +7,7 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearUserScopedStorage } from "../../lib/account-storage";
+import { ShortcutProvider, useShortcut } from "../shortcuts/shortcut-provider";
 import { ContentPreviewPanel } from "./content-preview-panel";
 import { SessionSidebar } from "./session-sidebar";
 
@@ -100,6 +101,55 @@ describe("side panel frames", () => {
     expect(
       (screen.getByRole("textbox", { name: "Local canvas" }) as HTMLTextAreaElement).value,
     ).toBe("");
+  });
+
+  it("keeps focus in the canvas after a keyboard Clear, in both views", async () => {
+    const user = userEvent.setup();
+    render(<Canvas initial="# Notes" />);
+    screen.getByRole("button", { name: "Clear canvas" }).focus();
+    await user.keyboard("{Enter}");
+    let confirm = await screen.findByRole("alertdialog", { name: "Clear the canvas?" });
+    within(confirm).getByRole("button", { name: "Clear" }).focus();
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    // The emptied canvas disables Clear, so focus goes to the field, not the page.
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Local canvas" })),
+    );
+
+    await user.type(screen.getByRole("textbox", { name: "Local canvas" }), "more");
+    await user.click(screen.getByRole("button", { name: "Preview" }));
+    screen.getByRole("button", { name: "Clear canvas" }).focus();
+    await user.keyboard("{Enter}");
+    confirm = await screen.findByRole("alertdialog", { name: "Clear the canvas?" });
+    within(confirm).getByRole("button", { name: "Clear" }).focus();
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Preview" })),
+    );
+  });
+
+  it("blocks app shortcuts while the Clear confirmation is open", async () => {
+    const user = userEvent.setup();
+    const openShortcuts = vi.fn();
+    function ShortcutProbe() {
+      useShortcut("shortcuts.open", openShortcuts);
+      return null;
+    }
+    render(
+      <ShortcutProvider>
+        <ShortcutProbe />
+        <Canvas initial="# Notes" />
+      </ShortcutProvider>,
+    );
+    screen.getByRole("button", { name: "Clear canvas" }).focus();
+    await user.keyboard("?");
+    expect(openShortcuts).toHaveBeenCalledTimes(1);
+    await user.keyboard("{Enter}");
+    await screen.findByRole("alertdialog", { name: "Clear the canvas?" });
+    await user.keyboard("?");
+    expect(openShortcuts).toHaveBeenCalledTimes(1);
   });
 
   it("closes with the prototype's controls and keeps the maximize label", () => {

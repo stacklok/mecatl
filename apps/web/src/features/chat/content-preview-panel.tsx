@@ -30,6 +30,7 @@ import { Textarea } from "../../components/ui/textarea";
 import { Toggle } from "../../components/ui/toggle";
 import { copyToClipboard } from "../../lib/clipboard";
 import { cn } from "../../lib/utils";
+import { useShortcutSuppression } from "../shortcuts/shortcut-provider";
 import { type ApprovalDetail, ApprovalDetailPanel } from "./approval-detail-panel";
 import {
   type AuthorizationHandoff,
@@ -305,6 +306,12 @@ function LocalCanvasEditor({
   value: string;
 }) {
   const [previewing, setPreviewing] = useState(false);
+  const [confirmingClear, setConfirmingClear] = useState(false);
+  const clearTrigger = useRef<HTMLButtonElement>(null);
+  const field = useRef<HTMLTextAreaElement>(null);
+  const previewToggle = useRef<HTMLButtonElement>(null);
+  // A modal confirmation: app shortcuts must not act on the chat behind it.
+  useShortcutSuppression(confirmingClear);
   const segment =
     "h-7 min-w-0 rounded-full px-3 text-xs text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-sm";
   return (
@@ -320,6 +327,7 @@ function LocalCanvasEditor({
             className={segment}
             onPressedChange={(pressed) => pressed && setPreviewing(true)}
             pressed={previewing}
+            ref={previewToggle}
             size="sm"
           >
             <ScanEye aria-hidden="true" />
@@ -348,12 +356,13 @@ function LocalCanvasEditor({
             <Copy aria-hidden="true" className="size-4" />
           </Button>
           {/* The canvas has no undo, so Clear asks first. */}
-          <AlertDialog>
+          <AlertDialog onOpenChange={setConfirmingClear} open={confirmingClear}>
             <AlertDialogTrigger asChild>
               <Button
                 aria-label="Clear canvas"
                 className="size-7 text-muted-foreground"
                 disabled={!value}
+                ref={clearTrigger}
                 size="icon"
                 type="button"
                 variant="ghost"
@@ -361,7 +370,14 @@ function LocalCanvasEditor({
                 <Eraser aria-hidden="true" className="size-4" />
               </Button>
             </AlertDialogTrigger>
-            <AlertDialogContent>
+            <AlertDialogContent
+              onCloseAutoFocus={(event) => {
+                // An emptied canvas disables Clear, and focus would fall to the page.
+                if (!clearTrigger.current?.disabled) return;
+                event.preventDefault();
+                (previewing ? previewToggle.current : field.current)?.focus();
+              }}
+            >
               <AlertDialogHeader>
                 <AlertDialogTitle>Clear the canvas?</AlertDialogTitle>
                 <AlertDialogDescription>
@@ -392,6 +408,7 @@ function LocalCanvasEditor({
               className="min-h-64 flex-1 resize-none font-mono text-xs"
               onChange={(event) => onChange(event.target.value)}
               placeholder="# Notes"
+              ref={field}
               value={value}
             />
             <p className="mt-2 text-xs text-muted-foreground">Saved only in this browser.</p>
