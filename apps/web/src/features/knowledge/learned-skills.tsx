@@ -32,7 +32,7 @@ import {
   DialogTitle,
 } from "../../components/ui/dialog";
 import { errorMessage } from "../../lib/error-message";
-import { formatDate } from "../../lib/formatters";
+import { formatDate, formatRelativeTime } from "../../lib/formatters";
 import { NO_DESCRIPTION } from "./format";
 import { DiffBlock, hasSkillDiffChanges, skillDiffRows } from "./skill-diff";
 import { StateCard } from "./state-card";
@@ -52,6 +52,17 @@ type LearnedSkillAction = "activate" | "archive" | "reject" | "rollback";
  * SPEC: a failed action (stale revision, conflict) re-reads the inventory and ledger and
  * shows the error inside the dialog; it never closes the dialog or reports success.
  */
+
+/**
+ * A list's timestamp the prototype's way: relative ("1d ago"), short enough
+ * to leave a phone's row its skill name, with the exact time on hover.
+ */
+function RelativeTime({ iso }: { iso: string }) {
+  const relative = formatRelativeTime(Date.parse(iso));
+  const absolute = formatDate(iso);
+  return <span title={absolute}>{relative ? `${relative} ago` : absolute}</span>;
+}
+
 const LEDGER_LIMIT = 20;
 
 /**
@@ -186,7 +197,12 @@ export function LearnedSkills({
                 </span>
                 <span className="shrink-0 text-xs text-muted-foreground">
                   {skill.ownerAgent}
-                  {skill.updatedAt && ` · ${formatDate(skill.updatedAt)}`}
+                  {skill.updatedAt && (
+                    <>
+                      {" · "}
+                      <RelativeTime iso={skill.updatedAt} />
+                    </>
+                  )}
                 </span>
               </button>
             ))}
@@ -212,7 +228,9 @@ export function LearnedSkills({
                 </span>
                 {change.verdict && <Badge variant="outline">{change.verdict}</Badge>}
                 {change.at && (
-                  <span className="ml-auto text-muted-foreground">{formatDate(change.at)}</span>
+                  <span className="ml-auto text-muted-foreground">
+                    <RelativeTime iso={change.at} />
+                  </span>
                 )}
               </li>
             ))}

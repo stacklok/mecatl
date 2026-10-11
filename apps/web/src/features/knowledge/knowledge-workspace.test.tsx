@@ -6,6 +6,7 @@ import { createMemoryHistory, createRouter, RouterContextProvider } from "@tanst
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
+import { formatDate } from "../../lib/formatters";
 import { routeTree } from "../../routeTree.gen";
 import { KnowledgeWorkspace } from "./knowledge-workspace";
 import { resetPublicationNotice } from "./learned-skills";
@@ -208,6 +209,54 @@ it("explains why learned skills are unavailable on a direct link", async () => {
   });
   expect(document.body.textContent).toContain("Learned skills are unavailable");
   expect(document.body.textContent).toContain("Learned skills are not enabled here.");
+});
+
+it("dates learned skills and their changes relatively, with the exact time on hover", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-25T12:30:00Z"));
+  try {
+    const updatedAt = "2026-09-24T08:30:00Z";
+    const at = "2026-09-25T09:30:00Z";
+    await renderLearned((request) => {
+      const { pathname } = new URL(request.url);
+      if (pathname === "/api/v1/runtime")
+        return { capabilities: { learnedSkills: true, skills: true } };
+      if (pathname.endsWith("/changes"))
+        return {
+          complete: true,
+          items: [
+            {
+              at,
+              fromState: "staged",
+              id: "c1",
+              name: "deploy",
+              operation: "activate",
+              skillId: "skill-1",
+              toState: "active",
+              verdict: "",
+              version: "v2",
+            },
+          ],
+        };
+      return {
+        complete: true,
+        items: [{ ...learned({}), updatedAt }],
+        reason: "",
+        supported: true,
+      };
+    });
+    const row = [...document.body.querySelectorAll("button")].find((button) =>
+      button.textContent?.includes("Draft procedure"),
+    );
+    expect(row?.textContent).toContain("agent · 1d ago");
+    expect(row?.textContent).not.toContain(formatDate(updatedAt));
+    expect(row?.querySelector(`[title="${formatDate(updatedAt)}"]`)?.textContent).toBe("1d ago");
+    const change = document.body.querySelector("li");
+    expect(change?.textContent).toContain("3h ago");
+    expect(change?.querySelector(`[title="${formatDate(at)}"]`)?.textContent).toBe("3h ago");
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("says when the changes ledger is truncated", async () => {
