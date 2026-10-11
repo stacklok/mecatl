@@ -1587,6 +1587,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     setSteeringQueuedId(id);
     setError(undefined);
     setNotice(undefined);
+    let steered = false;
     try {
       await steerRun({
         body: { text: item.text },
@@ -1594,6 +1595,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         throwOnError: true,
       });
       queuedMessages.remove(id);
+      steered = true;
       setNotice("Sent — steering the active run.");
     } catch (caught) {
       if (isStaleRunControl(caught))
@@ -1603,6 +1605,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       steeringQueuedRef.current = undefined;
       setSteeringQueuedId(undefined);
     }
+    // A run that ended during the steer skipped this message in its drain, and
+    // nothing else drains the queue until another run ends.
+    if (!steered && !activeRun.current) drainNextQueuedMessage(target.sessionId);
   }
 
   function drainNextQueuedMessage(activeSessionId: string) {
