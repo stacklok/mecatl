@@ -671,7 +671,6 @@ type Model struct {
 	// overwrite root state or a reopened picker.
 	modelCatalogRequestToken uint64
 	modelCatalog             modelCatalog          // root-owned inventory, statuses, defaults, and selection reconciliation
-	effort                   effortState           // /effort picker overlay state (view==effortNone when closed)
 	worktrees                worktreesState        // /worktrees overlay state (view==worktreesNone when closed) — issue #102
 	schedule                 scheduleState         // /schedule overlay state (view==scheduleNone when closed) — issue #234
 	connect                  connectState          // /connect saved-target picker (tombstone overlay)

@@ -2360,7 +2360,7 @@ func (m Model) clearAnySelection(msg tea.KeyPressMsg) (Model, bool) {
 	if !key.Matches(msg, m.keys.Cancel) || (!m.sel.active && !m.prompt.HasSelection()) ||
 		m.modal != nil || m.team.view != teamNone || m.agentsInv.view != agentsInvNone ||
 		m.reflections.view != reflectionsNone ||
-		m.effort.view != effortNone || m.worktrees.view != worktreesNone {
+		m.worktrees.view != worktreesNone {
 		return m, false
 	}
 	m = m.clearSelection()
@@ -2422,7 +2422,6 @@ func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		m.onAgentsInvKey,
 		m.onReflectionsKey,
 		m.onConnectKey,
-		m.onEffortKey,
 		m.onWorktreesKey,
 		m.onScheduleKey,
 	}
@@ -2596,6 +2595,12 @@ func (m Model) applyToolcallsSurfaceIntent(intent surfaceIntent) bool {
 // tells the caller to skip common dispatch post-processing after a root-owned
 // effect takes over; handled=false never carries meaningful work.
 func (m Model) applySurfaceIntent(intent surfaceIntent) (model tea.Model, cmd tea.Cmd, stopSurfaceDispatch bool) {
+	if intent, ok := intent.(effortSelectIntent); ok {
+		sel := m.effortSelection(intent.effort)
+		m.closeModal()
+		mm, cmd, _ := m.switchEffort(sel)
+		return mm, cmd, true
+	}
 	if model, cmd, handled, stopSurfaceDispatch := m.applyApprovalSurfaceIntent(intent); handled {
 		return model, cmd, stopSurfaceDispatch
 	}

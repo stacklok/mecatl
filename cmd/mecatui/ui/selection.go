@@ -110,7 +110,7 @@ func bodyOwnerOpen(m Model) bool {
 	return m.sessionDetailsOpen || m.team.view != teamNone ||
 		m.agentsInv.view != agentsInvNone || m.modal != nil ||
 		m.reflections.view != reflectionsNone ||
-		m.connect.open || m.effort.view != effortNone ||
+		m.connect.open ||
 		m.worktrees.view != worktreesNone || m.schedule.view != scheduleNone
 }
 

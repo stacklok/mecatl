@@ -198,7 +198,7 @@ for the available modes and their behavior.
 |Command|Result|
 |-|-|
 |`/models`|Starts a session on the selected model and keeps the conversation. Switching models clears model caches and can increase cost.|
-|`/effort`|Forks the conversation onto the selected reasoning-effort tier. The server reports unsupported tiers.|
+|`/effort`|Opens a picker to fork the conversation onto the selected reasoning-effort tier. The server reports unsupported tiers. See [Choose a reasoning-effort tier](#choose-a-reasoning-effort-tier).|
 |`/compact`|Reduces model history while keeping the session and visible scrollback. Run it without arguments while idle. Creating a cascade summary can use model tokens.|
 |`/clear`|Creates an empty-history session with the same placement. It does not roll back workspace changes.|
 |`/session`|Shows path-free details for the active session.|
@@ -207,6 +207,19 @@ for the available modes and their behavior.
 If `/clear` cancels an active run or approval and then fails to create the
 replacement, the original session remains selected and may be cancelled. Wait
 for it to settle, then retry `/clear`.
+
+### Choose a reasoning-effort tier
+
+When the session is idle, open `/effort` or press `f7`. Use `↑` and `↓` to
+select a tier, `pgup` and `pgdn` to move by a page, and `home` and `end` to
+jump to the first or last tier. The mouse wheel scrolls the visible list without
+changing the selected tier. Press `enter` to apply the selected tier, or `esc`
+to close the picker.
+
+When the terminal cannot fit the picker, it shows a compact close-only view.
+Resize the terminal to select a tier, or press `esc` to close it. See
+[Keybindings](./keybindings.md#navigate-the-effort-picker) for the complete
+picker controls and remapping information.
 
 ## A short key reference
 

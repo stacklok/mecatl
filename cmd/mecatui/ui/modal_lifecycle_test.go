@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -11,6 +12,36 @@ import (
 type fillHitDispatchSurface struct{ hitDispatchSurface }
 
 func (*fillHitDispatchSurface) modalPlacement() modalPlacement { return modalPlacementFill }
+
+func TestModalWindowSizeZeroInvalidatesOfferAcrossPlacements(t *testing.T) {
+	for _, fill := range []bool{false, true} {
+		for _, size := range []tea.WindowSizeMsg{{Width: 0, Height: 30}, {Width: 80, Height: 0}} {
+			t.Run(fmt.Sprintf("fill=%v/%dx%d", fill, size.Width, size.Height), func(t *testing.T) {
+				m, s := hitDispatchModel(t)
+				if fill {
+					m.modal = &fillHitDispatchSurface{hitDispatchSurface: *s}
+					s = &m.modal.(*fillHitDispatchSurface).hitDispatchSurface
+				}
+				_ = m.View()
+				m = applyAll(m, size, tea.KeyPressMsg{Code: 'z'})
+				if s.renders[len(s.renders)-1] != ([2]int{0, 0}) || len(m.hits.frame) != 0 || *m.metrics != (renderedSurfaceMetrics{}) {
+					t.Fatal("zero WindowSize must prepare zero offer and clear frame before input")
+				}
+				if m.renderBody() != "" {
+					t.Fatal("zero WindowSize rendered stale modal body")
+				}
+				m = applyAll(m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+				if s.renders[len(s.renders)-1] != ([2]int{0, 0}) {
+					t.Fatal("zero wheel prepared stale geometry")
+				}
+				m = applyAll(m, tea.WindowSizeMsg{Width: 80, Height: 30})
+				if m.renderBody() == "" || s.renders[len(s.renders)-1] == ([2]int{0, 0}) {
+					t.Fatal("restored modal offer stayed zero")
+				}
+			})
+		}
+	}
+}
 
 func TestModalFrameLifecycleSharedAcrossPlacements(t *testing.T) {
 	for _, fill := range []bool{false, true} {

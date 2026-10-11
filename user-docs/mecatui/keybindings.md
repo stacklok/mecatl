@@ -68,6 +68,18 @@ the active tab, child, group, member, Tasks, or Findings view. Only `esc`
 remains active; wheel input is consumed without scrolling the hidden
 conversation.
 
+### Navigate the effort picker
+
+In the `/effort` picker, `↑` and `↓` move the selected tier. `pgup` and `pgdn`
+move by a page, and `home` and `end` select the first and last tiers. These
+controls use the remappable `Up`, `Down`, `ScrollU`, `ScrollD`, `ScrollTop`, and
+`ScrollBottom` actions. The mouse wheel scrolls the visible list without moving
+the selected tier. Press `enter` to apply the selected tier or `esc` to close
+the picker.
+
+When the terminal cannot fit a list row, the picker is close-only. Press `esc`
+to close it, then resize the terminal to select a tier.
+
 ## Newline chords and your terminal
 
 `Newline` answers to four chords because terminals differ in how much of a key

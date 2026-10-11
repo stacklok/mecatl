@@ -191,7 +191,8 @@ func (m *Model) renderModalSurface() string {
 		m.metrics.clear()
 	}
 	bodyW, bodyH := m.width, m.vp.Height()
-	if bodyW <= 0 || bodyH <= 0 {
+	// relayout preserves the viewport at zero terminal height; it is not a modal offer.
+	if m.height <= 0 || bodyW <= 0 || bodyH <= 0 {
 		m.modal.Render(0, 0)
 		m.hits.clear()
 		m.metrics.clear()

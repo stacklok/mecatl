@@ -696,22 +696,11 @@ func (s *sessionsState) handleNavigationKey(msg tea.KeyPressMsg) (handled bool, 
 		return false, false
 	}
 	list := s.syncList(s.activeSessionID)
-	switch {
-	case key.Matches(msg, s.deps.keys.Up):
-		list.Move(bounded.LineUp)
-	case key.Matches(msg, s.deps.keys.Down):
-		list.Move(bounded.LineDown)
-	case key.Matches(msg, s.deps.keys.ScrollU):
-		list.Move(bounded.PageUp)
-	case key.Matches(msg, s.deps.keys.ScrollD):
-		list.Move(bounded.PageDown)
-	case key.Matches(msg, s.deps.keys.ScrollTop):
-		list.Move(bounded.Top)
-	case key.Matches(msg, s.deps.keys.ScrollBottom):
-		list.Move(bounded.End)
-	default:
+	move, ok := boundedNavigationMove(msg, s.deps.keys)
+	if !ok {
 		return false, false
 	}
+	list.Move(move)
 	return true, false
 }
 

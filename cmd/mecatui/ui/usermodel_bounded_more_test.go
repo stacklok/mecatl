@@ -351,6 +351,7 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario3_RejectsStaleResults(t *testi
 	}
 
 	m, s = savedMemoryOpened(t, savedMemoryEntries(4))
+	s.deps.keys = applyKeyOverrides(s.deps.keys, map[string][]string{"Down": {"d"}})
 	s.Render(50, 10)
 
 	// Drive the public Model.Update seam: abandoning A for B must make A's
@@ -358,7 +359,7 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario3_RejectsStaleResults(t *testi
 	mm, first := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
 	lateA := first().(client.UserModelDetailMsg)
-	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	mm, _ = m.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
 	m = mm.(Model)
 	mm, _ = m.Update(lateA)
 	m = mm.(Model)

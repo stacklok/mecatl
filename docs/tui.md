@@ -88,7 +88,9 @@ cursor. `presentListRow` owns the gutter and cursor/status markers; surfaces mus
 not embed those markers or their padding in item text. Let the surface own item
 semantics and activation.
 Keep unavailable entries visible when that explains the available choices, but
-exclude them from selection and activation.
+exclude them from selection and activation. Translate shared navigation keys to
+`bounded.Move` values in the `ui` package. Keep `internal/bounded` independent
+of UI key-event and keymap dependencies.
 Tool-call status uses `…` with `toolName`, `✓` with `toolOk`, and `✗` with
 `toolErr`. Pending and failed calls retain readable labels; settled successful
 single-line calls use the glyph and name without a redundant success label.

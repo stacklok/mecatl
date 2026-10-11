@@ -617,9 +617,10 @@ func TestMCPOverlayHintsReflectKeyOverride(t *testing.T) {
 // TestEffortOverlayHintsReflectKeyOverride proves the effort picker footer reads the
 // LIVE Up/Down/Choose/Close markings (issue #457).
 func TestEffortOverlayHintsReflectKeyOverride(t *testing.T) {
-	hk := liveHK()
-	th := theme.New("aztec", theme.AztecPalette())
-	got := stripANSIstr(renderEffortOverlay(th, effortState{view: effortPanel}, "auto", false, hk, 100, 30))
+	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
+	m.keys = applyKeyOverrides(defaultKeys(), overrideAll())
+	mm, _ := m.runEffort()
+	got := stripANSIstr(mm.(Model).View().Content)
 	if !strings.Contains(got, "ctrl+f26/ctrl+f27 move · ctrl+f17 apply · ctrl+f16 close") {
 		t.Errorf("effort hint should carry live move/apply/close: %q", got)
 	}
