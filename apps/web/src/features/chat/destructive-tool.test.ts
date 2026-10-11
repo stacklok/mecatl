@@ -68,6 +68,15 @@ describe("isDestructiveToolName", () => {
     "revo\u212Ae_token",
     // Fullwidth letters normalize to ASCII.
     "\uFF44\uFF45\uFF4C\uFF45\uFF54\uFF45",
+    // A compatibility character that normalizes to a letter or digit must not fuse
+    // into a verb the raw name keeps whole: fullwidth x, the fi ligature, a circled
+    // digit, the feminine ordinal, and a superscript digit.
+    "\uFF58delete",
+    "\uFB01delete",
+    "\u2460delete",
+    "delete\u2460",
+    "\u00AAdelete",
+    "x\u00B2rm",
   ])("classifies %j as destructive", (name) => {
     expect(isDestructiveToolName(name)).toBe(true);
   });
@@ -112,8 +121,9 @@ describe("isDestructiveToolName", () => {
 
   it("classifies everything the word-boundary regex classified as destructive", () => {
     // Exhaustive over every name of up to three pieces drawn from verbs in several
-    // casings, ordinary words, separators, digits, a non-ASCII letter, and the two
-    // compatibility letters the regex case-folds into verbs (ſ and the Kelvin sign).
+    // casings, ordinary words, separators, digits, a non-ASCII letter, the two
+    // compatibility letters the regex case-folds into verbs (ſ and the Kelvin sign),
+    // and two compatibility characters that normalize to a letter and a digit.
     const pieces = [
       "delete",
       "Delete",
@@ -141,6 +151,8 @@ describe("isDestructiveToolName", () => {
       "down",
       "\u017F",
       "\u212A",
+      "\uFF58",
+      "\u2460",
       "de",
       "troy",
       "revo",

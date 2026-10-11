@@ -32,16 +32,14 @@ function actionPart(name: string): string {
 }
 
 /**
- * Splits a tool name into lowercase tokens. The name is NFKC-normalized first, so
- * compatibility letters such as ſ (U+017F), the Kelvin sign (U+212A), and fullwidth
- * letters read as their ASCII forms. Segments are runs of ASCII letters and digits,
+ * Splits a tool name into lowercase tokens. Segments are runs of ASCII letters and digits,
  * so `_` (including MCP's `server__tool`), `-`, `.`, `/`, `:`, and spaces all
  * separate them. Each segment is kept whole and also split at case boundaries
  * (`removeBranch`, `DeleteFile`, `HTTPDelete`, `v2Delete`).
  */
 export function toolNameTokens(name: string): string[] {
   const tokens: string[] = [];
-  for (const segment of name.normalize("NFKC").split(/[^A-Za-z0-9]+/u)) {
+  for (const segment of name.split(/[^A-Za-z0-9]+/u)) {
     if (segment === "") continue;
     tokens.push(segment.toLowerCase());
     const words = segment.split(/(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])/u);
@@ -56,7 +54,15 @@ export function toolNameTokens(name: string): string[] {
  * structured risk signal, so this is a presentation heuristic over whole name tokens:
  * `delete_file` and `rmdir` are destructive, `deleted_items_report`, `confirm`, and
  * `dropdown` are not. An MCP tool's server segment is skipped.
+ *
+ * The name is read both as written and NFKC-normalized. Normalizing makes
+ * compatibility letters such as ſ (U+017F), the Kelvin sign (U+212A), and fullwidth
+ * letters read as their ASCII forms; reading the raw name too keeps a character that
+ * normalizes to a letter or digit (`ｘdelete`, `①delete`) from fusing into a verb.
  */
 export function isDestructiveToolName(name: string): boolean {
-  return toolNameTokens(actionPart(name)).some((token) => destructiveVerbs.has(token));
+  const action = actionPart(name);
+  const destructive = (form: string) =>
+    toolNameTokens(form).some((token) => destructiveVerbs.has(token));
+  return destructive(action) || destructive(action.normalize("NFKC"));
 }
