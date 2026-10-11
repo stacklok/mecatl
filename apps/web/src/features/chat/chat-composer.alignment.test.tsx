@@ -10,6 +10,7 @@ import {
   reconcileAccount,
 } from "../../lib/account-storage";
 import { readDraft, writeDraft } from "../../lib/draft-store";
+import { ShortcutProvider, useShortcut } from "../shortcuts/shortcut-provider";
 import { ChatComposer, type DraftChatConfiguration } from "./chat-composer";
 import { composerFrameClass } from "./composer-frame";
 import { PermissionModeBadge } from "./permission-mode-badge";
@@ -616,6 +617,33 @@ describe("composer pills", () => {
     await user.hover(screen.getByRole("menuitem", { name: /^Effort/ }));
     await screen.findByRole("menuitem", { name: "High" });
     expect(screen.queryByText(/reports no reasoning support/)).toBeNull();
+  });
+
+  it("blocks app shortcuts while the phone sheet is open", async () => {
+    const user = userEvent.setup();
+    const openShortcuts = vi.fn();
+    function ShortcutProbe() {
+      useShortcut("shortcuts.open", openShortcuts);
+      return null;
+    }
+    render(
+      <ShortcutProvider>
+        <ShortcutProbe />
+        <ChatComposer
+          configuration={configuration}
+          models={models}
+          onConfigurationChange={vi.fn()}
+          onSend={vi.fn().mockResolvedValue(true)}
+        />
+      </ShortcutProvider>,
+    );
+    await user.keyboard("?");
+    expect(openShortcuts).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "Composer options" }));
+    expect(screen.getByRole("dialog", { name: "Composer options" })).toBeTruthy();
+    await user.keyboard("?");
+    expect(openShortcuts).toHaveBeenCalledTimes(1);
   });
 
   it("offers a draft's Default model and Reset in the phone sheet", async () => {

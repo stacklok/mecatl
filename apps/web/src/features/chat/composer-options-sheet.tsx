@@ -16,6 +16,7 @@ import { Sheet, SheetClose, SheetContent, SheetTitle } from "../../components/ui
 import { MODE_OPTIONS, modeTitle, type SessionPermissionMode } from "../../lib/permission-mode";
 import { EFFORT_OPTIONS, effortLabel } from "../../lib/reasoning-effort";
 import { cn } from "../../lib/utils";
+import { useShortcutSuppression } from "../shortcuts/shortcut-provider";
 import type { ComposerModelOption } from "./chat-composer";
 import type { ComposerOption } from "./composer-option-menu";
 import { ModelSheetSection, modelLabel } from "./model-effort-menu";
@@ -73,6 +74,9 @@ export function ComposerOptionsSheet({
   const [view, setView] = useState<"main" | "mode" | "model">("main");
   const trigger = useRef<HTMLButtonElement>(null);
   const restoreFocus = useRef(true);
+
+  // A modal sheet: app shortcuts must not act on the chat behind it.
+  useShortcutSuppression(open);
 
   function close(returnFocus = true) {
     restoreFocus.current = returnFocus;
