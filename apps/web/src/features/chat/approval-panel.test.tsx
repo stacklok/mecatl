@@ -77,7 +77,6 @@ describe("ApprovalPanel tone", () => {
     "term",
     "dropdown",
     "deleted_items_report",
-    "rmdir",
     "undelete",
     "removal",
   ])("keeps %j warning", (tool) => {
@@ -96,4 +95,18 @@ describe("ApprovalPanel tone", () => {
   ])("gives %j the destructive tone", (tool) => {
     expect(tone(tool)).toBe("destructive");
   });
+
+  // rmdir deletes a directory; it was pinned as a warning only because the
+  // word-boundary regex could not see it.
+  it.each(["rmdir", "mcp__fs__rmdir"])("gives %j the destructive tone", (tool) => {
+    expect(tone(tool)).toBe("destructive");
+  });
+
+  // The mcp__<server>__ segment names a configured server, not an action.
+  it.each(["mcp__remove_bg__preview", "mcp__delete_tracker__list_items"])(
+    "keeps %j warning despite its server name",
+    (tool) => {
+      expect(tone(tool)).toBe("warning");
+    },
+  );
 });

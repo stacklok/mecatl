@@ -8,7 +8,28 @@ const destructiveVerbs: ReadonlySet<string> = new Set([
   "remove",
   "revoke",
   "rm",
+  "rmdir",
 ]);
+
+const mcpPrefix = "mcp__";
+/** A configured MCP server name: `[A-Za-z0-9_]+`, never containing `__`. */
+const mcpServerName = /^[A-Za-z0-9_]+$/u;
+
+/**
+ * The part of a tool name that names the action. An MCP tool is
+ * `mcp__<server>__<tool>`, and the server segment is configuration, not an action,
+ * so `mcp__remove_bg__preview` is judged by `preview` alone. The server ends at the
+ * first `__`, as the daemon splits it; a name whose server segment is not a valid
+ * server name is judged whole.
+ */
+function actionPart(name: string): string {
+  if (!name.startsWith(mcpPrefix)) return name;
+  const rest = name.slice(mcpPrefix.length);
+  const end = rest.indexOf("__");
+  if (end < 0) return name;
+  const tool = rest.slice(end + 2);
+  return mcpServerName.test(rest.slice(0, end)) && tool !== "" ? tool : name;
+}
 
 /**
  * Splits a tool name into lowercase tokens. The name is NFKC-normalized first, so
@@ -33,8 +54,9 @@ export function toolNameTokens(name: string): string[] {
  * Whether a tool name reads as data-destroying, which gives its approval card the
  * destructive treatment instead of the warning one. The permission ask carries no
  * structured risk signal, so this is a presentation heuristic over whole name tokens:
- * `delete_file` is destructive, `deleted_items_report`, `confirm`, and `dropdown` are not.
+ * `delete_file` and `rmdir` are destructive, `deleted_items_report`, `confirm`, and
+ * `dropdown` are not. An MCP tool's server segment is skipped.
  */
 export function isDestructiveToolName(name: string): boolean {
-  return toolNameTokens(name).some((token) => destructiveVerbs.has(token));
+  return toolNameTokens(actionPart(name)).some((token) => destructiveVerbs.has(token));
 }

@@ -46,6 +46,17 @@ describe("isDestructiveToolName", () => {
     "v2Delete",
     "github__delete_branch",
     "mcp__fs__rm",
+    // rmdir deletes a directory.
+    "rmdir",
+    "Rmdir",
+    "RMDIR",
+    "fs_rmdir",
+    "fs.rmdir",
+    "mcp__fs__rmdir",
+    // An MCP tool's own name still counts after its server segment is skipped.
+    "mcp__remove_bg__delete_image",
+    "mcp__files__DeleteFile",
+    "mcp__x___drop",
     "db.dropTable",
     "storage/purge_bucket",
     "k8s:deletePod",
@@ -82,7 +93,6 @@ describe("isDestructiveToolName", () => {
     "deleted_items_report",
     "DeletedItemsReport",
     "list_removed_files",
-    "rmdir",
     "undelete",
     "removal",
     "dropbox_upload",
@@ -90,6 +100,12 @@ describe("isDestructiveToolName", () => {
     "farm",
     "github__confirm_merge",
     "format_document",
+    // The mcp__<server>__ segment names a configured server, not an action.
+    "mcp__remove_bg__preview",
+    "mcp__delete_tracker__list_items",
+    "mcp__drop__status",
+    "mcp__Purge_Cache__get_stats",
+    "mcp__rm__list",
   ])("classifies %j as not destructive", (name) => {
     expect(isDestructiveToolName(name)).toBe(false);
   });
@@ -144,6 +160,41 @@ describe("isDestructiveToolName", () => {
     }
     expect(checked).toBe(pieces.length + pieces.length ** 2 + pieces.length ** 3);
     expect(legacyDestructive).toBeGreaterThan(1_000);
+  });
+
+  it("classifies everything the regex classified as destructive behind an MCP namespace", () => {
+    // Skipping a server segment must not lose a name the regex flagged, whether the
+    // segment is a valid server name or not.
+    const servers = [
+      "fs",
+      "remove_bg",
+      "delete",
+      "Drop_2",
+      "x.rm",
+      "x.rm.",
+      "a-delete",
+      "a delete b",
+      "rm ",
+      "",
+    ];
+    const tools = ["delete", "rm", "x", ".rm", "rm.x", "drop table", "-purge", "_delete", ""];
+    const suffixes = ["", "__", "__rm", ".delete", " rm"];
+    let checked = 0;
+    let legacyDestructive = 0;
+    for (const server of servers) {
+      for (const tool of tools) {
+        for (const suffix of suffixes) {
+          for (const name of [`mcp__${server}__${tool}${suffix}`, `mcp__${server}${suffix}`]) {
+            checked += 1;
+            if (!wordBoundary.test(name)) continue;
+            legacyDestructive += 1;
+            if (!isDestructiveToolName(name)) throw new Error(`regressed: ${JSON.stringify(name)}`);
+          }
+        }
+      }
+    }
+    expect(checked).toBe(servers.length * tools.length * suffixes.length * 2);
+    expect(legacyDestructive).toBeGreaterThan(50);
   });
 });
 

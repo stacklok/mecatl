@@ -239,8 +239,10 @@ then choose **Allow once**, **Always allow**, or **Deny**. If the arguments are
 unavailable, only **Deny** is enabled.
 
 The card is red when a word in the tool name is delete, remove, drop, revoke,
-destroy, purge, or rm, in any naming style, such as `delete_file` or
-`RemoveBranch`. Otherwise it's amber. The color comes from the tool name only,
+destroy, purge, rm, or rmdir, in any naming style, such as `delete_file` or
+`RemoveBranch`. Otherwise it's amber. For an MCP tool, named
+`mcp__<server>__<tool>`, only the tool part counts, so the server name doesn't
+turn every tool from that server red. The color comes from the tool name only,
 so review the arguments of every request.
 
 A **Plan review** card shows the proposed plan and any accompanying note. Choose
