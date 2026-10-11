@@ -23,16 +23,34 @@ var ErrAmbiguousToolArgs = errors.New("ambiguous tool arguments")
 // the Copy/Move operands, and the CallMcpWithQuery target. A top-level key that
 // matches one of them only under case folding is ambiguous for every tool,
 // because the policy reads the exact name while a case-insensitive decoder
-// would read the variant.
-var policyArgNames = []string{
+// would read the variant. They are bytes so a key compares without conversion.
+var policyArgNames = argNames(
 	"command", "cmd", "temp_scope",
 	"path", "file_path", "pattern", "url", "query",
 	"source", "destination",
 	"server", "tool",
+)
+
+func argNames(names ...string) [][]byte {
+	out := make([][]byte, len(names))
+	for i, name := range names {
+		out[i] = []byte(name)
+	}
+	return out
 }
 
 // maxArgNameInError bounds how much of a model-supplied key an error quotes.
 const maxArgNameInError = 64
+
+// The key scan holds up to argKeysOnStack keys and argFramesOnStack levels of
+// nesting in stack arrays, so it checks an ordinary tool call's arguments
+// without allocating. An object with more than maxPairwiseKeys keys is indexed
+// in a map rather than compared pairwise, so a large object stays linear.
+const (
+	argKeysOnStack   = 16
+	argFramesOnStack = 16
+	maxPairwiseKeys  = 16
+)
 
 // CheckToolArgs reports whether a tool call's raw arguments are in the
 // canonical form that permission evaluation, approval display and execution
@@ -47,10 +65,10 @@ const maxArgNameInError = 64
 //
 // Empty, non-object and syntactically invalid payloads pass: no reader can
 // extract a value from them, and the decoders that consume them already fail
-// closed. Its errors quote key names only, never argument values.
+// closed. Its errors quote key names only, never argument values. It does not
+// allocate for a valid object whose keys carry no JSON escapes.
 func CheckToolArgs(args json.RawMessage) error {
-	_, err := scanToolArgs(args)
-	return err
+	return checkToolArgs(args, nil)
 }
 
 // DecodeToolArgs is the single decode of a tool call's arguments shared by
@@ -67,64 +85,70 @@ func DecodeToolArgs(args json.RawMessage, dst any) error {
 	if len(args) == 0 {
 		return nil
 	}
-	keys, err := scanToolArgs(args)
-	if err != nil {
-		return err
-	}
-	if err := checkFieldSpelling(keys, dst); err != nil {
+	if err := checkToolArgs(args, taggedFieldNames(reflect.TypeOf(dst))); err != nil {
 		return err
 	}
 	return json.Unmarshal(args, dst)
 }
 
-// scanToolArgs validates args (see CheckToolArgs) and returns its top-level
-// keys when it is an object.
-func scanToolArgs(args json.RawMessage) ([]string, error) {
+// checkToolArgs applies CheckToolArgs and then, when fields is non-nil, rejects
+// a top-level key that names one of fields only under case folding.
+func checkToolArgs(args json.RawMessage, fields *taggedFields) error {
+	var buf [argKeysOnStack][]byte
+	keys, err := scanToolArgKeys(args, buf[:0])
+	if err != nil {
+		return err
+	}
+	return fields.checkSpelling(keys)
+}
+
+// scanToolArgKeys validates args (see CheckToolArgs) and appends the top-level
+// keys of an object payload to keys.
+func scanToolArgKeys(args json.RawMessage, keys [][]byte) ([][]byte, error) {
 	trimmed := bytes.TrimSpace(args)
 	if len(trimmed) == 0 || trimmed[0] != '{' || !json.Valid(trimmed) {
-		return nil, nil
+		return keys, nil
 	}
-	keys, err := scanObjectKeys(trimmed)
+	keys, err := scanObjectKeys(trimmed, keys)
 	if err != nil {
 		return nil, err
 	}
-	folded := make(map[string]string, len(keys))
-	for _, key := range keys {
-		fold := foldArgName(key)
-		if prior, seen := folded[fold]; seen {
-			return nil, fmt.Errorf("%w: %s and %s name the same argument", ErrAmbiguousToolArgs, quoteArgName(prior), quoteArgName(key))
-		}
-		folded[fold] = key
-		for _, name := range policyArgNames {
-			if key != name && strings.EqualFold(key, name) {
-				return nil, fmt.Errorf("%w: %s must be spelled %q", ErrAmbiguousToolArgs, quoteArgName(key), name)
-			}
-		}
+	if err := checkTopLevelKeys(keys); err != nil {
+		return nil, err
 	}
 	return keys, nil
 }
 
+// argFrame is an object or array the key scan is inside.
+type argFrame struct {
+	object    bool
+	expectKey bool
+	// start is where the object's keys begin in the scan's key list.
+	start int
+	// seen indexes the object's keys once it has more than maxPairwiseKeys.
+	seen map[string]struct{}
+}
+
 // scanObjectKeys walks a JSON document that json.Valid has accepted, rejecting a
-// repeated key in any object, and returns the keys of the top-level object. It
-// decodes only keys, so large string values cost no allocation.
-func scanObjectKeys(doc []byte) ([]string, error) {
-	type frame struct {
-		object    bool
-		expectKey bool
-		seen      map[string]struct{}
-	}
-	var (
-		stack []frame
-		top   []string
-	)
+// repeated key in any object, and appends the keys of the top-level object to
+// keys. A key is a subslice of doc unless it carries an escape or invalid UTF-8,
+// and a nested object's keys are dropped when it closes, so values and plain
+// keys cost no allocation.
+func scanObjectKeys(doc []byte, keys [][]byte) ([][]byte, error) {
+	var frames [argFramesOnStack]argFrame
+	stack := frames[:0]
 	for i := 0; i < len(doc); i++ {
-		switch c := doc[i]; c {
+		switch doc[i] {
 		case '{':
-			stack = append(stack, frame{object: true, expectKey: true})
+			stack = append(stack, argFrame{object: true, expectKey: true, start: len(keys)})
 		case '[':
-			stack = append(stack, frame{})
+			stack = append(stack, argFrame{})
 		case '}', ']':
+			closed := stack[len(stack)-1]
 			stack = stack[:len(stack)-1]
+			if closed.object && len(stack) > 0 {
+				keys = keys[:closed.start]
+			}
 		case ',':
 			if f := &stack[len(stack)-1]; f.object {
 				f.expectKey = true
@@ -137,21 +161,40 @@ func scanObjectKeys(doc []byte) ([]string, error) {
 				if err != nil {
 					return nil, err
 				}
-				if _, repeated := f.seen[key]; repeated {
-					return nil, fmt.Errorf("%w: %s is given more than once", ErrAmbiguousToolArgs, quoteArgName(key))
+				if f.repeats(keys[f.start:], key) {
+					return nil, fmt.Errorf("%w: %s is given more than once", ErrAmbiguousToolArgs, quoteArgName(string(key)))
 				}
-				if f.seen == nil {
-					f.seen = make(map[string]struct{})
-				}
-				f.seen[key] = struct{}{}
-				if len(stack) == 1 {
-					top = append(top, key)
-				}
+				keys = append(keys, key)
 			}
 			i = end
 		}
 	}
-	return top, nil
+	return keys, nil
+}
+
+// repeats reports whether key repeats one of own, the keys the object has given
+// so far. It compares pairwise until the object has more than maxPairwiseKeys
+// keys, then indexes them in f.seen.
+func (f *argFrame) repeats(own [][]byte, key []byte) bool {
+	if f.seen == nil && len(own) < maxPairwiseKeys {
+		for _, prior := range own {
+			if bytes.Equal(prior, key) {
+				return true
+			}
+		}
+		return false
+	}
+	if f.seen == nil {
+		f.seen = make(map[string]struct{}, 2*len(own))
+		for _, prior := range own {
+			f.seen[string(prior)] = struct{}{}
+		}
+	}
+	if _, repeated := f.seen[string(key)]; repeated {
+		return true
+	}
+	f.seen[string(key)] = struct{}{}
+	return false
 }
 
 // endOfJSONString returns the index of the closing quote of the JSON string
@@ -169,17 +212,60 @@ func endOfJSONString(doc []byte, start int) int {
 }
 
 // decodeJSONKey returns a quoted JSON key as encoding/json decodes it, resolving
-// escapes and replacing invalid UTF-8.
-func decodeJSONKey(quoted []byte) (string, error) {
+// escapes and replacing invalid UTF-8. A key with neither is returned as a
+// subslice of quoted.
+func decodeJSONKey(quoted []byte) ([]byte, error) {
 	inner := quoted[1 : len(quoted)-1]
 	if bytes.IndexByte(inner, '\\') < 0 && utf8.Valid(inner) {
-		return string(inner), nil
+		return inner, nil
 	}
 	var key string
 	if err := json.Unmarshal(quoted, &key); err != nil {
-		return "", err
+		return nil, err
 	}
-	return key, nil
+	return []byte(key), nil
+}
+
+// checkTopLevelKeys rejects two top-level keys that are equal under case
+// folding, and a key that matches a policy argument name only under case
+// folding.
+func checkTopLevelKeys(keys [][]byte) error {
+	var folded map[string][]byte
+	if len(keys) > maxPairwiseKeys {
+		folded = make(map[string][]byte, len(keys))
+	}
+	for i, key := range keys {
+		if prior, ok := foldedEarlierKey(keys[:i], key, folded); ok {
+			return fmt.Errorf("%w: %s and %s name the same argument", ErrAmbiguousToolArgs, quoteArgName(string(prior)), quoteArgName(string(key)))
+		}
+		for _, name := range policyArgNames {
+			if !bytes.Equal(key, name) && bytes.EqualFold(key, name) {
+				return fmt.Errorf("%w: %s must be spelled %q", ErrAmbiguousToolArgs, quoteArgName(string(key)), name)
+			}
+		}
+	}
+	return nil
+}
+
+// foldedEarlierKey returns the key in earlier that equals key under case
+// folding. With folded nil it compares pairwise with bytes.EqualFold, the
+// simple folding foldArgName represents; otherwise it looks key up in folded,
+// the index of earlier, and records it there.
+func foldedEarlierKey(earlier [][]byte, key []byte, folded map[string][]byte) ([]byte, bool) {
+	if folded == nil {
+		for _, prior := range earlier {
+			if bytes.EqualFold(prior, key) {
+				return prior, true
+			}
+		}
+		return nil, false
+	}
+	fold := foldArgName(string(key))
+	if prior, seen := folded[fold]; seen {
+		return prior, true
+	}
+	folded[fold] = key
+	return nil, false
 }
 
 // foldArgName maps name to a representative of its case-folding class: two
@@ -221,30 +307,39 @@ func quoteArgName(name string) string {
 	return fmt.Sprintf("%q", name)
 }
 
-// checkFieldSpelling rejects a key that names one of dst's explicitly tagged
-// struct fields only under case folding. Untagged fields keep encoding/json's
-// case-insensitive matching, since their Go name is not a wire spelling.
-func checkFieldSpelling(keys []string, dst any) error {
-	fields := taggedFieldNames(reflect.TypeOf(dst))
-	if fields == nil {
+// taggedFields holds a struct's explicitly tagged JSON field names.
+type taggedFields struct {
+	names [][]byte
+}
+
+// checkSpelling rejects a key that names one of the tagged fields only under
+// case folding. Untagged fields keep encoding/json's case-insensitive matching,
+// since their Go name is not a wire spelling. A nil f checks nothing.
+func (f *taggedFields) checkSpelling(keys [][]byte) error {
+	if f == nil {
 		return nil
 	}
 	for _, key := range keys {
-		if _, exact := fields.exact[key]; exact {
+		if f.has(key) {
 			continue
 		}
-		if name, ok := fields.folded[foldArgName(key)]; ok {
-			return fmt.Errorf("%w: %s must be spelled %q", ErrAmbiguousToolArgs, quoteArgName(key), name)
+		for _, name := range f.names {
+			if bytes.EqualFold(key, name) {
+				return fmt.Errorf("%w: %s must be spelled %q", ErrAmbiguousToolArgs, quoteArgName(string(key)), name)
+			}
 		}
 	}
 	return nil
 }
 
-// taggedFields indexes a struct's explicitly tagged JSON field names exactly and
-// by their case-folding class.
-type taggedFields struct {
-	exact  map[string]struct{}
-	folded map[string]string
+// has reports whether key is exactly one of the tagged names.
+func (f *taggedFields) has(key []byte) bool {
+	for _, name := range f.names {
+		if bytes.Equal(key, name) {
+			return true
+		}
+	}
+	return false
 }
 
 var taggedFieldCache sync.Map // reflect.Type -> *taggedFields
@@ -259,7 +354,7 @@ func taggedFieldNames(t reflect.Type) *taggedFields {
 	if cached, ok := taggedFieldCache.Load(t); ok {
 		return cached.(*taggedFields)
 	}
-	fields := &taggedFields{exact: map[string]struct{}{}, folded: map[string]string{}}
+	fields := &taggedFields{}
 	collectTaggedFields(t.Elem(), fields, 0)
 	taggedFieldCache.Store(t, fields)
 	return fields
@@ -292,7 +387,6 @@ func collectTaggedFields(t reflect.Type, fields *taggedFields, depth int) {
 		if !field.IsExported() || name == "" {
 			continue
 		}
-		fields.exact[name] = struct{}{}
-		fields.folded[foldArgName(name)] = name
+		fields.names = append(fields.names, []byte(name))
 	}
 }
