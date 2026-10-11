@@ -161,7 +161,7 @@ export function SettingsWorkspace({
               className="pointer-events-none absolute top-1/2 left-4 size-[18px] -translate-y-1/2 text-muted-foreground"
             />
             <select
-              className="min-h-11 w-full appearance-none rounded-2xl border-0 bg-muted/50 py-2 pr-10 pl-11 text-[15px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="min-h-11 w-full appearance-none rounded-2xl border border-muted-foreground bg-muted/50 py-2 pr-10 pl-11 text-[15px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               id="settings-section"
               onChange={(event) => onSectionChange?.(event.target.value as SettingsSection)}
               value={section}
@@ -184,9 +184,12 @@ export function SettingsWorkspace({
         </div>
 
         <div className="flex flex-col gap-6 min-[500px]:flex-row min-[500px]:items-start min-[500px]:gap-10">
+          {/* Sticky and scrollable on its own, so a short window keeps every
+              section reachable while the content scrolls. The 4px padding,
+              offset by the margin, leaves room for focus outlines. */}
           <nav
             aria-label="Settings sections"
-            className="hidden w-44 shrink-0 flex-col gap-5 min-[500px]:flex"
+            className="-m-1 hidden w-[11.5rem] shrink-0 flex-col gap-5 p-1 min-[500px]:sticky min-[500px]:top-0 min-[500px]:flex min-[500px]:max-h-[calc(100dvh-12rem)] min-[500px]:overflow-y-auto"
           >
             {settingsGroups.map((group) => (
               <div className="space-y-1" key={group.title}>
@@ -205,6 +208,7 @@ export function SettingsWorkspace({
                             : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
                         )}
                         onClick={() => onSectionChange?.(item.value)}
+                        ref={section === item.value ? keepInView : undefined}
                         type="button"
                       >
                         {item.label}
@@ -629,6 +633,11 @@ function providerState(state: string): { dot: string; label: string; ready: bool
     return { dot: "bg-destructive", label: "Unavailable", ready: false };
   }
   return { dot: "bg-muted-foreground", label: "Not ready", ready: false };
+}
+
+/** A short window cannot show the whole nav; keep the current section in view. */
+function keepInView(button: HTMLButtonElement | null) {
+  button?.scrollIntoView?.({ block: "nearest" });
 }
 
 function humanize(value: string): string {

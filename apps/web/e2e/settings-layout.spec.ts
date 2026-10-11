@@ -197,3 +197,84 @@ test("settings sections fit between the 500px pivot and a tablet", async ({
     });
   }
 });
+
+test("the settings nav keeps the current section on screen at 1280x800", async ({
+  offlineBff,
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium-desktop", "sets its own viewport size");
+  await page.addInitScript(() => localStorage.setItem("studio.account", "opaque-a"));
+  stub(offlineBff);
+  await page.setViewportSize({ width: 1280, height: 800 });
+
+  for (const section of SECTIONS) {
+    await page.goto(`/workspace/settings/${section}`);
+    const nav = page.getByRole("navigation", { name: "Settings sections" });
+    const current = nav.locator('button[aria-current="page"]');
+    await expect(current).toHaveCount(1);
+    await page.waitForLoadState("networkidle");
+    const visible = await current.evaluate((button) => {
+      const box = button.getBoundingClientRect();
+      const frame = button.closest("main")?.getBoundingClientRect();
+      // Every clipping ancestor, the page scroller and the nav included.
+      let clip = frame ?? new DOMRect(0, 0, innerWidth, innerHeight);
+      for (let node = button.parentElement; node; node = node.parentElement) {
+        if (getComputedStyle(node).overflowY !== "visible") {
+          const rect = node.getBoundingClientRect();
+          clip = new DOMRect(
+            Math.max(clip.left, rect.left),
+            Math.max(clip.top, rect.top),
+            Math.min(clip.right, rect.right) - Math.max(clip.left, rect.left),
+            Math.min(clip.bottom, rect.bottom) - Math.max(clip.top, rect.top),
+          );
+        }
+      }
+      return box.top >= clip.top - 1 && box.bottom <= clip.bottom + 1;
+    });
+    expect.soft(visible, `${section}: current nav item on screen`).toBe(true);
+    const heights = await nav
+      .locator("button")
+      .evaluateAll((buttons) => buttons.map((button) => button.getBoundingClientRect().height));
+    expect.soft(Math.min(...heights), `${section}: nav targets`).toBeGreaterThanOrEqual(44);
+  }
+});
+
+/** WCAG relative-luminance contrast between two computed `rgb()` colors. */
+function contrast(first: string, second: string): number {
+  const luminance = (color: string) => {
+    const [r, g, b] = (color.match(/[\d.]+/gu) ?? []).slice(0, 3).map((channel) => {
+      const value = Number(channel) / 255;
+      return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * (r ?? 0) + 0.7152 * (g ?? 0) + 0.0722 * (b ?? 0);
+  };
+  const [light, dark] = [luminance(first), luminance(second)].sort((a, b) => b - a);
+  return ((light ?? 0) + 0.05) / ((dark ?? 0) + 0.05);
+}
+
+for (const theme of ["light", "dark"] as const) {
+  test(`the phone section picker reads as a control in ${theme} mode`, async ({
+    offlineBff,
+    page,
+  }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium-mobile", "the picker only shows on a phone");
+    await page.addInitScript((value) => {
+      localStorage.setItem("mecatl-studio-theme", value);
+      localStorage.setItem("studio.account", "opaque-a");
+    }, theme);
+    stub(offlineBff);
+    await page.goto("/workspace/settings/profile");
+    const picker = page.getByRole("combobox", { name: "Settings section", exact: true });
+    await expect(picker).toBeVisible();
+    const colors = await picker.evaluate((select) => {
+      const style = getComputedStyle(select);
+      const page = getComputedStyle(select.closest("main") ?? document.body).backgroundColor;
+      return {
+        border: Number.parseFloat(style.borderTopWidth) >= 1 ? style.borderTopColor : page,
+        page,
+      };
+    });
+    // WCAG 1.4.11: the control's boundary needs 3:1 against what surrounds it.
+    expect(contrast(colors.border, colors.page), JSON.stringify(colors)).toBeGreaterThanOrEqual(3);
+  });
+}
