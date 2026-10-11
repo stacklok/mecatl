@@ -51,6 +51,189 @@ func checkEffortBodyFits(t *testing.T, m Model) string {
 	return stripANSIstr(body)
 }
 
+func TestEffortSurfacePreferredCardStaysStableWhileNavigating(t *testing.T) {
+	offers := []struct {
+		name string
+		rows int
+	}{
+		{"one-row", 1}, {"two-rows", 2}, {"three-rows", 3},
+		{"four-rows", 4}, {"five-rows", 5}, {"six-rows", 6},
+		{"roomy", 20},
+	}
+	for _, warning := range []bool{false, true} {
+		for _, offer := range offers {
+			t.Run(fmt.Sprintf("warning=%v/%s", warning, offer.name), func(t *testing.T) {
+				m, s := openedEffort(t, "max", warning)
+				height := offer.rows + 4 // title plus the three footer lines
+				if warning {
+					height++
+				}
+				m = effortOffer(m, 200, height)
+				out := checkEffortBodyFits(t, m)
+				bounds := m.metrics.outerBounds
+				want := [2]int{bounds.x1 - bounds.x0, bounds.y1 - bounds.y0}
+				if want[0] >= effortMaxOuterWidth {
+					t.Fatalf("small picker retained the %d-cell card: %+v", effortMaxOuterWidth, bounds)
+				}
+				if warning && !strings.Contains(out, effortWarning) {
+					t.Fatalf("warning did not fit readable width:\n%s", out)
+				}
+				for _, hint := range []string{"Reasoning effort", "move", "page", "first/last", "current  ·  auto = provider default"} {
+					if !strings.Contains(out, hint) {
+						t.Fatalf("title/footer missing %q:\n%s", hint, out)
+					}
+				}
+				if offer.rows == 1 && (s.list.Height() != 1 || strings.Contains(out, effortRowText(effortAuto))) {
+					t.Fatalf("max must start with the long auto row off-screen: height=%d\n%s", s.list.Height(), out)
+				}
+				if offer.name == "roomy" {
+					if s.list.Height() < len(effortTiers) {
+						t.Fatalf("roomy offer has only %d visible rows", s.list.Height())
+					}
+					for _, tier := range effortTiers {
+						if !strings.Contains(out, effortRowText(tier)) {
+							t.Fatalf("roomy offer omitted %q:\n%s", tier, out)
+						}
+					}
+				}
+
+				assertDimensions := func(msg tea.Msg) {
+					t.Helper()
+					_ = checkEffortBodyFits(t, m)
+					got := m.metrics.outerBounds
+					if dimensions := [2]int{got.x1 - got.x0, got.y1 - got.y0}; dimensions != want {
+						t.Fatalf("%T changed card dimensions from %v to %v", msg, want, dimensions)
+					}
+				}
+				for _, msg := range []tea.Msg{
+					tea.KeyPressMsg{Code: tea.KeyUp}, tea.KeyPressMsg{Code: tea.KeyDown},
+					tea.KeyPressMsg{Code: tea.KeyPgUp}, tea.KeyPressMsg{Code: tea.KeyPgDown},
+				} {
+					m = applyAll(m, msg)
+					assertDimensions(msg)
+				}
+				m = applyAll(m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+				assertDimensions(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+				m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyHome})
+				assertDimensions(tea.KeyPressMsg{Code: tea.KeyHome})
+				out = checkEffortBodyFits(t, m)
+				if offer.rows == 1 && !strings.Contains(out, effortRowText(effortAuto)) {
+					t.Fatalf("auto row was clipped after becoming visible:\n%s", out)
+				}
+				for range 2 {
+					m = applyAll(m, tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+					assertDimensions(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+				}
+				m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnd})
+				assertDimensions(tea.KeyPressMsg{Code: tea.KeyEnd})
+				selected := s.list.CursorID()
+				wheel := func(button tea.MouseButton) int {
+					t.Helper()
+					m = applyAll(m, tea.MouseWheelMsg{Button: button})
+					assertDimensions(tea.MouseWheelMsg{Button: button})
+					if s.list.CursorID() != selected {
+						t.Fatalf("wheel changed selected tier from %q to %q", selected, s.list.CursorID())
+					}
+					return s.list.Offset()
+				}
+				if offer.rows < len(effortTiers) {
+					bottom := s.list.Offset()
+					if up := wheel(tea.MouseWheelUp); up >= bottom {
+						t.Fatalf("wheel up did not move bounded window: %d -> %d", bottom, up)
+					}
+					for range 8 {
+						_ = wheel(tea.MouseWheelUp)
+					}
+					top := s.list.Offset()
+					if got := wheel(tea.MouseWheelUp); got != top {
+						t.Fatalf("wheel up escaped top endpoint: %d -> %d", top, got)
+					}
+					for range 8 {
+						_ = wheel(tea.MouseWheelDown)
+					}
+					bottom = s.list.Offset()
+					if got := wheel(tea.MouseWheelDown); got != bottom {
+						t.Fatalf("wheel down escaped bottom endpoint: %d -> %d", bottom, got)
+					}
+				} else {
+					offset := s.list.Offset()
+					for _, button := range []tea.MouseButton{tea.MouseWheelUp, tea.MouseWheelDown} {
+						if got := wheel(button); got != offset {
+							t.Fatalf("non-overflow wheel changed window: %d -> %d", offset, got)
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestEffortSurfaceLongCapturedHintsCapAndResize(t *testing.T) {
+	const offerHeight = 40
+	longHint := strings.Repeat("q", 160)
+	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
+	m.keys = applyKeyOverrides(m.keys, map[string][]string{"Up": {longHint}})
+	mm, _ := m.runEffort()
+	m = mm.(Model)
+	s := m.modal.(*effortState)
+	preferred := s.modalMaxOuterWidth()
+	if preferred != effortMaxOuterWidth {
+		t.Fatalf("long captured hint preferred width = %d, want cap %d", preferred, effortMaxOuterWidth)
+	}
+	checkLongHint := func(label string) {
+		t.Helper()
+		out := checkEffortBodyFits(t, m)
+		if got := strings.Count(out, "q"); got != len(longHint) {
+			t.Fatalf("%s long captured hint lost or duplicated cells: found %d of %d", label, got, len(longHint))
+		}
+		view := s.list.View()
+		gutter := 0
+		if len(view.Rows) > 0 {
+			gutter = view.Rows[0].GutterCells
+		}
+		if !s.list.Valid() || len(view.Rows) == 0 || gutter != 2 || !strings.Contains(out, "Reasoning effort") {
+			t.Fatalf("%s lost picker chrome or gutter: valid=%t rows=%d gutter=%d\n%s", label, s.list.Valid(), len(view.Rows), gutter, out)
+		}
+	}
+
+	m = effortOffer(m, 200, offerHeight)
+	checkLongHint("wide")
+	wideBounds := m.metrics.outerBounds
+	wideHeight := wideBounds.y1 - wideBounds.y0
+	if wideBounds.x1-wideBounds.x0 != preferred {
+		t.Fatalf("wide long-hint card bounds = %+v, want %d-cell cap", wideBounds, preferred)
+	}
+
+	m = effortOffer(m, 32, offerHeight)
+	checkLongHint("narrow")
+	narrowBounds := m.metrics.outerBounds
+	if got, want := narrowBounds.x1-narrowBounds.x0, min(preferred, m.width); got != want {
+		t.Fatalf("narrow outer width = %d, want min(preferred %d, parent %d) = %d", got, preferred, m.width, want)
+	}
+	if got := len(s.footerLines(narrowBounds.x1 - narrowBounds.x0 - m.deps.Theme.Style("askCard").GetHorizontalFrameSize())); got <= 3 {
+		t.Fatalf("narrow long hint footer did not wrap: %d lines", got)
+	}
+	if got := s.modalMaxOuterWidth(); got != preferred {
+		t.Fatalf("resize changed captured preferred width from %d to %d", preferred, got)
+	}
+	for _, msg := range []tea.Msg{
+		tea.KeyPressMsg{Code: tea.KeyHome}, tea.KeyPressMsg{Code: tea.KeyEnd},
+		tea.MouseWheelMsg{Button: tea.MouseWheelUp}, tea.MouseWheelMsg{Button: tea.MouseWheelDown},
+	} {
+		m = applyAll(m, msg)
+		checkLongHint(fmt.Sprintf("narrow after %T", msg))
+		if got := m.metrics.outerBounds; got != narrowBounds {
+			t.Fatalf("%T changed narrow card bounds from %+v to %+v", msg, narrowBounds, got)
+		}
+	}
+
+	m = effortOffer(m, 200, offerHeight)
+	checkLongHint("wide after resize")
+	if bounds := m.metrics.outerBounds; bounds.x1-bounds.x0 != preferred || bounds.y1-bounds.y0 != wideHeight {
+		t.Fatalf("wide resize did not restore %d×%d card: %+v", preferred, wideHeight, bounds)
+	}
+}
+
 func TestEffortSurfaceMeasuredGeometry(t *testing.T) {
 	for _, warning := range []bool{false, true} {
 		for _, dim := range [][2]int{{100, 20}, {32, 20}, {24, 30}, {200, 20}, {100, 7}, {100, 6}, {100, 5}, {5, 40}, {3, 80}} {

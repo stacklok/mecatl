@@ -3,20 +3,20 @@
 
 
 
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃                                                                                                  ┃
-┃  Reasoning effort                                                                                ┃
-┃     auto    (operator / provider default)                                                        ┃
-┃     low                                                                                          ┃
-┃   ● medium                                                                                       ┃
-┃  ▶  high                                                                                         ┃
-┃     xhigh                                                                                        ┃
-┃     max                                                                                          ┃
-┃  ↑/↓ move · enter apply · esc close                                                              ┃
-┃  pgup/pgdn page · home/end first/last                                                            ┃
-┃  ● current  ·  auto = provider default                                                           ┃
-┃                                                                                                  ┃
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+                           ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+                           ┃                                            ┃
+                           ┃  Reasoning effort                          ┃
+                           ┃     auto    (operator / provider default)  ┃
+                           ┃     low                                    ┃
+                           ┃   ● medium                                 ┃
+                           ┃  ▶  high                                   ┃
+                           ┃     xhigh                                  ┃
+                           ┃     max                                    ┃
+                           ┃  ↑/↓ move · enter apply · esc close        ┃
+                           ┃  pgup/pgdn page · home/end first/last      ┃
+                           ┃  ● current  ·  auto = provider default     ┃
+                           ┃                                            ┃
+                           ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 
 

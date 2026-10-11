@@ -38,6 +38,12 @@ import (
 // list, effortValue, and effortLabel share one spelling.
 const effortAuto = "auto"
 
+const (
+	effortMaxOuterWidth  = 128
+	effortRowGutterWidth = 3
+	effortWarning        = "this model has no reasoning support — a tier will be ignored"
+)
+
 // effortTiers is the neutral reasoning-effort vocabulary in picker order. "auto" is
 // the unset sentinel (⇒ ""); the rest are the real tiers the server understands.
 // FIXED order, locked by a test so the picker layout is stable.
@@ -70,7 +76,20 @@ func (s *effortState) takeSurfaceIntent() surfaceIntent {
 	return intent
 }
 
-func (*effortState) modalMaxOuterWidth() int                 { return 128 }
+func (s *effortState) modalMaxOuterWidth() int {
+	frame := s.deps.theme.Style("askCard").GetHorizontalFrameSize()
+	width := ansi.StringWidth("Reasoning effort")
+	for _, tier := range effortTiers {
+		width = max(width, effortRowGutterWidth+ansi.StringWidth(effortRowText(tier)))
+	}
+	for _, line := range s.footerLines(effortMaxOuterWidth - frame) {
+		width = max(width, ansi.StringWidth(line))
+	}
+	if s.noReasoning {
+		width = max(width, ansi.StringWidth(effortWarning))
+	}
+	return min(effortMaxOuterWidth, width+frame)
+}
 func (s *effortState) modalFrame() bool                      { return !s.compact }
 func (s *effortState) Close()                                { s.intent = nil }
 func (*effortState) HandleMsg(tea.Msg) (tea.Cmd, bool, bool) { return nil, false, false }
@@ -261,7 +280,7 @@ func (s *effortState) Render(width, height int) (string, []ClickableRegion) {
 	footer := s.footerLines(width)
 	var warning []string
 	if s.noReasoning {
-		warning = skillsTextLines(th.Style("warning"), "this model has no reasoning support — a tier will be ignored", width)
+		warning = skillsTextLines(th.Style("warning"), effortWarning, width)
 	}
 	rows := height - len(title) - len(warning) - len(footer)
 	s.list.SetGeometry(width, rows, 2, bounded.Clip)
