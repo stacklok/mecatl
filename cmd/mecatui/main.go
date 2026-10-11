@@ -185,7 +185,11 @@ type runOptions struct {
 	connectTransport       restartTransport
 	recoveryOnly           bool
 	beforeEmbeddedStart    func(app.Config) error
-	runProgram             func(context.Context, ui.Model) (tea.Model, error)
+	wrapTransportCleanup   func(func()) func()
+	statusSourceStarted    func(customization.Source)
+	// Fault injection after the real preflight succeeds; never replaces the RPC.
+	afterCompatibilityCheck func() error
+	runProgram              func(context.Context, ui.Model) (tea.Model, error)
 }
 
 //nolint:gocyclo // composition root sequences transport, safe auth recovery, and Bubble Tea lifecycle.
@@ -218,7 +222,12 @@ func runWithOptions(argv []string, options runOptions) error {
 	if cfg.providerKeys.AuthFileWarning != "" {
 		fmt.Fprintln(os.Stderr, "mecatui: WARNING: "+wrapAuthFileWarning(cfg.providerKeys.AuthFileWarning))
 	}
-	if err := validateRunConfig(cfg); err != nil {
+	validationCfg := cfg
+	if options.recoveryOnly {
+		// Disconnected recovery never embeds and needs no local provider.
+		validationCfg.transportMode = modeConnect
+	}
+	if err := validateRunConfig(validationCfg); err != nil {
 		return err
 	}
 	settings, err := readClientSettings()
@@ -228,6 +237,10 @@ func runWithOptions(argv []string, options runOptions) error {
 	statusSource, title, err := buildClientPresentation(cfg, settings, os.Stdout)
 	if err != nil {
 		return err
+	}
+	defer func() { _ = statusSource.Close(context.Background()) }()
+	if options.statusSourceStarted != nil {
+		options.statusSourceStarted(statusSource)
 	}
 	emitDebugPrivacyWarning(os.Stderr, cfg.debugTarget, cfg.debugMCP...)
 
@@ -257,7 +270,7 @@ func runWithOptions(argv []string, options runOptions) error {
 	themeAutoDetect := resolveThemeAutoDetect(cfg, stdoutIsTTY)
 	keyboardProbe := resolveKeyboardProbe(stdoutIsTTY)
 	if options.recoveryOnly {
-		defer func() { _ = statusSource.Close(context.Background()) }()
+		_ = statusSource.Close(context.Background())
 		return runDisconnectedRecovery(context.Background(), argv, th, themeAutoDetect, title, options)
 	}
 
@@ -265,28 +278,71 @@ func runWithOptions(argv []string, options runOptions) error {
 	// Bubble Tea quits); second signal during cleanup = immediate hard os.Exit(130).
 	ctx, forceExit := setupSignalHandler()
 
+	var cl *client.Client
+	var transCleanup func()
+	cleanup := func() {
+		if cl != nil {
+			_ = cl.Close()
+		}
+		if transCleanup != nil {
+			transCleanup()
+		}
+		_ = statusSource.Close(context.Background())
+		_ = closeTerminalTitle(title)
+	}
+
 	// Resolve where to connect before any potentially mutating readiness work. Resume
 	// placement is authoritative and must reject a mismatched profile first.
-	target, dial, transCleanup, err := resolveTransportWithHook(ctx, cfg, options.beforeEmbeddedStart)
+	var target string
+	var dial client.DialConfig
+	target, dial, transCleanup, err = resolveTransportWithHook(ctx, cfg, options.beforeEmbeddedStart)
 	if err != nil {
+		if runCleanup(forceExit, cleanup) || errors.Is(err, context.Canceled) {
+			return context.Canceled
+		}
 		if reason, ok := client.AuthFailure(err, cfg.authToken != ""); ok {
 			recoveryTarget := target
 			if recoveryTarget == "" {
 				recoveryTarget = cfg.connectAddress
 			}
-			return runWithOptions([]string{argv[0]}, authRecoveryOptions(reason, recoveryTarget, "Authentication needs attention.", options.connectResumeSessionID, restartTransport{Target: recoveryTarget, TLSCAFile: cfg.tlsCA}))
+			return runWithOptions([]string{argv[0]}, authRecoveryOptions(reason, recoveryTarget, options.connectResumeSessionID, restartTransport{Target: recoveryTarget, TLSCAFile: cfg.tlsCA}))
 		}
 		return err
+	}
+
+	if options.wrapTransportCleanup != nil {
+		transCleanup = options.wrapTransportCleanup(transCleanup)
 	}
 
 	if cfg.insecure {
 		fmt.Fprintln(os.Stderr, "mecatui: WARNING: --insecure skips TLS certificate verification (testing only)")
 	}
 
-	cl, err := client.Dial(dial)
+	cl, err = client.Dial(dial)
 	if err != nil {
-		transCleanup()
+		if runCleanup(forceExit, cleanup) {
+			return context.Canceled
+		}
 		return err
+	}
+
+	err = cl.CheckCompatibility(ctx)
+	if err == nil && options.afterCompatibilityCheck != nil {
+		err = options.afterCompatibilityCheck()
+	}
+	if err != nil {
+		interrupted := runCleanup(forceExit, cleanup)
+		if interrupted || errors.Is(err, context.Canceled) {
+			return context.Canceled
+		}
+		if !errors.Is(err, context.DeadlineExceeded) {
+			if reason, ok := client.AuthFailure(err, dial.AuthToken != "" || dial.TokenSource != nil); ok {
+				recovery := authRecoveryOptions(reason, target, options.connectResumeSessionID, restartTransport{Target: target, TLSCAFile: cfg.tlsCA})
+				recovery.runProgram = options.runProgram
+				return runWithOptions([]string{argv[0]}, recovery)
+			}
+		}
+		return &startupCompatibilityError{cause: err}
 	}
 
 	var resume *client.ResumeSelection
@@ -310,13 +366,13 @@ func runWithOptions(argv []string, options runOptions) error {
 		}
 	}
 	if err != nil {
-		if reason, ok := client.AuthFailure(err, dial.AuthToken != "" || dial.TokenSource != nil); ok {
-			_ = cl.Close()
-			transCleanup()
-			return runWithOptions([]string{argv[0]}, authRecoveryOptions(reason, target, "Authentication needs attention.", options.connectResumeSessionID, restartTransport{Target: target, TLSCAFile: cfg.tlsCA}))
+		interrupted := runCleanup(forceExit, cleanup)
+		if interrupted || errors.Is(err, context.Canceled) {
+			return context.Canceled
 		}
-		_ = cl.Close()
-		transCleanup()
+		if reason, ok := client.AuthFailure(err, dial.AuthToken != "" || dial.TokenSource != nil); ok {
+			return runWithOptions([]string{argv[0]}, authRecoveryOptions(reason, target, options.connectResumeSessionID, restartTransport{Target: target, TLSCAFile: cfg.tlsCA}))
+		}
 		return err
 	}
 
@@ -327,7 +383,6 @@ func runWithOptions(argv []string, options runOptions) error {
 	// before the create carries it (see ui.Init / updateModelsMsg).
 	store := newSelectionStore(xdgconfig.OSEnv)
 	initialSel, wsDefault, wsDefaultSet, globalDefault := launchSelections(store, uiWorkspace, cfg.debugTarget)
-	defer func() { _ = statusSource.Close(context.Background()) }()
 
 	connectionMode := resolveConnectionMode(cfg)
 	// Held concretely (not just as the ui interface) because this run OWNS its
@@ -432,8 +487,9 @@ func runWithOptions(argv []string, options runOptions) error {
 
 	// Apply keymap overrides (client YAML settings merged with CLI --keymap).
 	if err := applyKeyOverridesToDeps(cfg, settings, &deps); err != nil {
-		_ = cl.Close()
-		transCleanup()
+		if runCleanup(forceExit, cleanup) {
+			return context.Canceled
+		}
 		return err
 	}
 
@@ -450,17 +506,23 @@ func runWithOptions(argv []string, options runOptions) error {
 		runErr = err
 	}
 
+	cleanupInterrupted := false
 	finishFinalSessionHandoff(os.Stderr, finalModel, runErr, interrupted, cfg.transportMode == modeLocal, cl, func() {
-		runCleanup(forceExit, func() {
+		cleanupInterrupted = runCleanup(forceExit, func() {
 			// Settle the lifecycle hook FIRST: this must complete before the restart
 			// below can build a successor notifier, or a slow hook command could
 			// deliver this generation's terminal after the next generation's busy
 			// signal and mark the host idle during a live run.
 			closeAgentLifecycleHook(agentHook)
-			_ = cl.Close()
-			transCleanup()
+			cleanup()
 		})
 	})
+	if cleanupInterrupted {
+		if !interrupted {
+			return context.Canceled
+		}
+		return runErr
+	}
 	if intent, ok := connectRestartIntent(finalModel); ok {
 		return restartFromConnectIntent(argv, intent, restartTransport{Target: target, TLSCAFile: cfg.tlsCA})
 	}
@@ -609,8 +671,14 @@ func resolveKeyboardProbe(stdoutIsTTY bool) bool {
 
 func runDisconnectedRecovery(ctx context.Context, argv []string, th theme.Theme, themeAutoDetect bool, title *terminalTitleController, options runOptions) error {
 	deps := ui.Deps{Ctx: ctx, Theme: th, ThemeAutoDetect: themeAutoDetect, Connect: savedConnectController{}, ConnectOpen: true, ConnectError: options.connectError, ConnectReason: options.connectReason, ConnectTarget: options.connectTarget, ConnectResumeSessionID: options.connectResumeSessionID}
-	prog := newMecatuiProgram(ctx, deps, title)
-	finalModel, runErr := prog.Run()
+	var finalModel tea.Model
+	var runErr error
+	if options.runProgram != nil {
+		deps.TerminalTitle = title.Set
+		finalModel, runErr = options.runProgram(ctx, ui.New(deps))
+	} else {
+		finalModel, runErr = newMecatuiProgram(ctx, deps, title).Run()
+	}
 	if runErr == nil && ctx.Err() == nil {
 		if err := title.Close(); err != nil {
 			runErr = err
@@ -635,8 +703,8 @@ func safeAuthRecoveryState(state string) bool {
 	}
 }
 
-func authRecoveryOptions(reason client.AuthReason, target, message, candidate string, transport restartTransport) runOptions {
-	return runOptions{connectOpen: true, connectError: message, connectReason: reason, connectTarget: target, connectResumeSessionID: candidate, connectTransport: transport, recoveryOnly: true}
+func authRecoveryOptions(reason client.AuthReason, target, candidate string, transport restartTransport) runOptions {
+	return runOptions{connectOpen: true, connectError: "Authentication needs attention.", connectReason: reason, connectTarget: target, connectResumeSessionID: candidate, connectTransport: transport, recoveryOnly: true}
 }
 
 type connectRestartOps struct {
@@ -726,7 +794,19 @@ func restartFromConnectIntentWith(argv []string, intent ui.ConnectRestartIntent,
 	}
 	err := ops.run(connectArgv, runOptions{connectResumeSessionID: resumeSessionID})
 	if err != nil {
-		return ops.run([]string{argv[0]}, runOptions{connectOpen: true, connectError: "Connection failed; check the saved target and try again.", connectReason: recoveryReason, connectTarget: intent.Target, connectResumeSessionID: resumeSessionID, connectTransport: selectedTransport, recoveryOnly: true})
+		if errors.Is(err, context.Canceled) {
+			return err
+		}
+		connectError := "Connection failed; check the saved target and try again."
+		if diagnosis, ok := startupCompatibilityDiagnosis(err); ok {
+			connectError = diagnosis
+		}
+		if reason, ok := client.AuthFailure(err, false); ok {
+			recoveryReason = reason
+		} else {
+			recoveryReason = ""
+		}
+		return ops.run([]string{argv[0]}, runOptions{connectOpen: true, connectError: connectError, connectReason: recoveryReason, connectTarget: intent.Target, connectResumeSessionID: resumeSessionID, connectTransport: selectedTransport, recoveryOnly: true})
 	}
 	return nil
 }
@@ -827,39 +907,70 @@ func emitAuthFileWarning(writer io.Writer, warning string) {
 	}
 }
 
-// setupSignalHandler installs the manual two-signal handler: first signal =
-// graceful shutdown (cancels the returned ctx → Bubble Tea quits); a second
-// signal before cleanup completes = immediate hard os.Exit(130). It returns the
-// ctx plus a forceExit channel the caller closes ONLY after the post-Run cleanup
-// has finished (see runCleanup) to retire the handler on the normal path.
-//
-// The signal goroutine is the SOLE owner of sigCh (signal.Notify's channel): no
-// other code reads it, and NOTHING calls signal.Stop on the force-exit path, so
-// a second SIGINT/SIGTERM delivered while the post-Run cleanup is still running
-// is ALWAYS received and drives the immediate os.Exit(130). That is the
-// criterion-6 contract — a second signal during graceful shutdown forces a hard
-// exit. It must never be swallowed: a signal.Stop, or a second consumer draining
-// the channel, would silently revert that second Ctrl+C to the OS default
-// disposition and wedge the shutdown it exists to interrupt. To keep that
-// deterministic, forceExit is closed only AFTER cleanup finishes — never while
-// the goroutine is still parked listening for the second signal — so there is no
-// select race between "second signal" and "cleanup done" mid-cleanup.
-func setupSignalHandler() (context.Context, chan struct{}) {
+type startupCompatibilityError struct{ cause error }
+
+func (e *startupCompatibilityError) Error() string {
+	if message, ok := client.SafeCompatibilityError(e.cause); ok {
+		return message
+	}
+	if errors.Is(e.cause, context.DeadlineExceeded) {
+		return "server compatibility check timed out; retry the connection"
+	}
+	return "server compatibility check failed; check the connection and retry"
+}
+
+func (e *startupCompatibilityError) Unwrap() error { return e.cause }
+
+// startupCompatibilityDiagnosis recognizes the startup wrapper as the boundary
+// that guarantees its message is client-authored and safe for the disconnected UI.
+func startupCompatibilityDiagnosis(err error) (string, bool) {
+	var startupErr *startupCompatibilityError
+	if !errors.As(err, &startupErr) {
+		return "", false
+	}
+	return startupErr.Error(), true
+}
+
+// signalHandler owns one run's registration. done closes only after signal.Stop
+// and cancellation; interrupted records signals, not retirement's cancellation.
+type signalHandler struct {
+	forceExit   chan struct{}
+	done        chan struct{}
+	interrupted bool
+}
+
+// setupSignalHandler installs the two-signal handler: the first cancels ctx;
+// the second hard-exits even during cleanup. Only runCleanup retires it, after
+// cleanup finishes, and waits for signal.Stop before a successor can register.
+func setupSignalHandler() (context.Context, *signalHandler) {
 	sigCh := make(chan os.Signal, 2)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	forceExit := make(chan struct{})
+	handler := &signalHandler{forceExit: make(chan struct{}), done: make(chan struct{})}
 	go func() {
-		defer signal.Stop(sigCh)
-		defer cancel()
+		defer func() {
+			signal.Stop(sigCh)
+			// Include a first signal buffered during cleanup even if retirement
+			// won the select. Stop ensures no later delivery can race this read.
+			if !handler.interrupted {
+				select {
+				case <-sigCh:
+					handler.interrupted = true
+				default:
+				}
+			}
+			cancel()
+			close(handler.done)
+		}()
 		// First: graceful signal, or clean quit before any signal.
 		select {
 		case sig := <-sigCh:
+			handler.interrupted = true
 			fmt.Fprintf(os.Stderr, "mecatui: received %s, shutting down gracefully (press again to force exit)...\n", sig)
 			cancel()
-		case <-forceExit:
+		case <-handler.forceExit:
 			return
 		}
 		// Past the first signal: keep listening for the SECOND signal through the
@@ -874,10 +985,10 @@ func setupSignalHandler() (context.Context, chan struct{}) {
 		case <-sigCh:
 			fmt.Fprintln(os.Stderr, "mecatui: forcing immediate exit")
 			os.Exit(130)
-		case <-forceExit:
+		case <-handler.forceExit:
 		}
 	}()
-	return ctx, forceExit
+	return ctx, handler
 }
 
 // runCleanup runs the post-Run cleanup under a 45s hard deadline, retiring the
@@ -887,7 +998,7 @@ func setupSignalHandler() (context.Context, chan struct{}) {
 // already bounded to ~40s by tasks #1+#2, so 45s normally lets it complete; on
 // timeout the process exits 1 rather than hang (the signal goroutine stays armed
 // the whole time, so an operator Ctrl+C also force-exits a wedged cleanup).
-func runCleanup(forceExit chan struct{}, cleanup func()) {
+func runCleanup(handler *signalHandler, cleanup func()) bool {
 	cleanupDone := make(chan struct{})
 	go func() {
 		defer close(cleanupDone)
@@ -900,7 +1011,9 @@ func runCleanup(forceExit chan struct{}, cleanup func()) {
 		fmt.Fprintln(os.Stderr, "mecatui: cleanup timeout; exiting")
 		os.Exit(1)
 	}
-	close(forceExit) // retire the signal handler AFTER cleanup, not during it
+	close(handler.forceExit) // retire only AFTER cleanup, not during it
+	<-handler.done           // unregister before a successor run installs its handler
+	return handler.interrupted
 }
 
 func wireManualCompaction(deps *ui.Deps, compactor client.SessionCompactor) {

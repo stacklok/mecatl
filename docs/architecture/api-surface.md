@@ -49,12 +49,14 @@ and drivers, once into `sdk/typescript/src/gen` for the TypeScript SDK. CI regen
 and fails on any diff, so a proto change and its generated code always land together.
 Required-field annotations (`buf.validate`) document intent; the Go server enforces them.
 
-Compatibility is negotiated, not inferred from versions, because Mecatl ships from
-`main` as often as from tags. A client's first call, `GetCompatibilityInfo`, returns an
-API major (`features.go`) that changes only on a genuine break, plus capabilities and
-feature identifiers that announce every additive change. Feature identifiers, event
-types, stop reasons, and watch phases are open strings, so an older client passes an
-unknown value through instead of failing.
+Compatibility is negotiated, not inferred from release versions, because Mecatl
+ships from `main` as often as from tags. `GetCompatibilityInfo` returns an API
+major (`features.go`) that changes only on a genuine break, plus capabilities and
+feature identifiers that announce every additive change. The TypeScript SDK probes
+this descriptor before its first requested operation; `mecatui` checks it during
+startup, before session access. Feature identifiers, event types, stop reasons,
+and watch phases are open strings, so an older client passes an unknown value
+through instead of failing.
 
 ## Runs and the live stream
 

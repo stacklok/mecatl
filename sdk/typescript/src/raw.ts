@@ -12,6 +12,7 @@ import { Code } from "@connectrpc/connect";
 import {
   IncompatibleServerError,
   normalizeError,
+  ProtocolError,
   ServerError,
   type TransportKind,
 } from "./errors.js";
@@ -192,9 +193,30 @@ export interface RawClientOptions {
   transportKind?: TransportKind;
 }
 
-function incompatible(cause: unknown, transport: TransportKind): IncompatibleServerError {
+function incompatible(
+  cause: unknown,
+  transport: TransportKind,
+  observed?: unknown,
+): IncompatibleServerError {
+  if (observed === undefined) {
+    return new IncompatibleServerError(
+      "server does not support compatibility checking; update server",
+      {
+        cause,
+        transport,
+      },
+    );
+  }
+  if (typeof observed !== "number" || !Number.isSafeInteger(observed) || observed <= 0) {
+    return new IncompatibleServerError("server returned invalid compatibility information", {
+      cause,
+      transport,
+    });
+  }
+  const direction = observed > SUPPORTED_API_MAJOR ? "update SDK" : "update server";
+  const age = observed > SUPPORTED_API_MAJOR ? "newer" : "older";
   return new IncompatibleServerError(
-    `The server must implement GetCompatibilityInfo with API major ${SUPPORTED_API_MAJOR}`,
+    `server API is ${age} than this SDK (expected major ${SUPPORTED_API_MAJOR}, observed ${observed}); ${direction}`,
     { cause, transport },
   );
 }
@@ -237,7 +259,9 @@ export function createRawClient(options: RawClientOptions): RawClient {
     const promise = response
       .then((response) => {
         const info = response.message;
-        if (info.apiMajor !== SUPPORTED_API_MAJOR) throw incompatible(undefined, transportKind);
+        if (info.apiMajor !== SUPPORTED_API_MAJOR) {
+          throw incompatible(undefined, transportKind, info.apiMajor);
+        }
         return {
           generation,
           header: response.header,
@@ -251,6 +275,14 @@ export function createRawClient(options: RawClientOptions): RawClient {
         if (compatibility?.generation === generation) compatibility = undefined;
         if (cause instanceof IncompatibleServerError) throw cause;
         const normalized = normalizeError(cause, transportKind);
+        // Malformed HTTP descriptors omit decoder causes; body-read failures retain theirs.
+        if (
+          transportKind === "http" &&
+          normalized instanceof ProtocolError &&
+          normalized.cause === undefined
+        ) {
+          throw incompatible(normalized, transportKind, Number.NaN);
+        }
         if (
           (normalized instanceof ServerError &&
             (normalized.status === Code.Unimplemented ||
