@@ -1250,7 +1250,7 @@ These names describe domain concepts, not finalized API types or wire encodings.
 
 - [Companion domain model](session-commit-history.modelith.md)
 - [Model source](session-commit-history.modelith.yaml)
-- [Prior-art research shortlist](session-commit-history-prior-art.md)
+- [Prior-art survey and design recommendations](session-commit-history-prior-art.md)
 - [Implemented persistence and reliability](../architecture/observability.md)
 - [Implemented API surface](../architecture/api-surface.md)
 - [Draft index](README.md)
