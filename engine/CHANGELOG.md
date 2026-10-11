@@ -366,6 +366,18 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Fixed
 
+- **System temp-scope approval shows the full command** — a Shell call with
+  `temp_scope: "system"` previously surfaced an approval whose args held only
+  the first two words of the command (`command_summary`). The ask now carries
+  `{"command", "timeout_ms", "background", "temp_scope"}` re-encoded from the
+  decoded call, so duplicate or case-variant keys show the value that runs.
+  The `command_summary` field is removed; no in-repo client read it.
+  Runner-owned temporary paths and environment values still never appear.
+  Subagent asks follow suit: the isolation auto-approve no longer clears a
+  system temp-scope ask, a surfaced child ask's preview names the scope, and the
+  headless ask reviewer is told the command requests host-shared temporary
+  storage. Fixed (patch); no exported signatures changed.
+
 - **Built-in file operand decoding (issue #2094)** — `tool.LocalFileOperands`
   now matches built-in JSON decoding for case variants, duplicate keys, and
   null values. Operand decoding errors yield no paths; Copy/Move require both

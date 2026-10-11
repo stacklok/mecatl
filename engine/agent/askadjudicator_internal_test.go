@@ -328,3 +328,36 @@ func TestParseAskVerdictTable(t *testing.T) {
 		}
 	}
 }
+
+// TestAskReviewPromptNamesSystemTempScope pins that a system temp-scope ask
+// tells the reviewer, in a trusted line before the fence, that the command
+// reaches host-shared temporary storage; an ordinary Shell ask does not.
+func TestAskReviewPromptNamesSystemTempScope(t *testing.T) {
+	const scopeLine = "HOST-SHARED system temporary storage"
+	ask := shellAsk("go test ./...")
+	ask.Args = json.RawMessage(`{"command":"go test ./...","temp_scope":"system"}`)
+	prompt := buildAskReviewPrompt(defaultAskReviewPolicy, ChildAskReviewRequest{Ask: ask, Isolated: true})
+	idx, fence := strings.Index(prompt, scopeLine), strings.Index(prompt, governance.UntrustedFence)
+	if idx < 0 || idx > fence {
+		t.Fatalf("system scope line must appear before the fence (idx=%d, fence=%d); prompt:\n%s", idx, fence, prompt)
+	}
+	if subject := askReviewSubject(ask); subject != "go test ./..." {
+		t.Fatalf("askReviewSubject = %q, want the full command", subject)
+	}
+	if plain := buildAskReviewPrompt(defaultAskReviewPolicy, ChildAskReviewRequest{Ask: shellAsk("go test ./..."), Isolated: true}); strings.Contains(plain, scopeLine) {
+		t.Fatalf("an ordinary Shell ask must not claim system temporary storage")
+	}
+}
+
+// TestSurfacedCommandPreviewNamesSystemTempScope pins that a surfaced child
+// ask, which carries no args, still names the system temp scope.
+func TestSurfacedCommandPreviewNamesSystemTempScope(t *testing.T) {
+	ask := shellAsk("git status && echo done")
+	if got := surfacedCommandPreview(ask); got != "git status && echo done" {
+		t.Fatalf("ordinary preview = %q", got)
+	}
+	ask.Args = json.RawMessage(`{"command":"git status && echo done","temp_scope":"system"}`)
+	if got := surfacedCommandPreview(ask); got != "git status && echo done [temp_scope: system]" {
+		t.Fatalf("system scope preview = %q", got)
+	}
+}

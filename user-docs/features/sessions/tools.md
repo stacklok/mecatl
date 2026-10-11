@@ -185,7 +185,12 @@ never sweeps unrelated system files. Other platforms must set
 Set `temporary_storage.mode: system` in user-global settings to use system
 temporary storage. Existing managed leases remain for manual inspection or
 removal. A model request for `temp_scope: system` requires both Shell permission
-and the `ShellSystemTemp` capability. See the
+and the `ShellSystemTemp` capability. Its approval request shows the full
+command with `temp_scope: system`, plus `timeout_ms` and `background` when set.
+It never includes the temporary directory or environment values that Shell
+assigns when the command runs. Mecatl does not auto-approve these requests for
+isolated subagents, because system temporary storage is outside the subagent's
+worktree. See the
 [configuration reference](/reference/configuration.md#temporary_storage) for
 cleanup settings.
 

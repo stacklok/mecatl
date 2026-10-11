@@ -11,6 +11,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -234,6 +235,35 @@ func TestIsolatedSubagentAutoApprovesWorktreeSafe(t *testing.T) {
 
 	if got := bash.ran(); len(got) != 1 {
 		t.Fatalf("isolated worktree-safe Shell should auto-approve and execute once; ran=%v", got)
+	}
+}
+
+// TestIsolatedSubagentSystemScopeAskIsNotAutoApproved proves the isolation
+// auto-approve never clears a system temp-scope ask: host-shared temporary
+// storage reaches outside the child's worktree, so a worktree-safe command
+// still needs the independent ShellSystemTemp approval.
+func TestIsolatedSubagentSystemScopeAskIsNotAutoApproved(t *testing.T) {
+	bash := &fakeShell{}
+	childLLM := mockllm.New(
+		mockllm.ToolCallTurn(toolCall("k1", "Shell", `{"command":"go test ./...","temp_scope":"system"}`)),
+		mockllm.TextTurn("child done"),
+	)
+	childEngine := agent.NewEngine(agent.Deps{
+		LLM:     childLLM,
+		Catalog: shellCatalog(bash),
+		Policy:  permpolicy.NewPolicy([]governance.Rule{{Tool: "Shell", Pattern: "go test*", Effect: governance.Allow}}, nil),
+		Model:   "child-model",
+	})
+	task := agent.NewSubagentTool(childEngine, agent.WithChildForker(&recordingSubagentForker{}))
+	parentLLM := mockllm.New(
+		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"coverage"}`)),
+		mockllm.TextTurn("parent done"),
+	)
+	e := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, task)}) // Interactive=false
+	_ = drain(e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"}))
+
+	if got := bash.ran(); len(got) != 0 {
+		t.Fatalf("isolated child must not auto-approve a system temp-scope ask; ran=%v", got)
 	}
 }
 
