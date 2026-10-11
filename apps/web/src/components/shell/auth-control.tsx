@@ -25,6 +25,7 @@ export function AuthControl() {
         <p className="text-sm text-muted-foreground">You're signed in to this Mecatl deployment.</p>
       </div>
       <Button
+        className="min-h-11"
         onClick={async () => {
           await logoutAuthSession({ throwOnError: true });
           queryClient.clear();

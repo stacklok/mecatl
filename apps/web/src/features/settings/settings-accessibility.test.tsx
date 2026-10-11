@@ -5,7 +5,11 @@ import type {
   GetRuntimeResponse,
   GetRuntimeSettingsResponse,
 } from "@mecatl-studio/contracts/generated";
-import { getRuntimeQueryKey, getRuntimeSettingsQueryKey } from "@mecatl-studio/contracts/query";
+import {
+  getAuthSessionQueryKey,
+  getRuntimeQueryKey,
+  getRuntimeSettingsQueryKey,
+} from "@mecatl-studio/contracts/query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryHistory, createRouter, RouterContextProvider } from "@tanstack/react-router";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -155,6 +159,32 @@ describe("settings responsive accessibility", () => {
     expect(label?.htmlFor).toBe(control?.id);
     expect(label?.classList.contains("min-h-11")).toBe(true);
     expect(control?.className).toContain("focus-visible:");
+  });
+
+  it("gives About's Sign out a 44px touch area", () => {
+    const client = new QueryClient();
+    client.setQueryData(getRuntimeQueryKey(), {
+      capabilities: {},
+      connection: "online",
+      source: "local",
+    } as GetRuntimeResponse);
+    client.setQueryData(getRuntimeSettingsQueryKey(), settingsFixture);
+    client.setQueryData(getAuthSessionQueryKey(), {
+      account: "opaque-a",
+      mode: "oidc",
+      status: "authenticated",
+    });
+
+    const about = render(
+      "/workspace/settings/about",
+      <SettingsWorkspace section="about" />,
+      client,
+    );
+    const signOut = [...about.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
+      button.textContent?.includes("Sign out"),
+    );
+    expect(signOut).toBeDefined();
+    expect(signOut?.classList.contains("min-h-11")).toBe(true);
   });
 
   it("sizes personal preferences and Learning controls for touch", () => {
