@@ -64,6 +64,7 @@ func (s *Storage) Close() error {
 	return s.closeErr
 }
 
+// StoreUpstreamTokens seals the tokens under the session-bound AAD before persisting them.
 func (s *Storage) StoreUpstreamTokens(ctx context.Context, sessionID, provider string, tokens *storage.UpstreamTokens) error {
 	if tokens == nil {
 		return s.Storage.StoreUpstreamTokens(ctx, sessionID, provider, nil)
@@ -75,6 +76,7 @@ func (s *Storage) StoreUpstreamTokens(ctx context.Context, sessionID, provider s
 	return s.Storage.StoreUpstreamTokens(ctx, sessionID, provider, sealed)
 }
 
+// GetUpstreamTokens opens the sealed tokens stored for the session and provider.
 func (s *Storage) GetUpstreamTokens(ctx context.Context, sessionID, provider string) (*storage.UpstreamTokens, error) {
 	raw, err := s.Storage.GetUpstreamTokens(ctx, sessionID, provider)
 	if err != nil && !errors.Is(err, storage.ErrExpired) {
@@ -90,6 +92,7 @@ func (s *Storage) GetUpstreamTokens(ctx context.Context, sessionID, provider str
 	return plain, err
 }
 
+// GetAllUpstreamTokens opens every sealed token set stored for the session.
 func (s *Storage) GetAllUpstreamTokens(ctx context.Context, sessionID string) (map[string]*storage.UpstreamTokens, error) {
 	raw, err := s.Storage.GetAllUpstreamTokens(ctx, sessionID)
 	if err != nil {
@@ -110,6 +113,7 @@ func (s *Storage) GetAllUpstreamTokens(ctx context.Context, sessionID string) (m
 	return out, nil
 }
 
+// CompareAndSwapUpstreamTokens replaces the sealed tokens only if the stored refresh token equals expectedRefresh.
 func (s *Storage) CompareAndSwapUpstreamTokens(ctx context.Context, sessionID, provider, expectedRefresh string, tokens *storage.UpstreamTokens) error {
 	raw, err := s.Storage.GetUpstreamTokens(ctx, sessionID, provider)
 	switch {
@@ -161,6 +165,7 @@ func (*Storage) LoadPendingDeviceConfirmation(context.Context, string) (*storage
 	return nil, credentialenvelope.ErrUnavailable
 }
 
+// GetDCRCredentials opens the sealed DCR credentials stored for the key.
 func (s *Storage) GetDCRCredentials(ctx context.Context, key storage.DCRKey) (*storage.DCRCredentials, error) {
 	raw, err := s.dcr.GetDCRCredentials(ctx, key)
 	if err != nil {
@@ -169,6 +174,7 @@ func (s *Storage) GetDCRCredentials(ctx context.Context, key storage.DCRKey) (*s
 	return s.openDCR(key, raw)
 }
 
+// StoreDCRCredentialsIfAbsent seals and stores the credentials unless a row already exists, returning the winning row.
 func (s *Storage) StoreDCRCredentialsIfAbsent(ctx context.Context, creds *storage.DCRCredentials) (*storage.DCRCredentials, error) {
 	if creds == nil {
 		return nil, credentialenvelope.ErrUnavailable
@@ -184,6 +190,7 @@ func (s *Storage) StoreDCRCredentialsIfAbsent(ctx context.Context, creds *storag
 	return s.openDCR(creds.Key, raw)
 }
 
+// UpdateDCRCredentialsIfPresent seals and replaces the credentials only if a row already exists.
 func (s *Storage) UpdateDCRCredentialsIfPresent(ctx context.Context, creds *storage.DCRCredentials) (*storage.DCRCredentials, error) {
 	if creds == nil {
 		return nil, credentialenvelope.ErrUnavailable

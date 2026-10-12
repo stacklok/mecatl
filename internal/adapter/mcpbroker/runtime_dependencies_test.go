@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/oauth2"
+
 	"github.com/stacklok/mecatl/engine/session"
 	contract "github.com/stacklok/mecatl/internal/mcpbroker"
-
-	"golang.org/x/oauth2"
 )
 
 type authenticatedDiscoveryFunc func(context.Context, oauth2.TokenSource, string) (AuthenticatedCapabilities, error)
@@ -309,7 +309,8 @@ func TestProcessShutdownDoesNotDeadlockInspectionAndPublication(t *testing.T) {
 		for range 50 {
 			_, _ = r.InspectConnectors(context.Background(), "session", a.Binding())
 			a.mu.Lock()
-			_ = r.publication.WhileOpen(func() error { a.logical.mu.Lock(); a.logical.mu.Unlock(); return nil })
+			// Lock/Unlock is a barrier against in-flight logical operations.
+			_ = r.publication.WhileOpen(func() error { a.logical.mu.Lock(); a.logical.mu.Unlock(); return nil }) //nolint:staticcheck // SA2001: the empty critical section is the point
 			a.mu.Unlock()
 		}
 	}()

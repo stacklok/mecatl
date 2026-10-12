@@ -66,6 +66,9 @@ type protectedToolHiveStorage struct {
 	closeErr      error
 }
 
+// newProtectedToolHiveStorage builds the storage with the production Redis client.
+//
+//nolint:unused // production entry point; tests inject a client through buildProtectedToolHiveStorage
 func newProtectedToolHiveStorage(ctx context.Context, cfg ProtectedStorageConfig) (*protectedToolHiveStorage, error) {
 	return buildProtectedToolHiveStorage(ctx, cfg, cfg.Redis.Client)
 }
