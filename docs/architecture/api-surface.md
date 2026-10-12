@@ -49,14 +49,46 @@ and drivers, once into `sdk/typescript/src/gen` for the TypeScript SDK. CI regen
 and fails on any diff, so a proto change and its generated code always land together.
 Required-field annotations (`buf.validate`) document intent; the Go server enforces them.
 
-Compatibility is negotiated, not inferred from release versions, because Mecatl
-ships from `main` as often as from tags. `GetCompatibilityInfo` returns an API
-major (`features.go`) that changes only on a genuine break, plus capabilities and
-feature identifiers that announce every additive change. The TypeScript SDK probes
-this descriptor before its first requested operation; `mecatui` checks it during
-startup, before session access. Feature identifiers, event types, stop reasons,
-and watch phases are open strings, so an older client passes an unknown value
-through instead of failing.
+### Wire API compatibility
+
+The gRPC and HTTP/SSE contracts use an API major plus feature identifiers, with
+no negotiated minor version. `GetCompatibilityInfo` and `GET /v1/compatibility`
+report the major, features supported by the build and permitted on the listener,
+and capabilities available in the configured deployment. The TypeScript SDK
+checks the major before its first requested operation; `mecatui` checks it before
+session access. Software release versions are independent of this contract.
+
+**Increment the major when an existing conforming client would need changes to
+remain correct.** Examples include removing a supported RPC or route, adding a
+mandatory request field, or incompatibly changing a field's meaning, identifier
+guarantees, event ordering, control behavior, or authorization semantics. Assess
+what clients observe, including changes originating in engine code or server
+mappers. Unchanged protobuf declarations do not establish compatibility.
+
+Backward-compatible additions stay within the major. Use stable feature
+identifiers when clients need to discover support; clients ignore unknown
+identifiers. Event types, stop reasons, and watch phases also remain open strings.
+A client may require a feature and refuse servers that lack it
+without a major bump if existing clients still work. Guarantees already supplied
+by the major's baseline do not need duplicate feature identifiers. Deployment
+capabilities answer whether functionality is available here; disabling a
+capability is not version skew, and advertisement does not replace authorization.
+
+For a breaking change, explain the old and proposed contracts, affected clients,
+and client/server upgrade implications to the operator. Obtain explicit approval
+before implementing the incompatible behavior or bumping the major. Coordinate
+`server.APIMajor` (`internal/adapter/server/features.go`), supported client majors,
+and gRPC/HTTP endpoint changes. Specify how compatibility discovery stays
+reachable across the transition so old clients receive an actionable refusal.
+Add mismatch and transport-parity tests, and describe the upgrade in release notes.
+Changing only the version constant is insufficient.
+
+Every PR affecting the wire contract must include an **API compatibility** statement:
+the assessment and rationale, major or feature changes, operator approval for any
+break, and upgrade implications. Record the same decision in a plan when one is
+used; a plan is not a prerequisite. Assess Go source and stored-data compatibility
+separately; a Go rename alone does not require a wire-major bump, and a wire bump
+does not authorize loss of persisted state.
 
 ## Runs and the live stream
 

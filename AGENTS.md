@@ -44,6 +44,10 @@ for that area from [`docs/READING.md`](docs/READING.md).
   tests may use reference `engine/adapter/*`, never host `internal`. Wiring lives in
   `internal/app` and `cmd` mains. Keep depguard, DAG, and standalone-module guards and
   their existing narrow exceptions.
+- Remote-observable API changes, including engine-originated semantics, require
+  the [wire API compatibility assessment](docs/architecture/api-surface.md#wire-api-compatibility).
+  Follow the [scoped rule](.claude/rules/wire-api-compatibility.md); surface breaks
+  and their upgrade implications to the operator before implementation.
 - File writes preserve read-before-edit, exact matching, uniqueness, and CAS;
   new-file writes are create-only. Dispatch stays read-parallel/mutate-serial;
   direct-write children mutate the parent and run behind the barrier.
