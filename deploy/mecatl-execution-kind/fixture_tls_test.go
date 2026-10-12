@@ -72,7 +72,7 @@ phase_done() { printf 'done=%s\n' "$1"; }
 				t.Fatalf("renewal selection: %v: %s", err, out)
 			}
 			calls, err := os.ReadFile(marker)
-			if err != nil && !(len(tc.want) == 0 && os.IsNotExist(err)) {
+			if err != nil && (len(tc.want) != 0 || !os.IsNotExist(err)) {
 				t.Fatal(err)
 			}
 			var want string
