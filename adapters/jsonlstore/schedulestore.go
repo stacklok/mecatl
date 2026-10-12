@@ -561,6 +561,10 @@ func (s *scheduleStore) LoadFire(_ context.Context, fireID string) (port.Schedul
 func (s *scheduleStore) ListFires(_ context.Context, scheduleName string) ([]port.ScheduleFire, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.listFiresLocked(scheduleName)
+}
+
+func (s *scheduleStore) listFiresLocked(scheduleName string) ([]port.ScheduleFire, error) {
 	// The schedule must exist (the not-found-for-the-schedule contract).
 	if _, err := s.loadLocked(scheduleName); err != nil {
 		return nil, err
@@ -741,12 +745,8 @@ func cloneSpec(spec port.ScheduleSpec) port.ScheduleSpec {
 	return out
 }
 
-// ReArmOneShot is the at-least-once re-arm primitive for a one-shot schedule.
-// It atomically (under the shared mutex): re-enables the schedule
-// (Enabled=true), sets NextFireAt to nextFire, and increments
-// OneShotRetryCount, then writes the record atomically (temp file + rename). The
-// not-found case wraps ErrScheduleNotFound. The retry-budget gate is the CALLER's
-// responsibility. One-shot-only.
+// ReArmOneShot validates current retry eligibility under the shared mutex before
+// atomically writing the re-enabled schedule and incremented retry count.
 func (s *scheduleStore) ReArmOneShot(_ context.Context, name string, nextFire time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -756,6 +756,28 @@ func (s *scheduleStore) ReArmOneShot(_ context.Context, name string, nextFire ti
 	}
 	if rec.Schedule.State.DeletionID != "" {
 		return fmt.Errorf("jsonlstore: %w", port.ErrScheduleDeleting)
+	}
+	sched := rec.Schedule
+	if sched.Spec.Trigger.Kind() != port.TriggerOneShot || !sched.Spec.OneShotRetry ||
+		sched.State.Enabled || sched.State.OneShotRetryCount >= sched.Spec.OneShotMaxRetries ||
+		sched.State.LastFireAt.IsZero() || sched.State.LastFireSessionID == port.PendingFireSessionID || !sched.State.LastFireStartedAt.IsZero() {
+		return ErrScheduleNotFound
+	}
+	fires, err := s.listFiresLocked(name)
+	if err != nil {
+		return err
+	}
+	failed := false
+	for _, fire := range fires {
+		if fire.FiredAt.Equal(sched.State.LastFireAt) && fire.SessionID == sched.State.LastFireSessionID {
+			if fire.Stop != session.StopError {
+				return ErrScheduleNotFound
+			}
+			failed = true
+		}
+	}
+	if !failed {
+		return ErrScheduleNotFound
 	}
 	rec.Schedule.State.Enabled = true
 	rec.Schedule.State.NextFireAt = nextFire

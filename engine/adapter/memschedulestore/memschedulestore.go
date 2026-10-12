@@ -495,15 +495,7 @@ func (s *Store) ListFires(_ context.Context, scheduleName string) ([]port.Schedu
 	return out, nil
 }
 
-// ReArmOneShot is the at-least-once re-arm primitive for a one-shot schedule.
-// It atomically: re-enables the schedule (Enabled=true),
-// sets NextFireAt to nextFire, and increments OneShotRetryCount. The atomicity
-// (the single mutex) is the re-arm fence: two concurrent re-arms cannot
-// double-increment the counter or double-enable. The not-found case wraps
-// ErrScheduleNotFound. The retry-budget gate (OneShotRetryCount <
-// OneShotMaxRetries) is the CALLER's responsibility — the store does NOT enforce
-// the budget, it only atomically advances the counter. One-shot-only; the caller
-// never calls this on a cron schedule.
+// ReArmOneShot validates current retry eligibility and advances it under one lock.
 func (s *Store) ReArmOneShot(_ context.Context, name string, nextFire time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -513,6 +505,23 @@ func (s *Store) ReArmOneShot(_ context.Context, name string, nextFire time.Time)
 	}
 	if rec.state.DeletionID != "" {
 		return fmt.Errorf("memschedulestore: %w", port.ErrScheduleDeleting)
+	}
+	if rec.spec.Trigger.Kind() != port.TriggerOneShot || !rec.spec.OneShotRetry ||
+		rec.state.Enabled || rec.state.OneShotRetryCount >= rec.spec.OneShotMaxRetries ||
+		rec.state.LastFireAt.IsZero() || rec.state.LastFireSessionID == port.PendingFireSessionID || !rec.state.LastFireStartedAt.IsZero() {
+		return ErrNotFound
+	}
+	failed := false
+	for _, fire := range s.fires {
+		if fire.ScheduleName == name && fire.FiredAt.Equal(rec.state.LastFireAt) && fire.SessionID == rec.state.LastFireSessionID {
+			if fire.Stop != session.StopError {
+				return ErrNotFound
+			}
+			failed = true
+		}
+	}
+	if !failed {
+		return ErrNotFound
 	}
 	rec.state.Enabled = true
 	rec.state.NextFireAt = nextFire

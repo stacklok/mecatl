@@ -776,18 +776,19 @@ type ScheduleManager interface {
 // without widening the required surface — a store opts in by implementing the
 // method, and the caller type-asserts before calling.
 //
-// ReArmOneShot atomically: re-enables the schedule (Enabled=true), sets NextFireAt
-// to nextFire, and increments OneShotRetryCount. It is the re-arm primitive the
-// tick loop calls when it observes a one-shot that crashed mid-fire (Claim
-// disabled it; the fire never recorded a successful outcome). The atomicity is the
-// at-most-once fence for the RE-ARM: two concurrent re-arms must not
-// double-increment OneShotRetryCount or double-enable. The not-found case wraps
-// ErrScheduleNotFound. A re-arm past OneShotMaxRetries is the CALLER's gate (the
-// tick loop checks the budget before calling); the store does NOT enforce the
-// budget — it only atomically advances the counter.
-//
-// It is one-shot-ONLY: a cron schedule never re-arms (a cron self-heals via
-// misfire). The caller never calls ReArmOneShot on a cron schedule.
+// ReArmOneShot atomically validates CURRENT eligibility, re-enables the schedule,
+// sets NextFireAt to nextFire, and increments OneShotRetryCount. Eligibility
+// requires a disabled one-shot with OneShotRetry enabled and remaining budget,
+// no pending or started execution, and a settled StopError fire matching the
+// current LastFireAt and LastFireSessionID (including session-less failures).
+// Missing history is not proof of failure. Validation and mutation must share
+// one atomic fence: concurrent re-arms have one winner, and a delayed caller
+// cannot re-enable a successful or live successor. A newer settled failure may
+// be retried if its CURRENT policy and budget permit it; this is not a CAS on
+// the caller's previously observed failure. Claims must still fence active fires.
+// Missing or ineligible records wrap ErrScheduleNotFound without mutation;
+// deletion-marked records return ErrScheduleDeleting. Callers may prefilter,
+// but the store MUST enforce eligibility and budget at the mutation boundary.
 type ScheduleOneShotReArmer interface {
 	// ReArmOneShot re-enables the named one-shot schedule, sets its NextFireAt to
 	// nextFire, and increments OneShotRetryCount — atomically. It is the re-arm

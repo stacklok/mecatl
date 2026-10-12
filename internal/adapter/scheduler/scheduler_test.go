@@ -1432,6 +1432,7 @@ func TestOneShotReArmOnPendingCrash(t *testing.T) {
 			Enabled:           false,
 			FireCount:         1,
 			LastFireSessionID: port.PendingFireSessionID,
+			LastFireAt:        clk.Now(),
 		},
 	}); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -1493,6 +1494,7 @@ func TestOneShotReArmNoDueWork(t *testing.T) {
 			Enabled:           false,
 			FireCount:         1,
 			LastFireSessionID: port.PendingFireSessionID,
+			LastFireAt:        clk.Now(),
 		},
 	}); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -1557,6 +1559,7 @@ func TestOneShotReArmOnStopError(t *testing.T) {
 			Enabled:           false,
 			FireCount:         1,
 			LastFireSessionID: session.SessionID(fireID),
+			LastFireAt:        clk.Now(),
 		},
 	}); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -1622,7 +1625,8 @@ func TestOneShotNoRetryNotReArmed(t *testing.T) {
 			NextFireAt:        time.Time{},
 			Enabled:           false,
 			FireCount:         1,
-			LastFireSessionID: port.PendingFireSessionID, // crashed mid-fire
+			LastFireSessionID: port.PendingFireSessionID,
+			LastFireAt:        clk.Now(), // crashed mid-fire
 		},
 	}); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -1679,6 +1683,7 @@ func TestOneShotReArmBudgetExhausted(t *testing.T) {
 			Enabled:           false,
 			FireCount:         1,
 			LastFireSessionID: port.PendingFireSessionID,
+			LastFireAt:        clk.Now(),
 			OneShotRetryCount: 3, // budget exhausted
 		},
 	}); err != nil {
@@ -1743,6 +1748,7 @@ func TestOneShotReArmStoreWithoutInterface(t *testing.T) {
 			Enabled:           false,
 			FireCount:         1,
 			LastFireSessionID: port.PendingFireSessionID,
+			LastFireAt:        clk.Now(),
 		},
 	}); err != nil {
 		t.Fatalf("Save: %v", err)

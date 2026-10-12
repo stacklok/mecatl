@@ -714,6 +714,12 @@ func TestScheduleReArmOneShotOverWire(t *testing.T) {
 	if got.State.Enabled {
 		t.Fatalf("Claim did not disable the one-shot (Enabled=true)")
 	}
+	if err := st.ReArmOneShot(ctx, name, now.Add(time.Minute)); !errors.Is(err, port.ErrScheduleNotFound) {
+		t.Fatalf("pending rearm = %v, want ErrScheduleNotFound", err)
+	}
+	if err := st.RecordFire(ctx, port.ScheduleFire{ID: "failed", ScheduleName: name, FiredAt: now, Stop: session.StopError}); err != nil {
+		t.Fatal(err)
+	}
 	// ReArm re-enables + advances NextFireAt + increments the counter.
 	nextFire := now.Add(time.Minute)
 	if err := st.ReArmOneShot(ctx, name, nextFire); err != nil {

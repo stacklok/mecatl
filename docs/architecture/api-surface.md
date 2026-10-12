@@ -191,7 +191,14 @@ entry; `engine/agent` knows nothing about it.
   session if that placement has drifted (`internal/app/scheduler_fire.go`).
 
 A fire's name gate covers reload, claim, execution, and teardown. Re-arm and
-reconciliation skip locally admitted work and reload under the same gate. The
+reconciliation skip locally admitted work and reload under the same gate.
+`ReArmOneShot` also atomically validates the current store state: a disabled
+one-shot with retry enabled, remaining budget, no pending/started owner, and
+matching settled failure history. Missing history is not proof of failure.
+Concurrent rearms have one winner; a delayed replica cannot re-enable a live or
+successful successor. A newer settled failure may consume its current remaining
+budget, without admitting duplicate active execution. Drivers must enforce this
+contract too; caller prechecks and leadership cancellation are not the fence. The
 fire publishes its real session id only after admission holds its session lease.
 A lease-backed pending claim is ambiguous and stays quarantined; age alone is
 not evidence that its owner stopped. Lease probe failures likewise fail closed.

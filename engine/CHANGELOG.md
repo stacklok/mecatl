@@ -394,6 +394,14 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Changed
 
+- **Atomic one-shot retry eligibility (issue #2273)** —
+  `port.ScheduleOneShotReArmer.ReArmOneShot` now requires store-side atomic
+  validation of current disabled/settled-failure state, one-shot retry policy,
+  and remaining budget. Ineligible records wrap `ErrScheduleNotFound` unchanged;
+  concurrent rearms have one winner. Signatures and wire fields are unchanged,
+  but external re-arm implementations must adopt the stronger contract.
+  Changed (breaking; pre-v1 minor).
+
 - **Schedule predecessor ownership (issue #2273)** — `port.ScheduleStore.Claim`
   and `ClaimNow` must atomically reject pending or started, nonterminal
   predecessors even at different claim instants. `RecordFire` settles schedule

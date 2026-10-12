@@ -310,8 +310,12 @@ func TestLifetimeCapacityAcrossPollsAndBlockedReconciliation(t *testing.T) {
 			firstBatch.Wait()
 			// The reconciled fixture is now settled, as a real callback would do.
 			if reconcile {
-				if err := store.RecordFire(ctx, port.ScheduleFire{ID: "settled", ScheduleName: "first", FiredAt: clock.Now(), Stop: session.StopCancelled}); err != nil {
+				if err := store.RecordFire(ctx, port.ScheduleFire{ID: "settled", ScheduleName: "first", FiredAt: state.LastFireAt, Stop: session.StopCancelled}); err != nil {
 					t.Fatal(err)
+				}
+				settled, err := store.Load(ctx, "first")
+				if err != nil || settled.State.LastFireSessionID != "" || !settled.State.LastFireStartedAt.IsZero() {
+					t.Fatalf("reconciliation did not clear ownership: %+v %v", settled.State, err)
 				}
 			}
 			poll()
