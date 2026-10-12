@@ -425,7 +425,7 @@ func parseFlags(argv []string) (config, error) {
 	fs.BoolVar(&cfg.noScheduler, "no-scheduler", false, "Disable scheduled-task execution. Schedule management APIs remain available; one replica runs the scheduler when leasing is enabled")
 	fs.DurationVar(&cfg.schedulerTickInterval, "scheduler-tick-interval", 30*time.Second, "Interval for polling due schedules. Zero uses the default interval; inactive when scheduling is unavailable or disabled")
 	fs.DurationVar(&cfg.schedulerMinInterval, "scheduler-min-interval", time.Minute, "Minimum accepted schedule interval. Shorter intervals are rejected; zero disables the limit")
-	fs.IntVar(&cfg.schedulerMaxConcurrentFires, "scheduler-max-concurrent-fires", 4, "Maximum schedules started concurrently in one scheduler tick")
+	fs.IntVar(&cfg.schedulerMaxConcurrentFires, "scheduler-max-concurrent-fires", 4, "Maximum admitted scheduled fires, including manual fires and teardown")
 
 	// LLM resilience knobs (mirrors mecated's defaults).
 	fs.IntVar(&cfg.llmMaxAttempts, "llm-max-attempts", 60, "maximum attempts for one precommit model step (initial request included)")

@@ -711,6 +711,10 @@ func TestMaxConcurrentFiresBoundsFanout(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("RunOnceForTest did not complete after unblock")
 	}
+	// Capacity-deferred schedules stay due and are admitted on later polls.
+	for range 3 {
+		s.RunOnceForTest(context.Background())
+	}
 	if err := s.Stop(); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
@@ -2374,8 +2378,10 @@ func TestReleaseLeaderDemotesBeforeRelease(t *testing.T) {
 	store := memschedulestore.New()
 	fire := &fireStub{}
 	var s2 *scheduler.Scheduler
+	var released atomic.Bool
 	lease := &recordingLease{
 		onFirst: func() {
+			released.Store(true)
 			// Inside the Release call: the scheduler must ALREADY be demoted.
 			if _, leader := s2.LeaderOwner(); leader {
 				t.Errorf("releaseLeader released the lease while still leader (demote-before-release violated)")
@@ -2403,8 +2409,9 @@ func TestReleaseLeaderDemotesBeforeRelease(t *testing.T) {
 	if err := s2.Stop(); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
-	// The onFirst probe asserted the ordering synchronously; reaching here with
-	// no t.Errorf means demote preceded release.
+	if !released.Load() {
+		t.Fatal("Stop did not release the held leader lease")
+	}
 }
 
 // --- Fix 1 belt-and-braces: a demoted (standby) replica's tickOnce no-fires --

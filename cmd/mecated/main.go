@@ -1796,7 +1796,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.BoolVar(&cfg.noScheduler, "no-scheduler", false, "disable scheduling for a schedule-capable durable store. Create, list, and manual fire operations remain available.")
 	fs.DurationVar(&cfg.schedulerTickInterval, "scheduler-tick-interval", 30*time.Second, "interval for polling due schedules. Default 30s; 0 also uses 30s. Applies only when scheduling is enabled.")
 	fs.DurationVar(&cfg.schedulerMinInterval, "scheduler-min-interval", time.Minute, "minimum allowed scheduled cadence. Default 1m. Set 0 to allow any cadence.")
-	fs.IntVar(&cfg.schedulerMaxConcurrentFires, "scheduler-max-concurrent-fires", 4, "maximum schedules started in parallel per scheduler tick. Applies only when scheduling is enabled.")
+	fs.IntVar(&cfg.schedulerMaxConcurrentFires, "scheduler-max-concurrent-fires", 4, "maximum admitted scheduled fires, including manual fires and teardown.")
 	fs.StringVar(&cfg.driverAuthToken, "driver-auth-token", "", "bearer token sent on every store-driver RPC (or MECATL_DRIVER_AUTH_TOKEN; empty disables driver auth). Refused over cleartext to a non-loopback driver — pair with --driver-tls")
 	fs.BoolVar(&cfg.driverTLS, "driver-tls", false, "enable transport TLS on the store-driver connections (--session-store-url/--memory-store-url)")
 	fs.StringVar(&cfg.driverTLSCA, "driver-tls-ca", "", "PEM CA bundle to verify the store driver's server certificate (with --driver-tls; empty uses the system roots)")
