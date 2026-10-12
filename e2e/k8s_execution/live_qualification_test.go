@@ -254,7 +254,7 @@ func TestKindExecutionLiveQualification(t *testing.T) {
 	rc, release := acquireRunWithTTL(t, ctx, client, owner, created.SessionId, attached, fmt.Sprintf("live-verify-%d", time.Now().UnixNano()), 3*time.Minute)
 	release = cleanupOnce(release)
 	defer release()
-	before := readQualificationArtifacts(ctx, t, client, rc, nonce)
+	before := readQualificationArtifacts(ctx, t, state, client, rc, nonce, "pre_restart")
 	if !containsExactLine(before["arithmetic/sum.go"], "// implementation: reviewed") {
 		t.Fatal("independent artifact verification did not find model edit")
 	}
@@ -306,9 +306,10 @@ func TestKindExecutionLiveQualification(t *testing.T) {
 	postRestartRC, releasePostRestart := acquireRunWithTTL(t, ctx, freshClient, owner, created.SessionId, postRestartAttached, fmt.Sprintf("live-restart-verify-%d", time.Now().UnixNano()), 3*time.Minute)
 	releasePostRestart = cleanupOnce(releasePostRestart)
 	defer releasePostRestart()
-	after := readQualificationArtifacts(ctx, t, freshClient, postRestartRC, nonce)
-	if !qualificationArtifactsEqual(before, after) {
-		t.Fatal("qualification artifact bytes changed across restart")
+	after := readQualificationArtifacts(ctx, t, state, freshClient, postRestartRC, nonce, "post_restart")
+	if mismatch := qualificationArtifactMismatch(before, after); mismatch != nil {
+		writeLiveQualificationFailureSummary(t, state, postRestartRC, *mismatch)
+		t.Fatalf("typed gRPC artifact verification failed: %s", mismatch)
 	}
 	assertQualificationHelper(ctx, t, freshClient, postRestartRC)
 	afterCommand := runQualificationTests(ctx, t, freshClient, postRestartRC)
@@ -383,11 +384,7 @@ func TestKindExecutionLiveQualification(t *testing.T) {
 		AfterRestartExitCode:  afterCommand.Result.ExitCode,
 		Timestamp:             time.Now().UTC().Format(time.RFC3339),
 	}
-	blob, err := json.MarshalIndent(summary, "", "  ")
-	if err != nil {
-		t.Fatal("marshal sanitized summary failed")
-	}
-	if err := os.WriteFile(filepath.Join(state, "live-summary.json"), append(blob, '\n'), 0o600); err != nil {
+	if err := writeLiveSummary(state, summary); err != nil {
 		t.Fatal("write sanitized summary failed")
 	}
 }
@@ -428,20 +425,116 @@ func cleanupOnce(cleanup func()) func() {
 	return func() { once.Do(cleanup) }
 }
 
-func readQualificationArtifacts(ctx context.Context, t *testing.T, client *executionclient.Client, rc executionenv.RequestContext, nonce string) map[string][]byte {
+type qualificationArtifactFailure struct {
+	Phase             string
+	Path              string
+	Outcome           string
+	ErrorClass        string
+	Retryable         bool
+	ByteCount         int
+	ExpectedByteCount int
+	Attempts          int
+}
+
+func (f qualificationArtifactFailure) Error() string {
+	return fmt.Sprintf("phase=%s path=%s outcome=%s error_class=%s retryable=%t byte_count=%d expected_byte_count=%d attempts=%d", f.Phase, f.Path, f.Outcome, f.ErrorClass, f.Retryable, f.ByteCount, f.ExpectedByteCount, f.Attempts)
+}
+
+func readQualificationArtifacts(ctx context.Context, t *testing.T, state string, client *executionclient.Client, rc executionenv.RequestContext, nonce, phase string) map[string][]byte {
 	t.Helper()
 	artifacts := make(map[string][]byte, len(qualificationArtifactPaths))
 	for _, path := range qualificationArtifactPaths {
-		file, err := client.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileRead, Path: path})
-		if err != nil || len(file.Data) == 0 {
-			t.Fatalf("typed gRPC artifact verification failed for %s", path)
+		data, failure := readQualificationArtifact(ctx, phase, path, func(ctx context.Context) (executionenv.FileResponse, error) {
+			return client.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileRead, Path: path})
+		})
+		if failure != nil {
+			writeLiveQualificationFailureSummary(t, state, rc, *failure)
+			t.Fatalf("typed gRPC artifact verification failed: %s", failure)
 		}
-		artifacts[path] = bytes.Clone(file.Data)
+		artifacts[path] = data
 	}
 	if !containsExactLine(artifacts["arithmetic/sum.go"], "// qualification: "+nonce) {
-		t.Fatal("typed gRPC implementation artifact omitted the exact qualification nonce marker")
+		failure := qualificationArtifactFailure{Phase: phase, Path: "arithmetic/sum.go", Outcome: "missing_nonce", ErrorClass: "none", ByteCount: len(artifacts["arithmetic/sum.go"]), Attempts: 1}
+		writeLiveQualificationFailureSummary(t, state, rc, failure)
+		t.Fatalf("typed gRPC artifact verification failed: %s", failure)
 	}
 	return artifacts
+}
+
+func readQualificationArtifact(ctx context.Context, phase, path string, read func(context.Context) (executionenv.FileResponse, error)) ([]byte, *qualificationArtifactFailure) {
+	return readQualificationArtifactWithRetry(ctx, phase, path, read, 30*time.Second, 60, waitQualificationArtifactRetry)
+}
+
+func readQualificationArtifactWithRetry(ctx context.Context, phase, path string, read func(context.Context) (executionenv.FileResponse, error), timeout time.Duration, maxAttempts int, wait func(context.Context) error) ([]byte, *qualificationArtifactFailure) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	var last *qualificationArtifactFailure
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			if last != nil {
+				last.Outcome = qualificationRetryOutcome(err)
+				last.Attempts = attempt - 1
+				return nil, last
+			}
+			return nil, &qualificationArtifactFailure{Phase: phase, Path: path, Outcome: qualificationRetryOutcome(err), ErrorClass: "none", Attempts: attempt - 1}
+		}
+		file, err := read(ctx)
+		if err == nil {
+			if len(file.Data) == 0 {
+				return nil, &qualificationArtifactFailure{Phase: phase, Path: path, Outcome: "empty_response", ErrorClass: "none", ByteCount: 0, Attempts: attempt}
+			}
+			return bytes.Clone(file.Data), nil
+		}
+
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			termination := ctx.Err()
+			if termination == nil {
+				termination = err
+			}
+			if last != nil {
+				last.Outcome = qualificationRetryOutcome(termination)
+				last.Attempts = attempt
+				return nil, last
+			}
+			return nil, &qualificationArtifactFailure{Phase: phase, Path: path, Outcome: qualificationRetryOutcome(termination), ErrorClass: "none", Attempts: attempt}
+		}
+
+		var remote *executionenv.Error
+		retryable := errors.As(err, &remote) && remote.Code == executionenv.CodeNotReady && remote.Retryable
+		failure := &qualificationArtifactFailure{Phase: phase, Path: path, Outcome: "read_error", ErrorClass: remoteErrorCode(err), Retryable: retryable, ByteCount: len(file.Data), Attempts: attempt}
+		if !retryable {
+			return nil, failure
+		}
+		last = failure
+		if attempt == maxAttempts {
+			last.Outcome = "retry_exhausted"
+			return nil, last
+		}
+		if err := wait(ctx); err != nil {
+			last.Outcome = qualificationRetryOutcome(err)
+			return nil, last
+		}
+	}
+	panic("unreachable")
+}
+
+func waitQualificationArtifactRetry(ctx context.Context) error {
+	timer := time.NewTimer(500 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func qualificationRetryOutcome(err error) string {
+	if errors.Is(err, context.Canceled) {
+		return "context_canceled"
+	}
+	return "retry_timeout"
 }
 
 func containsExactLine(content []byte, want string) bool {
@@ -512,15 +605,19 @@ func assertRunReleased(ctx context.Context, t *testing.T, client *executionclien
 }
 
 func qualificationArtifactsEqual(before, after map[string][]byte) bool {
+	return qualificationArtifactMismatch(before, after) == nil
+}
+
+func qualificationArtifactMismatch(before, after map[string][]byte) *qualificationArtifactFailure {
 	if len(before) != len(qualificationArtifactPaths) || len(after) != len(qualificationArtifactPaths) {
-		return false
+		return &qualificationArtifactFailure{Phase: "post_restart", Outcome: "artifact_set_mismatch", ErrorClass: "none", ExpectedByteCount: len(qualificationArtifactPaths), ByteCount: len(after), Attempts: 1}
 	}
 	for _, path := range qualificationArtifactPaths {
 		if !bytes.Equal(before[path], after[path]) {
-			return false
+			return &qualificationArtifactFailure{Phase: "post_restart", Path: path, Outcome: "content_mismatch", ErrorClass: "none", ByteCount: len(after[path]), ExpectedByteCount: len(before[path]), Attempts: 1}
 		}
 	}
-	return true
+	return nil
 }
 
 func modelRanExactShell(events []*mecatlv1.Event, command string) bool {
@@ -546,23 +643,58 @@ func modelRanExactShell(events []*mecatlv1.Event, command string) bool {
 }
 
 type liveSummary struct {
-	SessionID             string         `json:"session_id"`
-	EnvironmentID         string         `json:"environment_id"`
-	TemplateRevision      string         `json:"template_revision"`
-	PVCUID                string         `json:"pvc_uid"`
-	ModelCalls            int            `json:"completed_model_calls"`
-	ToolCounts            map[string]int `json:"initial_successful_tool_counts"`
-	Cluster               string         `json:"cluster"`
-	Provider              string         `json:"provider"`
-	Model                 string         `json:"model"`
-	InputTokens           int64          `json:"input_tokens"`
-	OutputTokens          int64          `json:"output_tokens"`
-	ToolNames             []string       `json:"tool_names"`
-	ArtifactCount         int            `json:"artifact_count"`
-	RestartVerified       bool           `json:"restart_verified"`
-	BeforeRestartExitCode int            `json:"before_restart_exit_code"`
-	AfterRestartExitCode  int            `json:"after_restart_exit_code"`
-	Timestamp             string         `json:"timestamp"`
+	SessionID                 string         `json:"session_id"`
+	EnvironmentID             string         `json:"environment_id"`
+	TemplateRevision          string         `json:"template_revision"`
+	PVCUID                    string         `json:"pvc_uid"`
+	ModelCalls                int            `json:"completed_model_calls"`
+	ToolCounts                map[string]int `json:"initial_successful_tool_counts"`
+	Cluster                   string         `json:"cluster"`
+	Provider                  string         `json:"provider"`
+	Model                     string         `json:"model"`
+	InputTokens               int64          `json:"input_tokens"`
+	OutputTokens              int64          `json:"output_tokens"`
+	ToolNames                 []string       `json:"tool_names"`
+	ArtifactCount             int            `json:"artifact_count"`
+	RestartVerified           bool           `json:"restart_verified"`
+	BeforeRestartExitCode     int            `json:"before_restart_exit_code"`
+	AfterRestartExitCode      int            `json:"after_restart_exit_code"`
+	QualificationPhase        string         `json:"qualification_phase"`
+	QualificationOutcome      string         `json:"qualification_outcome"`
+	QualificationArtifactPath string         `json:"qualification_artifact_path"`
+	QualificationErrorClass   string         `json:"qualification_error_class"`
+	QualificationRetryable    bool           `json:"qualification_retryable"`
+	QualificationByteCount    int            `json:"qualification_byte_count"`
+	QualificationExpectedSize int            `json:"qualification_expected_byte_count"`
+	QualificationAttempts     int            `json:"qualification_attempts"`
+	Timestamp                 string         `json:"timestamp"`
+}
+
+func writeLiveSummary(state string, summary liveSummary) error {
+	blob, err := json.MarshalIndent(summary, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(state, "live-summary.json"), append(blob, '\n'), 0o600)
+}
+
+func writeLiveQualificationFailureSummary(t *testing.T, state string, rc executionenv.RequestContext, failure qualificationArtifactFailure) {
+	t.Helper()
+	if err := writeLiveSummary(state, liveSummary{
+		EnvironmentID:             rc.Environment.ID,
+		TemplateRevision:          os.Getenv("MECATL_EXECUTION_TEMPLATE_REVISION"),
+		QualificationPhase:        failure.Phase,
+		QualificationOutcome:      failure.Outcome,
+		QualificationArtifactPath: failure.Path,
+		QualificationErrorClass:   failure.ErrorClass,
+		QualificationRetryable:    failure.Retryable,
+		QualificationByteCount:    failure.ByteCount,
+		QualificationExpectedSize: failure.ExpectedByteCount,
+		QualificationAttempts:     failure.Attempts,
+		Timestamp:                 time.Now().UTC().Format(time.RFC3339),
+	}); err != nil {
+		t.Logf("artifact diagnostics unavailable; primary failure retained: %s", failure)
+	}
 }
 
 func assertCredentialScope(t *testing.T, ctx context.Context, kubeconfig, secretName string) {
