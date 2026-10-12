@@ -46,6 +46,53 @@ A readable export can preserve a transcript while omitting plugin state, runnabl
 A storage interface can support several backends without proving identical locking, durability, or external-execution semantics.
 The survey therefore treats transcript transfer, continuation transfer, and execution-resource transfer separately.
 
+## Graceful server upgrade and ownership handoff
+
+The inspected paths do not establish a complete equivalent to the proposal's future active-tree handoff contract.
+This is a bounded research conclusion, not a claim that every product or deployment built on these projects lacks graceful upgrade.
+Persistence, restart recovery, workspace pause/resume, and client reconnect each solve part of the problem; none alone establishes safe transfer of an active server-owned delegation tree.
+
+For this comparison, a complete graceful handoff would establish:
+
+- Coordinated drain of the root session, descendants, and extension-owned work to committed safe positions.
+- Preservation of pending asks, accepted decisions, steers, and continuation-critical obligations.
+- Publication of a complete parked-tree marker, release of the old claim, and fenced acquisition under a new epoch.
+- Reconstruction by a compatible successor without replaying effects or treating unknown outcomes as failures.
+- Durable discovery of released runnable work without waiting for a client to open the session.
+- Client catch-up from committed positions independently of the former owner.
+
+The proposal's future graceful path waits for active calls to settle before publishing the tree marker.
+Remote execution reattachment is a separate tool-owned recovery capability; a persisted task ID or workspace does not prove an outcome or authorize transfer of in-flight effects.
+A shutdown deadline that prevents complete parking falls back to explicit crash-style recovery, rather than publishing a partial graceful handoff.
+
+### Closest references and missing contracts
+
+| Reference | Closest aspect | Gap relative to complete active-tree handoff |
+| --- | --- | --- |
+| OpenHands V1 | Closest overall operational shape: separate agent server/workspace, persisted runtime state, generation leases, and client reconnect | Split event/snapshot authority; local guarded writes omit expiry checks; no verified whole-tree drain/park/publication protocol or authoritative external-outcome recovery |
+| Codex | Closest storage-interface reference: writer acquisition, canonical history, continuation replay, and separately paginated display | Inspected local locking does not provide distributed epoch/expiry fencing; active-work transfer was not established |
+| ActiveGraph | Closest acceptance/reconstruction reference: commit before projection, expected-head checks, and load without behavior execution | Explicitly excludes a distributed runtime; custom events do not automatically reconstruct custom continuation state |
+| OpenCode | Transactional projections and retained-sequence catch-up when retention is enabled | Local coordination/wakeups and restart settlement do not establish graceful ownership transfer; an aborted call does not prove its external effects stopped |
+| Pi | Extension state retained within history and reconstructible across reload/branching | Inspected JSONL path has no corresponding server-ownership or coordinated graceful-transfer contract |
+| LangGraph | Checkpointed task results, interrupts, and extensible continuation state | Resume can restart node code; checkpoint recovery does not itself establish whole-tree ownership transfer or safe external-effect continuation |
+
+OpenHands is therefore the nearest operational comparison, while Codex and ActiveGraph provide narrower architectural references.
+No single example supplies a handoff design to adopt wholesale.
+The per-project sections below contain the source evidence and limitations behind these comparisons.
+
+### Persistence is necessary, but not the handoff protocol
+
+Committed history establishes what the previous owner accepted.
+It does not establish that a remote process stopped, that an extension's transient resources are transferable, or that another server has compatible interpreters and execution access.
+Graceful upgrade also needs engine/tool/extension lifecycle contracts, writer fencing, complete parked-state publication, and successor discovery.
+The proposal's park points, obligation metadata, root-tree ownership, and atomic epoch/expiry checks address these distinct requirements.
+Their presence in a history format is not proof that lifecycle coordination is implemented or qualified.
+
+The [first cutover](session-commit-history.md#intended-qualities) establishes trustworthy reload and explicit interrupted-run recovery.
+It does not promise mixed-version rolling deployment or seamless transfer of active work.
+The [compatible-replica handoff section](session-commit-history.md#compatible-replica-active-tree-handoff-later-phase) describes a later contract that the persistence foundation must accommodate.
+The prior-art comparison supports retaining that scope distinction, rather than expanding first-cutover delivery or claiming a complete upgrade protocol has been validated.
+
 ## OpenCode
 
 ### Persistence and delivery

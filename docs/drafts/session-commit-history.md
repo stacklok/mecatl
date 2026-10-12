@@ -1020,6 +1020,8 @@ It must still preserve or explicitly replace these existing guarantees:
 
 A cancelled run or new client-started run is not continuation of the old tree.
 The following future contract describes what history must accommodate, not what the first phase delivers.
+The [prior-art handoff comparison](session-commit-history-prior-art.md#graceful-server-upgrade-and-ownership-handoff) identifies the closest partial references; no complete equivalent was established in the inspected paths.
+A portable history is necessary for this contract, but tool/extension parking, fenced ownership transfer, and successor discovery require separate lifecycle coordination.
 
 #### Parking the tree and closing approval admission
 
