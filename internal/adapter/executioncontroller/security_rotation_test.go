@@ -52,6 +52,45 @@ func TestSecurityReloadTLSWithoutPolicyGenerationChange(t *testing.T) {
 	}
 }
 
+func TestSecuritySnapshotExpiryBoundary(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().UTC()
+	ca, cert, key, issued := rpcSecurityPKI(t, now, "spiffe://example/client")
+	writeRotationMaterial(t, dir, map[string][]byte{"tls.crt": cert, "tls.key": key, "clients.pem": ca})
+	manifest := securityManifest{Version: 1, Generation: 1, TLS: securityTLSManifest{CertificateFile: "tls.crt", PrivateKeyFile: "tls.key", ClientCAFile: "clients.pem"}, Clients: []securityClientManifest{{URI: "spiffe://example/client", MayAttestOwner: true}}}
+	path := filepath.Join(dir, "manifest.json")
+	writeManifest(t, path, manifest)
+	kube := fake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "authority", Namespace: "ns"}})
+	manager := NewSecurityManager(path, dir, "ns", "authority", kube)
+	manager.now = func() time.Time { return now }
+	if err := manager.Reload(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	first := manager.state.Load().snapshot
+	leaf, err := x509.ParseCertificate(issued.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, delta := range []time.Duration{-time.Nanosecond, 0, time.Nanosecond} {
+		now = first.validUntil.Add(delta)
+		wantReady := delta < 0
+		_, tlsErr := manager.TLSConfig().GetConfigForClient(nil)
+		_, _, authErr := manager.authorize(t.Context(), []*x509.Certificate{leaf})
+		if manager.Ready() != wantReady || manager.CheckReady(t.Context()) != wantReady || (tlsErr == nil) != wantReady || (authErr == nil) != wantReady {
+			t.Fatalf("snapshot expiry delta=%s: readiness, TLS admission, or authorization disagreed", delta)
+		}
+	}
+	newCA, newCert, newKey := syntheticPKI(t, now)
+	writeRotationMaterial(t, dir, map[string][]byte{"tls.crt": newCert, "tls.key": newKey, "clients.pem": newCA})
+	if err := manager.Reload(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	second := manager.state.Load().snapshot
+	if !manager.Ready() || !manager.CheckReady(t.Context()) || second.generation != first.generation || second.digest != first.digest {
+		t.Fatal("renewed snapshot did not recover independently of policy generation")
+	}
+}
+
 func TestSecurityProjectedSwitchDuringActiveOperation(t *testing.T) {
 	for _, mode := range []string{"renewal", "policy and TLS", "separate policy", "stable mismatched key", "switch to mismatched key", "continuous switches"} {
 		t.Run(mode, func(t *testing.T) {

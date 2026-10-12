@@ -121,6 +121,62 @@ the verified OIDC issuer/subject still supplies the session owner. See
 [Configure the Kubernetes execution provider](../../user-docs/operating/mecak8s/native-execution.md)
 for the operator workflow.
 
+#### Execution-provider qualification
+
+From a checkout with the Taskfile's Kind prerequisites, run
+`task e2e:k8s:execution:production` for the complete serial suite (45-minute test
+ceiling), followed by mandatory `TestKindExecutionInFlightAutomaticRenewal`
+(30-minute ceiling, 25-minute context). Normal PR checks and native OpenRouter
+qualification use this bounded path without waiting for the original
+certificate lifetime to end. Certificate issuance, cert-manager scheduling,
+and Kubernetes Secret projection remain platform responsibilities; the tests
+qualify Mecatl's behavior at those boundaries.
+
+The distinct long proof is `TestKindExecutionAutomaticCertificateRenewal`.
+It exercises the **deployed `mecak8s` client's automatic reload loop** through
+at least two observed client/server renewals and one minute beyond the original
+server certificate's expiry. Remote tools must still work on the same session
+and PVC with unchanged authorization generation. The mandatory in-flight test
+uses a host-side client that mirrors the issued Secret and calls `ReloadTLS`
+explicitly, so it cannot replace this deployed-client proof.
+
+To include the long proof, explicitly select it:
+
+```sh
+MECATL_EXECUTION_QUAL_NATURAL_EXPIRY=1 task e2e:k8s:execution:production
+```
+
+The selector defaults to `0`, accepts only `0` or `1`, survives the runner's
+clean-environment re-exec, and rejects `1` outside the production profile before
+provisioning. The long test runs once with an 80-minute ceiling (78-minute
+context), before the mandatory in-flight test. The runner logs each renewal
+phase's start and elapsed completion, or an explicit natural-expiry skip.
+In the secret-free `k8s-e2e.yml` workflow, dispatch with `natural_expiry: true`
+for this proof; the boolean defaults to false. Production job budgets are 100
+minutes normally and 210 minutes for explicit long mode, including setup and
+cleanup. The normal 100-minute budget leaves 25 minutes beyond the two test
+ceilings; long mode leaves 55 minutes beyond all three.
+
+The manual native job always sets the selector to `0`: its production step has
+a 100-minute ceiling around a 98-minute command timeout. All native step ceilings
+sum to 148 minutes within a 160-minute job, reserving 12 minutes of overhead.
+Reviewed-SHA verification, disabled caching, successful same-run production
+qualification before credential staging, owned-cluster handoff, the live mock
+prerequisite, and cleanup remain mandatory. Run long renewal qualification once
+for the reviewed change rather than repeating it before model coding.
+
+Coverage is split by the regression each layer can establish:
+
+| Evidence | Regressions covered |
+| --- | --- |
+| `executioncontroller/security_rotation_test.go` | Coherent `..data` reads despite projection switches; incomplete or mismatched TLS fails closed; ordinary TLS reload preserves policy. Injected `SecurityManager.now` checks snapshot readiness, TLS admission, and authorization immediately before, at, and after expiry, then recovery without a policy change. |
+| `executionclient/client_test.go` | Invalid or mismatched client reload closes the stale transport and valid material restores a fresh transport. |
+| `executionclient/renewal_test.go` | Verified same-identity RPCs drain across replacement; synctest advances retired-channel expiry and checks reference cleanup; withdrawn trust terminates active RPCs. |
+| `executioncontroller/operation_peer_test.go` | Original-peer expiry and CA/policy withdrawal fail closed at admission, during a command, and at completion; ordinary renewal preserves authority. |
+| `e2e/k8s_execution/production_qualification_test.go` | Real projected Secret/policy updates, invalid-generation denial and recovery, trust withdrawal, durable authorization, and operation fencing across deployed replicas. Included in the unchanged serial suite. |
+| Mandatory in-flight renewal | Real issuer/client and provider renewal during a command; explicit mirrored-client reload; terminal receipt, exit status and output, workspace mutation, preserved PVC, and a later mutation without fencing. Session continuity is also covered by the serial mock journey. |
+| Explicit natural-expiry renewal | Deployed `mecak8s` automatic client reload across repeated issuer renewals and original expiry; remote-tool session/PVC continuity and unchanged policy. |
+
 **The classification guard.** Every boundary touching owned data is classified as
 caller-owned, derived (follows from the current authorized run), shared-infrastructure,
 or exempt, with a written rationale. `classification.go` covers the service and system

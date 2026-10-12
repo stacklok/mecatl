@@ -36,7 +36,7 @@ func nativeSteps(t *testing.T) map[string]workflowStep {
 		t.Fatal(err)
 	}
 	job := workflow.Jobs["native-execution-live"]
-	if strings.Join(strings.Fields(job.If), " ") != "github.repository == 'stacklok/mecatl' && github.event_name == 'workflow_dispatch' && inputs.native_execution" || job.Timeout != 270 {
+	if strings.Join(strings.Fields(job.If), " ") != "github.repository == 'stacklok/mecatl' && github.event_name == 'workflow_dispatch' && inputs.native_execution" || job.Timeout != 160 {
 		t.Fatal("native job must remain explicitly dispatched, repo-gated, and bounded")
 	}
 	steps := make(map[string]workflowStep)
@@ -64,6 +64,9 @@ func nativeSteps(t *testing.T) map[string]workflowStep {
 		if step.Env["MECATL_EXECUTION_QUAL_STATE"] != "${{ steps.production.outputs.state }}" || step.Env["NATIVE_CLUSTER"] != "${{ steps.production.outputs.cluster }}" || strings.Contains(step.Run, "/current") {
 			t.Fatal("downstream ownership must use production outputs, never current")
 		}
+	}
+	if steps["production"].Timeout != 100 || steps["production"].Env["MECATL_EXECUTION_QUAL_NATURAL_EXPIRY"] != "0" || !strings.Contains(steps["production"].Run, "timeout --kill-after=15s 98m task e2e:k8s:execution:production") {
+		t.Fatal("native coding must use bounded production qualification without natural expiry")
 	}
 	if steps["production"].Env["MECATL_EXECUTION_QUAL_CI"] != "0" || len(steps["credential"].Env) != 1 || steps["credential"].Env["OPENROUTER_API_KEY"] != "${{ secrets.OPENROUTER_API_KEY }}" {
 		t.Fatal("production retention or step-scoped credential wiring drifted")

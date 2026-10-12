@@ -10,10 +10,17 @@ if [ "${MECATL_EXECUTION_QUAL_CLEAN_ENV:-}" != 1 ]; then
     CONTAINER_ENGINE="${CONTAINER_ENGINE:-}" MECATL_EXECUTION_QUAL_CI="${MECATL_EXECUTION_QUAL_CI:-}" MECATL_EXECUTION_QUAL_PROFILE="${MECATL_EXECUTION_QUAL_PROFILE:-}" \
     TOOLBOX_PATH="${TOOLBOX_PATH:-}" MECATL_EXECUTION_DEV_TOOLBOX="${MECATL_EXECUTION_DEV_TOOLBOX:-}" MECATL_EXECUTION_K8S_TOOLBOX="${MECATL_EXECUTION_K8S_TOOLBOX:-}" \
     MECATL_EXECUTION_QUAL_OUTPUT="${MECATL_EXECUTION_QUAL_OUTPUT:-}" MECATL_EXECUTION_QUAL_RESUME_STATE="${MECATL_EXECUTION_QUAL_RESUME_STATE:-}" \
+    MECATL_EXECUTION_QUAL_NATURAL_EXPIRY="${MECATL_EXECUTION_QUAL_NATURAL_EXPIRY-0}" \
     MECATL_EXECUTION_QUAL_CLEAN_ENV=1 "$0" "$@"
 fi
 
 [ "$#" -eq 0 ] || { echo "usage: $0" >&2; exit 2; }
+natural_expiry=${MECATL_EXECUTION_QUAL_NATURAL_EXPIRY-0}
+case "$natural_expiry" in 0|1) ;; *) echo "MECATL_EXECUTION_QUAL_NATURAL_EXPIRY must be 0 or 1" >&2; exit 2 ;; esac
+if [ "$natural_expiry" = 1 ] && [ "${MECATL_EXECUTION_QUAL_PROFILE:-development}" != production ]; then
+  echo "natural expiry qualification requires the production profile" >&2
+  exit 2
+fi
 case "${MECATL_EXECUTION_DEV_TOOLBOX:-}" in ''|dev) ;; *) echo "MECATL_EXECUTION_DEV_TOOLBOX must be empty or dev" >&2; exit 2 ;; esac
 case "${MECATL_EXECUTION_K8S_TOOLBOX:-}" in ''|sre) ;; *) echo "MECATL_EXECUTION_K8S_TOOLBOX must be empty or sre" >&2; exit 2 ;; esac
 runtime=${CONTAINER_ENGINE:-docker}
@@ -460,11 +467,20 @@ dev env -i HOME="$HOME" PATH="$PATH" TOOLBOX_PATH="${TOOLBOX_PATH:-}" XDG_RUNTIM
 phase_done tests
 
 if [ "${MECATL_EXECUTION_QUAL_PROFILE:-development}" = production ]; then
-  printf 'qualification phase=automatic_certificate_renewal starting (initial expiry plus two issuer renewals and in-flight transport reload)\n'
+  if [ "$natural_expiry" = 1 ]; then
+    printf 'qualification phase=automatic_certificate_renewal starting (initial expiry plus two issuer renewals; ceiling=80m)\n'
+    dev env -i HOME="$HOME" PATH="$PATH" TOOLBOX_PATH="${TOOLBOX_PATH:-}" XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}" \
+      KUBECONFIG="$kubeconfig" MECATL_KUBE_CONTEXT="$context" MECATL_EXECUTION_K8S_TOOLBOX="${MECATL_EXECUTION_K8S_TOOLBOX:-}" MECATL_EXECUTION_TEMPLATE_REVISION="$go_revision" MECATL_EXECUTION_QUAL_STATE="$state" MECATL_EXECUTION_QUAL_PROFILE=production MECATL_EXECUTION_QUAL_RENEWAL=1 \
+      sh -c 'cd e2e/k8s_execution && exec "$@"' sh "$state/qualification.test" -test.v -test.count=1 -test.run '^TestKindExecutionAutomaticCertificateRenewal$' -test.timeout=80m
+    phase_done automatic_certificate_renewal
+  else
+    printf 'qualification phase=automatic_certificate_renewal skipped selector=0 elapsed=0s\n'
+  fi
+  printf 'qualification phase=inflight_automatic_renewal starting (ceiling=30m)\n'
   dev env -i HOME="$HOME" PATH="$PATH" TOOLBOX_PATH="${TOOLBOX_PATH:-}" XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}" \
     KUBECONFIG="$kubeconfig" MECATL_KUBE_CONTEXT="$context" MECATL_EXECUTION_K8S_TOOLBOX="${MECATL_EXECUTION_K8S_TOOLBOX:-}" MECATL_EXECUTION_TEMPLATE_REVISION="$go_revision" MECATL_EXECUTION_QUAL_STATE="$state" MECATL_EXECUTION_QUAL_PROFILE=production MECATL_EXECUTION_QUAL_RENEWAL=1 \
-    sh -c 'cd e2e/k8s_execution && exec "$@"' sh "$state/qualification.test" -test.v -test.count=1 -test.run '^TestKindExecution(AutomaticCertificateRenewal|InFlightAutomaticRenewal)$' -test.timeout=105m
-  phase_done automatic_certificate_renewal
+    sh -c 'cd e2e/k8s_execution && exec "$@"' sh "$state/qualification.test" -test.v -test.count=1 -test.run '^TestKindExecutionInFlightAutomaticRenewal$' -test.timeout=30m
+  phase_done inflight_automatic_renewal
 fi
 
 if [ "${MECATL_EXECUTION_QUAL_CI:-}" = 1 ]; then

@@ -2,6 +2,8 @@ package executionkind_test
 
 import (
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -14,28 +16,137 @@ func TestProductionRenewalSelectionAndOuterDeadlines(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(script)
-	serial := strings.Index(body, "-test.timeout=45m")
-	phase := strings.Index(body, "phase=automatic_certificate_renewal")
-	selection := strings.Index(body, "-test.run '^TestKindExecution(AutomaticCertificateRenewal|InFlightAutomaticRenewal)$' -test.timeout=105m")
-	if serial < 0 || phase <= serial || selection <= phase || !strings.Contains(body[:phase], "phase_done tests") || !strings.Contains(body[phase:selection], "MECATL_EXECUTION_QUAL_RENEWAL=1") || !strings.Contains(body[selection:], "phase_done automatic_certificate_renewal") {
-		t.Fatal("serial tests must be followed by both mandatory long renewals with a 105-minute test ceiling")
+	start := strings.Index(body, "\nif [ \"${MECATL_EXECUTION_QUAL_PROFILE:-development}\" = production ]; then\n  if [ \"$natural_expiry\" = 1 ]; then")
+	end := strings.Index(body, "\nif [ \"${MECATL_EXECUTION_QUAL_CI:-}\" = 1 ]; then\n  echo")
+	serial := strings.Index(body, "-test.timeout=45m\nphase_done tests")
+	if serial < 0 || start <= serial || end <= start {
+		t.Fatal("renewal phases must follow the complete serial suite")
+	}
+	for _, tc := range []struct {
+		profile, selector string
+		want              string
+	}{
+		{"production", "0", "^TestKindExecutionInFlightAutomaticRenewal$ 30m\n"},
+		{"production", "1", "^TestKindExecutionAutomaticCertificateRenewal$ 80m\n^TestKindExecutionInFlightAutomaticRenewal$ 30m\n"},
+		{"development", "0", ""},
+	} {
+		t.Run(tc.profile+"/"+tc.selector, func(t *testing.T) {
+			root := t.TempDir()
+			marker := filepath.Join(root, "calls")
+			stub := `
+set -eu
+dev() {
+  selection= ceiling= renewal=
+  for arg do
+    case "$arg" in
+      MECATL_EXECUTION_QUAL_RENEWAL=1) renewal=1 ;;
+      ^TestKindExecution*) selection=$arg ;;
+      -test.timeout=*) ceiling=${arg#*=} ;;
+    esac
+  done
+  test "$renewal" = 1
+  printf '%s %s\n' "$selection" "$ceiling" >> "$MARKER"
+}
+phase_done() { printf 'done=%s\n' "$1"; }
+kubeconfig=fixture context=fixture go_revision=fixture state=fixture
+`
+			out, err := runStep(t, root, stub+body[start:end], "MECATL_EXECUTION_QUAL_PROFILE="+tc.profile, "natural_expiry="+tc.selector, "MARKER="+marker)
+			if err != nil {
+				t.Fatalf("renewal selection: %v: %s", err, out)
+			}
+			calls, err := os.ReadFile(marker)
+			if err != nil && !(tc.want == "" && os.IsNotExist(err)) {
+				t.Fatal(err)
+			}
+			if string(calls) != tc.want {
+				t.Fatalf("renewal calls=%q, want %q", calls, tc.want)
+			}
+			if tc.profile == "production" && (!strings.Contains(string(out), "phase=inflight_automatic_renewal starting") || !strings.Contains(string(out), "done=inflight_automatic_renewal")) {
+				t.Fatal("mandatory renewal phase evidence missing")
+			}
+			if tc.profile == "production" && tc.selector == "0" && !strings.Contains(string(out), "phase=automatic_certificate_renewal skipped selector=0") {
+				t.Fatal("natural expiry skip evidence missing")
+			}
+		})
 	}
 	ci, err := os.ReadFile("../../.github/workflows/k8s-e2e.yml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	job := strings.SplitN(string(ci), "  execution-production-e2e:", 2)
-	if len(job) != 2 || !strings.Contains(job[1], "timeout-minutes: 210") {
-		t.Fatal("production Kind CI job cannot accommodate serial plus renewal and setup")
+	var workflow struct {
+		On struct {
+			Dispatch struct {
+				Inputs map[string]struct {
+					Type    string `yaml:"type"`
+					Default bool   `yaml:"default"`
+				} `yaml:"inputs"`
+			} `yaml:"workflow_dispatch"`
+		} `yaml:"on"`
+		Jobs map[string]struct {
+			Timeout string         `yaml:"timeout-minutes"`
+			Steps   []workflowStep `yaml:"steps"`
+		} `yaml:"jobs"`
 	}
-	live, err := os.ReadFile("../../.github/workflows/e2e-live.yml")
+	if err := yaml.Unmarshal(ci, &workflow); err != nil {
+		t.Fatal(err)
+	}
+	input, ok := workflow.On.Dispatch.Inputs["natural_expiry"]
+	job := workflow.Jobs["execution-production-e2e"]
+	if !ok || input.Type != "boolean" || input.Default || job.Timeout != "${{ github.event_name == 'workflow_dispatch' && inputs.natural_expiry && 210 || 100 }}" {
+		t.Fatal("natural expiry must be explicit manual opt-in with separate job budgets")
+	}
+	found := false
+	for _, step := range job.Steps {
+		if step.Run == "task e2e:k8s:execution:production" {
+			found = step.Env["MECATL_EXECUTION_QUAL_NATURAL_EXPIRY"] == "${{ github.event_name == 'workflow_dispatch' && inputs.natural_expiry && '1' || '0' }}"
+		}
+	}
+	if !found {
+		t.Fatal("Kind production selector is not tied to explicit manual opt-in")
+	}
+	nativeSteps(t)
+}
+
+func TestNaturalExpiryPreflightBeforeProvisioning(t *testing.T) {
+	script, err := os.ReadFile("run.sh")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, requirement := range []string{"native-execution-live:", "timeout-minutes: 270", "name: Qualify production execution\n        timeout-minutes: 210", "timeout --kill-after=15s 208m task e2e:k8s:execution:production", "name: Clean up exact owned resources"} {
-		if !strings.Contains(string(live), requirement) {
-			t.Fatalf("live CI production qualification/cleanup deadline missing: %s", requirement)
-		}
+	for _, tc := range []struct {
+		name, profile, selector, want string
+		set                           bool
+	}{
+		{"default", "production", "", "CONTAINER_ENGINE must be docker or podman", false},
+		{"bounded", "production", "0", "CONTAINER_ENGINE must be docker or podman", true},
+		{"long", "production", "1", "CONTAINER_ENGINE must be docker or podman", true},
+		{"development", "development", "0", "CONTAINER_ENGINE must be docker or podman", true},
+		{"empty", "production", "", "MECATL_EXECUTION_QUAL_NATURAL_EXPIRY must be 0 or 1", true},
+		{"invalid", "production", "true", "MECATL_EXECUTION_QUAL_NATURAL_EXPIRY must be 0 or 1", true},
+		{"injection", "production", "$(touch injected)", "MECATL_EXECUTION_QUAL_NATURAL_EXPIRY must be 0 or 1", true},
+		{"wrong-profile", "development", "1", "natural expiry qualification requires the production profile", true},
+		{"missing-profile", "", "1", "natural expiry qualification requires the production profile", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, "run.sh")
+			writeFixture(t, path, string(script), 0o700)
+			cmd := exec.CommandContext(t.Context(), path)
+			cmd.Dir = root
+			// Stop valid preflights at runtime validation, before any fixture state
+			// or provisioning. Leave CLEAN_ENV unset to exercise the real env -i.
+			cmd.Env = []string{"HOME=" + root, "PATH=" + os.Getenv("PATH"), "CONTAINER_ENGINE=preflight-stop", "MECATL_EXECUTION_QUAL_PROFILE=" + tc.profile}
+			if tc.set {
+				cmd.Env = append(cmd.Env, "MECATL_EXECUTION_QUAL_NATURAL_EXPIRY="+tc.selector)
+			}
+			out, err := cmd.CombinedOutput()
+			if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 2 || strings.TrimSpace(string(out)) != tc.want {
+				t.Fatalf("preflight: %v: %s", err, out)
+			}
+			entries, err := os.ReadDir(root)
+			if err != nil || len(entries) != 1 || entries[0].Name() != "run.sh" {
+				t.Fatal("preflight created state or executed selector input")
+			}
+		})
 	}
 }
 
