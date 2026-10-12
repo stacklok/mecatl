@@ -22,49 +22,70 @@ func TestProductionRenewalSelectionAndOuterDeadlines(t *testing.T) {
 	if serial < 0 || start <= serial || end <= start {
 		t.Fatal("renewal phases must follow the complete serial suite")
 	}
+	// Exercise the real clean-environment re-exec and selector resolution, then
+	// skip provisioning and run the renewal phases with a fake qualification binary.
+	preflight := scriptRange(t, "run.sh", "#!/bin/sh", "\nruntime=${CONTAINER_ENGINE:-docker}")
+	const boundedArgs = "-test.v\n-test.count=1\n-test.run\n^TestKindExecutionInFlightAutomaticRenewal$\n-test.timeout=30m\n"
+	const naturalArgs = "-test.v\n-test.count=1\n-test.run\n^TestKindExecutionAutomaticCertificateRenewal$\n-test.timeout=80m\n"
 	for _, tc := range []struct {
 		profile, selector string
-		want              string
+		want              []string
 	}{
-		{"production", "0", "^TestKindExecutionInFlightAutomaticRenewal$ 30m\n"},
-		{"production", "1", "^TestKindExecutionAutomaticCertificateRenewal$ 80m\n^TestKindExecutionInFlightAutomaticRenewal$ 30m\n"},
-		{"development", "0", ""},
+		{"production", "", []string{boundedArgs}},
+		{"production", "0", []string{boundedArgs}},
+		{"production", "1", []string{naturalArgs, boundedArgs}},
+		{"development", "", nil},
+		{"development", "0", nil},
 	} {
 		t.Run(tc.profile+"/"+tc.selector, func(t *testing.T) {
 			root := t.TempDir()
 			marker := filepath.Join(root, "calls")
-			stub := `
+			for _, dir := range []string{"state", "e2e/k8s_execution"} {
+				if err := os.MkdirAll(filepath.Join(root, dir), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			writeFixture(t, filepath.Join(root, "state/qualification.test"), `#!/bin/sh
 set -eu
-dev() {
-  selection= ceiling= renewal=
-  for arg do
-    case "$arg" in
-      MECATL_EXECUTION_QUAL_RENEWAL=1) renewal=1 ;;
-      ^TestKindExecution*) selection=$arg ;;
-      -test.timeout=*) ceiling=${arg#*=} ;;
-    esac
-  done
-  test "$renewal" = 1
-  printf '%s %s\n' "$selection" "$ceiling" >> "$MARKER"
-}
+{
+  printf 'cwd=%s profile=%s renewal=%s\n' "$PWD" "$MECATL_EXECUTION_QUAL_PROFILE" "$MECATL_EXECUTION_QUAL_RENEWAL"
+  printf '%s\n' "$@"
+} >> "$HOME/calls"
+`, 0o700)
+			stub := `
+root=$HOME
+state=$root/state
+kubeconfig=fixture context=fixture go_revision=fixture
+dev() { (cd "$root" && "$@"); }
 phase_done() { printf 'done=%s\n' "$1"; }
-kubeconfig=fixture context=fixture go_revision=fixture state=fixture
 `
-			out, err := runStep(t, root, stub+body[start:end], "MECATL_EXECUTION_QUAL_PROFILE="+tc.profile, "natural_expiry="+tc.selector, "MARKER="+marker)
+			path := filepath.Join(root, "run.sh")
+			writeFixture(t, path, preflight+stub+body[start:end], 0o700)
+			cmd := exec.CommandContext(t.Context(), path)
+			cmd.Dir = root
+			cmd.Env = []string{"HOME=" + root, "PATH=" + os.Getenv("PATH"), "MECATL_EXECUTION_QUAL_PROFILE=" + tc.profile}
+			if tc.selector != "" {
+				cmd.Env = append(cmd.Env, "MECATL_EXECUTION_QUAL_NATURAL_EXPIRY="+tc.selector)
+			}
+			out, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("renewal selection: %v: %s", err, out)
 			}
 			calls, err := os.ReadFile(marker)
-			if err != nil && !(tc.want == "" && os.IsNotExist(err)) {
+			if err != nil && !(len(tc.want) == 0 && os.IsNotExist(err)) {
 				t.Fatal(err)
 			}
-			if string(calls) != tc.want {
-				t.Fatalf("renewal calls=%q, want %q", calls, tc.want)
+			var want string
+			for _, args := range tc.want {
+				want += "cwd=" + filepath.Join(root, "e2e/k8s_execution") + " profile=production renewal=1\n" + args
+			}
+			if string(calls) != want {
+				t.Fatalf("renewal calls=%q, want %q", calls, want)
 			}
 			if tc.profile == "production" && (!strings.Contains(string(out), "phase=inflight_automatic_renewal starting") || !strings.Contains(string(out), "done=inflight_automatic_renewal")) {
 				t.Fatal("mandatory renewal phase evidence missing")
 			}
-			if tc.profile == "production" && tc.selector == "0" && !strings.Contains(string(out), "phase=automatic_certificate_renewal skipped selector=0") {
+			if tc.profile == "production" && tc.selector != "1" && !strings.Contains(string(out), "phase=automatic_certificate_renewal skipped selector=0") {
 				t.Fatal("natural expiry skip evidence missing")
 			}
 		})
@@ -117,6 +138,7 @@ func TestNaturalExpiryPreflightBeforeProvisioning(t *testing.T) {
 		set                           bool
 	}{
 		{"default", "production", "", "CONTAINER_ENGINE must be docker or podman", false},
+		{"development-default", "development", "", "CONTAINER_ENGINE must be docker or podman", false},
 		{"bounded", "production", "0", "CONTAINER_ENGINE must be docker or podman", true},
 		{"long", "production", "1", "CONTAINER_ENGINE must be docker or podman", true},
 		{"development", "development", "0", "CONTAINER_ENGINE must be docker or podman", true},
