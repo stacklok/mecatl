@@ -43,7 +43,7 @@ The agent loop uses those definitions to perform work, but it cannot decide whic
 
 The harness hosts the API and agent loop and authenticates the initiating user. An **agent-definition loader** supplies harness execution configuration and broker definition records and authority ceilings. An **identity broker** is a separate trusted service that governs access to protected tools. It issues agent credentials, checks requested operations against policy, and arranges downstream access using credentials it controls. It also records the decisions and actions it observes.
 
-This design scopes broker authorization to MCP tools. Extending that boundary to filesystem operations, Shell, and agent spawning is a future direction; their authorization and routing remain to be designed.
+This design scopes broker authorization to MCP tools. Extending that boundary to filesystem operations, Shell, and agent spawning is a [future direction](all-tool-mediation.md); their authorization and routing remain to be designed.
 
 ```mermaid
 flowchart LR
@@ -73,7 +73,7 @@ The remaining trust question is how the broker knows that the reported user and 
 
 Alice asks her main agent to review PR 42. Once the session's definitions are loaded, the main agent delegates to `code-reviewer`. The reviewer requests an MCP tool call to read the pull request.
 
-The broker checks the call using Alice's identity, the reviewer instance, and its delegation. If permitted, ToolHive dispatches it using Alice's GitHub credential, which stays outside `mecak8s`. If denied, no request reaches GitHub.
+The broker checks the registered reviewer's definition-derived server/tool ceiling with Cedar and retains existing user/connection checks. V1 does not evaluate PR-specific delegated bounds or comprehensive enterprise user policy. If all required checks pass, ToolHive dispatches the call using Alice's GitHub credential, which stays outside `mecak8s`. If denied, no request reaches GitHub.
 
 GitHub sees access under Alice's account. The broker's audit record supplies the rest of the story: which reviewer acted, which agent delegated the work, why the call was permitted, and what result was observed. A missing result is recorded as unknown, not as proof that the operation never happened.
 
@@ -81,7 +81,7 @@ See [Interactive execution](credentials-and-lifecycle.md#interactive-execution) 
 
 ## Detailed chapters
 
-The proposed chapters develop each part of the architecture. Linked chapters have been started; unlinked filenames are planned pages.
+The proposed chapters develop each part of the architecture.
 
 | Chapter | Focus |
 | --- | --- |
@@ -89,6 +89,6 @@ The proposed chapters develop each part of the architecture. Linked chapters hav
 | [Agent definitions](agent-definitions.md) | Explain `AgentDef` and separate harness execution configuration from broker-enforced authority. |
 | [MCP authorization](mcp-authorization.md) | Explain how user and agent permissions govern MCP calls and how the broker uses ToolHive. |
 | [Credentials and lifecycle](credentials-and-lifecycle.md) | Follow one credential-to-outcome walkthrough with validation and audit evidence, then explain renewal and recovery. |
-| `all-tool-mediation.md` | Develop the broader authorization boundary for filesystem tools, Shell, and spawning. |
+| [All-tool mediation](all-tool-mediation.md) | Develop the broader authorization boundary for filesystem tools, Shell, and spawning. |
 
 The [implementation and verification companion](implementation.md) records integration requirements and checks. Earlier material remains available in the [identity model](../agent-identity-model.md), [authority design](../../agent-authority.md), and [implementation notes](../../agent-authority-implementation.md). The old model's harness-owned signing and audit responsibilities are replaced here by the broker-centered architecture.

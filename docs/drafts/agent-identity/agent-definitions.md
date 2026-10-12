@@ -30,30 +30,44 @@ The proposed split keeps execution configuration in the harness and supplies the
 
 The harness uses `Tools`, `DisallowedTools`, and `MCPServers` to configure the agent's available tools. The broker needs an independently established ceiling on permitted MCP operations. A tool appearing in the harness catalog is not sufficient authorization to call it, and a model-supplied tool list cannot establish the broker's ceiling.
 
-The concrete field mapping remains to be specified. The existing definition-source snapshot contract is not, by itself, broker initialization.
+The broker ceiling is the set of permitted registered MCP server/tool pairs resolved under the existing `Tools`, `DisallowedTools`, and `MCPServers` semantics. That fixed admitted ceiling drives [deterministic Cedar policy generation](mcp-authorization.md#definition-derived-ceiling), tied to the definition source and revision. The existing definition-source snapshot contract is not, by itself, broker initialization.
 
 ## Loading definitions for a session
 
-The agent-definition loader resolves the definitions selected for a session from configured sources, such as administrator-managed files, repositories, or APIs. It supplies the harness with execution configuration and the broker with the corresponding definition records and authority ceilings.
+In the proposed lifecycle, mecak8s's trusted session lifecycle code resolves the session's definitions from configured sources, such as administrator-managed files, repositories, or APIs. It persists the fixed selection, source associations, revisions, and authority ceilings, and supplies execution configuration to the harness. This is a responsibility within mecak8s, not a new registrar component.
 
-Broker initialization must complete before the agent loop starts. The selected definitions remain fixed for the session, so both components work from the same selection.
+For Alice's session `S42` in the [walkthrough](credentials-and-lifecycle.md#interactive-execution), the selection includes the main definition and `project/code-reviewer`. Selecting the reviewer definition does not create a reviewer instance. The particular child is allocated later when the harness creates it.
 
-The loader is outside the untrusted agent loop. Its process placement and how the broker authenticates its input remain to be specified.
-
-Restoring a session must preserve its selected definitions rather than reload whatever happens to be current at their sources. The original source association and revision must remain recoverable; restoration must not silently substitute another definition.
-
-Keeping a definition fixed does not freeze user permissions or broker policy. The broker evaluates subsequent MCP calls against the applicable authorization policy.
+Before the main loop starts, mecak8s allocates and persists the main's durable incarnation, then authenticates to the broker with its workload ServiceAccount to register the selected definitions and main instance with no parent. Broker initialization and registration must complete before execution; a suitable instance SVID can be obtained when needed, before protected calls. The selected definitions remain fixed for the session so that the harness and broker use the same selection.
 
 ## Registering instances
 
-The proposed trusted session/agent lifecycle responsibility is to register each particular instance with the broker using the loader's fixed session selection. The broker needs to establish the association between session incarnation, instance SPIFFE ID, definition source and revision, authority ceiling, and creating instance; this does not select a combined record schema. It checks that the authenticated workload is permitted to act for that session and instance before issuing an instance credential. A known definition or a loop-supplied name alone is insufficient.
+The broker validates the workload-authenticated registration records and constructs the canonical instance subject. It checks that the workload may act for the session and instance and associates the supplied incarnation with the registered definition, source, revision, ceiling, and creating instance, if any. mecak8s allocates incarnations; the broker does not. A known definition or loop-supplied name alone is insufficient for issuance.
 
-Creation ancestry describes which instance created another. Execution delegation separately links the current parent run, child run, and delegated MCP bounds; the same instance can participate in several runs. The harness manages instance creation and run execution. Registration supplies trusted identity records, not broker admission of runs or authorization to spawn.
+When the main creates the reviewer, mecak8s allocates and persists the child's incarnation. It registers that particular child using the persisted incarnation, the reviewer definition already registered from the session selection, and the registered main-instance reference. The broker validates these records and constructs the child subject. This is a lifecycle assertion authenticated by mecak8s's workload credential, not proof derived from possession of the parent's SVID.
 
-In this proposal, restoring an instance preserves its identity, fixed definition selection, and original authority bounds; a new incarnation must not inherit the old instance's authority merely by reusing a session name. This identity continuity is separate from the existing broker's attachment recovery. The [credential walkthrough](credentials-and-lifecycle.md#3-broker-session-and-instance-registration) distinguishes the stable broker session reference from a replaceable process-local attachment binding. On the cited branch, recovery remains within the exact authenticated workload and deployment partition: another Pod with the same workload identity is not a grant of access to a different workload.
+Creation ancestry records who created an instance. Execution delegation separately links parent run `R41`, reviewer run `R42`, and the bounds of delegation `D42`. Registration establishes identity records; it does not authorize spawning, run execution, or a tool call. The harness manages execution, and the broker [authorizes each MCP request](mcp-authorization.md#two-requests-two-authorization-decisions).
 
-The loader and lifecycle component are outside the untrusted loop as responsibilities. Their authenticated registration channel, durable record representation, and protection from a compromised loop sharing their process still need implementation design. Their placement alone does not prove isolation. The API's user report remains a trusted assertion, separate from the broker's workload verification.
+The broker explicitly trusts mecak8s's workload-authenticated lifecycle assertions. These responsibilities are outside the untrusted loop, but a ServiceAccount cannot distinguish trusted lifecycle code from compromised code in the same process. This design does not establish same-process isolation. The API's initiating-user report is also a trusted assertion, separate from workload verification.
+
+## Identity continuity across runs and restarts
+
+An instance can perform several runs without changing identity. Its fixed definition selection provides continuity, while each call remains subject to applicable current user permissions and broker policy.
+
+| Event | What remains fixed or must be checked |
+| --- | --- |
+| New run on the same instance | The incarnation and selected definition stay fixed. The new run has its own execution context and applicable bounds; the instance credential alone does not authorize it. |
+| Definition source edited | The session's pinned source and revision selection does not change. Restoration must not substitute whatever is current at the source. |
+| Process restart or session restoration | Restore the original incarnation, definition selection, parent association, and authority bounds. Recover the unfinished execution context and its user/actor/connection association or fail closed. |
+| Instance credential expires | Renew for the registered identity after the required checks. Renewal grants no new authority and does not widen recovered bounds. |
+| Fresh incarnation | Register a distinct identity. Reusing a session or definition name does not inherit the old instance's authority. |
+
+Continuation preserves the unfinished run's original bounds. Current restrictions or withdrawal can constrain it; credential renewal or policy expansion must not automatically widen recovered authority. If the original identity or selection cannot be recovered, restoration must fail closed rather than silently substitute another instance or definition.
+
+Identity continuity is separate from broker attachment recovery. A stable broker session reference can have a replaceable process-local attachment binding within the exact authenticated workload and deployment partition; another Pod with the same workload identity does not grant access to a different workload. See [pauses and restart](credentials-and-lifecycle.md#pauses-and-restart) for credential recovery and unknown operation outcomes.
 
 ## Source records and policy representation
 
-Definition-source and revision records, and the representation of broker policy, remain unresolved. Generating Cedar from definition tool lists was discussed as an option, not selected as the mechanism. The relationship between definition-derived ceilings and separately managed user and agent permissions also needs to be described without conflating them.
+The proposal adopts workload-authenticated mecak8s lifecycle assertions, host-allocated durable incarnations, and broker validation and subject construction as its semantic mechanism. The exact registration wire API, durable record schema, and execution-context binding remain unresolved, as does protection from same-process substitution. These are proposed semantics, not implemented contracts.
+
+Cedar is selected for the definition-derived ceiling. The representation of definition-source and revision records, registration API, and Cedar policies remains an implementation choice. V1 generates policy only from resolved definition facts; separately managed user, resource, argument, and dynamic delegation policies are deferred. Existing user/connection authorization checks remain required.

@@ -26,7 +26,7 @@ The protected MCP endpoint validates the delegated token's issuer, audience, exp
 
 Whether the two presentation points use one multi-audience instance credential or separately issued credentials remains to be specified. The [walkthrough](credentials-and-lifecycle.md#interactive-execution) illustrates the former without selecting it as the deployment contract.
 
-Verify issuance rejects a known definition without a trusted particular-instance registration, an unauthorized workload, mismatched ancestry, or a stale session incarnation. These are proposed checks; the registration protocol and input protection remain unspecified. Verify restoration preserves the instance identity, fixed definition selection, and original bounds. Separately, the existing broker recovery path permits a new process-local attachment binding for a stable broker session within the exact authenticated workload and deployment partition; a different workload cannot assume access. Knowing a noncredential broker session reference must not suffice. Account-association checks must reject OAuth success without authorization for the company user to use the ToolHive subject and provider connection; the association mechanism remains unselected.
+Verify issuance rejects a known definition without a trusted particular-instance registration, an unauthorized workload, mismatched ancestry, or a stale session incarnation. These are proposed checks under the [workload-authenticated mecak8s lifecycle registration](agent-definitions.md#registering-instances); the exact wire API, durable schema, and protection from same-process substitution remain unspecified. Verify restoration preserves the instance identity, fixed definition selection, and original bounds. Separately, the existing broker recovery path permits a new process-local attachment binding for a stable broker session within the exact authenticated workload and deployment partition; a different workload cannot assume access. Knowing a noncredential broker session reference must not suffice. Account-association checks must reject OAuth success without authorization for the company user to use the ToolHive subject and provider connection; the association mechanism remains unselected.
 
 ## Workload-specific verification
 
@@ -43,6 +43,18 @@ The broker validates the configured Kubernetes issuer, audience, and ServiceAcco
 `mecak8s` obtains an X.509-SVID and key through the Workload API and proves possession during mTLS to both broker endpoints. The broker checks platform trust and permitted workload IDs. A TLS-terminating ingress needs explicitly trusted identity propagation; a forwarded header alone is insufficient. Rotation, bundle refresh, and connection renewal must preserve mTLS checks without bearer fallback.
 
 Workload mTLS does not bind an OAuth access token to its certificate, prove user consent, or isolate agents sharing a harness process.
+
+## Cedar authorization and audit verification
+
+Cedar is the selected engine for the v1 definition-derived MCP server/tool ceiling. Policy representation is an implementation choice; user, resource, argument, and dynamic delegation policies are deferred. Required focused checks are:
+
+- Resolve `Tools`, `DisallowedTools`, and `MCPServers` with existing defaults, selection, and exclusion semantics into registered server/tool pairs. Reject ambiguous or unresolved grants; the same tool name on another server must not inherit access.
+- Prove deterministic generation from fixed admitted definition inputs, with retained source, definition revision, and generated policy revision. Prose and model output must not affect grants; source edits and restoration must not silently replace the admitted ceiling.
+- Select the actor's policy through trusted registration. Reject caller substitution of actor, definition, revision, or policy. Require an explicit resolved main ceiling, without name-based privilege.
+- Evaluate each call, including calls using cached credentials and retries after enrollment. Default deny; generation/loading failures, evaluation failures, and any evaluation diagnostic errors deny, even if the nominal Cedar result is allow.
+- Check the exact dispatched server/tool pair and recheck changed requests. Prove the reviewer read passes its ceiling while excluded merge fails; PR 42 and PR 43 reads on the same pair have the same ceiling result. Do not claim this proves PR-specific delegation.
+- Preserve existing local, user/connection, ToolHive AS, and vMCP checks. A ceiling permit must not bypass their denials or substitute for user entitlement.
+- Verify audit provenance, definition and policy revision correlation, safe reasons and policy IDs, and distinct decision/dispatch/outcome evidence per operation and attempt. Diagnostic errors must yield an effective deny in the record. Redaction must exclude secrets and unrestricted payloads. Test unknown outcomes without automatic replay and durability across restart once storage, ordering, and failure handling are specified; no transactional ledger is selected here.
 
 ## Parking and recovery: implementation status
 
