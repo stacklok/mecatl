@@ -8,7 +8,7 @@ require (
 	github.com/gofrs/flock v0.13.1
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver v0.1.0
-	github.com/stacklok/mecatl/engine v0.16.1-0.20261012171723-12429ad5c06e
+	github.com/stacklok/mecatl/engine v0.16.1-0.20261012175530-26bd65048e25
 	github.com/stacklok/mecatl/internal/adaptersupport v0.1.0
 	github.com/stacklok/toolhive-core/redisconn v0.0.2
 	go.uber.org/goleak v1.3.0

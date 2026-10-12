@@ -32,6 +32,8 @@ github.com/stacklok/mecatl/engine v0.15.1-0.20260929125653-6142f5252a09 h1:MHooQ
 github.com/stacklok/mecatl/engine v0.15.1-0.20260929125653-6142f5252a09/go.mod h1:hI3EP11xB9K+trfc4cf+GrLMY86wFdeye+tcLVIlZtI=
 github.com/stacklok/mecatl/engine v0.16.1-0.20261012171723-12429ad5c06e h1:unQ0Nzv5coFyipcETPIT7WGSLvvMSa6eF3gwy/mjA24=
 github.com/stacklok/mecatl/engine v0.16.1-0.20261012171723-12429ad5c06e/go.mod h1:8CrW9Phc64woCfe8LUcGbfthNlHIJe0VnIrE7OndRwA=
+github.com/stacklok/mecatl/engine v0.16.1-0.20261012175530-26bd65048e25 h1:DyV7Qlc9eg+jac2/EHG7cBfLSM1EKW8RClE6wixZG9w=
+github.com/stacklok/mecatl/engine v0.16.1-0.20261012175530-26bd65048e25/go.mod h1:8CrW9Phc64woCfe8LUcGbfthNlHIJe0VnIrE7OndRwA=
 github.com/stacklok/mecatl/internal/adaptersupport v0.1.0 h1:KaCe+M36om+17HhXyuEQPm0cbyPf2EHFYuFli6Sloyc=
 github.com/stacklok/mecatl/internal/adaptersupport v0.1.0/go.mod h1:EMSuWmclHN8OJf+QJAkoOQErWz+r8C7GmLjSI5xr8DA=
 github.com/stacklok/toolhive-core/redisconn v0.0.2 h1:Ju7+LrajHdpCpBe5xmGdle1z0F/F2qByUdzZi6YSgJ4=

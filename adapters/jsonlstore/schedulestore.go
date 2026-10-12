@@ -745,6 +745,37 @@ func cloneSpec(spec port.ScheduleSpec) port.ScheduleSpec {
 	return out
 }
 
+// loadOneShotRetryFireLocked reads retry history strictly: unlike ListFires, an
+// unreadable record must not make a one-shot failure look retryable.
+func (s *scheduleStore) loadOneShotRetryFireLocked(scheduleName string, sched port.Schedule) (port.ScheduleFire, error) {
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		return port.ScheduleFire{}, fmt.Errorf("jsonlstore: list fires dir: %w", err)
+	}
+	var failed port.ScheduleFire
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), scheduleFirePrefix) || !strings.HasSuffix(entry.Name(), scheduleSuffix) {
+			continue
+		}
+		rec, err := readScheduleFireFile(filepath.Join(s.dir, entry.Name()))
+		if err != nil {
+			return port.ScheduleFire{}, err
+		}
+		fire := rec.Fire
+		if fire.ScheduleName != scheduleName || !fire.FiredAt.Equal(sched.State.LastFireAt) || fire.SessionID != sched.State.LastFireSessionID {
+			continue
+		}
+		if fire.Stop != session.StopError {
+			return port.ScheduleFire{}, ErrScheduleNotFound
+		}
+		failed = fire
+	}
+	if failed.ID == "" {
+		return port.ScheduleFire{}, ErrScheduleNotFound
+	}
+	return failed, nil
+}
+
 // ReArmOneShot validates current retry eligibility under the shared mutex before
 // atomically writing the re-enabled schedule and incremented retry count.
 func (s *scheduleStore) ReArmOneShot(_ context.Context, name string, nextFire time.Time) error {
@@ -763,21 +794,8 @@ func (s *scheduleStore) ReArmOneShot(_ context.Context, name string, nextFire ti
 		sched.State.LastFireAt.IsZero() || sched.State.LastFireSessionID == port.PendingFireSessionID || !sched.State.LastFireStartedAt.IsZero() {
 		return ErrScheduleNotFound
 	}
-	fires, err := s.listFiresLocked(name)
-	if err != nil {
+	if _, err := s.loadOneShotRetryFireLocked(name, sched); err != nil {
 		return err
-	}
-	failed := false
-	for _, fire := range fires {
-		if fire.FiredAt.Equal(sched.State.LastFireAt) && fire.SessionID == sched.State.LastFireSessionID {
-			if fire.Stop != session.StopError {
-				return ErrScheduleNotFound
-			}
-			failed = true
-		}
-	}
-	if !failed {
-		return ErrScheduleNotFound
 	}
 	rec.Schedule.State.Enabled = true
 	rec.Schedule.State.NextFireAt = nextFire

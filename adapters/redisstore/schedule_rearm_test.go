@@ -23,11 +23,31 @@ func (*rearmEvalGate) DialHook(next redis.DialHook) redis.DialHook { return next
 func (*rearmEvalGate) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
 	return next
 }
+
 func (g *rearmEvalGate) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 	return func(ctx context.Context, cmd redis.Cmder) error {
 		args := cmd.Args()
 		if cmd.Name() == "evalsha" && args[1] == reArmOneShotScript.Hash() {
 			g.once.Do(func() { close(g.entered); <-g.release })
+		}
+		return next(ctx, cmd)
+	}
+}
+
+type rearmGetFailure struct {
+	key string
+	err error
+}
+
+func (*rearmGetFailure) DialHook(next redis.DialHook) redis.DialHook { return next }
+func (*rearmGetFailure) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+func (g *rearmGetFailure) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		args := cmd.Args()
+		if cmd.Name() == "get" && len(args) > 1 && args[1] == g.key {
+			return g.err
 		}
 		return next(ctx, cmd)
 	}
@@ -128,6 +148,93 @@ func TestRearmSnapshotFencedAtRedisMutation(t *testing.T) {
 			after, err := bs.Load(ctx, name)
 			if err != nil || after.State != before.State || after.Spec.OneShotRetry != before.Spec.OneShotRetry || after.Spec.OneShotMaxRetries != before.Spec.OneShotMaxRetries {
 				t.Fatalf("stale EVAL mutated successor: %+v -> %+v, %v", before, after, err)
+			}
+		})
+	}
+}
+
+func TestRearmOneShotFailsClosedOnUnreadableCurrentOutcome(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		current     session.StopReason
+		prepare     func(t *testing.T, store *Store)
+		wantRearmed bool
+	}{
+		{name: "failure control", current: session.StopError, wantRearmed: true},
+		{
+			name:    "get error",
+			current: session.StopEndTurn,
+			prepare: func(_ *testing.T, store *Store) {
+				store.testClient().AddHook(&rearmGetFailure{key: scheduleFireKey("current"), err: errors.New("injected get failure")})
+			},
+		},
+		{
+			name:    "corrupt current outcome",
+			current: session.StopError,
+			prepare: func(t *testing.T, store *Store) {
+				if err := store.testClient().Set(t.Context(), scheduleFireKey("current"), "not-json", 0).Err(); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name:    "legacy outcome id absent",
+			current: session.StopError,
+			prepare: func(t *testing.T, store *Store) {
+				if err := store.testClient().HDel(t.Context(), scheduleKey("retry"), fieldLastFireOutcomeID).Err(); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := t.Context()
+			mr := miniredis.RunT(t)
+			store, err := New(mr.Addr())
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = store.Close() })
+			schedules := store.ScheduleStore()
+			now := time.Unix(1_700_000_000, 0)
+			const name = "retry"
+			if err := schedules.Save(ctx, port.Schedule{Spec: port.ScheduleSpec{Name: name, Trigger: port.TriggerSpec{OneShot: now}, OneShotRetry: true, OneShotMaxRetries: 2}, State: port.ScheduleState{Enabled: true, NextFireAt: now}}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := schedules.Claim(ctx, name, now, time.Time{}); err != nil {
+				t.Fatal(err)
+			}
+			if err := schedules.RecordFire(ctx, port.ScheduleFire{ID: "failed", SessionID: "session", ScheduleName: name, FiredAt: now, Stop: session.StopError}); err != nil {
+				t.Fatal(err)
+			}
+			if err := schedules.RecordFire(ctx, port.ScheduleFire{ID: "current", SessionID: "session", ScheduleName: name, FiredAt: now, Stop: test.current}); err != nil {
+				t.Fatal(err)
+			}
+			if test.prepare != nil {
+				test.prepare(t, store)
+			}
+			before, err := schedules.Load(ctx, name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = schedules.(port.ScheduleOneShotReArmer).ReArmOneShot(ctx, name, now.Add(time.Minute))
+			if test.wantRearmed {
+				if err != nil {
+					t.Fatalf("ReArmOneShot: %v", err)
+				}
+			} else if err == nil {
+				t.Fatal("ReArmOneShot unexpectedly succeeded")
+			}
+			after, loadErr := schedules.Load(ctx, name)
+			if loadErr != nil {
+				t.Fatal(loadErr)
+			}
+			if test.wantRearmed {
+				if !after.State.Enabled || after.State.OneShotRetryCount != before.State.OneShotRetryCount+1 {
+					t.Fatalf("ReArmOneShot state = %+v, want enabled with retry count %d", after.State, before.State.OneShotRetryCount+1)
+				}
+			} else if after.State != before.State {
+				t.Fatalf("failed ReArmOneShot mutated state: %+v -> %+v", before.State, after.State)
 			}
 		})
 	}

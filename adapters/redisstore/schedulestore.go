@@ -535,7 +535,7 @@ func (s *scheduleStore) ReArmOneShot(ctx context.Context, name string, nextFire 
 	if sched.State.DeletionID != "" {
 		return fmt.Errorf("redisstore: %w", port.ErrScheduleDeleting)
 	}
-	failed, err := s.loadOneShotRetryFire(ctx, sched)
+	failed, err := loadOneShotRetryFire(ctx, client, sched, fields[fieldLastFireOutcomeID])
 	if err != nil {
 		return err
 	}
@@ -562,26 +562,28 @@ func (s *scheduleStore) ReArmOneShot(ctx context.Context, name string, nextFire 
 	return nil
 }
 
-func (s *scheduleStore) loadOneShotRetryFire(ctx context.Context, sched port.Schedule) (port.ScheduleFire, error) {
+func loadOneShotRetryFire(ctx context.Context, client redis.Cmdable, sched port.Schedule, outcomeID string) (port.ScheduleFire, error) {
 	if sched.Spec.Trigger.Kind() != port.TriggerOneShot || !sched.Spec.OneShotRetry ||
 		sched.State.Enabled || sched.State.OneShotRetryCount >= sched.Spec.OneShotMaxRetries ||
-		sched.State.LastFireAt.IsZero() || sched.State.LastFireSessionID == port.PendingFireSessionID || !sched.State.LastFireStartedAt.IsZero() {
+		sched.State.LastFireAt.IsZero() || sched.State.LastFireSessionID == port.PendingFireSessionID || !sched.State.LastFireStartedAt.IsZero() || outcomeID == "" {
 		return port.ScheduleFire{}, ErrScheduleNotFound
 	}
-	fires, err := s.ListFires(ctx, sched.Spec.Name)
+	raw, err := client.Get(ctx, scheduleFireKey(outcomeID)).Bytes()
 	if err != nil {
-		return port.ScheduleFire{}, err
-	}
-	var failed port.ScheduleFire
-	for _, fire := range fires {
-		if fire.FiredAt.Equal(sched.State.LastFireAt) && fire.SessionID == sched.State.LastFireSessionID {
-			if fire.Stop != session.StopError {
-				return port.ScheduleFire{}, ErrScheduleNotFound
-			}
-			failed = fire
+		if errors.Is(err, redis.Nil) {
+			return port.ScheduleFire{}, ErrScheduleNotFound
 		}
+		return port.ScheduleFire{}, fmt.Errorf("redisstore: load retry fire %q: %w", outcomeID, err)
 	}
-	if failed.ID == "" {
+	var rec scheduleFireRecord
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		return port.ScheduleFire{}, fmt.Errorf("redisstore: decode retry fire %q: %w", outcomeID, err)
+	}
+	if rec.V != scheduleFormat {
+		return port.ScheduleFire{}, fmt.Errorf("redisstore: unknown retry fire format %q (want %q)", rec.V, scheduleFormat)
+	}
+	failed := rec.Fire
+	if failed.ID != outcomeID || failed.ScheduleName != sched.Spec.Name || !failed.FiredAt.Equal(sched.State.LastFireAt) || failed.SessionID != sched.State.LastFireSessionID || failed.Stop != session.StopError {
 		return port.ScheduleFire{}, ErrScheduleNotFound
 	}
 	return failed, nil
