@@ -99,4 +99,4 @@ The proposed chapters develop each part of the architecture.
 | [Credentials and lifecycle](credentials-and-lifecycle.md) | Follow one credential-to-outcome walkthrough with validation and audit evidence, then explain renewal and recovery. |
 | [All-tool mediation](all-tool-mediation.md) | Develop the broader authorization boundary for filesystem tools, Shell, and spawning. |
 
-The [implementation and verification companion](implementation.md) records integration requirements and checks. Earlier material remains available in the [identity model](../agent-identity-model.md), [authority design](../../agent-authority.md), and [implementation notes](../../agent-authority-implementation.md). The old model's harness-owned signing and audit responsibilities are replaced here by the broker-centered architecture.
+The [implementation and verification companion](implementation.md) records integration requirements and checks. This broker-centered architecture supersedes the earlier identity model's harness-owned signing and audit responsibilities; the donor documents are retained in Git history.
