@@ -4,7 +4,17 @@
 
 ## Definitions and executing instances
 
-An agent definition describes how an agent should perform work. An executing instance uses that definition within a session and can perform multiple runs. Mecatl represents the definition with `AgentDef`, a value containing metadata and instructions, rather than an executing loop.
+An agent definition describes how an agent should perform work. Mecatl represents it with `AgentDef`, a value containing metadata and instructions, rather than an executing loop. This chapter uses the following vocabulary:
+
+| Term | Meaning |
+| --- | --- |
+| Definition | A kind of agent, identified with its source and admitted revision, not just its name. |
+| Session | The harness's persisted context for work, identified by a host session ID such as `S42`. |
+| Agent instance | One use of a selected definition in a session, with its own identity and any creation-parent association. A delegated child has its own instance. |
+| Run | One execution by an instance, such as `R41` or `R42`. An instance can perform multiple runs. |
+| Agent-instance incarnation | The durable identity allocated by mecak8s for that instance's lifetime, preserved across restoration and credential renewal. A fresh incarnation identifies a distinct instance. |
+
+The existing implementation persists a [session incarnation](../../../engine/session/incarnation.go) on each session aggregate, including child sessions. The proposal uses that durable incarnation for agent-instance identity; it is not the host session ID or a run ID. The broker's own session incarnation and attachment binding are separate [recovery concepts](credentials-and-lifecycle.md#pauses-and-restart).
 
 ## What AgentDef contains
 
@@ -38,7 +48,7 @@ In the proposed lifecycle, mecak8s's trusted session lifecycle code resolves the
 
 For Alice's session `S42` in the [walkthrough](credentials-and-lifecycle.md#interactive-execution), the selection includes the main definition and `project/code-reviewer`. Selecting the reviewer definition does not create a reviewer instance. The particular child is allocated later when the harness creates it.
 
-Before the main loop starts, mecak8s allocates and persists the main's durable incarnation, then authenticates to the broker with its workload ServiceAccount to register the selected definitions and main instance with no parent. Broker initialization and registration must complete before execution; a suitable instance SVID can be obtained when needed, before protected calls. The selected definitions remain fixed for the session so that the harness and broker use the same selection.
+Before the main loop starts, mecak8s allocates and persists the main's durable agent-instance incarnation, then authenticates to the broker with its workload ServiceAccount to register the selected definitions and main instance with no parent. Broker initialization and registration must complete before execution; a suitable instance SVID can be obtained when needed, before protected calls. The selected definitions remain fixed for the session so that the harness and broker use the same selection.
 
 ## Registering instances
 
@@ -64,7 +74,7 @@ An instance can perform several runs without changing identity. Its fixed defini
 
 Continuation preserves the unfinished run's original bounds. Current restrictions or withdrawal can constrain it; credential renewal or policy expansion must not automatically widen recovered authority. If the original identity or selection cannot be recovered, restoration must fail closed rather than silently substitute another instance or definition.
 
-Identity continuity is separate from broker attachment recovery. A stable broker session reference can have a replaceable process-local attachment binding within the exact authenticated workload and deployment partition; another Pod with the same workload identity does not grant access to a different workload. See [pauses and restart](credentials-and-lifecycle.md#pauses-and-restart) for credential recovery and unknown operation outcomes.
+Identity continuity is separate from broker attachment recovery. See [pauses and restart](credentials-and-lifecycle.md#pauses-and-restart) for attachment checks, credential and execution recovery, and unknown operation outcomes.
 
 ## Source records and policy representation
 

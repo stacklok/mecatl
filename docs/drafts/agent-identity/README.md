@@ -48,7 +48,7 @@ This design scopes broker authorization to MCP tools. Extending that boundary to
 ```mermaid
 flowchart LR
     U["Client"] -->|"Session creation and requests"| H["mecak8s"]
-    F["Agent-definition sources"] --> R["Agent-definition loader (placement TBD)"]
+    F["Agent-definition sources"] --> R["Agent-definition loader (mecak8s lifecycle)"]
     R -->|"Execution configuration"| H
     subgraph B["Identity broker"]
         I["Identity issuance and authorization"]
@@ -60,7 +60,7 @@ flowchart LR
         V["vMCP"]
         T --- V
     end
-    R -->|"Definition records and authority ceilings"| I
+    R -->|"Workload-authenticated definition and instance registration"| I
     H <-->|"User report, tool requests, and results"| I
     G -->|"Chaining grant"| T
     I <-->|"Authorized MCP calls"| V
@@ -70,7 +70,7 @@ flowchart LR
 
 The diagram shows the broker-backed remote architecture's MCP path. Local deployments can retain direct tool access; protected operations in the remote deployment must pass through the broker.
 
-Before the agent loop starts, the agent-definition loader supplies `mecak8s` with execution configuration and initializes the corresponding definition records and authority ceilings in the broker. The loader is outside the untrusted agent loop. Its process placement and how the broker authenticates its input remain to be specified.
+Before the agent loop starts, mecak8s's trusted session lifecycle code [loads and persists the fixed definition selection](agent-definitions.md#loading-definitions-for-a-session), supplies execution configuration, and [registers definitions and the main instance](agent-definitions.md#registering-instances) with the broker under workload authentication. This loader responsibility is outside the untrusted loop, not a separate registrar or an isolation boundary. The registration API, durable schema, execution-context binding, and protection from same-process substitution remain open.
 
 The broker contains the agent trust issuer, the authorization and audit logic, and a grant issuer (AS-1). The vMCP gateway contains its own authorization server (AS-2), the provider credential storage, and the vMCP. The gateway can run inside the Mecatl deployment or be operated separately, such as an enterprise connector gateway. In both cases AS-1 vouches for the user and acting agent with a short-lived grant that AS-2 redeems; see [MCP gateway modes](mcp-gateway-modes.md). The tools themselves execute the operations.
 
@@ -78,7 +78,7 @@ The remaining trust question is how the broker knows that the reported user and 
 
 ## Following an action through the architecture
 
-Alice asks her main agent to review PR 42. Once the session's definitions are loaded, the main agent delegates to `code-reviewer`. The reviewer requests an MCP tool call to read the pull request.
+Alice asks her main agent to list pull requests and review PR 42. Once the session's definitions are loaded, the main calls `pull_request_list`, then delegates to `code-reviewer`. The reviewer calls `pull_request_read` for PR 42. Each call requires its own authorization decision.
 
 The broker checks the registered reviewer's definition-derived server/tool ceiling with Cedar and retains existing user/connection checks. V1 does not evaluate PR-specific delegated bounds or comprehensive enterprise user policy. If all required checks pass, ToolHive dispatches the call using Alice's GitHub credential, which stays outside `mecak8s`. If denied, no request reaches GitHub.
 

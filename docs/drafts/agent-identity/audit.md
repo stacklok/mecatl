@@ -25,7 +25,7 @@ The following readable fields illustrate a proposed broker authorization event f
 | Field group | Illustrative values or required evidence |
 | --- | --- |
 | Event and call references | Event `authz-42`, operation `op-pr42-001`, attempt `attempt-1`, recording component, and observation time. Distinguish another attempt from another event for the same attempt. |
-| Actor and context | Verified reviewer subject from its registered instance; verified workload with trust qualifier; session `S42` and its incarnation; run `R42`; creation-parent reference; reported delegation `D42` from `R41`; API-reported Alice with issuer/subject and request reference. Preserve the provenance above. |
+| Actor and context | Verified reviewer subject from its registered instance; verified workload with trust qualifier; host session `S42`; reviewer's agent-instance incarnation; run `R42`; creation-parent reference; reported delegation `D42` from `R41`; API-reported Alice with issuer/subject and request reference. Preserve the provenance above. |
 | Definition and policy | Registered `project/code-reviewer`, source reference, admitted revision `review-def-r17`, resolved ceiling reference, generated policy revision `review-ceiling-r17-g1`. These come from registration, not request-selected policy. |
 | Target | Registered payments MCP server reference, exact `pull_request_read` tool, authorized connection `github-conn-42`. |
 | Evaluation | Cedar nominal decision `allow`, evaluation status `completed-without-errors`, relevant policy IDs, and generated policy revision. |

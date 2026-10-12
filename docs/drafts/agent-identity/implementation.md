@@ -10,7 +10,7 @@ Verify that scheduled invocations preserve owner attribution without treating sa
 
 ## SPIFFE identifier construction
 
-Use literal, nonempty SPIFFE-safe definition names (`[A-Za-z0-9._-]+`, except `.` and `..`); reject invalid names rather than rewriting them. Incarnations use persisted `inc_` values with 26 lowercase base32 characters, or deterministic `legacy_` values for older snapshots.
+Use literal, nonempty SPIFFE-safe definition names (`[A-Za-z0-9._-]+`, except `.` and `..`); reject invalid names rather than rewriting them. Agent-instance incarnations use persisted `inc_` values with 26 lowercase base32 characters, or deterministic `legacy_` values for older snapshots.
 
 Apply any issuance limit to the **whole URI**, including child hops, without truncating it. [SPIFFE-ID §2.3](https://github.com/spiffe/spiffe/blob/main/standards/SPIFFE-ID.md#23-maximum-spiffe-id-length) requires support through 2048 bytes and advises against generating longer IDs; a Mecatl cap and compatible name/depth bounds remain undecided. Legacy-name compatibility is also open. The path has no version segment, so incompatible grammar requires migration.
 
@@ -18,7 +18,7 @@ Apply any issuance limit to the **whole URI**, including child hops, without tru
 
 Operator configuration fixes accepted workload issuers, audiences and identities, issuance limits, and trusted public signing keys. Tokens must not select verification endpoints, CA trust, or server names.
 
-For each tool call, the broker authenticates the workload and validates the agent-instance JWT-SVID's signature against the configured agent trust-domain bundle, required `sub`/`aud`/`exp` claims, expected audience, expiry, and permitted presenter. JWT-SVID does not require `iss` or `jti`. The broker checks that the credential identifies the expected registered instance and session incarnation. Credential validation does not replace authorization of the requested operation.
+For each tool call, the broker authenticates the workload and validates the agent-instance JWT-SVID's signature against the configured agent trust-domain bundle, required `sub`/`aud`/`exp` claims, expected audience, expiry, and permitted presenter. JWT-SVID does not require `iss` or `jti`. The broker checks that the credential identifies the expected registered instance and agent-instance incarnation. Credential validation does not replace authorization of the requested operation.
 
 At token exchange, ToolHive's authorization server validates the user token and the actor credential's trusted bundle association, signature, required claims, audience, expiry, and permitted presenter. The instance JWT-SVID needs an explicit ToolHive-AS audience; validity for presentation to the broker alone is insufficient.
 
@@ -26,7 +26,11 @@ The protected MCP endpoint validates the delegated token's issuer, audience, exp
 
 Whether the two presentation points use one multi-audience instance credential or separately issued credentials remains to be specified. The [walkthrough](credentials-and-lifecycle.md#interactive-execution) illustrates the former without selecting it as the deployment contract.
 
-Verify issuance rejects a known definition without a trusted particular-instance registration, an unauthorized workload, mismatched ancestry, or a stale session incarnation. These are proposed checks under the [workload-authenticated mecak8s lifecycle registration](agent-definitions.md#registering-instances); the exact wire API, durable schema, and protection from same-process substitution remain unspecified. Verify restoration preserves the instance identity, fixed definition selection, and original bounds. Separately, the existing broker recovery path permits a new process-local attachment binding for a stable broker session within the exact authenticated workload and deployment partition; a different workload cannot assume access. Knowing a noncredential broker session reference must not suffice. Account-association checks must reject OAuth success without authorization for the company user to use the ToolHive subject and provider connection; the association mechanism remains unselected.
+Verify issuance rejects a known definition without a trusted particular-instance registration, an unauthorized workload, mismatched ancestry, or a stale agent-instance incarnation. These are proposed checks under the [workload-authenticated mecak8s lifecycle registration](agent-definitions.md#registering-instances); the exact wire API, durable schema, and protection from same-process substitution remain unspecified.
+
+Verify [identity continuity](agent-definitions.md#identity-continuity-across-runs-and-restarts) preserves the instance identity, fixed definition selection, and original bounds. Test [attachment recovery](credentials-and-lifecycle.md#pauses-and-restart) with a replacement process in the same authenticated workload and deployment partition; reject a different workload or possession of a noncredential broker session reference alone.
+
+Account-association checks must reject OAuth success without authorization for the company user to use the ToolHive subject and provider connection; the association mechanism remains unselected.
 
 ## Workload-specific verification
 
