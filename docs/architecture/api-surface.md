@@ -163,17 +163,28 @@ A schedule is a saved prompt that runs on a cron expression or once, unattended 
 most once per due slot across replicas. It lives in the composition layer and reuses normal run
 entry; `engine/agent` knows nothing about it.
 
-- `port.ScheduleStore` (`engine/port/schedule.go`) is the ground truth. Its `Claim`
-  atomically advances the next fire time, which is the at-most-once fence. Store
-  adapters (`memschedulestore`, `adapters/jsonlstore`, `adapters/redisstore`, and a
-  remote gRPC driver) share the `scheduleconformance` suite.
+- `port.ScheduleStore` (`engine/port/schedule.go`) is the ground truth. `Claim` and
+  `ClaimNow` atomically reject unresolved predecessors (pending admission or a
+  started, nonterminal fire), including claims for different slots. Terminal
+  settlement must precede the next claim. The cadence advance additionally fences
+  the due slot. Late terminal records enter history but cannot clear a successor's
+  ownership: schedule settlement compares the recorded claim instant atomically.
+  Store adapters (`memschedulestore`, `adapters/jsonlstore`, `adapters/redisstore`,
+  and a remote gRPC driver) share the `scheduleconformance` suite.
 - The tick loop (`internal/adapter/scheduler`) runs only on the replica holding the
   `__scheduler__` leader lease; standby replicas take over when it lapses. Each tick
   finds due schedules and admits background workers without waiting for the batch.
-  Lifetime capacity includes manual fires, cancellation, delivery, and reconciliation;
+  Lifetime capacity includes manual fires, cancellation, delivery, reconciliation,
+  and one-shot retry probes/actions;
   busy names and full capacity leave slots unclaimed for a later poll. Admission is
   closed before shutdown joins workers and survives leadership epoch changes.
-  Leadership is hygiene; `Claim` fences a due slot, not ownership of older work.
+  Leadership is hygiene; the atomic store guards, not local prechecks, fence claims.
+  Due work is admitted before retry/reconciliation; candidate reloads and probes
+  run behind the bounded name guard. Uncooperative root `Due`/`List` calls can
+  still block polling.
+  An intentionally skipped misfire is settled as `cancelled`, with a policy
+  explanation and no session id: no execution was admitted. It does not leave
+  an uncertain pending owner blocking the next fresh slot.
 - Each fire creates a fresh `sched--` session owned by the schedule's captured owner,
   with bounded limits. A schedule not marked mutating runs in plan mode. The fire
   reattaches the exact placement persisted at creation, and fails before creating a

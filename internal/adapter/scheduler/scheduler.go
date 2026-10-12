@@ -937,23 +937,7 @@ func (s *Scheduler) tickOnce(ctx context.Context) (batch *sync.WaitGroup) {
 		s.diag.Log(ctx, port.LevelWarn, "schedule store Due failed", "err", err.Error())
 		return
 	}
-	// One-shot crash-loss retry. A one-shot with
-	// OneShotRetry=true that Claim disabled (the at-most-once advance) but never
-	// recorded a successful outcome (a crash mid-fire, or a fire that ended
-	// StopError) is re-armed up to OneShotMaxRetries times. The re-arm path scans
-	// ALL schedules (List) — a disabled one-shot is NOT returned by Due (Due
-	// filters Enabled=true), so this is a separate scan. The re-arm check is in
-	// the tick loop's scan, NOT in the fire path itself (the fire path knows
-	// nothing of re-arm — it only fires what Claim advanced). A store that does
-	// not implement ScheduleOneShotReArmer degrades to at-most-once.
-	//
-	// This runs on EVERY tick, BEFORE the len(due)==0 early return — a quiet
-	// one-shot-only deployment (no due cron to "spark" the tick past the early
-	// return) must still re-arm a crashed one-shot. Without this ordering a
-	// crashed one-shot in a quiet deployment stalls indefinitely.
-	s.maybeReArmOneShots(ctx, now)
-	// Reconciliation also runs on quiet ticks, but admits after due work so
-	// repeated remote liveness probes cannot starve newly due schedules.
+	// Due work is admitted before retry/reconciliation scans and probes.
 	for _, sched := range due {
 		if s.cfg.CanProcess != nil && !s.cfg.CanProcess(sched) {
 			continue
@@ -978,6 +962,7 @@ func (s *Scheduler) tickOnce(ctx context.Context) (batch *sync.WaitGroup) {
 		}()
 	}
 	s.reconcileStaleFires(ctx, now, batch)
+	s.maybeReArmOneShots(ctx, now, batch)
 	return
 }
 
@@ -990,7 +975,7 @@ func (s *Scheduler) loadDueSchedule(ctx context.Context, name string, now time.T
 		return sched, false
 	}
 	if s.cfg.Lease != nil && (sched.State.LastFireSessionID == port.PendingFireSessionID || !sched.State.LastFireStartedAt.IsZero()) {
-		// Claim fences a due slot, not ownership of older work.
+		// Early filtering avoids a worker; the store repeats this guard atomically.
 		return sched, false
 	}
 	return sched, true
@@ -1090,6 +1075,14 @@ func (s *Scheduler) fireOne(ctx context.Context, sched port.Schedule, now time.T
 	}
 
 	if skipFire {
+		// No execution was admitted: cancel the claim without inventing a session.
+		if err := s.cfg.Store.RecordFire(context.WithoutCancel(ctx), port.ScheduleFire{
+			ID:           fmt.Sprintf("skip--%s--%d", claimed.Spec.Name, now.UnixNano()),
+			ScheduleName: claimed.Spec.Name, FiredAt: now, Stop: session.StopCancelled,
+			Err: "misfire skipped by policy",
+		}); err != nil {
+			s.diag.Log(ctx, port.LevelWarn, "scheduler: skipped claim settlement failed", "schedule", claimed.Spec.Name, "err", err.Error())
+		}
 		s.emitSchedule(ctx, claimed, session.SchedulePayload{
 			ScheduleName: claimed.Spec.Name,
 			Kind:         scheduleKindSkipped,
@@ -1375,7 +1368,7 @@ const oneShotReArmBackoff = 1 * time.Minute
 // re-arm is NOT attempted (the retry budget is exhausted; the one-shot is
 // permanently done). A store that does not implement ScheduleOneShotReArmer
 // degrades to at-most-once — the scan is skipped.
-func (s *Scheduler) maybeReArmOneShots(ctx context.Context, now time.Time) {
+func (s *Scheduler) maybeReArmOneShots(ctx context.Context, now time.Time, batch *sync.WaitGroup) {
 	reArmer, ok := s.cfg.Store.(port.ScheduleOneShotReArmer)
 	if !ok {
 		return // store does not implement the re-arm seam — at-most-once.
@@ -1389,19 +1382,45 @@ func (s *Scheduler) maybeReArmOneShots(ctx context.Context, now time.Time) {
 		return
 	}
 	for _, sched := range all {
-		s.reArmOneShot(ctx, sched.Spec.Name, now, reArmer)
+		if sched.Spec.Trigger.Kind() != port.TriggerOneShot || !sched.Spec.OneShotRetry || sched.State.Enabled || sched.State.OneShotRetryCount >= sched.Spec.OneShotMaxRetries {
+			continue
+		}
+		if !sched.State.LastFireStartedAt.IsZero() || (s.cfg.Lease != nil && sched.State.LastFireSessionID == port.PendingFireSessionID) {
+			continue
+		}
+		mu := s.fireNameMutex(sched.Spec.Name)
+		if !mu.TryLock() {
+			continue
+		}
+		if !s.reserveFire(ctx) {
+			mu.Unlock()
+			continue
+		}
+		batch.Add(1)
+		go func() {
+			defer batch.Done()
+			defer s.releaseFire()
+			defer mu.Unlock()
+			s.reArmOneShot(ctx, sched.Spec.Name, now, reArmer)
+		}()
 	}
 }
 
 func (s *Scheduler) reArmOneShot(ctx context.Context, name string, now time.Time, reArmer port.ScheduleOneShotReArmer) {
-	mu := s.fireNameMutex(name)
-	if !mu.TryLock() {
-		return
-	}
-	defer mu.Unlock()
 	sched, err := s.cfg.Store.Load(ctx, name)
 	if err != nil || !s.shouldReArmOneShot(ctx, sched) {
 		return
+	}
+	if sched.State.LastFireSessionID == port.PendingFireSessionID {
+		// Only the affinity-only path can establish that this pending owner stopped.
+		if err := s.cfg.Store.RecordFire(ctx, port.ScheduleFire{
+			ID:           fmt.Sprintf("retry--%s--%d", name, sched.State.LastFireAt.UnixNano()),
+			ScheduleName: name, FiredAt: sched.State.LastFireAt, Stop: session.StopError,
+			Err: "fire interrupted before execution admission",
+		}); err != nil {
+			s.diag.Log(ctx, port.LevelWarn, "scheduler: retry claim settlement failed", "schedule", name, "err", err.Error())
+			return
+		}
 	}
 	nextFire := now.Add(oneShotReArmBackoff)
 	if err := reArmer.ReArmOneShot(ctx, name, nextFire); err != nil {
@@ -1449,13 +1468,24 @@ func (s *Scheduler) shouldReArmOneShot(ctx context.Context, sched port.Schedule)
 	// case) is treated as a crash → re-arm (fail-safe toward retry, not silent
 	// loss). A fire with Stop==StopError → re-arm. A fire with any other stop
 	// (the fire succeeded) → do NOT re-arm.
-	if sched.State.LastFireSessionID == "" {
-		// No prior fire at all (the one-shot was disabled without a Claim —
-		// e.g. paused). Not a re-arm candidate.
-		return false
+	if !sched.State.LastFireStartedAt.IsZero() {
+		return false // reconciliation must settle execution before retry.
 	}
 	loadCtx, cancel := context.WithTimeout(ctx, singletonTrialTimeout)
 	defer cancel()
+	if sched.State.LastFireSessionID == "" {
+		// Admission failures have no session; consult the claim's terminal history.
+		fires, err := s.cfg.Store.ListFires(loadCtx, sched.Spec.Name)
+		if err != nil || sched.State.LastFireAt.IsZero() {
+			return false
+		}
+		for _, fire := range fires {
+			if fire.FiredAt.Equal(sched.State.LastFireAt) && fire.Stop == session.StopError {
+				return true
+			}
+		}
+		return false
+	}
 	fire, err := s.cfg.Store.LoadFire(loadCtx, string(sched.State.LastFireSessionID))
 	if err != nil {
 		// A not-found fire record: RecordFire never ran. The sentinel was

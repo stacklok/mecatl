@@ -645,9 +645,15 @@ func TestScheduleClaimNowFenceOverWire(t *testing.T) {
 	if _, err := st.ClaimNow(ctx, name, now, next); !errors.Is(err, port.ErrScheduleNotFound) {
 		t.Errorf("ClaimNow (same now) = %v, want errors.Is(_, port.ErrScheduleNotFound) (LastFireAt fence)", err)
 	}
-	// A ClaimNow at a LATER now succeeds (crash-recoverable: the fence self-heals).
+	// A later timestamp still rejects an unresolved predecessor over the wire.
 	later := now.Add(time.Minute)
 	next2 := later.Add(time.Minute)
+	if _, err := st.ClaimNow(ctx, name, later, next2); !errors.Is(err, port.ErrScheduleNotFound) {
+		t.Fatalf("ClaimNow bypassed pending predecessor: %v", err)
+	}
+	if err := st.RecordFire(ctx, port.ScheduleFire{ID: "wire-settled", ScheduleName: name, FiredAt: now, Stop: session.StopCancelled}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := st.ClaimNow(ctx, name, later, next2); err != nil {
 		t.Fatalf("ClaimNow (later now): %v", err)
 	}

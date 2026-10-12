@@ -259,7 +259,7 @@ func (s *Store) Claim(_ context.Context, name string, now, nextFire time.Time) (
 	// Re-check the at-most-once fence: the slot must STILL be due at claim time.
 	// A peer's Claim between this caller's Due and Claim advanced NextFireAt
 	// past `now`; the slot is gone.
-	if !rec.state.Enabled || rec.state.DeletionID != "" {
+	if !rec.state.Enabled || rec.state.DeletionID != "" || rec.state.LastFireSessionID == port.PendingFireSessionID || !rec.state.LastFireStartedAt.IsZero() {
 		return port.Schedule{}, ErrNotFound
 	}
 	if rec.state.NextFireAt.IsZero() || rec.state.NextFireAt.After(now) {
@@ -295,7 +295,8 @@ func (s *Store) Claim(_ context.Context, name string, now, nextFire time.Time) (
 // at-most-once). The Enabled + MaxFires checks STILL apply. The at-most-once
 // fence is LastFireAt == now: a second ClaimNow at the same now (or a ClaimNow
 // racing a tick-loop Claim at the same now) is rejected — the advance already
-// happened. See port.ScheduleStore.ClaimNow for the crash-recoverability rationale.
+// happened. It additionally rejects pending or started predecessors atomically,
+// different timestamps. See port.ScheduleStore.ClaimNow for settlement semantics.
 func (s *Store) ClaimNow(_ context.Context, name string, now, nextFire time.Time) (port.Schedule, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -303,7 +304,7 @@ func (s *Store) ClaimNow(_ context.Context, name string, now, nextFire time.Time
 	if !ok {
 		return port.Schedule{}, ErrNotFound
 	}
-	if !rec.state.Enabled || rec.state.DeletionID != "" {
+	if !rec.state.Enabled || rec.state.DeletionID != "" || rec.state.LastFireSessionID == port.PendingFireSessionID || !rec.state.LastFireStartedAt.IsZero() {
 		return port.Schedule{}, ErrNotFound
 	}
 	if rec.spec.MaxFires > 0 && rec.state.FireCount >= rec.spec.MaxFires {
@@ -375,12 +376,13 @@ func (s *Store) RecordFire(_ context.Context, f port.ScheduleFire) error {
 	if !ok {
 		return ErrNotFound
 	}
-	rec.state.LastFireSessionID = f.SessionID
-	// Clear the in-flight fields: a terminal fire has no in-flight run.
-	rec.state.LastFireStartedAt = time.Time{}
-	rec.state.LastFireProgressAt = time.Time{}
-	rec.state.FireDeadline = time.Time{}
-	s.scheds[f.ScheduleName] = rec
+	if rec.state.LastFireAt.IsZero() || rec.state.LastFireAt.Equal(f.FiredAt) {
+		rec.state.LastFireSessionID = f.SessionID
+		rec.state.LastFireStartedAt = time.Time{}
+		rec.state.LastFireProgressAt = time.Time{}
+		rec.state.FireDeadline = time.Time{}
+		s.scheds[f.ScheduleName] = rec
+	}
 	s.fires[f.ID] = cloneFire(f)
 	return nil
 }

@@ -110,6 +110,11 @@ local now = tonumber(ARGV[1])
 local nextFire = ARGV[2]
 local pending = ARGV[3]
 local maxFires = tonumber(ARGV[4])
+local prior = redis.call('HGET', KEYS[1], 'last_fire_session_id')
+local started = redis.call('HGET', KEYS[1], 'last_fire_started_at')
+if prior == pending or (started ~= false and started ~= '' and started ~= '0') then
+  return 'NOT_CLAIMABLE'
+end
 if enabled == false or enabled == '0' or (deleting ~= false and deleting ~= '') then
   return 'NOT_CLAIMABLE'
 end
@@ -161,6 +166,11 @@ local now = ARGV[1]
 local nextFire = ARGV[2]
 local pending = ARGV[3]
 local maxFires = tonumber(ARGV[4])
+local prior = redis.call('HGET', KEYS[1], 'last_fire_session_id')
+local started = redis.call('HGET', KEYS[1], 'last_fire_started_at')
+if prior == pending or (started ~= false and started ~= '' and started ~= '0') then
+  return 'NOT_CLAIMABLE'
+end
 if enabled == false or enabled == '0' or (deleting ~= false and deleting ~= '') then
   return 'NOT_CLAIMABLE'
 end
@@ -1010,6 +1020,26 @@ func advanceInFlightFireProgress(ctx context.Context, client redis.UniversalClie
 // fire has no in-flight run (issue #386). The semantics mirror
 // memschedulestore.RecordFire byte-for-byte, adapted to Redis's single-threaded
 // execution.
+var recordFireScript = redis.NewScript(`
+local existing = redis.call('GET', KEYS[2])
+if existing then
+  local ok, record = pcall(cjson.decode, existing)
+  if ok and type(record) == 'table' and record.v == ARGV[4] and type(record.fire) == 'table' and record.fire.Stop ~= nil and record.fire.Stop ~= '' then
+    return 1
+  end
+end
+if redis.call('HEXISTS', KEYS[1], 'spec') == 0 then
+  return 0
+end
+local claimedAt = redis.call('HGET', KEYS[1], 'last_fire_at')
+if claimedAt == false or claimedAt == '0' or claimedAt == ARGV[2] then
+  redis.call('HSET', KEYS[1], 'last_fire_session_id', ARGV[3])
+  redis.call('HDEL', KEYS[1], 'last_fire_started_at', 'last_fire_progress_at', 'fire_deadline')
+end
+redis.call('SET', KEYS[2], ARGV[1])
+return 1
+`)
+
 func (s *scheduleStore) RecordFire(ctx context.Context, f port.ScheduleFire) error {
 	client, release, err := s.clients.acquire()
 	if err != nil {
@@ -1020,52 +1050,14 @@ func (s *scheduleStore) RecordFire(ctx context.Context, f port.ScheduleFire) err
 	if err != nil {
 		return fmt.Errorf("redisstore: marshal schedule fire: %w", err)
 	}
-	fireKey := scheduleFireKey(f.ID)
-	// Idempotent per fire id: a re-record of an already-TERMINAL fire is a no-op.
-	// (An in-flight record under the same id is overwritten with the terminal one
-	// below — the fire transitions in-flight → terminal.)
-	if raw, err := client.Get(ctx, fireKey).Bytes(); err == nil {
-		var existing scheduleFireRecord
-		if json.Unmarshal(raw, &existing) == nil && existing.V == scheduleFormat && existing.Fire.Stop != "" {
-			return nil // already terminal — idempotent no-op
-		}
-	} else if !errors.Is(err, redis.Nil) {
-		return fmt.Errorf("redisstore: record fire %q (load existing): %w", f.ID, err)
+	result, err := recordFireScript.Run(ctx, client,
+		[]string{scheduleKey(f.ScheduleName), scheduleFireKey(f.ID)},
+		string(fireJSON), nanoStr(f.FiredAt), string(f.SessionID), scheduleFormat).Int()
+	if err != nil {
+		return fmt.Errorf("redisstore: record fire %q: %w", f.ID, err)
 	}
-	// The schedule must still exist (it may have been deleted between Claim and
-	// RecordFire). HGET the spec as a liveness probe.
-	if specRaw, err := client.HGet(ctx, scheduleKey(f.ScheduleName), fieldSpec).Result(); err != nil {
-		if errors.Is(err, redis.Nil) {
-			return fmt.Errorf("%w: %q", ErrScheduleNotFound, f.ScheduleName)
-		}
-		return fmt.Errorf("redisstore: record fire %q (schedule): %w", f.ID, err)
-	} else if specRaw == "" {
+	if result == 0 {
 		return fmt.Errorf("%w: %q", ErrScheduleNotFound, f.ScheduleName)
-	}
-	// Stamp the real session id over the port.PendingFireSessionID value Claim
-	// set AND clear the in-flight fields (a terminal fire has no in-flight run) —
-	// BEFORE latching the fire key. Ordering matters: the fire key (SET below) is
-	// the idempotency latch, so it MUST be the last write. If the stamp ran AFTER
-	// the latch and then failed transiently, a retry would short-circuit at the
-	// terminal-record check above (the latch is set with a terminal Stop) and
-	// never re-run the stamp — wedging LastFireSessionID at PendingFireSessionID
-	// permanently (review #189). With the stamp first, a failed stamp leaves the
-	// latch unset so a retry re-runs it; a failed latch after a successful stamp
-	// simply re-stamps the same value (idempotent) and re-latches.
-	if err := client.HSet(ctx, scheduleKey(f.ScheduleName), fieldLastFireSessionID, string(f.SessionID)).Err(); err != nil {
-		return fmt.Errorf("redisstore: record fire %q (update session): %w", f.ID, err)
-	}
-	if err := client.HDel(ctx, scheduleKey(f.ScheduleName),
-		fieldLastFireStartedAt, fieldLastFireProgressAt, fieldFireDeadline,
-	).Err(); err != nil {
-		return fmt.Errorf("redisstore: record fire %q (clear in-flight): %w", f.ID, err)
-	}
-	// Latch the terminal fire record (SET overwrites any prior in-flight record
-	// under the same id — the in-flight → terminal transition). Two concurrent
-	// RecordFire of the same fire race past the terminal-record check, but both
-	// write the identical terminal record, so the result is not consulted.
-	if err := client.Set(ctx, fireKey, fireJSON, 0).Err(); err != nil {
-		return fmt.Errorf("redisstore: record fire %q (set): %w", f.ID, err)
 	}
 	return nil
 }

@@ -394,6 +394,14 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Changed
 
+- **Schedule predecessor ownership (issue #2273)** — `port.ScheduleStore.Claim`
+  and `ClaimNow` must atomically reject pending or started, nonterminal
+  predecessors even at different claim instants. `RecordFire` settles schedule
+  state only for its own claim instant (or legacy zero `LastFireAt`), retaining
+  late outcomes without clearing a successor. This replaces timestamp-only
+  pending recovery with explicit settlement. Changed (breaking behavioral
+  contract, pre-v1 minor); exported signatures and API snapshots are unchanged.
+
 - **Target-scoped project guidance and ephemeral snapshot** — `prompt.InstructionAssembler`
   now requires `Assemble(context.Context, []string, *session.InstructionSnapshot, int)`
   and `TargetScoped() bool`. `prompt.AssembleWithManifest` requires the directory

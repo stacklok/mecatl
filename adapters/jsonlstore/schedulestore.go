@@ -335,7 +335,7 @@ func (s *scheduleStore) Claim(_ context.Context, name string, now, nextFire time
 	st := rec.Schedule.State
 	spec := rec.Schedule.Spec
 	// Re-check the at-most-once fence: the slot must STILL be due at claim time.
-	if !st.Enabled || st.DeletionID != "" {
+	if !st.Enabled || st.DeletionID != "" || st.LastFireSessionID == port.PendingFireSessionID || !st.LastFireStartedAt.IsZero() {
 		return port.Schedule{}, ErrScheduleNotFound
 	}
 	if st.NextFireAt.IsZero() || st.NextFireAt.After(now) {
@@ -382,7 +382,7 @@ func (s *scheduleStore) ClaimNow(_ context.Context, name string, now, nextFire t
 	}
 	st := rec.Schedule.State
 	spec := rec.Schedule.Spec
-	if !st.Enabled || st.DeletionID != "" {
+	if !st.Enabled || st.DeletionID != "" || st.LastFireSessionID == port.PendingFireSessionID || !st.LastFireStartedAt.IsZero() {
 		return port.Schedule{}, ErrScheduleNotFound
 	}
 	if spec.MaxFires > 0 && st.FireCount >= spec.MaxFires {
@@ -532,13 +532,14 @@ func (s *scheduleStore) RecordFire(_ context.Context, f port.ScheduleFire) error
 	if err != nil {
 		return err
 	}
-	rec.Schedule.State.LastFireSessionID = f.SessionID
-	// Clear the in-flight fields: a terminal fire has no in-flight run.
-	rec.Schedule.State.LastFireStartedAt = time.Time{}
-	rec.Schedule.State.LastFireProgressAt = time.Time{}
-	rec.Schedule.State.FireDeadline = time.Time{}
-	if err := s.writeScheduleLocked(f.ScheduleName, rec); err != nil {
-		return err
+	if rec.Schedule.State.LastFireAt.IsZero() || rec.Schedule.State.LastFireAt.Equal(f.FiredAt) {
+		rec.Schedule.State.LastFireSessionID = f.SessionID
+		rec.Schedule.State.LastFireStartedAt = time.Time{}
+		rec.Schedule.State.LastFireProgressAt = time.Time{}
+		rec.Schedule.State.FireDeadline = time.Time{}
+		if err := s.writeScheduleLocked(f.ScheduleName, rec); err != nil {
+			return err
+		}
 	}
 	return s.writeFireLocked(f)
 }

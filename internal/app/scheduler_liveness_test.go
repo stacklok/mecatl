@@ -142,14 +142,18 @@ func (p *uncooperativeFireProvider) Stream(_ context.Context, _ port.LLMRequest)
 }
 
 func TestFireDeadlineNonclosingEventsKeepLeaseUntilRecovery(t *testing.T) {
-	testFireRecovery(t, false)
+	testFireRecovery(t, false, false)
 }
 
 func TestFireDeadlineJoinsBlockedCancelWithBusyOrigin(t *testing.T) {
-	testFireRecovery(t, true)
+	testFireRecovery(t, true, false)
 }
 
-func testFireRecovery(t *testing.T, blockedCancel bool) {
+func TestFireStopGraceKeepsLeaseUntilRecovery(t *testing.T) {
+	testFireRecovery(t, false, true)
+}
+
+func testFireRecovery(t *testing.T, blockedCancel, stopBeforeRecovery bool) {
 	t.Helper()
 	ignore := goleak.IgnoreCurrent()
 	t.Cleanup(func() { goleak.VerifyNone(t, ignore) })
@@ -192,7 +196,7 @@ func testFireRecovery(t *testing.T, blockedCancel bool) {
 	if blockedCancel {
 		fireFunc = makeFireFuncWithCancel(svc, schedStore, time.Second, nil, cancelRun)
 	}
-	s := scheduler.New(scheduler.Config{Store: schedStore, Clock: wallclock.Clock{}, Fire: fireFunc, MaxConcurrentFires: 1, DeliverFireResult: deliverFireResult(svc, queue)})
+	s := scheduler.New(scheduler.Config{Store: schedStore, Clock: wallclock.Clock{}, Fire: fireFunc, MaxConcurrentFires: 1, Diagnostics: diag, StopFireGrace: 50 * time.Millisecond, DeliverFireResult: deliverFireResult(svc, queue)})
 	done := make(chan struct{})
 	var originRun *agent.Run
 	var releaseOnce sync.Once
@@ -251,6 +255,28 @@ func testFireRecovery(t *testing.T, blockedCancel bool) {
 	case <-done:
 		t.Fatal("fire returned with event producer still active")
 	default:
+	}
+	if stopBeforeRecovery {
+		stopped := make(chan struct{})
+		go func() { defer close(stopped); _ = s.Stop() }()
+		select {
+		case <-stopped:
+		case <-time.After(time.Second):
+			t.Fatal("Stop exceeded its grace with uncooperative execution")
+		}
+		waitDeadlineDiagnostic(t, diag, "Stop grace elapsed")
+		if _, err := lease.Acquire(ctx, inflight.SessionID, "competitor"); !errors.Is(err, port.ErrLeaseHeld) {
+			t.Fatalf("Stop released execution ownership before producer closed: %v", err)
+		}
+		stillRunning, err := schedStore.LoadFire(ctx, inflight.ID)
+		if err != nil || stillRunning.Stop != "" {
+			t.Fatalf("Stop fabricated terminal completion: %+v %v", stillRunning, err)
+		}
+		select {
+		case <-done:
+			t.Fatal("Stop abandoned admitted execution")
+		default:
+		}
 	}
 	cancelCaller() // Cancel the scheduler's caller, not merely the run deadline.
 	if blockedCancel {

@@ -107,7 +107,7 @@ func TestScheduleClaimHandsPlacementToFireSession(t *testing.T) {
 			if claimed.State.FireCount != 1 {
 				t.Fatalf("FireCount=%d, want 1", claimed.State.FireCount)
 			}
-			if err := store.RecordFire(ctx, port.ScheduleFire{ID: claim.name + "-fire", ScheduleName: claim.name, SessionID: "sched--historic", FiredAt: now, Stop: session.StopEndTurn}); err != nil {
+			if err := store.RecordFire(ctx, port.ScheduleFire{ID: claim.name + "-fire", ScheduleName: claim.name, SessionID: "sched--historic", FiredAt: claimed.State.LastFireAt, Stop: session.StopEndTurn}); err != nil {
 				t.Fatal(err)
 			}
 			if err := svc.DeleteSchedule(ctx, claim.name); err != nil {
