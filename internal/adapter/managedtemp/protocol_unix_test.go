@@ -12,6 +12,198 @@ import (
 	"testing"
 )
 
+func TestValidTestHomeMarkerAcceptsActiveCmdAndJobLeases(t *testing.T) {
+	ns, err := Open(filepath.Join(t.TempDir(), "managed"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ns.Close() })
+	workspace, err := ns.OpenWorkspace("osfs", "test-home-markers", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = workspace.Close() })
+	if err := os.Remove(filepath.Join(ns.Path(), "gc.lock")); err != nil {
+		t.Fatalf("remove test namespace gc lock: %v", err)
+	}
+
+	for _, kind := range []string{"cmd", "job"} {
+		t.Run("active_"+kind, func(t *testing.T) {
+			lease, err := workspace.Allocate(kind)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = lease.Close() })
+			if !ValidTestHomeMarker(lease.Path()) {
+				t.Fatalf("ValidTestHomeMarker(%q) = false, want true", lease.Path())
+			}
+		})
+	}
+
+	t.Run("inactive", func(t *testing.T) {
+		lease, err := workspace.Allocate("cmd")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := lease.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if ValidTestHomeMarker(lease.Path()) {
+			t.Fatal("ValidTestHomeMarker accepted inactive lease")
+		}
+	})
+
+	for _, test := range []struct {
+		name    string
+		prepare func(t *testing.T, path string)
+	}{
+		{
+			name: "tmp_symlink",
+			prepare: func(t *testing.T, path string) {
+				t.Helper()
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(t.TempDir(), path); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "tmp_not_directory",
+			prepare: func(t *testing.T, path string) {
+				t.Helper()
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "tmp_unsafe_mode",
+			prepare: func(t *testing.T, path string) {
+				t.Helper()
+				if err := os.Chmod(path, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			lease, err := workspace.Allocate("cmd")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = lease.Close() })
+			test.prepare(t, lease.TempDir())
+			if ValidTestHomeMarker(lease.Path()) {
+				t.Fatalf("ValidTestHomeMarker accepted lease with %s", test.name)
+			}
+		})
+	}
+
+	t.Run("malformed", func(t *testing.T) {
+		lease, err := workspace.Allocate("cmd")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = lease.Close() })
+		if err := os.WriteFile(filepath.Join(lease.Path(), "manifest.json"), []byte("not-json"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if ValidTestHomeMarker(lease.Path()) {
+			t.Fatal("ValidTestHomeMarker accepted malformed manifest")
+		}
+	})
+
+	t.Run("link", func(t *testing.T) {
+		lease, err := workspace.Allocate("cmd")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = lease.Close() })
+		target := lease.Path() + ".target"
+		if err := os.Rename(lease.Path(), target); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, lease.Path()); err != nil {
+			t.Fatal(err)
+		}
+		if ValidTestHomeMarker(lease.Path()) {
+			t.Fatal("ValidTestHomeMarker accepted linked lease")
+		}
+	})
+
+	for _, field := range []string{"kind", "id"} {
+		t.Run("mismatched_"+field, func(t *testing.T) {
+			lease, err := workspace.Allocate("cmd")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = lease.Close() })
+			data, err := os.ReadFile(filepath.Join(lease.Path(), "manifest.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var manifest allocationManifest
+			if err := json.Unmarshal(data, &manifest); err != nil {
+				t.Fatal(err)
+			}
+			if field == "kind" {
+				manifest.Kind = "job"
+			} else {
+				manifest.ID = "different-id"
+			}
+			data, err = json.Marshal(manifest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(lease.Path(), "manifest.json"), data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if ValidTestHomeMarker(lease.Path()) {
+				t.Fatalf("ValidTestHomeMarker accepted mismatched manifest %s", field)
+			}
+		})
+	}
+
+	if ValidTestHomeMarker(t.TempDir()) {
+		t.Fatal("ValidTestHomeMarker accepted forged marker")
+	}
+}
+
+func TestValidTestHomeMarkerRejectsUnownedLease(t *testing.T) {
+	ns, err := Open(filepath.Join(t.TempDir(), "managed"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ns.Close() })
+	workspace, err := ns.OpenWorkspace("osfs", "unowned-test-home-marker", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = workspace.Close() })
+	lease, err := workspace.Allocate("cmd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = lease.Close() })
+
+	uid := os.Geteuid()
+	otherUID := 1
+	if uid == otherUID {
+		otherUID = 2
+	}
+	if err := os.Chown(lease.Path(), otherUID, -1); err != nil {
+		t.Skipf("changing lease ownership is unavailable: %v", err)
+	}
+	if ValidTestHomeMarker(lease.Path()) {
+		t.Fatal("ValidTestHomeMarker accepted unowned lease")
+	}
+}
+
 func TestWorkspaceKeyUsesFirst96BitsOfRawURLBase64SHA256(t *testing.T) {
 	const backend = "osfs"
 	const identity = "/canonical/workspace"

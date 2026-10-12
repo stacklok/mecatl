@@ -108,8 +108,8 @@ func (l *Lease) transition(state string, pid int) error {
 	return replacePrivateFile(l.root, "manifest.json", updated)
 }
 
-// ValidTestHomeMarker reports whether marker names a private command lease
-// created by this protocol. It rejects ordinary paths and malformed metadata;
+// ValidTestHomeMarker reports whether marker names a private command or job
+// lease created by this protocol. It rejects ordinary paths and malformed metadata;
 // test-home uses it before placing process-wide HOME state under the lease.
 //
 //nolint:gocyclo // each marker validation check is intentionally explicit.
@@ -122,8 +122,8 @@ func ValidTestHomeMarker(marker string) bool {
 		return false
 	}
 	name := filepath.Base(marker)
-	id, ok := strings.CutPrefix(name, "cmd-")
-	if !ok || !validAllocationID(id) {
+	kind, id, ok := strings.Cut(name, "-")
+	if !ok || (kind != "cmd" && kind != "job") || !validAllocationID(id) {
 		return false
 	}
 	if !validTestHomeNamespace(marker) {
@@ -134,14 +134,15 @@ func ValidTestHomeMarker(marker string) bool {
 		return false
 	}
 	var manifest allocationManifest
-	if json.Unmarshal(data, &manifest) != nil || manifest.Version != manifestVersion || manifest.Kind != "cmd" || manifest.ID != id {
+	if json.Unmarshal(data, &manifest) != nil || manifest.Version != manifestVersion || manifest.Kind != kind || manifest.ID != id {
 		return false
 	}
-	for _, child := range []string{"lease.lock", "tmp"} {
-		childInfo, err := os.Lstat(filepath.Join(marker, child))
-		if err != nil || childInfo.Mode()&os.ModeSymlink != 0 || !ownedByCurrentUser(childInfo) {
-			return false
-		}
+	leaseLock, err := os.Lstat(filepath.Join(marker, "lease.lock"))
+	if err != nil || !leaseLock.Mode().IsRegular() || leaseLock.Mode()&os.ModeSymlink != 0 || leaseLock.Mode().Perm() != privateFileMode || !ownedByCurrentUser(leaseLock) {
+		return false
+	}
+	if !validPrivateTestHomeDirs(filepath.Join(marker, "tmp")) {
+		return false
 	}
 	lock, err := os.OpenFile(filepath.Join(marker, "lease.lock"), os.O_RDWR, 0)
 	if err != nil {
@@ -403,10 +404,6 @@ func allocationID() (string, error) {
 func validTestHomeNamespace(marker string) bool {
 	commands, workspace, workspaces, namespace := testHomeNamespacePaths(marker)
 	if filepath.Base(commands) != "commands" || filepath.Base(workspaces) != "workspaces" || !validPrivateTestHomeDirs(commands, workspace, workspaces, namespace) {
-		return false
-	}
-	gc, err := os.Lstat(filepath.Join(namespace, "gc.lock"))
-	if err != nil || !gc.Mode().IsRegular() || gc.Mode()&os.ModeSymlink != 0 || gc.Mode().Perm() != privateFileMode || !ownedByCurrentUser(gc) {
 		return false
 	}
 	_, ok := validTestHomeWorkspaceManifest(workspace)
