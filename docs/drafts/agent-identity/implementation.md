@@ -18,13 +18,15 @@ Apply any issuance limit to the **whole URI**, including child hops, without tru
 
 Operator configuration fixes accepted workload issuers, audiences and identities, issuance limits, and trusted public signing keys. Tokens must not select verification endpoints, CA trust, or server names.
 
-For each tool call, the broker authenticates the workload and validates the agent-instance JWT-SVID's signature, issuer, audience, expiry, and permitted presenter. It checks that the credential identifies the expected instance and session incarnation. Credential validation does not replace authorization of the requested operation.
+For each tool call, the broker authenticates the workload and validates the agent-instance JWT-SVID's signature against the configured agent trust-domain bundle, required `sub`/`aud`/`exp` claims, expected audience, expiry, and permitted presenter. JWT-SVID does not require `iss` or `jti`. The broker checks that the credential identifies the expected registered instance and session incarnation. Credential validation does not replace authorization of the requested operation.
 
-At token exchange, ToolHive's authorization server validates the user token and the actor credential's issuer, signature, audience, expiry, and permitted presenter. The instance JWT-SVID needs an explicit ToolHive-AS audience; validity for presentation to the broker alone is insufficient.
+At token exchange, ToolHive's authorization server validates the user token and the actor credential's trusted bundle association, signature, required claims, audience, expiry, and permitted presenter. The instance JWT-SVID needs an explicit ToolHive-AS audience; validity for presentation to the broker alone is insufficient.
 
 The protected MCP endpoint validates the delegated token's issuer, audience, expiry, and bounded access, applies operation policy, and resolves only the authorized user/tenant/target's provider connection.
 
-Whether the two presentation points use one multi-audience instance credential or separately issued credentials remains to be specified.
+Whether the two presentation points use one multi-audience instance credential or separately issued credentials remains to be specified. The [walkthrough](credentials-and-lifecycle.md#interactive-execution) illustrates the former without selecting it as the deployment contract.
+
+Verify issuance rejects a known definition without a trusted particular-instance registration, an unauthorized workload, mismatched ancestry, or a stale session incarnation. These are proposed checks; the registration protocol and input protection remain unspecified. Verify restoration preserves the instance identity, fixed definition selection, and original bounds. Separately, the existing broker recovery path permits a new process-local attachment binding for a stable broker session within the exact authenticated workload and deployment partition; a different workload cannot assume access. Knowing a noncredential broker session reference must not suffice. Account-association checks must reject OAuth success without authorization for the company user to use the ToolHive subject and provider connection; the association mechanism remains unselected.
 
 ## Workload-specific verification
 

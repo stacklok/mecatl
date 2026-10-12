@@ -44,6 +44,16 @@ Restoring a session must preserve its selected definitions rather than reload wh
 
 Keeping a definition fixed does not freeze user permissions or broker policy. The broker evaluates subsequent MCP calls against the applicable authorization policy.
 
+## Registering instances
+
+The proposed trusted session/agent lifecycle responsibility is to register each particular instance with the broker using the loader's fixed session selection. The broker needs to establish the association between session incarnation, instance SPIFFE ID, definition source and revision, authority ceiling, and creating instance; this does not select a combined record schema. It checks that the authenticated workload is permitted to act for that session and instance before issuing an instance credential. A known definition or a loop-supplied name alone is insufficient.
+
+Creation ancestry describes which instance created another. Execution delegation separately links the current parent run, child run, and delegated MCP bounds; the same instance can participate in several runs. The harness manages instance creation and run execution. Registration supplies trusted identity records, not broker admission of runs or authorization to spawn.
+
+In this proposal, restoring an instance preserves its identity, fixed definition selection, and original authority bounds; a new incarnation must not inherit the old instance's authority merely by reusing a session name. This identity continuity is separate from the existing broker's attachment recovery. The [credential walkthrough](credentials-and-lifecycle.md#3-broker-session-and-instance-registration) distinguishes the stable broker session reference from a replaceable process-local attachment binding. On the cited branch, recovery remains within the exact authenticated workload and deployment partition: another Pod with the same workload identity is not a grant of access to a different workload.
+
+The loader and lifecycle component are outside the untrusted loop as responsibilities. Their authenticated registration channel, durable record representation, and protection from a compromised loop sharing their process still need implementation design. Their placement alone does not prove isolation. The API's user report remains a trusted assertion, separate from the broker's workload verification.
+
 ## Source records and policy representation
 
 Definition-source and revision records, and the representation of broker policy, remain unresolved. Generating Cedar from definition tool lists was discussed as an option, not selected as the mechanism. The relationship between definition-derived ceilings and separately managed user and agent permissions also needs to be described without conflating them.

@@ -85,10 +85,10 @@ The proposed chapters develop each part of the architecture. Linked chapters hav
 
 | Chapter | Focus |
 | --- | --- |
-| [Audit](audit.md) | Follow a delegated action through concrete token and audit-record examples, including what the evidence establishes. |
+| [Audit](audit.md) | Define attribution, correlation, evidence, redaction, and durability requirements. |
 | [Agent definitions](agent-definitions.md) | Explain `AgentDef` and separate harness execution configuration from broker-enforced authority. |
 | [MCP authorization](mcp-authorization.md) | Explain how user and agent permissions govern MCP calls and how the broker uses ToolHive. |
-| [Credentials and lifecycle](credentials-and-lifecycle.md) | Explain instance credentials, run bindings, downstream access, and continuity across pauses and restarts. |
+| [Credentials and lifecycle](credentials-and-lifecycle.md) | Follow one credential-to-outcome walkthrough with validation and audit evidence, then explain renewal and recovery. |
 | `all-tool-mediation.md` | Develop the broader authorization boundary for filesystem tools, Shell, and spawning. |
 
 The [implementation and verification companion](implementation.md) records integration requirements and checks. Earlier material remains available in the [identity model](../agent-identity-model.md), [authority design](../../agent-authority.md), and [implementation notes](../../agent-authority-implementation.md). The old model's harness-owned signing and audit responsibilities are replaced here by the broker-centered architecture.
