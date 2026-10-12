@@ -626,7 +626,9 @@ func (s *Store) retryUpdateStatusRaw(ctx context.Context, name string, mutate fu
 		return err
 	})
 	if apierrors.IsConflict(err) {
-		return &executionenv.Error{Code: executionenv.CodeConflict, Message: "environment changed concurrently", Retryable: true}
+		// The private wire contract treats conflicts as terminal; a retryable
+		// conflict would be sanitized to internal instead of preserving Aborted.
+		return &executionenv.Error{Code: executionenv.CodeConflict, Message: "environment changed concurrently"}
 	}
 	return err
 }

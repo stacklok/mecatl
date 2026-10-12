@@ -84,7 +84,7 @@ if [ "${MECATL_EXECUTION_QUAL_CI:-}" = 1 ]; then
       if [ -n "${MECATL_EXECUTION_K8S_TOOLBOX:-}" ]; then
         set -- toolbox run -c "$MECATL_EXECUTION_K8S_TOOLBOX" "$@"
       fi
-      timeout --kill-after=5s 60s "$@" || printf 'qualification_diagnostics_incomplete\n' >&2
+      timeout --kill-after=5s 80s "$@" || printf 'qualification_diagnostics_incomplete\n' >&2
     fi
     kind delete cluster --name "$cluster"
     return "$status"

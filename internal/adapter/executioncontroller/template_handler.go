@@ -9,6 +9,7 @@ import (
 	"sort"
 
 	executionv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/execution/v1"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/executionenv"
 )
 
@@ -130,6 +131,9 @@ func (h *Handler) EnsureTemplate(ctx context.Context, q *executionv1.EnsureTempl
 	fp := fingerprint(c.id, ownerHash(owner), q.BindingId, selector.Id, selector.Revision)
 	a, err := backend.EnsurePendingOwnedRevision(ctx, c.id, ownerHash(owner), owner, q.BindingId, selector.Id, selector.Revision, fp, q.OperationId)
 	if err != nil {
+		if h.cfg.Diagnostics != nil {
+			h.cfg.Diagnostics.Log(ctx, port.LevelWarn, "execution backend failure", "operation", "ensure_template", "reason", backendReasonClass(err))
+		}
 		return nil, backendError(err)
 	}
 	return ensureResponse(a), nil

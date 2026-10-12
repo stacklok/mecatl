@@ -140,7 +140,7 @@ restore() {
     if [ -n "${MECATL_EXECUTION_K8S_TOOLBOX:-}" ]; then
       set -- toolbox run -c "$MECATL_EXECUTION_K8S_TOOLBOX" "$@"
     fi
-    if timeout --kill-after=5s 45s "$@"; then
+    if timeout --kill-after=5s 80s "$@"; then
       printf 'complete\n' > "$state/live-diagnostics.status" || echo 'warning: diagnostic status unavailable' >&2
     else
       printf 'incomplete\n' > "$state/live-diagnostics.status" || echo 'warning: diagnostic status unavailable' >&2

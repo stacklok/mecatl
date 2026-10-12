@@ -15,13 +15,28 @@ failed=0
 # Drain every bounded response: no head/SIGPIPE and no raw log file, even locally.
 # Fixed workloads in the already ownership-checked fixture namespace only.
 for deployment in mecak8s mecatl-execution; do
-  if ! {
-    if ! kubectl --kubeconfig "$kubeconfig" --context "$context" --request-timeout=5s logs "deployment/$deployment" -n execution-qualification --all-containers=true --tail=1000 --limit-bytes=262144 2>/dev/null; then
-      printf '\n{"collector_unavailable":true}\n'
-    fi
-  } | jq -Rnc --arg source "$deployment" -f "$filters/create-stages.jq" >&3 2>/dev/null; then
+  # Fetch each replica separately: kubectl --all-pods prefixes JSON log lines.
+  # The selector and pod names are constrained before any log request.
+  if ! listing=$(kubectl --kubeconfig "$kubeconfig" --context "$context" --request-timeout=5s get pods -n execution-qualification -l "app.kubernetes.io/name=$deployment" -o json 2>/dev/null) ||
+     ! pods=$(printf '%s\n' "$listing" | jq -r '[.items[]? | select(.metadata.name | type == "string" and length <= 253 and test("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"))] | sort_by(.metadata.creationTimestamp) | .[:2][] | .metadata.name' 2>/dev/null); then
+    printf '{"kind":"log_collection","source":"%s","unavailable":true}\n' "$deployment" >&3
     failed=1
+    continue
   fi
+  if [ -z "$pods" ]; then
+    printf '{"kind":"log_collection","source":"%s","unavailable":true}\n' "$deployment" >&3
+    failed=1
+    continue
+  fi
+  for pod in $pods; do
+    if ! {
+      if ! kubectl --kubeconfig "$kubeconfig" --context "$context" --request-timeout=5s logs "pod/$pod" -n execution-qualification --all-containers=true --tail=1000 --limit-bytes=262144 2>/dev/null; then
+        printf '\n{"collector_unavailable":true}\n'
+      fi
+    } | jq -Rnc --arg source "$deployment" -f "$filters/create-stages.jq" >&3 2>/dev/null; then
+      failed=1
+    fi
+  done
 done
 if ! {
   for resource in executionenvironments pods persistentvolumeclaims resourcequotas events; do

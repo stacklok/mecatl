@@ -246,6 +246,27 @@ func TestReloadTLSClosesStaleConnectionOnIncompleteProjectionAndRecovers(t *test
 	}
 }
 
+type exhaustedStatusBackend struct{ integrationBackend }
+
+func (*exhaustedStatusBackend) EnsurePendingOwnedRevision(context.Context, string, string, executionenv.Owner, string, string, string, string, string) (executioncontroller.Allocation, error) {
+	return executioncontroller.Allocation{}, &executionenv.Error{Code: executionenv.CodeConflict, Message: "PRIVATE-STATUS-CONFLICT"}
+}
+
+func TestEnsureTemplateConflictSurvivesHandlerAndClient(t *testing.T) {
+	fx := startFixture(t, &exhaustedStatusBackend{}, nil)
+	defer fx.stop()
+	client, err := New(fx.endpoint, fx.clientTLS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	_, err = client.EnsureTemplate(t.Context(), "binding", "coding", codingRevision, executionenv.Owner{Issuer: "issuer", Subject: "alice"}, "op")
+	var remote *executionenv.Error
+	if !errors.As(err, &remote) || remote.Code != executionenv.CodeConflict || remote.Retryable || strings.Contains(err.Error(), "PRIVATE") {
+		t.Fatalf("conflict not preserved through gRPC: %v", err)
+	}
+}
+
 func TestTemplateProviderRequiresExactRevision(t *testing.T) {
 	for _, revision := range []string{"", "v1-" + strings.Repeat("z", 64), "v1-" + strings.Repeat("A", 64), "v1-" + strings.Repeat("a", 63)} {
 		if _, err := NewTemplateProvider(&Client{}, "coding", revision); err == nil {
