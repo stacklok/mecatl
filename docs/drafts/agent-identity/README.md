@@ -50,14 +50,21 @@ flowchart LR
     U["Client"] -->|"Session creation and requests"| H["mecak8s"]
     F["Agent-definition sources"] --> R["Agent-definition loader (placement TBD)"]
     R -->|"Execution configuration"| H
-    subgraph B["Identity broker (combined deployment)"]
+    subgraph B["Identity broker"]
         I["Identity issuance and authorization"]
-        T["ToolHive AS, credential storage, and vMCP"]
-        I <-->|"Authorized operations"| T
+        G["Grant issuer (AS-1)"]
+        I --> G
+    end
+    subgraph W["vMCP gateway (embedded or external)"]
+        T["Gateway AS (AS-2) and credential storage"]
+        V["vMCP"]
+        T --- V
     end
     R -->|"Definition records and authority ceilings"| I
     H <-->|"User report, tool requests, and results"| I
-    T <-->|"Protected calls"| P["MCP backends / providers"]
+    G -->|"Chaining grant"| T
+    I <-->|"Authorized MCP calls"| V
+    V <-->|"Protected calls"| P["MCP backends / providers"]
     I -->|"Decisions and observed outcomes"| A["Audit records"]
 ```
 
@@ -65,7 +72,7 @@ The diagram shows the broker-backed remote architecture's MCP path. Local deploy
 
 Before the agent loop starts, the agent-definition loader supplies `mecak8s` with execution configuration and initializes the corresponding definition records and authority ceilings in the broker. The loader is outside the untrusted agent loop. Its process placement and how the broker authenticates its input remain to be specified.
 
-The broker contains the agent trust issuer alongside ToolHive's authorization server, credential storage, and vMCP. The issuer signs agent identity credentials; the ToolHive components handle access to downstream tools. The tools themselves execute the operations.
+The broker contains the agent trust issuer, the authorization and audit logic, and a grant issuer (AS-1). The vMCP gateway contains its own authorization server (AS-2), the provider credential storage, and the vMCP. The gateway can run inside the Mecatl deployment or be operated separately, such as an enterprise connector gateway. In both cases AS-1 vouches for the user and acting agent with a short-lived grant that AS-2 redeems; see [MCP gateway modes](mcp-gateway-modes.md). The tools themselves execute the operations.
 
 The remaining trust question is how the broker knows that the reported user and agent definition are genuine. The agent loop must not be able to substitute either. Giving agents distinct credentials helps identify them, but does not isolate agents sharing one `mecak8s` process.
 
@@ -88,6 +95,7 @@ The proposed chapters develop each part of the architecture.
 | [Audit](audit.md) | Define attribution, correlation, evidence, redaction, and durability requirements. |
 | [Agent definitions](agent-definitions.md) | Explain `AgentDef` and separate harness execution configuration from broker-enforced authority. |
 | [MCP authorization](mcp-authorization.md) | Explain how user and agent permissions govern MCP calls and how the broker uses ToolHive. |
+| [MCP gateway modes](mcp-gateway-modes.md) | Chain the broker's grant issuer to the vMCP gateway's authorization server, so one protocol works with an embedded or an external gateway. |
 | [Credentials and lifecycle](credentials-and-lifecycle.md) | Follow one credential-to-outcome walkthrough with validation and audit evidence, then explain renewal and recovery. |
 | [All-tool mediation](all-tool-mediation.md) | Develop the broader authorization boundary for filesystem tools, Shell, and spawning. |
 
