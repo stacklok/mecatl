@@ -239,3 +239,132 @@ func TestRearmOneShotFailsClosedOnUnreadableCurrentOutcome(t *testing.T) {
 		})
 	}
 }
+
+func TestRecordFirePreservesCurrentNonErrorOutcome(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		record      func(t *testing.T, schedules port.ScheduleStore, store *Store, now time.Time)
+		fireIDs     []string
+		wantRearmed bool
+	}{
+		{
+			name: "success then error in same claim",
+			record: func(t *testing.T, schedules port.ScheduleStore, _ *Store, now time.Time) {
+				t.Helper()
+				for _, fire := range []port.ScheduleFire{
+					{ID: "success", SessionID: "session", ScheduleName: "retry", FiredAt: now, Stop: session.StopEndTurn},
+					{ID: "error", SessionID: "session", ScheduleName: "retry", FiredAt: now, Stop: session.StopError},
+				} {
+					if err := schedules.RecordFire(t.Context(), fire); err != nil {
+						t.Fatal(err)
+					}
+				}
+			},
+			fireIDs: []string{"success", "error"},
+		},
+		{
+			name: "error then success in same claim",
+			record: func(t *testing.T, schedules port.ScheduleStore, _ *Store, now time.Time) {
+				t.Helper()
+				for _, fire := range []port.ScheduleFire{
+					{ID: "error", SessionID: "session", ScheduleName: "retry", FiredAt: now, Stop: session.StopError},
+					{ID: "success", SessionID: "session", ScheduleName: "retry", FiredAt: now, Stop: session.StopEndTurn},
+				} {
+					if err := schedules.RecordFire(t.Context(), fire); err != nil {
+						t.Fatal(err)
+					}
+				}
+			},
+			fireIDs: []string{"error", "success"},
+		},
+		{
+			name: "error in distinct claim",
+			record: func(t *testing.T, schedules port.ScheduleStore, store *Store, now time.Time) {
+				t.Helper()
+				if err := schedules.RecordFire(t.Context(), port.ScheduleFire{ID: "success", SessionID: "session", ScheduleName: "retry", FiredAt: now, Stop: session.StopEndTurn}); err != nil {
+					t.Fatal(err)
+				}
+				later := now.Add(time.Minute)
+				if err := store.testClient().HSet(t.Context(), scheduleKey("retry"), fieldEnabled, "1", fieldNextFireAt, nanoStr(later)).Err(); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := schedules.Claim(t.Context(), "retry", later, time.Time{}); err != nil {
+					t.Fatal(err)
+				}
+				if err := schedules.RecordFire(t.Context(), port.ScheduleFire{ID: "error", SessionID: "session", ScheduleName: "retry", FiredAt: later, Stop: session.StopError}); err != nil {
+					t.Fatal(err)
+				}
+			},
+			fireIDs:     []string{"success", "error"},
+			wantRearmed: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := t.Context()
+			mr := miniredis.RunT(t)
+			store, err := New(mr.Addr())
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = store.Close() })
+			schedules := store.ScheduleStore()
+			now := time.Unix(1_700_000_000, 0)
+			if err := schedules.Save(ctx, port.Schedule{Spec: port.ScheduleSpec{Name: "retry", Trigger: port.TriggerSpec{OneShot: now}, OneShotRetry: true, OneShotMaxRetries: 2}, State: port.ScheduleState{Enabled: true, NextFireAt: now}}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := schedules.Claim(ctx, "retry", now, time.Time{}); err != nil {
+				t.Fatal(err)
+			}
+			test.record(t, schedules, store, now)
+			for _, fireID := range test.fireIDs {
+				if _, err := schedules.LoadFire(ctx, fireID); err != nil {
+					t.Fatalf("LoadFire(%q): %v", fireID, err)
+				}
+			}
+			err = schedules.(port.ScheduleOneShotReArmer).ReArmOneShot(ctx, "retry", now.Add(2*time.Minute))
+			if test.wantRearmed {
+				if err != nil {
+					t.Fatalf("ReArmOneShot: %v", err)
+				}
+			} else if err == nil {
+				t.Fatal("ReArmOneShot unexpectedly succeeded")
+			}
+		})
+	}
+}
+
+func TestRecordFireReportsPointerReadFailureAfterPersistingHistory(t *testing.T) {
+	ctx := t.Context()
+	mr := miniredis.RunT(t)
+	store, err := New(mr.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	schedules := store.ScheduleStore()
+	now := time.Unix(1_700_000_000, 0)
+	if err := schedules.Save(ctx, port.Schedule{Spec: port.ScheduleSpec{Name: "retry", Trigger: port.TriggerSpec{OneShot: now}, OneShotRetry: true, OneShotMaxRetries: 2}, State: port.ScheduleState{Enabled: true, NextFireAt: now}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := schedules.Claim(ctx, "retry", now, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := schedules.RecordFire(ctx, port.ScheduleFire{ID: "success", SessionID: "session", ScheduleName: "retry", FiredAt: now, Stop: session.StopEndTurn}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.testClient().Del(ctx, scheduleFireKey("success")).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.testClient().LPush(ctx, scheduleFireKey("success"), "not-a-fire").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := schedules.RecordFire(ctx, port.ScheduleFire{ID: "error", SessionID: "session", ScheduleName: "retry", FiredAt: now, Stop: session.StopError}); err == nil {
+		t.Fatal("RecordFire unexpectedly succeeded")
+	}
+	if _, err := schedules.LoadFire(ctx, "error"); err != nil {
+		t.Fatalf("LoadFire(error): %v", err)
+	}
+	if err := schedules.(port.ScheduleOneShotReArmer).ReArmOneShot(ctx, "retry", now.Add(time.Minute)); err == nil {
+		t.Fatal("ReArmOneShot unexpectedly succeeded")
+	}
+}

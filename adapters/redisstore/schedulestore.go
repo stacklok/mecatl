@@ -1059,7 +1059,9 @@ func advanceInFlightFireProgress(ctx context.Context, client redis.UniversalClie
 //
 // It FLIPS the fire terminal and clears the in-flight ScheduleState fields
 // (LastFireStartedAt/LastFireProgressAt/FireDeadline) — a recorded (terminal)
-// fire has no in-flight run (issue #386). The semantics mirror
+// fire has no in-flight run (issue #386). When a non-error terminal outcome is
+// already current for this claim, a later error record remains in history but
+// cannot replace that outcome as the retry authority. The semantics mirror
 // memschedulestore.RecordFire byte-for-byte, adapted to Redis's single-threaded
 // execution.
 var recordFireScript = redis.NewScript(`
@@ -1073,12 +1075,29 @@ end
 if redis.call('HEXISTS', KEYS[1], 'spec') == 0 then
   return 0
 end
+redis.call('SET', KEYS[2], ARGV[1])
 local claimedAt = redis.call('HGET', KEYS[1], 'last_fire_at')
 if claimedAt == false or claimedAt == '0' or claimedAt == ARGV[2] then
-  redis.call('HSET', KEYS[1], 'last_fire_session_id', ARGV[3], 'last_fire_outcome_id', ARGV[5])
+  local preserve = false
+  local outcomeID = redis.call('HGET', KEYS[1], 'last_fire_outcome_id')
+  if outcomeID ~= false and outcomeID ~= '' then
+    local prior = redis.call('GET', 'mecatl:schedulefire:' .. outcomeID)
+    local incomingOK, incoming = pcall(cjson.decode, ARGV[1])
+    local priorOK, priorRecord = pcall(cjson.decode, prior)
+    if not priorOK then
+      preserve = true
+    elseif incomingOK and type(priorRecord) == 'table' and priorRecord.v == ARGV[4] and type(priorRecord.fire) == 'table' and
+      priorRecord.fire.ScheduleName == incoming.fire.ScheduleName and priorRecord.fire.FiredAt == incoming.fire.FiredAt and priorRecord.fire.SessionID == incoming.fire.SessionID and
+      priorRecord.fire.Stop ~= nil and priorRecord.fire.Stop ~= '' and priorRecord.fire.Stop ~= ARGV[6] then
+      preserve = true
+    end
+  end
+  redis.call('HSET', KEYS[1], 'last_fire_session_id', ARGV[3])
+  if not preserve then
+    redis.call('HSET', KEYS[1], 'last_fire_outcome_id', ARGV[5])
+  end
   redis.call('HDEL', KEYS[1], 'last_fire_started_at', 'last_fire_progress_at', 'fire_deadline')
 end
-redis.call('SET', KEYS[2], ARGV[1])
 return 1
 `)
 
@@ -1094,7 +1113,7 @@ func (s *scheduleStore) RecordFire(ctx context.Context, f port.ScheduleFire) err
 	}
 	result, err := recordFireScript.Run(ctx, client,
 		[]string{scheduleKey(f.ScheduleName), scheduleFireKey(f.ID)},
-		string(fireJSON), nanoStr(f.FiredAt), string(f.SessionID), scheduleFormat, f.ID).Int()
+		string(fireJSON), nanoStr(f.FiredAt), string(f.SessionID), scheduleFormat, f.ID, string(session.StopError)).Int()
 	if err != nil {
 		return fmt.Errorf("redisstore: record fire %q: %w", f.ID, err)
 	}

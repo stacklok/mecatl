@@ -152,7 +152,8 @@ policy instead.
 
 A re-armed one-shot starts with fresh context, even when carried context is
 enabled. Retry is at least once within its configured budget, not an
-exactly-once guarantee.
+exactly-once guarantee. Mecatl leaves a one-shot disabled when it cannot verify
+that its current terminal outcome is an error.
 
 ### Carried context
 
