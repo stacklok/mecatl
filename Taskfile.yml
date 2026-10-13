@@ -1118,6 +1118,7 @@ tasks:
       - bash .github/scripts/deslop-workflow_test.sh
       - bash .github/scripts/microvm-ci-release_test.sh
       - sh .github/scripts/release-tag-guard_test.sh
+      - sh .github/scripts/resolve-main-build_test.sh
       - python3 .github/scripts/instruction-files_test.py
 
   lint:action-templates:

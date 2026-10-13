@@ -7,8 +7,9 @@
 # Main builds never touch release artifacts. They publish under
 # ghcr.io/<repo>/main/ (images main/mecak8s and main/studio, charts
 # main/charts), versioned X.Y.(Z+1)-main.<run>.<attempt>.g<sha8> from the
-# commit's VERSION: the patch bump sorts them above the last release, and the
-# run number and attempt order them by publication. Renaming this file resets
+# commit's VERSION, never below the last publication's X.Y.Z: the patch bump
+# sorts them above the last release, and the run number and attempt order them
+# by publication. Renaming this file resets
 # the run number, so bump VERSION alongside such a rename. Images are tagged
 # v<version>; each chart pins its image by digest. Signatures and attestations
 # name this workflow (continuous.yml@refs/heads/main), so they can never verify
@@ -16,7 +17,8 @@
 #
 # A commit publishes only when it is newer on main than the last published
 # mecatl-studio chart, the chart pushed last, so versions never move followers
-# back to an older commit. For a workflow_run, provenance names the main commit
+# back to an older commit; a chart this workflow did not sign and attest does
+# not count as published. For a workflow_run, provenance names the main commit
 # that defined this workflow; the image revision label and the version name the
 # commit that was built.
 name: Continuous main build
@@ -27,9 +29,10 @@ on:
     types: [completed]
     branches: [main]
   # Publish by hand from main, e.g. after a transient registry failure. A run
-  # publishes the commit it was dispatched at; force publishes another commit,
-  # or one that is not newer than the last published build, and moves every
-  # follower to it.
+  # publishes the commit it was dispatched at once CI has passed on it. Force
+  # skips that check and the newer-than-last-published check, so it can publish
+  # another commit, including an older one, and move every follower to it until
+  # the next main build publishes.
   workflow_dispatch:
     inputs:
       commit_sha:
@@ -38,7 +41,7 @@ on:
         type: string
         default: ''
       force:
-        description: 'Publish even if the commit is not newer than the last published build'
+        description: 'Publish even if CI has not passed on the commit or it is not newer than the last published build'
         required: false
         type: boolean
         default: false
@@ -80,8 +83,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
+      actions: read # check that CI passed on a dispatched commit
       contents: read # checkout
-      packages: read # read the last published chart
+      packages: read # read and verify the last published chart
     env:
       OCI_REGISTRY: ghcr.io/${{ github.repository }}/main/charts
     outputs:
@@ -101,6 +105,10 @@ jobs:
         with:
           version: v3.18.4
 
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      # .github/scripts/resolve-main-build.sh documents the publication rules;
+      # its test runs in `task lint:actions`.
       - name: Resolve commit and version
         id: resolve
         env:
@@ -110,69 +118,12 @@ jobs:
           RUN_NUMBER: ${{ github.run_number }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SIGNING_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/continuous.yml@refs/heads/main
+          SIGNING_ISSUER: https://token.actions.githubusercontent.com
         run: |
           set -euo pipefail
-          main=$(git rev-parse HEAD)
-          if [ "${GITHUB_EVENT_NAME}" = workflow_run ]; then
-            sha="${RUN_SHA}"
-          else
-            # Provenance names the dispatched commit, so publish that commit
-            # unless another one is forced.
-            sha="${INPUT_SHA:-$GITHUB_SHA}"
-            if [ "$sha" != "$GITHUB_SHA" ] && [ "${FORCE:-}" != true ]; then
-              echo "::error::a dispatch publishes its own commit ${GITHUB_SHA}; set force to publish ${sha}"
-              exit 1
-            fi
-          fi
-          if ! printf '%s' "$sha" | grep -Eq '^[0-9a-f]{40}$'; then
-            echo "::error::commit must be a full 40-character SHA, got '${sha}'"
-            exit 1
-          fi
-          if ! git merge-base --is-ancestor "$sha" "$main"; then
-            echo "::error::${sha} is not on main"
-            exit 1
-          fi
-
-          # The last published build is the newest mecatl-studio chart: it is
-          # pushed last, so a run that failed before it publishes again.
           printf '%s' "$GH_TOKEN" | helm registry login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
-          last=""
-          if chart=$(helm show chart "oci://${OCI_REGISTRY}/mecatl-studio" --devel 2>&1); then
-            last_version=$(printf '%s\n' "$chart" | awk '/^version:/ {print $2}')
-            last=$(git rev-parse --verify --quiet "${last_version##*.g}^{commit}") || {
-              echo "::error::last published ${last_version} names no commit on main"
-              exit 1
-            }
-            echo "Last published: ${last_version} (${last})"
-          elif printf '%s' "$chart" | grep -q 'name unknown'; then
-            echo "Nothing published yet"
-          else
-            printf '%s\n' "$chart" >&2
-            exit 1
-          fi
-          if [ -n "$last" ] && [ "${FORCE:-}" != true ] && git merge-base --is-ancestor "$sha" "$last"; then
-            echo "::notice title=Already published::${sha} is not newer than the last published build ${last}."
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          base=$(git show "${sha}:VERSION" | tr -d '[:space:]')
-          if ! printf '%s' "$base" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "::error::VERSION at ${sha} is not bare semver: '${base}'"
-            exit 1
-          fi
-          major=${base%%.*}
-          rest=${base#*.}
-          minor=${rest%%.*}
-          patch=${rest#*.}
-          # The g prefix keeps an all-digit short SHA a valid semver identifier.
-          version="${major}.${minor}.$((patch + 1))-main.${RUN_NUMBER}.${RUN_ATTEMPT}.g$(printf '%s' "$sha" | cut -c1-8)"
-          {
-            echo "publish=true"
-            echo "sha=${sha}"
-            echo "version=${version}"
-          } >> "$GITHUB_OUTPUT"
-          echo "Publishing ${sha} as ${version}"
+          .github/scripts/resolve-main-build.sh
 
   publish-mecak8s:
     needs: compute-version
@@ -463,10 +414,14 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # yq (mikefarah) ships on the ubuntu-24.04 runner image. A digest selects
-      # the image in both charts, and each chart refuses a tag alongside it.
+      # the image in both charts, and each chart refuses a tag alongside it. The
+      # revision annotation tells the next run which commit this build was.
       - name: Pin the charts to the verified image digests
         run: |
           set -euo pipefail
+          for chart in mecak8s mecatl-studio; do
+            yq --inplace '.annotations."org.opencontainers.image.revision" = strenv(SHA)' "deploy/helm/${chart}/Chart.yaml"
+          done
           IMAGE="${MECAK8S_IMAGE}" DIGEST="${MECAK8S_DIGEST}" \
             yq --inplace '.image.repository = strenv(IMAGE) | .image.tag = "" | .image.digest = strenv(DIGEST)' deploy/helm/mecak8s/values.yaml
           IMAGE="${STUDIO_IMAGE}" DIGEST="${STUDIO_DIGEST}" \
