@@ -129,7 +129,7 @@ import { useChatEscape } from "./chat-escape";
 import { groupSessions, useChatFolders } from "./chat-folders";
 import { takeNextQueuedMessage, useQueuedMessages } from "./chat-queue";
 import { consumeChatSeed } from "./chat-seed";
-import { SessionUsageControls } from "./chat-session-controls";
+import { SessionExecutionStatus, SessionUsageControls } from "./chat-session-controls";
 import {
   approvalKey,
   type ChatMessage,
@@ -3349,6 +3349,11 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
               setSeedRequiresConfirmation(false);
             }}
             onSend={handleComposerSend}
+            pillRowDetail={
+              sessionId && displayedDetail ? (
+                <SessionExecutionStatus detail={displayedDetail} variant="pills" />
+              ) : undefined
+            }
             pillRowEnd={
               sessionId && displayedDetail ? (
                 <SessionUsageControls

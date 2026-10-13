@@ -18,11 +18,35 @@ interface SessionUsageControlsProps {
 }
 
 /**
+ * Whether a live chat's session has execution files and the built-in Shell,
+ * from its bound capabilities: on the line under the composer's pills, and in
+ * the phone options sheet's footer.
+ */
+export function SessionExecutionStatus({
+  detail,
+  variant,
+}: {
+  detail: SessionDetailResponse;
+  variant: "pills" | "sheet";
+}) {
+  return (
+    <div
+      aria-label="Session execution capabilities"
+      className={cn("text-xs text-muted-foreground", variant === "sheet" && "px-4 py-2")}
+      role="status"
+    >
+      Files: {detail.capabilities.executionFiles ? "available" : "unavailable"} · Built-in Shell:{" "}
+      {detail.capabilities.builtInShell ? "available" : "unavailable"}
+    </div>
+  );
+}
+
+/**
  * A live chat's usage and compaction, beside the composer's Mode and Model
- * pills: whether the session has execution files and the built-in Shell, how
- * much of the model's context the conversation fills, the Compact action, and
- * a note while a fork or a mode change is in flight. Mode and Model
- * themselves are composer pills (`chat-composer.tsx`).
+ * pills: how much of the model's context the conversation fills, the Compact
+ * action, and a note while a fork or a mode change is in flight. Mode and
+ * Model themselves are composer pills (`chat-composer.tsx`). The phone sheet's
+ * footer also shows the session's execution capabilities.
  */
 export function SessionUsageControls({
   compacting,
@@ -50,19 +74,6 @@ export function SessionUsageControls({
       {forking ? "Forking this conversation…" : "Updating permission mode…"}
     </p>
   );
-  const execution = (
-    <div
-      aria-label="Session execution capabilities"
-      className={cn(
-        "text-xs text-muted-foreground",
-        variant === "pills" ? "shrink-0 whitespace-nowrap px-1.5" : "px-4 py-2",
-      )}
-      role="status"
-    >
-      Files: {detail.capabilities.executionFiles ? "available" : "unavailable"} · Built-in Shell:{" "}
-      {detail.capabilities.builtInShell ? "available" : "unavailable"}
-    </div>
-  );
   const usage = model && (
     <ContextUsage
       contextWindow={model.contextWindow}
@@ -76,7 +87,7 @@ export function SessionUsageControls({
     return (
       <div className="border-t py-2">
         {usage}
-        {execution}
+        <SessionExecutionStatus detail={detail} variant="sheet" />
         {pending}
         <button
           className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm transition-colors hover:bg-muted/50 disabled:opacity-50"
@@ -94,7 +105,6 @@ export function SessionUsageControls({
 
   return (
     <div className="ml-auto flex shrink-0 items-center gap-1">
-      {execution}
       {pending}
       {usage}
       <button

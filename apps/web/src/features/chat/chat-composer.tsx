@@ -131,6 +131,8 @@ interface ChatComposerProps {
     action: ComposerEnterAction,
     images: ImageAttachment[],
   ) => Promise<boolean>;
+  /** A live chat's execution capabilities, on the line under its pills. */
+  pillRowDetail?: ReactNode;
   /** A live chat's usage and Compact action, at the end of the pill row. */
   pillRowEnd?: ReactNode;
   seedCanConfirm?: boolean;
@@ -197,6 +199,7 @@ export function ChatComposer({
   onRefreshExecution,
   onSeedConsumed,
   onSend,
+  pillRowDetail,
   pillRowEnd,
   seedCanConfirm = true,
   seedContext,
@@ -581,7 +584,8 @@ export function ChatComposer({
             }
           : undefined;
   // A draft's execution choice. The prototype has no template catalog, so
-  // the picker keeps its own form in the pill row and in the phone sheet.
+  // the picker keeps its own form, on the line under the pills and inline in
+  // the phone sheet.
   const execution = configuration ? (
     <ExecutionPicker
       configuration={configuration}
@@ -592,7 +596,8 @@ export function ChatComposer({
       status={executionStatus}
     />
   ) : undefined;
-  const showPillRow = Boolean(mode || model || execution || pillRowEnd);
+  const executionLine = execution ?? pillRowDetail;
+  const showPillRow = Boolean(mode || model || executionLine || pillRowEnd);
 
   return (
     <form
@@ -803,32 +808,36 @@ export function ChatComposer({
         {showPillRow && (
           <section
             aria-label="Chat configuration and usage"
-            className="hide-scrollbar @container -mt-4 flex items-center gap-1 overflow-x-auto rounded-b-2xl border border-t-0 border-zinc-300 bg-zinc-50 px-2 pt-5 pb-1.5 dark:border-zinc-700 dark:bg-zinc-900 max-[499px]:hidden"
+            className="-mt-4 rounded-b-2xl border border-t-0 border-zinc-300 bg-zinc-50 px-2 pt-5 pb-1.5 dark:border-zinc-700 dark:bg-zinc-900 max-[499px]:hidden"
           >
-            {mode && (
-              <ComposerOptionMenu
-                disabled={mode.disabled}
-                items={MODE_OPTIONS}
-                label="Mode"
-                menuClassName="w-72"
-                onSelect={mode.onChange}
-                value={mode.value}
-                valueLabel={modeTitle(mode.value)}
-              />
-            )}
-            {execution}
-            {model && (
-              <ModelEffortMenu
-                disabled={model.disabled}
-                effort={model.effort}
-                groupedModels={model.groupedModels}
-                model={model.model}
-                onEffortChange={model.onEffortChange}
-                onModelChange={model.onModelChange}
-                onReset={model.onReset}
-              />
-            )}
-            {pillRowEnd}
+            <div className="hide-scrollbar @container flex items-center gap-1 overflow-x-auto">
+              {mode && (
+                <ComposerOptionMenu
+                  disabled={mode.disabled}
+                  items={MODE_OPTIONS}
+                  label="Mode"
+                  menuClassName="w-72"
+                  onSelect={mode.onChange}
+                  value={mode.value}
+                  valueLabel={modeTitle(mode.value)}
+                />
+              )}
+              {model && (
+                <ModelEffortMenu
+                  disabled={model.disabled}
+                  effort={model.effort}
+                  groupedModels={model.groupedModels}
+                  model={model.model}
+                  onEffortChange={model.onEffortChange}
+                  onModelChange={model.onModelChange}
+                  onReset={model.onReset}
+                />
+              )}
+              {pillRowEnd}
+            </div>
+            {/* Execution has no pill in the prototype, so it takes its own line
+                rather than pushing Model or Compact out of the pill row. */}
+            {executionLine && <div className="px-2.5 pt-1">{executionLine}</div>}
           </section>
         )}
       </div>
