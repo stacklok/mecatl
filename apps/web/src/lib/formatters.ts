@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import cronstrue from "cronstrue";
+
 export function formatRelativeTime(ts: number): string {
   if (!ts || ts < 1000) return "";
   try {
@@ -88,8 +90,6 @@ export function formatBytes(bytes: number): string {
   return `${rendered} ${BYTE_UNITS[unit]}`;
 }
 
-const CRON_DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-
 /** 1 → "1st", 22 → "22nd", 13 → "13th" — day-of-month labels. */
 export function ordinal(n: number): string {
   const rem10 = n % 10;
@@ -100,48 +100,19 @@ export function ordinal(n: number): string {
   return `${n}th`;
 }
 
-function formatClock(hour: number, minute: number): string {
-  const period = hour < 12 ? "AM" : "PM";
-  const h12 = hour % 12 === 0 ? 12 : hour % 12;
-  return `${h12}:${String(minute).padStart(2, "0")} ${period}`;
-}
-
 /**
- * Render a standard 5-field cron expression in plain English for the common
- * shapes our scheduled tasks use (daily/weekly at a time, every N hours or
- * minutes). Anything it doesn't recognise falls back to the raw expression, so
- * the exact cron is still available (shown in a tooltip alongside).
+ * Render a standard 5-field cron expression in plain English. Anything cronstrue
+ * cannot parse falls back to the raw expression, so the exact cron is still
+ * available (shown in a tooltip alongside).
  */
 export function describeCron(expr: string): string {
-  const parts = expr.trim().split(/\s+/);
-  if (parts.length !== 5) return expr;
-  const [min = "", hour = "", dom = "", mon = "", dow = ""] = parts;
-  const everyHour = /^\*\/(\d+)$/.exec(hour);
-  const everyMin = /^\*\/(\d+)$/.exec(min);
-  const numMin = /^\d+$/.test(min);
-  const numHour = /^\d+$/.test(hour);
-
-  if (everyMin && hour === "*" && dom === "*" && mon === "*" && dow === "*") {
-    return Number(everyMin[1]) === 1 ? "Every minute" : `Every ${everyMin[1]} minutes`;
+  const cron = expr.trim();
+  if (cron.split(/\s+/).length !== 5) return expr;
+  try {
+    return cronstrue.toString(cron, { use24HourTimeFormat: false });
+  } catch {
+    return expr;
   }
-  if (min === "0" && hour === "*" && dom === "*" && mon === "*" && dow === "*") {
-    return "Every hour";
-  }
-  if (everyHour && numMin && dom === "*" && mon === "*" && dow === "*") {
-    return Number(everyHour[1]) === 1 ? "Every hour" : `Every ${everyHour[1]} hours`;
-  }
-  if (numMin && numHour && mon === "*") {
-    const time = formatClock(Number(hour), Number(min));
-    if (dom === "*") {
-      if (dow === "*") return `Daily at ${time}`;
-      if (dow === "1-5") return `Weekdays at ${time}`;
-      if (/^[0-6]$/.test(dow)) return `Weekly on ${CRON_DAYS[Number(dow)]} at ${time}`;
-    } else if (dow === "*" && /^\d{1,2}$/.test(dom)) {
-      const day = Number(dom);
-      if (day >= 1 && day <= 31) return `Monthly on the ${ordinal(day)} at ${time}`;
-    }
-  }
-  return expr;
 }
 
 export function formatMessageTime(ts: number): string {

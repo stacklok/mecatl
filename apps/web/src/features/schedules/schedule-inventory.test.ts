@@ -60,7 +60,7 @@ describe("schedule inventory", () => {
       deriveScheduleInventory(source, "Europe/Rome", "status").map((item) => item.name),
     ).toEqual(["Rome report"]);
     expect(
-      deriveScheduleInventory(source, "Weekdays at 5:30", "status").map((item) => item.name),
+      deriveScheduleInventory(source, "Monday through Friday", "status").map((item) => item.name),
     ).toEqual(["Rome report"]);
     expect(deriveScheduleInventory(source, "", "status").map((item) => item.name)).toEqual([
       "Live",
@@ -98,7 +98,7 @@ describe("schedule inventory", () => {
         name: "Alpha",
         nextFireAt: "2026-10-08T10:00:00Z",
         status: "paused",
-        trigger: { expression: "0 9 * * *", kind: "cron", timezone: "" },
+        trigger: { expression: "0 5 * * *", kind: "cron", timezone: "" },
       }),
       schedule({
         fireCount: 1,
