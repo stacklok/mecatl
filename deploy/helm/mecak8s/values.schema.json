@@ -4,6 +4,9 @@
   "additionalProperties": false,
   "required": ["image", "redis", "learning"],
   "properties": {
+    "global": {
+      "type": "object"
+    },
     "image": {
       "type": "object",
       "additionalProperties": false,
