@@ -26,12 +26,12 @@ func TestScheduleConformanceSelfTest(t *testing.T) {
 }
 
 // Run the failing suite in a subprocess to observe its failures. Deliberately
-// bypassing ClaimNow rejection keeps this negative control valid even when the
-// reference backend later adopts execution fencing.
-func TestExecutionFencedRejectsPendingBypass(t *testing.T) {
-	const childEnv = "MECATL_TEST_EXECUTION_FENCED_BYPASS"
+// bypassing the unresolved-claim rejection keeps this negative control valid
+// even when the reference backend later adopts claim and retry safety.
+func TestClaimAndRetryConformanceRejectsPendingBypass(t *testing.T) {
+	const childEnv = "MECATL_TEST_CLAIM_AND_RETRY_BYPASS"
 	if os.Getenv(childEnv) == "1" {
-		scheduleconformance.RunExecutionFenced(t, func(*testing.T) port.ScheduleStore {
+		scheduleconformance.RunClaimAndRetryConformance(t, func(*testing.T) port.ScheduleStore {
 			return pendingBypassStore{ScheduleStore: memschedulestore.New()}
 		})
 		return
@@ -40,16 +40,16 @@ func TestExecutionFencedRejectsPendingBypass(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.CommandContext(t.Context(), binary, "-test.run=^TestExecutionFencedRejectsPendingBypass$", "-test.v")
+	cmd := exec.CommandContext(t.Context(), binary, "-test.run=^TestClaimAndRetryConformanceRejectsPendingBypass$", "-test.v")
 	cmd.Env = append(os.Environ(), childEnv+"=1")
 	output, err := cmd.CombinedOutput()
 	if _, ok := err.(*exec.ExitError); !ok {
 		t.Fatalf("expected suite failure, got %v:\n%s", err, output)
 	}
 	for _, diagnostic := range []string{
-		"unresolved predecessor bypassed",
-		"--- FAIL: TestExecutionFencedRejectsPendingBypass/claims_fence_unresolved_predecessors_and_late_settlement/manual=true/pending",
-		"--- PASS: TestExecutionFencedRejectsPendingBypass/save/load_round-trips_spec_and_state",
+		"unresolved prior claim accepted later claim",
+		"--- FAIL: TestClaimAndRetryConformanceRejectsPendingBypass/claims_reject_unresolved_prior_claims_and_preserve_later_claims/manual=true/pending",
+		"--- PASS: TestClaimAndRetryConformanceRejectsPendingBypass/save/load_round-trips_spec_and_state",
 	} {
 		if !strings.Contains(string(output), diagnostic) {
 			t.Errorf("missing diagnostic %q:\n%s", diagnostic, output)

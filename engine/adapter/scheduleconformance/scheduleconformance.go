@@ -66,21 +66,25 @@ func Run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore) {
 	run(t, newStore, false)
 }
 
-// RunExecutionFenced executes the complete ScheduleStore suite with unresolved
-// predecessor exclusion, late-outcome isolation, and single-winner retry rearming.
-// Adapters adopting the strengthened execution contract use this instead of Run;
-// Run retains the legacy pending-claim bypass and concurrent rearm expectations.
-// newStore must return a fresh, isolated store for each case.
-func RunExecutionFenced(t *testing.T, newStore func(t *testing.T) port.ScheduleStore) {
+// RunClaimAndRetryConformance executes the complete ScheduleStore suite with
+// claim and retry safety checks. Claim atomically reserves a schedule occurrence
+// in the store; rearm re-enables a failed one-shot for retry. The checks cover
+// stored scheduling records only. They do not launch or stop an executor.
+// newStore must return a fresh, isolated store for each test case.
+//
+// Run retains the legacy expectations for stores that have not adopted these
+// checks. The two entry points share the common suite and differ only where
+// legacy expectations conflict with claim and retry safety.
+func RunClaimAndRetryConformance(t *testing.T, newStore func(t *testing.T) port.ScheduleStore) {
 	t.Helper()
 	run(t, newStore, true)
 }
 
-func run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore, executionFenced bool) {
+func run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore, requireClaimAndRetrySafety bool) {
 	t.Helper()
 	ctx := context.Background()
-	if executionFenced {
-		runExecutionFencedCases(t, newStore)
+	if requireClaimAndRetrySafety {
+		runClaimAndRetryCases(t, newStore)
 	}
 
 	t.Run("save/load round-trips spec and state", func(t *testing.T) {
@@ -1178,7 +1182,7 @@ func run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore, execution
 		if c1.State.FireCount != 1 || !c1.State.Enabled {
 			t.Fatalf("Claim #1 state = %+v, want FireCount=1 Enabled=true", c1.State)
 		}
-		if executionFenced {
+		if requireClaimAndRetrySafety {
 			if err := s.RecordFire(ctx, port.ScheduleFire{ID: "maxfires-first", ScheduleName: name, FiredAt: now, Stop: session.StopEndTurn}); err != nil {
 				t.Fatal(err)
 			}
@@ -1374,13 +1378,13 @@ func run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore, execution
 		}
 
 		// (c) Legacy Run permits a later timestamp to bypass pending ownership.
-		// The execution-fenced suite instead requires settlement before retry.
+		// Claim and retry safety requires the prior claim to settle before retry.
 		later := now.Add(2 * time.Hour)
 		next2, err := cronparse.NextFire(sampleCron, later, time.UTC)
 		if err != nil {
 			t.Fatalf("cronparse.NextFire #2: %v", err)
 		}
-		if executionFenced {
+		if requireClaimAndRetrySafety {
 			if _, err := s.ClaimNow(ctx, name, later, next2); !errors.Is(err, port.ErrScheduleNotFound) {
 				t.Fatalf("ClaimNow bypassed pending predecessor: %v", err)
 			}
@@ -1389,7 +1393,7 @@ func run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore, execution
 			}
 		}
 		if _, err := s.ClaimNow(ctx, name, later, next2); err != nil {
-			t.Fatalf("ClaimNow at later now (executionFenced=%t): %v", executionFenced, err)
+			t.Fatalf("ClaimNow at later now (requireClaimAndRetrySafety=%t): %v", requireClaimAndRetrySafety, err)
 		}
 
 		// (d) ClaimNow on a DISABLED schedule → ErrScheduleNotFound (the Enabled
@@ -1499,7 +1503,7 @@ func run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore, execution
 		if _, err := s.Claim(ctx, name, now, time.Time{}); err != nil {
 			t.Fatalf("Claim: %v", err)
 		}
-		if executionFenced {
+		if requireClaimAndRetrySafety {
 			if err := s.RecordFire(ctx, port.ScheduleFire{ID: "failed", ScheduleName: name, FiredAt: now, Stop: session.StopError}); err != nil {
 				t.Fatal(err)
 			}
@@ -1529,7 +1533,7 @@ func run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore, execution
 	})
 
 	t.Run("rearm one-shot concurrent calls do not double-increment", func(t *testing.T) {
-		// Legacy Run expects two successful increments; execution fencing permits
+		// Legacy Run expects two successful increments; claim and retry safety permits
 		// only one caller to consume a settled failure's retry budget.
 		s := newStore(t)
 		reArmer, ok := s.(port.ScheduleOneShotReArmer)
@@ -1554,7 +1558,7 @@ func run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore, execution
 		if _, err := s.Claim(ctx, name, now, time.Time{}); err != nil {
 			t.Fatalf("Claim: %v", err)
 		}
-		if executionFenced {
+		if requireClaimAndRetrySafety {
 			if err := s.RecordFire(ctx, port.ScheduleFire{ID: "failed", ScheduleName: name, FiredAt: now, Stop: session.StopError}); err != nil {
 				t.Fatal(err)
 			}
@@ -1570,12 +1574,12 @@ func run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore, execution
 		for i := 0; i < 2; i++ {
 			if err := <-done; err == nil {
 				wins++
-			} else if !executionFenced || !errors.Is(err, port.ErrScheduleNotFound) {
+			} else if !requireClaimAndRetrySafety || !errors.Is(err, port.ErrScheduleNotFound) {
 				t.Fatalf("ReArmOneShot %d: %v", i, err)
 			}
 		}
 		wantWins := 2
-		if executionFenced {
+		if requireClaimAndRetrySafety {
 			wantWins = 1
 		}
 		if wins != wantWins {

@@ -11,10 +11,10 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-func runExecutionFencedCases(t *testing.T, newStore func(t *testing.T) port.ScheduleStore) {
+func runClaimAndRetryCases(t *testing.T, newStore func(t *testing.T) port.ScheduleStore) {
 	t.Helper()
 	ctx := context.Background()
-	t.Run("claims fence unresolved predecessors and late settlement", func(t *testing.T) {
+	t.Run("claims reject unresolved prior claims and preserve later claims", func(t *testing.T) {
 		for _, manual := range []bool{false, true} {
 			for _, outcome := range []string{"pending", "started", "terminal", "skipped"} {
 				t.Run(fmt.Sprintf("manual=%t/%s", manual, outcome), func(t *testing.T) {
@@ -50,24 +50,24 @@ func runExecutionFencedCases(t *testing.T, newStore func(t *testing.T) port.Sche
 					_, err := claim(ctx, name, later, later.Add(time.Minute))
 					if outcome == "pending" || outcome == "started" {
 						if !errors.Is(err, port.ErrScheduleNotFound) {
-							t.Fatalf("unresolved predecessor bypassed: %v", err)
+							t.Fatalf("unresolved prior claim accepted later claim: %v", err)
 						}
 						return
 					}
 					if err != nil {
-						t.Fatalf("settled predecessor blocked: %v", err)
+						t.Fatalf("terminal prior result blocked later claim: %v", err)
 					}
-					// A distinct late outcome must not settle the newly pending claim.
+					// A late terminal result must not settle the newer claim.
 					prior.ID = "late-prior"
 					if err := s.RecordFire(ctx, prior); err != nil {
 						t.Fatal(err)
 					}
 					loaded, err := s.Load(ctx, name)
 					if err != nil || loaded.State.LastFireSessionID != port.PendingFireSessionID || !loaded.State.LastFireAt.Equal(later) || loaded.State.FireCount != 2 {
-						t.Fatalf("late writer cleared successor: %+v %v", loaded.State, err)
+						t.Fatalf("late result cleared later pending claim: %+v %v", loaded.State, err)
 					}
 					if _, err := claim(ctx, name, later.Add(time.Hour), later.Add(2*time.Hour)); !errors.Is(err, port.ErrScheduleNotFound) {
-						t.Fatalf("late settlement reopened claim: %v", err)
+						t.Fatalf("late terminal result reopened later claim: %v", err)
 					}
 					successor := port.ScheduleFire{ID: "successor", SessionID: "successor", ScheduleName: name, FiredAt: later, StartedAt: later, Deadline: later.Add(time.Hour)}
 					if err := s.RecordFireStart(ctx, name, successor); err != nil {
@@ -79,7 +79,7 @@ func runExecutionFencedCases(t *testing.T, newStore func(t *testing.T) port.Sche
 					}
 					loaded, err = s.Load(ctx, name)
 					if err != nil || loaded.State.LastFireSessionID != successor.SessionID || !loaded.State.LastFireStartedAt.Equal(later) || !loaded.State.FireDeadline.Equal(successor.Deadline) {
-						t.Fatalf("late writer cleared started successor: %+v %v", loaded.State, err)
+						t.Fatalf("late result cleared later started claim: %+v %v", loaded.State, err)
 					}
 					for _, id := range []string{"late-prior", "late-prior-after-start"} {
 						fire, err := s.LoadFire(ctx, id)

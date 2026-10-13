@@ -13,12 +13,13 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
-- **Opt-in execution-fenced schedule conformance** — adds
-  `scheduleconformance.RunExecutionFenced` with the complete shared suite plus
-  unresolved predecessor exclusion, late-outcome isolation, and eligible,
-  single-winner one-shot retries. Legacy `Run` expectations remain unchanged;
-  no runtime or port contract changes. Added (minor); test-helper API only,
-  outside the core API snapshot surface.
+- **Schedule-store claim and retry conformance** — adds
+  `scheduleconformance.RunClaimAndRetryConformance` with the complete shared
+  suite plus unresolved prior-claim rejection, late-result isolation, and
+  eligible, single-winner one-shot rearming. Claim reserves a schedule
+  occurrence in stored state, and rearming re-enables a failed one-shot; this
+  suite does not run an executor. Legacy `Run` expectations remain unchanged.
+  Added (minor); test-helper API only, outside the core API snapshot surface.
 
 - **Durable bound execution affordances** — adds `session.ExecutionCapabilities`
   and `Session.ExecutionCapabilities` for host-stamped, creation-time filesystem
