@@ -26,6 +26,8 @@ handoff_image() {
 handoff_ready() {
   kube -n execution-qualification rollout status deployment/mecatl-execution --timeout=240s || return 1
   kube -n execution-qualification rollout status deployment/mecak8s --timeout=240s || return 1
+  kube -n execution-qualification rollout status deployment/oidc-issuer --timeout=240s || return 1
+  kube -n execution-qualification wait --for=condition=Ready pod -l app.kubernetes.io/name=oidc-issuer --timeout=240s || return 1
   kube -n execution-qualification wait --for=condition=Ready pod -l app.kubernetes.io/name=mecatl-execution --timeout=240s || return 1
   kube -n execution-qualification wait --for=condition=Ready pod -l app.kubernetes.io/name=mecak8s --timeout=240s || return 1
 }
@@ -61,12 +63,13 @@ handoff_digest() (
       printf '%s=%s %s\n' "$key" "$image" "$descriptor"
     done
     # Installed identity/spec/data, not Helm's original values or status clocks.
-    for object in namespace/execution-qualification deployment/mecatl-execution deployment/mecak8s configmap/execution-mock configmap/mecatl-execution-templates configmap/mecatl-execution-security-manifest configmap/mecatl-execution-security-authority issuer/execution-fixture-ca certificate/execution-provider-tls certificate/execution-client-tls; do
+    for object in namespace/execution-qualification deployment/mecatl-execution deployment/mecak8s deployment/oidc-issuer configmap/execution-mock configmap/mecatl-execution-templates configmap/mecatl-execution-security-manifest configmap/mecatl-execution-security-authority issuer/execution-fixture-ca certificate/execution-provider-tls certificate/execution-client-tls; do
       kube -n execution-qualification get "$object" -o json >"$tmp/object" || exit 1
       jq -ceS '{kind, name:.metadata.name, uid:.metadata.uid, labels:.metadata.labels, spec, data} | select(.uid != null and .uid != "")' "$tmp/object" || exit 1
       case "$object" in
         deployment/mecatl-execution) key=provider ;;
         deployment/mecak8s) key=agent ;;
+        deployment/oidc-issuer) key=oidc ;;
         *) continue ;;
       esac
       image=$(handoff_image "$key") || exit 1

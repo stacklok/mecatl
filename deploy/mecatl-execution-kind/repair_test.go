@@ -1,7 +1,9 @@
 package executionkind_test
 
 import (
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -271,12 +273,12 @@ esac
 // Run the actual clean-environment live entrypoint and shared digest against
 // an owned offline fixture. Fake executables reject private-data projections.
 func TestQualifiedLiveHandoffRejectsDriftBeforeCredentialLoader(t *testing.T) {
-	for _, fault := range []string{"", "leaf-renewal", "default", "sha", "run", "attempt", "cluster", "state", "session", "missing", "malformed", "selector", "config", "spec", "deployment-uid", "image", "revision", "trust", "catalog", "authority", "alias", "node", "secret-uid", "read", "ready", "checkout"} {
+	for _, fault := range []string{"", "leaf-renewal", "default", "sha", "run", "attempt", "cluster", "state", "session", "missing", "malformed", "selector", "config", "spec", "deployment-uid", "image", "revision", "trust", "catalog", "authority", "alias", "node", "secret-uid", "read", "ready", "checkout", "oidc-spec", "oidc-uid", "oidc-image", "oidc-ready", "networkpolicy", "service", "serviceaccount", "role", "rolebinding"} {
 		t.Run("fault="+fault, func(t *testing.T) {
 			root := t.TempDir()
 			state := filepath.Join(root, ".scratch/k8s-execution/owned")
 			scripts := filepath.Join(root, "deploy/mecatl-execution-kind")
-			for _, dir := range []string{state + "/images", state + "/pki", scripts, filepath.Join(root, "bin")} {
+			for _, dir := range []string{state + "/images", state + "/pki", scripts, filepath.Join(root, "bin"), filepath.Join(root, "inventory")} {
 				if err := os.MkdirAll(dir, 0o700); err != nil {
 					t.Fatal(err)
 				}
@@ -306,6 +308,40 @@ func TestQualifiedLiveHandoffRejectsDriftBeforeCredentialLoader(t *testing.T) {
 			writeFixture(t, filepath.Join(state, "images/proof"), proof.String(), 0o600)
 			writeFixture(t, filepath.Join(root, "aliases"), aliases.String(), 0o600)
 			writeFixture(t, filepath.Join(root, "fault"), "", 0o600)
+			// Independent installed chart/fixture inventory: never synthesize an
+			// arbitrary object from the name requested by the handoff implementation.
+			goHash := sha256.Sum256([]byte("go"))
+			inventory := map[string][]string{
+				"networkpolicy": {
+					`{"kind":"NetworkPolicy","metadata":{"name":"mecatl-execution-provider","uid":"np-provider"},"spec":{"podSelector":{"matchLabels":{"app.kubernetes.io/name":"mecatl-execution"}},"policyTypes":["Ingress","Egress"],"ingress":[{"from":[{"podSelector":{"matchLabels":{"app.kubernetes.io/name":"mecak8s"}}}],"ports":[{"port":8443}]}]}}`,
+					`{"kind":"NetworkPolicy","metadata":{"name":"mecatl-execution-workload-default-deny","uid":"np-deny"},"spec":{"podSelector":{"matchExpressions":[{"key":"execution.mecatl.dev/environment","operator":"Exists"}]},"policyTypes":["Ingress","Egress"],"ingress":[],"egress":[]}}`,
+					fmt.Sprintf(`{"kind":"NetworkPolicy","metadata":{"name":"mecatl-execution-profile-%x","uid":"np-go"},"spec":{"podSelector":{"matchLabels":{"execution.mecatl.dev/template-id":"%x"}},"policyTypes":["Egress"],"egress":[{"to":[{"ipBlock":{"cidr":"10.244.0.5/32"}}],"ports":[{"protocol":"TCP","port":8080}]}]}}`, goHash[:8], goHash[:8]),
+					`{"kind":"NetworkPolicy","metadata":{"name":"mecak8s-raw-driver","uid":"np-driver"},"spec":{"podSelector":{"matchLabels":{"app.kubernetes.io/component":"raw-driver"}},"policyTypes":["Ingress"],"ingress":[{"from":[{"podSelector":{"matchLabels":{"app.kubernetes.io/component":"agent"}}}],"ports":[{"protocol":"TCP","port":9090}]}]}}`,
+				},
+				"service": {
+					`{"kind":"Service","metadata":{"name":"mecatl-execution","uid":"svc-provider"},"spec":{"selector":{"app.kubernetes.io/name":"mecatl-execution"},"ports":[{"name":"grpc","port":8443,"targetPort":"grpc"}]}}`,
+					`{"kind":"Service","metadata":{"name":"mecak8s","uid":"svc-agent"},"spec":{"selector":{"app.kubernetes.io/name":"mecak8s","app.kubernetes.io/component":"agent"},"ports":[{"name":"grpc","port":8080},{"name":"http","port":8081}]}}`,
+					`{"kind":"Service","metadata":{"name":"oidc-issuer","uid":"svc-oidc"},"spec":{"selector":{"app.kubernetes.io/name":"oidc-issuer"},"ports":[{"name":"https","port":8443,"targetPort":"https"}]}}`,
+					`{"kind":"Service","metadata":{"name":"redis","uid":"svc-redis"},"spec":{"selector":{"app.kubernetes.io/name":"redis"},"ports":[{"name":"redis","port":6379}]}}`,
+				},
+				"serviceaccount": {
+					`{"kind":"ServiceAccount","metadata":{"name":"default","uid":"sa-default"}}`,
+					`{"kind":"ServiceAccount","metadata":{"name":"mecatl-execution","uid":"sa-provider"}}`,
+					`{"kind":"ServiceAccount","metadata":{"name":"mecatl-execution-executor","uid":"sa-executor"},"automountServiceAccountToken":false}`,
+					`{"kind":"ServiceAccount","metadata":{"name":"mecak8s","uid":"sa-agent"},"automountServiceAccountToken":true}`,
+				},
+				"role": {
+					`{"kind":"Role","metadata":{"name":"mecatl-execution","uid":"role-provider"},"rules":[{"apiGroups":["execution.mecatl.dev"],"resources":["executionenvironments"],"verbs":["get","list","watch","create","update","patch","delete"]}]}`,
+					`{"kind":"Role","metadata":{"name":"mecak8s-lease-holder","uid":"role-agent"},"rules":[{"apiGroups":["coordination.k8s.io"],"resources":["leases"],"verbs":["get","create","update","delete"]}]}`,
+				},
+				"rolebinding": {
+					`{"kind":"RoleBinding","metadata":{"name":"mecatl-execution","uid":"rb-provider"},"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"Role","name":"mecatl-execution"},"subjects":[{"kind":"ServiceAccount","name":"mecatl-execution","namespace":"execution-qualification"}]}`,
+					`{"kind":"RoleBinding","metadata":{"name":"mecak8s-lease-holder","uid":"rb-agent"},"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"Role","name":"mecak8s-lease-holder"},"subjects":[{"kind":"ServiceAccount","name":"mecak8s","namespace":"execution-qualification"}]}`,
+				},
+			}
+			for resource, items := range inventory {
+				writeFixture(t, filepath.Join(root, "inventory", resource), `{"items":[`+strings.Join(items, ",")+`]}`, 0o600)
+			}
 			prefix := "#!/bin/sh\nset -eu\ntest -z \"${OPENROUTER_API_KEY+x}\" && test -z \"${AWS_SECRET_ACCESS_KEY+x}\"\nfault=$(cat \"$HOME/fault\")\n"
 			writeFixture(t, filepath.Join(root, "bin/git"), prefix+"case \"$1\" in rev-parse) printf '%s\\n' '"+sha+"' ;; diff) test \"$fault\" != checkout ;; *) exit 99 ;; esac\n", 0o700)
 			writeFixture(t, filepath.Join(root, "bin/docker"), prefix+`
@@ -342,11 +378,17 @@ case "$*" in
 'config view '*)
   marker=stable; test "$fault" != config || marker=drift
   printf '{"clusters":[{"name":"owned","cluster":{"server":"%s"}}],"users":[{"name":"owned","user":{"client-certificate-data":"DATA+OMITTED","client-key-data":"DATA+OMITTED"}}]}\n' "$marker" ;;
-*'rollout status '*|*'wait --for=condition=Ready '*) test "$fault" != ready ;;
+'-n execution-qualification rollout status deployment/mecatl-execution --timeout=240s'|'-n execution-qualification rollout status deployment/mecak8s --timeout=240s'|'-n execution-qualification rollout status deployment/oidc-issuer --timeout=240s'|'-n execution-qualification wait --for=condition=Ready pod -l app.kubernetes.io/name=mecatl-execution --timeout=240s'|'-n execution-qualification wait --for=condition=Ready pod -l app.kubernetes.io/name=mecak8s --timeout=240s'|'-n execution-qualification wait --for=condition=Ready pod -l app.kubernetes.io/name=oidc-issuer --timeout=240s')
+  test "$fault" != ready
+  case "$*" in *oidc-issuer*) test "$fault" != oidc-ready ;; esac ;;
 *'rollout restart '*) printf 'restart\n' >> "$HOME/events" ;;
 *'create configmap '*) printf 'mock-setup\n' >> "$HOME/events"; printf 'mock\n' ;;
 'apply -f -') cat >/dev/null ;;
 '-n execution-qualification get secret '*)
+  case "$5" in
+  execution-security|execution-client-tls|execution-trust|execution-fixture-ca|oidc-fixture-identity) ;;
+  *) echo 'unknown Secret rejected' >&2; exit 99 ;;
+  esac
   case "$*" in
   *'.metadata.uid'*) marker=stable; test "$fault" != secret-uid || marker=drift; printf 'uid-%s\n' "$marker" ;;
   *'.data.clients\.pem'*|*'.data.ca\.crt'*|*'secret execution-fixture-ca -o jsonpath={.data.tls\.crt}'*) marker=stable; test "$fault" != trust || marker=drift; printf 'public-trust-%s' "$marker" ;;
@@ -359,14 +401,34 @@ case "$*" in
   *deployment/*:spec|*configmap/execution-mock*:config|*configmap/mecatl-execution-templates*:catalog|*configmap/mecatl-execution-security-authority*:authority) marker=drift ;;
   esac
   case "$4" in
-  */*)
-    image=ko.local/provider@`+digest+`
-    test "$4" != deployment/mecak8s || image=ko.local/agent@`+digest+`
-    uid=uid
-    case "$4:$fault" in deployment/*:deployment-uid) uid=changed ;; deployment/*:image) image=changed ;; esac
-    printf '{"kind":"Fixture","metadata":{"name":"%s","uid":"%s"},"spec":{"marker":"%s","template":{"spec":{"containers":[{"image":"%s"}]}}},"data":{"marker":"%s"},"status":{"clock":"%s"}}\n' "$4" "$uid" "$marker" "$image" "$marker" "$fault" ;;
-  *) printf '{"items":[]}\n' ;;
-  esac ;;
+  deployment/mecatl-execution) image=ko.local/provider@`+digest+`; app=mecatl-execution; container=provider ;;
+  deployment/mecak8s) image=ko.local/agent@`+digest+`; app=mecak8s; container=agent ;;
+  deployment/oidc-issuer) image=ko.local/oidc@`+digest+`; app=oidc-issuer; container=issuer ;;
+  namespace/execution-qualification|configmap/execution-mock|configmap/mecatl-execution-templates|configmap/mecatl-execution-security-manifest|configmap/mecatl-execution-security-authority|issuer/execution-fixture-ca|certificate/execution-provider-tls|certificate/execution-client-tls)
+    case "$4" in namespace/*) kind=Namespace ;; configmap/*) kind=ConfigMap ;; issuer/*) kind=Issuer ;; certificate/*) kind=Certificate ;; esac
+    printf '{"kind":"%s","metadata":{"name":"%s","uid":"uid-%s"},"spec":{"marker":"%s"},"data":{"marker":"%s"}}\n' "$kind" "${4#*/}" "$4" "$marker" "$marker"
+    exit 0 ;;
+  networkpolicy|service|serviceaccount|role|rolebinding)
+    if [ "$fault" = "$4" ]; then
+      case "$4" in
+      networkpolicy) change='.items[0].spec.ingress = []' ;;
+      service) change='.items[0].spec.selector = {"app.kubernetes.io/name":"intruder"}' ;;
+      serviceaccount) change='.items[2].automountServiceAccountToken = true' ;;
+      role) change='.items[0].rules[0].verbs = ["*"]' ;;
+      rolebinding) change='.items[0].subjects[0].name = "intruder"' ;;
+      esac
+      jq "$change" "$HOME/inventory/$4"
+    else cat "$HOME/inventory/$4"; fi
+    exit 0 ;;
+  *) echo "unknown resource rejected: $4" >&2; exit 99 ;;
+  esac
+  uid=uid
+  case "$4:$fault" in
+  deployment/*:deployment-uid|deployment/oidc-issuer:oidc-uid) uid=changed ;;
+  deployment/*:image|deployment/oidc-issuer:oidc-image) image=changed ;;
+  deployment/oidc-issuer:oidc-spec) marker=drift ;;
+  esac
+  printf '{"kind":"Deployment","metadata":{"name":"%s","uid":"%s"},"spec":{"marker":"%s","selector":{"matchLabels":{"app.kubernetes.io/name":"%s"}},"template":{"metadata":{"labels":{"app.kubernetes.io/name":"%s"}},"spec":{"containers":[{"name":"%s","image":"%s"}]}}},"status":{"clock":"%s"}}\n' "${4#*/}" "$uid" "$marker" "$app" "$app" "$container" "$image" "$fault" ;;
 *) echo "unexpected kubectl request: $*" >&2; exit 99 ;;
 esac
 `, 0o700)
@@ -387,7 +449,7 @@ handoff_digest
 			}
 			// Only modeled state changes affect the digest; status/leaf clocks don't.
 			commandFault := ""
-			if strings.Contains(" config spec deployment-uid image trust catalog authority node secret-uid read ready checkout leaf-renewal ", " "+fault+" ") {
+			if strings.Contains(" config spec deployment-uid image trust catalog authority node secret-uid read ready checkout leaf-renewal oidc-spec oidc-uid oidc-image oidc-ready networkpolicy service serviceaccount role rolebinding ", " "+fault+" ") {
 				commandFault = fault
 			}
 			writeFixture(t, filepath.Join(root, "fault"), commandFault, 0o600)
@@ -424,6 +486,19 @@ handoff_digest
 			// Replace explicitly instead of relying on duplicate environment names.
 			env = env[:len(env)-2]
 			env = append(env, "MECATL_EXECUTION_HANDOFF_SHA="+sha, "MECATL_EXECUTION_QUAL_STATE="+capturedState, "MECATL_EXECUTION_HANDOFF_COMPLETE="+complete, "MECATL_EXECUTION_HANDOFF_DIGEST="+qualified, "MECATL_EXECUTION_HANDOFF_RUN_ID="+run, "MECATL_EXECUTION_HANDOFF_RUN_ATTEMPT="+attempt, "MECATL_EXECUTION_HANDOFF_CLUSTER="+capturedCluster, "MECATL_EXECUTION_LIVE_SESSION="+session, "MECATL_EXECUTION_LIVE_QUALIFIED="+selector, "MECATL_EXECUTION_CREDENTIAL_FILE="+filepath.Join(root, "provider;touch injected"), "OPENROUTER_API_KEY=PROVIDER-SENTINEL", "AWS_SECRET_ACCESS_KEY=PRIVATE-SENTINEL")
+			verifyEnv := make([]string, 0, len(env))
+			for _, entry := range env {
+				if !strings.HasPrefix(entry, "MECATL_EXECUTION_CREDENTIAL_FILE=") {
+					verifyEnv = append(verifyEnv, entry)
+				}
+			}
+			out, err = runStep(t, root, "sh ./deploy/mecatl-execution-kind/live.sh --verify-handoff", verifyEnv...)
+			if (err == nil) != (fault == "" || fault == "leaf-renewal") {
+				t.Fatalf("secret-free verification admission: %v: %s", err, out)
+			}
+			if events, err := os.ReadFile(filepath.Join(root, "events")); !os.IsNotExist(err) {
+				t.Fatalf("verify-only prepared, mutated, or staged credentials: %q: %v", events, err)
+			}
 			out, err = runStep(t, root, "sh ./deploy/mecatl-execution-kind/live.sh", env...)
 			if err == nil {
 				t.Fatal("fake credentialloader must stop before real live mutation")

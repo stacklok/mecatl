@@ -100,7 +100,9 @@ case "$*" in
 *'-test.skip ^TestKindExecutionQualification$'*) phase=serial ;;
 *'^TestKindExecutionAutomaticCertificateRenewal$'*) phase=natural ;;
 *'^TestKindExecutionInFlightAutomaticRenewal$'*) phase=renewal ;;
-*'^TestKindExecutionQualification$'*) phase=final ;;
+*'^TestKindExecutionQualification$'*)
+  phase=final
+  test "$MECATL_EXECUTION_LIVE_CLUSTER" = owned-cluster ;;
 *) exit 99 ;;
 esac
 printf '%s\n' "$phase" >> "$HOME/events"
@@ -112,7 +114,7 @@ phase_done() { :; }
 cleanup_test_build() { printf 'cleanup\n' >> "$HOME/events"; test "$(cat "$HOME/fault")" != cleanup; }
 handoff_ready() { printf 'ready\n' >> "$HOME/events"; }
 handoff_digest() { test "$(cat "$HOME/fault")" != digest || return 1; printf '%064d\n' 0; }
-`+serial+final, "root="+root, "state="+filepath.Join(root, "state"), "handoff=1", "natural_expiry=1", "MECATL_EXECUTION_QUAL_PROFILE=production", "kubeconfig=owned", "context=owned", "go_revision=owned", "GITHUB_SHA="+strings.Repeat("a", 40), "GITHUB_RUN_ID=123", "GITHUB_RUN_ATTEMPT=2", "GITHUB_OUTPUT="+filepath.Join(root, "output"))
+`+serial+final, "root="+root, "cluster=owned-cluster", "state="+filepath.Join(root, "state"), "handoff=1", "natural_expiry=1", "MECATL_EXECUTION_QUAL_PROFILE=production", "kubeconfig=owned", "context=owned", "go_revision=owned", "GITHUB_SHA="+strings.Repeat("a", 40), "GITHUB_RUN_ID=123", "GITHUB_RUN_ATTEMPT=2", "GITHUB_OUTPUT="+filepath.Join(root, "output"))
 			if (err == nil) != (fault == "") {
 				t.Fatalf("qualification gate: %v: %s", err, out)
 			}

@@ -283,8 +283,8 @@ jobs:
     env:
       NATIVE_CI_DIR: ${{ github.workspace }}/.scratch/native-live-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
-      # Step ceilings sum to 148m: setup 9, production 100, credential 1,
-      # live 25, cleanup 10, reporting 3. The job retains 12m overhead.
+      # Step ceilings sum to 150m: setup 9, production 100, validation 2,
+      # credential 1, live 25, cleanup 10, reporting 3. Retain 10m overhead.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         timeout-minutes: 1
         with:
@@ -339,10 +339,24 @@ jobs:
           MECATL_EXECUTION_QUAL_HANDOFF: "1"
           MECATL_EXECUTION_HANDOFF_SHA: ${{ github.sha }}
         run: MECATL_EXECUTION_QUAL_OUTPUT="$GITHUB_OUTPUT" timeout --kill-after=15s 98m task e2e:k8s:execution:production
+      - name: Validate secret-free handoff before credential staging
+        timeout-minutes: 2
+        id: validation
+        if: success() && steps.production.outcome == 'success' && steps.production.outputs.handoff_complete == '1'
+        env:
+          MECATL_EXECUTION_LIVE_QUALIFIED: "1"
+          MECATL_EXECUTION_HANDOFF_COMPLETE: ${{ steps.production.outputs.handoff_complete }}
+          MECATL_EXECUTION_HANDOFF_DIGEST: ${{ steps.production.outputs.handoff_digest }}
+          MECATL_EXECUTION_HANDOFF_SHA: ${{ steps.production.outputs.handoff_sha }}
+          MECATL_EXECUTION_HANDOFF_RUN_ID: ${{ steps.production.outputs.handoff_run_id }}
+          MECATL_EXECUTION_HANDOFF_RUN_ATTEMPT: ${{ steps.production.outputs.handoff_run_attempt }}
+          MECATL_EXECUTION_HANDOFF_CLUSTER: ${{ steps.production.outputs.cluster }}
+          MECATL_EXECUTION_QUAL_STATE: ${{ steps.production.outputs.state }}
+        run: timeout --kill-after=5s 105s ./deploy/mecatl-execution-kind/live.sh --verify-handoff
       - name: Stage private provider credential
         timeout-minutes: 1
         id: credential
-        if: success() && steps.production.outcome == 'success' && steps.production.outputs.handoff_complete == '1'
+        if: success() && steps.production.outcome == 'success' && steps.production.outputs.handoff_complete == '1' && steps.validation.outcome == 'success'
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |

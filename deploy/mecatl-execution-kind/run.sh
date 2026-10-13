@@ -500,7 +500,7 @@ fi
 if [ "${handoff:-0}" = 1 ]; then
   printf 'qualification phase=final_mock starting\n'
   dev env -i HOME="$HOME" PATH="$PATH" TOOLBOX_PATH="${TOOLBOX_PATH:-}" XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}" \
-    KUBECONFIG="$kubeconfig" MECATL_KUBE_CONTEXT="$context" MECATL_EXECUTION_K8S_TOOLBOX="${MECATL_EXECUTION_K8S_TOOLBOX:-}" MECATL_EXECUTION_TEMPLATE_REVISION="$go_revision" MECATL_EXECUTION_QUAL_STATE="$state" MECATL_EXECUTION_QUAL_PROFILE=production \
+    KUBECONFIG="$kubeconfig" MECATL_KUBE_CONTEXT="$context" MECATL_EXECUTION_K8S_TOOLBOX="${MECATL_EXECUTION_K8S_TOOLBOX:-}" MECATL_EXECUTION_TEMPLATE_REVISION="$go_revision" MECATL_EXECUTION_QUAL_STATE="$state" MECATL_EXECUTION_QUAL_PROFILE=production MECATL_EXECUTION_LIVE_CLUSTER="$cluster" \
     sh -c 'cd e2e/k8s_execution && exec "$@"' sh "$state/qualification.test" -test.v -test.count=1 -test.run '^TestKindExecutionQualification$' -test.timeout=15m
   phase_done final_mock
   # A successful binary exit includes its deferred cleanup. No later mutation

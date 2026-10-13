@@ -71,8 +71,20 @@ func nativeSteps(t *testing.T) map[string]workflowStep {
 	if steps["production"].Env["MECATL_EXECUTION_QUAL_CI"] != "0" || len(steps["credential"].Env) != 1 || steps["credential"].Env["OPENROUTER_API_KEY"] != "${{ secrets.OPENROUTER_API_KEY }}" {
 		t.Fatal("production retention or step-scoped credential wiring drifted")
 	}
-	if steps["credential"].If != "success() && steps.production.outcome == 'success' && steps.production.outputs.handoff_complete == '1'" || steps["live"].If != "success() && steps.production.outcome == 'success' && steps.production.outputs.handoff_complete == '1' && steps.credential.outcome == 'success'" || steps["cleanup"].If != "always() && steps.prepare.outcome == 'success'" {
+	if steps["credential"].If != "success() && steps.production.outcome == 'success' && steps.production.outputs.handoff_complete == '1' && steps.validation.outcome == 'success'" || steps["live"].If != "success() && steps.production.outcome == 'success' && steps.production.outputs.handoff_complete == '1' && steps.credential.outcome == 'success'" || steps["cleanup"].If != "always() && steps.prepare.outcome == 'success'" {
 		t.Fatal("qualification must depend on actual production success and always clean up")
+	}
+	validation := steps["validation"]
+	if validation.Timeout != 2 || validation.If != "success() && steps.production.outcome == 'success' && steps.production.outputs.handoff_complete == '1'" || validation.Run != "timeout --kill-after=5s 105s ./deploy/mecatl-execution-kind/live.sh --verify-handoff" {
+		t.Fatal("private file staging requires bounded secret-free handoff verification")
+	}
+	for _, key := range []string{"MECATL_EXECUTION_LIVE_QUALIFIED", "MECATL_EXECUTION_QUAL_STATE", "MECATL_EXECUTION_HANDOFF_CLUSTER", "MECATL_EXECUTION_HANDOFF_COMPLETE", "MECATL_EXECUTION_HANDOFF_DIGEST", "MECATL_EXECUTION_HANDOFF_SHA", "MECATL_EXECUTION_HANDOFF_RUN_ID", "MECATL_EXECUTION_HANDOFF_RUN_ATTEMPT"} {
+		if validation.Env[key] != steps["live"].Env[key] {
+			t.Fatalf("validation/live identity mismatch: %s", key)
+		}
+	}
+	if len(validation.Env) != 8 {
+		t.Fatal("secret-free validation must not receive a credential")
 	}
 	return steps
 }

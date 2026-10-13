@@ -17,14 +17,56 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/peer"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
+	executionv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/execution/v1"
 	"github.com/stacklok/mecatl/internal/adapter/executionclient"
 	"github.com/stacklok/mecatl/internal/executionenv"
 )
+
+// The authorized catalog is read-only and independent of the active run lease.
+func inflightCatalogSerial(ctx context.Context, client grpc.ClientConnInterface) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	var remote peer.Peer
+	_, err := executionv1.NewExecutionProviderServiceClient(client).ListExecutionTemplates(ctx, &executionv1.ListExecutionTemplatesRequest{}, grpc.Peer(&remote))
+	if err != nil {
+		return "", err
+	}
+	info, ok := remote.AuthInfo.(credentials.TLSInfo)
+	if !ok || len(info.State.VerifiedChains) == 0 || len(info.State.PeerCertificates) == 0 {
+		return "", fmt.Errorf("catalog RPC did not authenticate the provider")
+	}
+	return info.State.PeerCertificates[0].SerialNumber.String(), nil
+}
+
+func inflightVerifyReload(ctx context.Context, client grpc.ClientConnInterface, files executionclient.TLSFiles, serverSerial, clientSerial string) error {
+	cfg, err := executionclient.LoadTLSConfig(files)
+	if err != nil {
+		return err
+	}
+	leaf, err := x509.ParseCertificate(cfg.Certificates[0].Certificate[0])
+	if err != nil {
+		return err
+	}
+	if leaf.SerialNumber.String() != clientSerial {
+		return fmt.Errorf("published client identity differs from renewed issued pair")
+	}
+	serial, err := inflightCatalogSerial(ctx, client)
+	if err != nil {
+		return err
+	}
+	if serial != serverSerial {
+		return fmt.Errorf("same-client catalog RPC did not use renewed server identity")
+	}
+	return nil
+}
 
 func inflightHandshake(endpoint string, files executionclient.TLSFiles) (string, error) {
 	cfg, err := executionclient.LoadTLSConfig(files)
@@ -239,7 +281,7 @@ func TestKindExecutionInFlightAutomaticRenewal(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(client.Close)
-	oldServerSerial, err := inflightHandshake(forward.addr, files)
+	oldServerSerial, err := inflightCatalogSerial(ctx, client)
 	if err != nil {
 		t.Fatalf("initial provider handshake: %v", err)
 	}
@@ -436,6 +478,12 @@ func TestKindExecutionInFlightAutomaticRenewal(t *testing.T) {
 		}
 		return client.ReloadTLS()
 	}, func() error {
+		if err := assertActive(); err != nil {
+			return err
+		}
+		if err := inflightVerifyReload(renewCtx, client, files, newServerSerial, newClientSerial); err != nil {
+			return err
+		}
 		if err := assertActive(); err != nil {
 			return err
 		}

@@ -13,10 +13,19 @@ if [ "${MECATL_EXECUTION_LIVE_CLEAN_ENV:-}" != 1 ]; then
     GITHUB_ACTIONS="${GITHUB_ACTIONS:-}" GITHUB_RUN_ID="${GITHUB_RUN_ID:-}" GITHUB_RUN_ATTEMPT="${GITHUB_RUN_ATTEMPT:-}" GITHUB_SHA="${GITHUB_SHA:-}" TMPDIR="${TMPDIR:-}" \
     MECATL_EXECUTION_LIVE_CLEAN_ENV=1 "$0" "$@"
 fi
-[ "$#" -eq 0 ] || { echo "usage: MECATL_EXECUTION_CREDENTIAL_FILE=/absolute/file MECATL_EXECUTION_QUAL_STATE=/owned/state $0" >&2; exit 2; }
+verify_only=0
+case "$*" in
+  '') [ "$#" -eq 0 ] || exit 2 ;;
+  --verify-handoff) [ "$#" -eq 1 ] || exit 2; verify_only=1 ;;
+  *) echo "usage: $0 [--verify-handoff]" >&2; exit 2 ;;
+esac
 qualified=${MECATL_EXECUTION_LIVE_QUALIFIED-0}
 case "$qualified" in 0|1) ;; *) echo "MECATL_EXECUTION_LIVE_QUALIFIED must be 0 or 1" >&2; exit 2 ;; esac
-[ -n "$MECATL_EXECUTION_CREDENTIAL_FILE" ] || { echo "MECATL_EXECUTION_CREDENTIAL_FILE is required" >&2; exit 2; }
+if [ "$verify_only" = 1 ]; then
+  [ "$qualified" = 1 ] || { echo "verification requires qualified handoff" >&2; exit 2; }
+else
+  [ -n "${MECATL_EXECUTION_CREDENTIAL_FILE:-}" ] || { echo "MECATL_EXECUTION_CREDENTIAL_FILE is required" >&2; exit 2; }
+fi
 [ -n "$MECATL_EXECUTION_QUAL_STATE" ] || { echo "MECATL_EXECUTION_QUAL_STATE is required" >&2; exit 2; }
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)
@@ -96,6 +105,10 @@ load_image() {
 if [ "$qualified" = 1 ]; then
   . "$root/deploy/mecatl-execution-kind/handoff.sh"
   handoff_consume || { echo "qualified same-run handoff missing or drifted" >&2; exit 1; }
+  if [ "$verify_only" = 1 ]; then
+    printf 'live qualified_handoff=verified credentials=unstaged\n'
+    exit 0
+  fi
   provider_image=$(handoff_image provider)
   agent_image=$(handoff_image agent)
   workload_image=$(handoff_image workload)
