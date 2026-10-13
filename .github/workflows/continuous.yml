@@ -9,9 +9,9 @@
 # main/charts), versioned X.Y.(Z+1)-main.<run>.<attempt>.g<sha8> from the
 # commit's VERSION, never below the last publication's X.Y.Z: the patch bump
 # sorts them above the last release, and the run number and attempt order them
-# by publication. Renaming this file resets
-# the run number, so bump VERSION alongside such a rename. Images are tagged
-# v<version>; each chart pins its image by digest. Signatures and attestations
+# by publication. Renaming this file resets the run number, so cut a release
+# (which bumps VERSION) alongside such a rename. Images are tagged v<version>;
+# each chart pins its image by digest. Signatures and attestations
 # name this workflow (continuous.yml@refs/heads/main), so they can never verify
 # as a release (release.yml@refs/tags/v*).
 #
@@ -48,9 +48,10 @@ on:
 
 permissions: {}
 
-# One publication at a time, in order. A burst of merges collapses into at most
-# one queued run behind the one in progress; never cancel a half-signed run.
-# Runs that cannot publish (failed CI, pull requests from a branch named main,
+# One publication at a time, in order, and never cancel a half-signed run. A
+# newer pending run replaces an older one, pending dispatches included, so a
+# burst of merges publishes only its newest commit and the skipped runs show as
+# cancelled. Runs that cannot publish (failed CI, pull requests from a branch named main,
 # dispatches from other refs) get their own group, so they never replace a
 # queued publication.
 concurrency:

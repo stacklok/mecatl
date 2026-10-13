@@ -11,26 +11,28 @@ release behavior. This page is only a stable index to operational guidance.
 
 ## Continuous builds from main
 
-[Continuous main build](continuous.yml) runs after [CI](ci.yml) succeeds on a push
-to `main`. It publishes the `mecak8s` image, the Studio image, and the `mecak8s` and
-`mecatl-studio` charts, all built from that commit and sharing one version,
-`X.Y.(Z+1)-main.<run>.<attempt>.g<sha8>`, derived from the commit's `VERSION`. Images
-go to `ghcr.io/stacklok/mecatl/main/{mecak8s,studio}` (tagged `v<version>`) and charts
-to `oci://ghcr.io/stacklok/mecatl/main/charts`; each chart pins its image by digest.
-Release artifacts and their paths are never touched.
+[Continuous main build](continuous.yml) publishes signed `mecak8s` and Studio images
+and their charts after [CI](ci.yml) passes on a push to `main`. Its header comment
+describes the version scheme and publication order.
 
-The charts publish last, after both images are signed and verified, so a follower
-that selects the newest chart with a prerelease range such as `>=0.0.0-0` always gets
-images from one commit. A commit publishes only when it is newer on `main` than the
-last published `mecatl-studio` chart; an older or already published commit ends with
-a notice, so followers never move back. To publish by hand, dispatch the workflow from
-`main`; it publishes the dispatched commit. Set `force` only to republish a commit or
-to deliberately move followers to an older one.
-
-Signatures and attestations name `.github/workflows/continuous.yml@refs/heads/main`,
-so verify a main build with that certificate identity. Main builds ship without the
-product-metrics ingest key. GitHub creates the four `main/` packages as private on
-their first publication; pull them with a GHCR credential or make them public.
+- **Packages:** images at `ghcr.io/stacklok/mecatl/main/{mecak8s,studio}` and charts
+  at `oci://ghcr.io/stacklok/mecatl/main/charts`, each pinning its image by digest.
+  Follow the newest build with a prerelease range such as `>=0.0.0-0`. GitHub creates
+  these packages as private; pull them with a GHCR credential or make them public.
+  Main builds ship without the product-metrics ingest key.
+- **Verification:** signatures and attestations name
+  `.github/workflows/continuous.yml@refs/heads/main`. Have followers verify charts
+  with that identity (for Flux, `verify.provider: cosign`), so they never deploy a
+  chart whose signing failed.
+- **Publishing by hand:** dispatch the workflow from `main` once CI has passed on its
+  commit. Dispatch while no run is in progress and check that it published, because
+  a later automatic run replaces a pending dispatch. Dispatching again republishes a
+  commit whose chart was pushed but not signed and attested.
+- **Rolling back:** dispatch with `force` and an older `commit_sha`. Followers move to
+  it until the next main build publishes; to hold a version, pin it on the follower.
+- **Partial failures:** the `mecak8s` chart publishes before `mecatl-studio`, so a run
+  that fails between them leaves followers on the new daemon with the previous Studio
+  until the next build publishes.
 
 ## Cutting a root release
 
