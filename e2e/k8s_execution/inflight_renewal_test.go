@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -63,23 +64,125 @@ func inflightIssuedHandshake(endpoint string, ca []byte, pair tls.Certificate) (
 	return inflightTLSHandshake(endpoint, &tls.Config{MinVersion: tls.VersionTLS13, ServerName: "mecatl-execution.execution-qualification.svc.cluster.local", RootCAs: pool, Certificates: []tls.Certificate{pair}})
 }
 
-// Exercise an active provider lease across cert-manager's scheduled leaf rotation.
+const inflightBarrierCommand = `set -eu; test ! -e renewal-release; printf 'started\n' > renewal-started; i=0; while [ ! -f renewal-release ]; do if [ "$i" -ge 210 ]; then printf 'renewal barrier timeout\n' >&2; exit 124; fi; i=$((i+1)); sleep 1; done; printf 'after\n' > renewal-writer; printf 'renewal-terminal\n'`
+
+const inflightReleaseCommand = `set -eu; test -f /workspace/renewal-started; test ! -e /workspace/renewal-release; printf 'release\n' > /workspace/renewal-release`
+
+func inflightExecutorPod(pods []corev1.Pod, environmentID, uid string) (corev1.Pod, error) {
+	if len(pods) != 1 || uid == "" {
+		return corev1.Pod{}, fmt.Errorf("expected one executor with a durable Pod UID")
+	}
+	pod := pods[0]
+	if pod.Name == "" || string(pod.UID) != uid || pod.Labels["execution.mecatl.dev/environment"] != environmentID || pod.DeletionTimestamp != nil || len(pod.Spec.Containers) != 1 || pod.Spec.Containers[0].Name != "executor" {
+		return corev1.Pod{}, fmt.Errorf("executor Pod does not match the active environment")
+	}
+	return pod, nil
+}
+
+func inflightExecutorCommand(ctx context.Context, kubeconfig, pod, script string) *exec.Cmd {
+	return command(ctx, kubeconfig, "--request-timeout=10s", "exec", "-n", namespace, "pod/"+pod, "-c", "executor", "--", "/bin/sh", "-c", script)
+}
+
+func inflightRenewCommand(ctx context.Context, state, kubeconfig, name string) *exec.Cmd {
+	cmd := fixtureCommand(ctx, filepath.Join(state, "tools", "cmctl"), "renew", "--kubeconfig", kubeconfig, "--context", os.Getenv("MECATL_KUBE_CONTEXT"), "--namespace", namespace, name)
+	cmd.Env = cleanEnv()
+	cmd.WaitDelay = time.Second
+	return cmd
+}
+
+func inflightRunning(ctx context.Context, done <-chan struct{}) error {
+	select {
+	case <-done:
+		return fmt.Errorf("command completed before controlled renewal/reload/release")
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+		return nil
+	}
+}
+
+func inflightWait(ctx context.Context, done <-chan struct{}, ready func() (bool, error)) error {
+	for {
+		if err := inflightRunning(ctx, done); err != nil {
+			return err
+		}
+		ok, err := ready()
+		if err != nil {
+			return err
+		}
+		if err := inflightRunning(ctx, done); err != nil {
+			return err
+		}
+		if ok {
+			return nil
+		}
+		select {
+		case <-done:
+			return fmt.Errorf("command completed while waiting for controlled renewal")
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+// Only an explicit API update conflict is retryable. A successful or ambiguous
+// request is never repeated, and an already-issuing certificate is left alone.
+func inflightRenewRequest(ctx context.Context, request func() error, pending func() (bool, error)) error {
+	for attempt := 0; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		err := request()
+		if err == nil || !strings.Contains(err.Error(), "failed to trigger issuance of Certificate ") || !strings.Contains(err.Error(), "the object has been modified") || attempt == 2 {
+			return err
+		}
+		if issuing, checkErr := pending(); checkErr != nil || issuing {
+			return checkErr
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+func inflightReloadAndRelease(ctx context.Context, done <-chan struct{}, reload, release func() error) error {
+	if err := inflightRunning(ctx, done); err != nil {
+		return err
+	}
+	if err := reload(); err != nil {
+		return err
+	}
+	if err := inflightRunning(ctx, done); err != nil {
+		return err
+	}
+	return release()
+}
+
+// Exercise an active provider lease across controlled cert-manager leaf renewal.
+// Keep the historical test name for existing selectors.
 func TestKindExecutionInFlightAutomaticRenewal(t *testing.T) {
 	if os.Getenv("MECATL_EXECUTION_QUAL_RENEWAL") != "1" {
-		t.Skip("automatic renewal qualification only")
+		t.Skip("controlled renewal qualification only")
 	}
-	state, kubeconfig, ctx, cancel := requireProduction(t)
+	state, kubeconfig, parent, parentCancel := requireProduction(t)
+	defer parentCancel()
+	ctx, cancel := context.WithTimeout(parent, 7*time.Minute)
 	defer cancel()
+	ioCtx := ctx
 	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(&clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfig}, &clientcmd.ConfigOverrides{CurrentContext: os.Getenv("MECATL_KUBE_CONTEXT")}).ClientConfig()
 	if err != nil {
 		t.Fatal(err)
 	}
+	config.Timeout = 10 * time.Second
 	k8s, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		t.Fatal(err)
 	}
 	readIssued := func() *corev1.Secret {
-		secret, err := k8s.CoreV1().Secrets(namespace).Get(ctx, "execution-client-tls", metav1.GetOptions{})
+		secret, err := k8s.CoreV1().Secrets(namespace).Get(ioCtx, "execution-client-tls", metav1.GetOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -141,28 +244,20 @@ func TestKindExecutionInFlightAutomaticRenewal(t *testing.T) {
 		t.Fatalf("initial provider handshake: %v", err)
 	}
 	owner, binding, attached := createProductionEnvironment(t, ctx, client, "inflight-renewal")
-	before := readExecutionStatus(t, ctx, kubeconfig, attached.Environment.ID)
-	if before.PVCUID == "" {
-		t.Fatal("missing retained workspace")
+	statusAt := func(parent context.Context) executionStatus {
+		t.Helper()
+		poll, stop := context.WithTimeout(parent, 10*time.Second)
+		defer stop()
+		return readExecutionStatus(t, poll, kubeconfig, attached.Environment.ID)
+	}
+	before := statusAt(ctx)
+	if before.PVCUID == "" || before.PodUID == "" {
+		t.Fatal("missing retained workspace or executor identity")
 	}
 	certificate := func(name, field string) string {
-		return kubeValue(t, ctx, kubeconfig, "get", "certificate/"+name, "-n", namespace, "-o", "jsonpath={.status."+field+"}")
-	}
-	var renewal time.Time
-	for {
-		var err error
-		renewal, err = time.Parse(time.RFC3339, certificate("execution-provider-tls", "renewalTime"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if time.Until(renewal) > 40*time.Second {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatal("no future automatic renewal in qualification window")
-		case <-time.After(10 * time.Second):
-		}
+		poll, stop := context.WithTimeout(ioCtx, 10*time.Second)
+		defer stop()
+		return kubeValue(t, poll, kubeconfig, "get", "certificate/"+name, "-n", namespace, "-o", "jsonpath={.status."+field+"}")
 	}
 	serverRevision, err := strconv.Atoi(certificate("execution-provider-tls", "revision"))
 	if err != nil {
@@ -172,20 +267,17 @@ func TestKindExecutionInFlightAutomaticRenewal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("scheduled_renewal=%s server_revision=%d client_revision=%d", renewal.UTC().Format(time.RFC3339), serverRevision, clientRevision)
-	select {
-	case <-ctx.Done():
-		t.Fatal("renewal wait exceeded qualification deadline")
-	case <-time.After(time.Until(renewal.Add(-20 * time.Second))):
-	}
+	t.Logf("controlled_renewal_baseline server_revision=%d client_revision=%d", serverRevision, clientRevision)
 	runID := fmt.Sprintf("inflight-%d", time.Now().UnixNano())
-	claim, err := client.AcquireRun(ctx, executionenv.RunClaimRequest{Environment: attached.Environment, Owner: owner, BindingID: binding, RunID: runID, OperationID: "acquire-" + runID, TTL: 3 * time.Minute})
+	claim, err := client.AcquireRun(ctx, executionenv.RunClaimRequest{Environment: attached.Environment, Owner: owner, BindingID: binding, RunID: runID, OperationID: "acquire-" + runID, TTL: 5 * time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
 	rc := executionenv.RequestContext{Environment: claim.Environment, Owner: owner, BindingID: binding, RunID: claim.RunID, ClaimID: claim.ClaimID, Epoch: claim.Epoch, GrantGeneration: claim.GrantGeneration}
 	defer func() {
-		if err := client.ReleaseRun(context.WithoutCancel(ctx), executionenv.RunClaimRequest{Environment: claim.Environment, Owner: owner, BindingID: binding, RunID: claim.RunID, ClaimID: claim.ClaimID, Epoch: claim.Epoch, GrantGeneration: claim.GrantGeneration, OperationID: "release-" + runID}); err != nil {
+		cleanup, stop := context.WithTimeout(context.Background(), 15*time.Second)
+		defer stop()
+		if err := client.ReleaseRun(cleanup, executionenv.RunClaimRequest{Environment: claim.Environment, Owner: owner, BindingID: binding, RunID: claim.RunID, ClaimID: claim.ClaimID, Epoch: claim.Epoch, GrantGeneration: claim.GrantGeneration, OperationID: "release-" + runID}); err != nil {
 			t.Errorf("release in-flight run: %v", err)
 		}
 	}()
@@ -196,59 +288,132 @@ func TestKindExecutionInFlightAutomaticRenewal(t *testing.T) {
 		response executionenv.CommandStartResponse
 		err      error
 	}
-	done := make(chan result, 1)
+	var r result
+	done := make(chan struct{})
+	commandCtx, stopCommand := context.WithCancel(ctx)
 	go func() {
-		response, err := client.StartCommand(ctx, executionenv.CommandStartRequest{Context: rc, Command: `i=0; while [ "$i" -lt 90 ]; do i=$((i+1)); printf '%s\n' "$i" > renewal-writer; sleep 1; done; printf 'renewal-terminal\n'`, TimeoutMillis: 115000})
-		done <- result{response, err}
+		r.response, r.err = client.StartCommand(commandCtx, executionenv.CommandStartRequest{Context: rc, Command: inflightBarrierCommand, TimeoutMillis: 240000})
+		close(done)
 	}()
-	for readExecutionStatus(t, ctx, kubeconfig, attached.Environment.ID).ActiveOperationID == "" {
-		select {
-		case r := <-done:
-			t.Fatalf("command ended before active-operation publication: state=%s code=%s", r.response.State, remoteErrorCode(r.err))
-		case <-ctx.Done():
-			t.Fatal("active operation was not published")
-		case <-time.After(time.Second):
+	defer func() { stopCommand(); <-done }()
+	renewCtx, stopRenewal := context.WithTimeout(ctx, 180*time.Second)
+	defer stopRenewal()
+	ioCtx = renewCtx
+	var active executionStatus
+	if err := inflightWait(renewCtx, done, func() (bool, error) {
+		active = statusAt(renewCtx)
+		return active.ActiveOperationID != "", nil
+	}); err != nil {
+		t.Fatalf("active operation publication: %v", err)
+	}
+	pods, err := k8s.CoreV1().Pods(namespace).List(renewCtx, metav1.ListOptions{LabelSelector: "execution.mecatl.dev/environment=" + attached.Environment.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod, err := inflightExecutorPod(pods.Items, attached.Environment.ID, active.PodUID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertActive := func() error {
+		if err := inflightRunning(renewCtx, done); err != nil {
+			return err
+		}
+		status := statusAt(renewCtx)
+		if status.ActiveOperationID != active.ActiveOperationID || status.PodUID != before.PodUID || status.PVCUID != before.PVCUID || status.Epoch != claim.Epoch || status.ActiveGrantGeneration != claim.GrantGeneration || status.FenceState == "FenceUnknown" {
+			return fmt.Errorf("controlled renewal changed active operation, Pod, PVC, epoch, or grant")
+		}
+		return inflightRunning(renewCtx, done)
+	}
+	// Fixture-admin exec only checks/releases the barrier; client.File cannot run
+	// concurrently with StartCommand. Never select a replacement Pod by label.
+	executorExec := func(script string) ([]byte, error) {
+		if err := assertActive(); err != nil {
+			return nil, err
+		}
+		poll, stop := context.WithTimeout(renewCtx, 10*time.Second)
+		defer stop()
+		verify := func() error {
+			current, err := k8s.CoreV1().Pods(namespace).Get(poll, pod.Name, metav1.GetOptions{})
+			if err != nil {
+				return err
+			}
+			_, err = inflightExecutorPod([]corev1.Pod{*current}, attached.Environment.ID, string(pod.UID))
+			return err
+		}
+		if err := verify(); err != nil {
+			return nil, err
+		}
+		out, err := inflightExecutorCommand(poll, kubeconfig, pod.Name, script).CombinedOutput()
+		if verifyErr := verify(); verifyErr != nil {
+			return nil, verifyErr
+		}
+		return out, err
+	}
+	if err := inflightWait(renewCtx, done, func() (bool, error) {
+		out, err := executorExec(`set -eu; if [ -f /workspace/renewal-started ]; then printf 'started'; fi`)
+		return string(out) == "started", err
+	}); err != nil {
+		t.Fatalf("command started marker: %v", err)
+	}
+	t.Logf("controlled_renewal_active operation=%s pod=%s pod_uid=%s epoch=%d grant=%d", active.ActiveOperationID, pod.Name, pod.UID, claim.Epoch, claim.GrantGeneration)
+	for _, cert := range []struct {
+		name     string
+		revision int
+	}{{"execution-provider-tls", serverRevision}, {"execution-client-tls", clientRevision}} {
+		err := inflightRenewRequest(renewCtx, func() error {
+			if err := assertActive(); err != nil {
+				return err
+			}
+			requestCtx, stop := context.WithTimeout(renewCtx, 15*time.Second)
+			defer stop()
+			out, err := inflightRenewCommand(requestCtx, state, kubeconfig, cert.name).CombinedOutput()
+			if err != nil {
+				return fmt.Errorf("cmctl renew %s: %w: %s", cert.name, err, out)
+			}
+			return assertActive()
+		}, func() (bool, error) {
+			if err := assertActive(); err != nil {
+				return false, err
+			}
+			revision, err := strconv.Atoi(certificate(cert.name, "revision"))
+			if err != nil {
+				return false, err
+			}
+			return revision > cert.revision || certificate(cert.name, `conditions[?(@.type=="Issuing")].status`) == "True", nil
+		})
+		if err != nil {
+			t.Fatalf("controlled renewal request: %v", err)
 		}
 	}
-	observed := false
-	for !observed {
-		select {
-		case r := <-done:
-			t.Fatalf("command ended before both scheduled renewals: state=%s code=%s", r.response.State, remoteErrorCode(r.err))
-		case <-ctx.Done():
-			t.Fatal("automatic renewal deadline during active operation")
-		case <-time.After(2 * time.Second):
-			server, serverErr := strconv.Atoi(certificate("execution-provider-tls", "revision"))
-			peer, peerErr := strconv.Atoi(certificate("execution-client-tls", "revision"))
-			if serverErr != nil || peerErr != nil {
-				t.Fatalf("certificate revision unavailable: server=%v client=%v", serverErr, peerErr)
-			}
-			observed = server > serverRevision && peer > clientRevision
-			if observed {
-				t.Logf("in_flight_renewal=%s server_revision=%d client_revision=%d", time.Now().UTC().Format(time.RFC3339), server, peer)
-			}
+	if err := inflightWait(renewCtx, done, func() (bool, error) {
+		if err := assertActive(); err != nil {
+			return false, err
 		}
+		server, serverErr := strconv.Atoi(certificate("execution-provider-tls", "revision"))
+		peer, peerErr := strconv.Atoi(certificate("execution-client-tls", "revision"))
+		if serverErr != nil || peerErr != nil {
+			return false, fmt.Errorf("certificate revision unavailable: server=%v client=%v", serverErr, peerErr)
+		}
+		return server > serverRevision && peer > clientRevision, nil
+	}); err != nil {
+		t.Fatalf("controlled issuance revisions: %v", err)
 	}
 	// The active RPC is pinned to the original client transport. Publish the
 	// cert-manager-issued projection and reload the *same* client while it drains.
 	newClientSerial := oldClientSerial
 	newServerSerial := oldServerSerial
-	for newClientSerial == oldClientSerial || newServerSerial == oldServerSerial {
-		select {
-		case r := <-done:
-			t.Fatalf("command ended before client transport switched: state=%s code=%s", r.response.State, remoteErrorCode(r.err))
-		case <-ctx.Done():
-			t.Fatal("renewed projected identities did not become available during active RPC")
-		default:
+	if err := inflightWait(renewCtx, done, func() (bool, error) {
+		if err := assertActive(); err != nil {
+			return false, err
 		}
 		secret := readIssued()
 		pair, pairErr := tls.X509KeyPair(secret.Data[corev1.TLSCertKey], secret.Data[corev1.TLSPrivateKeyKey])
 		if pairErr != nil {
-			t.Fatal("renewed client Secret has invalid pair")
+			return false, fmt.Errorf("renewed client Secret has invalid pair")
 		}
 		leaf, parseErr := x509.ParseCertificate(pair.Certificate[0])
 		if parseErr != nil {
-			t.Fatal("renewed client Secret has invalid leaf")
+			return false, fmt.Errorf("renewed client Secret has invalid leaf")
 		}
 		newClientSerial = leaf.SerialNumber.String()
 		if newClientSerial != oldClientSerial {
@@ -258,34 +423,42 @@ func TestKindExecutionInFlightAutomaticRenewal(t *testing.T) {
 				newServerSerial = oldServerSerial
 			}
 		}
-		if newClientSerial == oldClientSerial || newServerSerial == oldServerSerial {
-			time.Sleep(time.Second)
+		return newClientSerial != oldClientSerial && newServerSerial != oldServerSerial, nil
+	}); err != nil {
+		t.Fatalf("renewed projected identities during active RPC: %v", err)
+	}
+	if err := inflightReloadAndRelease(renewCtx, done, func() error {
+		if err := assertActive(); err != nil {
+			return err
 		}
+		if got := publish(readIssued(), 1); got != newClientSerial {
+			return fmt.Errorf("client Secret changed between handshake and projection; refusing ambiguous reload")
+		}
+		return client.ReloadTLS()
+	}, func() error {
+		if err := assertActive(); err != nil {
+			return err
+		}
+		t.Logf("transport_reloaded_during_rpc=true old_client_serial=%s new_client_serial=%s old_server_serial=%s new_server_serial=%s", oldClientSerial, newClientSerial, oldServerSerial, newServerSerial)
+		_, err := executorExec(inflightReleaseCommand)
+		return err
+	}); err != nil {
+		t.Fatalf("reload and release controlled renewal barrier: %v", err)
 	}
-	if got := publish(readIssued(), 1); got != newClientSerial {
-		t.Fatal("client Secret changed between handshake and projection; refusing ambiguous reload")
-	}
-	if err := client.ReloadTLS(); err != nil {
-		t.Fatalf("reload issued client projection during active command: %v", err)
-	}
-	if status := readExecutionStatus(t, ctx, kubeconfig, attached.Environment.ID); status.ActiveOperationID == "" {
-		t.Fatal("active command finished before client transport reload")
-	}
-	t.Logf("transport_reloaded_during_rpc=true old_client_serial=%s new_client_serial=%s old_server_serial=%s new_server_serial=%s", oldClientSerial, newClientSerial, oldServerSerial, newServerSerial)
 	select {
-	case r := <-done:
-		if r.err != nil || r.response.State != executionenv.CommandSucceeded || r.response.Result.State != executionenv.CommandSucceeded || r.response.Result.ExitCode != 0 || r.response.Result.TerminalReceipt == "" || !strings.Contains(string(r.response.Result.Stdout), "renewal-terminal") {
+	case <-done:
+		if r.err != nil || r.response.CommandID == "" || r.response.CommandID != r.response.Result.CommandID || r.response.State != executionenv.CommandSucceeded || r.response.Result.State != executionenv.CommandSucceeded || r.response.Result.ExitCode != 0 || r.response.Result.TerminalReceipt == "" || !strings.Contains(string(r.response.Result.Stdout), "renewal-terminal") {
 			t.Fatalf("in-flight command terminal proof: state=%s result=%s code=%d receipt=%t err=%v", r.response.State, r.response.Result.State, r.response.Result.ExitCode, r.response.Result.TerminalReceipt != "", r.err)
 		}
 	case <-ctx.Done():
 		t.Fatal("in-flight operation did not return a terminal result")
 	}
 	written, err := client.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileRead, Path: "renewal-writer"})
-	if err != nil || strings.TrimSpace(string(written.Data)) != "90" {
+	if err != nil || strings.TrimSpace(string(written.Data)) != "after" {
 		t.Fatalf("file mutation across renewal: value=%q err=%v", written.Data, err)
 	}
-	status := readExecutionStatus(t, ctx, kubeconfig, attached.Environment.ID)
-	if status.FenceState == "FenceUnknown" || status.ActiveOperationID != "" || status.PVCUID != before.PVCUID {
+	status := statusAt(ctx)
+	if status.FenceState == "FenceUnknown" || status.ActiveOperationID != "" || status.PVCUID != before.PVCUID || status.PodUID != before.PodUID || status.Epoch != claim.Epoch || status.ActiveGrantGeneration != claim.GrantGeneration {
 		t.Fatalf("renewal changed durable operation/workspace: fence=%q active=%t pvc_preserved=%t", status.FenceState, status.ActiveOperationID != "", status.PVCUID == before.PVCUID)
 	}
 	if _, err := client.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileCreate, Path: "after-renewal", Data: []byte("new-call\n")}); err != nil {

@@ -268,10 +268,195 @@ esac
 	}
 }
 
+// Run the actual clean-environment live entrypoint and shared digest against
+// an owned offline fixture. Fake executables reject private-data projections.
+func TestQualifiedLiveHandoffRejectsDriftBeforeCredentialLoader(t *testing.T) {
+	for _, fault := range []string{"", "leaf-renewal", "default", "sha", "run", "attempt", "cluster", "state", "session", "missing", "malformed", "selector", "config", "spec", "deployment-uid", "image", "revision", "trust", "catalog", "authority", "alias", "node", "secret-uid", "read", "ready", "checkout"} {
+		t.Run("fault="+fault, func(t *testing.T) {
+			root := t.TempDir()
+			state := filepath.Join(root, ".scratch/k8s-execution/owned")
+			scripts := filepath.Join(root, "deploy/mecatl-execution-kind")
+			for _, dir := range []string{state + "/images", state + "/pki", scripts, filepath.Join(root, "bin")} {
+				if err := os.MkdirAll(dir, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, name := range []string{"live.sh", "handoff.sh", "images.sh"} {
+				data, err := os.ReadFile(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				writeFixture(t, filepath.Join(scripts, name), string(data), 0o700)
+			}
+			const cluster = "mecatl-execution-qual-owned"
+			sha := strings.Repeat("a", 40)
+			digest := "sha256:" + strings.Repeat("b", 64)
+			kubeconfig := filepath.Join(state, "kubeconfig")
+			writeFixture(t, kubeconfig, "private synthetic kubeconfig", 0o600)
+			writeFixture(t, filepath.Join(state, "ownership"), "cluster="+cluster+"\ncontext=kind-"+cluster+"\nkubeconfig="+kubeconfig+"\nnamespace=execution-qualification\nowner=fixture\nruntime=docker\nprofile=production\n", 0o600)
+			writeFixture(t, filepath.Join(state, "go-template-revision"), "v1-"+strings.Repeat("c", 64)+"\n", 0o600)
+			writeFixture(t, filepath.Join(state, "pki/ca.crt"), "public CA", 0o600)
+			writeFixture(t, filepath.Join(state, "pki/ca.key"), "PRIVATE-SENTINEL", 0o600)
+			var proof, aliases strings.Builder
+			for _, name := range []string{"provider", "agent", "oidc", "netprobe", "workload", "derivative", "incompatible"} {
+				proof.WriteString(name + "=ko.local/" + name + "@" + digest + "\n")
+				aliases.WriteString("ko.local/" + name + "@" + digest + " type " + digest + "\nko.local/" + name + ":head type " + digest + "\n")
+			}
+			aliases.WriteString("localhost/mecatl-execution-workload:e2e type " + digest + "\nlocalhost/mecatl-execution-workload@" + digest + " type " + digest + "\n")
+			writeFixture(t, filepath.Join(state, "images/proof"), proof.String(), 0o600)
+			writeFixture(t, filepath.Join(root, "aliases"), aliases.String(), 0o600)
+			writeFixture(t, filepath.Join(root, "fault"), "", 0o600)
+			prefix := "#!/bin/sh\nset -eu\ntest -z \"${OPENROUTER_API_KEY+x}\" && test -z \"${AWS_SECRET_ACCESS_KEY+x}\"\nfault=$(cat \"$HOME/fault\")\n"
+			writeFixture(t, filepath.Join(root, "bin/git"), prefix+"case \"$1\" in rev-parse) printf '%s\\n' '"+sha+"' ;; diff) test \"$fault\" != checkout ;; *) exit 99 ;; esac\n", 0o700)
+			writeFixture(t, filepath.Join(root, "bin/docker"), prefix+`
+case "$1" in
+inspect)
+  case "$4" in
+  *Labels*) printf '%s\n' '`+cluster+`' ;;
+  *) marker=stable; test "$fault" != node || marker=drift; printf 'node-%s image-id\n' "$marker" ;;
+  esac ;;
+exec) cat "$HOME/aliases" ;;
+image) printf '%s\n' '`+digest+`' ;;
+build) printf 'build\n' >> "$HOME/events" ;;
+save) printf 'save\n' >> "$HOME/events"; : > "$4" ;;
+*) exit 99 ;;
+esac
+`, 0o700)
+			writeFixture(t, filepath.Join(root, "bin/kind"), prefix+"printf 'load\\n' >> \"$HOME/events\"\n", 0o700)
+			writeFixture(t, filepath.Join(root, "bin/ko"), prefix+`
+printf 'build\n' >> "$HOME/events"
+case "$*" in *mecatl-execution-provider*) printf 'ko.local/provider:head\n' ;; *mecak8s*) printf 'ko.local/agent:head\n' ;; *) exit 99 ;; esac
+`, 0o700)
+			writeFixture(t, filepath.Join(root, "bin/helm"), prefix+"printf 'helm\\n' >> \"$HOME/events\"\n", 0o700)
+			writeFixture(t, filepath.Join(root, "bin/go"), prefix+`
+case "$*" in
+*'credentialloader stage '*) printf 'stage\n' >> "$HOME/events"; exit 17 ;;
+*'^TestKindExecutionQualification$'*) printf 'mock-test\n' >> "$HOME/events" ;;
+*) exit 99 ;;
+esac
+`, 0o700)
+			writeFixture(t, filepath.Join(root, "bin/kubectl"), prefix+`
+if [ "$1" = --kubeconfig ]; then shift 4; fi
+case "$*" in
+'config current-context') printf 'kind-`+cluster+`\n' ;;
+'config view '*)
+  marker=stable; test "$fault" != config || marker=drift
+  printf '{"clusters":[{"name":"owned","cluster":{"server":"%s"}}],"users":[{"name":"owned","user":{"client-certificate-data":"DATA+OMITTED","client-key-data":"DATA+OMITTED"}}]}\n' "$marker" ;;
+*'rollout status '*|*'wait --for=condition=Ready '*) test "$fault" != ready ;;
+*'rollout restart '*) printf 'restart\n' >> "$HOME/events" ;;
+*'create configmap '*) printf 'mock-setup\n' >> "$HOME/events"; printf 'mock\n' ;;
+'apply -f -') cat >/dev/null ;;
+'-n execution-qualification get secret '*)
+  case "$*" in
+  *'.metadata.uid'*) marker=stable; test "$fault" != secret-uid || marker=drift; printf 'uid-%s\n' "$marker" ;;
+  *'.data.clients\.pem'*|*'.data.ca\.crt'*|*'secret execution-fixture-ca -o jsonpath={.data.tls\.crt}'*) marker=stable; test "$fault" != trust || marker=drift; printf 'public-trust-%s' "$marker" ;;
+  *) echo 'private Secret read rejected' >&2; exit 99 ;;
+  esac ;;
+'-n execution-qualification get '*)
+  test "$fault" != read || exit 1
+  marker=stable
+  case "$*:$fault" in
+  *deployment/*:spec|*configmap/execution-mock*:config|*configmap/mecatl-execution-templates*:catalog|*configmap/mecatl-execution-security-authority*:authority) marker=drift ;;
+  esac
+  case "$4" in
+  */*)
+    image=ko.local/provider@`+digest+`
+    test "$4" != deployment/mecak8s || image=ko.local/agent@`+digest+`
+    uid=uid
+    case "$4:$fault" in deployment/*:deployment-uid) uid=changed ;; deployment/*:image) image=changed ;; esac
+    printf '{"kind":"Fixture","metadata":{"name":"%s","uid":"%s"},"spec":{"marker":"%s","template":{"spec":{"containers":[{"image":"%s"}]}}},"data":{"marker":"%s"},"status":{"clock":"%s"}}\n' "$4" "$uid" "$marker" "$image" "$marker" "$fault" ;;
+  *) printf '{"items":[]}\n' ;;
+  esac ;;
+*) echo "unexpected kubectl request: $*" >&2; exit 99 ;;
+esac
+`, 0o700)
+			env := []string{"PATH=" + filepath.Join(root, "bin") + ":" + os.Getenv("PATH"), "USER=fixture", "TMPDIR=" + t.TempDir(), "GITHUB_ACTIONS=true", "GITHUB_SHA=" + sha, "GITHUB_RUN_ID=123", "GITHUB_RUN_ATTEMPT=2", "MECATL_EXECUTION_HANDOFF_SHA=" + sha, "MECATL_EXECUTION_QUAL_STATE=" + state}
+			out, err := runStep(t, root, `set -eu
+state=$MECATL_EXECUTION_QUAL_STATE
+cluster=`+cluster+`
+context=kind-$cluster
+runtime=docker
+kubeconfig=$state/kubeconfig
+kube() { kubectl --kubeconfig "$kubeconfig" --context "$context" "$@"; }
+. ./deploy/mecatl-execution-kind/handoff.sh
+handoff_digest
+`, env...)
+			qualified := strings.TrimSpace(string(out))
+			if err != nil || len(qualified) != 64 {
+				t.Fatalf("produce offline digest: %v: %s", err, out)
+			}
+			// Only modeled state changes affect the digest; status/leaf clocks don't.
+			commandFault := ""
+			if strings.Contains(" config spec deployment-uid image trust catalog authority node secret-uid read ready checkout leaf-renewal ", " "+fault+" ") {
+				commandFault = fault
+			}
+			writeFixture(t, filepath.Join(root, "fault"), commandFault, 0o600)
+			if fault == "alias" {
+				writeFixture(t, filepath.Join(root, "aliases"), strings.ReplaceAll(aliases.String(), "type "+digest, "type sha256:"+strings.Repeat("d", 64)), 0o600)
+			}
+			selector, complete, run, attempt, capturedCluster, capturedState, session := "1", "1", "123", "2", cluster, state, ""
+			switch fault {
+			case "default":
+				selector = "0"
+			case "sha":
+				sha = strings.Repeat("d", 40)
+			case "run":
+				run = "124"
+			case "attempt":
+				attempt = "3"
+			case "cluster":
+				capturedCluster = "mecatl-execution-qual-other"
+			case "state":
+				capturedState = state + "/../owned"
+			case "session":
+				session = "continued"
+			case "missing":
+				complete = ""
+			case "malformed":
+				qualified = "$(touch injected)"
+			case "selector":
+				selector = "$(touch injected)"
+			case "revision":
+				writeFixture(t, filepath.Join(state, "go-template-revision"), "v1-"+strings.Repeat("d", 64)+"\n", 0o600)
+			case "leaf-renewal":
+				writeFixture(t, filepath.Join(state, "pki/mecak8s.crt"), "renewed public leaf", 0o600)
+			}
+			// Replace explicitly instead of relying on duplicate environment names.
+			env = env[:len(env)-2]
+			env = append(env, "MECATL_EXECUTION_HANDOFF_SHA="+sha, "MECATL_EXECUTION_QUAL_STATE="+capturedState, "MECATL_EXECUTION_HANDOFF_COMPLETE="+complete, "MECATL_EXECUTION_HANDOFF_DIGEST="+qualified, "MECATL_EXECUTION_HANDOFF_RUN_ID="+run, "MECATL_EXECUTION_HANDOFF_RUN_ATTEMPT="+attempt, "MECATL_EXECUTION_HANDOFF_CLUSTER="+capturedCluster, "MECATL_EXECUTION_LIVE_SESSION="+session, "MECATL_EXECUTION_LIVE_QUALIFIED="+selector, "MECATL_EXECUTION_CREDENTIAL_FILE="+filepath.Join(root, "provider;touch injected"), "OPENROUTER_API_KEY=PROVIDER-SENTINEL", "AWS_SECRET_ACCESS_KEY=PRIVATE-SENTINEL")
+			out, err = runStep(t, root, "sh ./deploy/mecatl-execution-kind/live.sh", env...)
+			if err == nil {
+				t.Fatal("fake credentialloader must stop before real live mutation")
+			}
+			events, readErr := os.ReadFile(filepath.Join(root, "events"))
+			wantStage := fault == "" || fault == "leaf-renewal" || fault == "default"
+			if wantStage {
+				if readErr != nil || !strings.HasSuffix(string(events), "stage\n") {
+					t.Fatalf("valid admission did not stage: %q: %v: %s", events, readErr, out)
+				}
+				if fault != "default" && string(events) != "stage\n" {
+					t.Fatalf("qualified reuse rebuilt/mutated/reran: %q", events)
+				}
+				if fault == "default" && (!strings.Contains(string(events), "mock-test\nstage\n") || !strings.Contains(string(events), "load\n") || !strings.Contains(string(events), "restart\n")) {
+					t.Fatalf("standalone prerequisite lost: %q", events)
+				}
+			} else if !os.IsNotExist(readErr) {
+				t.Fatalf("drift mutated or reached credentials: %q: %v: %s", events, readErr, out)
+			}
+			if strings.Contains(string(out), "PRIVATE-SENTINEL") || strings.Contains(string(out), "PROVIDER-SENTINEL") {
+				t.Fatal("handoff disclosed secret data")
+			}
+			if _, err := os.Stat(filepath.Join(root, "injected")); !os.IsNotExist(err) {
+				t.Fatal("selector/output executed as shell code")
+			}
+		})
+	}
+}
+
 func TestProductionThenLiveImageAlias(t *testing.T) {
 	// The alias fixture exercises the load loop without the runner's timing helper.
 	production := "image_step_done() { :; }\n" + scriptRange(t, "run.sh", "load_index=0\nfor item in", "printf 'provider=%s")
-	live := scriptRange(t, "live.sh", ". \"$root/deploy/mecatl-execution-kind/images.sh\"", "\nprovider_tag=$(build_ko")
+	live := scriptRange(t, "live.sh", ". \"$root/deploy/mecatl-execution-kind/images.sh\"", "\nif [ \"$qualified\" = 1 ]; then")
 	helper, err := os.ReadFile("images.sh")
 	if err != nil {
 		t.Fatal(err)
@@ -348,7 +533,7 @@ esac
 }
 
 func TestLivePreservesQualifiedStorageAndHelmDigestThroughRestoration(t *testing.T) {
-	live := scriptRange(t, "live.sh", "printf 'provider=%s", "\necho \"live qualification passed")
+	live := scriptRange(t, "live.sh", "printf 'provider=%s", "\nfi # standalone preparation") + "\n" + scriptRange(t, "live.sh", "secret=", "\necho \"live qualification passed")
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "images"), 0o700); err != nil {
 		t.Fatal(err)
@@ -427,7 +612,7 @@ helm_kube() {
 }
 
 func TestLiveResumeDoesNotAllocateMockWorkspaces(t *testing.T) {
-	preflight := scriptRange(t, "live.sh", "# Resuming an already-created", "\nsecret=")
+	preflight := scriptRange(t, "live.sh", "# Resuming an already-created", "\nfi # standalone preparation")
 	out, err := runStep(t, t.TempDir(), "dev() { echo 'unexpected allocation'; return 99; }\n"+preflight, "MECATL_EXECUTION_LIVE_SESSION="+strings.Repeat("a", 32))
 	if err != nil || len(out) != 0 {
 		t.Fatalf("resume allocated mock workspaces: %v: %s", err, out)

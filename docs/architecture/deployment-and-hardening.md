@@ -126,11 +126,32 @@ for the operator workflow.
 From a checkout with the Taskfile's Kind prerequisites, run
 `task e2e:k8s:execution:production` for the complete serial suite (45-minute test
 ceiling), followed by mandatory `TestKindExecutionInFlightAutomaticRenewal`
-(30-minute ceiling, 25-minute context). Normal PR checks and native OpenRouter
-qualification use this bounded path without waiting for the original
-certificate lifetime to end. Certificate issuance, cert-manager scheduling,
-and Kubernetes Secret projection remain platform responsibilities; the tests
-qualify Mecatl's behavior at those boundaries.
+(8-minute test ceiling, 7-minute context, 10-minute outer process deadline).
+This test requests controlled renewal with the supported `cmctl renew` command
+only after observing both the active operation and its started marker. The
+production fixture installs cmctl v2.6.1 into its private, owned tools directory;
+HTTPS downloads are checked against repository-pinned SHA-256 hashes before
+making the binary executable. Each certificate has a separate renewal request.
+Only an explicit update conflict permits a bounded, per-certificate retry, and
+an already-issuing certificate is left to finish.
+
+The command waits at a marker barrier while the test observes increased client
+and server certificate revisions, changed client and server serials, and a
+verified handshake against the provider's renewed projected identity. The test
+atomically publishes the issued host client pair and calls `ReloadTLS` on the
+same client during the active RPC. Fixture-admin exec releases the barrier on
+the captured executor Pod, with its name, UID, environment, and active operation
+verified before release. The original RPC must return a successful terminal
+receipt, output, and workspace mutation with unchanged Pod/PVC, epoch, and grant.
+
+The active-renewal budget is 180 seconds; the command's self-barrier expires
+after 210 seconds, its timeout is 240 seconds, and the run claim lasts five
+minutes. These bounds are intended to remove the roughly ten-minute scheduled
+renewal wait; elapsed savings have not been measured. Normal PR checks and
+native OpenRouter qualification use this controlled path. Certificate issuance
+and Kubernetes Secret projection remain cert-manager/platform responsibilities;
+the fixture does not edit cert-manager-owned Secrets. Runtime authorization,
+status, and expiry semantics are unchanged.
 
 The distinct long proof is `TestKindExecutionAutomaticCertificateRenewal`.
 It exercises the **deployed `mecak8s` client's automatic reload loop** through
@@ -154,16 +175,54 @@ phase's start and elapsed completion, or an explicit natural-expiry skip.
 In the secret-free `k8s-e2e.yml` workflow, dispatch with `natural_expiry: true`
 for this proof; the boolean defaults to false. Production job budgets are 100
 minutes normally and 210 minutes for explicit long mode, including setup and
-cleanup. The normal 100-minute budget leaves 25 minutes beyond the two test
-ceilings; long mode leaves 55 minutes beyond all three.
+cleanup. Including the in-flight outer process deadline, the normal 100-minute
+budget leaves 45 minutes beyond the test/process ceilings; long mode leaves
+75 minutes beyond all three.
 
 The manual native job always sets the selector to `0`: its production step has
 a 100-minute ceiling around a 98-minute command timeout. All native step ceilings
 sum to 148 minutes within a 160-minute job, reserving 12 minutes of overhead.
 Reviewed-SHA verification, disabled caching, successful same-run production
-qualification before credential staging, owned-cluster handoff, the live mock
-prerequisite, and cleanup remain mandatory. Run long renewal qualification once
-for the reviewed change rather than repeating it before model coding.
+qualification before credential staging, owned-cluster handoff, and cleanup
+remain mandatory. Run long renewal qualification once for the reviewed change
+rather than repeating it before model coding.
+
+The native workflow explicitly selects `MECATL_EXECUTION_QUAL_HANDOFF=1`.
+This CI-only mode requires fresh, retained production state, numeric GitHub run
+ID/attempt, an exact clean checkout matching the supplied reviewed SHA, and
+`GITHUB_OUTPUT`. Its serial invocation excludes only the exact
+`TestKindExecutionQualification` test. After the serial Helm-lifetime mutations,
+optional natural-expiry proof, and mandatory controlled renewal finish, the
+same compiled binary runs that full mock proof once. Its successful exit
+includes deferred cleanup; the runner then checks readiness and publishes
+`handoff_complete=1` with a nonsecret digest and SHA/run/attempt outputs. Early
+state/cluster outputs remain cleanup ownership hints, not qualification evidence.
+
+The workflow requires both production step success and completion output before
+creating the private credential file. It passes the successful step's outputs
+to `live.sh` with `MECATL_EXECUTION_LIVE_QUALIFIED=1`. Before any build, cluster
+mutation, or credentialloader invocation, live mode checks the same run,
+checkout, exact state/cluster, readiness, and current digest. The digest binds
+the final provider/agent Deployment UIDs and specs, pinned containerd image alias
+descriptors, current template catalog/revision, mock configuration, public
+security manifest/authority, public trust, and owned cluster/kubeconfig identity.
+Tracked chart/config/build inputs are bound by the exact clean checkout. Secret
+UID/source metadata is included; private Secret data and auto-renewing leaf
+bytes/status clocks are excluded. Successful reuse keeps the qualified reattach
+deployment and pinned images without rebuilding, loading, reinstalling mock
+configuration, restarting, or rerunning the mock proof before credential staging.
+Malformed or drifted reuse fails instead of falling back. This is a trusted
+same-job handoff, not a historical receipt or an attestation against a compromised
+runner. `MECATL_EXECUTION_LIVE_SESSION` remains a separate standalone resume
+selector and is rejected in qualified mode.
+
+Both handoff selectors default to `0` and accept only literal `0` or `1`.
+Ordinary production qualification keeps its complete serial suite and renewal
+ordering. Standalone live qualification keeps its existing build/load/mock
+setup and full mock prerequisite before Kubernetes credential staging (including
+its existing continued-session behavior). Timing improvements and the final
+state/readiness binding still need CI measurement on the reviewed commit;
+job and step deadlines remain unchanged.
 
 Coverage is split by the regression each layer can establish:
 
@@ -174,8 +233,10 @@ Coverage is split by the regression each layer can establish:
 | `executionclient/renewal_test.go` | Verified same-identity RPCs drain across replacement; synctest advances retired-channel expiry and checks reference cleanup; withdrawn trust terminates active RPCs. |
 | `executioncontroller/operation_peer_test.go` | Original-peer expiry and CA/policy withdrawal fail closed at admission, during a command, and at completion; ordinary renewal preserves authority. |
 | `e2e/k8s_execution/production_qualification_test.go` | Real projected Secret/policy updates, invalid-generation denial and recovery, trust withdrawal, durable authorization, and operation fencing across deployed replicas. Included in the unchanged serial suite. |
-| Mandatory in-flight renewal | Real issuer/client and provider renewal during a command; explicit mirrored-client reload; terminal receipt, exit status and output, workspace mutation, preserved PVC, and a later mutation without fencing. Session continuity is also covered by the serial mock journey. |
+| Mandatory in-flight controlled renewal | Real cmctl-triggered issuer/client and projected provider renewal behind an active command barrier; explicit mirrored-client reload before release; terminal receipt, exit status and output, workspace mutation, preserved Pod/PVC, epoch and grant, and a later mutation without fencing. Session continuity is also covered by the serial mock journey. |
 | Explicit natural-expiry renewal | Deployed `mecak8s` automatic client reload across repeated issuer renewals and original expiry; remote-tool session/PVC continuity and unchanged policy. |
+| Full mock qualification | Ordinary runs execute it in the serial suite. Native handoff executes it exactly once after all serial/renewal mutations, proving the final installed authority/catalog and leaving the qualified reattach deployment. |
+| `deploy/mecatl-execution-kind/{fixture_tls,repair,ci}_test.go` | Behavioral shell fixtures exercise proof ordering and failure publication, clean-environment selectors, valid no-rebuild reuse, standalone mock-before-stage, and rejection of SHA/run/attempt/state/cluster/config/spec/image/catalog/authority drift before credentialloader. |
 
 **The classification guard.** Every boundary touching owned data is classified as
 caller-owned, derived (follows from the current authorized run), shared-infrastructure,

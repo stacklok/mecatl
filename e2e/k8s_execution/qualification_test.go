@@ -795,6 +795,7 @@ func command(ctx context.Context, kubeconfig string, args ...string) *exec.Cmd {
 	fullArgs := append([]string{"--kubeconfig", kubeconfig, "--context", contextName}, args...)
 	cmd := fixtureCommand(ctx, "kubectl", fullArgs...)
 	cmd.Env = cleanEnv()
+	cmd.WaitDelay = time.Second
 	return cmd
 }
 func runKubectl(t *testing.T, ctx context.Context, kubeconfig string, args ...string) []byte {
