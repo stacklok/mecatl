@@ -1,0 +1,537 @@
+# Continuous builds from main: after CI passes on a main commit, publish the
+# mecak8s image, the Mecatl Studio image, and the mecak8s and mecatl-studio Helm
+# charts, all built from that one commit and sharing one version. Deployments
+# that follow main (the stacklok/infra dev cluster) select the newest chart
+# with a prerelease semver range; nothing here writes to another repository.
+#
+# Main builds never touch release artifacts. They publish under
+# ghcr.io/<repo>/main/ (images main/mecak8s and main/studio, charts
+# main/charts), versioned X.Y.(Z+1)-main.<run>.<attempt>.g<sha8> from the
+# commit's VERSION: the patch bump sorts them above the last release, and the
+# run number and attempt order them by publication. Renaming this file resets
+# the run number, so bump VERSION alongside such a rename. Images are tagged
+# v<version>; each chart pins its image by digest. Signatures and attestations
+# name this workflow (continuous.yml@refs/heads/main), so they can never verify
+# as a release (release.yml@refs/tags/v*).
+#
+# A commit publishes only when it is newer on main than the last published
+# mecatl-studio chart, the chart pushed last, so versions never move followers
+# back to an older commit. For a workflow_run, provenance names the main commit
+# that defined this workflow; the image revision label and the version name the
+# commit that was built.
+name: Continuous main build
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  # Publish by hand from main, e.g. after a transient registry failure. A run
+  # publishes the commit it was dispatched at; force publishes another commit,
+  # or one that is not newer than the last published build, and moves every
+  # follower to it.
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: 'Full main commit SHA to publish (default: the dispatched commit; another commit needs force)'
+        required: false
+        type: string
+        default: ''
+      force:
+        description: 'Publish even if the commit is not newer than the last published build'
+        required: false
+        type: boolean
+        default: false
+
+permissions: {}
+
+# One publication at a time, in order. A burst of merges collapses into at most
+# one queued run behind the one in progress; never cancel a half-signed run.
+# Runs that cannot publish (failed CI, pull requests from a branch named main,
+# dispatches from other refs) get their own group, so they never replace a
+# queued publication.
+concurrency:
+  group: >-
+    ${{ ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+        || (github.event_name == 'workflow_run'
+          && github.event.workflow_run.conclusion == 'success'
+          && github.event.workflow_run.event == 'push'
+          && github.event.workflow_run.head_branch == 'main'
+          && github.event.workflow_run.head_repository.full_name == github.repository))
+      && 'continuous-main' || format('continuous-skip-{0}', github.run_id) }}
+  cancel-in-progress: false
+
+env:
+  GOTOOLCHAIN: local
+  GOFLAGS: -mod=readonly
+
+jobs:
+  compute-version:
+    # workflow_run also fires for pull requests whose head branch is named
+    # main, including forks: require a push to this repository's main.
+    if: >-
+      (github.event_name == 'workflow_run'
+        && github.event.workflow_run.conclusion == 'success'
+        && github.event.workflow_run.event == 'push'
+        && github.event.workflow_run.head_branch == 'main'
+        && github.event.workflow_run.head_repository.full_name == github.repository)
+      || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    name: Resolve the main commit and its version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # checkout
+      packages: read # read the last published chart
+    env:
+      OCI_REGISTRY: ghcr.io/${{ github.repository }}/main/charts
+    outputs:
+      publish: ${{ steps.resolve.outputs.publish }}
+      sha: ${{ steps.resolve.outputs.sha }}
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: main
+          # Ancestry only: full history without blobs.
+          fetch-depth: 0
+          filter: blob:none
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.18.4
+
+      - name: Resolve commit and version
+        id: resolve
+        env:
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          INPUT_SHA: ${{ inputs.commit_sha }}
+          FORCE: ${{ inputs.force }}
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          main=$(git rev-parse HEAD)
+          if [ "${GITHUB_EVENT_NAME}" = workflow_run ]; then
+            sha="${RUN_SHA}"
+          else
+            # Provenance names the dispatched commit, so publish that commit
+            # unless another one is forced.
+            sha="${INPUT_SHA:-$GITHUB_SHA}"
+            if [ "$sha" != "$GITHUB_SHA" ] && [ "${FORCE:-}" != true ]; then
+              echo "::error::a dispatch publishes its own commit ${GITHUB_SHA}; set force to publish ${sha}"
+              exit 1
+            fi
+          fi
+          if ! printf '%s' "$sha" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::commit must be a full 40-character SHA, got '${sha}'"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$sha" "$main"; then
+            echo "::error::${sha} is not on main"
+            exit 1
+          fi
+
+          # The last published build is the newest mecatl-studio chart: it is
+          # pushed last, so a run that failed before it publishes again.
+          printf '%s' "$GH_TOKEN" | helm registry login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          last=""
+          if chart=$(helm show chart "oci://${OCI_REGISTRY}/mecatl-studio" --devel 2>&1); then
+            last_version=$(printf '%s\n' "$chart" | awk '/^version:/ {print $2}')
+            last=$(git rev-parse --verify --quiet "${last_version##*.g}^{commit}") || {
+              echo "::error::last published ${last_version} names no commit on main"
+              exit 1
+            }
+            echo "Last published: ${last_version} (${last})"
+          elif printf '%s' "$chart" | grep -q 'name unknown'; then
+            echo "Nothing published yet"
+          else
+            printf '%s\n' "$chart" >&2
+            exit 1
+          fi
+          if [ -n "$last" ] && [ "${FORCE:-}" != true ] && git merge-base --is-ancestor "$sha" "$last"; then
+            echo "::notice title=Already published::${sha} is not newer than the last published build ${last}."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          base=$(git show "${sha}:VERSION" | tr -d '[:space:]')
+          if ! printf '%s' "$base" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::VERSION at ${sha} is not bare semver: '${base}'"
+            exit 1
+          fi
+          major=${base%%.*}
+          rest=${base#*.}
+          minor=${rest%%.*}
+          patch=${rest#*.}
+          # The g prefix keeps an all-digit short SHA a valid semver identifier.
+          version="${major}.${minor}.$((patch + 1))-main.${RUN_NUMBER}.${RUN_ATTEMPT}.g$(printf '%s' "$sha" | cut -c1-8)"
+          {
+            echo "publish=true"
+            echo "sha=${sha}"
+            echo "version=${version}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Publishing ${sha} as ${version}"
+
+  publish-mecak8s:
+    needs: compute-version
+    if: needs.compute-version.outputs.publish == 'true'
+    name: Build, sign, attest mecak8s image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read # checkout
+      packages: write # push image + SBOM to GHCR
+      id-token: write # OIDC: cosign keyless signing AND provenance
+      attestations: write # SLSA build provenance via actions/attest-build-provenance
+    env:
+      KO_DOCKER_REPO: ghcr.io/${{ github.repository }}/main/mecak8s
+      SHA: ${{ needs.compute-version.outputs.sha }}
+      VERSION: v${{ needs.compute-version.outputs.version }}
+    outputs:
+      image: ${{ steps.build.outputs.image_name }}
+      digest: ${{ steps.build.outputs.image_digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          ref: ${{ needs.compute-version.outputs.sha }}
+
+      - name: Assert checkout is the resolved commit
+        run: test "$(git rev-parse HEAD)" = "${SHA}"
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.mod
+            authn/oidc/go.sum
+
+      - uses: ko-build/setup-ko@61b4d1d396f5b2e7d6bb6fefdce3dc38d1a13445 # v0.10
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Login to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Main builds ship without the product-metrics ingest key, so development
+      # deployments never report product metrics.
+      - name: Build and push image (+ SBOM)
+        id: build
+        run: |
+          set -euo pipefail
+          ko build \
+            --platform=linux/amd64,linux/arm64 \
+            --bare \
+            --sbom=spdx \
+            -t "${VERSION}" \
+            --image-refs=image-refs.txt \
+            --image-label=org.opencontainers.image.source=https://github.com/${{ github.repository }} \
+            --image-label=org.opencontainers.image.title=mecak8s \
+            --image-label=org.opencontainers.image.version="${VERSION}" \
+            --image-label=org.opencontainers.image.revision="${SHA}" \
+            --image-label=org.opencontainers.image.vendor=Stacklok \
+            ./cmd/mecak8s
+          ref="$(head -n1 image-refs.txt)"
+          {
+            echo "ref=${ref}"
+            echo "image_name=${ref%@*}"
+            echo "image_digest=${ref##*@}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Built ${ref}"
+
+      - name: Sign image (keyless)
+        env:
+          IMAGE_REF: ${{ steps.build.outputs.ref }}
+        run: cosign sign --yes "${IMAGE_REF}"
+
+      - name: Generate SBOM file
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: ${{ steps.build.outputs.ref }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: false
+
+      - name: Attest SBOM (keyless)
+        env:
+          IMAGE_REF: ${{ steps.build.outputs.ref }}
+        run: cosign attest --yes --predicate sbom.spdx.json --type spdxjson "${IMAGE_REF}"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.build.outputs.image_name }}
+          subject-digest: ${{ steps.build.outputs.image_digest }}
+          push-to-registry: true
+          # See release.yml: the artifact-metadata index is unused and its
+          # permission is unknown to the pinned actionlint.
+          create-storage-record: false
+
+      - name: Verify signature and attestations
+        env:
+          IMAGE_REF: ${{ steps.build.outputs.ref }}
+          IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/continuous.yml@refs/heads/main
+          ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          set -eu
+          cosign verify --certificate-identity "${IDENTITY}" --certificate-oidc-issuer "${ISSUER}" "${IMAGE_REF}" > /dev/null
+          for type in spdxjson slsaprovenance1; do
+            cosign verify-attestation --type "${type}" --certificate-identity "${IDENTITY}" --certificate-oidc-issuer "${ISSUER}" "${IMAGE_REF}" > /dev/null
+          done
+
+  publish-studio:
+    needs: compute-version
+    if: needs.compute-version.outputs.publish == 'true'
+    name: Build, scan, sign, attest Mecatl Studio image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read # checkout
+      packages: write # push image + SBOM to GHCR
+      id-token: write # OIDC: cosign keyless signing AND provenance
+      attestations: write # SLSA build provenance via actions/attest-build-provenance
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}/main/studio
+      SHA: ${{ needs.compute-version.outputs.sha }}
+      VERSION: v${{ needs.compute-version.outputs.version }}
+    outputs:
+      image: ghcr.io/${{ github.repository }}/main/studio
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          ref: ${{ needs.compute-version.outputs.sha }}
+
+      - name: Assert checkout is the resolved commit
+        run: test "$(git rev-parse HEAD)" = "${SHA}"
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Login to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Studio compiles the checked-out SDK, so the image carries the SDK from
+      # this commit. Pushed by digest only: nothing can pull it by name until
+      # the scan, signature, and attestations have been verified.
+      - name: Build and push image by digest
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: apps/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,push=true
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.title=studio
+            org.opencontainers.image.description=Mecatl Studio web UI and its backend for frontend
+            org.opencontainers.image.licenses=Apache-2.0
+            org.opencontainers.image.version=${{ env.VERSION }}
+            org.opencontainers.image.revision=${{ env.SHA }}
+            org.opencontainers.image.vendor=Stacklok
+            org.stacklok.mecatl.studio.stability=early-access
+          build-args: |
+            STUDIO_BUILD_ID=${{ env.VERSION }}
+
+      - name: Scan image for fixable critical vulnerabilities
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          fail-build: true
+          only-fixed: true
+          severity-cutoff: critical
+          output-format: table
+
+      - name: Sign image (keyless)
+        env:
+          IMAGE_REF: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "${IMAGE_REF}"
+
+      - name: Generate SBOM file
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: false
+
+      - name: Attest SBOM (keyless)
+        env:
+          IMAGE_REF: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+        run: cosign attest --yes --predicate sbom.spdx.json --type spdxjson "${IMAGE_REF}"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Verify signature and attestations
+        env:
+          IMAGE_REF: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/continuous.yml@refs/heads/main
+          ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          set -eu
+          cosign verify --certificate-identity "${IDENTITY}" --certificate-oidc-issuer "${ISSUER}" "${IMAGE_REF}" > /dev/null
+          for type in spdxjson slsaprovenance1; do
+            cosign verify-attestation --type "${type}" --certificate-identity "${IDENTITY}" --certificate-oidc-issuer "${ISSUER}" "${IMAGE_REF}" > /dev/null
+          done
+
+      # Only now give the verified digest its name; the check refuses a tag
+      # that resolves anywhere else.
+      - name: Tag the verified image
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -eu
+          docker buildx imagetools create --tag "${IMAGE}:${VERSION}" "${IMAGE}@${DIGEST}"
+          resolved=$(docker buildx imagetools inspect "${IMAGE}:${VERSION}" --format '{{json .Manifest}}' | jq --raw-output .digest)
+          if [ "${resolved}" != "${DIGEST}" ]; then
+            echo "${IMAGE}:${VERSION} resolves to ${resolved}, not the verified ${DIGEST}" >&2
+            exit 1
+          fi
+
+  # The charts are the commit point followers react to, so they publish only
+  # after both images from the same commit are signed and verified. Each chart
+  # pins its image by digest; the values rewrite happens in this job only and is
+  # never committed.
+  publish-charts:
+    needs: [compute-version, publish-mecak8s, publish-studio]
+    name: Package, publish, sign, attest main Helm charts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # checkout
+      packages: write # push charts to GHCR
+      id-token: write # OIDC: cosign keyless signing AND provenance
+      attestations: write # SLSA build provenance via actions/attest-build-provenance
+    env:
+      OCI_REGISTRY: ghcr.io/${{ github.repository }}/main/charts
+      SHA: ${{ needs.compute-version.outputs.sha }}
+      CHART_VERSION: ${{ needs.compute-version.outputs.version }}
+      MECAK8S_IMAGE: ${{ needs.publish-mecak8s.outputs.image }}
+      MECAK8S_DIGEST: ${{ needs.publish-mecak8s.outputs.digest }}
+      STUDIO_IMAGE: ${{ needs.publish-studio.outputs.image }}
+      STUDIO_DIGEST: ${{ needs.publish-studio.outputs.digest }}
+      # The minimal values each chart needs to render; the same overrides the
+      # release workflow lints with.
+      MECAK8S_RENDER_SET: redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials,tls.enabled=true,tls.secretName=mecak8s-tls,oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl
+    outputs:
+      mecak8s_chart_digest: ${{ steps.push.outputs.mecak8s }}
+      studio_chart_digest: ${{ steps.push.outputs.mecatl-studio }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          ref: ${{ needs.compute-version.outputs.sha }}
+
+      - name: Assert checkout is the resolved commit
+        run: test "$(git rev-parse HEAD)" = "${SHA}"
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.18.4
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Login to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # yq (mikefarah) ships on the ubuntu-24.04 runner image. A digest selects
+      # the image in both charts, and each chart refuses a tag alongside it.
+      - name: Pin the charts to the verified image digests
+        run: |
+          set -euo pipefail
+          IMAGE="${MECAK8S_IMAGE}" DIGEST="${MECAK8S_DIGEST}" \
+            yq --inplace '.image.repository = strenv(IMAGE) | .image.tag = "" | .image.digest = strenv(DIGEST)' deploy/helm/mecak8s/values.yaml
+          IMAGE="${STUDIO_IMAGE}" DIGEST="${STUDIO_DIGEST}" \
+            yq --inplace '.image.repository = strenv(IMAGE) | .image.tag = "" | .image.digest = strenv(DIGEST)' deploy/helm/mecatl-studio/values.yaml
+
+      - name: Lint, package, and check the rendered images
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          helm lint deploy/helm/mecak8s --set "${MECAK8S_RENDER_SET}"
+          helm lint deploy/helm/mecatl-studio -f deploy/helm/mecatl-studio/ci/browser-login-values.yaml
+          for chart in mecak8s mecatl-studio; do
+            helm package "deploy/helm/${chart}" --version "${CHART_VERSION}" --app-version "v${CHART_VERSION}" --destination dist
+          done
+          helm template main "dist/mecak8s-${CHART_VERSION}.tgz" --set "${MECAK8S_RENDER_SET}" > mecak8s.rendered.yaml
+          grep -Fq "${MECAK8S_IMAGE}@${MECAK8S_DIGEST}" mecak8s.rendered.yaml
+          helm template main "dist/mecatl-studio-${CHART_VERSION}.tgz" -f deploy/helm/mecatl-studio/ci/browser-login-values.yaml > studio.rendered.yaml
+          grep -Fq "${STUDIO_IMAGE}@${STUDIO_DIGEST}" studio.rendered.yaml
+
+      # mecak8s first: Studio follows the daemon it talks to, so a failure
+      # between the two pushes leaves followers on a matching older Studio.
+      - name: Push and sign charts
+        id: push
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+          for chart in mecak8s mecatl-studio; do
+            helm push "dist/${chart}-${CHART_VERSION}.tgz" "oci://${OCI_REGISTRY}" > push-output.txt 2>&1
+            cat push-output.txt
+            digest="$(awk '/^Digest:/ {print $2}' push-output.txt)"
+            case "$digest" in sha256:*) ;; *) echo "could not parse the ${chart} chart digest" >&2; exit 1;; esac
+            cosign sign --yes "${OCI_REGISTRY}/${chart}@${digest}"
+            echo "${chart}=${digest}" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Attest mecak8s chart provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.OCI_REGISTRY }}/mecak8s
+          subject-digest: ${{ steps.push.outputs.mecak8s }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Attest mecatl-studio chart provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.OCI_REGISTRY }}/mecatl-studio
+          subject-digest: ${{ steps.push.outputs.mecatl-studio }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Summary
+        env:
+          MECAK8S_CHART_DIGEST: ${{ steps.push.outputs.mecak8s }}
+          STUDIO_CHART_DIGEST: ${{ steps.push.outputs.mecatl-studio }}
+        run: |
+          {
+            echo "## Main build ${CHART_VERSION}"
+            echo ""
+            echo "Commit: \`${SHA}\`"
+            echo ""
+            echo "| Artifact | Reference |"
+            echo "|---|---|"
+            echo "| mecak8s image | \`${MECAK8S_IMAGE}@${MECAK8S_DIGEST}\` |"
+            echo "| Studio image | \`${STUDIO_IMAGE}@${STUDIO_DIGEST}\` |"
+            echo "| mecak8s chart | \`oci://${OCI_REGISTRY}/mecak8s\` ${CHART_VERSION} (\`${MECAK8S_CHART_DIGEST}\`) |"
+            echo "| mecatl-studio chart | \`oci://${OCI_REGISTRY}/mecatl-studio\` ${CHART_VERSION} (\`${STUDIO_CHART_DIGEST}\`) |"
+          } >> "$GITHUB_STEP_SUMMARY"

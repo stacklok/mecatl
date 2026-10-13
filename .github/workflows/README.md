@@ -9,6 +9,29 @@ release behavior. This page is only a stable index to operational guidance.
 - [Mecatequi CI adoption](../../user-docs/building/ci/mecatequi.md)
 - [microVM environment operations](../../user-docs/operating/microvm-environments.md)
 
+## Continuous builds from main
+
+[Continuous main build](continuous.yml) runs after [CI](ci.yml) succeeds on a push
+to `main`. It publishes the `mecak8s` image, the Studio image, and the `mecak8s` and
+`mecatl-studio` charts, all built from that commit and sharing one version,
+`X.Y.(Z+1)-main.<run>.<attempt>.g<sha8>`, derived from the commit's `VERSION`. Images
+go to `ghcr.io/stacklok/mecatl/main/{mecak8s,studio}` (tagged `v<version>`) and charts
+to `oci://ghcr.io/stacklok/mecatl/main/charts`; each chart pins its image by digest.
+Release artifacts and their paths are never touched.
+
+The charts publish last, after both images are signed and verified, so a follower
+that selects the newest chart with a prerelease range such as `>=0.0.0-0` always gets
+images from one commit. A commit publishes only when it is newer on `main` than the
+last published `mecatl-studio` chart; an older or already published commit ends with
+a notice, so followers never move back. To publish by hand, dispatch the workflow from
+`main`; it publishes the dispatched commit. Set `force` only to republish a commit or
+to deliberately move followers to an older one.
+
+Signatures and attestations name `.github/workflows/continuous.yml@refs/heads/main`,
+so verify a main build with that certificate identity. Main builds ship without the
+product-metrics ingest key. GitHub creates the four `main/` packages as private on
+their first publication; pull them with a GHCR credential or make them public.
+
 ## Cutting a root release
 
 Releases go through a pull request; nothing pushes a commit to `main`.
