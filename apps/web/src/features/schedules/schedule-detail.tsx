@@ -14,9 +14,10 @@ import {
 } from "@mecatl-studio/contracts/query";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { Ellipsis } from "lucide-react";
+import { CalendarClock, Ellipsis } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { PageShell } from "../../components/shell/page-shell";
+import { Alert, AlertDescription } from "../../components/ui/alert";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,13 +29,21 @@ import {
   AlertDialogTitle,
 } from "../../components/ui/alert-dialog";
 import { Badge } from "../../components/ui/badge";
-import { Button } from "../../components/ui/button";
+import { Button, buttonVariants } from "../../components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../../components/ui/dropdown-menu";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "../../components/ui/empty";
 import { SortableHead, type SortDirection } from "../../components/ui/sortable-head";
 import {
   Table,
@@ -48,6 +57,7 @@ import { errorMessage } from "../../lib/error-message";
 import { describeCron, formatDate } from "../../lib/formatters";
 import { pageTitleClass } from "../../lib/typography";
 import { canEditSchedule, ScheduleForm } from "./schedule-form";
+import { ScheduleStatusBadge } from "./schedule-status";
 
 type Schedule = ListSchedulesResponse["items"][number];
 /**
@@ -143,7 +153,7 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
     }
   }
 
-  if (schedules.isPending) return <DetailState text="Loading scheduled task…" />;
+  if (schedules.isPending) return <DetailState loading text="Loading scheduled task…" />;
   if (schedules.isError) return <DetailState text={errorMessage(schedules.error)} />;
   if (!schedules.data.supported)
     return <DetailState text={schedules.data.reason} title="Scheduling unavailable" />;
@@ -209,14 +219,16 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
         </DropdownMenu>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <StatusBadge status={schedule.status} />
+        <ScheduleStatusBadge status={schedule.status} />
         <Badge variant="outline">{modeLabel(schedule.mode)}</Badge>
         {schedule.mutating && <Badge variant="warning">writes enabled</Badge>}
         {schedule.profile === "noFilesystem" && <Badge variant="outline">no filesystem</Badge>}
       </div>
 
       {error && (
-        <p className="mt-5 rounded-lg bg-destructive/10 p-3 text-sm text-foreground">{error}</p>
+        <Alert className="mt-5" variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       )}
 
       <p className="mt-8 max-w-3xl whitespace-pre-wrap rounded-xl border bg-card p-5 text-sm leading-6">
@@ -315,7 +327,11 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction disabled={remove.isPending} onClick={() => void deleteItem()}>
+            <AlertDialogAction
+              className={buttonVariants({ variant: "destructive" })}
+              disabled={remove.isPending}
+              onClick={() => void deleteItem()}
+            >
               Delete
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -591,39 +607,51 @@ function Fact({ label, title, value }: { label: string; title?: string; value: s
   );
 }
 
-function StatusBadge({ status }: { status: Schedule["status"] }) {
-  const variant =
-    status === "running"
-      ? "success"
-      : status === "paused"
-        ? "muted"
-        : status === "claimed"
-          ? "warning"
-          : "info";
-  return <Badge variant={variant}>{status}</Badge>;
-}
-
-function DetailState({ text, title }: { text: string; title?: string }) {
+function DetailState({
+  loading,
+  text,
+  title,
+}: {
+  loading?: boolean;
+  text: string;
+  title?: string;
+}) {
   return (
-    <div className="flex h-full items-center justify-center p-6 text-center">
-      <div className="max-w-md rounded-xl border border-dashed p-8">
-        {title && <h1 className="font-semibold">{title}</h1>}
-        <p className="mt-2 text-sm text-muted-foreground">{text}</p>
-        <Button asChild className="mt-5" size="sm" variant="outline">
-          <Link to="/workspace/schedules">Back to scheduled</Link>
-        </Button>
-      </div>
+    <div className="flex h-full items-center justify-center p-6">
+      <Empty className="max-w-md flex-none border" role={loading ? "status" : "alert"}>
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <CalendarClock />
+          </EmptyMedia>
+          {title && <EmptyTitle>{title}</EmptyTitle>}
+          <EmptyDescription>{text}</EmptyDescription>
+        </EmptyHeader>
+        {!loading && (
+          <EmptyContent>
+            <Button asChild size="sm" variant="outline">
+              <Link to="/workspace/schedules">Back to scheduled</Link>
+            </Button>
+          </EmptyContent>
+        )}
+      </Empty>
     </div>
   );
 }
 
 function HistoryState({ destructive, text }: { destructive?: boolean; text: string }) {
+  if (destructive) {
+    return (
+      <Alert className="mt-3" variant="destructive">
+        <AlertDescription>{text}</AlertDescription>
+      </Alert>
+    );
+  }
   return (
-    <p
-      className={`mt-3 rounded-xl border border-dashed p-6 text-sm ${destructive ? "text-destructive" : "text-muted-foreground"}`}
-    >
-      {text}
-    </p>
+    <Empty className="mt-3 border" role="status">
+      <EmptyHeader>
+        <EmptyDescription>{text}</EmptyDescription>
+      </EmptyHeader>
+    </Empty>
   );
 }
 

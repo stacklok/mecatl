@@ -72,7 +72,7 @@ describe("schedule inventory controls", () => {
     expect(renderedDesktopNames()).toEqual(["Alpha"]);
 
     await user.clear(search);
-    await user.click(screen.getByRole("button", { name: "scheduled" }));
+    await user.click(screen.getByRole("radio", { name: "scheduled" }));
     expect(renderedDesktopNames()).toEqual(["Beta", "Alpha"]);
     expect(screen.queryByText("Run history")).toBeNull();
   });
@@ -94,11 +94,11 @@ describe("schedule inventory controls", () => {
       "Paused",
       "Completed",
     ]);
-    await user.click(screen.getByRole("button", { name: "scheduled" }));
+    await user.click(screen.getByRole("radio", { name: "scheduled" }));
     expect(renderedDesktopNames()).toEqual(["Live paused", "Claimed", "Future"]);
-    await user.click(screen.getByRole("button", { name: "paused" }));
+    await user.click(screen.getByRole("radio", { name: "paused" }));
     expect(renderedDesktopNames()).toEqual(["Paused"]);
-    await user.click(screen.getByRole("button", { name: "all" }));
+    await user.click(screen.getByRole("radio", { name: "all" }));
     expect(renderedDesktopNames()).toContain("Completed");
   });
 

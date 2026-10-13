@@ -11,9 +11,10 @@ import {
 } from "@mecatl-studio/contracts/query";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { CalendarClock, Ellipsis, Plus, Search } from "lucide-react";
+import { CalendarClock, Ellipsis, Plus } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { PageShell } from "../../components/shell/page-shell";
+import { Alert, AlertDescription } from "../../components/ui/alert";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,15 +25,23 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "../../components/ui/alert-dialog";
-import { Badge } from "../../components/ui/badge";
-import { Button } from "../../components/ui/button";
+import { Button, buttonVariants } from "../../components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../../components/ui/dropdown-menu";
-import { Input } from "../../components/ui/input";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "../../components/ui/empty";
+import { InputSearch } from "../../components/ui/input-search";
+import { Skeleton } from "../../components/ui/skeleton";
 import { SortableHead, type SortDirection } from "../../components/ui/sortable-head";
 import {
   Table,
@@ -42,6 +51,7 @@ import {
   TableHeader,
   TableRow,
 } from "../../components/ui/table";
+import { ToggleGroup, ToggleGroupItem } from "../../components/ui/toggle-group";
 import { errorMessage } from "../../lib/error-message";
 import { formatDate } from "../../lib/formatters";
 import { pageTitleClass } from "../../lib/typography";
@@ -54,6 +64,7 @@ import {
   type ScheduleInventoryOrder,
   scheduleTriggerLabel,
 } from "./schedule-inventory";
+import { ScheduleStatusBadge, ScheduleStatusDot } from "./schedule-status";
 
 type Schedule = ListSchedulesResponse["items"][number];
 type Filter = "all" | "paused" | "scheduled";
@@ -221,13 +232,17 @@ export function SchedulesWorkspace() {
       </div>
 
       {error && (
-        <p className="mt-5 rounded-lg bg-destructive/10 p-3 text-sm text-foreground">{error}</p>
+        <Alert className="mt-5" variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       )}
 
       {schedules.isPending ? (
-        <EmptyState text="Loading schedules…" />
+        <LoadingState />
       ) : schedules.isError ? (
-        <EmptyState text={errorMessage(schedules.error)} />
+        <Alert className="mt-8" variant="destructive">
+          <AlertDescription>{errorMessage(schedules.error)}</AlertDescription>
+        </Alert>
       ) : !schedules.data.supported ? (
         <EmptyState
           text={schedules.data.reason}
@@ -242,31 +257,32 @@ export function SchedulesWorkspace() {
       ) : (
         <>
           <div className="mt-7 flex flex-wrap items-center gap-3">
-            <div className="inline-flex rounded-full bg-muted p-1">
+            <ToggleGroup
+              aria-label="Filter by status"
+              className="rounded-full bg-muted p-1"
+              onValueChange={(value) => value && setFilter(value as Filter)}
+              type="single"
+              value={filter}
+            >
               {(["all", "scheduled", "paused"] as const).map((value) => (
-                <button
-                  aria-pressed={filter === value}
-                  className={`min-h-11 rounded-full px-4 text-sm capitalize focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${filter === value ? "bg-background font-medium shadow-sm" : "text-muted-foreground"}`}
+                <ToggleGroupItem
+                  className="min-h-11 rounded-full px-4 capitalize data-[state=on]:bg-background data-[state=on]:font-medium data-[state=on]:shadow-sm"
                   key={value}
-                  onClick={() => setFilter(value)}
-                  type="button"
+                  value={value}
                 >
                   {value}
-                </button>
+                </ToggleGroupItem>
               ))}
-            </div>
-            <div className="relative w-full min-[500px]:max-w-64 min-[500px]:flex-1">
-              <Search className="pointer-events-none absolute left-3 top-3.5 size-4 text-muted-foreground" />
-              <Input
-                aria-label="Filter scheduled tasks"
-                className="min-h-11 pl-9"
-                onChange={(event) => setQuery(event.target.value)}
-                onKeyDown={onSearchKeyDown}
-                placeholder="Filter by name or schedule"
-                ref={searchRef}
-                value={query}
-              />
-            </div>
+            </ToggleGroup>
+            <InputSearch
+              aria-label="Filter scheduled tasks"
+              className="w-full min-[500px]:max-w-64 min-[500px]:flex-1"
+              inputRef={searchRef}
+              onChange={setQuery}
+              onKeyDown={onSearchKeyDown}
+              placeholder="Filter by name or schedule"
+              value={query}
+            />
           </div>
 
           {items.length === 0 ? (
@@ -321,6 +337,7 @@ export function SchedulesWorkspace() {
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
+              className={buttonVariants({ variant: "destructive" })}
               disabled={remove.isPending}
               onClick={() => confirmDelete && void deleteItem(confirmDelete)}
             >
@@ -428,7 +445,7 @@ function ScheduleInventory({
                   {runCount(schedule)}
                 </TableCell>
                 <TableCell className="px-4 py-3">
-                  <StatusBadge status={schedule.status} />
+                  <ScheduleStatusBadge status={schedule.status} />
                 </TableCell>
                 <TableCell className="w-0 px-4 py-3">
                   <ScheduleActions
@@ -456,7 +473,7 @@ function ScheduleInventory({
             params={{ scheduleName: schedule.name }}
             to="/workspace/schedules/$scheduleName"
           >
-            <StatusDot status={schedule.status} />
+            <ScheduleStatusDot status={schedule.status} />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-medium">{schedule.name}</span>
               <span className="line-clamp-2 text-xs text-muted-foreground">{schedule.prompt}</span>
@@ -525,6 +542,17 @@ function ScheduleActions({
   );
 }
 
+function LoadingState() {
+  return (
+    <div className="mt-8 space-y-3" role="status">
+      <span className="sr-only">Loading schedules…</span>
+      <Skeleton className="h-10 w-full" />
+      <Skeleton className="h-10 w-full" />
+      <Skeleton className="h-10 w-full" />
+    </div>
+  );
+}
+
 function EmptyState({
   action,
   actionLabel = "Schedule task",
@@ -537,49 +565,24 @@ function EmptyState({
   title?: string;
 }) {
   return (
-    <div className="mt-8 flex min-h-64 flex-col items-center justify-center rounded-xl border border-dashed p-8 text-center">
-      <span className="flex size-11 items-center justify-center rounded-full bg-muted text-muted-foreground">
-        <CalendarClock className="size-5" />
-      </span>
-      {title && <h2 className="mt-4 font-semibold">{title}</h2>}
-      <p className="mt-2 max-w-md text-sm text-muted-foreground">{text}</p>
+    <Empty className="mt-8 min-h-64 border" role="status">
+      <EmptyHeader>
+        <EmptyMedia variant="icon">
+          <CalendarClock />
+        </EmptyMedia>
+        {title && <EmptyTitle>{title}</EmptyTitle>}
+        <EmptyDescription>{text}</EmptyDescription>
+      </EmptyHeader>
       {action && (
-        <Button className="mt-5" onClick={action} variant="action">
-          {actionLabel === "Schedule task" && <Plus />}
-          {actionLabel}
-        </Button>
+        <EmptyContent>
+          <Button onClick={action} variant="action">
+            {actionLabel === "Schedule task" && <Plus />}
+            {actionLabel}
+          </Button>
+        </EmptyContent>
       )}
-    </div>
+    </Empty>
   );
-}
-
-function StatusDot({ status }: { status: Schedule["status"] }) {
-  const color =
-    status === "running"
-      ? "bg-success"
-      : status === "claimed"
-        ? "bg-warning"
-        : status === "paused"
-          ? "bg-muted-foreground"
-          : "bg-info";
-  return (
-    <span className="mt-1.5 flex size-3 shrink-0 items-center justify-center">
-      <span aria-hidden="true" className={`size-2 rounded-full ${color}`} />
-      <span className="sr-only">{status}</span>
-    </span>
-  );
-}
-
-function StatusBadge({ status }: { status: Schedule["status"] }) {
-  const variant =
-    status === "running"
-      ? "success"
-      : status === "paused"
-        ? "muted"
-        : status === "claimed"
-          ? "warning"
-          : "info";
-  return <Badge variant={variant}>{status}</Badge>;
 }
 
 function runCount(schedule: Schedule) {
