@@ -128,7 +128,7 @@ jobs:
   publish-mecak8s:
     needs: compute-version
     if: needs.compute-version.outputs.publish == 'true'
-    name: Build, sign, attest mecak8s image
+    name: Build, scan, sign, attest mecak8s image
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -176,7 +176,9 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Main builds ship without the product-metrics ingest key, so development
-      # deployments never report product metrics.
+      # deployments never report product metrics. As in release.yml, ko names
+      # the image v<version> as it pushes, before the scan and signature below;
+      # followers reach it only by the verified digest their chart pins.
       - name: Build and push image (+ SBOM)
         id: build
         run: |
@@ -200,6 +202,17 @@ jobs:
             echo "image_digest=${ref##*@}"
           } >> "$GITHUB_OUTPUT"
           echo "Built ${ref}"
+
+      # The same gate as Studio: refuse to sign an image with a critical
+      # vulnerability that already has a fix.
+      - name: Scan image for fixable critical vulnerabilities
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: ${{ steps.build.outputs.ref }}
+          fail-build: true
+          only-fixed: true
+          severity-cutoff: critical
+          output-format: table
 
       - name: Sign image (keyless)
         env:
@@ -385,12 +398,14 @@ jobs:
       MECAK8S_DIGEST: ${{ needs.publish-mecak8s.outputs.digest }}
       STUDIO_IMAGE: ${{ needs.publish-studio.outputs.image }}
       STUDIO_DIGEST: ${{ needs.publish-studio.outputs.digest }}
+      IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/continuous.yml@refs/heads/main
+      ISSUER: https://token.actions.githubusercontent.com
       # The minimal values each chart needs to render; the same overrides the
       # release workflow lints with.
       MECAK8S_RENDER_SET: redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials,tls.enabled=true,tls.secretName=mecak8s-tls,oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl
     outputs:
-      mecak8s_chart_digest: ${{ steps.push.outputs.mecak8s }}
-      studio_chart_digest: ${{ steps.push.outputs.mecatl-studio }}
+      mecak8s_chart_digest: ${{ steps.push-mecak8s.outputs.digest }}
+      studio_chart_digest: ${{ steps.push-studio.outputs.digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -441,42 +456,84 @@ jobs:
           helm template main "dist/mecatl-studio-${CHART_VERSION}.tgz" -f deploy/helm/mecatl-studio/ci/browser-login-values.yaml > studio.rendered.yaml
           grep -Fq "${STUDIO_IMAGE}@${STUDIO_DIGEST}" studio.rendered.yaml
 
-      # mecak8s first: Studio follows the daemon it talks to, so a failure
-      # between the two pushes leaves followers on a matching older Studio.
-      - name: Push and sign charts
-        id: push
+      - name: Log in to the chart registry
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GH_TOKEN" | helm registry login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+
+      # Followers can select a chart as soon as it is pushed, so each chart is
+      # signed, attested, and verified before the next one is pushed. mecak8s
+      # goes first: Studio talks to the daemon, so a failure between the two
+      # leaves followers on the new daemon with the previous Studio. The next
+      # run treats an unverified mecatl-studio chart as unpublished.
+      - name: Push and sign the mecak8s chart
+        id: push-mecak8s
+        env:
+          CHART: mecak8s
         run: |
           set -euo pipefail
-          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
-          for chart in mecak8s mecatl-studio; do
-            helm push "dist/${chart}-${CHART_VERSION}.tgz" "oci://${OCI_REGISTRY}" > push-output.txt 2>&1
-            cat push-output.txt
-            digest="$(awk '/^Digest:/ {print $2}' push-output.txt)"
-            case "$digest" in sha256:*) ;; *) echo "could not parse the ${chart} chart digest" >&2; exit 1;; esac
-            cosign sign --yes "${OCI_REGISTRY}/${chart}@${digest}"
-            echo "${chart}=${digest}" >> "$GITHUB_OUTPUT"
-          done
+          if ! helm push "dist/${CHART}-${CHART_VERSION}.tgz" "oci://${OCI_REGISTRY}" > push-output.txt 2>&1; then
+            cat push-output.txt >&2
+            exit 1
+          fi
+          cat push-output.txt
+          digest="$(awk '/^Digest:/ {print $2}' push-output.txt)"
+          case "$digest" in sha256:*) ;; *) echo "could not parse the ${CHART} chart digest" >&2; exit 1;; esac
+          cosign sign --yes "${OCI_REGISTRY}/${CHART}@${digest}"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
 
       - name: Attest mecak8s chart provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ env.OCI_REGISTRY }}/mecak8s
-          subject-digest: ${{ steps.push.outputs.mecak8s }}
+          subject-digest: ${{ steps.push-mecak8s.outputs.digest }}
           push-to-registry: true
           create-storage-record: false
+
+      - name: Verify the mecak8s chart signature and attestation
+        env:
+          CHART_REF: ${{ env.OCI_REGISTRY }}/mecak8s@${{ steps.push-mecak8s.outputs.digest }}
+        run: |
+          set -eu
+          cosign verify --certificate-identity "${IDENTITY}" --certificate-oidc-issuer "${ISSUER}" "${CHART_REF}" > /dev/null
+          cosign verify-attestation --type slsaprovenance1 --certificate-identity "${IDENTITY}" --certificate-oidc-issuer "${ISSUER}" "${CHART_REF}" > /dev/null
+
+      - name: Push and sign the mecatl-studio chart
+        id: push-studio
+        env:
+          CHART: mecatl-studio
+        run: |
+          set -euo pipefail
+          if ! helm push "dist/${CHART}-${CHART_VERSION}.tgz" "oci://${OCI_REGISTRY}" > push-output.txt 2>&1; then
+            cat push-output.txt >&2
+            exit 1
+          fi
+          cat push-output.txt
+          digest="$(awk '/^Digest:/ {print $2}' push-output.txt)"
+          case "$digest" in sha256:*) ;; *) echo "could not parse the ${CHART} chart digest" >&2; exit 1;; esac
+          cosign sign --yes "${OCI_REGISTRY}/${CHART}@${digest}"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
 
       - name: Attest mecatl-studio chart provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ env.OCI_REGISTRY }}/mecatl-studio
-          subject-digest: ${{ steps.push.outputs.mecatl-studio }}
+          subject-digest: ${{ steps.push-studio.outputs.digest }}
           push-to-registry: true
           create-storage-record: false
 
+      - name: Verify the mecatl-studio chart signature and attestation
+        env:
+          CHART_REF: ${{ env.OCI_REGISTRY }}/mecatl-studio@${{ steps.push-studio.outputs.digest }}
+        run: |
+          set -eu
+          cosign verify --certificate-identity "${IDENTITY}" --certificate-oidc-issuer "${ISSUER}" "${CHART_REF}" > /dev/null
+          cosign verify-attestation --type slsaprovenance1 --certificate-identity "${IDENTITY}" --certificate-oidc-issuer "${ISSUER}" "${CHART_REF}" > /dev/null
+
       - name: Summary
         env:
-          MECAK8S_CHART_DIGEST: ${{ steps.push.outputs.mecak8s }}
-          STUDIO_CHART_DIGEST: ${{ steps.push.outputs.mecatl-studio }}
+          MECAK8S_CHART_DIGEST: ${{ steps.push-mecak8s.outputs.digest }}
+          STUDIO_CHART_DIGEST: ${{ steps.push-studio.outputs.digest }}
         run: |
           {
             echo "## Main build ${CHART_VERSION}"
