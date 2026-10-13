@@ -287,9 +287,6 @@ func TestKindExecutionBorrowedSchedule(t *testing.T) {
 		borrowedProofTurn("manual", proofPath("manual")),
 		borrowedCall("manual-read", "Read", map[string]any{"path": proofPath("manual")}),
 		borrowedScriptTurn{Text: "manual complete"},
-		borrowedProofTurn("second", proofPath("second")),
-		borrowedCall("second-read", "Read", map[string]any{"path": proofPath("second")}),
-		borrowedScriptTurn{Text: "second manual complete"},
 	)
 	runKubectl(t, ctx, kubeconfig, "rollout", "restart", "deployment/mecak8s", "-n", namespace)
 	runKubectl(t, ctx, kubeconfig, "rollout", "status", "deployment/mecak8s", "-n", namespace, "--timeout=240s")
@@ -341,6 +338,24 @@ func TestKindExecutionBorrowedSchedule(t *testing.T) {
 	}
 	t.Logf("manual borrowed fire completed session=%s environment=%s", fireSession, ref.ID)
 
+	installBorrowedScript(t, ctx, kubeconfig,
+		borrowedProofTurn("second", proofPath("second")),
+		borrowedCall("second-read", "Read", map[string]any{"path": proofPath("second")}),
+		borrowedScriptTurn{Text: "second manual complete"},
+	)
+	runKubectl(t, ctx, kubeconfig, "rollout", "restart", "deployment/mecak8s", "-n", namespace)
+	runKubectl(t, ctx, kubeconfig, "rollout", "status", "deployment/mecak8s", "-n", namespace, "--timeout=240s")
+	grpc.stop()
+	agent.stop()
+	grpc = portForward(t, ctx, kubeconfig, "service/mecak8s", 8080)
+	agent = portForward(t, ctx, kubeconfig, "service/mecak8s", 8081)
+	if err := wire.Close(); err != nil {
+		t.Fatal(err)
+	}
+	wire, err = tuiClient.Dial(tuiClient.DialConfig{Server: grpc.addr, AuthToken: token})
+	if err != nil {
+		t.Fatal(err)
+	}
 	secondStarted := time.Now()
 	_, secondSession, err := wire.FireNow(ctx, manual)
 	if err != nil || secondSession == "" || secondSession == fireSession {
