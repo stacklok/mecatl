@@ -34,12 +34,14 @@ describes the version scheme and publication order.
   that fails between them leaves followers on the new daemon with the previous Studio
   until the next build publishes.
 
-[Prune main builds](prune-main-builds.yml) deletes old main builds daily. Each
-`main/` package keeps every build younger than 7 days plus the newest 20 older charts
-and 30 older images, so every kept chart still resolves its images. It removes a
-deleted image's platform manifests, signatures, SBOMs, and attestations with it, along
-with untagged leftovers of failed runs. Dispatch it by hand for a dry run, which is the
-default for manual runs.
+[Prune main builds](prune-main-builds.yml) deletes old main builds daily. Each image
+package keeps every build younger than 7 days plus the newest 30 older ones; each chart
+package keeps 20. Every kept chart still resolves its images unless more than 10 older
+runs failed between pushing an image and pushing the charts. A follower more than 7
+days and 20 builds behind loses its images. Deleting an image also deletes its platform
+manifests, signatures, SBOMs, and attestations, and untagged leftovers of failed runs go
+too. A package that doesn't exist or that this repository can't access fails its job.
+Dispatch it by hand for a dry run, which is the default for manual runs.
 
 ## Cutting a root release
 

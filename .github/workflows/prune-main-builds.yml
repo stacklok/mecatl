@@ -2,17 +2,23 @@
 # main/ packages are touched; release images and charts are never named here.
 #
 # Retention per package: every build younger than 7 days, plus the newest
-# older ones (20 charts, 30 images). Images keep more than charts, so every kept
-# chart still resolves its digest-pinned images even when a few runs failed
-# between pushing an image and pushing the charts. Followers select the newest
-# chart, so they never run a pruned build. Untagged leftovers of failed runs and
-# signatures whose image is gone are removed once they pass the same age.
+# older ones (20 charts, 30 images). Only version tags (*-main.*) count toward
+# that number: ko also tags each platform image's SBOM (sha256-<digest>.sbom),
+# which would otherwise take two of every three mecak8s slots. Images keep more
+# than charts, so every kept chart resolves its digest-pinned images unless more
+# than 10 older runs failed between pushing an image and pushing the charts. A
+# follower that tracks the newest chart never runs a pruned build; one more than
+# 7 days and 20 builds behind loses its images.
 #
-# ghcr-cleanup-action deletes a multi-arch image together with its platform
-# manifests, its sha256-<digest>.{sig,att,sbom} tags, and its OCI referrers
-# (the build-provenance attestations), so nothing a kept build needs is
-# removed. Deleting a version needs the Admin role on the package, which the
-# publishing repository holds for packages its GITHUB_TOKEN created.
+# ghcr-cleanup-action deletes an image together with its platform manifests and
+# its signature, SBOM, and attestation artifacts, whether a sha256-<digest> tag
+# or an OCI referrer links them. A kept build's artifacts are never deletion
+# candidates. Untagged leftovers of failed runs are removed once they pass the
+# same age; orphaned artifacts, such as a deleted image's per-platform SBOMs,
+# are removed whenever a run finds them. A package that doesn't exist or that
+# this repository can't access fails its job. Deleting a version needs the Admin
+# role on the package, which the publishing repository holds for packages its
+# GITHUB_TOKEN created.
 name: Prune main builds
 
 on:
@@ -36,7 +42,9 @@ concurrency:
 
 jobs:
   prune:
-    if: github.repository == 'stacklok/mecatl'
+    # Only main's copy prunes, so a dispatch from another branch can't delete
+    # with edited packages or keep counts.
+    if: github.repository == 'stacklok/mecatl' && github.ref == 'refs/heads/main'
     name: Prune ${{ matrix.package }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -51,38 +59,19 @@ jobs:
           - {package: mecatl/main/charts/mecak8s, keep: 20}
           - {package: mecatl/main/charts/mecatl-studio, keep: 20}
     steps:
-      # A package appears with its first main build; until then there is
-      # nothing to prune.
-      - name: Check that the package exists
-        id: exists
-        env:
-          GH_TOKEN: ${{ github.token }}
-          OWNER: ${{ github.repository_owner }}
-          PACKAGE: ${{ matrix.package }}
-        run: |
-          set -eu
-          encoded=$(jq -rn --arg p "$PACKAGE" '$p | @uri')
-          if gh api "/orgs/${OWNER}/packages/container/${encoded}" --silent 2> lookup.err; then
-            echo "found=true" >> "$GITHUB_OUTPUT"
-          elif grep -q 'HTTP 404' lookup.err; then
-            echo "::notice title=Nothing to prune::${PACKAGE} has not been published yet."
-            echo "found=false" >> "$GITHUB_OUTPUT"
-          else
-            cat lookup.err >&2
-            exit 1
-          fi
-
       - name: Prune old versions
-        if: steps.exists.outputs.found == 'true'
         uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
         with:
           token: ${{ github.token }}
           owner: ${{ github.repository_owner }}
           package: ${{ matrix.package }}
           older-than: 7 days
+          # Images are tagged v<version> and charts <version>, both *-main.*.
+          delete-tags: '*-main.*'
           keep-n-tagged: ${{ matrix.keep }}
           delete-untagged: true
           delete-orphaned-images: true
+          # Advisory only: rechecks the package after deleting and warns.
           validate: true
           # Scheduled runs delete; a manual run defaults to a dry run.
           dry-run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
