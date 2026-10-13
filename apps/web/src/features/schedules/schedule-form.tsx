@@ -59,12 +59,14 @@ const PHRASE_HINT = 'Not recognised — try "every weekday at 9am" or a cron exp
 // Create and update bodies still pass through the authenticated BFF contract.
 
 /**
- * DECISION: Completed one-shots stay inspect-only because the backend rejects
- * their unchanged past trigger (#2146). Completed crons may still change prompt
- * and permission posture, but reopening or rescheduling belongs to #2149.
+ * DECISION: A one-shot whose time has passed stays inspect-only, whatever its
+ * status, because the backend rejects any update that keeps a past trigger
+ * (#2146). Completed crons may still change prompt and permission posture, but
+ * reopening or rescheduling belongs to #2149.
  */
-export function canEditSchedule(schedule: Pick<Schedule, "status" | "trigger">) {
-  return !(schedule.status === "completed" && schedule.trigger.kind === "once");
+export function canEditSchedule(schedule: Pick<Schedule, "status" | "trigger">, now = Date.now()) {
+  if (schedule.trigger.kind !== "once") return true;
+  return schedule.status !== "completed" && !(Date.parse(schedule.trigger.at) <= now);
 }
 
 /** The plain-English preview of what a phrase compiled to. */

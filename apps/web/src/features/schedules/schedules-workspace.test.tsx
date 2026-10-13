@@ -173,6 +173,25 @@ describe("schedule inventory controls", () => {
       false,
     );
   });
+
+  it("does not act on a disabled menu item, even for a click that skips pointer events", async () => {
+    const user = userEvent.setup();
+    mount([
+      schedule({
+        enabled: true,
+        name: "Past once",
+        status: "paused",
+        trigger: { at: "2026-10-01T09:00:00Z", kind: "once" },
+      }),
+    ]);
+
+    await user.click(screen.getByRole("button", { name: "Actions for Past once" }));
+    const edit = screen.getByRole("menuitem", { name: "Edit" });
+    expect(edit.hasAttribute("data-disabled")).toBe(true);
+    fireEvent.click(edit);
+
+    expect(screen.queryByRole("dialog", { name: "Edit scheduled task" })).toBeNull();
+  });
 });
 
 function mount(items: Schedule[]) {

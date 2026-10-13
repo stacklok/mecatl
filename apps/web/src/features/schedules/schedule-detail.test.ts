@@ -8,7 +8,6 @@ import {
   describeLastRun,
   describeNextRun,
   describeRuns,
-  fireDurationMs,
   fireOutcome,
   scheduleDetailPollInterval,
   scheduleDetailPolling,
@@ -36,32 +35,17 @@ function fire(overrides: Partial<Fire> & Pick<Fire, "id">): Fire {
 }
 
 describe("schedule fire history", () => {
-  it("sorts by duration with newest fire as the tie break", () => {
+  it("sorts by outcome with the newest fire as the tie break", () => {
     const items = [
-      fire({
-        firedAt: "2026-01-02T00:00:00.000Z",
-        id: "newer",
-        progressAt: "2026-01-02T00:00:02.000Z",
-        startedAt: "2026-01-02T00:00:00.000Z",
-      }),
-      fire({
-        firedAt: "2026-01-01T00:00:00.000Z",
-        id: "older",
-        progressAt: "2026-01-01T00:00:02.000Z",
-        startedAt: "2026-01-01T00:00:00.000Z",
-      }),
-      fire({
-        firedAt: "2026-01-03T00:00:00.000Z",
-        id: "longest",
-        progressAt: "2026-01-03T00:00:03.000Z",
-        startedAt: "2026-01-03T00:00:00.000Z",
-      }),
+      fire({ firedAt: "2026-01-01T00:00:00.000Z", id: "old-done", stop: "end_turn" }),
+      fire({ firedAt: "2026-01-02T00:00:00.000Z", id: "failed", stop: "error" }),
+      fire({ firedAt: "2026-01-03T00:00:00.000Z", id: "new-done", stop: "end_turn" }),
     ];
 
-    expect(sortScheduleFires(items, "duration", "asc").map((item) => item.id)).toEqual([
-      "newer",
-      "older",
-      "longest",
+    expect(sortScheduleFires(items, "outcome", "asc").map((item) => item.id)).toEqual([
+      "new-done",
+      "old-done",
+      "failed",
     ]);
   });
 
@@ -78,9 +62,25 @@ describe("schedule fire history", () => {
         "In flight",
       ],
       [fire({ id: "failed", error: "provider failed", stop: "end_turn" }), "Failed"],
+      [fire({ id: "error", stop: "error" }), "Failed"],
+      [fire({ id: "failures", stop: "max_consecutive_failures" }), "Failed"],
       [fire({ id: "cancelled", stop: "cancelled" }), "Cancelled"],
-      [fire({ id: "timeout", stop: "deadline_exceeded" }), "Timed out"],
+      // The daemon records a timeout with both its stop reason and an error.
+      [
+        fire({
+          id: "timeout",
+          error: "scheduled fire exceeded its wall-clock deadline of 30m0s",
+          stop: "timeout",
+        }),
+        "Timed out",
+      ],
+      [fire({ id: "turns", stop: "max_turns" }), "Limit reached"],
+      [fire({ id: "tools", stop: "max_tool_calls" }), "Limit reached"],
+      [fire({ id: "budget", stop: "budget" }), "Limit reached"],
+      [fire({ id: "stalled", stop: "no_progress" }), "Stopped"],
+      [fire({ id: "unknown", stop: "something_new" }), "Stopped"],
       [fire({ id: "complete", stop: "end_turn" }), "Completed"],
+      [fire({ id: "structured", stop: "structured_output" }), "Completed"],
       [fire({ id: "empty", stop: "" }), "Completed"],
     ];
 
@@ -101,37 +101,6 @@ describe("schedule fire history", () => {
     );
     expect(scheduleFirePollInterval("running", [])).toBe(5_000);
     expect(scheduleFirePollInterval("claimed", undefined)).toBe(5_000);
-  });
-
-  it("uses the current time for an in-flight duration", () => {
-    expect(
-      fireDurationMs(
-        fire({ id: "live", inFlight: true, startedAt: "2026-01-01T00:00:00.000Z" }),
-        Date.parse("2026-01-01T00:00:04.500Z"),
-      ),
-    ).toBe(4_500);
-  });
-
-  it("does not present a terminal deadline as a completed duration", () => {
-    const terminal = {
-      deadline: "2026-01-01T00:30:00.000Z",
-      startedAt: "2026-01-01T00:00:00.000Z",
-    };
-
-    expect(fireDurationMs(fire({ ...terminal, id: "complete", stop: "end_turn" }))).toBeNull();
-    expect(fireDurationMs(fire({ ...terminal, id: "timeout", stop: "deadline_exceeded" }))).toBe(
-      1_800_000,
-    );
-    expect(
-      fireDurationMs(
-        fire({
-          ...terminal,
-          id: "progressed",
-          progressAt: "2026-01-01T00:00:03.000Z",
-          stop: "end_turn",
-        }),
-      ),
-    ).toBe(3_000);
   });
 });
 
@@ -165,6 +134,20 @@ describe("schedule actions and labels", () => {
         trigger: { expression: "0 9 * * *", kind: "cron", timezone: "" },
       }),
     ).toBe(true);
+  });
+
+  it("blocks editing any one-shot whose time has passed, whatever its status", () => {
+    const now = Date.parse("2026-10-08T12:00:00Z");
+    for (const status of ["scheduled", "paused", "claimed", "running"] as const) {
+      expect(
+        canEditSchedule({ status, trigger: { at: "2026-10-08T11:00:00Z", kind: "once" } }, now),
+        `${status} past`,
+      ).toBe(false);
+      expect(
+        canEditSchedule({ status, trigger: { at: "2026-10-08T13:00:00Z", kind: "once" } }, now),
+        `${status} future`,
+      ).toBe(true);
+    }
   });
 
   it("labels an empty cron time zone as UTC", () => {

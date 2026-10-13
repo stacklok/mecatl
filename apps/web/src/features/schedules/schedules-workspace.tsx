@@ -359,7 +359,7 @@ function ScheduleInventory({
   return (
     <>
       <div
-        className="mt-4 overflow-hidden rounded-xl border bg-card max-[499px]:hidden"
+        className="mt-4 overflow-hidden rounded-xl border bg-card max-[500px]:hidden"
         data-schedule-desktop-table
       >
         <Table>
@@ -471,21 +471,21 @@ function ScheduleActions({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <DropdownMenuItem disabled={busy || !canRunNow(schedule)} onClick={() => onAction("fire")}>
+        <DropdownMenuItem disabled={busy || !canRunNow(schedule)} onSelect={() => onAction("fire")}>
           Run now
         </DropdownMenuItem>
         <DropdownMenuItem
           disabled={busy || !canTogglePause(schedule)}
-          onClick={() => onAction(schedule.enabled ? "pause" : "resume")}
+          onSelect={() => onAction(schedule.enabled ? "pause" : "resume")}
         >
           {schedule.enabled ? "Pause" : "Resume"}
         </DropdownMenuItem>
-        <DropdownMenuItem disabled={busy || !canEditSchedule(schedule)} onClick={onEdit}>
+        <DropdownMenuItem disabled={busy || !canEditSchedule(schedule)} onSelect={onEdit}>
           Edit
         </DropdownMenuItem>
         <DropdownMenuItem
           disabled={busy}
-          onClick={() => triggerRef.current && onDelete(triggerRef.current)}
+          onSelect={() => triggerRef.current && onDelete(triggerRef.current)}
           variant="destructive"
         >
           Delete

@@ -66,7 +66,7 @@ type Schedule = ListSchedulesResponse["items"][number];
  * agent run inside a session.
  */
 type ScheduleFire = ListScheduleFiresResponse["items"][number];
-export type FireSortKey = "duration" | "fired" | "outcome";
+export type FireSortKey = "fired" | "outcome";
 
 export const scheduleDetailPolling = { refetchIntervalInBackground: false } as const;
 
@@ -192,25 +192,25 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
           <DropdownMenuContent align="end">
             <DropdownMenuItem
               disabled={busy || !canRunNow(schedule)}
-              onClick={() => void runAction("fire")}
+              onSelect={() => void runAction("fire")}
             >
               Run now
             </DropdownMenuItem>
             <DropdownMenuItem
               disabled={busy || !canTogglePause(schedule)}
-              onClick={() => void runAction(schedule.enabled ? "pause" : "resume")}
+              onSelect={() => void runAction(schedule.enabled ? "pause" : "resume")}
             >
               {schedule.enabled ? "Pause" : "Resume"}
             </DropdownMenuItem>
             <DropdownMenuItem
               disabled={busy || !canEditSchedule(schedule)}
-              onClick={() => setEditing(true)}
+              onSelect={() => setEditing(true)}
             >
               Edit
             </DropdownMenuItem>
             <DropdownMenuItem
               disabled={busy}
-              onClick={() => setConfirmDelete(true)}
+              onSelect={() => setConfirmDelete(true)}
               variant="destructive"
             >
               Delete
@@ -371,14 +371,13 @@ function ScheduleFireHistory({
 
   return (
     <>
-      <div className="mt-3 overflow-hidden rounded-xl border bg-card max-[499px]:hidden">
+      <div className="mt-3 overflow-hidden rounded-xl border bg-card max-[500px]:hidden">
         <Table className="min-w-[42rem]">
           <TableHeader className="bg-muted/50 text-xs text-muted-foreground">
             <TableRow className="hover:bg-transparent">
               {(
                 [
                   ["fired", "Ran"],
-                  ["duration", "Duration"],
                   ["outcome", "Outcome"],
                 ] as const
               ).map(([key, label]) => (
@@ -397,9 +396,6 @@ function ScheduleFireHistory({
               <TableRow key={fire.id}>
                 <TableCell className="whitespace-nowrap">
                   {fire.firedAt ? formatDate(fire.firedAt) : "—"}
-                </TableCell>
-                <TableCell className="whitespace-nowrap text-muted-foreground">
-                  {formatDuration(fireDurationMs(fire))}
                 </TableCell>
                 <TableCell className="whitespace-normal">
                   <FireOutcome fire={fire} />
@@ -432,9 +428,6 @@ function ScheduleFireHistory({
                 <p className="text-sm font-medium">
                   {fire.firedAt ? formatDate(fire.firedAt) : "Time unavailable"}
                 </p>
-                <p className="text-xs text-muted-foreground">
-                  Duration {formatDuration(fireDurationMs(fire))}
-                </p>
               </div>
               <FireOutcome fire={fire} compact />
             </div>
@@ -459,7 +452,7 @@ function FireOutcome({ compact, fire }: { compact?: boolean; fire: ScheduleFire 
       ? "success"
       : outcome === "Failed"
         ? "destructive"
-        : outcome === "Timed out"
+        : outcome === "Timed out" || outcome === "Limit reached"
           ? "warning"
           : "muted";
   const rawStop = fire.stop.trim();
@@ -533,55 +526,47 @@ export function sortScheduleFires(
   fires: readonly ScheduleFire[],
   key: FireSortKey,
   direction: SortDir,
-  now = Date.now(),
 ) {
   const multiplier = direction === "asc" ? 1 : -1;
   return [...fires].sort((left, right) => {
     let comparison: number;
-    if (key === "duration")
-      comparison = (fireDurationMs(left, now) ?? -1) - (fireDurationMs(right, now) ?? -1);
-    else if (key === "outcome") comparison = fireOutcome(left).localeCompare(fireOutcome(right));
+    if (key === "outcome") comparison = fireOutcome(left).localeCompare(fireOutcome(right));
     else comparison = dateValue(left.firedAt) - dateValue(right.firedAt);
     return comparison * multiplier || dateValue(right.firedAt) - dateValue(left.firedAt);
   });
 }
 
-export function fireDurationMs(fire: ScheduleFire, now = Date.now()) {
-  const started = dateValue(fire.startedAt);
-  if (!started) return null;
-  if (fire.inFlight) return Math.max(0, now - started);
-
-  // DECISION: A terminal deadline is not a completion time. Show an unknown
-  // duration unless progress records an end, except for deadline-exceeded runs.
-  const progress = dateValue(fire.progressAt);
-  if (progress) return Math.max(0, progress - started);
-  if (fireOutcome(fire) !== "Timed out") return null;
-  const deadline = dateValue(fire.deadline);
-  return deadline ? Math.max(0, deadline - started) : null;
-}
+/**
+ * DECISION: The outcome is read from the recorded `session.StopReason`, not by
+ * matching substrings. A timeout is recorded with both `timeout` and an error
+ * (`scheduler_fire.go`), so the stop reason is checked before the error. A
+ * limit stop is neither a success nor a failure, and an unknown future reason
+ * reads "Stopped" rather than claiming completion.
+ */
+const COMPLETED_STOPS = new Set([
+  "",
+  "end_turn",
+  "structured_output",
+  "plan_approved",
+  "plan_iterate",
+]);
+const LIMIT_STOPS = new Set(["max_turns", "max_tool_calls", "budget"]);
+const FAILED_STOPS = new Set(["error", "max_consecutive_failures"]);
 
 export function fireOutcome(fire: ScheduleFire) {
   if (fire.inFlight) return fire.startedAt ? "In flight" : "Claimed";
-  if (fire.error) return "Failed";
-  const stop = fire.stop.trim().toLocaleLowerCase().replaceAll("-", "_").replaceAll(" ", "_");
-  if (stop.includes("cancel")) return "Cancelled";
-  if (stop.includes("timeout") || stop.includes("timed_out") || stop.includes("deadline"))
-    return "Timed out";
-  return "Completed";
+  const stop = fire.stop.trim().toLocaleLowerCase();
+  if (stop === "timeout") return "Timed out";
+  if (stop === "cancelled") return "Cancelled";
+  if (fire.error || FAILED_STOPS.has(stop)) return "Failed";
+  if (LIMIT_STOPS.has(stop)) return "Limit reached";
+  return COMPLETED_STOPS.has(stop) ? "Completed" : "Stopped";
 }
 
 function dateValue(value: string | null) {
   if (!value) return 0;
   const result = Date.parse(value);
   return Number.isNaN(result) ? 0 : result;
-}
-
-function formatDuration(milliseconds: number | null) {
-  if (milliseconds === null) return "—";
-  const seconds = milliseconds / 1_000;
-  if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  const minutes = Math.floor(seconds / 60);
-  return `${minutes}m ${Math.round(seconds - minutes * 60)}s`;
 }
 
 function FactGroup({ children, title }: { children: React.ReactNode; title: string }) {
