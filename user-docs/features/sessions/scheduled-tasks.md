@@ -82,6 +82,26 @@ for exact request and response fields.
 The `mecatui` overlay is available when the connected server advertises a
 reachable schedule store.
 
+## Manage schedules in Studio
+
+[Studio](/operating/studio.md) lists every schedule you can see, with a detail
+page that shows the run history. Each run links to its session in Chats.
+
+- **Filter and search.** Press `/` to search by name, prompt, or cadence.
+  **Scheduled** lists schedules that are running, claimed, or waiting for their
+  next run, and **Paused** lists paused ones. A finished schedule appears only
+  under **All**.
+- **Create and edit.** The dialog sets the prompt, a cron or one-time trigger,
+  whether the task may make changes, and the tool profile. A new cron schedule
+  uses your browser's time zone. Studio has no control for the time zone, run
+  limit, or one-shot retry; use the API or the `Schedule` tool to set them.
+- **What you can't change.** After creation, the name, trigger, and tool
+  profile are fixed. To change when a task runs, create a new schedule and
+  delete the old one. A one-time schedule whose time has passed can't be
+  edited.
+- **Finished schedules.** A one-time schedule that has run, or a cron schedule
+  that reached its run limit, can be deleted but not run, paused, or resumed.
+
 ## Placement and deletion
 
 Mecatl resolves placement when it creates the schedule. Every fire reattaches
