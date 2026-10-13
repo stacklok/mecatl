@@ -16,7 +16,7 @@ import (
 // isolated. The port methods take `now` as an explicit argument, so the suite
 // controls time directly (no injected clock to move).
 func TestJSONLStoreScheduleConformance(t *testing.T) {
-	scheduleconformance.Run(t, func(*testing.T) port.ScheduleStore {
+	scheduleconformance.RunClaimAndRetryConformance(t, func(*testing.T) port.ScheduleStore {
 		st, err := jsonlstore.New(t.TempDir())
 		if err != nil {
 			t.Fatalf("jsonlstore.New: %v", err)

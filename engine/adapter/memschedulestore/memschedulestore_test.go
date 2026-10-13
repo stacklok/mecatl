@@ -12,7 +12,7 @@ import (
 // table against the in-memory reference store. The suite controls time by
 // passing explicit `now` values to Due/Claim, so the store needs no clock.
 func TestMemschedulestoreConformance(t *testing.T) {
-	scheduleconformance.Run(t, func(*testing.T) port.ScheduleStore {
+	scheduleconformance.RunClaimAndRetryConformance(t, func(*testing.T) port.ScheduleStore {
 		return memschedulestore.New()
 	})
 }

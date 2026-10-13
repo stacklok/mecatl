@@ -20,7 +20,7 @@ import (
 // adapter so a suite bug is caught in the suite's own package, not only in an
 // adapter's).
 func TestScheduleConformanceSelfTest(t *testing.T) {
-	scheduleconformance.Run(t, func(*testing.T) port.ScheduleStore {
+	scheduleconformance.RunClaimAndRetryConformance(t, func(*testing.T) port.ScheduleStore {
 		return memschedulestore.New()
 	})
 }
