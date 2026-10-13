@@ -26,6 +26,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/peer"
 	corev1 "k8s.io/api/core/v1"
 
 	executionv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/execution/v1"
@@ -124,9 +125,19 @@ func TestFinalMockTLSSelectsCurrentIssuedIdentityAfterInitialExpiry(t *testing.T
 type renewalCatalogServer struct {
 	executionv1.UnimplementedExecutionProviderServiceServer
 	started, release chan struct{}
+	clientSerial     atomic.Value
 }
 
-func (s *renewalCatalogServer) ListExecutionTemplates(context.Context, *executionv1.ListExecutionTemplatesRequest) (*executionv1.ListExecutionTemplatesResponse, error) {
+func (s *renewalCatalogServer) ListExecutionTemplates(ctx context.Context, _ *executionv1.ListExecutionTemplatesRequest) (*executionv1.ListExecutionTemplatesResponse, error) {
+	remote, ok := peer.FromContext(ctx)
+	if !ok {
+		return nil, fmt.Errorf("catalog RPC did not provide a peer")
+	}
+	info, ok := remote.AuthInfo.(credentials.TLSInfo)
+	if !ok || len(info.State.VerifiedChains) == 0 || len(info.State.PeerCertificates) == 0 {
+		return nil, fmt.Errorf("catalog RPC did not authenticate the client")
+	}
+	s.clientSerial.Store(info.State.PeerCertificates[0].SerialNumber.String())
 	return &executionv1.ListExecutionTemplatesResponse{}, nil
 }
 
@@ -186,6 +197,9 @@ func TestSameClientReloadProofRejectsNoOpAndWrongClient(t *testing.T) {
 	if serial, err := inflightCatalogSerial(ctx, client); err != nil || serial != "4" {
 		t.Fatalf("baseline RPC: serial=%s err=%v", serial, err)
 	}
+	if serial := svc.clientSerial.Load(); serial != "2" {
+		t.Fatalf("baseline RPC authenticated client serial=%v, want 2", serial)
+	}
 	done := make(chan struct{})
 	result := make(chan error, 1)
 	go func() {
@@ -205,11 +219,23 @@ func TestSameClientReloadProofRejectsNoOpAndWrongClient(t *testing.T) {
 	if err := inflightVerifyReload(ctx, client, files, "5", "3"); err == nil {
 		t.Fatal("accepted no-op reload")
 	}
+	if serial := svc.clientSerial.Load(); serial != "2" {
+		t.Fatalf("no-op reload RPC authenticated client serial=%v, want 2", serial)
+	}
 	if err := wrongClient.ReloadTLS(); err != nil {
 		t.Fatal(err)
 	}
+	if serial, err := inflightCatalogSerial(ctx, wrongClient); err != nil || serial != "5" {
+		t.Fatalf("wrong-client RPC: serial=%s err=%v", serial, err)
+	}
+	if serial := svc.clientSerial.Load(); serial != "3" {
+		t.Fatalf("wrong-client RPC authenticated client serial=%v, want 3", serial)
+	}
 	if err := inflightVerifyReload(ctx, client, files, "5", "3"); err == nil {
 		t.Fatal("accepted reload of a different client")
+	}
+	if serial := svc.clientSerial.Load(); serial != "2" {
+		t.Fatalf("original-client RPC after wrong-client reload authenticated client serial=%v, want 2", serial)
 	}
 	if err := client.ReloadTLS(); err != nil {
 		t.Fatal(err)
@@ -219,6 +245,9 @@ func TestSameClientReloadProofRejectsNoOpAndWrongClient(t *testing.T) {
 	}
 	if err := inflightVerifyReload(ctx, client, files, "5", "3"); err != nil {
 		t.Fatal(err)
+	}
+	if serial := svc.clientSerial.Load(); serial != "3" {
+		t.Fatalf("same-client reload RPC authenticated client serial=%v, want 3", serial)
 	}
 	if err := inflightRunning(ctx, done); err != nil {
 		t.Fatal(err)
