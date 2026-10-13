@@ -214,7 +214,9 @@ turn off **Starter prompts** in **Settings > Personalise**; the choice belongs t
 your account in this browser. A link with `?prompt=` also
 fills it without starting a run. If the link includes `send=1`, Studio shows the
 prompt, target chat, model, and permission mode before you select **Send
-prompt** or **Edit prompt**. For a new chat, it also shows tool access. Opening
+prompt** or **Edit prompt**. It also shows **Execution**: the execution selected
+for a new chat, or whether files and the built-in Shell are available in an
+existing chat. Opening
 or reloading the link never sends it automatically, and the prompt does not
 replace your saved draft until you select **Edit prompt**. If you need to sign in
 first, keep the original tab open. Its prompt stays there while the popup or new
