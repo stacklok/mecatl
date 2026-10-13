@@ -16,11 +16,8 @@ spec:
     matchLabels: {{- include "mecatl-studio.selectorLabels" . | nindent 6 }}
   template:
     metadata:
-      labels:
-        {{- include "mecatl-studio.labels" . | nindent 8 }}
-        {{- with .Values.podLabels }}
-        {{- toYaml . | nindent 8 }}
-        {{- end }}
+      {{- /* Selector labels only, so a chart bump with the same image does not restart pods. */}}
+      labels: {{- merge (include "mecatl-studio.selectorLabels" . | fromYaml) .Values.podLabels | toYaml | nindent 8 }}
       {{- with .Values.podAnnotations }}
       annotations: {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -103,8 +100,8 @@ spec:
             {{- toYaml . | nindent 12 }}
             {{- end }}
           # Studio closes its listener on SIGTERM; keep serving while the
-          # gateway drops this endpoint. The image has no shell, so this uses
-          # the kubelet's sleep action.
+          # gateway drops this endpoint. The kubelet's sleep action keeps the
+          # hook independent of binaries in the image.
           lifecycle:
             preStop:
               sleep:

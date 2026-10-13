@@ -18,15 +18,10 @@ spec:
       from: {{- toYaml . | nindent 8 }}
       {{- end }}
   egress:
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: kube-system
-      ports:
-        - protocol: UDP
-          port: 53
-        - protocol: TCP
-          port: 53
+    - ports: {{- toYaml .Values.networkPolicy.dns.ports | nindent 8 }}
+      {{- with .Values.networkPolicy.dns.to }}
+      to: {{- toYaml . | nindent 8 }}
+      {{- end }}
     {{- $ports := list "443" (include "mecatl-studio.urlPort" .Values.mecatl.baseURL) }}
     {{- with .Values.mecatl.resourceURL }}
     {{- $ports = append $ports (include "mecatl-studio.urlPort" .) }}

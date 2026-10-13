@@ -380,8 +380,11 @@ same `STUDIO_SESSION_SECRET`.
 ### Install with Helm
 
 The `mecatl-studio` chart at `oci://ghcr.io/stacklok/mecatl/charts/mecatl-studio`
-deploys Studio with the settings above. Each chart version matches a Mecatl
-release and pulls that release's Studio image.
+deploys Studio with the settings above on Kubernetes 1.30 or later. Each chart
+version matches a Mecatl release after `v0.0.47` and pulls that release's Studio
+image. Choose a version from
+[GitHub releases](https://github.com/stacklok/mecatl/releases), then substitute
+its number without the leading `v` for `<CHART_VERSION>`.
 
 1. Create the session secret in the namespace Studio runs in:
 
@@ -397,7 +400,7 @@ release and pulls that release's Studio image.
    ```sh
    helm upgrade --install mecatl-studio \
      oci://ghcr.io/stacklok/mecatl/charts/mecatl-studio \
-     --version <VERSION> \
+     --version <CHART_VERSION> \
      --namespace mecatl-studio \
      --set mecatl.baseURL=https://mecak8s.example.com \
      --set publicURL=https://studio.example.com \
@@ -405,19 +408,44 @@ release and pulls that release's Studio image.
    kubectl rollout status deployment/mecatl-studio --namespace mecatl-studio
    ```
 
-The chart refuses to render a configuration the Studio image would reject at
-startup, such as a missing `publicURL` or a static token without
-`allowUnauthenticated`. To publish Studio through a Gateway API listener, set
-`httpRoute.enabled=true` and `httpRoute.parentRefs`; the route's host name
-defaults to the host of `publicURL`. The chart's NetworkPolicy admits any peer
-on Studio's port and allows egress only to DNS in `kube-system` and to TCP port
-443 and the ports in `mecatl.baseURL` and `mecatl.resourceURL`. Narrow ingress
-with `networkPolicy.ingressFrom`. NetworkPolicy matches the destination pod's
-port, so add `networkPolicy.extraEgress` rules when a Service or in-cluster
-gateway in front of Mecatl or the identity provider forwards to another port.
-Run
-`helm show values oci://ghcr.io/stacklok/mecatl/charts/mecatl-studio` for every
-value.
+A release named `mecatl-studio` keeps that name for its Deployment and Service;
+any other release name produces `<RELEASE>-mecatl-studio`. Set
+`fullnameOverride` for a fixed name.
+
+The chart is signed with keyless Cosign under the same release identity as the
+image:
+
+```sh
+cosign verify \
+  --certificate-identity https://github.com/stacklok/mecatl/.github/workflows/release.yml@refs/tags/v<CHART_VERSION> \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/stacklok/mecatl/charts/mecatl-studio:<CHART_VERSION>
+```
+
+The chart checks required settings and their combinations before anything
+reaches the cluster: it refuses to render without `mecatl.baseURL` or
+`publicURL`, with a static token but no `allowUnauthenticated`, or with an
+`extraEnv` entry that overrides a variable the chart sets. Checks that depend on
+Secret contents, such as the session secret's length, still fail at startup.
+
+To publish Studio through a Gateway API listener, set `httpRoute.enabled=true`
+and `httpRoute.parentRefs`. The route's host name defaults to the host of
+`publicURL`. The chart trusts one proxy hop in `X-Forwarded-For` by default, so
+set `networkPolicy.ingressFrom` to the gateway's namespace or pods; otherwise
+any pod that reaches Studio directly can choose the client address Studio
+rate-limits and audits. A `NodePort` or `LoadBalancer` Service requires
+`trustedProxyHops=0`.
+
+The chart's NetworkPolicy allows egress to DNS in `kube-system` and to TCP port
+443 and the ports in `mecatl.baseURL` and `mecatl.resourceURL`. Set
+`networkPolicy.dns` when your cluster resolves names elsewhere, such as NodeLocal
+DNSCache or OpenShift's `openshift-dns`. Add `networkPolicy.extraEgress` rules
+for an identity provider on a port other than 443, and when a Service or
+in-cluster gateway in front of Mecatl forwards to another port, because
+NetworkPolicy matches the destination pod's port.
+
+Run `helm show values oci://ghcr.io/stacklok/mecatl/charts/mecatl-studio` for
+every value.
 
 ### Sign in and recover
 

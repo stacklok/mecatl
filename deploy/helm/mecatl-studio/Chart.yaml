@@ -2,8 +2,10 @@ apiVersion: v2
 name: mecatl-studio
 description: Mecatl Studio, the early-access browser UI and its backend for frontend, connected to an existing Mecatl deployment.
 type: application
-# Release PRs keep version and appVersion aligned with VERSION. Release and
-# continuous builds also set both when they package the chart.
+# The preStop sleep action needs Kubernetes 1.30 or later.
+kubeVersion: ">=1.30.0-0"
+# Release PRs keep version and appVersion aligned with VERSION. The Release
+# workflow also sets both when it packages the chart.
 version: 0.0.47
 appVersion: "v0.0.47"
 annotations:

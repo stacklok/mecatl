@@ -115,6 +115,18 @@ tests:
           path: metadata.labels["helm.sh/chart"]
           value: mecatl-studio-0.0.48-main.212.g1a2b3c4d
 
+  - it: labels pods with the selector and pod labels only, so chart bumps do not restart them
+    set:
+      podLabels:
+        team: studio
+    asserts:
+      - equal:
+          path: spec.template.metadata.labels
+          value:
+            app.kubernetes.io/name: mecatl-studio
+            app.kubernetes.io/instance: mecatl-studio
+            team: studio
+
   - it: keeps the release name when it already names the chart
     asserts:
       - equal:

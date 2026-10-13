@@ -20,6 +20,18 @@ tests:
                 - protocol: TCP
                   port: 3100
       - equal:
+          path: spec.egress[0]
+          value:
+            ports:
+              - protocol: UDP
+                port: 53
+              - protocol: TCP
+                port: 53
+            to:
+              - namespaceSelector:
+                  matchLabels:
+                    kubernetes.io/metadata.name: kube-system
+      - equal:
           path: spec.egress[1]
           value:
             ports:
@@ -80,6 +92,43 @@ tests:
           path: spec.egress[1].ports[1].port
           value: 80
 
+  - it: reads ports from the URL authority, not its path
+    template: templates/networkpolicy.yaml
+    set:
+      mecatl.baseURL: http://mecak8s.mecak8s.svc:08080
+      mecatl.resourceURL: https://mecak8s.example.com/a:12/b
+    asserts:
+      - equal:
+          path: spec.egress[1].ports
+          value:
+            - protocol: TCP
+              port: 443
+            - protocol: TCP
+              port: 8080
+
+  - it: sends DNS to the configured resolvers
+    template: templates/networkpolicy.yaml
+    set:
+      networkPolicy.dns:
+        to:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: openshift-dns
+        ports:
+          - protocol: UDP
+            port: 5353
+    asserts:
+      - equal:
+          path: spec.egress[0]
+          value:
+            ports:
+              - protocol: UDP
+                port: 5353
+            to:
+              - namespaceSelector:
+                  matchLabels:
+                    kubernetes.io/metadata.name: openshift-dns
+
   - it: omits the policy when disabled
     template: templates/networkpolicy.yaml
     set:
@@ -130,6 +179,17 @@ tests:
           value:
             - studio.example.com
 
+  - it: matches every listener host when the public origin is an IP address
+    template: templates/httproute.yaml
+    set:
+      publicURL: https://203.0.113.10
+      httpRoute.enabled: true
+      httpRoute.parentRefs:
+        - name: eg
+    asserts:
+      - notExists:
+          path: spec.hostnames
+
   - it: uses explicit route hostnames
     template: templates/httproute.yaml
     set:
@@ -137,12 +197,12 @@ tests:
       httpRoute.parentRefs:
         - name: eg
       httpRoute.hostnames:
-        - studio.internal.example.com
+        - "*.example.com"
     asserts:
       - equal:
           path: spec.hostnames
           value:
-            - studio.internal.example.com
+            - "*.example.com"
 
   - it: limits voluntary disruption for several replicas without blocking drains
     template: templates/pdb.yaml

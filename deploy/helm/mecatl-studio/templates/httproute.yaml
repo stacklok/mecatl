@@ -6,12 +6,12 @@ metadata:
   labels: {{- include "mecatl-studio.labels" . | nindent 4 }}
 spec:
   parentRefs: {{- toYaml .Values.httpRoute.parentRefs | nindent 4 }}
+  {{- if .Values.httpRoute.hostnames }}
+  hostnames: {{- toYaml .Values.httpRoute.hostnames | nindent 4 }}
+  {{- else if not (include "mecatl-studio.publicHostIsIP" .) }}
   hostnames:
-    {{- if .Values.httpRoute.hostnames }}
-    {{- toYaml .Values.httpRoute.hostnames | nindent 4 }}
-    {{- else }}
     - {{ include "mecatl-studio.publicHost" . | quote }}
-    {{- end }}
+  {{- end }}
   rules:
     - matches:
         - path:
