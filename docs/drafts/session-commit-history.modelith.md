@@ -49,6 +49,8 @@ The private, versioned, append-only ordered facts of a `Session`. An accepted po
 - **fenced-append** — An append to `CommittedHistory` checks the expected head and rejects stale writers under the backend's declared operating mode; distributed appends atomically check the current epoch and unexpired `OwnershipClaim`, while single-process local storage enforces write serialization and available file-lock protection.
 - **retained-compaction-history** — Compaction changes model continuation but preserves earlier `CommittedHistory` for authorized display and forks.
 - **lost-commit-fails-closed** — Missing previously acknowledged `CommittedHistory` stops writes and confirmed projections; local memory cannot overwrite history to repair it.
+- **commit-before-confirmed-publication** — Confirmed `ClientProjection` updates and notifications follow successful outermost acceptance into `CommittedHistory`; a savepoint or failed append is not a committed boundary.
+- **capture-obeys-disclosure** — `CommittedHistory` capture of `LogicalModelInput` and `HookInvocation` evidence obeys secret scrubbing and withholding or destruction rules; transformation evidence cannot preserve prohibited bytes through another path.
 
 ### `ContinuationCheckpoint`
 
@@ -73,6 +75,30 @@ A trusted registered interpreter for namespaced, versioned session records and d
 - **critical-extension-fails-closed** — Missing or incompatible continuation-critical `Extension` handlers block dependent execution, while core management and logical deletion remain possible.
 - **extension-slot-authority** — An `Extension` controls only its own `SteerSlot`; notification submission grants neither user-slot authority nor permission to answer asks or bypass execution gates.
 - **small-retrievable-hints** — An `Extension` steer is a size-capped hint pointing to authorized tools for full canonical results; replacement covers outstanding work without deleting `Operation` outcomes.
+
+### `HookInvocation`
+
+One logical hook execution anchored to a durable session action, model turn, or tool call. Its stable identity covers the hook registration, phase, and occurrence, with reconstructible definition, input, parameters, and permitted output or failure evidence. Physical attempts can repeat under the same identity and are not ordinary tool-execution retries.
+
+**Invariants**
+
+- **hook-at-least-once** — `HookInvocation` execution is at least once under authorized admission and recovery; missing completion permits repeated execution with the same logical identity and possible prior external effects, while committed completion is reused.
+- **stable-hook-retry-identity** — Retries of a `HookInvocation` reconstruct the same definition, input, and parameters and retain its identity; changed invocations receive distinct identities, and current configuration or ephemeral ordering cannot redefine an old invocation.
+- **hook-output-before-dependent-execution** — Required completed `HookInvocation` evidence commits before dependent model or ordinary tool execution; transformations may batch with logical input or authorized intent without a separate write for every hook phase.
+- **hook-retry-not-tool-retry** — Repeating a `HookInvocation` does not authorize repeating an uncertain ordinary tool, bypassing an approval, or starting work without current `OwnershipClaim` authority.
+
+### `LogicalModelInput`
+
+The complete effective logical request submitted to a model within a `Run`. It includes effective instructions, ordered messages and media, tool declarations, model selection and behavior-affecting parameters, and relevant private provider continuation state. Its retained values or immutable references reconstruct the request without current templates or configuration; raw transport framing and credentials are excluded.
+
+**Relationships**
+
+- `HookInvocation` — n:n — Transformations contributing to the effective logical request.
+
+**Invariants**
+
+- **complete-logical-input** — `LogicalModelInput` preserves complete admitted effective values and transformation provenance, subject to capture policy; request-local changes cannot silently escape `CommittedHistory`.
+- **logical-input-before-model** — Dependent model execution uses committed `LogicalModelInput`; any permitted provisional request during ownership uncertainty uses already committed input without new uncommitted transformations.
 
 ### `Operation`
 
@@ -121,13 +147,17 @@ A durable request for an authorized decision gating work in an exact `Run`. Mult
 
 A sequence of model turns within a `Session`, continued through requested tool calls and their results. In the normal course, the model ends the `Run` with a terminal response rather than requesting more tools; cancellation, failure, limits, and interruption can also end it. A `Run` has stable identity distinct from session identity and is server-owned rather than owned by the connection that requested it.
 
+**Relationships**
+
+- `LogicalModelInput` — 1:n — owned
+
 **Invariants**
 
 - **explicit-prompt-conflict** — A competing prompt receives an explicit conflict identifying the active `Run`; it is neither silently queued nor reinterpreted as a steer.
 - **exact-run-no-promotion** — A steer qualified by `Run` identity cannot start or retarget another run; an unqualified steer may request eligible execution when idle.
 - **disconnect-not-cancel** — A `Client` disconnect does not cancel the `Run` or transfer control rights.
-- **intent-before-dispatch** — A `Run` commits the assistant tool request and each call's intent before dispatch, and commits the result before dependent model continuation.
-- **no-uncertain-tool-retry** — Recovery distinguishes requested-not-started tools from intent-with-unknown-outcome tools and never automatically reruns an uncertain external action.
+- **intent-before-dispatch** — A `Run` commits the assistant tool request and each call's effective authorized intent after trusted rewrites, including required `HookInvocation` evidence, before tool dispatch, and commits the canonical result before dependent model continuation.
+- **no-uncertain-tool-retry** — Recovery distinguishes requested-not-dispatched tools from intent-with-unknown-outcome tools and never automatically reruns an uncertain ordinary tool; absent intent excludes tool dispatch but does not prove pre-intent hooks had no effects.
 
 ### `Session`
 
@@ -140,6 +170,7 @@ The durable conversation and unit of interaction. A `Session` survives individua
 - `SteerSlot` — 1:n — owned
 - `PermissionAsk` — 1:n — owned
 - `Operation` — 1:n — owned
+- `HookInvocation` — 1:n — owned
 - `OwnershipClaim` — n:0..1 — An active delegation tree shares its root claim. Separately owned peer sessions have separate claims.
 - `Client` — n:n
 - `ClientProjection` — 1:n
@@ -185,6 +216,8 @@ erDiagram
     CommittedHistory {}
     ContinuationCheckpoint {}
     Extension {}
+    HookInvocation {}
+    LogicalModelInput {}
     Operation {}
     OwnershipClaim {}
     PermissionAsk {}
@@ -197,13 +230,16 @@ erDiagram
     CommittedHistory ||..o{ ContinuationCheckpoint : ""
     Extension ||..o{ Operation : ""
     Extension |o..o{ SteerSlot : ""
+    LogicalModelInput }o..o{ HookInvocation : ""
     Operation }o..|| Run : ""
     PermissionAsk }o..|| Run : ""
+    Run ||--o{ LogicalModelInput : ""
     Session ||--|| CommittedHistory : ""
     Session ||--o{ Run : ""
     Session ||--o{ SteerSlot : ""
     Session ||--o{ PermissionAsk : ""
     Session ||--o{ Operation : ""
+    Session ||--o{ HookInvocation : ""
     Session }o..o| OwnershipClaim : ""
     Session }o..o{ Client : ""
     Session ||..o{ ClientProjection : ""
@@ -339,11 +375,34 @@ erDiagram
 
 - **fenced-append** — An append to `CommittedHistory` checks the expected head and rejects stale writers under the backend's declared operating mode; distributed appends atomically check the current epoch and unexpired `OwnershipClaim`, while single-process local storage enforces write serialization and available file-lock protection.
 - **expiry-is-not-quiescence** — Expired `OwnershipClaim` authority does not prove tools or the former replica stopped; reacquisition advances the epoch and reconciles the durable head.
-- **intent-before-dispatch** — A `Run` commits the assistant tool request and each call's intent before dispatch, and commits the result before dependent model continuation.
-- **no-uncertain-tool-retry** — Recovery distinguishes requested-not-started tools from intent-with-unknown-outcome tools and never automatically reruns an uncertain external action.
+- **intent-before-dispatch** — A `Run` commits the assistant tool request and each call's effective authorized intent after trusted rewrites, including required `HookInvocation` evidence, before tool dispatch, and commits the canonical result before dependent model continuation.
+- **no-uncertain-tool-retry** — Recovery distinguishes requested-not-dispatched tools from intent-with-unknown-outcome tools and never automatically reruns an uncertain ordinary tool; absent intent excludes tool dispatch but does not prove pre-intent hooks had no effects.
 - **active-operation-claim** — Active `Operation` execution and writes remain under the root `OwnershipClaim`, even without a foreground `Run`.
 - **critical-extension-fails-closed** — Missing or incompatible continuation-critical `Extension` handlers block dependent execution, while core management and logical deletion remain possible.
 - **trusted-extension-registration** — Only trusted registered `Extension` handlers declare record type, version, continuation criticality, and safe-point metadata; payload text cannot register authority.
+
+### High-resolution request reconstructed after hook retry
+
+**Steps**
+
+1. A `Session` commits an action anchor sufficient to reconstruct a `HookInvocation` definition, input, parameters, and derived identity.
+2. The hook affects an external integration, but the process stops before its output commits to `CommittedHistory`.
+3. Authorized recovery under a current `OwnershipClaim` repeats the hook with the same identity, allowing the integration to deduplicate its effects.
+4. The owner batches permitted hook output and transformation evidence with `LogicalModelInput`, then submits the model request after acceptance.
+5. Historical inspection reconstructs effective instructions, messages, tool declarations, parameters, and hook provenance without current templates or raw transport bytes.
+6. A subsequent load reuses committed hook completion without reexecution, and confirmed `ClientProjection` updates follow accepted history.
+7. Scrubbed or destroyed bytes are not restored through hook traces, and hook retry does not repeat an uncertain ordinary tool.
+
+**Invariants touched**
+
+- **complete-logical-input** — `LogicalModelInput` preserves complete admitted effective values and transformation provenance, subject to capture policy; request-local changes cannot silently escape `CommittedHistory`.
+- **logical-input-before-model** — Dependent model execution uses committed `LogicalModelInput`; any permitted provisional request during ownership uncertainty uses already committed input without new uncommitted transformations.
+- **hook-at-least-once** — `HookInvocation` execution is at least once under authorized admission and recovery; missing completion permits repeated execution with the same logical identity and possible prior external effects, while committed completion is reused.
+- **stable-hook-retry-identity** — Retries of a `HookInvocation` reconstruct the same definition, input, and parameters and retain its identity; changed invocations receive distinct identities, and current configuration or ephemeral ordering cannot redefine an old invocation.
+- **hook-output-before-dependent-execution** — Required completed `HookInvocation` evidence commits before dependent model or ordinary tool execution; transformations may batch with logical input or authorized intent without a separate write for every hook phase.
+- **hook-retry-not-tool-retry** — Repeating a `HookInvocation` does not authorize repeating an uncertain ordinary tool, bypassing an approval, or starting work without current `OwnershipClaim` authority.
+- **commit-before-confirmed-publication** — Confirmed `ClientProjection` updates and notifications follow successful outermost acceptance into `CommittedHistory`; a savepoint or failed append is not a committed boundary.
+- **capture-obeys-disclosure** — `CommittedHistory` capture of `LogicalModelInput` and `HookInvocation` evidence obeys secret scrubbing and withholding or destruction rules; transformation evidence cannot preserve prohibited bytes through another path.
 
 ### Readers do not pin ownership or bypass deletion
 

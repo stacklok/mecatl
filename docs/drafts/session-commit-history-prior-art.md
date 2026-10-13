@@ -88,7 +88,7 @@ Graceful upgrade also needs engine/tool/extension lifecycle contracts, writer fe
 The proposal's park points, obligation metadata, root-tree ownership, and atomic epoch/expiry checks address these distinct requirements.
 Their presence in a history format is not proof that lifecycle coordination is implemented or qualified.
 
-The [first cutover](session-commit-history.md#intended-qualities) establishes trustworthy reload and explicit interrupted-run recovery.
+The [first cutover](session-commit-history.md#delivery-boundary) establishes trustworthy reload and explicit interrupted-run recovery.
 It does not promise mixed-version rolling deployment or seamless transfer of active work.
 The [compatible-replica handoff section](session-commit-history.md#compatible-replica-active-tree-handoff-later-phase) describes a later contract that the persistence foundation must accommodate.
 The prior-art comparison supports retaining that scope distinction, rather than expanding first-cutover delivery or claiming a complete upgrade protocol has been validated.
@@ -362,9 +362,9 @@ A checkpoint and a reducer describe state, but do not by themselves prove an ext
 
 ## Suggestions for the current proposal
 
-These are recommendations for discussion, not semantic edits to the proposal or companion domain model.
-"Already in the proposal" identifies existing draft text, not an approved or implemented contract.
-The highest-value changes make existing guarantees concrete; this research does not justify broadening the first cutover into automatic recovery, execution migration, or a general plugin platform.
+The [consolidated proposal](session-commit-history.md#architectural-narrative) incorporates the clarifications below as discussion-design requirements, not an approved or implemented contract.
+The per-project sections remain the evidence; this section explains how the lessons apply to Mecatl.
+Concrete interfaces, staging, and recovery details remain open, and the first cutover does not expand into autonomous recovery, execution migration, or a general plugin platform.
 
 ### Make the storage contract executable
 
@@ -423,12 +423,18 @@ This is a completeness rule, not authorization to add legacy migration.
 ### Preserve effective inputs and causal inspection
 
 OpenCode's persisted prompt/tool mutations and Pi's request-local transforms expose a distinction worth making explicit in the tool/hook state machine: retained original data, accepted effective content, and request-only decoration have different replay roles.
-Persist continuation-critical effective input under the existing commit gates; do not replay side-effecting hooks merely to rediscover it.
+The proposal requires [complete logical input capture](session-commit-history.md#complete-logical-model-inputs-and-transformation-evidence): effective instructions, ordered messages/media, declarations, model selection and behavior-affecting parameters, and relevant private continuation material.
+Retained values or immutable references must reconstruct that input without current templates or configuration.
+Raw HTTP bodies, transport framing, credentials, and token-stream fragments are outside that guarantee.
+Hook transformation evidence retains input, parameters, output or failure, and relevant identity/version/configuration, under scrubbing and withholding or destruction policy.
+Required evidence commits before dependent model execution or tool dispatch; tool intent describes the effective authorized invocation after trusted rewrites rather than only the earlier model request.
 
-**Concrete decision to discuss:** does retained history support exact reconstruction of historical model requests, or only safe future continuation and retained display?
-If exact reconstruction is required, capture the effective system prompt/tool declarations and trusted request transformations, subject to private-data and payload constraints.
-If it is not required, identify which request-local inputs are unavailable instead of presenting replay as a byte-exact reconstruction.
-In either case, tool intent must describe the effective authorized invocation after trusted rewrites, rather than only the earlier model request.
+The [hook contract](session-commit-history.md#hook-execution-and-recovery) uses at-least-once execution with stable harness-supplied logical invocation IDs, which can derive from durable action/tool/turn anchors, phase, registration identity, and occurrence.
+Committed completion is reused; authorized recovery can repeat an invocation with missing completion under the same identity, allowing external integrations to deduplicate effects.
+This exception does not authorize rerunning an uncertain ordinary tool.
+Completed transformations may batch with the effective request or authorized intent; logical records do not imply one physical write per hook stage.
+Pre-intent hooks can have effects even when the tool was never dispatched.
+Concrete ID formats and the hook failure/recovery state machine remain open.
 
 Use bounded causal references to run, call, operation, child, and fork position for inspection, following ActiveGraph's provenance idea.
 Specify reference scope and fork-remapping rules; unresolved or redacted links should remain explicit.
@@ -437,7 +443,7 @@ This strengthens the proposal's existing correlations without adding a graph dom
 
 ### Turn recovery gates into fault-injection scenarios
 
-The proposal already distinguishes request, intent, result, and unknown outcomes, and does not authorize automatic uncertain-action rerun.
+The proposal distinguishes request, intent, result, and unknown outcomes, and does not authorize automatic uncertain ordinary-tool retry.
 Add a failure matrix around those transitions: intent append rejected, intent accepted but acknowledgement lost, effect occurred but result append failed, and result committed but projection/notification failed.
 Assert no dispatch before authorized intent, no dependent model continuation before accepted result, and no side-effecting behavior during ordinary history reconstruction.
 A synthetic failure is not evidence that an external effect failed.

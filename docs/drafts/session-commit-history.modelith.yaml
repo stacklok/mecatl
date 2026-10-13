@@ -31,6 +31,9 @@ entities:
       - entity: Operation
         cardinality: "1:n"
         ownership: owned
+      - entity: HookInvocation
+        cardinality: "1:n"
+        ownership: owned
       - entity: OwnershipClaim
         cardinality: "n:0..1"
         note: >
@@ -65,6 +68,13 @@ entities:
         statement: Compaction changes model continuation but preserves earlier `CommittedHistory` for authorized display and forks.
       - id: lost-commit-fails-closed
         statement: Missing previously acknowledged `CommittedHistory` stops writes and confirmed projections; local memory cannot overwrite history to repair it.
+      - id: commit-before-confirmed-publication
+        statement: Confirmed `ClientProjection` updates and notifications follow successful outermost acceptance into `CommittedHistory`; a savepoint or failed append is not a committed boundary.
+      - id: capture-obeys-disclosure
+        statement: >
+          `CommittedHistory` capture of `LogicalModelInput` and `HookInvocation`
+          evidence obeys secret scrubbing and withholding or destruction rules;
+          transformation evidence cannot preserve prohibited bytes through another path.
 
   OwnershipClaim:
     definition: >
@@ -99,6 +109,10 @@ entities:
       cancellation, failure, limits, and interruption can also end it.
       A `Run` has stable identity distinct from session identity and is
       server-owned rather than owned by the connection that requested it.
+    relationships:
+      - entity: LogicalModelInput
+        cardinality: "1:n"
+        ownership: owned
     invariants:
       - id: explicit-prompt-conflict
         statement: A competing prompt receives an explicit conflict identifying the active `Run`; it is neither silently queued nor reinterpreted as a steer.
@@ -107,9 +121,51 @@ entities:
       - id: disconnect-not-cancel
         statement: A `Client` disconnect does not cancel the `Run` or transfer control rights.
       - id: intent-before-dispatch
-        statement: A `Run` commits the assistant tool request and each call's intent before dispatch, and commits the result before dependent model continuation.
+        statement: A `Run` commits the assistant tool request and each call's effective authorized intent after trusted rewrites, including required `HookInvocation` evidence, before tool dispatch, and commits the canonical result before dependent model continuation.
       - id: no-uncertain-tool-retry
-        statement: Recovery distinguishes requested-not-started tools from intent-with-unknown-outcome tools and never automatically reruns an uncertain external action.
+        statement: Recovery distinguishes requested-not-dispatched tools from intent-with-unknown-outcome tools and never automatically reruns an uncertain ordinary tool; absent intent excludes tool dispatch but does not prove pre-intent hooks had no effects.
+
+  LogicalModelInput:
+    definition: >
+      The complete effective logical request submitted to a model within a
+      `Run`. It includes effective instructions, ordered messages and media,
+      tool declarations, model selection and behavior-affecting parameters,
+      and relevant private provider continuation state. Its retained values or
+      immutable references reconstruct the request without current templates
+      or configuration; raw transport framing and credentials are excluded.
+    relationships:
+      - entity: HookInvocation
+        cardinality: "n:n"
+        note: Transformations contributing to the effective logical request.
+    invariants:
+      - id: complete-logical-input
+        statement: >
+          `LogicalModelInput` preserves complete admitted effective values and
+          transformation provenance, subject to capture policy; request-local
+          changes cannot silently escape `CommittedHistory`.
+      - id: logical-input-before-model
+        statement: Dependent model execution uses committed `LogicalModelInput`; any permitted provisional request during ownership uncertainty uses already committed input without new uncommitted transformations.
+
+  HookInvocation:
+    definition: >
+      One logical hook execution anchored to a durable session action, model
+      turn, or tool call. Its stable identity covers the hook registration,
+      phase, and occurrence, with reconstructible definition, input, parameters,
+      and permitted output or failure evidence. Physical attempts can repeat
+      under the same identity and are not ordinary tool-execution retries.
+    invariants:
+      - id: hook-at-least-once
+        statement: >
+          `HookInvocation` execution is at least once under authorized admission
+          and recovery; missing completion permits repeated execution with the
+          same logical identity and possible prior external effects, while
+          committed completion is reused.
+      - id: stable-hook-retry-identity
+        statement: Retries of a `HookInvocation` reconstruct the same definition, input, and parameters and retain its identity; changed invocations receive distinct identities, and current configuration or ephemeral ordering cannot redefine an old invocation.
+      - id: hook-output-before-dependent-execution
+        statement: Required completed `HookInvocation` evidence commits before dependent model or ordinary tool execution; transformations may batch with logical input or authorized intent without a separate write for every hook phase.
+      - id: hook-retry-not-tool-retry
+        statement: Repeating a `HookInvocation` does not authorize repeating an uncertain ordinary tool, bypassing an approval, or starting work without current `OwnershipClaim` authority.
 
   Client:
     definition: >
@@ -299,6 +355,17 @@ scenarios:
       - A stale append fails; recovery distinguishes no-intent requests from intent-with-unknown-outcome calls and does not rerun the uncertain tool.
       - Active `Operation` obligations remain under the root claim, and a missing continuation-critical `Extension` blocks dependent execution rather than claiming quiescence.
     invariants_touched: [fenced-append, expiry-is-not-quiescence, intent-before-dispatch, no-uncertain-tool-retry, active-operation-claim, critical-extension-fails-closed, trusted-extension-registration]
+
+  - name: High-resolution request reconstructed after hook retry
+    steps:
+      - A `Session` commits an action anchor sufficient to reconstruct a `HookInvocation` definition, input, parameters, and derived identity.
+      - The hook affects an external integration, but the process stops before its output commits to `CommittedHistory`.
+      - Authorized recovery under a current `OwnershipClaim` repeats the hook with the same identity, allowing the integration to deduplicate its effects.
+      - The owner batches permitted hook output and transformation evidence with `LogicalModelInput`, then submits the model request after acceptance.
+      - Historical inspection reconstructs effective instructions, messages, tool declarations, parameters, and hook provenance without current templates or raw transport bytes.
+      - A subsequent load reuses committed hook completion without reexecution, and confirmed `ClientProjection` updates follow accepted history.
+      - Scrubbed or destroyed bytes are not restored through hook traces, and hook retry does not repeat an uncertain ordinary tool.
+    invariants_touched: [complete-logical-input, logical-input-before-model, hook-at-least-once, stable-hook-retry-identity, hook-output-before-dependent-execution, hook-retry-not-tool-retry, commit-before-confirmed-publication, capture-obeys-disclosure]
 
   - name: Readers do not pin ownership or bypass deletion
     actors: [Client]
