@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ListSchedulesResponse } from "@mecatl-studio/contracts/generated";
-import type { SortDirection } from "../../components/ui/sortable-head";
+import type { SortDir } from "@/components/sortable-head";
 import { describeCron, formatDate } from "../../lib/formatters";
 
 type Schedule = ListSchedulesResponse["items"][number];
@@ -38,7 +38,7 @@ export function deriveScheduleInventory(
   schedules: readonly Schedule[],
   query: string,
   order: ScheduleInventoryOrder,
-  direction: SortDirection = "asc",
+  direction: SortDir = "asc",
 ): Schedule[] {
   const visible = filterScheduleInventory(schedules, query);
   const sign = direction === "asc" ? 1 : -1;

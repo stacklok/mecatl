@@ -13,6 +13,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { CalendarClock, Ellipsis, Plus } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
+import { SortableHead, type TableSort, useTableSort } from "@/components/sortable-head";
 import { PageShell } from "../../components/shell/page-shell";
 import { Alert, AlertDescription } from "../../components/ui/alert";
 import {
@@ -42,7 +43,6 @@ import {
 } from "../../components/ui/empty";
 import { InputSearch } from "../../components/ui/input-search";
 import { Skeleton } from "../../components/ui/skeleton";
-import { SortableHead, type SortDirection } from "../../components/ui/sortable-head";
 import {
   Table,
   TableBody,
@@ -121,10 +121,7 @@ export function SchedulesWorkspace() {
   const action = useMutation(actOnScheduleMutation());
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
-  const [sort, setSort] = useState<{
-    direction: SortDirection;
-    key: ScheduleInventoryOrder;
-  }>({ direction: "asc", key: "status" });
+  const sort = useTableSort<ScheduleInventoryOrder>("status");
   const [editor, setEditor] = useState<Schedule | "new">();
   const [confirmDelete, setConfirmDelete] = useState<Schedule>();
   const [error, setError] = useState<string>();
@@ -146,8 +143,8 @@ export function SchedulesWorkspace() {
     [filter, schedules.data?.items],
   );
   const items = useMemo(
-    () => deriveScheduleInventory(filtered, query, sort.key, sort.direction),
-    [filtered, query, sort.direction, sort.key],
+    () => deriveScheduleInventory(filtered, query, sort.key, sort.dir),
+    [filtered, query, sort.dir, sort.key],
   );
   const mobileItems = useMemo(
     () => deriveMobileScheduleInventory(filtered, query),
@@ -172,13 +169,6 @@ export function SchedulesWorkspace() {
   function closeDelete() {
     setConfirmDelete(undefined);
     queueMicrotask(() => deleteOpener.current?.focus());
-  }
-
-  function changeSort(key: ScheduleInventoryOrder) {
-    setSort((current) => ({
-      direction: current.key === key && current.direction === "asc" ? "desc" : "asc",
-      key,
-    }));
   }
 
   function onSearchKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
@@ -303,7 +293,6 @@ export function SchedulesWorkspace() {
               onAction={(schedule, name) => void runAction(schedule, name)}
               onDelete={openDelete}
               onEdit={openEditor}
-              onSort={changeSort}
               sort={sort}
             />
           )}
@@ -357,7 +346,6 @@ function ScheduleInventory({
   onAction,
   onDelete,
   onEdit,
-  onSort,
   sort,
 }: {
   busy: boolean;
@@ -366,11 +354,8 @@ function ScheduleInventory({
   onAction: (schedule: Schedule, action: "fire" | "pause" | "resume") => void;
   onDelete: (schedule: Schedule, opener: HTMLButtonElement) => void;
   onEdit: (schedule: Schedule) => void;
-  onSort: (key: ScheduleInventoryOrder) => void;
-  sort: { direction: SortDirection; key: ScheduleInventoryOrder };
+  sort: TableSort<ScheduleInventoryOrder>;
 }) {
-  const direction = (key: ScheduleInventoryOrder) =>
-    sort.key === key ? sort.direction : undefined;
   return (
     <>
       <div
@@ -380,49 +365,19 @@ function ScheduleInventory({
         <Table>
           <TableHeader>
             <TableRow className="hover:bg-transparent">
-              <SortableHead
-                className="w-2/5 px-4"
-                direction={direction("name")}
-                label="Name"
-                onSort={() => onSort("name")}
-              />
-              <SortableHead
-                className="px-4"
-                direction={direction("schedule")}
-                label="Schedule"
-                onSort={() => onSort("schedule")}
-              />
-              <SortableHead
-                className="px-4"
-                direction={direction("nextRun")}
-                label="Next run"
-                onSort={() => onSort("nextRun")}
-              />
-              <SortableHead
-                className="px-4"
-                direction={direction("lastRun")}
-                label="Last run"
-                onSort={() => onSort("lastRun")}
-              />
-              <SortableHead
-                className="px-4 text-right"
-                direction={direction("fires")}
-                label="Runs"
-                onSort={() => onSort("fires")}
-              />
-              <SortableHead
-                className="px-4"
-                direction={direction("status")}
-                label="Status"
-                onSort={() => onSort("status")}
-              />
-              <TableHead aria-label="Actions" className="w-0 px-4" />
+              <SortableHead className="w-2/5" label="Name" sort={sort} sortKey="name" />
+              <SortableHead label="Schedule" sort={sort} sortKey="schedule" />
+              <SortableHead label="Next run" sort={sort} sortKey="nextRun" />
+              <SortableHead label="Last run" sort={sort} sortKey="lastRun" />
+              <SortableHead className="text-right" label="Runs" sort={sort} sortKey="fires" />
+              <SortableHead label="Status" sort={sort} sortKey="status" />
+              <TableHead aria-label="Actions" className="w-0" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {items.map((schedule) => (
-              <TableRow key={schedule.name}>
-                <TableCell className="max-w-0 px-4 py-3 whitespace-normal">
+              <TableRow className="has-aria-expanded:bg-muted/50" key={schedule.name}>
+                <TableCell className="max-w-0 whitespace-normal">
                   <Link
                     className="block truncate font-medium hover:underline"
                     params={{ scheduleName: schedule.name }}
@@ -432,22 +387,20 @@ function ScheduleInventory({
                   </Link>
                   <p className="line-clamp-1 text-xs text-muted-foreground">{schedule.prompt}</p>
                 </TableCell>
-                <TableCell className="px-4 py-3 text-muted-foreground">
+                <TableCell className="text-muted-foreground">
                   {scheduleTriggerLabel(schedule)}
                 </TableCell>
-                <TableCell className="px-4 py-3 text-muted-foreground">
+                <TableCell className="text-muted-foreground">
                   {schedule.enabled && schedule.nextFireAt ? formatDate(schedule.nextFireAt) : "—"}
                 </TableCell>
-                <TableCell className="px-4 py-3 text-muted-foreground">
+                <TableCell className="text-muted-foreground">
                   {schedule.lastFireAt ? formatDate(schedule.lastFireAt) : "Never"}
                 </TableCell>
-                <TableCell className="px-4 py-3 text-right tabular-nums">
-                  {runCount(schedule)}
-                </TableCell>
-                <TableCell className="px-4 py-3">
+                <TableCell className="text-right tabular-nums">{runCount(schedule)}</TableCell>
+                <TableCell>
                   <ScheduleStatusBadge status={schedule.status} />
                 </TableCell>
-                <TableCell className="w-0 px-4 py-3">
+                <TableCell className="w-0">
                   <ScheduleActions
                     busy={busy}
                     onAction={(name) => onAction(schedule, name)}

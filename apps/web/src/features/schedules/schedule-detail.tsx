@@ -16,6 +16,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { CalendarClock, Ellipsis } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
+import { SortableHead, type SortDir } from "@/components/sortable-head";
 import { PageShell } from "../../components/shell/page-shell";
 import { Alert, AlertDescription } from "../../components/ui/alert";
 import {
@@ -44,7 +45,6 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "../../components/ui/empty";
-import { SortableHead, type SortDirection } from "../../components/ui/sortable-head";
 import {
   Table,
   TableBody,
@@ -351,7 +351,7 @@ function ScheduleFireHistory({
   loading: boolean;
 }) {
   const [sortKey, setSortKey] = useState<FireSortKey>("fired");
-  const [direction, setDirection] = useState<SortDirection>("desc");
+  const [direction, setDirection] = useState<SortDir>("desc");
   const sorted = useMemo(
     () => sortScheduleFires(fires ?? [], sortKey, direction),
     [direction, fires, sortKey],
@@ -383,29 +383,28 @@ function ScheduleFireHistory({
                 ] as const
               ).map(([key, label]) => (
                 <SortableHead
-                  className="px-4"
-                  direction={sortKey === key ? direction : undefined}
                   key={key}
                   label={label}
-                  onSort={() => changeSort(key)}
+                  sort={{ dir: direction, key: sortKey, toggle: changeSort }}
+                  sortKey={key}
                 />
               ))}
-              <TableHead className="px-4 text-right">Session</TableHead>
+              <TableHead className="text-right">Session</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {sorted.map((fire) => (
               <TableRow key={fire.id}>
-                <TableCell className="px-4 py-3 whitespace-nowrap">
+                <TableCell className="whitespace-nowrap">
                   {fire.firedAt ? formatDate(fire.firedAt) : "—"}
                 </TableCell>
-                <TableCell className="px-4 py-3 whitespace-nowrap text-muted-foreground">
+                <TableCell className="whitespace-nowrap text-muted-foreground">
                   {formatDuration(fireDurationMs(fire))}
                 </TableCell>
-                <TableCell className="px-4 py-3 whitespace-normal">
+                <TableCell className="whitespace-normal">
                   <FireOutcome fire={fire} />
                 </TableCell>
-                <TableCell className="px-4 py-3 text-right">
+                <TableCell className="text-right">
                   {fire.sessionId ? (
                     <Button asChild size="sm" variant="ghost">
                       <Link search={{ sessionId: fire.sessionId }} to="/workspace/chat">
@@ -533,7 +532,7 @@ export function describeRuns(schedule: Pick<Schedule, "fireCount" | "maxFires">)
 export function sortScheduleFires(
   fires: readonly ScheduleFire[],
   key: FireSortKey,
-  direction: SortDirection,
+  direction: SortDir,
   now = Date.now(),
 ) {
   const multiplier = direction === "asc" ? 1 : -1;
