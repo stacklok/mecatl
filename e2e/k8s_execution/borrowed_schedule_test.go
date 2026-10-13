@@ -357,7 +357,15 @@ func TestKindExecutionBorrowedSchedule(t *testing.T) {
 		t.Fatal(err)
 	}
 	secondStarted := time.Now()
-	_, secondSession, err := wire.FireNow(ctx, manual)
+	leaderDeadline = time.Now().Add(45 * time.Second)
+	var secondSession string
+	for {
+		_, secondSession, err = wire.FireNow(ctx, manual)
+		if err == nil || status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "not the scheduler leader") || time.Now().After(leaderDeadline) {
+			break
+		}
+		time.Sleep(time.Second)
+	}
 	if err != nil || secondSession == "" || secondSession == fireSession {
 		t.Fatalf("second manual fire after released claim: session=%q err=%v", secondSession, err)
 	}
