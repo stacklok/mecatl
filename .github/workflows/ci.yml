@@ -618,8 +618,9 @@ jobs:
   studio:
     name: Mecatl Studio (apps/)
     needs: changes
-    # Studio builds the checked-out SDK for execution-template APIs and drives
-    # its integration suite against the daemon; run for apps/, SDK, or Go changes.
+    # Studio builds the checked-out SDK (one commit for Studio, SDK, and daemon)
+    # and drives its integration suite against the daemon; run for apps/, SDK, or
+    # Go changes.
     # The image build is push: false.
     if: needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.studio_relevant == 'true' || needs.changes.outputs.go_relevant == 'true')
     runs-on: ubuntu-24.04
@@ -690,7 +691,7 @@ jobs:
         run: task studio:test:integration
 
       # The approval journey uses the binary built by the integration task
-      # through the published SDK and a loopback-only browser fixture.
+      # through the checked-out SDK and a loopback-only browser fixture.
       - name: Test Studio browser journeys (Playwright, offline)
         run: task studio:browser
 

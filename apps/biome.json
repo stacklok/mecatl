@@ -24,10 +24,10 @@
           "level": "error",
           "options": {
             "paths": {
-              "../sdk": "Studio consumes only the published @stacklok-oss/mecatl-sdk.",
-              "../../sdk": "Studio consumes only the published @stacklok-oss/mecatl-sdk.",
-              "../../../sdk": "Studio consumes only the published @stacklok-oss/mecatl-sdk.",
-              "../../../../sdk/typescript": "Studio consumes only the published @stacklok-oss/mecatl-sdk."
+              "../sdk": "Import the SDK by package name (@stacklok-oss/mecatl-sdk), never by relative path.",
+              "../../sdk": "Import the SDK by package name (@stacklok-oss/mecatl-sdk), never by relative path.",
+              "../../../sdk": "Import the SDK by package name (@stacklok-oss/mecatl-sdk), never by relative path.",
+              "../../../../sdk/typescript": "Import the SDK by package name (@stacklok-oss/mecatl-sdk), never by relative path."
             }
           }
         }

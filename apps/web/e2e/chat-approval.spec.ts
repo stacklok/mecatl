@@ -259,7 +259,7 @@ test("approves and denies exact asks through the browser journey", async ({
   });
 
   // Both tabs saw the same scripted ask. The first acknowledgement is scripted;
-  // the second submit traverses the real BFF, released SDK, and mock daemon.
+  // the second submit traverses the real BFF, checked-out SDK, and mock daemon.
   // That daemon has no such pending ask, so its exact target must be rejected.
   // The daemon's consumed-ask duplicate invariant is pinned separately by its
   // exact control tests; this browser step verifies cross-tab reconciliation.

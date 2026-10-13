@@ -7,8 +7,9 @@
 # build-provenance steps as the Slack bot image; built no-push on every relevant
 # PR by the `studio` CI job; built locally by `task studio:image`.
 #
-# Build context is repository root so the BFF can consume the checked-out SDK
-# (the released npm package does not yet contain execution-template RPCs).
+# Build context is repository root so the BFF compiles the SDK from the same
+# checkout: Studio, its SDK, and the daemon it targets always share one commit,
+# and a change spanning all three needs no intermediate SDK release.
 #
 # Shape (multi-stage):
 #   1. build   — node:26-slim (Debian + shell + toolchain): pnpm 12.4.2 via

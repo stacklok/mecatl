@@ -275,8 +275,11 @@ committed and drift-gated).
 
 The browser calls only the BFF's `/api/v1` product API and imports neither the SDK nor
 daemon types. The BFF holds the user's credential, serves app and API from one origin,
-and is the only part that talks to Mecatl. It depends on a released SDK version from
-npm, never the in-repo source, so a UI change that needs an unreleased SDK change waits.
+and is the only part that talks to Mecatl. It builds the SDK from the same checkout
+through a `file:` dependency, never a registry release, so Studio, the SDK, and the
+daemon it targets ship from one commit and a change spanning all three needs no
+intermediate SDK release. It still imports the SDK only by package name, through the
+same exports as any other consumer.
 
 The BFF resolves exactly one runtime mode at startup: `external` (an existing gRPC
 listener), `spawn` (a local `mecated`), or `mock`. Login uses the issuer named in the

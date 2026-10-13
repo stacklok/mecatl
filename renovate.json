@@ -190,13 +190,6 @@
       "addLabels": ["studio-runtime"]
     },
     {
-      "description": "Studio consumes the published SDK; adopt new releases in their own PR without the npm release-age wait",
-      "matchFileNames": ["apps/**"],
-      "matchPackageNames": ["@stacklok-oss/mecatl-sdk"],
-      "groupName": "studio mecatl sdk",
-      "minimumReleaseAge": null
-    },
-    {
       "description": "Group routine GitHub Actions updates",
       "matchManagers": ["github-actions"],
       "matchDepTypes": ["action", "workflow"],

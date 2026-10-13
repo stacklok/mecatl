@@ -46,7 +46,7 @@ import { registerScheduleRoutes } from "./routes/schedules.js";
 import { registerSettingsRoutes } from "./routes/settings.js";
 import { registerStatusRoutes } from "./routes/status.js";
 import { registerStorageRoutes } from "./routes/storage.js";
-import { readInstalledSdkVersion } from "./sdk-version.js";
+import { readInstalledSdkVersion, reportedSdkVersion } from "./sdk-version.js";
 
 const sdkVersion = readInstalledSdkVersion();
 
@@ -109,6 +109,7 @@ export interface AppDependencies {
 
 export function createApp(dependencies: AppDependencies = {}) {
   const studioBuildId = dependencies.studioBuildId ?? bakedStudioBuildId;
+  const reportedSdk = reportedSdkVersion(sdkVersion, studioBuildId);
   // Every route's request validation fails as RFC 9457 problem details, never
   // the validator's raw error object; a route may still install its own hook.
   const app = new OpenAPIHono<AppEnv>({
@@ -216,7 +217,7 @@ export function createApp(dependencies: AppDependencies = {}) {
       return context.json(
         {
           ...runtime.snapshot(),
-          ...(sdkVersion === undefined ? {} : { sdkVersion }),
+          ...(reportedSdk === undefined ? {} : { sdkVersion: reportedSdk }),
           ...(studioBuildId === undefined ? {} : { studioBuildId }),
         },
         200,
