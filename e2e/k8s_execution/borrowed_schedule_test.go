@@ -117,7 +117,8 @@ func assertBorrowedSnapshot(t *testing.T, snapshot *session.Session, label strin
 	}
 	shellID, readID := session.ToolCallID(label+"-shell"), session.ToolCallID(label+"-read")
 	if calls[shellID] != "Shell" || results[shellID] == nil || results[shellID].IsError || !strings.Contains(results[shellID].Content, "[exit code: 0]") {
-		t.Fatalf("%s snapshot lacks successful remote Shell execution", label)
+		result := results[shellID]
+		t.Fatalf("%s snapshot lacks successful remote Shell execution: calls=%v result_present=%t result_error=%t exit_zero=%t", label, calls, result != nil, result != nil && result.IsError, result != nil && strings.Contains(result.Content, "[exit code: 0]"))
 	}
 	if calls[readID] != "Read" || results[readID] == nil || results[readID].IsError || !strings.Contains(results[readID].Content, label) {
 		t.Fatalf("%s snapshot lacks successful remote Read proof", label)
