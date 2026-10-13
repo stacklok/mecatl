@@ -118,7 +118,15 @@ func assertBorrowedSnapshot(t *testing.T, snapshot *session.Session, label strin
 	shellID, readID := session.ToolCallID(label+"-shell"), session.ToolCallID(label+"-read")
 	if calls[shellID] != "Shell" || results[shellID] == nil || results[shellID].IsError || !strings.Contains(results[shellID].Content, "[exit code: 0]") {
 		result := results[shellID]
-		t.Fatalf("%s snapshot lacks successful remote Shell execution: calls=%v result_present=%t result_error=%t exit_zero=%t", label, calls, result != nil, result != nil && result.IsError, result != nil && strings.Contains(result.Content, "[exit code: 0]"))
+		roles := make([]session.Role, 0, len(snapshot.Conversation.Messages))
+		summaries := 0
+		for _, message := range snapshot.Conversation.Messages {
+			roles = append(roles, message.Role)
+			if session.IsSynthesisedSummary(message.Text) {
+				summaries++
+			}
+		}
+		t.Fatalf("%s snapshot lacks successful remote Shell execution: calls=%v result_present=%t result_error=%t exit_zero=%t roles=%v summaries=%d", label, calls, result != nil, result != nil && result.IsError, result != nil && strings.Contains(result.Content, "[exit code: 0]"), roles, summaries)
 	}
 	if calls[readID] != "Read" || results[readID] == nil || results[readID].IsError || !strings.Contains(results[readID].Content, label) {
 		t.Fatalf("%s snapshot lacks successful remote Read proof", label)
