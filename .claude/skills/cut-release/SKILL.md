@@ -116,10 +116,17 @@ Run from the repo root.
 6. **Confirm the release run started, then wait for every publishing job.** A
    successful CLI archive or one green image is not a complete release. In
    particular, check the `mecated`, execution provider/workload, Brood Box
-   resolution, microVM, chart, and CLI/Homebrew jobs before reporting success:
+   resolution, microVM, mecak8s/execution/Studio chart, and CLI/Homebrew jobs
+   before reporting success:
    ```sh
    gh run list --workflow=release.yml --limit 3
    gh run watch "$(gh run list --workflow=release.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
+   ```
+   The Studio chart job skips with a notice when the tag has no chart, so confirm the
+   charts actually landed in GHCR (bare `X.Y.Z`, no `v`):
+   ```sh
+   helm show chart oci://ghcr.io/stacklok/mecatl/charts/mecak8s --version X.Y.Z
+   helm show chart oci://ghcr.io/stacklok/mecatl/charts/mecatl-studio --version X.Y.Z
    ```
 
 7. **Verify the GitHub Release carries every artifact.** It must not be a draft, and it must

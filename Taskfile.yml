@@ -758,7 +758,7 @@ tasks:
   deploy:check:
     desc: |
       Validate the deploy/helm/mecak8s and deploy/helm/mecatl-studio charts
-      WITHOUT a cluster: render every deploy/helm/*/ci/*-values.yaml fixture,
+      WITHOUT a cluster: render every deploy/helm/{mecak8s,mecatl-studio}/ci/*-values.yaml fixture,
       schema-check the rendered manifests (mecak8s default + oidc.enabled=true),
       and assert the caller-identity boundaries. Needs helm + kubeconform; needs
       NO cluster, so it runs in CI and on a laptop.
@@ -790,8 +790,8 @@ tasks:
             helm template deploy/helm/mecak8s -f "$f" | kubeconform -strict -summary -
           done
         silent: true
-      # kubeconform ships no Gateway API schemas; the Studio HTTPRoute shape is
-      # covered by the chart's helm-unittest suites instead.
+      # kubeconform ships no Gateway API schemas, so HTTPRoute is skipped here;
+      # the chart's helm-unittest suites assert its key fields.
       - cmd: |
           set -eu -o pipefail
           for f in deploy/helm/mecatl-studio/ci/*-values.yaml; do

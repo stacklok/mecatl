@@ -1480,15 +1480,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Bare `helm lint` does not fail on the chart's required values, so lint
-      # the browser-login fixture the deploy:check task also renders.
-      - name: Lint and package chart
+      # helm lint reports `fail` and `required` as INFO lines and still exits 0,
+      # so render every fixture to enforce the chart's render-time validation,
+      # then lint for chart structure.
+      - name: Check and package chart
         if: steps.gate.outputs.publish == 'true'
         id: package
         run: |
           set -euo pipefail
           chart_version="${VERSION#v}"
-          helm lint deploy/helm/mecatl-studio -f deploy/helm/mecatl-studio/ci/browser-login-values.yaml
+          for f in deploy/helm/mecatl-studio/ci/*-values.yaml; do
+            helm template mecatl-studio deploy/helm/mecatl-studio -f "$f" > /dev/null
+          done
+          helm lint --strict deploy/helm/mecatl-studio -f deploy/helm/mecatl-studio/ci/browser-login-values.yaml
           mkdir -p dist
           helm package deploy/helm/mecatl-studio --version "$chart_version" --app-version "$VERSION" --destination dist
           echo "chart_version=$chart_version" >> "$GITHUB_OUTPUT"
@@ -1500,8 +1504,10 @@ jobs:
           CHART_VERSION: ${{ steps.package.outputs.chart_version }}
         run: |
           set -euo pipefail
-          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
-          helm push "dist/${CHART}-${CHART_VERSION}.tgz" "oci://${OCI_REGISTRY}" > push-output.txt 2>&1
+          if ! helm push "dist/${CHART}-${CHART_VERSION}.tgz" "oci://${OCI_REGISTRY}" > push-output.txt 2>&1; then
+            cat push-output.txt >&2
+            exit 1
+          fi
           cat push-output.txt
           digest="$(awk '/^Digest:/ {print $2}' push-output.txt)"
           case "$digest" in sha256:*) ;; *) echo "could not parse chart digest" >&2; exit 1;; esac
@@ -1521,6 +1527,37 @@ jobs:
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
           create-storage-record: false
+
+      # Verify exactly what user-docs/operating/studio.md tells operators to
+      # verify, pinned to this workflow at this tag.
+      - name: Verify signature and provenance
+        if: steps.gate.outputs.publish == 'true'
+        env:
+          CHART_REF: ${{ env.OCI_REGISTRY }}/${{ env.CHART }}@${{ steps.push.outputs.digest }}
+          IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/release.yml@${{ needs.validate-release-ref.outputs.signing_ref }}
+          ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          set -eu
+          cosign verify --certificate-identity "${IDENTITY}" --certificate-oidc-issuer "${ISSUER}" "${CHART_REF}" > /dev/null
+          cosign verify-attestation --type slsaprovenance1 --certificate-identity "${IDENTITY}" --certificate-oidc-issuer "${ISSUER}" "${CHART_REF}" > /dev/null
+
+      - name: Summary
+        if: steps.gate.outputs.publish == 'true'
+        env:
+          CHART_VERSION: ${{ steps.package.outputs.chart_version }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+          IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/release.yml@${{ needs.validate-release-ref.outputs.signing_ref }}
+        run: |
+          {
+            echo "## Mecatl Studio Helm chart published"
+            echo ""
+            echo '```'
+            echo "helm upgrade --install mecatl-studio oci://${OCI_REGISTRY}/${CHART} --version ${CHART_VERSION}"
+            echo "cosign verify ${OCI_REGISTRY}/${CHART}@${DIGEST} \\"
+            echo "  --certificate-identity=${IDENTITY} \\"
+            echo "  --certificate-oidc-issuer=https://token.actions.githubusercontent.com"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # Publish the chart only after its default image tag exists.
   publish-helm-chart:
