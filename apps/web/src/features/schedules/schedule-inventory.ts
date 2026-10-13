@@ -2,7 +2,7 @@
 
 import type { ListSchedulesResponse } from "@mecatl-studio/contracts/generated";
 import type { SortDirection } from "../../components/ui/sortable-head";
-import { describeCron } from "./cron-builder";
+import { describeCron, formatDate } from "../../lib/formatters";
 
 type Schedule = ListSchedulesResponse["items"][number];
 
@@ -125,10 +125,4 @@ function dateValue(value: string | null, fallback: number) {
   if (!value) return fallback;
   const parsed = Date.parse(value);
   return Number.isNaN(parsed) ? fallback : parsed;
-}
-
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(
-    new Date(value),
-  );
 }

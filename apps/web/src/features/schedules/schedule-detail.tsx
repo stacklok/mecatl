@@ -45,9 +45,8 @@ import {
   TableRow,
 } from "../../components/ui/table";
 import { errorMessage } from "../../lib/error-message";
-import { formatDate } from "../../lib/formatters";
+import { describeCron, formatDate } from "../../lib/formatters";
 import { pageTitleClass } from "../../lib/typography";
-import { describeCron } from "./cron-builder";
 import { canEditSchedule, ScheduleForm } from "./schedule-form";
 
 type Schedule = ListSchedulesResponse["items"][number];
