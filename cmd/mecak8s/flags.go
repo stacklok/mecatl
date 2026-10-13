@@ -650,7 +650,6 @@ func parseFlags(argv []string) (config, error) {
 		if cfg.enableParallel || cfg.enableTeams {
 			return config{}, errors.New("remote execution does not support --enable-parallel or --enable-teams")
 		}
-		cfg.noScheduler = true
 	}
 	if cfg.redisFilesystem && cfg.workspace != "" {
 		return config{}, errors.New("--redis-filesystem and --workspace are mutually exclusive")

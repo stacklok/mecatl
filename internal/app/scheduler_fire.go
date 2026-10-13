@@ -43,6 +43,8 @@ const (
 // advanced NextFireAt, so a failed fire is NOT retried). Model pinning is
 // fail-closed at the provider call — there is NO pre-flight ListModels check (a
 // live network call, deferred); an unknown model surfaces as StopError.
+//
+//nolint:gocyclo // Fire lifecycle must keep each placement, claim, and terminal failure path explicit.
 func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout time.Duration, deliverStarted func(ctx context.Context, sched port.Schedule, fire port.ScheduleFire)) scheduler.FireFunc {
 	return func(ctx context.Context, sched port.Schedule, now time.Time) (port.ScheduleFire, error) {
 		// The scheduler passes the physical store key so RecordFire* remains in the
@@ -83,23 +85,35 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 		}
 
 		ownerCtx := schedulerOwnerContext(ctx, sched.Spec.Owner)
-		placement, err := svc.ReattachPlacementInScope(ownerCtx, sched.Spec.EnvironmentRef, sched.Spec.PlacementScope)
+		// A native borrowed schedule needs its own durable reference, not a
+		// binding-less reattachment of the origin's reference. Mint the ID first
+		// so reservation and session publication use the same identity.
+		fireID := newFireID(literalName, now)
+		placement, err := svc.ScheduleFirePlacement(ownerCtx, sched.Spec, session.SessionID(fireID))
 		if err != nil {
 			return fireFailed(sched, now, "", err), err
 		}
 
-		// Pre-mint the fire id: a "sched--"-prefixed
-		// id that serves as BOTH the fire id AND the session id. Minting it here
-		// (before CreateSessionWithProfile) and passing it as the WithSessionID
-		// override means the fire's persisted session carries the sched-- family
-		// prefix the GC retention sweep (ScheduleFireRetention) partitions on.
-		fireID := newFireID(literalName, now)
+		// The pre-minted ID is both the fire ID and session ID. WithSessionID
+		// also gives the persisted session the sched-- GC-retention prefix.
 		sess, err := svc.CreateSessionWithProfile(ownerCtx, mode, limits, sel, profile,
 			server.WithSessionID(session.SessionID(fireID)),
 			server.WithOwner(fireSessionOwner(sched.Spec.Owner)),
 			server.WithPlacementBinding(placement),
 			server.WithScheduledRelationship(literalName, sched.Spec.OriginSessionID))
 		if err != nil {
+			// A failure before CreateSession installs its placement rollback must
+			// also retire the unpublished reservation. Close is idempotent with
+			// the session transaction and never aborts an ambiguous Commit.
+			if placement.Close != nil {
+				_ = placement.Close()
+			}
+			if sess != nil {
+				// Publication can fail after installing the engine and attachment.
+				// Release local resources, retaining the snapshot and ambiguous ref.
+				svc.CloseSession(sess.ID)
+				return fireFailed(sched, now, string(sess.ID), err), err
+			}
 			return fireFailed(sched, now, "", err), err
 		}
 		// Release the fire session's process-scoped resources — its cross-process
@@ -189,6 +203,7 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 		if err != nil {
 			return fireFailed(sched, now, string(sess.ID), err), err
 		}
+		defer svc.FinishRun(sess.ID, run)
 
 		// Drive the run to its terminal EvResult. The agent loop persists the
 		// terminal session snapshot itself (engine/agent terminate→save, the SAME

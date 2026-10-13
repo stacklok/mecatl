@@ -317,11 +317,9 @@ func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, sto
 		Rationale: "memory tools resolve the verified caller through the caller-partitioned store"}, func() {
 		registerMemoryFamilies(ctx, cfg, cat, *a)
 	})
-	if !s.remote {
-		classified.captureEach(scheduleToolClassification, func() {
-			registerScheduleTool(ctx, cfg, cat, a, s)
-		})
-	}
+	classified.captureEach(scheduleToolClassification, func() {
+		registerScheduleTool(ctx, cfg, cat, a, s)
+	})
 	classified.captureEach(func(t tool.Tool) (server.ClassificationEntry, bool) {
 		return skillToolClassification(t, *a, s)
 	}, func() {

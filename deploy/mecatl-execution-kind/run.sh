@@ -375,21 +375,26 @@ sed "s|OIDC_IMAGE|$oidc_image|g" "$root/deploy/mecatl-execution-kind/oidc.yaml" 
 kube -n execution-qualification rollout restart deployment/oidc-issuer
 kube -n execution-qualification rollout status deployment/oidc-issuer --timeout=180s
 
-runtime_values=
-if [ "${MECATL_EXECUTION_QUAL_PROFILE:-development}" = production ]; then
-  api_endpoint=$(kube -n default get endpoints kubernetes -o jsonpath='{.subsets[0].addresses[0].ip}')
-  api_endpoint_port=$(kube -n default get endpoints kubernetes -o jsonpath='{.subsets[0].ports[0].port}')
-  fixture_endpoint=$(kube -n execution-qualification get pod network-fixture -o jsonpath='{.status.podIP}')
-  case "$api_endpoint:$fixture_endpoint:$api_endpoint_port" in
-    *[!0-9.:]*) echo "invalid discovered network-policy endpoint" >&2; exit 1 ;;
-    :*|*:) echo "missing discovered network-policy endpoint" >&2; exit 1 ;;
-  esac
-  runtime_values="$state/production-runtime-values.yaml"
-  cat >"$runtime_values" <<EOF
+runtime_values="$state/network-runtime-values.yaml"
+# Kindnet enforces NetworkPolicy in both profiles, including API service DNAT.
+valid_ipv4() {
+  printf '%s\n' "$1" | awk -F. 'NR != 1 || NF != 4 {exit 1} {for (i = 1; i <= NF; i++) if ($i !~ /^[0-9]+$/ || length($i) > 3 || $i > 255) exit 1}'
+}
+api_service=$(kube -n default get service kubernetes -o jsonpath='{.spec.clusterIP}')
+api_endpoint=$(kube -n default get endpoints kubernetes -o jsonpath='{.subsets[0].addresses[0].ip}')
+api_endpoint_port=$(kube -n default get endpoints kubernetes -o jsonpath='{.subsets[0].ports[0].port}')
+for address in "$api_service" "$api_endpoint"; do
+  valid_ipv4 "$address" || { echo "invalid discovered IPv4 network-policy endpoint" >&2; exit 1; }
+done
+case "$api_endpoint_port" in
+  ''|*[!0-9]*) echo "invalid discovered network-policy port" >&2; exit 1 ;;
+esac
+[ "$api_endpoint_port" -ge 1 ] && [ "$api_endpoint_port" -le 65535 ] || { echo "invalid discovered network-policy port" >&2; exit 1; }
+cat >"$runtime_values" <<EOF
 provider:
   replicas: 2
   apiServerCIDRs:
-    - 10.96.0.1/32
+    - $api_service/32
     - $api_endpoint/32
   dnsCIDRs:
     - 10.96.0.10/32
@@ -397,6 +402,11 @@ networkPolicy:
   apiServerPorts:
     - 443
     - $api_endpoint_port
+EOF
+if [ "${MECATL_EXECUTION_QUAL_PROFILE:-development}" = production ]; then
+  fixture_endpoint=$(kube -n execution-qualification get pod network-fixture -o jsonpath='{.status.podIP}')
+  valid_ipv4 "$fixture_endpoint" || { echo "invalid discovered IPv4 network-policy fixture endpoint" >&2; exit 1; }
+  cat >>"$runtime_values" <<EOF
   workloadProfiles:
     go:
       egress:
@@ -431,10 +441,7 @@ fi
 set -- upgrade --install mecatl-execution "$root/deploy/helm/mecatl-execution" \
   --namespace execution-qualification \
   -f "$root/deploy/mecatl-execution-kind/execution-values.yaml" -f "$template_values" \
-  -f "$root/deploy/mecatl-execution-kind/fixture-security-values.yaml"
-if [ -n "$runtime_values" ]; then
-  set -- "$@" -f "$runtime_values"
-fi
+  -f "$root/deploy/mecatl-execution-kind/fixture-security-values.yaml" -f "$runtime_values"
 helm_kube "$@" \
   --set fullnameOverride=mecatl-execution \
   --set-string provider.image="$provider_image" \

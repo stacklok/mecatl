@@ -882,15 +882,24 @@ func (p *Provider) ReserveSuccessor(ctx context.Context, req server.PlacementSuc
 		return server.PlacementBinding{}, server.ErrPlacementUnavailable
 	}
 	ref := executionenv.EnvironmentRef{ID: req.Ref.ID, Revision: req.Ref.Revision}
-	if err := p.client.ReserveSuccessor(ctx, executionenv.ReferenceRequest{Environment: ref, Owner: owner, SourceBindingID: string(req.SourceBindingID), BindingID: string(req.DestinationBindingID), OperationID: op}); err != nil {
+	reservation := executionenv.ReferenceRequest{Environment: ref, Owner: owner, SourceBindingID: string(req.SourceBindingID), BindingID: string(req.DestinationBindingID), OperationID: op}
+	abort := func() {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		_ = p.client.AbortReference(cleanupCtx, reservation)
+	}
+	if err := p.client.ReserveSuccessor(ctx, reservation); err != nil {
+		abort()
 		return server.PlacementBinding{}, mapPlacementError(err)
 	}
 	attached, err := p.client.Attach(ctx, executionenv.AttachEnvironmentRequest{Context: executionenv.RequestContext{Environment: ref, Owner: owner, BindingID: string(req.SourceBindingID)}, Purpose: executionenv.PurposeSession})
 	if err != nil {
+		abort()
 		return server.PlacementBinding{}, mapPlacementError(err)
 	}
 	base, err := p.binding(owner, string(req.DestinationBindingID), attached)
 	if err != nil {
+		abort()
 		return server.PlacementBinding{}, err
 	}
 	return p.withExclusiveReferenceTransaction(base, owner, string(req.DestinationBindingID), op), nil

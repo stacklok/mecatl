@@ -90,6 +90,28 @@ session's worktree; an independent schedule owns a separately provisioned
 placement when the deployment provider supports that lifecycle (including
 `microvm-local`). Updates cannot change either relationship.
 
+On `mecak8s` with remote execution, workspace-backed schedules are limited to
+in-chat schedules that borrow the origin's Kubernetes workspace. Each fire
+receives its own session binding to that workspace, including across server
+and execution-provider restarts. Independent remote workspace allocation is
+unsupported and fails before allocating an environment; independent no-FS
+schedules remain available. A fire fails while another run holds the borrowed
+workspace, and a claimed slot is not retried unless its trigger's retry policy
+allows it.
+
+The original session must remain stored with the same workspace binding for
+future fires. Deleting it, including through session retention, makes future
+fires fail even if retained fire sessions keep the workspace alive. Updates
+cannot retarget the schedule to another session. Create a new in-chat schedule
+from a surviving session eligible to use that workspace instead.
+
+Each retained fire session consumes one of the environment's 64 reference
+slots, shared with the origin and other sessions. Configure fire-session
+retention or delete unneeded fire sessions before that limit blocks further
+fires. Deleting only the schedule does not release those references. Existing
+sessions keep their persisted tool authority; start a new session if the
+`Schedule` tool is absent from an older session's authority.
+
 Deleting a borrowed schedule leaves its origin untouched. Deleting an
 independently placed schedule first persists an atomic, restart-safe deletion
 marker; claimed/running fires must settle before that transition, and

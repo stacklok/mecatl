@@ -513,7 +513,7 @@ type schedulePlacement struct {
 	rollback func(context.Context) error
 }
 
-func (s *Service) resolveSchedulePlacement(ctx context.Context, ref session.EnvironmentRef, profile SessionProfile) (schedulePlacement, error) {
+func (s *Service) resolveSchedulePlacement(ctx context.Context, ref session.EnvironmentRef, origin session.SessionID, profile SessionProfile) (schedulePlacement, error) {
 	if profile == ProfileNoFS {
 		binding, err := s.BindPlacement(ctx, NoFSPlacement(), PlacementOperationCreate)
 		if err != nil {
@@ -527,8 +527,20 @@ func (s *Service) resolveSchedulePlacement(ctx context.Context, ref session.Envi
 	var binding PlacementBinding
 	var err error
 	newBinding := !ref.Valid()
+	if newBinding && s.cfg.ExecutionAccess != nil {
+		return schedulePlacement{}, fmt.Errorf("%w: independent native schedules require durable reference ownership", ErrFailedPrecondition)
+	}
 	if ref.Valid() {
-		binding, err = s.ReattachPlacement(ctx, ref)
+		if origin != "" && s.cfg.ExecutionAccess != nil && s.cfg.ExecutionAccess.Applies(ref) {
+			var source *session.Session
+			source, err = s.GetSession(ctx, origin)
+			if err != nil || source.EnvironmentRef != ref {
+				return schedulePlacement{}, ErrPlacementNotFound
+			}
+			binding, err = s.ReattachPlacementForBinding(ctx, ref, origin)
+		} else {
+			binding, err = s.ReattachPlacement(ctx, ref)
+		}
 	} else {
 		binding, err = s.BindPlacement(ctx, DefaultPlacement(), PlacementOperationCreate)
 	}
@@ -549,6 +561,40 @@ func (s *Service) resolveSchedulePlacement(ctx context.Context, ref session.Envi
 		}
 	}
 	return resolved, nil
+}
+
+// ScheduleFirePlacement reauthorizes the stored placement; a borrowed native
+// schedule additionally reserves a distinct reference for the fire session.
+// Session creation owns rollback and commit of the returned binding.
+func (s *Service) ScheduleFirePlacement(ctx context.Context, spec port.ScheduleSpec, fireID session.SessionID) (PlacementBinding, error) {
+	if s.cfg.ExecutionAccess == nil || !s.cfg.ExecutionAccess.Applies(spec.EnvironmentRef) {
+		return s.ReattachPlacementInScope(ctx, spec.EnvironmentRef, spec.PlacementScope)
+	}
+	if spec.OriginSessionID == "" || fireID == "" || spec.PlacementScope == "" || PlacementScope(spec.PlacementScope) != s.cfg.PlacementScope {
+		return PlacementBinding{}, ErrPlacementNotFound
+	}
+	owner := session.PrincipalFromContext(ctx)
+	if spec.Owner == nil || !spec.Owner.SameIdentity(owner) {
+		return PlacementBinding{}, ErrPlacementNotFound
+	}
+	source, err := s.GetSession(ctx, spec.OriginSessionID)
+	if err != nil || source.EnvironmentRef != spec.EnvironmentRef || source.Owner == nil || !source.Owner.SameIdentity(spec.Owner) {
+		return PlacementBinding{}, ErrPlacementNotFound
+	}
+	binding, err := s.successorPlacement(ctx, source, SuccessorPlacement{}, fireID)
+	if err != nil {
+		s.logPlacementProviderError(ctx, "reserve schedule fire", err)
+		return PlacementBinding{}, sanitizePlacementProviderError(err)
+	}
+	if binding.Ref != spec.EnvironmentRef {
+		rollbackUnpublishedPlacement(s, &binding)
+		return PlacementBinding{}, ErrInvalidPlacementBinding
+	}
+	if err := validatePlacementBinding(binding); err != nil {
+		rollbackUnpublishedPlacement(s, &binding)
+		return PlacementBinding{}, err
+	}
+	return binding, nil
 }
 
 func (s *Service) deleteSchedulePlacement(ctx context.Context, ref session.EnvironmentRef, scope string) (bool, error) {
@@ -611,14 +657,22 @@ func (s *Service) installSessionPlacement(id session.SessionID, binding Placemen
 	}
 	attachment.refs++
 	s.placementAttachMu.Unlock()
-	if redundantClose != nil {
+	// A reserved successor sharing the source's environment must be committed
+	// before its Close runs: Close aborts an unpublished reference.
+	if redundantClose != nil && binding.Commit == nil {
 		_ = redundantClose()
+		redundantClose = nil
 	}
 
 	var once sync.Once
 	release := func() error {
 		var err error
-		once.Do(func() { err = s.releasePlacementAttachment(binding.Ref) })
+		once.Do(func() {
+			err = s.releasePlacementAttachment(binding.Ref)
+			if redundantClose != nil {
+				err = errors.Join(err, redundantClose())
+			}
+		})
 		return err
 	}
 	s.setSessionEnvironment(id, binding.Environment, release)

@@ -403,8 +403,12 @@ func TestMakeFireFuncReleasesSessionLease(t *testing.T) {
 		},
 	}
 
-	if _, err := fire(ctx, sched, time.Now()); err != nil {
+	first, err := fire(ctx, sched, time.Now())
+	if err != nil {
 		t.Fatalf("fire #1: %v", err)
+	}
+	if svc.IsLive(first.SessionID) {
+		t.Fatal("fire #1 remained registered after its terminal result")
 	}
 	if n := svc.ActiveRuns(); n != 0 {
 		t.Fatalf("ActiveRuns after fire #1 = %d, want 0 (the fire session's lease must be released — review #189)", n)

@@ -8754,7 +8754,7 @@ func applyRedisWorkspacePosture(pc prompt.Config, enabled bool) prompt.Config {
 
 const workspaceRootForPrompt = "/workspace"
 
-const remoteExecutionPostureNote = "This session uses a persistent remote Kubernetes workspace. Use the filesystem tools and foreground Shell for work in /workspace. Local project instructions, rules, project-scoped skills and commands, schedules, SkillDraft, Parallel, Team, and Subagent delegation are unavailable; explicitly selected independent commands, operator-global skills, MCP, memory, and web tools remain available. Never assume harness-local files are part of this workspace."
+const remoteExecutionPostureNote = "This session uses a persistent remote Kubernetes workspace. Use the filesystem tools and foreground Shell for work in /workspace. Local project instructions, rules, project-scoped skills and commands, SkillDraft, Parallel, Team, and Subagent delegation are unavailable; in-chat schedules may borrow this session's exact workspace for future fires, but independent scheduled workspace allocation is unsupported and a fire fails if the workspace is busy; explicitly selected independent commands, operator-global skills, MCP, memory, and web tools remain available. Never assume harness-local files are part of this workspace."
 
 func applyRemoteExecutionPosture(deps agent.Deps, enabled bool) agent.Deps {
 	if !enabled {
