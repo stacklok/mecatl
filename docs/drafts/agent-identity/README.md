@@ -2,7 +2,7 @@
 
 This document proposes how Mecatl identifies **who is acting** in a multi-user, multi-session deployment: a user starts an agent, the agent delegates to subagents, each delegation stays within its parent's authority, and the resulting actions leave a durable audit trail. The goal is to let an operator trace an action back to the agent and user behind it, with authorization enforced outside the agent loop.
 
-**Workload identity alone cannot answer these questions.** It identifies the Mecatl service, but one service can host many users, agent definitions, and running instances. This architecture gives those agents identities of their own and connects them to the users they act for. It follows an agent from the trusted definition loaded at session creation, through its execution and delegation, to the tool calls made on its behalf, which may use a human user's credentials to access an external service.
+**Workload identity alone cannot answer these questions.** It identifies the Mecatl service, but one service can host many users, agent definitions, and running instances. This architecture gives those agents identities of their own and connects them to the users they act for. It follows an agent from the trusted definition loaded at session creation, through its runs and delegated child instances, to the tool calls made on its behalf, which may use a human user's credentials to access an external service.
 
 *This document describes the intended architecture, not current implementation status.*
 
@@ -70,7 +70,7 @@ flowchart LR
 
 The diagram shows the broker-backed remote architecture's MCP path. Local deployments can retain direct tool access; protected operations in the remote deployment must pass through the broker.
 
-Before the agent loop starts, mecak8s's trusted session lifecycle code [loads and persists the fixed definition selection](agent-definitions.md#loading-definitions-for-a-session), supplies execution configuration, and [registers definitions and the main instance](agent-definitions.md#registering-instances) with the broker under workload authentication. This loader responsibility is outside the untrusted loop, not a separate registrar or an isolation boundary. The registration API, durable schema, execution-context binding, and protection from same-process substitution remain open.
+Before the agent loop starts, mecak8s's trusted session lifecycle code [loads and persists the fixed definition selection](agent-definitions.md#loading-definitions-for-a-session), supplies execution configuration, and [registers definitions and the main instance](agent-definitions.md#registering-instances) with the broker under workload authentication. This loader responsibility is outside the untrusted loop, not a separate registrar or an isolation boundary. The registration API, durable schema, verified per-operation binding for reported context, and protection from same-process substitution remain open.
 
 The broker contains the agent trust issuer, the authorization and audit logic, and a grant issuer (AS-1). The vMCP gateway contains its own authorization server (AS-2), the provider credential storage, and the vMCP. The gateway can run inside the Mecatl deployment or be operated separately, such as an enterprise connector gateway. In both cases AS-1 vouches for the user and acting agent with a short-lived grant that AS-2 redeems; see [MCP gateway modes](mcp-gateway-modes.md). The tools themselves execute the operations.
 
@@ -80,7 +80,7 @@ The remaining trust question is how the broker knows that the reported user and 
 
 Alice asks her main agent to list pull requests and review PR 42. Once the session's definitions are loaded, the main calls `pull_request_list`, then delegates to `code-reviewer`. The reviewer calls `pull_request_read` for PR 42. Each call requires its own authorization decision.
 
-The broker checks the registered reviewer's definition-derived server/tool ceiling with Cedar and retains existing user/connection checks. V1 does not evaluate PR-specific delegated bounds or comprehensive enterprise user policy. If all required checks pass, ToolHive dispatches the call using Alice's GitHub credential, which stays outside `mecak8s`. If denied, no request reaches GitHub.
+The broker checks the reviewer's effective server/tool ceiling, its definition ceiling narrowed by the main's, with Cedar and retains existing user/connection checks. V1 does not evaluate PR-specific delegated bounds or comprehensive enterprise user policy. If all required checks pass, ToolHive dispatches the call using Alice's GitHub credential, which stays outside `mecak8s`. If denied, no request reaches GitHub.
 
 GitHub sees access under Alice's account. The broker's audit record supplies the rest of the story: which reviewer acted, which agent delegated the work, why the call was permitted, and what result was observed. A missing result is recorded as unknown, not as proof that the operation never happened.
 

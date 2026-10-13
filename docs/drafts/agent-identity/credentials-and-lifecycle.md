@@ -2,7 +2,7 @@
 
 *This chapter describes the intended architecture, not current implementation status.*
 
-An agent instance can participate in multiple runs. Its instance credential identifies it to the broker; presenting that credential does not by itself authorize an MCP tool call. The harness manages run execution. In v1, the broker checks the acting instance's definition-derived server/tool ceiling with Cedar, alongside existing user/connection checks and trusted execution-context binding. User, resource, argument, and dynamic delegation policies are deferred; carrying run or delegation context does not mean Cedar evaluates those bounds. Renewing the instance credential does not itself extend or widen permission to call tools.
+An agent instance can participate in multiple runs. Its instance credential identifies it to the broker; presenting that credential does not by itself authorize an MCP tool call. The harness manages run execution. In v1, the broker checks the acting instance's effective server/tool ceiling, its definition ceiling narrowed by its parent's, with Cedar, alongside existing user/connection checks and execution-context checks. User, resource, argument, and dynamic delegation policies are deferred; carrying run or delegation context does not mean Cedar evaluates those bounds. Renewing the instance credential does not itself extend or widen permission to call tools.
 
 ## Credential roles
 
@@ -54,7 +54,7 @@ sequenceDiagram
     U->>H: List pull requests and review PR 42 in acme/payments<br/>API access token
     Note over H,V: First call: main run R41 lists pull requests
     H->>B: pull_request_list(repository=acme/payments)<br/>Workload + main SVID + R41 + op-list-prs-001
-    B->>B: Authenticate and verify context<br/>Check main server/tool ceiling and connection access
+    B->>B: Authenticate and check context<br/>Check main server/tool ceiling and connection access
     B->>A: Exchange user subject_token + main actor_token<br/>Broker client authentication
     A->>A: Validate user and main actor tokens and broker client<br/>Authorize requested MCP target and access bounds
     A-->>B: Delegated token with sub=ToolHive user and act.sub=main
@@ -71,7 +71,7 @@ sequenceDiagram
 
     Note over H,V: Second call: reviewer run R42 reads PR 42
     H->>B: pull_request_read(repository=acme/payments, number=42)<br/>Workload + reviewer SVID + R42 + D42 + op-pr42-001
-    B->>B: Authenticate and verify context<br/>Check reviewer server/tool ceiling and connection access
+    B->>B: Authenticate and check context<br/>Check reviewer server/tool ceiling and connection access
     B->>A: Exchange user subject_token + reviewer actor_token<br/>Broker client authentication
     A->>A: Validate user and reviewer actor tokens and broker client<br/>Authorize requested MCP target and delegated access bounds
     A-->>B: Delegated token with sub=ToolHive user and act.sub=reviewer
@@ -89,13 +89,13 @@ sequenceDiagram
 | [(3) Broker session and instance registration](#3-broker-session-and-instance-registration) | Before returning the registered reference and before (4), the issuer validates the workload and persisted registration records, then constructs the canonical subject. Registration remains identity recording only; it authorizes neither spawning, run execution, nor a tool call. |
 | [(4) Agent-instance JWT-SVID](#4-agent-instance-jwt-svid) | After the SVID is returned and before an invocation, mecak8s verifies its signature using the configured agent trust bundle and checks the registered subject, allowed algorithm, audience, and expiry. |
 | [(5) Enrollment](#5-enrollment-and-authorized-connection) | If an invocation reveals missing enrollment or a grant requiring user reauthorization, the broker returns an enrollment-required response without dispatch. mecak8s pauses, presents the broker link, and retries after completion through all checks. Enrollment is not permission to execute. Refreshable expiry is handled in custody where possible. |
-| [(6) Per-operation authorization](#6-per-operation-authorization) | Main's list and reviewer's read each pass local permissions and hooks, broker credential/context checks, the actor's own definition ceiling, and connection checks before dispatch. `D42` is context, not v1 dynamic delegation policy. The [ceiling rules](mcp-authorization.md#definition-derived-ceiling) fail closed, including on any Cedar diagnostic error. |
+| [(6) Per-operation authorization](#6-per-operation-authorization) | Main's list and reviewer's read each pass local permissions and hooks, broker credential/context checks, the actor's effective ceiling, and connection checks before dispatch. `D42` is context, not v1 dynamic delegation policy. The [ceiling rules](mcp-authorization.md#definition-derived-ceiling) fail closed, including on any Cedar diagnostic error. |
 | [(7) Token exchange and delegated MCP access token](#7-token-exchange-and-delegated-mcp-access-token) | Before requesting exchange, the broker obtains a current user access token from custody or refreshes it when needed. Before returning the delegated token, ToolHive AS validates the user token, actor credential, presenter, and bounded access. The broker restricts any delegated token to the applicable execution context; reuse never exceeds those bounds. |
 | [(8) Dispatch and observed outcome](#8-dispatch-and-observed-outcome) | Before resolving the upstream grant or calling the provider, vMCP validates the delegated token and operation policy and resolves the authorized connection. It performs each GitHub operation using the native provider credential held by ToolHive, never an SVID as the provider credential. After the provider result and before returning the sanitized result, the broker records the observed outcome and provider correlation when available. |
 
 Decision, dispatch, and outcome require durable evidence; persistence ordering and cross-service propagation are unspecified. Every subsequent tool call repeats authorization.
 
-A child call uses the same invocation flow with the child's own JWT-SVID and attributed run and delegation context. It does not require or present the parent's SVID. The broker checks the child's registered parent-instance reference, not a parent token, when it constructs the child subject, then evaluates the child's own definition ceiling for the call. Broker enforcement of dynamic delegated bounds remains future work.
+A child call uses the same invocation flow with the child's own JWT-SVID and attributed run and delegation context. It does not require or present the parent's SVID. The broker checks the child's registered parent-instance reference, not a parent token, when it constructs the child subject and computes the child's [effective ceiling](mcp-authorization.md#delegated-authority) from its definition ceiling and the main's. It evaluates that stored effective ceiling for the call. Broker enforcement of task-specific delegated bounds remains future work.
 
 ### (1) Company API access token
 
@@ -146,7 +146,7 @@ The broker session reference identifies broker-owned state; knowing it grants no
 
 For the diagram's main registration, mecak8s supplies the persisted main agent-instance incarnation and selected definition, with no parent. For the reviewer, it supplies the child's persisted incarnation, the already registered reviewer definition, and the registered main-instance reference, not the main's token. The broker constructs each canonical subject under the [registration checks](agent-definitions.md#registering-instances).
 
-Alice's identity remains a separate API report, not established by the workload credential. The issuance example in (4) preserves that distinction. See [source records and policy representation](agent-definitions.md#source-records-and-policy-representation) for the open API, schema, context-binding, and same-process protection questions.
+Alice's identity remains a separate API report, not established by the workload credential. The issuance example in (4) preserves that distinction. See [source records and policy representation](agent-definitions.md#source-records-and-policy-representation) for the open API, schema, per-operation context-binding, and same-process protection questions.
 
 ### (4) Agent-instance JWT-SVID
 
@@ -207,7 +207,7 @@ Local permissions and hooks run before each call. For the second call, trusted h
 }
 ```
 
-The broker checks main's list against the main's registered ceiling and this read against the reviewer's, following the [definition-derived ceiling rules](mcp-authorization.md#definition-derived-ceiling). Both calls require valid workload and actor credentials, trusted execution-context binding, and authorization to use the ToolHive subject and provider connection; the context-binding mechanism remains unresolved. The reviewer ceiling gives the same result for PR 43 on this server/tool pair: v1 does not verify PR-specific bounds from `D42`. Existing connection and downstream checks still apply; see [two requests, two authorization decisions](mcp-authorization.md#two-requests-two-authorization-decisions).
+The broker checks main's list against the main's effective ceiling and this read against the reviewer's, following the [definition-derived ceiling rules](mcp-authorization.md#definition-derived-ceiling). Both calls require valid workload and actor credentials, execution-context checks, and authorization to use the ToolHive subject and provider connection; in v1, user, run, and delegation remain mecak8s-reported. The reviewer ceiling gives the same result for PR 43 on this server/tool pair: v1 does not verify PR-specific bounds from `D42`. Existing connection and downstream checks still apply; see [two requests, two authorization decisions](mcp-authorization.md#two-requests-two-authorization-decisions).
 
 **Illustrative broker evidence:** `op-pr42-001` passed policy revision `review-ceiling-r17-g1` without evaluation errors and was allowed after the required connection and context checks. The workload and reviewer credential were verified; Alice remains API-reported and `D42` reported execution context. This decision proves neither dispatch nor success. The [audit evidence shape](audit.md#illustrative-authorization-evidence) owns the full attribution, request, attempt, policy, and redaction requirements.
 
@@ -341,7 +341,7 @@ This groups examples for reading, not storage or transport. Each AS validates it
 
 The broker holds its ToolHive user access and refresh tokens. ToolHive holds, refreshes, and injects native provider credentials for the authorized connection. Neither Mecatl nor the model receives those native provider credentials. This boundary concerns protected tool access; it does not relocate other harness credentials, such as those used to call an LLM provider.
 
-Agent identity does not protect against compromise of the broker's signing authority or provider-credential storage. Separating issuance, authorization, and custody into modules does not create security boundaries against compromise of their shared process or host.
+Agent-instance identity does not protect against compromise of the broker's signing authority or provider-credential storage. Separating issuance, authorization, and custody into modules does not create security boundaries against compromise of their shared process or host.
 
 ## Credential lifetimes and renewal
 
@@ -365,7 +365,7 @@ An approval wait or provider-enrollment pause leaves the current run unfinished.
 
 After restart, recovering credentials is not enough to continue safely. The system must recover the unfinished execution context and establish the association between the user, acting agent, and provider connection. If that association cannot be established, the tool call must fail closed. The harness determines whether execution resumes; the broker authorizes subsequent MCP calls.
 
-Under the [identity and selection continuity rules](agent-definitions.md#identity-continuity-across-runs-and-restarts), continuation retains the unfinished run's original bounds. In v1, the broker rechecks the fixed definition-derived ceiling and existing connection restrictions; the harness retains its run/delegation restrictions. Broker evaluation of dynamic delegated bounds is deferred. Credential renewal does not widen recovered authority.
+Under the [identity and selection continuity rules](agent-definitions.md#identity-continuity-across-runs-and-restarts), continuation retains the unfinished run's original bounds. In v1, the broker rechecks the stored effective ceiling and existing connection restrictions; the harness retains its run/delegation restrictions. Broker evaluation of task-specific delegated bounds is deferred. Credential renewal does not widen recovered authority.
 
 An operation that may have been dispatched but has no recorded completion has an unknown outcome. Restoring credentials does not make replay safe. Reconciliation requires evidence about the original operation, such as provider status or an applicable idempotency mechanism.
 
@@ -457,6 +457,6 @@ These IDs describe instance identity and creation ancestry. The initiating user 
 
 The walkthrough's delegated token is a bearer without sender binding. Its signature protects the claims from alteration but does not prove which holder presented it.
 
-Workload-level DPoP is follow-on work to bind the broker-facing OAuth credential to a presenting worker's key and reduce replay of stolen access tokens. It does not establish which agent inside that worker made a call, protect against a compromised worker using its own key, or bind the MCP arguments. Agent identity and tool-call authorization remain separate checks.
+Workload-level DPoP is follow-on work to bind the broker-facing OAuth credential to a presenting worker's key and reduce replay of stolen access tokens. It does not establish which agent inside that worker made a call, protect against a compromised worker using its own key, or bind the MCP arguments. Agent-instance identity and tool-call authorization remain separate checks.
 
 Key custody, renewal, restart behavior, and replay handling belong in the implementation design.
