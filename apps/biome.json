@@ -23,12 +23,12 @@
         "noRestrictedImports": {
           "level": "error",
           "options": {
-            "paths": {
-              "../sdk": "Import the SDK by package name (@stacklok-oss/mecatl-sdk), never by relative path.",
-              "../../sdk": "Import the SDK by package name (@stacklok-oss/mecatl-sdk), never by relative path.",
-              "../../../sdk": "Import the SDK by package name (@stacklok-oss/mecatl-sdk), never by relative path.",
-              "../../../../sdk/typescript": "Import the SDK by package name (@stacklok-oss/mecatl-sdk), never by relative path."
-            }
+            "patterns": [
+              {
+                "group": ["**/sdk", "**/sdk/**"],
+                "message": "Import the SDK by package name (@stacklok-oss/mecatl-sdk), never by relative path."
+              }
+            ]
           }
         }
       }

@@ -29,14 +29,18 @@ section.
 Studio is a consumer of Mecatl's public surface, not part of the Go build:
 
 - **Checked-out SDK.** `server/` uses the repository's `sdk/typescript` through a
-  frozen `file:` dependency, so Studio, its SDK, and the daemon it targets always
-  come from one commit, and a change spanning all three lands without an
+  frozen `file:` dependency, so Studio, its SDK, and the daemon contract it targets
+  are built from one commit, and a change spanning all three lands without an
   intermediate SDK release. `server/src/sdk-source.test.ts` fails if the dependency
-  moves to a registry version. The BFF still imports the SDK only by package name
-  (Biome rejects relative imports of `sdk/`), so it uses the same exports as any
-  other consumer; the SDK's own package checks cover the published tarball. Run
-  `task studio:install` to compile the local SDK before installing Studio. The
-  image builds both from the repository root; the browser never imports the SDK.
+  moves to a registry version, or if `pnpm-lock.yaml` installs the SDK's own
+  dependencies at versions other than `sdk/typescript/package.json` pins. After an
+  SDK dependency bump, refresh the lockfile here with
+  `pnpm --filter server update @stacklok-oss/mecatl-sdk --lockfile-only`. The BFF
+  still imports the SDK only by package name (Biome rejects relative imports of
+  `sdk/`), so it uses the same exports as any other consumer; the SDK's own package
+  checks cover the published tarball. Run `task studio:install` to compile the local
+  SDK before installing Studio. The image builds both from the repository root; the
+  browser never imports the SDK.
 - **The browser never talks to Mecatl.** `web/` imports neither the SDK nor its
   generated protocol types (Biome rejects `@stacklok-oss/mecatl-sdk`, `/node`, and
   `/gen` there). Only the BFF holds a credential; the browser holds four cookies (see

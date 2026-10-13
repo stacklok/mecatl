@@ -15,6 +15,7 @@ describe("installed SDK version", () => {
       "0.5.0+v0.0.48-main.212.g1a2b3c4d",
     );
     expect(reportedSdkVersion("0.5.0", undefined)).toBe("0.5.0");
+    expect(reportedSdkVersion("0.5.0", "")).toBe("0.5.0");
     expect(reportedSdkVersion(undefined, "v0.0.48")).toBeUndefined();
   });
 });

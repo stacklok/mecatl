@@ -100,7 +100,7 @@ describe("Mecatl chat sessions", () => {
     expect(result.items[3]).toMatchObject({ debugTargetSessionId: "target", kind: "debug" });
   });
 
-  it("maps product session controls to published SDK options", async () => {
+  it("maps product session controls to public SDK options", async () => {
     const create = vi.fn().mockResolvedValue({ id: "session-1" });
     const service = createMecatlChatService({ sessions: { create } } as unknown as Client);
 
@@ -536,7 +536,7 @@ describe("Mecatl chat sessions", () => {
     }
   });
 
-  it("uses published SDK operations for mode, compaction, clearing, and model forks", async () => {
+  it("uses public SDK operations for mode, compaction, clearing, and model forks", async () => {
     const compact = vi.fn().mockResolvedValue(true);
     const setMode = vi.fn().mockResolvedValue({ mode: SessionMode.AcceptEdits });
     const clear = vi.fn().mockResolvedValue({ id: "session-clear" });
@@ -618,7 +618,7 @@ describe("Mecatl chat sessions", () => {
     expect(steer).toHaveBeenCalledWith("focus on the auth module");
   });
 
-  it("gates plan control on the published SDK feature", async () => {
+  it("gates plan control on the public SDK feature", async () => {
     const resolvePlanAsk = vi.fn().mockResolvedValue(undefined);
     const resolvePlan = vi.fn();
     const run = vi.fn().mockResolvedValue({

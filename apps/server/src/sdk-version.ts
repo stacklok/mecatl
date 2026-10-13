@@ -27,7 +27,5 @@ export function reportedSdkVersion(
   version: string | undefined,
   studioBuildId: string | undefined,
 ): string | undefined {
-  return version === undefined || studioBuildId === undefined
-    ? version
-    : `${version}+${studioBuildId}`;
+  return version === undefined || !studioBuildId ? version : `${version}+${studioBuildId}`;
 }

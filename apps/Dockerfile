@@ -8,8 +8,8 @@
 # PR by the `studio` CI job; built locally by `task studio:image`.
 #
 # Build context is repository root so the BFF compiles the SDK from the same
-# checkout: Studio, its SDK, and the daemon it targets always share one commit,
-# and a change spanning all three needs no intermediate SDK release.
+# checkout: Studio, its SDK, and the daemon contract it targets are built from
+# one commit, and a change spanning all three needs no intermediate SDK release.
 #
 # Shape (multi-stage):
 #   1. build   — node:26-slim (Debian + shell + toolchain): pnpm 12.4.2 via

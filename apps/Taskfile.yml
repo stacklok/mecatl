@@ -123,6 +123,6 @@ tasks:
       - pnpm run dev
 
   image:
-    desc: Build the Studio container image locally as mecatl-studio:dev (context = apps/)
+    desc: Build the Studio container image locally as mecatl-studio:dev (context = repository root)
     cmds:
       - docker build -f Dockerfile -t mecatl-studio:dev ..
