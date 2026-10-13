@@ -488,8 +488,8 @@ func (m Model) dispatchNonInputMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if mm, handled := m.updateSkillChangesMsg(msg); handled {
 		return mm, nil
 	}
-	// Inventory-overlay result/error msgs (agentsInv, usermodel, /worktrees,
-	// /schedule, /sessions) — grouped to keep update() flat as overlays accrue.
+	// Inventory-overlay result/error msgs (agentsInv, reflections, /schedule)
+	// remain grouped while surface-owned results route through the modal.
 	if mm, cmd, handled := m.updateInventoryMsgs(msg); handled {
 		return mm, cmd
 	}
@@ -508,7 +508,7 @@ func (m Model) dispatchNonInputMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // updateInventoryMsgs is the fall-through chain for the unmigrated inventory
-// overlays (agentsInv, reflections, worktrees, schedule):
+// overlays (agentsInv, reflections, execution, schedule):
 // each per-overlay helper returns handled=false for a non-matching msg, so at
 // most one consumes. Most carry no follow-up command; /schedule's
 // ScheduleActionMsg re-lists on success so the cmd is propagated. Surfaces
@@ -523,9 +523,6 @@ func (m Model) updateInventoryMsgs(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	}
 	if mm, cmd, handled := m.updateExecutionMsg(msg); handled {
 		return mm, cmd, true
-	}
-	if mm, handled := m.updateWorktreesMsg(msg); handled {
-		return mm, nil, true
 	}
 	if mm, cmd, handled := m.updateScheduleMsg(msg); handled {
 		return mm, cmd, true
@@ -2362,8 +2359,7 @@ func (m Model) onPendingApprovalRecoveryKey(msg tea.KeyPressMsg) (tea.Model, tea
 func (m Model) clearAnySelection(msg tea.KeyPressMsg) (Model, bool) {
 	if !key.Matches(msg, m.keys.Cancel) || (!m.sel.active && !m.prompt.HasSelection()) ||
 		m.modal != nil || m.team.view != teamNone || m.agentsInv.view != agentsInvNone ||
-		m.reflections.view != reflectionsNone ||
-		m.executionPicker.open || m.worktrees.view != worktreesNone {
+		m.reflections.view != reflectionsNone || m.executionPicker.open {
 		return m, false
 	}
 	m = m.clearSelection()
@@ -2426,7 +2422,6 @@ func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		m.onReflectionsKey,
 		m.onConnectKey,
 		m.onExecutionKey,
-		m.onWorktreesKey,
 		m.onScheduleKey,
 	}
 	for _, route := range overlays {
@@ -2599,6 +2594,15 @@ func (m Model) applyToolcallsSurfaceIntent(intent surfaceIntent) bool {
 // tells the caller to skip common dispatch post-processing after a root-owned
 // effect takes over; handled=false never carries meaningful work.
 func (m Model) applySurfaceIntent(intent surfaceIntent) (model tea.Model, cmd tea.Cmd, stopSurfaceDispatch bool) {
+	if intent, ok := intent.(worktreeSelectIntent); ok {
+		if intent.sourceID != m.sessionID || m.phase != phaseIdle {
+			m.closeModal()
+			m.statusMsg = "worktree choice is stale; relist and try again"
+			return m, m.prompt.Focus(), true
+		}
+		mm, cmd := m.switchToWorktree(intent.worktree)
+		return mm, cmd, true
+	}
 	if intent, ok := intent.(effortSelectIntent); ok {
 		sel := m.effortSelection(intent.effort)
 		m.closeModal()

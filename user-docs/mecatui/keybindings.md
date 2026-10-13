@@ -32,6 +32,7 @@ bindings and dims features that the connected server does not provide.
 |Agents overlay controls|Select and inspect delegated work. See [Navigate the Agents overlay](#navigate-the-agents-overlay).|
 |Models picker controls|The mouse wheel scrolls the visible model list without moving its cursor. A primary click on a visible model row moves the cursor without switching models; press `enter` to activate the cursor row.|
 |Effort picker controls|The mouse wheel scrolls the list without changing the selected tier.|
+|Worktrees picker controls|The mouse wheel scrolls the list without changing the selected worktree.|
 |`pgup` / `pgdn`|Scroll the conversation.|
 |`home` / `end`|Jump to the top or bottom; `end` resumes auto-follow.|
 |`/`|Open the slash-command palette.|
