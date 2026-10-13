@@ -338,8 +338,8 @@ func TestKindExecutionBorrowedSchedule(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load completed manual fire snapshot: %v", err)
 	}
-	assertBorrowedSnapshot(t, fireSnapshot, "manual")
 	assertBorrowedEvents(t, ctx, agent.addr, token, fireSession, "manual")
+	assertBorrowedSnapshot(t, fireSnapshot, "manual")
 	if fireSession == origin || environmentForBinding(t, ctx, kubeconfig, fireSession) != ref || readExecutionStatus(t, ctx, kubeconfig, ref.ID).PVCUID != pvc {
 		t.Fatal("manual fire did not publish its own binding to the exact origin environment and PVC")
 	}
