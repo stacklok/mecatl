@@ -13,6 +13,13 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Opt-in execution-fenced schedule conformance** — adds
+  `scheduleconformance.RunExecutionFenced` with the complete shared suite plus
+  unresolved predecessor exclusion, late-outcome isolation, and eligible,
+  single-winner one-shot retries. Legacy `Run` expectations remain unchanged;
+  no runtime or port contract changes. Added (minor); test-helper API only,
+  outside the core API snapshot surface.
+
 - **Durable bound execution affordances** — adds `session.ExecutionCapabilities`
   and `Session.ExecutionCapabilities` for host-stamped, creation-time filesystem
   and Shell availability facts. Snapshot and event-source restoration preserve

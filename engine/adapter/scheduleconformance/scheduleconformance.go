@@ -63,7 +63,25 @@ const sampleCron = "* * * * *"
 // clock to advance, and the factory needs no advance callback.
 func Run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore) {
 	t.Helper()
+	run(t, newStore, false)
+}
+
+// RunExecutionFenced executes the complete ScheduleStore suite with unresolved
+// predecessor exclusion, late-outcome isolation, and single-winner retry rearming.
+// Adapters adopting the strengthened execution contract use this instead of Run;
+// Run retains the legacy pending-claim bypass and concurrent rearm expectations.
+// newStore must return a fresh, isolated store for each case.
+func RunExecutionFenced(t *testing.T, newStore func(t *testing.T) port.ScheduleStore) {
+	t.Helper()
+	run(t, newStore, true)
+}
+
+func run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore, executionFenced bool) {
+	t.Helper()
 	ctx := context.Background()
+	if executionFenced {
+		runExecutionFencedCases(t, newStore)
+	}
 
 	t.Run("save/load round-trips spec and state", func(t *testing.T) {
 		s := newStore(t)
@@ -1160,6 +1178,11 @@ func Run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore) {
 		if c1.State.FireCount != 1 || !c1.State.Enabled {
 			t.Fatalf("Claim #1 state = %+v, want FireCount=1 Enabled=true", c1.State)
 		}
+		if executionFenced {
+			if err := s.RecordFire(ctx, port.ScheduleFire{ID: "maxfires-first", ScheduleName: name, FiredAt: now, Stop: session.StopEndTurn}); err != nil {
+				t.Fatal(err)
+			}
+		}
 		// Advance the clock to next1 (the new NextFireAt) so the slot is due again.
 		now2 := next1
 		// Fire #2 — the FINAL fire (MaxFires=2). A cron whose FireCount reaches
@@ -1350,17 +1373,23 @@ func Run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore) {
 			t.Fatalf("ClaimNow #2 at same now = %v, want ErrScheduleNotFound (the advance already happened — at-most-once)", err)
 		}
 
-		// (c) ClaimNow at a LATER now succeeds (crash-recoverability — no wedge).
-		// The fence is LastFireAt == now, so a new now passes (the stale
-		// LastFireAt != the new now). This is the self-heal property: a hard
-		// crash between ClaimNow and RecordFire does NOT wedge the schedule.
+		// (c) Legacy Run permits a later timestamp to bypass pending ownership.
+		// The execution-fenced suite instead requires settlement before retry.
 		later := now.Add(2 * time.Hour)
 		next2, err := cronparse.NextFire(sampleCron, later, time.UTC)
 		if err != nil {
 			t.Fatalf("cronparse.NextFire #2: %v", err)
 		}
+		if executionFenced {
+			if _, err := s.ClaimNow(ctx, name, later, next2); !errors.Is(err, port.ErrScheduleNotFound) {
+				t.Fatalf("ClaimNow bypassed pending predecessor: %v", err)
+			}
+			if err := s.RecordFire(ctx, port.ScheduleFire{ID: "claimnow-settled", ScheduleName: name, FiredAt: now, Stop: session.StopCancelled}); err != nil {
+				t.Fatal(err)
+			}
+		}
 		if _, err := s.ClaimNow(ctx, name, later, next2); err != nil {
-			t.Fatalf("ClaimNow at later now = %v, want success (crash-recoverable: a new now passes the LastFireAt fence)", err)
+			t.Fatalf("ClaimNow at later now (executionFenced=%t): %v", executionFenced, err)
 		}
 
 		// (d) ClaimNow on a DISABLED schedule → ErrScheduleNotFound (the Enabled
@@ -1470,6 +1499,11 @@ func Run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore) {
 		if _, err := s.Claim(ctx, name, now, time.Time{}); err != nil {
 			t.Fatalf("Claim: %v", err)
 		}
+		if executionFenced {
+			if err := s.RecordFire(ctx, port.ScheduleFire{ID: "failed", ScheduleName: name, FiredAt: now, Stop: session.StopError}); err != nil {
+				t.Fatal(err)
+			}
+		}
 		// ReArmOneShot re-enables + advances NextFireAt + increments the counter.
 		nextFire := now.Add(time.Minute)
 		if err := reArmer.ReArmOneShot(ctx, name, nextFire); err != nil {
@@ -1495,12 +1529,8 @@ func Run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore) {
 	})
 
 	t.Run("rearm one-shot concurrent calls do not double-increment", func(t *testing.T) {
-		// THE ATOMICITY PROOF. Two callers ReArmOneShot the same name
-		// "simultaneously". The store MUST serialize them so the counter advances
-		// by exactly 2 (one per call), NOT a torn double-increment that loses an
-		// update or double-counts. This is the at-most-once fence for the RE-ARM:
-		// a concurrent re-arm must not double-enable or double-increment. Run with
-		// -race to surface a torn update.
+		// Legacy Run expects two successful increments; execution fencing permits
+		// only one caller to consume a settled failure's retry budget.
 		s := newStore(t)
 		reArmer, ok := s.(port.ScheduleOneShotReArmer)
 		if !ok {
@@ -1524,25 +1554,39 @@ func Run(t *testing.T, newStore func(t *testing.T) port.ScheduleStore) {
 		if _, err := s.Claim(ctx, name, now, time.Time{}); err != nil {
 			t.Fatalf("Claim: %v", err)
 		}
-		// Two concurrent re-arms. Each must succeed and increment the counter by 1;
-		// the final counter must be exactly 2 (no lost updates, no
-		// double-increments).
+		if executionFenced {
+			if err := s.RecordFire(ctx, port.ScheduleFire{ID: "failed", ScheduleName: name, FiredAt: now, Stop: session.StopError}); err != nil {
+				t.Fatal(err)
+			}
+		}
 		nextFire := now.Add(time.Minute)
 		done := make(chan error, 2)
+		start := make(chan struct{})
 		for i := 0; i < 2; i++ {
-			go func() { done <- reArmer.ReArmOneShot(ctx, name, nextFire) }()
+			go func() { <-start; done <- reArmer.ReArmOneShot(ctx, name, nextFire) }()
 		}
+		close(start)
+		wins := 0
 		for i := 0; i < 2; i++ {
-			if err := <-done; err != nil {
+			if err := <-done; err == nil {
+				wins++
+			} else if !executionFenced || !errors.Is(err, port.ErrScheduleNotFound) {
 				t.Fatalf("ReArmOneShot %d: %v", i, err)
 			}
+		}
+		wantWins := 2
+		if executionFenced {
+			wantWins = 1
+		}
+		if wins != wantWins {
+			t.Fatalf("concurrent rearm winners = %d, want %d", wins, wantWins)
 		}
 		got, err := s.Load(ctx, name)
 		if err != nil {
 			t.Fatalf("Load after concurrent ReArmOneShot: %v", err)
 		}
-		if got.State.OneShotRetryCount != 2 {
-			t.Errorf("OneShotRetryCount = %d, want 2 (two concurrent re-arms must each increment once — atomicity)", got.State.OneShotRetryCount)
+		if got.State.OneShotRetryCount != wantWins {
+			t.Errorf("OneShotRetryCount = %d, want %d (one increment per winner)", got.State.OneShotRetryCount, wantWins)
 		}
 		if !got.State.Enabled {
 			t.Errorf("Enabled = false, want true (re-enabled)")
