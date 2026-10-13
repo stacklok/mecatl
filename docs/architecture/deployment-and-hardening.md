@@ -181,7 +181,7 @@ budget leaves 45 minutes beyond the test/process ceilings; long mode leaves
 
 The manual native job always sets the selector to `0`: its production step has
 a 100-minute ceiling around a 98-minute command timeout. All native step ceilings
-sum to 148 minutes within a 160-minute job, reserving 12 minutes of overhead.
+sum to 150 minutes within a 160-minute job, reserving 10 minutes of overhead.
 Reviewed-SHA verification, disabled caching, successful same-run production
 qualification before credential staging, owned-cluster handoff, and cleanup
 remain mandatory. Run long renewal qualification once for the reviewed change
@@ -198,19 +198,21 @@ includes deferred cleanup; the runner then checks readiness and publishes
 `handoff_complete=1` with a nonsecret digest and SHA/run/attempt outputs. Early
 state/cluster outputs remain cleanup ownership hints, not qualification evidence.
 
-The workflow requires both production step success and completion output before
-creating the private credential file. It passes the successful step's outputs
-to `live.sh` with `MECATL_EXECUTION_LIVE_QUALIFIED=1`. Before any build, cluster
-mutation, or credentialloader invocation, live mode checks the same run,
-checkout, exact state/cluster, readiness, and current digest. The digest binds
-the final provider/agent Deployment UIDs and specs, pinned containerd image alias
-descriptors, current template catalog/revision, mock configuration, public
-security manifest/authority, public trust, and owned cluster/kubeconfig identity.
-Tracked chart/config/build inputs are bound by the exact clean checkout. Secret
-UID/source metadata is included; private Secret data and auto-renewing leaf
-bytes/status clocks are excluded. Successful reuse keeps the qualified reattach
-deployment and pinned images without rebuilding, loading, reinstalling mock
-configuration, restarting, or rerunning the mock proof before credential staging.
+The workflow requires production-step success and the completion output, then
+runs `live.sh --verify-handoff` before creating the private credential file.
+This secret-free check validates the same run, checkout, owned state and cluster,
+readiness, and current digest. Only after it succeeds does the workflow stage
+the private credential file. The subsequent credentialed `live.sh` invocation
+revalidates the handoff before calling credentialloader to create the Kubernetes
+Secret. The digest binds the final provider, agent, and OIDC issuer Deployment
+UIDs and specs, pinned containerd image alias descriptors, current template
+catalog/revision, mock configuration, public security manifest/authority, public
+trust, and owned cluster/kubeconfig identity. Tracked chart/config/build inputs
+are bound by the exact clean checkout. Secret UID/source metadata is included;
+private Secret data and auto-renewing leaf bytes/status clocks are excluded.
+Successful reuse keeps the qualified reattach deployment and pinned images
+without rebuilding, loading, reinstalling mock configuration, restarting, or
+rerunning the mock proof before credential staging.
 Malformed or drifted reuse fails instead of falling back. This is a trusted
 same-job handoff, not a historical receipt or an attestation against a compromised
 runner. `MECATL_EXECUTION_LIVE_SESSION` remains a separate standalone resume
@@ -219,10 +221,8 @@ selector and is rejected in qualified mode.
 Both handoff selectors default to `0` and accept only literal `0` or `1`.
 Ordinary production qualification keeps its complete serial suite and renewal
 ordering. Standalone live qualification keeps its existing build/load/mock
-setup and full mock prerequisite before Kubernetes credential staging (including
-its existing continued-session behavior). Timing improvements and the final
-state/readiness binding still need CI measurement on the reviewed commit;
-job and step deadlines remain unchanged.
+setup and full mock prerequisite before Kubernetes credential staging, including
+its existing continued-session behavior.
 
 Coverage is split by the regression each layer can establish:
 
