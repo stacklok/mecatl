@@ -1,0 +1,43 @@
+# An in-cluster Mecatl target with a tenant resource, a pinned image, an
+# existing service account, and the pass-through pod settings.
+mecatl:
+  baseURL: http://mecak8s.mecak8s.svc:8080
+  resourceURL: https://mecak8s.example.com/tenant
+publicURL: https://studio.example.com
+session:
+  secretName: mecatl-studio-session
+image:
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+serviceAccount:
+  create: false
+  name: shared-studio
+podLabels:
+  team: studio
+podAnnotations:
+  example.com/owner: studio
+extraEnv:
+  - name: NODE_EXTRA_CA_CERTS
+    valueFrom:
+      configMapKeyRef:
+        name: private-ca
+        key: ca.crt
+networkPolicy:
+  dns:
+    to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: kube-system
+      - ipBlock:
+          cidr: 169.254.20.10/32
+    ports:
+      - protocol: UDP
+        port: 53
+      - protocol: TCP
+        port: 53
+httpRoute:
+  enabled: true
+  parentRefs:
+    - name: eg
+      namespace: envoy-gateway-system
+  hostnames:
+    - "*.example.com"

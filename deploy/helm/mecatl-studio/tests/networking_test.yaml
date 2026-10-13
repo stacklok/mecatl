@@ -40,6 +40,11 @@ tests:
       - lengthEqual:
           path: spec.egress
           count: 2
+      - equal:
+          path: spec.podSelector.matchLabels
+          value:
+            app.kubernetes.io/name: mecatl-studio
+            app.kubernetes.io/instance: mecatl-studio
 
   - it: narrows ingress peers and appends egress rules
     template: templates/networkpolicy.yaml
@@ -143,7 +148,7 @@ tests:
       - hasDocuments:
           count: 0
 
-  - it: routes the public host to the Service without a request timeout
+  - it: routes the public host, without its port, to the Service without a request timeout
     template: templates/httproute.yaml
     set:
       httpRoute.enabled: true
@@ -162,6 +167,18 @@ tests:
             kind: Service
             name: mecatl-studio
             port: 3100
+      - equal:
+          path: spec.parentRefs
+          value:
+            - name: eg
+              namespace: envoy-gateway-system
+              sectionName: studio-https
+      - equal:
+          path: spec.rules[0].matches
+          value:
+            - path:
+                type: PathPrefix
+                value: /
       - equal:
           path: spec.rules[0].timeouts.request
           value: 0s
@@ -213,6 +230,28 @@ tests:
       - equal:
           path: spec.unhealthyPodEvictionPolicy
           value: AlwaysAllow
+      - equal:
+          path: spec.selector.matchLabels
+          value:
+            app.kubernetes.io/name: mecatl-studio
+            app.kubernetes.io/instance: mecatl-studio
+
+  - it: accepts a percentage disruption limit
+    template: templates/pdb.yaml
+    set:
+      podDisruptionBudget.maxUnavailable: 50%
+    asserts:
+      - equal:
+          path: spec.maxUnavailable
+          value: 50%
+
+  - it: omits the budget when disabled
+    template: templates/pdb.yaml
+    set:
+      podDisruptionBudget.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
 
   - it: omits the budget for one replica
     template: templates/pdb.yaml

@@ -34,12 +34,30 @@ tests:
       - failedTemplate:
           errorPattern: "mecatl.baseURL must be an http or https scheme, host, and optional port"
 
-  - it: accepts a namespaced resource but rejects a query
+  - it: accepts a namespaced resource
+    set:
+      mecatl.resourceURL: https://mecak8s.example.com/tenant
+    asserts:
+      - notFailedTemplate: {}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: MECATL_RESOURCE_URL
+            value: https://mecak8s.example.com/tenant
+
+  - it: rejects a query in the resource URL
     set:
       mecatl.resourceURL: https://mecak8s.example.com/tenant?x=1
     asserts:
       - failedTemplate:
           errorPattern: "mecatl.resourceURL must be an http or https URL"
+
+  - it: accepts an in-cluster http target and a public origin with a port
+    set:
+      mecatl.baseURL: http://mecak8s.mecak8s.svc:8080
+      publicURL: https://studio.example.com:8443
+    asserts:
+      - notFailedTemplate: {}
 
   - it: requires the public origin
     set:
@@ -86,6 +104,13 @@ tests:
     asserts:
       - failedTemplate:
           errorPattern: "session.secretName is required for browser login"
+
+  - it: requires a key for the session Secret
+    set:
+      session.secretKey: ""
+    asserts:
+      - failedTemplate:
+          errorPattern: "session.secretKey is required when session.secretName is set"
 
   - it: refuses a static token without the unauthenticated opt-in
     set:
@@ -150,7 +175,21 @@ tests:
       logLevel: verbose
     asserts:
       - failedTemplate:
-          errorPattern: "logLevel"
+          errorPattern: "/logLevel"
+
+  - it: rejects more trusted proxy hops than Studio accepts
+    set:
+      trustedProxyHops: 17
+    asserts:
+      - failedTemplate:
+          errorPattern: "/trustedProxyHops"
+
+  - it: rejects an image digest that is not sha256
+    set:
+      image.digest: latest
+    asserts:
+      - failedTemplate:
+          errorPattern: "/image/digest"
 
   - it: refuses route hostnames when the public origin is an IP address
     set:
@@ -209,7 +248,7 @@ tests:
     asserts:
       - notFailedTemplate: {}
 
-  - it: refuses pod labels that would change the selector
+  - it: refuses pod labels that would change the instance selector
     set:
       podLabels:
         app.kubernetes.io/instance: other
@@ -217,9 +256,24 @@ tests:
       - failedTemplate:
           errorPattern: "podLabels must not set the selector label app.kubernetes.io/instance"
 
-  - it: rejects a disruption budget that is not a positive count or percentage
+  - it: refuses pod labels that would change the name selector
+    set:
+      podLabels:
+        app.kubernetes.io/name: other
+    asserts:
+      - failedTemplate:
+          errorPattern: "podLabels must not set the selector label app.kubernetes.io/name"
+
+  - it: rejects a disruption budget that is not a count or percentage
     set:
       podDisruptionBudget.maxUnavailable: abc
     asserts:
       - failedTemplate:
-          errorPattern: "maxUnavailable"
+          errorPattern: "/podDisruptionBudget/maxUnavailable"
+
+  - it: rejects a disruption budget of zero
+    set:
+      podDisruptionBudget.maxUnavailable: 0
+    asserts:
+      - failedTemplate:
+          errorPattern: "/podDisruptionBudget/maxUnavailable"

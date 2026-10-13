@@ -88,6 +88,33 @@ func TestMecak8sHelmChart_ReleaseMetadataMatchesVersion(t *testing.T) {
 	}
 }
 
+// The Studio chart has no Go package of its own; release PRs bump it with this
+// chart, so its drift check lives beside this one.
+func TestMecatlStudioHelmChart_ReleaseMetadataMatchesVersion(t *testing.T) {
+	versionData, err := os.ReadFile("../../../VERSION")
+	if err != nil {
+		t.Fatalf("read root VERSION: %v", err)
+	}
+	version := strings.TrimSpace(string(versionData))
+
+	chartData, err := os.ReadFile("../mecatl-studio/Chart.yaml")
+	if err != nil {
+		t.Fatalf("read mecatl-studio Chart.yaml: %v", err)
+	}
+	var chart struct {
+		Version    string `yaml:"version"`
+		AppVersion string `yaml:"appVersion"`
+	}
+	if err := yaml.Unmarshal(chartData, &chart); err != nil {
+		t.Fatalf("parse mecatl-studio Chart.yaml: %v", err)
+	}
+
+	if chart.Version != version || chart.AppVersion != "v"+version {
+		t.Fatalf("mecatl-studio release metadata is not synchronized: VERSION=%q chart.version=%q chart.appVersion=%q",
+			version, chart.Version, chart.AppVersion)
+	}
+}
+
 func helm(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	if _, err := exec.LookPath("helm"); err != nil {
