@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,6 +20,7 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/mcpperf"
 	"github.com/stacklok/mecatl/internal/adapter/skills"
@@ -57,6 +59,34 @@ func TestLogListenerPostureClassifiesCallerAuthentication(t *testing.T) {
 				t.Fatalf("authenticated posture not reported: %s", got)
 			}
 		})
+	}
+}
+
+func TestApplyPostureCLIYoloWarning(t *testing.T) {
+	t.Setenv("MECATL_SANDBOX", "1")
+	var logs bytes.Buffer
+	original := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(original) })
+
+	if err := applyPostureCLI(config{posture: "yolo", postureFlagSet: true}, port.NopDiagnostics{}); err != nil {
+		t.Fatalf("applyPostureCLI(yolo): %v", err)
+	}
+	for _, want := range []string{
+		"YOLO skips default approvals. Commands can delete files or expose data.",
+		"Use an isolated, disposable environment. Explicit permission rules still apply.",
+	} {
+		if !strings.Contains(logs.String(), want) {
+			t.Fatalf("startup log missing %q: %s", want, logs.String())
+		}
+	}
+
+	logs.Reset()
+	if err := applyPostureCLI(config{posture: "strict", postureFlagSet: true}, port.NopDiagnostics{}); err != nil {
+		t.Fatalf("applyPostureCLI(strict): %v", err)
+	}
+	if strings.Contains(logs.String(), "YOLO skips default approvals") {
+		t.Fatalf("strict posture emitted yolo warning: %s", logs.String())
 	}
 }
 

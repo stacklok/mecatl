@@ -1507,6 +1507,7 @@ type Built struct {
 	MCPBroker             *mcpbroker.Runtime
 	MCPBrokerHandlers     mcpbroker.HandlerBundle
 	MCPBrokerCallbackPath string
+	GuardrailsAdvisory    bool
 	Close                 func()
 }
 
@@ -3005,7 +3006,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	managedTempTransferred = true
 	harnessContextTransferred = true
 	commandResolverTransferred = true
-	return &Built{Service: svc, MCPBroker: brokerRuntime, MCPBrokerHandlers: brokerHandlers, MCPBrokerCallbackPath: brokerCallbackPath, Close: closeAll}, nil
+	return &Built{Service: svc, MCPBroker: brokerRuntime, MCPBrokerHandlers: brokerHandlers, MCPBrokerCallbackPath: brokerCallbackPath, GuardrailsAdvisory: guardrailConfigured && cfg.Posture >= PostureYolo, Close: closeAll}, nil
 }
 
 // resolveAgentSeam resolves the agent-definition registry from cfg: the
@@ -5404,7 +5405,7 @@ func guardrailsPostureLine(cfg Config, model string, src guardrailSource, specs 
 	// operator sees it in the log, not only in the docs — `mode=` already reflects the
 	// demoted specs for explicit rules; the note states WHY it is advisory.
 	if cfg.Posture >= PostureYolo {
-		out += " — DEMOTED to advisory by posture yolo (no block, no ask)"
+		out += " — YOLO: AI safety checks are advisory only."
 	}
 	return out
 }

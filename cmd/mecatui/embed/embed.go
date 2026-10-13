@@ -135,7 +135,8 @@ type Server struct {
 	// onto an instance another owner armed. It exists so a test can tell whether
 	// /debug/flightrecorder will serve a live snapshot (armed) versus a stopped
 	// process-singleton (the sync.Once limitation; see ProcessFlightRecorder).
-	recorderArmed bool
+	recorderArmed      bool
+	guardrailsAdvisory bool
 }
 
 // registerLocalSessionContextServer registers the privileged local-session-context projection only
@@ -265,16 +266,17 @@ func Start(ctx context.Context, cfg app.Config, perf PerfConfig) (*Server, error
 	go func() { _ = grpcSrv.Serve(lis) }() // returns when GracefulStop is called
 
 	srv := &Server{
-		target:        "unix://" + sock,
-		dir:           dir,
-		grpc:          grpcSrv,
-		appstop:       built.Close,
-		adminNetwork:  ps.adminNetwork,
-		adminAddr:     ps.adminAddr,
-		adminSrv:      ps.adminSrv,
-		perfStop:      ps.stop,
-		perfShutdown:  ps.shutdown,
-		recorderArmed: ps.recorderArmed,
+		target:             "unix://" + sock,
+		dir:                dir,
+		grpc:               grpcSrv,
+		appstop:            built.Close,
+		adminNetwork:       ps.adminNetwork,
+		adminAddr:          ps.adminAddr,
+		adminSrv:           ps.adminSrv,
+		perfStop:           ps.stop,
+		perfShutdown:       ps.shutdown,
+		recorderArmed:      ps.recorderArmed,
+		guardrailsAdvisory: built.GuardrailsAdvisory,
 	}
 	return srv, nil
 }
@@ -286,6 +288,9 @@ func Start(ctx context.Context, cfg app.Config, perf PerfConfig) (*Server, error
 // run stopped the process-singleton (the sync.Once cannot be re-armed). Tests use
 // it to decide whether /debug/flightrecorder will serve a live snapshot.
 func (s *Server) RecorderArmed() bool { return s.recorderArmed }
+
+// GuardrailsAdvisory reports whether enabled guardrails were demoted to advisory mode.
+func (s *Server) GuardrailsAdvisory() bool { return s.guardrailsAdvisory }
 
 // Target returns the gRPC dial string for the hosted server (a "unix://" target).
 func (s *Server) Target() string { return s.target }

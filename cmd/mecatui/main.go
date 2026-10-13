@@ -624,7 +624,7 @@ func warnEmbeddedPosture(cfg config) {
 	case app.PostureAuto:
 		fmt.Fprintln(os.Stderr, "mecatui: WARNING: posture auto is active; allow-all is ON for the embedded server (the built-in mutate-ask floor + the MAIN agent's substitution floor are waived). A Deny in any scope and any configured Ask still apply. The CHILD prompt-injection defense stays ON. For unattended single-tenant use.")
 	case app.PostureYolo:
-		fmt.Fprintln(os.Stderr, "mecatui: WARNING: posture yolo is active; allow-all is ON AND the CHILD prompt-injection defense is OFF — $()/backtick/heredoc commands AUTO-RUN in subagents/branches. A Deny in any scope and any configured Ask still apply. ISOLATED, SINGLE-TENANT use ONLY. NOTE: --yolo now ALSO loosens the child substitution floor.")
+		fmt.Fprintln(os.Stderr, "mecatui: WARNING: YOLO skips default approvals. Commands can delete files or expose data.\nUse an isolated, disposable environment. Explicit permission rules still apply.")
 	}
 }
 
@@ -1164,6 +1164,9 @@ func resolveTransportWithHook(ctx context.Context, cfg config, beforeEmbeddedSta
 		shutdownProductMetrics(pm)
 		_ = diagCloser.Close()
 		return target, client.DialConfig{}, noop, fmt.Errorf("start embedded server: %w", err)
+	}
+	if srv.GuardrailsAdvisory() {
+		fmt.Fprintln(os.Stderr, "mecatui: WARNING: AI safety checks are advisory only.")
 	}
 	if diagSink.Path != "" {
 		// One line, written to the FILE sink (never the TUI), so an operator can find
