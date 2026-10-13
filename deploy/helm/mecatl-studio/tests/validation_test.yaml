@@ -1,0 +1,135 @@
+suite: render-time validation
+templates:
+  - templates/deployment.yaml
+set:
+  mecatl.baseURL: https://mecak8s.example.com
+  publicURL: https://studio.example.com
+  session.secretName: studio-session
+tests:
+  - it: requires the Mecatl address
+    set:
+      mecatl.baseURL: ""
+    asserts:
+      - failedTemplate:
+          errorPattern: "mecatl.baseURL is required"
+
+  - it: rejects a Mecatl address that is not a URL
+    set:
+      mecatl.baseURL: mecak8s.example.com:443
+    asserts:
+      - failedTemplate:
+          errorPattern: "mecatl.baseURL must be an http or https scheme"
+
+  - it: rejects a Mecatl address with a path
+    set:
+      mecatl.baseURL: https://mecak8s.example.com/grpc
+    asserts:
+      - failedTemplate:
+          errorPattern: "mecatl.baseURL must be an http or https scheme, host, and optional port"
+
+  - it: rejects credentials in the Mecatl address
+    set:
+      mecatl.baseURL: https://user:secret@mecak8s.example.com
+    asserts:
+      - failedTemplate:
+          errorPattern: "mecatl.baseURL must be an http or https scheme, host, and optional port"
+
+  - it: accepts a namespaced resource but rejects a query
+    set:
+      mecatl.resourceURL: https://mecak8s.example.com/tenant?x=1
+    asserts:
+      - failedTemplate:
+          errorPattern: "mecatl.resourceURL must be an http or https URL"
+
+  - it: requires the public origin
+    set:
+      publicURL: ""
+    asserts:
+      - failedTemplate:
+          errorPattern: "publicURL is required"
+
+  - it: rejects a public URL with a path
+    set:
+      publicURL: https://example.com/studio
+    asserts:
+      - failedTemplate:
+          errorPattern: "publicURL must be an http or https origin without a path"
+
+  - it: requires a session secret for browser login
+    set:
+      session.secretName: ""
+    asserts:
+      - failedTemplate:
+          errorPattern: "session.secretName is required for browser login"
+
+  - it: refuses a static token without the unauthenticated opt-in
+    set:
+      mecatl.authToken.secretName: studio-token
+      mecatl.authToken.secretKey: token
+    asserts:
+      - failedTemplate:
+          errorPattern: "requires allowUnauthenticated=true"
+
+  - it: requires a key for the static-token Secret
+    set:
+      allowUnauthenticated: true
+      mecatl.authToken.secretName: studio-token
+    asserts:
+      - failedTemplate:
+          errorPattern: "mecatl.authToken.secretKey is required"
+
+  - it: refuses both an image tag and digest
+    set:
+      image.tag: v1.2.3
+      image.digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+    asserts:
+      - failedTemplate:
+          errorPattern: "set at most one of image.digest or image.tag"
+
+  - it: refuses an extra variable the chart owns
+    set:
+      extraEnv:
+        - name: STUDIO_PORT
+          value: "8080"
+    asserts:
+      - failedTemplate:
+          errorPattern: 'extraEnv name "STUDIO_PORT" collides'
+
+  - it: requires parent references for the route
+    set:
+      httpRoute.enabled: true
+    asserts:
+      - failedTemplate:
+          errorPattern: "httpRoute.parentRefs is required"
+
+  - it: rejects an unknown log level through the schema
+    set:
+      logLevel: verbose
+    asserts:
+      - failedTemplate:
+          errorPattern: "logLevel"
+
+  - it: requires route hostnames when the public origin is an IP address
+    set:
+      publicURL: https://203.0.113.10
+      httpRoute.enabled: true
+      httpRoute.parentRefs:
+        - name: eg
+    asserts:
+      - failedTemplate:
+          errorPattern: "httpRoute.hostnames is required when publicURL uses an IP address"
+
+  - it: refuses pod labels that would change the selector
+    set:
+      podLabels:
+        app.kubernetes.io/instance: other
+    asserts:
+      - failedTemplate:
+          errorPattern: "podLabels must not set the selector label app.kubernetes.io/instance"
+
+  - it: rejects a disruption budget that is not a positive count or percentage
+    set:
+      podDisruptionBudget.maxUnavailable: abc
+    asserts:
+      - failedTemplate:
+          errorPattern: "maxUnavailable"

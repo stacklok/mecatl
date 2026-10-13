@@ -728,7 +728,7 @@ tasks:
       - CONTAINER_ENGINE=podman task e2e:k8s
 
   deploy:helm-unittest:
-    desc: Run the Helm-native mecak8s chart unit tests without a cluster
+    desc: Run the Helm-native mecak8s and mecatl-studio chart unit tests without a cluster
     vars:
       # Pinned version — bump deliberately. CI has no separate pin; the k8s-e2e
       # workflow runs this task directly. v1.1.x requires newer Helm plugin
@@ -753,14 +753,15 @@ tasks:
               $(helm plugin install --help | grep -qE '^[[:space:]]+--verify([=[:space:]]|$)' && echo --verify=false)
           fi
       - helm unittest --strict deploy/helm/mecak8s
+      - helm unittest --strict deploy/helm/mecatl-studio
 
   deploy:check:
     desc: |
-      Validate the deploy/helm/mecak8s chart WITHOUT a cluster: `helm lint`
-      every deploy/helm/mecak8s/ci/*-values.yaml fixture, schema-check the
-      rendered manifests (default + oidc.enabled=true), and assert the
-      caller-identity boundaries. Needs helm + kubeconform; needs NO
-      cluster, so it runs in CI and on a laptop.
+      Validate the deploy/helm/mecak8s and deploy/helm/mecatl-studio charts
+      WITHOUT a cluster: render every deploy/helm/*/ci/*-values.yaml fixture,
+      schema-check the rendered manifests (mecak8s default + oidc.enabled=true),
+      and assert the caller-identity boundaries. Needs helm + kubeconform; needs
+      NO cluster, so it runs in CI and on a laptop.
     vars:
       PROD_SET: redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials,security.allowUnsafeRealProvider=true
       SAFE_SET: redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials,tls.enabled=true,tls.secretName=mecak8s-tls,oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl
@@ -787,6 +788,14 @@ tasks:
           set -eu -o pipefail
           for f in deploy/helm/mecak8s/ci/*-values.yaml; do
             helm template deploy/helm/mecak8s -f "$f" | kubeconform -strict -summary -
+          done
+        silent: true
+      # kubeconform ships no Gateway API schemas; the Studio HTTPRoute shape is
+      # covered by the chart's helm-unittest suites instead.
+      - cmd: |
+          set -eu -o pipefail
+          for f in deploy/helm/mecatl-studio/ci/*-values.yaml; do
+            helm template mecatl-studio deploy/helm/mecatl-studio -f "$f" | kubeconform -strict -summary -skip HTTPRoute -
           done
         silent: true
       # Schema validation is kubeconform, NOT `kubectl apply --dry-run=client`:

@@ -50,6 +50,7 @@ on:
       - internal/adapter/server/http.go
       - deploy/helm/mecak8s/**
       - deploy/helm/mecatl-execution/**
+      - deploy/helm/mecatl-studio/**
       - cmd/mecatl-execution-provider/**
       - cmd/mecatl-executor/**
       - internal/adapter/executioncontroller/**
@@ -85,6 +86,7 @@ on:
       - internal/adapter/server/http.go
       - deploy/helm/mecak8s/**
       - deploy/helm/mecatl-execution/**
+      - deploy/helm/mecatl-studio/**
       - cmd/mecatl-execution-provider/**
       - cmd/mecatl-executor/**
       - internal/adapter/executioncontroller/**

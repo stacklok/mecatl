@@ -1,0 +1,163 @@
+suite: deployment contracts
+templates:
+  - templates/deployment.yaml
+release:
+  name: mecatl-studio
+set:
+  mecatl.baseURL: https://mecak8s.example.com
+  publicURL: https://studio.example.com
+  session.secretName: studio-session
+tests:
+  - it: defaults the image to the chart's release
+    chart:
+      appVersion: v1.2.3
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/stacklok/mecatl/studio:v1.2.3
+
+  - it: pins the image by digest
+    set:
+      image.repository: ghcr.io/stacklok/mecatl/main/studio
+      image.digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/stacklok/mecatl/main/studio@sha256:0000000000000000000000000000000000000000000000000000000000000000
+
+  - it: projects the browser-login configuration
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env
+          value:
+            - name: MECATL_BASE_URL
+              value: https://mecak8s.example.com
+            - name: STUDIO_PUBLIC_URL
+              value: https://studio.example.com
+            - name: STUDIO_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: studio-session
+                  key: STUDIO_SESSION_SECRET
+            - name: STUDIO_TRUSTED_PROXY_HOPS
+              value: "1"
+
+  - it: projects a static-token target only with the unauthenticated opt-in
+    set:
+      session.secretName: ""
+      allowUnauthenticated: true
+      mecatl.resourceURL: https://mecak8s.example.com:8443
+      mecatl.authToken.secretName: studio-token
+      mecatl.authToken.secretKey: token
+      logLevel: debug
+      extraEnv:
+        - name: STUDIO_RATE_LIMIT_MAX
+          value: "40"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env
+          value:
+            - name: MECATL_BASE_URL
+              value: https://mecak8s.example.com
+            - name: MECATL_RESOURCE_URL
+              value: https://mecak8s.example.com:8443
+            - name: MECATL_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: studio-token
+                  key: token
+            - name: STUDIO_PUBLIC_URL
+              value: https://studio.example.com
+            - name: STUDIO_ALLOW_UNAUTHENTICATED
+              value: "1"
+            - name: STUDIO_TRUSTED_PROXY_HOPS
+              value: "1"
+            - name: STUDIO_LOG_LEVEL
+              value: debug
+            - name: STUDIO_RATE_LIMIT_MAX
+              value: "40"
+
+  - it: runs non-root with a read-only root filesystem and no service account token
+    asserts:
+      - equal:
+          path: spec.template.spec.automountServiceAccountToken
+          value: false
+      - equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].securityContext
+          value:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+  - it: keeps serving while the gateway drops a terminating pod
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].lifecycle.preStop.sleep.seconds
+          value: 5
+      - equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 30
+
+  - it: keeps prerelease versions valid as label values
+    chart:
+      version: 0.0.48-main.212.g1a2b3c4d
+      appVersion: v0.0.48-main.212.g1a2b3c4d
+    asserts:
+      - equal:
+          path: metadata.labels["app.kubernetes.io/version"]
+          value: v0.0.48-main.212.g1a2b3c4d
+      - equal:
+          path: metadata.labels["helm.sh/chart"]
+          value: mecatl-studio-0.0.48-main.212.g1a2b3c4d
+
+  - it: keeps the release name when it already names the chart
+    asserts:
+      - equal:
+          path: metadata.name
+          value: mecatl-studio
+      - equal:
+          path: spec.selector.matchLabels
+          value:
+            app.kubernetes.io/name: mecatl-studio
+            app.kubernetes.io/instance: mecatl-studio
+
+  - it: prefixes other release names
+    release:
+      name: dev
+    asserts:
+      - equal:
+          path: metadata.name
+          value: dev-mecatl-studio
+
+  - it: spreads replicas over zones with this release's selector
+    asserts:
+      - equal:
+          path: spec.template.spec.topologySpreadConstraints
+          value:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: mecatl-studio
+                  app.kubernetes.io/instance: mecatl-studio
+              maxSkew: 1
+              topologyKey: topology.kubernetes.io/zone
+              whenUnsatisfiable: ScheduleAnyway
+
+  - it: keeps an explicit spread selector
+    set:
+      topologySpreadConstraints:
+        - maxSkew: 2
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              team: studio
+    asserts:
+      - equal:
+          path: spec.template.spec.topologySpreadConstraints[0].labelSelector.matchLabels
+          value:
+            team: studio

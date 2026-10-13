@@ -377,6 +377,48 @@ securityContext:
 Scale Studio horizontally without shared storage: every replica needs only the
 same `STUDIO_SESSION_SECRET`.
 
+### Install with Helm
+
+The `mecatl-studio` chart at `oci://ghcr.io/stacklok/mecatl/charts/mecatl-studio`
+deploys Studio with the settings above. Each chart version matches a Mecatl
+release and pulls that release's Studio image.
+
+1. Create the session secret in the namespace Studio runs in:
+
+   ```sh
+   kubectl create namespace mecatl-studio
+   kubectl create secret generic mecatl-studio-session \
+     --namespace mecatl-studio \
+     --from-literal=STUDIO_SESSION_SECRET="$(openssl rand -base64 48)"
+   ```
+
+1. Install the chart and wait for the rollout:
+
+   ```sh
+   helm upgrade --install mecatl-studio \
+     oci://ghcr.io/stacklok/mecatl/charts/mecatl-studio \
+     --version <VERSION> \
+     --namespace mecatl-studio \
+     --set mecatl.baseURL=https://mecak8s.example.com \
+     --set publicURL=https://studio.example.com \
+     --set session.secretName=mecatl-studio-session
+   kubectl rollout status deployment/mecatl-studio --namespace mecatl-studio
+   ```
+
+The chart refuses to render a configuration the Studio image would reject at
+startup, such as a missing `publicURL` or a static token without
+`allowUnauthenticated`. To publish Studio through a Gateway API listener, set
+`httpRoute.enabled=true` and `httpRoute.parentRefs`; the route's host name
+defaults to the host of `publicURL`. The chart's NetworkPolicy admits any peer
+on Studio's port and allows egress only to DNS in `kube-system` and to TCP port
+443 and the ports in `mecatl.baseURL` and `mecatl.resourceURL`. Narrow ingress
+with `networkPolicy.ingressFrom`. NetworkPolicy matches the destination pod's
+port, so add `networkPolicy.extraEgress` rules when a Service or in-cluster
+gateway in front of Mecatl or the identity provider forwards to another port.
+Run
+`helm show values oci://ghcr.io/stacklok/mecatl/charts/mecatl-studio` for every
+value.
+
 ### Sign in and recover
 
 On your first visit, select **Sign in to Mecatl** in the centered card. If the

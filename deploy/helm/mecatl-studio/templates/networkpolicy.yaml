@@ -1,0 +1,42 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mecatl-studio.fullname" . }}
+  labels: {{- include "mecatl-studio.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "mecatl-studio.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 3100
+      {{- with .Values.networkPolicy.ingressFrom }}
+      from: {{- toYaml . | nindent 8 }}
+      {{- end }}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- $ports := list "443" (include "mecatl-studio.urlPort" .Values.mecatl.baseURL) }}
+    {{- with .Values.mecatl.resourceURL }}
+    {{- $ports = append $ports (include "mecatl-studio.urlPort" .) }}
+    {{- end }}
+    - ports:
+        {{- range $ports | uniq }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
+    {{- with .Values.networkPolicy.extraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

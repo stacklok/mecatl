@@ -1,0 +1,10 @@
+apiVersion: v2
+name: mecatl-studio
+description: Mecatl Studio, the early-access browser UI and its backend for frontend, connected to an existing Mecatl deployment.
+type: application
+# Release PRs keep version and appVersion aligned with VERSION. Release and
+# continuous builds also set both when they package the chart.
+version: 0.0.47
+appVersion: "v0.0.47"
+annotations:
+  org.stacklok.mecatl.studio.stability: early-access

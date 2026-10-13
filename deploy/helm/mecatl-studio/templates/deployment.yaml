@@ -1,0 +1,140 @@
+{{- include "mecatl-studio.validate" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mecatl-studio.fullname" . }}
+  labels: {{- include "mecatl-studio.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  revisionHistoryLimit: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels: {{- include "mecatl-studio.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mecatl-studio.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "mecatl-studio.serviceAccountName" . }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.topologySpreadConstraints }}
+      {{- $selector := dict "matchLabels" (include "mecatl-studio.selectorLabels" $ | fromYaml) }}
+      {{- $constraints := list }}
+      {{- range . }}
+      {{- $constraint := deepCopy . }}
+      {{- if not (hasKey $constraint "labelSelector") }}
+      {{- $_ := set $constraint "labelSelector" $selector }}
+      {{- end }}
+      {{- $constraints = append $constraints $constraint }}
+      {{- end }}
+      topologySpreadConstraints: {{- toYaml $constraints | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: studio
+          image: {{ include "mecatl-studio.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 3100
+              protocol: TCP
+          env:
+            - name: MECATL_BASE_URL
+              value: {{ .Values.mecatl.baseURL | quote }}
+            {{- with .Values.mecatl.resourceURL }}
+            - name: MECATL_RESOURCE_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.mecatl.authToken.secretName }}
+            - name: MECATL_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . }}
+                  key: {{ $.Values.mecatl.authToken.secretKey }}
+            {{- end }}
+            - name: STUDIO_PUBLIC_URL
+              value: {{ .Values.publicURL | quote }}
+            {{- with .Values.session.secretName }}
+            - name: STUDIO_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . }}
+                  key: {{ $.Values.session.secretKey }}
+            {{- end }}
+            {{- if .Values.allowUnauthenticated }}
+            - name: STUDIO_ALLOW_UNAUTHENTICATED
+              value: "1"
+            {{- end }}
+            - name: STUDIO_TRUSTED_PROXY_HOPS
+              value: {{ .Values.trustedProxyHops | quote }}
+            {{- with .Values.logLevel }}
+            - name: STUDIO_LOG_LEVEL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          # Studio closes its listener on SIGTERM; keep serving while the
+          # gateway drops this endpoint. The image has no shell, so this uses
+          # the kubelet's sleep action.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: {{ .Values.preStopSleepSeconds }}
+          # /api/health answers on any Host as soon as the server listens.
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          {{- with .Values.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          # Studio writes nothing to its own filesystem.
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL

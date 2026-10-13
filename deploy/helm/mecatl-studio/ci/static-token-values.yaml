@@ -1,0 +1,11 @@
+# One service identity behind the operator's own access control.
+replicaCount: 1
+mecatl:
+  baseURL: https://mecak8s.example.com
+  authToken:
+    secretName: mecatl-studio-token
+    secretKey: token
+publicURL: https://studio.example.com
+session:
+  secretName: ""
+allowUnauthenticated: true
