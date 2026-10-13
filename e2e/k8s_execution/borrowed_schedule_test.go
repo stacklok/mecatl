@@ -284,16 +284,12 @@ func TestKindExecutionBorrowedSchedule(t *testing.T) {
 		t.Fatalf("authorized origin session unavailable to agent: %v", err)
 	}
 	installBorrowedScript(t, ctx, kubeconfig,
-		borrowedScriptTurn{Text: "origin received manual fire start notice"},
 		borrowedProofTurn("manual", proofPath("manual")),
 		borrowedCall("manual-read", "Read", map[string]any{"path": proofPath("manual")}),
 		borrowedScriptTurn{Text: "manual complete"},
-		borrowedScriptTurn{Text: "origin received manual fire result notice"},
-		borrowedScriptTurn{Text: "origin received second manual fire start notice"},
 		borrowedProofTurn("second", proofPath("second")),
 		borrowedCall("second-read", "Read", map[string]any{"path": proofPath("second")}),
 		borrowedScriptTurn{Text: "second manual complete"},
-		borrowedScriptTurn{Text: "origin received second manual fire result notice"},
 	)
 	runKubectl(t, ctx, kubeconfig, "rollout", "restart", "deployment/mecak8s", "-n", namespace)
 	runKubectl(t, ctx, kubeconfig, "rollout", "status", "deployment/mecak8s", "-n", namespace, "--timeout=240s")
@@ -365,11 +361,9 @@ func TestKindExecutionBorrowedSchedule(t *testing.T) {
 	t.Logf("second borrowed fire completed session=%s environment=%s", secondSession, ref.ID)
 
 	installBorrowedScript(t, ctx, kubeconfig,
-		borrowedScriptTurn{Text: "origin received timer fire start notice"},
 		borrowedProofTurn("timer", proofPath("timer")),
 		borrowedCall("timer-read", "Read", map[string]any{"path": proofPath("timer")}),
 		borrowedScriptTurn{Text: "timer complete"},
-		borrowedScriptTurn{Text: "origin received timer fire result notice"},
 	)
 	runKubectl(t, ctx, kubeconfig, "rollout", "restart", "deployment/mecatl-execution", "-n", namespace)
 	runKubectl(t, ctx, kubeconfig, "rollout", "status", "deployment/mecatl-execution", "-n", namespace, "--timeout=240s")
