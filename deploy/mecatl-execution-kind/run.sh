@@ -10,7 +10,9 @@ if [ "${MECATL_EXECUTION_QUAL_CLEAN_ENV:-}" != 1 ]; then
     CONTAINER_ENGINE="${CONTAINER_ENGINE:-}" MECATL_EXECUTION_QUAL_CI="${MECATL_EXECUTION_QUAL_CI:-}" MECATL_EXECUTION_QUAL_PROFILE="${MECATL_EXECUTION_QUAL_PROFILE:-}" \
     TOOLBOX_PATH="${TOOLBOX_PATH:-}" MECATL_EXECUTION_DEV_TOOLBOX="${MECATL_EXECUTION_DEV_TOOLBOX:-}" MECATL_EXECUTION_K8S_TOOLBOX="${MECATL_EXECUTION_K8S_TOOLBOX:-}" \
     MECATL_EXECUTION_QUAL_OUTPUT="${MECATL_EXECUTION_QUAL_OUTPUT:-}" MECATL_EXECUTION_QUAL_RESUME_STATE="${MECATL_EXECUTION_QUAL_RESUME_STATE:-}" \
-    MECATL_EXECUTION_QUAL_NATURAL_EXPIRY="${MECATL_EXECUTION_QUAL_NATURAL_EXPIRY-0}" \
+    MECATL_EXECUTION_QUAL_NATURAL_EXPIRY="${MECATL_EXECUTION_QUAL_NATURAL_EXPIRY-0}" MECATL_EXECUTION_QUAL_HANDOFF="${MECATL_EXECUTION_QUAL_HANDOFF-0}" \
+    GITHUB_ACTIONS="${GITHUB_ACTIONS:-}" GITHUB_RUN_ID="${GITHUB_RUN_ID:-}" GITHUB_RUN_ATTEMPT="${GITHUB_RUN_ATTEMPT:-}" GITHUB_SHA="${GITHUB_SHA:-}" GITHUB_OUTPUT="${GITHUB_OUTPUT:-}" \
+    MECATL_EXECUTION_HANDOFF_SHA="${MECATL_EXECUTION_HANDOFF_SHA:-}" TMPDIR="${TMPDIR:-}" \
     MECATL_EXECUTION_QUAL_CLEAN_ENV=1 "$0" "$@"
 fi
 
@@ -27,6 +29,15 @@ runtime=${CONTAINER_ENGINE:-docker}
 case "$runtime" in docker|podman) command -v "$runtime" >/dev/null 2>&1 ;; *) echo "CONTAINER_ENGINE must be docker or podman" >&2; exit 2 ;; esac
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)
 cd "$root"
+handoff=${MECATL_EXECUTION_QUAL_HANDOFF-0}
+case "$handoff" in 0|1) ;; *) echo "MECATL_EXECUTION_QUAL_HANDOFF must be 0 or 1" >&2; exit 2 ;; esac
+if [ "$handoff" = 1 ]; then
+  [ "${MECATL_EXECUTION_QUAL_PROFILE:-development}" = production ] &&
+  [ "${MECATL_EXECUTION_QUAL_CI:-}" = 0 ] && [ -z "${MECATL_EXECUTION_QUAL_RESUME_STATE:-}" ] &&
+  [ -n "${GITHUB_OUTPUT:-}" ] && [ "${MECATL_EXECUTION_QUAL_OUTPUT:-}" = "$GITHUB_OUTPUT" ] || { echo "handoff requires fresh retained production CI state and GitHub output" >&2; exit 2; }
+  . "$root/deploy/mecatl-execution-kind/handoff.sh"
+  handoff_ci_identity || { echo "handoff requires the exact reviewed same-run checkout" >&2; exit 2; }
+fi
 run_id=$(date -u +%Y%m%d%H%M%S)-$$
 cluster="mecatl-execution-qual-$run_id"
 context="kind-$cluster"
@@ -169,6 +180,7 @@ helm_kube() {
 }
 
 if [ "${MECATL_EXECUTION_QUAL_PROFILE:-development}" = production ]; then
+  sh "$root/deploy/mecatl-execution-kind/install-cmctl.sh" "$state"
   cni_manifest="$state/calico-v3.32.2.yaml"
   curl --fail --location --proto '=https' --tlsv1.2 \
     https://raw.githubusercontent.com/projectcalico/calico/v3.32.2/manifests/calico.yaml \
@@ -468,9 +480,11 @@ wait "$test_build_pid"
 test_build_pid=
 printf 'qualification test_build=wait elapsed=%ss\n' "$(( $(date +%s) - test_build_wait_start))"
 
+set --
+if [ "${handoff:-0}" = 1 ]; then set -- -test.skip '^TestKindExecutionQualification$'; fi
 dev env -i HOME="$HOME" PATH="$PATH" TOOLBOX_PATH="${TOOLBOX_PATH:-}" XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}" \
   KUBECONFIG="$kubeconfig" MECATL_KUBE_CONTEXT="$context" MECATL_EXECUTION_K8S_TOOLBOX="${MECATL_EXECUTION_K8S_TOOLBOX:-}" MECATL_EXECUTION_TEMPLATE_REVISION="$go_revision" MECATL_EXECUTION_QUAL_STATE="$state" MECATL_EXECUTION_QUAL_PROFILE="${MECATL_EXECUTION_QUAL_PROFILE:-development}" \
-  sh -c 'cd e2e/k8s_execution && exec "$@"' sh "$state/qualification.test" -test.v -test.count=1 -test.timeout=45m
+  sh -c 'cd e2e/k8s_execution && exec "$@"' sh "$state/qualification.test" "$@" -test.v -test.count=1 -test.timeout=45m
 phase_done tests
 
 if [ "${MECATL_EXECUTION_QUAL_PROFILE:-development}" = production ]; then
@@ -483,11 +497,26 @@ if [ "${MECATL_EXECUTION_QUAL_PROFILE:-development}" = production ]; then
   else
     printf 'qualification phase=automatic_certificate_renewal skipped selector=0 elapsed=0s\n'
   fi
-  printf 'qualification phase=inflight_automatic_renewal starting (ceiling=30m)\n'
+  printf 'qualification phase=inflight_controlled_renewal starting (test ceiling=8m; outer ceiling=10m)\n'
   dev env -i HOME="$HOME" PATH="$PATH" TOOLBOX_PATH="${TOOLBOX_PATH:-}" XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}" \
     KUBECONFIG="$kubeconfig" MECATL_KUBE_CONTEXT="$context" MECATL_EXECUTION_K8S_TOOLBOX="${MECATL_EXECUTION_K8S_TOOLBOX:-}" MECATL_EXECUTION_TEMPLATE_REVISION="$go_revision" MECATL_EXECUTION_QUAL_STATE="$state" MECATL_EXECUTION_QUAL_PROFILE=production MECATL_EXECUTION_QUAL_RENEWAL=1 \
-    sh -c 'cd e2e/k8s_execution && exec "$@"' sh "$state/qualification.test" -test.v -test.count=1 -test.run '^TestKindExecutionInFlightAutomaticRenewal$' -test.timeout=30m
-  phase_done inflight_automatic_renewal
+    timeout --kill-after=5s 10m sh -c 'cd e2e/k8s_execution && exec "$@"' sh "$state/qualification.test" -test.v -test.count=1 -test.run '^TestKindExecutionInFlightAutomaticRenewal$' -test.timeout=8m
+  phase_done inflight_controlled_renewal
+fi
+
+if [ "${handoff:-0}" = 1 ]; then
+  printf 'qualification phase=final_mock starting\n'
+  dev env -i HOME="$HOME" PATH="$PATH" TOOLBOX_PATH="${TOOLBOX_PATH:-}" XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}" \
+    KUBECONFIG="$kubeconfig" MECATL_KUBE_CONTEXT="$context" MECATL_EXECUTION_K8S_TOOLBOX="${MECATL_EXECUTION_K8S_TOOLBOX:-}" MECATL_EXECUTION_TEMPLATE_REVISION="$go_revision" MECATL_EXECUTION_QUAL_STATE="$state" MECATL_EXECUTION_QUAL_PROFILE=production MECATL_EXECUTION_LIVE_CLUSTER="$cluster" \
+    sh -c 'cd e2e/k8s_execution && exec "$@"' sh "$state/qualification.test" -test.v -test.count=1 -test.run '^TestKindExecutionQualification$' -test.timeout=15m
+  phase_done final_mock
+  # A successful binary exit includes its deferred cleanup. No later mutation
+  # precedes credential staging; ownership outputs above are only cleanup hints.
+  cleanup_test_build
+  handoff_ready
+  qualified_digest=$(handoff_digest)
+  printf 'handoff_digest=%s\nhandoff_sha=%s\nhandoff_run_id=%s\nhandoff_run_attempt=%s\nhandoff_complete=1\n' \
+    "$qualified_digest" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >>"$GITHUB_OUTPUT"
 fi
 
 if [ "${MECATL_EXECUTION_QUAL_CI:-}" = 1 ]; then

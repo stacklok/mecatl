@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ListConfiguredSkillsResponse } from "@mecatl-studio/contracts/generated";
-import type { SortDirection } from "../../components/ui/sortable-head";
+import { directed, type SortDir } from "@/components/sortable-head";
 import { humanizeSkillName } from "./humanize-skill-name";
 
 /**
@@ -33,15 +33,14 @@ const sortValue: Record<SkillSortKey, (skill: ConfiguredSkill) => string> = {
 export function sortSkills(
   skills: readonly ConfiguredSkill[],
   key: SkillSortKey,
-  direction: SortDirection,
+  direction: SortDir,
 ): ConfiguredSkill[] {
   const read = sortValue[key];
-  const sign = direction === "asc" ? 1 : -1;
   const compare = (a: string, b: string) =>
     a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
   return [...skills].sort(
     (a, b) =>
-      sign * compare(read(a), read(b)) ||
+      directed(direction, compare(read(a), read(b))) ||
       compare(humanizeSkillName(a.name), humanizeSkillName(b.name)),
   );
 }

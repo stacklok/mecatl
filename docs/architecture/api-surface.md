@@ -163,24 +163,72 @@ A schedule is a saved prompt that runs on a cron expression or once, unattended 
 most once per due slot across replicas. It lives in the composition layer and reuses normal run
 entry; `engine/agent` knows nothing about it.
 
-- `port.ScheduleStore` (`engine/port/schedule.go`) is the ground truth. Its `Claim`
-  atomically advances the next fire time, which is the at-most-once fence. Store
-  adapters (`memschedulestore`, `adapters/jsonlstore`, `adapters/redisstore`, and a
-  remote gRPC driver) share the `scheduleconformance` suite.
+- `port.ScheduleStore` (`engine/port/schedule.go`) is the ground truth. `Claim` and
+  `ClaimNow` atomically reject unresolved predecessors (pending admission or a
+  started, nonterminal fire), including claims for different slots. Terminal
+  settlement must precede the next claim. The cadence advance additionally fences
+  the due slot. Late terminal records enter history but cannot clear a successor's
+  ownership: schedule settlement compares the recorded claim instant atomically.
+  Store adapters (`memschedulestore`, `adapters/jsonlstore`, `adapters/redisstore`,
+  and a remote gRPC driver) share the `scheduleconformance` suite.
 - The tick loop (`internal/adapter/scheduler`) runs only on the replica holding the
   `__scheduler__` leader lease; standby replicas take over when it lapses. Each tick
-  finds due schedules, applies the misfire policy, then claims, fires, and records each.
-  Leadership is hygiene; `Claim` is the correctness guarantee.
+  finds due schedules and admits background workers without waiting for the batch.
+  Lifetime capacity includes manual fires, cancellation, delivery, reconciliation,
+  and one-shot retry probes/actions;
+  busy names and full capacity leave slots unclaimed for a later poll. Admission is
+  closed before shutdown joins workers and survives leadership epoch changes.
+  Leadership is hygiene; the atomic store guards, not local prechecks, fence claims.
+  Due work is admitted before retry/reconciliation; candidate reloads and probes
+  run behind the bounded name guard. Uncooperative root `Due`/`List` calls can
+  still block polling.
+  An intentionally skipped misfire is settled as `cancelled`, with a policy
+  explanation and no session id: no execution was admitted. It does not leave
+  an uncertain pending owner blocking the next fresh slot.
 - Each fire creates a fresh `sched--` session owned by the schedule's captured owner,
   with bounded limits. A schedule not marked mutating runs in plan mode. The fire
   reattaches the exact placement persisted at creation, and fails before creating a
   session if that placement has drifted (`internal/app/scheduler_fire.go`).
 
-The main failure mode is a crash between `Claim` and `RecordFire`. A recurring schedule
-heals on its next due slot; a one-shot is lost unless it opts into bounded retry, which
-starts each retry fresh. A fire whose predecessor is still running is skipped. Context
-carried from a previous fire enters the prompt as a fenced, untrusted preamble, never as
-history, because that fire may have been prompt-injected.
+A fire's name gate covers reload, claim, execution, and teardown. Re-arm and
+reconciliation skip locally admitted work and reload under the same gate.
+`ReArmOneShot` also atomically validates the current store state: a disabled
+one-shot with retry enabled, remaining budget, no pending/started owner, and
+matching settled failure history. Missing history is not proof of failure.
+Concurrent rearms have one winner; a delayed replica cannot re-enable a live or
+successful successor. A newer settled failure may consume its current remaining
+budget, without admitting duplicate active execution. Drivers must enforce this
+contract too; caller prechecks and leadership cancellation are not the fence. The
+fire publishes its real session id only after admission holds its session lease.
+A lease-backed pending claim is ambiguous and stays quarantined; age alone is
+not evidence that its owner stopped. Lease probe failures likewise fail closed.
+After a process restart without a lease backend, affinity plus the stale window
+permits reconciliation of the prior process's abandoned work.
+
+The deadline context covers run admission as well as execution. A watchdog logs
+`overdue/degraded; termination unconfirmed` before calling `Service.Cancel` and
+logs cancellation errors. Once run admission succeeds, empty `Stop` plus the
+saved elapsed `Deadline` and `ProgressAt` remain the truthful degraded
+representation. If `StartScheduledRunContent` is blocked before acquiring the
+lease, there is no durable fire deadline or published execution session. Inspect
+instead reports the schedule's pending claim and `LastFireAt`, explicitly marking
+ownership/termination unconfirmed even when prior terminal fires exist. A configured
+`FireTimeout` gives a conditional elapsed-since-claim warning, not proof that
+admission began or terminated; a default timeout is not recoverable from this
+pending state. Investigate uncertain ownership before replacing a pending claim.
+The admission context and watchdog still cover this phase; when admission finally
+returns, its actual failure is recorded and resources/capacity can be released.
+The fire drains events
+to closure and joins its single watchdog worker before settling the snapshot,
+calling `FinishRun`, and closing the session. Uncooperative work retains its
+ownership and capacity, rather than permitting replacement mutations. Polling
+and leadership health are therefore separate from execution progress. Terminal
+recording and delivery use a cancel-detached context.
+
+A crash between `Claim` and `RecordFire` can lose a slot. After reconciliation,
+a recurring schedule resumes its cadence; opt-in one-shot retry starts fresh.
+Context carried from a previous fire enters the prompt as a fenced, untrusted
+preamble, never as history, because that fire may have been prompt-injected.
 
 The in-chat `Schedule` tool, `ScheduleService`, and the REST routes all go through
 `port.ScheduleManager`, so they share one registry and one validating create path.

@@ -606,8 +606,14 @@ func renderScheduleInspect(sched port.Schedule, fires []port.ScheduleFire) strin
 	// is never mistaken for a schedule that has never fired.
 	claimedPending := string(sched.State.LastFireSessionID) == string(port.PendingFireSessionID) &&
 		sched.State.LastFireStartedAt.IsZero()
-	if claimedPending && len(fires) == 0 {
-		b.WriteString("\n  in-flight: claimed (session pending)")
+	if claimedPending {
+		b.WriteString("\n  in-flight: claimed (session pending); ownership/termination unconfirmed")
+		if !sched.State.LastFireAt.IsZero() {
+			fmt.Fprintf(&b, " claimed at %s", sched.State.LastFireAt.UTC().Format(time.RFC3339))
+			if sched.Spec.FireTimeout > 0 {
+				fmt.Fprintf(&b, " (If %s has elapsed since claim: pending admission may be overdue/degraded; do not infer termination)", sched.Spec.FireTimeout)
+			}
+		}
 	}
 
 	if len(fires) == 0 {
@@ -660,6 +666,7 @@ func renderScheduleInspect(sched port.Schedule, fires []port.ScheduleFire) strin
 			}
 			if !f.Deadline.IsZero() {
 				fmt.Fprintf(&b, " deadline %s", f.Deadline.UTC().Format(time.RFC3339))
+				b.WriteString(" (If this deadline has elapsed: overdue/degraded; termination unconfirmed)")
 			}
 			continue
 		}

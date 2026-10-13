@@ -428,7 +428,7 @@ func TestStaticProtectedRoutesRejectInvalidDeclarationsAndCollisions(t *testing.
 // route for Runtime-only tests. NewToolHiveProcess itself publishes broker routes.
 func admitStaticForGenericAuthorizationTest(t *testing.T, process *Process) {
 	t.Helper()
-	routes, err := compileStaticProtectedRoutes(process.construction, process.protectedTarget, nil, process.occupied)
+	routes, err := compileStaticProtectedRoutes(process.construction, process.protectedTarget, nil, process.Runtime.enrollment.occupied)
 	if err != nil {
 		t.Fatalf("compile generic static routes: %v", err)
 	}

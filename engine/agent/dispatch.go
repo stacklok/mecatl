@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1235,28 +1236,38 @@ func shellSystemScope(c session.ToolCall) bool {
 	return ok && shellScope(args) == tool.TemporaryScopeSystem
 }
 
-// systemScopeApprovalArgs projects only the requested scope and a command verb.
-// It must never include a runner-owned temporary path or environment value.
+// systemScopeApproval is the approval projection of a system-scope Shell call:
+// the shellArgs fields that change what runs, each as parseShellArgs decoded it.
+type systemScopeApproval struct {
+	Command    string `json:"command"`
+	TimeoutMS  int    `json:"timeout_ms,omitempty"`
+	Background bool   `json:"background,omitempty"`
+	TempScope  string `json:"temp_scope"`
+}
+
+// systemScopeApprovalArgs projects the system-scope Shell call the engine will
+// execute: the full command, a non-zero timeout, the background flag, and the
+// requested scope, re-encoded from the decoded shellArgs so duplicate or
+// case-variant keys show the value that runs. Runner-owned temporary paths and
+// environment values are chosen when the command runs and never enter the call,
+// so the projection cannot carry them.
 func systemScopeApprovalArgs(c session.ToolCall) []byte {
 	args, _, ok := parseShellArgs(c)
 	if !ok {
-		return []byte(`{"temp_scope":"system","command_summary":"Shell command"}`)
+		// Unreachable: shellSystemScope already required a valid call.
+		return []byte(`{"temp_scope":"system"}`)
 	}
-	summary := "Shell command"
-	if fields := strings.Fields(args.Command); len(fields) > 0 {
-		summary = fields[0]
-		if len(fields) > 1 {
-			summary += " " + fields[1]
-		}
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	// Shell commands are full of & < >; keep them literal for raw-args views.
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(systemScopeApproval{
+		Command: args.Command, TimeoutMS: args.TimeoutMS, Background: args.Background,
+		TempScope: string(tool.TemporaryScopeSystem),
+	}); err != nil {
+		return []byte(`{"temp_scope":"system"}`)
 	}
-	out, err := json.Marshal(struct {
-		TempScope string `json:"temp_scope"`
-		Summary   string `json:"command_summary"`
-	}{TempScope: "system", Summary: summary})
-	if err != nil {
-		return []byte(`{"temp_scope":"system","command_summary":"Shell command"}`)
-	}
-	return out
+	return bytes.TrimSuffix(b.Bytes(), []byte("\n"))
 }
 
 func (e *Engine) reauthorizeApprovedCall(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, acceptAsk bool) (permissionAuthorization, session.ToolResult, bool) {
@@ -2385,14 +2396,24 @@ func routingDiagnosticAttrs(decision *session.RoutingDecision) []any {
 // surfacedCommandPreview returns the human-facing preview of a surfaced child ask: for
 // a Shell ask, the command string; otherwise the ask reason (already policy-authored, not
 // peer content). It is the single text that rides the surfaced EvPermissionAsk and is
-// always clampPreview'd by the caller before emission.
+// always clampPreview'd by the caller before emission. A system temp-scope Shell ask
+// also names its scope, since the surfaced ask carries no args.
 func surfacedCommandPreview(ask session.PendingAsk) string {
 	if ask.Tool == "Shell" {
 		if cmd := shellCmdFromArgs(ask.Args); cmd != "" {
+			if systemScopeAsk(ask) {
+				return cmd + " [temp_scope: system]"
+			}
 			return cmd
 		}
 	}
 	return ask.Reason
+}
+
+// systemScopeAsk reports whether a pending ask gates a system temp-scope Shell
+// call, decoding its args exactly as Shell does.
+func systemScopeAsk(ask session.PendingAsk) bool {
+	return shellSystemScope(session.NewToolCall(ask.Call, ask.Tool, ask.Args))
 }
 
 // resultPayload is the JSON shape of the PostToolUse hook's view of a tool

@@ -37,7 +37,7 @@ require (
 	github.com/stacklok/mecatl/adapters v0.1.1
 	github.com/stacklok/mecatl/authn/oidc v0.0.0-00010101000000-000000000000
 	github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver v0.1.0
-	github.com/stacklok/mecatl/engine v0.15.1-0.20260929125653-6142f5252a09
+	github.com/stacklok/mecatl/engine v0.16.1-0.20261013103539-36b6ca993df9
 	github.com/stacklok/mecatl/internal/adaptersupport v0.1.0
 	github.com/stacklok/mecatl/provider/anthropic v0.0.0-00010101000000-000000000000
 	github.com/stacklok/mecatl/provider/openai v0.0.0-00010101000000-000000000000
@@ -63,7 +63,6 @@ require (
 	go.uber.org/goleak v1.3.0
 	golang.org/x/net v0.60.0
 	golang.org/x/oauth2 v0.37.0
-	golang.org/x/sync v0.23.0
 	golang.org/x/sys v0.48.0
 	golang.org/x/term v0.46.0
 	golang.org/x/time v0.16.0
@@ -309,6 +308,7 @@ require (
 	golang.org/x/exp/event v0.0.0-20260824195058-e88cd73687aa // indirect
 	golang.org/x/exp/jsonrpc2 v0.0.0-20260908205506-85c1c2202aba // indirect
 	golang.org/x/mod v0.41.0 // indirect
+	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260928230214-8a89bd6388cc // indirect

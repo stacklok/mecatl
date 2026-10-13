@@ -17,7 +17,7 @@ import (
 // isolated. The port methods take `now` as an explicit argument, so the suite
 // controls time directly (no injected clock to move).
 func TestRedisScheduleStoreConformance(t *testing.T) {
-	scheduleconformance.Run(t, func(*testing.T) port.ScheduleStore {
+	scheduleconformance.RunClaimAndRetryConformance(t, func(*testing.T) port.ScheduleStore {
 		mr, err := miniredis.Run()
 		if err != nil {
 			t.Fatalf("miniredis: %v", err)

@@ -130,6 +130,46 @@ describe("FactsAboutYou", () => {
     expect(names()).toEqual(["beta", "alpha"]);
   });
 
+  it("keeps the sort cycle, tie-break, and aria-sort state of each header", async () => {
+    await renderFacts(
+      seeded(
+        supported([
+          { description: "same", key: "gamma" },
+          { description: "same", key: "alpha" },
+          { description: "earlier", key: "beta" },
+        ]),
+      ),
+    );
+    const table = () => screen.getByRole("table");
+    const names = () =>
+      within(table())
+        .getAllByRole("link")
+        .map((link) => link.textContent);
+    const ariaSort = (label: RegExp) =>
+      within(table()).getByRole("button", { name: label }).closest("th")?.getAttribute("aria-sort");
+
+    // Default: name ascending.
+    expect(names()).toEqual(["alpha", "beta", "gamma"]);
+    expect(ariaSort(/Name/)).toBe("ascending");
+    expect(ariaSort(/Remembers/)).toBe("none");
+
+    // A new column starts ascending; equal descriptions fall back to name order.
+    fireEvent.click(within(table()).getByRole("button", { name: /Remembers/ }));
+    expect(names()).toEqual(["beta", "alpha", "gamma"]);
+    expect(ariaSort(/Remembers/)).toBe("ascending");
+    expect(ariaSort(/Name/)).toBe("none");
+
+    // The active column flips; the name tie-break stays ascending.
+    fireEvent.click(within(table()).getByRole("button", { name: /Remembers/ }));
+    expect(names()).toEqual(["alpha", "gamma", "beta"]);
+    expect(ariaSort(/Remembers/)).toBe("descending");
+
+    // Back to name: ascending again, not the remembered descending direction.
+    fireEvent.click(within(table()).getByRole("button", { name: /Name/ }));
+    expect(names()).toEqual(["alpha", "beta", "gamma"]);
+    expect(ariaSort(/Name/)).toBe("ascending");
+  });
+
   it("uses singular wording for one fact", async () => {
     await renderFacts(seeded(supported([{ description: "x", key: "only" }])));
     expect(screen.getByTestId("memory-footprint").textContent).toBe("1 fact remembered");

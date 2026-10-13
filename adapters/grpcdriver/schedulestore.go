@@ -313,7 +313,8 @@ func (st *ScheduleStore) ListFires(ctx context.Context, scheduleName string) ([]
 
 // ReArmOneShot re-enables the named one-shot schedule, sets its NextFireAt to
 // nextFire, and increments OneShotRetryCount over the wire. The driver applies
-// it atomically (the at-most-once fence for the re-arm). A driver NOT_FOUND
+// it atomically with current retry eligibility and budget validation (see
+// port.ScheduleOneShotReArmer). A driver NOT_FOUND
 // maps to port.ErrScheduleNotFound. A driver that does not serve the re-arm
 // service answers UNIMPLEMENTED → port.ErrScheduleUnsupported (the sticky-
 // disable sentinel; the production degradation path — see the type doc).

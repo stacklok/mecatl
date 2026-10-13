@@ -1127,7 +1127,7 @@ func TestScheduleInspectRendersInFlightFire(t *testing.T) {
 	m := newScheduleModel(t, conv, fs, scheduleCaps())
 	m = openInspectWithFires(t, m, fs)
 	out := stripANSIstr(m.View().Content)
-	for _, want := range []string{"in-flight", "fire-inflight", "started", "last update", "deadline", "run timeout"} {
+	for _, want := range []string{"in-flight", "fire-inflight", "started", "last update", "deadline", "run timeout", "overdue/degraded; termination unconfirmed"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("in-flight inspect missing %q:\n%s", want, out)
 		}
@@ -1152,6 +1152,11 @@ func TestScheduleInspectRendersClaimedPending(t *testing.T) {
 	out := stripANSIstr(m.View().Content)
 	if !strings.Contains(out, "waiting to start (session pending)") {
 		t.Errorf("claimed-pending inspect missing the claimed line:\n%s", out)
+	}
+	for _, want := range []string{"ownership/termination unconfirmed", "elapsed timeout does not prove termination"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("pending inspection missing %q:\n%s", want, out)
+		}
 	}
 	if strings.Contains(out, "no runs recorded") {
 		t.Errorf("claimed-pending inspect rendered \"no runs recorded\" (a claimed fire must NOT render as never-fired):\n%s", out)

@@ -44,8 +44,8 @@ func connectorFixture(t *testing.T) (*Runtime, *Attachment, *orderedCapabilityQu
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.process.construction = construction
-	routes, err := compileStaticProtectedRoutes(construction, r.process.protectedTarget, r.catalogue.routes, nil)
+	setTestConnectorConfiguration(r, construction)
+	routes, err := compileStaticProtectedRoutes(construction, r.enrollment.target, r.catalogue.routes, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,6 +55,15 @@ func connectorFixture(t *testing.T) (*Runtime, *Attachment, *orderedCapabilityQu
 		t.Fatal(err)
 	}
 	return r, a, queries, requests
+}
+
+func setTestConnectorConfiguration(r *Runtime, construction toolHiveConstruction) {
+	connectors := make([]configuredConnector, len(construction.backends))
+	for i, backend := range construction.backends {
+		_, protected := construction.providerByBackend[backend.ID]
+		connectors[i] = configuredConnector{id: backend.ID, name: connectorDisplayName(backend.Name), protected: protected}
+	}
+	r.enrollment.connectors = connectors
 }
 
 func connectorInventory(t *testing.T, r *Runtime, id session.SessionID, binding session.ExternalBinding) contract.ConnectorInventory {
@@ -168,7 +177,8 @@ func TestBrokerMCPStatus_Scenario1_EnrollmentStates(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		r.process = &Process{Runtime: r, construction: construction}
+		process := &Process{Runtime: r, construction: construction}
+		process.configureRuntime(nil)
 		a := testAttachment(t, r)
 		if err := a.Commit(t.Context()); err != nil {
 			t.Fatal(err)
@@ -186,7 +196,7 @@ func TestBrokerMCPStatus_Scenario1_EnrollmentStates(t *testing.T) {
 			var releaseOnce sync.Once
 			unblock := func() { releaseOnce.Do(func() { close(release) }) }
 			defer unblock()
-			r.process.queryAuthenticated = func(ctx context.Context, source oauth2.TokenSource, backend string) (AuthenticatedCapabilities, error) {
+			r.discovery = authenticatedDiscoveryFunc(func(ctx context.Context, source oauth2.TokenSource, backend string) (AuthenticatedCapabilities, error) {
 				if backend == "declared" {
 					close(entered)
 					select {
@@ -199,7 +209,7 @@ func TestBrokerMCPStatus_Scenario1_EnrollmentStates(t *testing.T) {
 					}
 				}
 				return queries.query(ctx, source, backend)
-			}
+			})
 			done := make(chan error, 1)
 			go func() {
 				result, err := a.ObserveWorkspaceEnrollment(t.Context(), presentation.Ref)
@@ -315,6 +325,8 @@ func TestBrokerMCPStatus_Scenario2_Lifecycle(t *testing.T) {
 	for _, action := range []string{"local close", "delete", "runtime close", "process close"} {
 		t.Run("concurrent "+action, func(t *testing.T) {
 			r, a, _, _ := connectorFixture(t)
+			process := &Process{Runtime: r}
+			r.publication = processPublicationGate{process: process, runtime: r}
 			presentation := beginAndGrantWorkspaceEnrollment(t, r, a)
 			if result, err := a.ObserveWorkspaceEnrollment(t.Context(), presentation.Ref); err != nil || result.Status != contract.WorkspaceEnrollmentConnected {
 				t.Fatalf("publish before shutdown = %+v, %v", result, err)
@@ -337,7 +349,7 @@ func TestBrokerMCPStatus_Scenario2_Lifecycle(t *testing.T) {
 				case "runtime close":
 					err = r.Close()
 				case "process close":
-					err = r.process.Close()
+					err = process.Close()
 				}
 				done <- err
 			}()
@@ -384,7 +396,7 @@ func TestConnectorInventoryBundledConstruction(t *testing.T) {
 }
 
 func TestConnectorInventoryBoundsAndCancellation(t *testing.T) {
-	r, a, _, _ := connectorFixture(t)
+	r := testAnonymousRuntime(t)
 	profiles := make([]ToolHiveProfile, 257)
 	for i := range profiles {
 		profiles[i] = ToolHiveProfile{Name: fmt.Sprintf("anonymous-%d", i), URL: "https://anonymous.example/mcp", Auth: authNone}
@@ -394,7 +406,12 @@ func TestConnectorInventoryBoundsAndCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.process.construction = construction
+	process := &Process{Runtime: r, construction: construction}
+	process.configureRuntime(nil)
+	a := testAttachment(t, r)
+	if err := a.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	got := connectorInventory(t, r, "session", a.Binding())
 	wantName := "bad�" + strings.Repeat("界", 124)
 	if got.TotalConnectors != 257 || !got.Truncated || len(got.Connectors) != 256 || got.Connectors[0].Name != wantName || got.Connectors[255].Name != "anonymous-255" {

@@ -31,8 +31,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"golang.org/x/sync/errgroup"
-
 	"github.com/stacklok/mecatl/engine/adapter/cronparse"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -126,8 +124,9 @@ type Config struct {
 	// future self-pushing lookahead can consult it without widening the
 	// constructor. Documented here to keep it honest.
 	MinInterval time.Duration
-	// MaxConcurrentFires bounds the per-tick fire fan-out via an errgroup with
-	// SetLimit. A non-positive value defaults to defaultMaxConcurrentFires.
+	// MaxConcurrentFires bounds all admitted fires for the scheduler's lifetime,
+	// including manual fires and workers still tearing down after cancellation.
+	// A non-positive value defaults to defaultMaxConcurrentFires.
 	MaxConcurrentFires int
 	// StopFireGrace is how long Stop waits for in-flight fires to drain before
 	// abandoning them. A non-positive value defaults to stopFireGrace. It is a
@@ -356,7 +355,9 @@ type Scheduler struct {
 	stickyUnsupported atomic.Bool
 
 	// firesWG tracks in-flight fire goroutines so Stop can join them.
-	firesWG sync.WaitGroup
+	firesWG     sync.WaitGroup
+	admissionMu sync.Mutex // orders admission Add against Stop's Wait
+	activeFires int
 
 	// done is closed when Stop completes (all goroutines joined, lease
 	// released). Tests may wait on it to assert clean shutdown.
@@ -366,28 +367,38 @@ type Scheduler struct {
 	started atomic.Bool
 	stopped atomic.Bool
 
-	// fireMu is the per-schedule-name serialization gate for FireNow (the
-	// TOCTOU close: Load → singleton trial-lease → ClaimNow had no per-name
-	// serialization, so two concurrent FireNow RPCs with different `now` values
-	// could both pass the singleton fence and both fire — the very overlap the
-	// singleton guard prevents). It is shared with the tick loop's fireOne so a
-	// tick-driven fire and a manual FireNow on the SAME schedule serialize per
-	// name (different schedules stay parallel — the errgroup's SetLimit still
-	// bounds fan-out). A sync.Map holds one *sync.Mutex per name, created lazily.
+	// fireMu fences the full lifetime of each schedule's admitted work. Busy
+	// names are skipped without queuing workers or consuming another slot.
 	fireMu sync.Map
 }
 
-// lockFireName acquires the per-schedule-name mutex that serializes concurrent
-// FireNow calls AND a tick-loop fireOne on the SAME schedule (the TOCTOU close
-// for the Load→singleton→Claim fence). Different schedule names stay parallel.
-// The caller MUST defer the returned release func. It is safe to call from the
-// tick loop (fireOne runs under the errgroup) and from the caller-driven
-// FireNow path.
-func (s *Scheduler) lockFireName(name string) func() {
+func (s *Scheduler) fireNameMutex(name string) *sync.Mutex {
 	v, _ := s.fireMu.LoadOrStore(name, &sync.Mutex{})
-	mu := v.(*sync.Mutex)
-	mu.Lock()
-	return mu.Unlock
+	return v.(*sync.Mutex)
+}
+
+// reserveFire never waits for capacity. Uncooperative workers retain their slot
+// and name fence until the entire fire (including auxiliary teardown) returns.
+func (s *Scheduler) reserveFire(ctx context.Context) bool {
+	s.admissionMu.Lock()
+	defer s.admissionMu.Unlock()
+	if s.stopped.Load() || s.draining.Load() || ctx.Err() != nil {
+		return false
+	}
+	if s.activeFires == s.cfg.MaxConcurrentFires {
+		s.diag.Log(ctx, port.LevelWarn, "scheduler: fire capacity exhausted; polling continues", "active", s.activeFires)
+		return false
+	}
+	s.activeFires++
+	s.firesWG.Add(1)
+	return true
+}
+
+func (s *Scheduler) releaseFire() {
+	s.admissionMu.Lock()
+	s.activeFires--
+	s.firesWG.Done()
+	s.admissionMu.Unlock()
 }
 
 // SetFire sets the composition-supplied FireFunc. It MUST be called before
@@ -750,12 +761,10 @@ func (s *Scheduler) waitEpoch() {
 // and tick while our epoch was still firing (the demote cancels the epoch ctx
 // first; the release then frees the lease only after our tick loop is stopping).
 func (s *Scheduler) releaseLeader() {
-	s.demote()
 	s.mu.Lock()
 	lease := s.leaderLease
-	s.leaderLease = nil
-	s.isLeader = false
 	s.mu.Unlock()
+	s.demote()
 	if s.cfg.Lease != nil && lease != nil {
 		relCtx, relCancel := context.WithTimeout(context.Background(), leaderLeaseAcquireTimeout)
 		if err := s.cfg.Lease.Release(relCtx, *lease); err != nil {
@@ -878,10 +887,8 @@ func (s *Scheduler) renewLeader(renewCtx context.Context) {
 	}
 }
 
-// tick is the poll loop. Each tick: read `now` from the clock, poll
-// ScheduleStore.Due, and for each due schedule (bounded by
-// MaxConcurrentFires via an errgroup) apply the misfire policy, Claim the
-// slot (the at-most-once advance), Fire it, and RecordFire the outcome.
+// tick polls due schedules and admits lifetime-bounded background workers.
+// It never waits for a fire or reconciliation callback to finish.
 func (s *Scheduler) tick(ctx context.Context) {
 	ticker := time.NewTicker(s.cfg.TickInterval)
 	defer ticker.Stop()
@@ -897,7 +904,8 @@ func (s *Scheduler) tick(ctx context.Context) {
 
 // tickOnce runs one tick iteration. It is the unit a test can drive directly
 // (via runOnce) to avoid real ticker sleeps.
-func (s *Scheduler) tickOnce(ctx context.Context) {
+func (s *Scheduler) tickOnce(ctx context.Context) (batch *sync.WaitGroup) {
+	batch = &sync.WaitGroup{}
 	if s.draining.Load() {
 		return // drain gate: no new fires mid-tick
 	}
@@ -929,71 +937,58 @@ func (s *Scheduler) tickOnce(ctx context.Context) {
 		s.diag.Log(ctx, port.LevelWarn, "schedule store Due failed", "err", err.Error())
 		return
 	}
-	// One-shot crash-loss retry. A one-shot with
-	// OneShotRetry=true that Claim disabled (the at-most-once advance) but never
-	// recorded a successful outcome (a crash mid-fire, or a fire that ended
-	// StopError) is re-armed up to OneShotMaxRetries times. The re-arm path scans
-	// ALL schedules (List) — a disabled one-shot is NOT returned by Due (Due
-	// filters Enabled=true), so this is a separate scan. The re-arm check is in
-	// the tick loop's scan, NOT in the fire path itself (the fire path knows
-	// nothing of re-arm — it only fires what Claim advanced). A store that does
-	// not implement ScheduleOneShotReArmer degrades to at-most-once.
-	//
-	// This runs on EVERY tick, BEFORE the len(due)==0 early return — a quiet
-	// one-shot-only deployment (no due cron to "spark" the tick past the early
-	// return) must still re-arm a crashed one-shot. Without this ordering a
-	// crashed one-shot in a quiet deployment stalls indefinitely.
-	s.maybeReArmOneShots(ctx, now)
-	// Stale-fire reconciliation (issue #386):
-	// scan for claimed-but-never-terminal fires left behind by a crashed
-	// process and settle them via the composition-injected callback. Runs on
-	// EVERY tick, BEFORE the len(due)==0 early return — a quiet deployment
-	// (no due cron) must still reconcile a crashed fire. Nil callback = the
-	// no-reconcile path. See reconcileStaleFires.
-	s.reconcileStaleFires(ctx, now)
-	if len(due) == 0 {
-		return
-	}
-	// Bound the fire fan-out. The errgroup's ctx cancels remaining fires on the
-	// first non-nil error, but a fire error is recorded (not propagated to abort
-	// siblings) — each fire is independent (one failed fire does not block the
-	// others). So we swallow per-fire errors inside fireOne and never return a
-	// non-nil error from the errgroup.
-	//
-	// KNOWN LIMITATION (issue #189): fireOne drives each fire to a
-	// TERMINAL EvResult (a full agent session — potentially minutes), and this
-	// g.Wait() blocks the tick goroutine until the whole due batch completes.
-	// While blocked the loop cannot re-poll Due (time.Ticker drops intervening
-	// ticks), so a long-running fire delays every OTHER schedule by up to its
-	// duration. This does NOT affect at-most-once (Claim advances NextFireAt
-	// before Fire, so no slot double-fires) — only fire LATENCY under a slow
-	// co-scheduled run. Acceptable for small schedule counts. Decoupling
-	// Claim/advance from the drive (hand fires to a background pool, don't await
-	// terminal in the tick) is not implemented.
-	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(s.cfg.MaxConcurrentFires)
+	// Due work is admitted before retry/reconciliation scans and probes.
 	for _, sched := range due {
 		if s.cfg.CanProcess != nil && !s.cfg.CanProcess(sched) {
 			continue
 		}
-		sched := sched
-		g.Go(func() error {
-			s.fireOne(gctx, sched, now)
-			return nil
-		})
+		if s.cfg.Lease != nil && (sched.State.LastFireSessionID == port.PendingFireSessionID || !sched.State.LastFireStartedAt.IsZero()) {
+			continue
+		}
+		mu := s.fireNameMutex(sched.Spec.Name)
+		if !mu.TryLock() {
+			continue
+		}
+		if !s.reserveFire(ctx) {
+			mu.Unlock()
+			continue
+		}
+		batch.Add(1)
+		go func() {
+			defer batch.Done()
+			defer s.releaseFire()
+			defer mu.Unlock()
+			s.fireOne(ctx, sched, now)
+		}()
 	}
-	_ = g.Wait()
+	s.reconcileStaleFires(ctx, now, batch)
+	s.maybeReArmOneShots(ctx, now, batch)
+	return
+}
+
+func (s *Scheduler) loadDueSchedule(ctx context.Context, name string, now time.Time) (port.Schedule, bool) {
+	sched, err := s.cfg.Store.Load(ctx, name)
+	if err != nil || !sched.State.Enabled || sched.State.NextFireAt.After(now) || ctx.Err() != nil {
+		return sched, false
+	}
+	if s.cfg.CanProcess != nil && !s.cfg.CanProcess(sched) {
+		return sched, false
+	}
+	if s.cfg.Lease != nil && (sched.State.LastFireSessionID == port.PendingFireSessionID || !sched.State.LastFireStartedAt.IsZero()) {
+		// Early filtering avoids a worker; the store repeats this guard atomically.
+		return sched, false
+	}
+	return sched, true
 }
 
 // fireOne applies the misfire policy, the singleton overlap check, Claims the
-// slot, Fires (unless skip), and RecordFires the outcome. It is the per-schedule
-// claim-before-fire cycle.
+// slot, Fires (unless skip), and RecordFires the outcome.
 func (s *Scheduler) fireOne(ctx context.Context, sched port.Schedule, now time.Time) {
-	// Per-schedule-name serialization: a concurrent FireNow (or a peer tick on
-	// the same schedule) must not race the Load→singleton→Claim fence (the
-	// TOCTOU the singleton guard closes). Different schedule names stay
-	// parallel — the errgroup's SetLimit still bounds fan-out.
-	defer s.lockFireName(sched.Spec.Name)()
+	// Admission owns the name fence. Due is only a snapshot: reload before Claim.
+	sched, eligible := s.loadDueSchedule(ctx, sched.Spec.Name, now)
+	if !eligible {
+		return
+	}
 	// Compute the next fire instant. A cron trigger computes it via cronparse
 	// (the store is parser-free); a one-shot fires once (zero nextFire → Claim
 	// disables the schedule). A MaxFires-exhausted cron also yields zero (the
@@ -1080,6 +1075,14 @@ func (s *Scheduler) fireOne(ctx context.Context, sched port.Schedule, now time.T
 	}
 
 	if skipFire {
+		// No execution was admitted: cancel the claim without inventing a session.
+		if err := s.cfg.Store.RecordFire(context.WithoutCancel(ctx), port.ScheduleFire{
+			ID:           fmt.Sprintf("skip--%s--%d", claimed.Spec.Name, now.UnixNano()),
+			ScheduleName: claimed.Spec.Name, FiredAt: now, Stop: session.StopCancelled,
+			Err: "misfire skipped by policy",
+		}); err != nil {
+			s.diag.Log(ctx, port.LevelWarn, "scheduler: skipped claim settlement failed", "schedule", claimed.Spec.Name, "err", err.Error())
+		}
 		s.emitSchedule(ctx, claimed, session.SchedulePayload{
 			ScheduleName: claimed.Spec.Name,
 			Kind:         scheduleKindSkipped,
@@ -1096,9 +1099,6 @@ func (s *Scheduler) fireOne(ctx context.Context, sched port.Schedule, now time.T
 	// fireClaimed runs the Fire→RecordFire tail (the shared path with FireNow)
 	// and emits the fired/failed event via the callback. It does NOT do the
 	// singleton check or misfire policy — those are this caller's prelude.
-	// firesWG is tracked here so Stop's grace drain sees the in-flight fire.
-	s.firesWG.Add(1)
-	defer s.firesWG.Done()
 	_, _ = s.fireClaimed(ctx, claimed, now)
 }
 
@@ -1114,6 +1114,7 @@ func (s *Scheduler) fireOne(ctx context.Context, sched port.Schedule, now time.T
 // fire.Stop is populated (the FireFunc drives the run to terminal).
 func (s *Scheduler) fireClaimed(ctx context.Context, claimed port.Schedule, now time.Time) (port.ScheduleFire, error) {
 	fire, fireErr := s.cfg.Fire(ctx, claimed, now)
+	ctx = context.WithoutCancel(ctx) // terminal reporting must survive shutdown/deadline cancellation
 	if fireErr != nil {
 		// A failed fire is recorded as StopError; the at-most-once Claim
 		// already advanced NextFireAt, so it is NOT retried (the slot is gone —
@@ -1241,13 +1242,24 @@ func (s *Scheduler) FireNow(ctx context.Context, name string, now time.Time) (po
 	// fence (the TOCTOU the singleton guard closes — two concurrent FireNow RPCs
 	// with different `now` values would both pass the singleton trial-lease and
 	// both fire). Different schedule names stay parallel.
-	defer s.lockFireName(name)()
+	mu := s.fireNameMutex(name)
+	if !mu.TryLock() {
+		return port.ScheduleFire{}, ErrFireNowOverlap
+	}
+	defer mu.Unlock()
+	if !s.reserveFire(ctx) {
+		return port.ScheduleFire{}, fmt.Errorf("scheduler: fire-now admission unavailable (draining or capacity exhausted)")
+	}
+	defer s.releaseFire()
 	sched, err := s.cfg.Store.Load(ctx, name)
 	if err != nil {
 		return port.ScheduleFire{}, err
 	}
 	if !sched.State.Enabled {
 		return port.ScheduleFire{}, ErrFireNowDisabled
+	}
+	if s.cfg.Lease != nil && (sched.State.LastFireSessionID == port.PendingFireSessionID || !sched.State.LastFireStartedAt.IsZero()) {
+		return port.ScheduleFire{}, ErrFireNowOverlap
 	}
 	// A one-shot that has already fired is exhausted (a one-shot fires once).
 	if sched.Spec.Trigger.Kind() == port.TriggerOneShot && sched.State.FireCount > 0 {
@@ -1288,9 +1300,7 @@ func (s *Scheduler) FireNow(ctx context.Context, name string, now time.Time) (po
 	if err != nil {
 		return port.ScheduleFire{}, err
 	}
-	// fireClaimed runs Fire→RecordFire + emits the fired/failed event. It is
-	// NOT tracked on firesWG (FireNow is a caller-driven synchronous fire, not
-	// a tick-loop fan-out goroutine; Stop does not need to join it).
+	// fireClaimed retains the manual admission through recording and delivery.
 	return s.fireClaimed(ctx, claimed, now)
 }
 
@@ -1358,7 +1368,7 @@ const oneShotReArmBackoff = 1 * time.Minute
 // re-arm is NOT attempted (the retry budget is exhausted; the one-shot is
 // permanently done). A store that does not implement ScheduleOneShotReArmer
 // degrades to at-most-once — the scan is skipped.
-func (s *Scheduler) maybeReArmOneShots(ctx context.Context, now time.Time) {
+func (s *Scheduler) maybeReArmOneShots(ctx context.Context, now time.Time, batch *sync.WaitGroup) {
 	reArmer, ok := s.cfg.Store.(port.ScheduleOneShotReArmer)
 	if !ok {
 		return // store does not implement the re-arm seam — at-most-once.
@@ -1372,28 +1382,56 @@ func (s *Scheduler) maybeReArmOneShots(ctx context.Context, now time.Time) {
 		return
 	}
 	for _, sched := range all {
-		if !s.shouldReArmOneShot(ctx, sched) {
+		if sched.Spec.Trigger.Kind() != port.TriggerOneShot || !sched.Spec.OneShotRetry || sched.State.Enabled || sched.State.OneShotRetryCount >= sched.Spec.OneShotMaxRetries {
 			continue
 		}
-		// The re-arm backoff. A crashed one-shot is re-armed with NextFireAt =
-		// now + backoff so a crash-loop does not hammer the provider.
-		nextFire := now.Add(oneShotReArmBackoff)
-		if err := reArmer.ReArmOneShot(ctx, sched.Spec.Name, nextFire); err != nil {
-			// ErrScheduleNotFound: the schedule was deleted between List and
-			// ReArmOneShot — the fence worked, not an error.
-			if errors.Is(err, port.ErrScheduleNotFound) {
-				continue
-			}
-			s.diag.Log(ctx, port.LevelWarn, "scheduler: re-arm one-shot failed",
-				"schedule", sched.Spec.Name, "err", err.Error())
+		if !sched.State.LastFireStartedAt.IsZero() || (s.cfg.Lease != nil && sched.State.LastFireSessionID == port.PendingFireSessionID) {
 			continue
 		}
-		s.diag.Log(ctx, port.LevelInfo, "scheduler: re-armed one-shot (crash-loss retry)",
-			"schedule", sched.Spec.Name,
-			"retry_count", sched.State.OneShotRetryCount+1,
-			"max_retries", sched.Spec.OneShotMaxRetries,
-			"next_fire", nextFire)
+		mu := s.fireNameMutex(sched.Spec.Name)
+		if !mu.TryLock() {
+			continue
+		}
+		if !s.reserveFire(ctx) {
+			mu.Unlock()
+			continue
+		}
+		batch.Add(1)
+		go func() {
+			defer batch.Done()
+			defer s.releaseFire()
+			defer mu.Unlock()
+			s.reArmOneShot(ctx, sched.Spec.Name, now, reArmer)
+		}()
 	}
+}
+
+func (s *Scheduler) reArmOneShot(ctx context.Context, name string, now time.Time, reArmer port.ScheduleOneShotReArmer) {
+	sched, err := s.cfg.Store.Load(ctx, name)
+	if err != nil || !s.shouldReArmOneShot(ctx, sched) {
+		return
+	}
+	if sched.State.LastFireSessionID == port.PendingFireSessionID {
+		// Only the affinity-only path can establish that this pending owner stopped.
+		if err := s.cfg.Store.RecordFire(ctx, port.ScheduleFire{
+			ID:           fmt.Sprintf("retry--%s--%d", name, sched.State.LastFireAt.UnixNano()),
+			ScheduleName: name, FiredAt: sched.State.LastFireAt, Stop: session.StopError,
+			Err: "fire interrupted before execution admission",
+		}); err != nil {
+			s.diag.Log(ctx, port.LevelWarn, "scheduler: retry claim settlement failed", "schedule", name, "err", err.Error())
+			return
+		}
+	}
+	nextFire := now.Add(oneShotReArmBackoff)
+	if err := reArmer.ReArmOneShot(ctx, name, nextFire); err != nil {
+		if !errors.Is(err, port.ErrScheduleNotFound) {
+			s.diag.Log(ctx, port.LevelWarn, "scheduler: re-arm one-shot failed", "schedule", name, "err", err.Error())
+		}
+		return
+	}
+	s.diag.Log(ctx, port.LevelInfo, "scheduler: re-armed one-shot (crash-loss retry)",
+		"schedule", name, "retry_count", sched.State.OneShotRetryCount+1,
+		"max_retries", sched.Spec.OneShotMaxRetries, "next_fire", nextFire)
 }
 
 // shouldReArmOneShot reports whether the given schedule is a crashed one-shot
@@ -1420,7 +1458,9 @@ func (s *Scheduler) shouldReArmOneShot(ctx context.Context, sched port.Schedule)
 	// before RecordFire). Claim stamped the sentinel; RecordFire never
 	// overwrote it with a real session id. Re-arm.
 	if sched.State.LastFireSessionID == port.PendingFireSessionID {
-		return true
+		// With replicas, a pending claim has no session lease to probe. Age is
+		// not proof that its owner stopped; quarantine rather than duplicate it.
+		return s.cfg.Lease == nil
 	}
 	// Crash sub-case 2: the fire recorded a StopError (the fire ran but ended
 	// in error). LoadFire probes the prior fire's outcome. A not-found fire
@@ -1428,13 +1468,24 @@ func (s *Scheduler) shouldReArmOneShot(ctx context.Context, sched port.Schedule)
 	// case) is treated as a crash → re-arm (fail-safe toward retry, not silent
 	// loss). A fire with Stop==StopError → re-arm. A fire with any other stop
 	// (the fire succeeded) → do NOT re-arm.
-	if sched.State.LastFireSessionID == "" {
-		// No prior fire at all (the one-shot was disabled without a Claim —
-		// e.g. paused). Not a re-arm candidate.
-		return false
+	if !sched.State.LastFireStartedAt.IsZero() {
+		return false // reconciliation must settle execution before retry.
 	}
 	loadCtx, cancel := context.WithTimeout(ctx, singletonTrialTimeout)
 	defer cancel()
+	if sched.State.LastFireSessionID == "" {
+		// Admission failures have no session; consult the claim's terminal history.
+		fires, err := s.cfg.Store.ListFires(loadCtx, sched.Spec.Name)
+		if err != nil || sched.State.LastFireAt.IsZero() {
+			return false
+		}
+		for _, fire := range fires {
+			if fire.FiredAt.Equal(sched.State.LastFireAt) && fire.Stop == session.StopError {
+				return true
+			}
+		}
+		return false
+	}
 	fire, err := s.cfg.Store.LoadFire(loadCtx, string(sched.State.LastFireSessionID))
 	if err != nil {
 		// A not-found fire record: RecordFire never ran. The sentinel was
@@ -1486,7 +1537,7 @@ func (s *Scheduler) shouldReArmOneShot(ctx context.Context, sched port.Schedule)
 // (lease held → skip) and must NOT race a fire that is concurrently being
 // recorded by a peer (the lease check is the authoritative liveness oracle;
 // the window is the fallback).
-func (s *Scheduler) reconcileStaleFires(ctx context.Context, now time.Time) {
+func (s *Scheduler) reconcileStaleFires(ctx context.Context, now time.Time, batch *sync.WaitGroup) {
 	if s.cfg.ReconcileStaleFire == nil {
 		return // no-reconcile path.
 	}
@@ -1499,13 +1550,31 @@ func (s *Scheduler) reconcileStaleFires(ctx context.Context, now time.Time) {
 		return
 	}
 	for _, sched := range all {
-		if !s.shouldReconcileStaleFire(ctx, sched, now) {
+		anchor := sched.State.LastFireStartedAt
+		if sched.State.LastFireSessionID == port.PendingFireSessionID {
+			anchor = sched.State.LastFireAt
+		}
+		if anchor.IsZero() || now.Sub(anchor) <= staleFireThreshold(sched, anchor) {
 			continue
 		}
-		// Hand the stale schedule to composition for the settle. The callback
-		// is idempotent (RecordFire is idempotent per fire id); a transient
-		// settle failure WARNs inside the callback and never fails the tick.
-		s.cfg.ReconcileStaleFire(ctx, sched)
+		mu := s.fireNameMutex(sched.Spec.Name)
+		if !mu.TryLock() {
+			continue
+		}
+		if !s.reserveFire(ctx) {
+			mu.Unlock()
+			continue
+		}
+		batch.Add(1)
+		go func() {
+			defer batch.Done()
+			defer s.releaseFire()
+			defer mu.Unlock()
+			current, err := s.cfg.Store.Load(ctx, sched.Spec.Name)
+			if err == nil && s.shouldReconcileStaleFire(ctx, current, now) {
+				s.cfg.ReconcileStaleFire(ctx, current)
+			}
+		}()
 	}
 }
 
@@ -1521,6 +1590,10 @@ func (s *Scheduler) shouldReconcileStaleFire(ctx context.Context, sched port.Sch
 	// staleness anchor is LastFireAt (the Claim instant). The window fallback
 	// applies (no FireDeadline for a fire that never started its run).
 	if sched.State.LastFireSessionID == port.PendingFireSessionID {
+		if s.cfg.Lease != nil {
+			s.diag.Log(ctx, port.LevelWarn, "scheduler: pending fire ownership unknown; reconciliation quarantined", "schedule", sched.Spec.Name)
+			return false
+		}
 		anchor := sched.State.LastFireAt
 		if anchor.IsZero() {
 			return false // no Claim recorded — not a crashed fire (a fresh schedule).
@@ -1594,9 +1667,12 @@ func staleFireThreshold(sched port.Schedule, anchor time.Time) time.Duration {
 // never allowed to stall shutdown unboundedly); the fire-grace wait and lease
 // release are likewise bounded.
 func (s *Scheduler) Stop() error {
+	s.admissionMu.Lock()
 	if !s.stopped.CompareAndSwap(false, true) {
+		s.admissionMu.Unlock()
 		return nil
 	}
+	s.admissionMu.Unlock()
 	// Cancel the leadership loop first so no new epoch starts, then the current
 	// epoch so the tick + renewer exit. Read the cancel funcs + done channels
 	// under s.mu, then act on them OUTSIDE the lock so a channel receive below
@@ -1682,7 +1758,7 @@ func (s *Scheduler) RunOnceForTest(ctx context.Context) {
 		eff = s.tickCtx
 	}
 	s.mu.Unlock()
-	s.tickOnce(eff)
+	s.tickOnce(eff).Wait()
 }
 
 // misfireGraceWindow is the lateness threshold beyond which a MisfireSkip slot
@@ -1731,10 +1807,8 @@ func LoadLocation(tz string) *time.Location {
 // session lease. Returns (overlap, releaseFunc) where releaseFunc is nil when
 // no trial lease was acquired.
 //
-// The acquire is BOUNDED by singletonTrialTimeout (not the tick ctx) so a slow
-// or unresponsive lease backend cannot block the fire path or starve the
-// MaxConcurrentFires errgroup. A timeout is treated as a transient infra fault
-// → fail-safe (fire; the Claim fence is the backstop).
+// The acquire is bounded by singletonTrialTimeout. Unknown lease state fails
+// closed: Claim cannot establish that an older execution has stopped.
 func (s *Scheduler) isPriorFireLive(ctx context.Context, sessID session.SessionID) (bool, func()) {
 	if s.cfg.Lease == nil {
 		return false, nil // no lease backend — can't check cross-replica; fire (single-replica by affinity)
@@ -1753,12 +1827,10 @@ func (s *Scheduler) isPriorFireLive(ctx context.Context, sessID session.SessionI
 		if errors.Is(err, port.ErrLeaseUnsupported) {
 			return false, nil // backend can't lease; fire (the Claim fence still holds within-process)
 		}
-		// Infra error or timeout — fail safe: don't skip (a transient fault
-		// shouldn't suppress a fire). The at-most-once Claim fence is the
-		// backstop.
-		s.diag.Log(ctx, port.LevelWarn, "scheduler: singleton trial-lease acquire failed; firing (fail-safe)",
+		// Unknown lease state cannot establish termination of prior mutations.
+		s.diag.Log(ctx, port.LevelWarn, "scheduler: singleton trial-lease acquire failed; ownership unknown (fail-closed)",
 			"session", sessID, "err", err.Error())
-		return false, nil
+		return true, nil
 	}
 	// Acquired — the prior fire is NOT live. Release immediately; the fire's
 	// own run-entry will acquire its own session lease on the new session id.

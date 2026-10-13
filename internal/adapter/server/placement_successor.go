@@ -8,6 +8,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	brokercontract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
 // SuccessorPlacement selects exact inheritance when empty or one freshly
@@ -165,6 +166,9 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 		}
 	}
 	destinationID := s.cfg.NewID()
+	if s.cfg.MCPBroker != nil && !brokercontract.ValidLogicalSessionID(destinationID) {
+		return "", fmt.Errorf("%w: session id is not admissible for broker", ErrInvalidArgument)
+	}
 	releaseDestination, reserveErr := s.reserveGeneratedSessionID(mutationCtx, destinationID)
 	if reserveErr != nil {
 		return "", reserveErr

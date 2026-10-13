@@ -13,6 +13,14 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Schedule-store claim and retry conformance** — adds
+  `scheduleconformance.RunClaimAndRetryConformance` with the complete shared
+  suite plus unresolved prior-claim rejection, late-result isolation, and
+  eligible, single-winner one-shot rearming. Claim reserves a schedule
+  occurrence in stored state, and rearming re-enables a failed one-shot; this
+  suite does not run an executor. Legacy `Run` expectations remain unchanged.
+  Added (minor); test-helper API only, outside the core API snapshot surface.
+
 - **Durable bound execution affordances** — adds `session.ExecutionCapabilities`
   and `Session.ExecutionCapabilities` for host-stamped, creation-time filesystem
   and Shell availability facts. Snapshot and event-source restoration preserve
@@ -376,6 +384,18 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Fixed
 
+- **System temp-scope approval shows the full command** — a Shell call with
+  `temp_scope: "system"` previously surfaced an approval whose args held only
+  the first two words of the command (`command_summary`). The ask now carries
+  `{"command", "timeout_ms", "background", "temp_scope"}` re-encoded from the
+  decoded call, so duplicate or case-variant keys show the value that runs.
+  The `command_summary` field is removed; no in-repo client read it.
+  Runner-owned temporary paths and environment values still never appear.
+  Subagent asks follow suit: the isolation auto-approve no longer clears a
+  system temp-scope ask, a surfaced child ask's preview names the scope, and the
+  headless ask reviewer is told the command requests host-shared temporary
+  storage. Fixed (patch); no exported signatures changed.
+
 - **Built-in file operand decoding (issue #2094)** — `tool.LocalFileOperands`
   now matches built-in JSON decoding for case variants, duplicate keys, and
   null values. Operand decoding errors yield no paths; Copy/Move require both
@@ -385,6 +405,22 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 - **`port.SessionLease.Renew` doc comment narrowed (issue #1333)** — clarifies that bare expiry of the caller's own owner/token, with nothing else having taken the lease over, is not by itself one of the definitive-loss conditions `ErrLeaseHeld` documents; loss is specifically a holder or token change. An implementation that can prove no one else could have raced it (e.g. a single-host backend re-checking its own durable record under its stable transition lock) may reclaim instead of declaring loss — `internal/adapter/flocklease.Lease.Renew` now does exactly this. This narrows, never widens, when `ErrLeaseHeld` may be returned, so it is a documentation clarification, not a contract change; no exported signature changed. No `task api:update` needed.
 
 ### Changed
+
+- **Atomic one-shot retry eligibility (issue #2273)** —
+  `port.ScheduleOneShotReArmer.ReArmOneShot` now requires store-side atomic
+  validation of current disabled/settled-failure state, one-shot retry policy,
+  and remaining budget. Ineligible records wrap `ErrScheduleNotFound` unchanged;
+  concurrent rearms have one winner. Signatures and wire fields are unchanged,
+  but external re-arm implementations must adopt the stronger contract.
+  Changed (breaking; pre-v1 minor).
+
+- **Schedule predecessor ownership (issue #2273)** — `port.ScheduleStore.Claim`
+  and `ClaimNow` must atomically reject pending or started, nonterminal
+  predecessors even at different claim instants. `RecordFire` settles schedule
+  state only for its own claim instant (or legacy zero `LastFireAt`), retaining
+  late outcomes without clearing a successor. This replaces timestamp-only
+  pending recovery with explicit settlement. Changed (breaking behavioral
+  contract, pre-v1 minor); exported signatures and API snapshots are unchanged.
 
 - **Target-scoped project guidance and ephemeral snapshot** — `prompt.InstructionAssembler`
   now requires `Assemble(context.Context, []string, *session.InstructionSnapshot, int)`

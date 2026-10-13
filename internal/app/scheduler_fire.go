@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 	"unicode"
@@ -43,9 +44,15 @@ const (
 // advanced NextFireAt, so a failed fire is NOT retried). Model pinning is
 // fail-closed at the provider call — there is NO pre-flight ListModels check (a
 // live network call, deferred); an unknown model surfaces as StopError.
+func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout time.Duration, deliverStarted func(ctx context.Context, sched port.Schedule, fire port.ScheduleFire)) scheduler.FireFunc {
+	return makeFireFuncWithCancel(svc, store, defaultTimeout, deliverStarted, svc.Cancel)
+}
+
+// The cancellation seam lets composition tests model a blocked control operation
+// independently of the event producer, while retaining the real fire lifecycle.
 //
 //nolint:gocyclo // Fire lifecycle must keep each placement, claim, and terminal failure path explicit.
-func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout time.Duration, deliverStarted func(ctx context.Context, sched port.Schedule, fire port.ScheduleFire)) scheduler.FireFunc {
+func makeFireFuncWithCancel(svc *server.Service, store port.ScheduleStore, defaultTimeout time.Duration, deliverStarted func(ctx context.Context, sched port.Schedule, fire port.ScheduleFire), cancelRun func(context.Context, session.SessionID, string) error) scheduler.FireFunc {
 	return func(ctx context.Context, sched port.Schedule, now time.Time) (port.ScheduleFire, error) {
 		// The scheduler passes the physical store key so RecordFire* remains in the
 		// correct owner namespace. Presentation also receives the authoritative
@@ -144,66 +151,39 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 		// session id (not the pending sentinel, not empty).
 		prompt := carriedContextPrompt(ownerCtx, svc, sched)
 
-		// Issue #386 — the in-flight scheduled-fire state: RecordFireStart flips
-		// LastFireSessionID off the "pending" sentinel to the REAL session id and
-		// writes a discoverable in-flight fire record (Stop="", StartedAt set)
-		// BEFORE the run. A crash after this point leaves a real session id (not
-		// "pending"), so shouldReArmOneShot's crash case + the operator's
-		// ListFires can see it. Best-effort WARN on failure — the Claim already
-		// advanced, so the fire is NOT failed; the record is an enhancement.
 		startedAt := now
 		deadline := effectiveFireDeadline(sched.Spec.FireTimeout, defaultTimeout, now)
-		recordFireStart(ctx, svc.Diagnostics(), store, port.ScheduleFire{
-			ID:           fireID,
-			ScheduleName: sched.Spec.Name,
-			SessionID:    sess.ID,
-			FiredAt:      now,
-			StartedAt:    startedAt,
-			Deadline:     deadline,
-		})
-		// "Started" notice (issue #386): route a fenced-untrusted
-		// harness note carrying ONLY the schedule name + fire/session id back
-		// into the fire's origin conversation, right AFTER RecordFireStart.
-		// A nil deliverStarted is the byte-identical no-start-notice path.
-		if deliverStarted != nil && sched.Spec.OriginSessionID != "" {
-			deliverStarted(ctx, sched, port.ScheduleFire{
-				ID:           fireID,
-				ScheduleName: sched.Spec.Name,
-				SessionID:    sess.ID,
-				FiredAt:      now,
-				StartedAt:    startedAt,
-				Deadline:     deadline,
-			})
-		}
 
-		// Arm the wall-clock watchdog (issue #386): a non-zero deadline bounds the
-		// fire's RUN. On lapse it cancels the in-flight run via the Service's
-		// run-registry cancel seam (Service.Cancel → run.Cancel(), the same path
-		// #388's Service.Close uses) — the loop yields StopCancelled, which the
-		// event loop below OVERRIDES to StopTimeout so a caller distinguishes
-		// "timed out" from a user cancel. The watchdog is a LIVENESS bound, NOT
-		// load-bearing for at-most-once (Claim already advanced). Stopped on the
-		// terminal EvResult (defer) so a clean completion does not double-fire.
-		var timedOut atomic.Bool
-		stopTimer := func() {}
+		// Cancellation is a request, not proof of termination. Keep the fire,
+		// session lease and capacity until both the event producer and watchdog
+		// return. The deadline context also covers provisional run admission.
+		runCtx := ownerCtx
 		if !deadline.IsZero() {
-			timer := time.AfterFunc(time.Until(deadline), func() {
-				timedOut.Store(true)
-				// Service.Cancel looks up the run by session id and calls
-				// run.Cancel(); a not-found/already-finished run is a nil-safe
-				// no-op (the watchdog only arms for a deadline, so a stale fire
-				// after a clean completion is harmless — Stop already ran).
-				_ = svc.Cancel(context.WithoutCancel(ownerCtx), sess.ID, "")
-			})
-			stopTimer = func() { timer.Stop() }
+			var cancel context.CancelFunc
+			runCtx, cancel = context.WithDeadline(ownerCtx, deadline)
+			defer cancel()
 		}
+		inflight := port.ScheduleFire{
+			ID: fireID, ScheduleName: sched.Spec.Name, SessionID: sess.ID,
+			FiredAt: now, StartedAt: startedAt, Deadline: deadline,
+		}
+		watchdogFire := inflight
+		watchdogFire.ScheduleName = literalName
+		timedOut, stopTimer := watchFireDeadline(ctx, svc.Diagnostics(), watchdogFire, func() error {
+			return cancelRun(context.WithoutCancel(ownerCtx), sess.ID, "")
+		})
 		defer stopTimer()
 
-		run, err := svc.StartScheduledRunContent(ownerCtx, sess.ID, prompt, sched.Spec.Parts)
+		run, err := svc.StartScheduledRunContent(runCtx, sess.ID, prompt, sched.Spec.Parts)
 		if err != nil {
 			return fireFailed(sched, now, string(sess.ID), err), err
 		}
-		defer svc.FinishRun(sess.ID, run)
+		// Publish the real session only after run admission holds its lease.
+		// A pending claim has no lease oracle and must remain fail-closed.
+		recordFireStart(context.WithoutCancel(ctx), svc.Diagnostics(), store, inflight)
+		if deliverStarted != nil && sched.Spec.OriginSessionID != "" {
+			deliverStarted(ctx, sched, inflight)
+		}
 
 		// Drive the run to its terminal EvResult. The agent loop persists the
 		// terminal session snapshot itself (engine/agent terminate→save, the SAME
@@ -238,6 +218,7 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 			}
 		}
 		recorder.Close()
+		stopTimer()
 		// Settle the terminal session snapshot HERE, best-effort, so it is durable
 		// BEFORE the fire returns. A fire whose run was cancelled mid-flight
 		// (Service.Close → run.Cancel on shutdown, issue #388 Task #3, OR the
@@ -251,6 +232,7 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 		// channel closed with no terminal EvResult — an abandoned run) is treated
 		// as StopCancelled. See settleFireTerminalSnapshot.
 		stop = settleFireTerminalSnapshot(ctx, svc, sess.ID, stop)
+		svc.FinishRun(sess.ID, run)
 		// The watchdog fired: the loop's StopCancelled is a watchdog cancel, not
 		// a user cancel. Override the recorded stop so a caller distinguishes
 		// "timed out" from an explicit cancel (the domain declares StopTimeout;
@@ -258,7 +240,7 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 		// timeout duration so an operator reading the fire record sees why. The
 		// session snapshot stays the loop's persisted StateCancelled (terminal +
 		// Interrupt-recoverable, like a shutdown-cancelled fire).
-		if timedOut.Load() && stop == session.StopCancelled {
+		if fireTimedOut(runCtx, timedOut.Load(), stop) {
 			stop = session.StopTimeout
 			timeout := sched.Spec.FireTimeout
 			if timeout <= 0 {
@@ -289,6 +271,41 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 			Stop:         stop,
 			Err:          runErr,
 		}, nil
+	}
+}
+
+func fireTimedOut(ctx context.Context, observed bool, stop session.StopReason) bool {
+	return (observed || ctx.Err() == context.DeadlineExceeded) &&
+		(stop == session.StopCancelled || stop == session.StopTimeout)
+}
+
+// watchFireDeadline reports degradation before attempting cancellation. Its
+// idempotent stop joins the single cancellation worker, even if Cancel blocks.
+func watchFireDeadline(ctx context.Context, diag port.Diagnostics, fire port.ScheduleFire, cancel func() error) (*atomic.Bool, func()) {
+	timedOut := &atomic.Bool{}
+	if fire.Deadline.IsZero() {
+		return timedOut, func() {}
+	}
+	done := make(chan struct{})
+	timer := time.AfterFunc(time.Until(fire.Deadline), func() {
+		defer close(done)
+		timedOut.Store(true)
+		logCtx := context.WithoutCancel(ctx)
+		diag.Log(logCtx, port.LevelWarn,
+			"scheduled fire overdue/degraded; termination unconfirmed; capacity quarantined",
+			"schedule", fire.ScheduleName, "fire", fire.ID, "deadline", fire.Deadline)
+		if err := cancel(); err != nil {
+			diag.Log(logCtx, port.LevelWarn, "scheduled fire deadline cancellation failed",
+				"schedule", fire.ScheduleName, "fire", fire.ID, "err", err.Error())
+		}
+	})
+	var once sync.Once
+	return timedOut, func() {
+		once.Do(func() {
+			if !timer.Stop() {
+				<-done
+			}
+		})
 	}
 }
 

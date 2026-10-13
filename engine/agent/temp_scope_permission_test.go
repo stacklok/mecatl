@@ -132,8 +132,8 @@ func TestSystemTempCapabilityIsGlobalButNotShellAllow(t *testing.T) {
 }
 
 // TestSystemTempApprovalDoesNotLeakPath pins the approval projection:
-// it names system scope and a safe command summary, never runner-owned paths or
-// temporary environment values.
+// it names system scope and the model's full command, never runner-owned paths
+// or temporary environment values.
 func TestSystemTempApprovalDoesNotLeakPath(t *testing.T) {
 	t.Parallel()
 	runner := &fakeShellRunner{res: tool.CommandResult{Stdout: "ok"}}
@@ -143,8 +143,8 @@ func TestSystemTempApprovalDoesNotLeakPath(t *testing.T) {
 			continue
 		}
 		body := string(event.Ask.Args)
-		if !strings.Contains(body, `"temp_scope":"system"`) || !strings.Contains(body, "go test") {
-			t.Fatalf("system approval does not disclose scope and command summary: %s", body)
+		if !strings.Contains(body, `"temp_scope":"system"`) || !strings.Contains(body, `"command":"go test ./..."`) {
+			t.Fatalf("system approval does not disclose scope and command: %s", body)
 		}
 		for _, forbidden := range []string{"/tmp/", "TMPDIR", "GOTMPDIR", "MECATL_TEST_TEMP_LEASE"} {
 			if strings.Contains(body, forbidden) {
@@ -154,4 +154,94 @@ func TestSystemTempApprovalDoesNotLeakPath(t *testing.T) {
 		return
 	}
 	t.Fatal("system scope did not surface the independent capability approval")
+}
+
+// firstPermissionAsk returns the first permission ask in events.
+func firstPermissionAsk(t *testing.T, events []session.Event) session.PendingAsk {
+	t.Helper()
+	for _, event := range events {
+		if event.Type == session.EvPermissionAsk && event.Ask != nil {
+			return *event.Ask
+		}
+	}
+	t.Fatal("system scope did not surface a permission ask")
+	return session.PendingAsk{}
+}
+
+// TestSystemTempApprovalShowsFullCommand pins that the system-scope approval
+// shows the whole command and every execution-relevant field as the engine
+// decoded them, so duplicate and case-variant keys project the value that runs.
+func TestSystemTempApprovalShowsFullCommand(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, args, want string }{
+		{
+			name: "compound command",
+			args: `{"command":"git status && echo done","temp_scope":"system"}`,
+			want: `{"command":"git status && echo done","temp_scope":"system"}`,
+		},
+		{
+			name: "timeout and background",
+			args: `{"temp_scope":"system","background":true,"timeout_ms":5000,"command":"go test ./... | tee out.txt"}`,
+			want: `{"command":"go test ./... | tee out.txt","timeout_ms":5000,"background":true,"temp_scope":"system"}`,
+		},
+		{
+			name: "duplicate key",
+			args: `{"command":"git status","temp_scope":"system","command":"git status && echo done"}`,
+			want: `{"command":"git status && echo done","temp_scope":"system"}`,
+		},
+		{
+			name: "case-variant keys",
+			args: `{"command":"git status","COMMAND":"git status && echo done","Temp_Scope":"system","Timeout_MS":7}`,
+			want: `{"command":"git status && echo done","timeout_ms":7,"temp_scope":"system"}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			runner := &fakeShellRunner{res: tool.CommandResult{Stdout: "ok"}}
+			call := session.NewToolCall("c", tool.ShellToolName, []byte(tc.args))
+			events, _ := runScopedShell(t, []governance.Rule{{Tool: tool.ShellToolName, Effect: governance.Allow}}, call, runner)
+			if got := string(firstPermissionAsk(t, events).Args); got != tc.want {
+				t.Fatalf("system approval args = %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSystemTempApprovalMatchesExecutedCommand approves the system-scope ask
+// and proves the command the approver saw is the command the runner received.
+func TestSystemTempApprovalMatchesExecutedCommand(t *testing.T) {
+	t.Parallel()
+	for _, args := range []string{
+		`{"command":"git status && echo done","temp_scope":"system"}`,
+		`{"command":"git status","temp_scope":"system","command":"git status && echo done"}`,
+		`{"command":"git status","COMMAND":"git status && echo done","TEMP_SCOPE":"system"}`,
+	} {
+		t.Run(args, func(t *testing.T) {
+			t.Parallel()
+			runner := &fakeShellRunner{res: tool.CommandResult{Stdout: "ok"}}
+			call := session.NewToolCall("c", tool.ShellToolName, []byte(args))
+			provider := mockllm.New(mockllm.ToolCallTurn(call), mockllm.TextTurn("done"))
+			catalog := tool.NewCatalog()
+			catalog.MustRegister(NewShellTool())
+			eng := NewEngine(Deps{LLM: provider, Catalog: catalog, Policy: permpolicy.NewPolicy([]governance.Rule{{Tool: tool.ShellToolName, Effect: governance.Allow}}, nil)})
+			sess := session.New("scope", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, session.Limits{MaxTurns: 3}, time.Now())
+			run := eng.Run(context.Background(), sess, shellEnvRunner(runner), RunRequest{Text: "run"})
+			var shown string
+			for event := range run.Events() {
+				if event.Type == session.EvPermissionAsk && event.Ask != nil && shown == "" {
+					projected, _, ok := parseShellArgs(session.NewToolCall("p", tool.ShellToolName, event.Ask.Args))
+					if !ok || shellScope(projected) != tool.TemporaryScopeSystem {
+						t.Errorf("system approval args do not decode as a system-scope Shell call: %s", event.Ask.Args)
+					}
+					shown = projected.Command
+					if err := run.Approve(event.Ask.AskID, session.VerdictAllowOnce); err != nil {
+						t.Errorf("approve: %v", err)
+					}
+				}
+			}
+			if shown != "git status && echo done" || runner.command != shown || runner.scope != tool.TemporaryScopeSystem {
+				t.Fatalf("approval showed %q, runner executed %q in scope %q", shown, runner.command, runner.scope)
+			}
+		})
+	}
 }

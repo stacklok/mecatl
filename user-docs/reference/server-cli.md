@@ -411,8 +411,8 @@ Flags:
         capability, if any. Uses the same driver authentication and TLS settings as --
         session-store-url.
   --scheduler-max-concurrent-fires int
-        maximum schedules started in parallel per scheduler tick. Applies only when
-        scheduling is enabled. (default 4)
+        maximum admitted scheduled fires, including manual fires and teardown. (default
+        4)
   --scheduler-min-interval duration
         minimum allowed scheduled cadence. Default 1m. Set 0 to allow any cadence.
         (default 1m0s)
@@ -858,7 +858,8 @@ Usage: mecak8s [flags]
         Keep at most this many scheduled-run snapshots; delete the oldest non-active
         snapshots above the limit. Zero disables count cleanup
   --scheduler-max-concurrent-fires int
-        Maximum schedules started concurrently in one scheduler tick (default 4)
+        Maximum admitted scheduled fires, including manual fires and teardown (default
+        4)
   --scheduler-min-interval duration
         Minimum accepted schedule interval. Shorter intervals are rejected; zero
         disables the limit (default 1m0s)

@@ -266,6 +266,7 @@ describe("SDK server discovery", () => {
       PromptFreeControls: "prompt_free_controls",
       ServerInfo: "server_info",
       SessionActivityInventory: "session_activity_inventory",
+      SkillFiles: "skill_files",
       WatchSessionEvents: "watch_session_events",
     });
     expect(ServerPosture).toEqual({
@@ -925,6 +926,7 @@ describe("SDK server discovery", () => {
         'readonly PromptFreeControls: "prompt_free_controls";',
         'readonly ServerInfo: "server_info";',
         'readonly SessionActivityInventory: "session_activity_inventory";',
+        'readonly SkillFiles: "skill_files";',
         'readonly WatchSessionEvents: "watch_session_events";',
       ]);
       expect(report).toContain(

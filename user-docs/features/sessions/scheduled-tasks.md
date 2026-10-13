@@ -36,8 +36,8 @@ Mecatl claims and advances a due slot before starting its run. This prevents two
 replicas from firing the same slot. A leader lease limits polling to one
 replica, while the atomic claim remains the duplicate-execution safeguard.
 
-A crash after a claim can skip that slot. Recurring schedules continue at the
-next slot. By default a one-shot schedule can be lost. Opt-in retry can repeat
+A crash after a claim can skip that slot. Once the prior fire is reconciled,
+recurring schedules continue at the next slot. By default a one-shot schedule can be lost. Opt-in retry can repeat
 the work, so tasks using it must tolerate duplicate effects; use an external job
 system when you need stronger delivery guarantees. Each successful claim creates
 a fresh session whose record preserves the conversation, tool calls, usage,
@@ -138,7 +138,7 @@ Important operator settings include:
 |`--no-scheduler`|`false`|Disable automatic polling; manual management remains available.|
 |`--scheduler-tick-interval`|`30s`|Poll interval for due schedules.|
 |`--scheduler-min-interval`|`1m`|Minimum recurring cadence; `0` disables the floor.|
-|`--scheduler-max-concurrent-fires`|`4`|Maximum due fires processed in parallel per tick.|
+|`--scheduler-max-concurrent-fires`|`4`|Maximum admitted fires, including manual fires and teardown.|
 |`--schedule-fire-retention`|`7d` when unset|Retention for persisted fire sessions.|
 |`--schedule-store-url`|empty|Remote schedule-store driver, independent of the session store.|
 
@@ -158,10 +158,10 @@ The default misfire policy fires once immediately for a missed recurring slot,
 then resumes the cadence. It does not replay every missed occurrence. Choose
 `skip` when a stale run would be misleading.
 
-New schedules suppress overlapping fires by default. The prior fire's session
-lease determines whether it is still active across replicas. A released or
-expired lease permits later work; a stale session pointer alone does not block
-the schedule forever. Manual firing also rejects an overlapping active fire.
+The scheduler holds a same-schedule execution fence until the fire and its
+cleanup finish. Manual firing rejects an overlapping admitted fire. Across
+replicas, an in-flight predecessor must be reconciled before another fire can
+start; a lease lookup failure keeps that predecessor fenced.
 
 ### One-shot retry
 
@@ -174,7 +174,8 @@ policy instead.
 
 A re-armed one-shot starts with fresh context, even when carried context is
 enabled. Retry is at least once within its configured budget, not an
-exactly-once guarantee.
+exactly-once guarantee. Mecatl leaves a one-shot disabled when it cannot verify
+that its current terminal outcome is an error.
 
 ### Carried context
 
@@ -188,16 +189,29 @@ reload it.
 ### Deadlines and orphaned fires
 
 The supplied deployment uses a 30-minute fire deadline unless the schedule
-supplies its own nonzero `fire_timeout`. A deadline ends the run in a
-recoverable timeout state. Inspect the fire before deciding whether to continue
-it manually.
+supplies its own nonzero `fire_timeout`. The deadline requests cancellation.
+A cooperative run finishes with a recoverable timeout result. An uncooperative
+run remains in-flight with its saved deadline and last-progress time; inspection
+shows **overdue/degraded; termination unconfirmed**. Diagnostics report this
+state before attempting cancellation, including when cancellation blocks or fails.
 
-The scheduler reconciles its latest orphaned in-flight fire after a crash. A
-claim lost before session creation becomes an error fire record; a fire lost
-during its run becomes an error record with a cancelled, recoverable session.
-Failed reconciliation is retried on later ticks. This cleanup records what
-happened; it is separate from opt-in one-shot retry. Older orphaned fire
-sessions beyond the latest schedule state are not covered by this sweep.
+Polling continues while a fire is stuck. Unrelated schedules can start within
+remaining capacity. The stuck fire retains its execution ownership and capacity
+slot until the run and cancellation worker finish; when all slots are occupied,
+diagnostics report exhausted capacity and due work remains unclaimed. A healthy
+leadership lease alone does not establish fire progress. Completion notes reach
+the originating conversation only after the fire actually finishes.
+
+After a crash, the scheduler reconciles its latest orphaned in-flight fire when
+its session lease is free, recording an error and a recoverable cancelled
+session. Failed reconciliation is retried on later ticks. A claim that has no
+session record has no session lease to check: with a lease backend,
+it stays quarantined and emits an ownership-unknown diagnostic. Investigate and
+confirm that its former execution has stopped before arranging replacement work.
+Without a lease backend, single-replica affinity permits reconciliation of that
+claim after the stale window.
+This cleanup is separate from opt-in one-shot retry. Older orphaned sessions
+beyond the latest schedule state are not covered by the sweep.
 
 ### Delivery to the originating conversation
 

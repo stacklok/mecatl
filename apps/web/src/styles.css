@@ -300,6 +300,13 @@
     min-height: 100%;
   }
 
+  /* Paint the canvas AND body with the shell gradient's terminal colour:
+     iOS standalone computes dvh stale at launch (self-corrects on first
+     scroll), leaving a strip beside/below the app, and overscroll exposes
+     the canvas too. Every visible surface (the card, panels, dialogs)
+     declares its own bg-background, so nothing reads body's background —
+     matching the gradient's end keeps the stale strip invisible. The token
+     already carries the dark and per-palette values. */
   html,
   body {
     margin: 0;
@@ -369,4 +376,19 @@
   --normal-bg: var(--popover);
   --normal-text: var(--popover-foreground);
   --normal-border: var(--border);
+}
+
+/* Thinking-indicator dots: Tailwind's animate-bounce moves 25% of the
+   element's own height — invisible on a 6px dot. A fixed 5px hop with a
+   squash-and-stretch easing reads as an actual bounce. */
+@keyframes thinking-bounce {
+  0%,
+  100% {
+    transform: translateY(0);
+    animation-timing-function: cubic-bezier(0.8, 0, 1, 1);
+  }
+  50% {
+    transform: translateY(-5px);
+    animation-timing-function: cubic-bezier(0, 0, 0.2, 1);
+  }
 }

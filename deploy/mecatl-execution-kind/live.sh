@@ -8,10 +8,24 @@ if [ "${MECATL_EXECUTION_LIVE_CLEAN_ENV:-}" != 1 ]; then
     DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}" CONTAINER_HOST="${CONTAINER_HOST:-}" DOCKER_HOST="${DOCKER_HOST:-}" \
     TOOLBOX_PATH="${TOOLBOX_PATH:-}" MECATL_EXECUTION_DEV_TOOLBOX="${MECATL_EXECUTION_DEV_TOOLBOX:-}" MECATL_EXECUTION_K8S_TOOLBOX="${MECATL_EXECUTION_K8S_TOOLBOX:-}" \
     MECATL_EXECUTION_CREDENTIAL_FILE="${MECATL_EXECUTION_CREDENTIAL_FILE:-}" MECATL_EXECUTION_QUAL_STATE="${MECATL_EXECUTION_QUAL_STATE:-}" MECATL_EXECUTION_LIVE_SESSION="${MECATL_EXECUTION_LIVE_SESSION:-}" \
+    MECATL_EXECUTION_LIVE_QUALIFIED="${MECATL_EXECUTION_LIVE_QUALIFIED-0}" MECATL_EXECUTION_HANDOFF_COMPLETE="${MECATL_EXECUTION_HANDOFF_COMPLETE:-}" MECATL_EXECUTION_HANDOFF_DIGEST="${MECATL_EXECUTION_HANDOFF_DIGEST:-}" \
+    MECATL_EXECUTION_HANDOFF_SHA="${MECATL_EXECUTION_HANDOFF_SHA:-}" MECATL_EXECUTION_HANDOFF_RUN_ID="${MECATL_EXECUTION_HANDOFF_RUN_ID:-}" MECATL_EXECUTION_HANDOFF_RUN_ATTEMPT="${MECATL_EXECUTION_HANDOFF_RUN_ATTEMPT:-}" MECATL_EXECUTION_HANDOFF_CLUSTER="${MECATL_EXECUTION_HANDOFF_CLUSTER:-}" \
+    GITHUB_ACTIONS="${GITHUB_ACTIONS:-}" GITHUB_RUN_ID="${GITHUB_RUN_ID:-}" GITHUB_RUN_ATTEMPT="${GITHUB_RUN_ATTEMPT:-}" GITHUB_SHA="${GITHUB_SHA:-}" TMPDIR="${TMPDIR:-}" \
     MECATL_EXECUTION_LIVE_CLEAN_ENV=1 "$0" "$@"
 fi
-[ "$#" -eq 0 ] || { echo "usage: MECATL_EXECUTION_CREDENTIAL_FILE=/absolute/file MECATL_EXECUTION_QUAL_STATE=/owned/state $0" >&2; exit 2; }
-[ -n "$MECATL_EXECUTION_CREDENTIAL_FILE" ] || { echo "MECATL_EXECUTION_CREDENTIAL_FILE is required" >&2; exit 2; }
+verify_only=0
+case "$*" in
+  '') [ "$#" -eq 0 ] || exit 2 ;;
+  --verify-handoff) [ "$#" -eq 1 ] || exit 2; verify_only=1 ;;
+  *) echo "usage: $0 [--verify-handoff]" >&2; exit 2 ;;
+esac
+qualified=${MECATL_EXECUTION_LIVE_QUALIFIED-0}
+case "$qualified" in 0|1) ;; *) echo "MECATL_EXECUTION_LIVE_QUALIFIED must be 0 or 1" >&2; exit 2 ;; esac
+if [ "$verify_only" = 1 ]; then
+  [ "$qualified" = 1 ] || { echo "verification requires qualified handoff" >&2; exit 2; }
+else
+  [ -n "${MECATL_EXECUTION_CREDENTIAL_FILE:-}" ] || { echo "MECATL_EXECUTION_CREDENTIAL_FILE is required" >&2; exit 2; }
+fi
 [ -n "$MECATL_EXECUTION_QUAL_STATE" ] || { echo "MECATL_EXECUTION_QUAL_STATE is required" >&2; exit 2; }
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)
@@ -88,6 +102,18 @@ load_image() {
   pin_loaded "$tagged"
 }
 
+if [ "$qualified" = 1 ]; then
+  . "$root/deploy/mecatl-execution-kind/handoff.sh"
+  handoff_consume || { echo "qualified same-run handoff missing or drifted" >&2; exit 1; }
+  if [ "$verify_only" = 1 ]; then
+    printf 'live qualified_handoff=verified credentials=unstaged\n'
+    exit 0
+  fi
+  provider_image=$(handoff_image provider)
+  agent_image=$(handoff_image agent)
+  workload_image=$(handoff_image workload)
+  printf 'live qualified_handoff=verified preparation=reused\n'
+else
 provider_tag=$(build_ko ./cmd/mecatl-execution-provider ko.local/mecatl-execution-provider)
 agent_tag=$(build_ko ./cmd/mecak8s ko.local/mecak8s)
 if [ "$runtime" = podman ]; then
@@ -123,6 +149,7 @@ dev env -i HOME="$HOME" PATH="$PATH" TOOLBOX_PATH="${TOOLBOX_PATH:-}" XDG_RUNTIM
   KUBECONFIG="$kubeconfig" MECATL_KUBE_CONTEXT="$context" MECATL_EXECUTION_K8S_TOOLBOX="${MECATL_EXECUTION_K8S_TOOLBOX:-}" MECATL_EXECUTION_TEMPLATE_REVISION="$go_revision" MECATL_EXECUTION_QUAL_STATE="$state" MECATL_EXECUTION_LIVE_CLUSTER="$cluster" \
   go test -tags kind_execution_e2e -run '^TestKindExecutionQualification$' -count=1 -v -timeout=15m ./e2e/k8s_execution
 fi
+fi # standalone preparation
 
 secret="mecak8s-live-$(date -u +%Y%m%d%H%M%S)-$$"
 receipt="$state/live-secret-$secret.receipt.json"
