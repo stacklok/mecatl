@@ -59,6 +59,9 @@ entities:
     relationships:
       - entity: ContinuationCheckpoint
         cardinality: "1:n"
+      - entity: ProviderReplay
+        cardinality: "1:n"
+        ownership: owned
     invariants:
       - id: single-history-authority
         statement: Continuation and retained display facts derive from `CommittedHistory`; summaries, checkpoints, and optional diagnostic logs are not separate authorities.
@@ -72,8 +75,8 @@ entities:
         statement: Confirmed `ClientProjection` updates and notifications follow successful outermost acceptance into `CommittedHistory`; a savepoint or failed append is not a committed boundary.
       - id: capture-obeys-disclosure
         statement: >
-          `CommittedHistory` capture of `LogicalModelInput` and `HookInvocation`
-          evidence obeys secret scrubbing and withholding or destruction rules;
+          `CommittedHistory` capture of `LogicalModelInput`, `ProviderReplay`,
+          and `HookInvocation` evidence obeys secret scrubbing and withholding or destruction rules;
           transformation evidence cannot preserve prohibited bytes through another path.
 
   OwnershipClaim:
@@ -145,6 +148,34 @@ entities:
           changes cannot silently escape `CommittedHistory`.
       - id: logical-input-before-model
         statement: Dependent model execution uses committed `LogicalModelInput`; any permitted provisional request during ownership uncertainty uses already committed input without new uncommitted transformations.
+
+  ProviderReplay:
+    definition: >
+      A private versioned provider-owned representation of ordered output items
+      and occurrence-specific bindings to canonical conversation, calls, and
+      results in `CommittedHistory`. It preserves item boundaries and opaque
+      payloads without assuming one canonical assistant message equals one
+      provider message or reasoning item. The LLM boundary owns interpretation
+      and compatibility; public projections and executable tool objects do not.
+    relationships:
+      - entity: LogicalModelInput
+        cardinality: "n:n"
+        note: Compatible private replay incorporated into subsequent logical input.
+    invariants:
+      - id: provider-replay-ordered-opaque
+        statement: Accepted `ProviderReplay` preserves ordered item boundaries and opaque signed or encrypted payloads byte-exact under capture policy; core cannot flatten or interpret their private meaning.
+      - id: replay-binding-occurrence
+        statement: >
+          `ProviderReplay` binds globally unique engine-owned canonical call
+          identities to distinct provider pairing-key and item-ID namespaces
+          within the producing session and request/turn occurrence; repeated
+          provider keys cannot alias calls or results from another occurrence.
+      - id: replay-consistent-acceptance
+        statement: Canonical accepted outputs, calls, and results and their required `ProviderReplay` payloads and bindings share a consistent acceptance boundary; missing or mismatched replay state cannot authorize tool dispatch or dependent continuation.
+      - id: replay-immutable-compatible
+        statement: Accepted `ProviderReplay` owns immutable payloads and producer/version provenance; restart, forks, compaction, and provider changes require compatible LLM-boundary interpretation rather than mutable aliases or silent reuse of incompatible continuation-critical metadata.
+      - id: replay-not-public-authority
+        statement: A `ClientProjection` cannot reconstruct uncaptured private `ProviderReplay` or grant access to it, and provider keys cannot be reinterpreted as canonical engine call identity.
 
   HookInvocation:
     definition: >
@@ -366,6 +397,15 @@ scenarios:
       - A subsequent load reuses committed hook completion without reexecution, and confirmed `ClientProjection` updates follow accepted history.
       - Scrubbed or destroyed bytes are not restored through hook traces, and hook retry does not repeat an uncertain ordinary tool.
     invariants_touched: [complete-logical-input, logical-input-before-model, hook-at-least-once, stable-hook-retry-identity, hook-output-before-dependent-execution, hook-retry-not-tool-retry, commit-before-confirmed-publication, capture-obeys-disclosure]
+
+  - name: Ordered private replay with repeated provider keys
+    steps:
+      - A provider completes a turn with separate message, reasoning, and function-call items in order; the engine assigns a canonical globally unique tool-call identity.
+      - The owner consistently accepts canonical conversation facts with `ProviderReplay` retaining item boundaries, per-item metadata, opaque payloads, and occurrence-specific call bindings.
+      - Another completed turn reuses a provider pairing key, but its distinct producing occurrence prevents aliasing the earlier call or result.
+      - Restart reconstructs compatible `LogicalModelInput` through the LLM boundary while `ClientProjection` displays only authorized canonical facts.
+      - A fork or provider change preserves provenance and requires compatible bindings and private interpretation; unsupported continuation-critical replay blocks dependent execution without reinterpreting provider keys as engine identity.
+    invariants_touched: [provider-replay-ordered-opaque, replay-binding-occurrence, replay-consistent-acceptance, replay-immutable-compatible, replay-not-public-authority, complete-logical-input]
 
   - name: Readers do not pin ownership or bypass deletion
     actors: [Client]

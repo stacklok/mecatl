@@ -236,6 +236,12 @@ This supports durable hook contributions without establishing arbitrary hook-own
 They are separate from conversation history, and fork copies are best-effort: attachment-copy failure does not fail the conversation fork.
 This is a useful distinction between optional annotations and continuation-critical records whose omission must fail a fork.
 
+The [typed ResponseItem representation](https://github.com/openai/codex/blob/92caad782887cde063572fc0a0efbf5b1317520d/codex-rs/protocol/src/models.rs#L1036-L1122), inspected at the separate revision `92caad782887cde063572fc0a0efbf5b1317520d`, also supplies a replay-fidelity reference.
+It keeps message content as separate items with optional per-message phases, reasoning items with their IDs and encrypted content, and function-call item IDs distinct from `call_id`.
+This source establishes richer item representation, not a guarantee about storage acceptance ordering or partial-response recovery.
+Mecatl's [provider replay contract](session-commit-history.md#versioned-provider-replay-and-richer-response-items) therefore reserves a versioned opaque ordered representation and occurrence-specific bindings alongside canonical history, rather than flattening private fidelity into display text.
+It does not adopt Codex's incremental completed-item acceptance, partial-failure behavior, or WebSocket continuation, and it does not change the no-migration cutover.
+
 **Lesson:** adopt an explicit storage contract and materialization watermark, while separately specifying append acceptance, durability, and live-notification behavior.
 
 ## Pi

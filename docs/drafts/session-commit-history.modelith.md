@@ -42,6 +42,7 @@ The private, versioned, append-only ordered facts of a `Session`. An accepted po
 **Relationships**
 
 - `ContinuationCheckpoint` — 1:n
+- `ProviderReplay` — 1:n — owned
 
 **Invariants**
 
@@ -50,7 +51,7 @@ The private, versioned, append-only ordered facts of a `Session`. An accepted po
 - **retained-compaction-history** — Compaction changes model continuation but preserves earlier `CommittedHistory` for authorized display and forks.
 - **lost-commit-fails-closed** — Missing previously acknowledged `CommittedHistory` stops writes and confirmed projections; local memory cannot overwrite history to repair it.
 - **commit-before-confirmed-publication** — Confirmed `ClientProjection` updates and notifications follow successful outermost acceptance into `CommittedHistory`; a savepoint or failed append is not a committed boundary.
-- **capture-obeys-disclosure** — `CommittedHistory` capture of `LogicalModelInput` and `HookInvocation` evidence obeys secret scrubbing and withholding or destruction rules; transformation evidence cannot preserve prohibited bytes through another path.
+- **capture-obeys-disclosure** — `CommittedHistory` capture of `LogicalModelInput`, `ProviderReplay`, and `HookInvocation` evidence obeys secret scrubbing and withholding or destruction rules; transformation evidence cannot preserve prohibited bytes through another path.
 
 ### `ContinuationCheckpoint`
 
@@ -143,6 +144,22 @@ A durable request for an authorized decision gating work in an exact `Run`. Mult
 - **first-committed-approval-wins** — The first valid authorized committed `PermissionAsk` resolution wins; later conflicting answers receive the authoritative already-resolved outcome and cannot reverse it.
 - **durable-ask-is-not-execution** — A pending `PermissionAsk` can survive unloading and ownership release; resolving it rehydrates the exact ask through the authorized activation boundary.
 
+### `ProviderReplay`
+
+A private versioned provider-owned representation of ordered output items and occurrence-specific bindings to canonical conversation, calls, and results in `CommittedHistory`. It preserves item boundaries and opaque payloads without assuming one canonical assistant message equals one provider message or reasoning item. The LLM boundary owns interpretation and compatibility; public projections and executable tool objects do not.
+
+**Relationships**
+
+- `LogicalModelInput` — n:n — Compatible private replay incorporated into subsequent logical input.
+
+**Invariants**
+
+- **provider-replay-ordered-opaque** — Accepted `ProviderReplay` preserves ordered item boundaries and opaque signed or encrypted payloads byte-exact under capture policy; core cannot flatten or interpret their private meaning.
+- **replay-binding-occurrence** — `ProviderReplay` binds globally unique engine-owned canonical call identities to distinct provider pairing-key and item-ID namespaces within the producing session and request/turn occurrence; repeated provider keys cannot alias calls or results from another occurrence.
+- **replay-consistent-acceptance** — Canonical accepted outputs, calls, and results and their required `ProviderReplay` payloads and bindings share a consistent acceptance boundary; missing or mismatched replay state cannot authorize tool dispatch or dependent continuation.
+- **replay-immutable-compatible** — Accepted `ProviderReplay` owns immutable payloads and producer/version provenance; restart, forks, compaction, and provider changes require compatible LLM-boundary interpretation rather than mutable aliases or silent reuse of incompatible continuation-critical metadata.
+- **replay-not-public-authority** — A `ClientProjection` cannot reconstruct uncaptured private `ProviderReplay` or grant access to it, and provider keys cannot be reinterpreted as canonical engine call identity.
+
 ### `Run`
 
 A sequence of model turns within a `Session`, continued through requested tool calls and their results. In the normal course, the model ends the `Run` with a terminal response rather than requesting more tools; cancellation, failure, limits, and interruption can also end it. A `Run` has stable identity distinct from session identity and is server-owned rather than owned by the connection that requested it.
@@ -221,6 +238,7 @@ erDiagram
     Operation {}
     OwnershipClaim {}
     PermissionAsk {}
+    ProviderReplay {}
     Run {}
     Session {}
     SteerRevision {}
@@ -228,11 +246,13 @@ erDiagram
     Client ||..o{ ClientProjection : ""
     ClientProjection }o..|| CommittedHistory : ""
     CommittedHistory ||..o{ ContinuationCheckpoint : ""
+    CommittedHistory ||--o{ ProviderReplay : ""
     Extension ||..o{ Operation : ""
     Extension |o..o{ SteerSlot : ""
     LogicalModelInput }o..o{ HookInvocation : ""
     Operation }o..|| Run : ""
     PermissionAsk }o..|| Run : ""
+    ProviderReplay }o..o{ LogicalModelInput : ""
     Run ||--o{ LogicalModelInput : ""
     Session ||--|| CommittedHistory : ""
     Session ||--o{ Run : ""
@@ -402,7 +422,26 @@ erDiagram
 - **hook-output-before-dependent-execution** — Required completed `HookInvocation` evidence commits before dependent model or ordinary tool execution; transformations may batch with logical input or authorized intent without a separate write for every hook phase.
 - **hook-retry-not-tool-retry** — Repeating a `HookInvocation` does not authorize repeating an uncertain ordinary tool, bypassing an approval, or starting work without current `OwnershipClaim` authority.
 - **commit-before-confirmed-publication** — Confirmed `ClientProjection` updates and notifications follow successful outermost acceptance into `CommittedHistory`; a savepoint or failed append is not a committed boundary.
-- **capture-obeys-disclosure** — `CommittedHistory` capture of `LogicalModelInput` and `HookInvocation` evidence obeys secret scrubbing and withholding or destruction rules; transformation evidence cannot preserve prohibited bytes through another path.
+- **capture-obeys-disclosure** — `CommittedHistory` capture of `LogicalModelInput`, `ProviderReplay`, and `HookInvocation` evidence obeys secret scrubbing and withholding or destruction rules; transformation evidence cannot preserve prohibited bytes through another path.
+
+### Ordered private replay with repeated provider keys
+
+**Steps**
+
+1. A provider completes a turn with separate message, reasoning, and function-call items in order; the engine assigns a canonical globally unique tool-call identity.
+2. The owner consistently accepts canonical conversation facts with `ProviderReplay` retaining item boundaries, per-item metadata, opaque payloads, and occurrence-specific call bindings.
+3. Another completed turn reuses a provider pairing key, but its distinct producing occurrence prevents aliasing the earlier call or result.
+4. Restart reconstructs compatible `LogicalModelInput` through the LLM boundary while `ClientProjection` displays only authorized canonical facts.
+5. A fork or provider change preserves provenance and requires compatible bindings and private interpretation; unsupported continuation-critical replay blocks dependent execution without reinterpreting provider keys as engine identity.
+
+**Invariants touched**
+
+- **provider-replay-ordered-opaque** — Accepted `ProviderReplay` preserves ordered item boundaries and opaque signed or encrypted payloads byte-exact under capture policy; core cannot flatten or interpret their private meaning.
+- **replay-binding-occurrence** — `ProviderReplay` binds globally unique engine-owned canonical call identities to distinct provider pairing-key and item-ID namespaces within the producing session and request/turn occurrence; repeated provider keys cannot alias calls or results from another occurrence.
+- **replay-consistent-acceptance** — Canonical accepted outputs, calls, and results and their required `ProviderReplay` payloads and bindings share a consistent acceptance boundary; missing or mismatched replay state cannot authorize tool dispatch or dependent continuation.
+- **replay-immutable-compatible** — Accepted `ProviderReplay` owns immutable payloads and producer/version provenance; restart, forks, compaction, and provider changes require compatible LLM-boundary interpretation rather than mutable aliases or silent reuse of incompatible continuation-critical metadata.
+- **replay-not-public-authority** — A `ClientProjection` cannot reconstruct uncaptured private `ProviderReplay` or grant access to it, and provider keys cannot be reinterpreted as canonical engine call identity.
+- **complete-logical-input** — `LogicalModelInput` preserves complete admitted effective values and transformation provenance, subject to capture policy; request-local changes cannot silently escape `CommittedHistory`.
 
 ### Readers do not pin ownership or bypass deletion
 

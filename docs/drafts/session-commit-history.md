@@ -27,6 +27,7 @@ Private continuation and public display derive from the same authority, so they 
 A reconnecting client can recover the complete authorized history, including records from before compaction, and then follow committed changes without a silent gap.
 Compaction changes model context, not retained history.
 The private history preserves complete logical model inputs and canonical outcomes, subject to admission, disclosure, secret scrubbing, and explicit withholding or destruction rules.
+Versioned provider-owned replay preserves richer ordered response items without assuming a one-to-one mapping to canonical assistant messages.
 Checkpoints and display projections accelerate or authorize reads; neither is another authority.
 
 ### Execution follows committed decisions
@@ -245,6 +246,35 @@ The [hook execution contract](#hook-execution-and-recovery) defines invocation i
 High fidelity is the default and the first cutover does not trim history.
 Future filtering or downsampling needs explicit retention semantics identifying what can no longer be reconstructed and how affected reads, forks, and cursors behave.
 This is not permission to admit unbounded payloads: current large-payload bounds and the [payload admission contract](#payload-admission-and-external-artifacts) still apply.
+
+#### Versioned provider replay and richer response items
+
+The storage contract must retain a private, versioned `ProviderReplay` representation alongside canonical conversation facts without making it another authority.
+It can represent an ordered sequence of provider output items, including kinds the canonical conversation does not render or execute.
+One canonical assistant message need not equal one provider message, one text string, or one reasoning payload.
+Item order, content boundaries, and occurrence-specific metadata must survive capture rather than being collapsed into last-wins fields.
+The LLM boundary owns the representation, codecs, and compatibility decisions; storage preserves accepted opaque payloads and core does not interpret signed or encrypted contents.
+
+Canonical `ToolCallID` is globally unique and engine-owned.
+Provider pairing keys, output-item IDs, and engine call identity are separate namespaces, even when a provider supplies similar-looking strings.
+Provider metadata stays behind the LLM boundary rather than being added to executable domain `ToolCall` or `ToolResult` objects.
+Bindings identify the producing session, request/turn occurrence, and relevant provider item so repeated provider keys in completed turns cannot alias another call or result.
+Canonical identity must never be recovered by treating an old provider-ID key as an engine ID.
+
+For example, an OpenAI Responses replay representation can preserve separate assistant message items and their phases, reasoning-item IDs bound to their exact encrypted payloads, and function-call item IDs distinct from both provider `call_id` and engine `ToolCallID`.
+These are illustrative adapter-owned details, not a fixed core schema or an exhaustive list of response kinds.
+A text-only client projection or event fold cannot reconstruct private metadata that was never captured.
+
+Canonical accepted output, replay bindings, and any required replay payload share a consistent acceptance boundary.
+Do not accept a canonical call with missing or mismatched required replay state, or dispatch from a partially accepted replay bundle.
+Retain producer/version provenance and immutable ownership of payloads and bindings; no mutable aliases can change accepted history.
+Restart, compaction, forks, and provider switches must preserve the relevant occurrence bindings and apply LLM-boundary compatibility and fork-transformation rules.
+Unsupported or incompatible continuation-critical state fails explicitly; core cannot guess, silently drop required metadata, or replay it through an incompatible adapter.
+Capture and disclosure policies still apply, and accepted opaque signed/encrypted values remain byte-exact rather than being interpreted or rewritten by core.
+
+This reserves storage capacity and semantics for richer replay without authorizing fuller provider replay implementation in this change.
+It does not adopt incremental acceptance of completed output items, partial-response failure/retry behavior, or WebSocket continuation; those need separate execution contracts.
+Versioning and explicit compatibility must not silently reinterpret old IDs or payloads, and the no-legacy-migration cutover remains unchanged.
 
 #### Core records and extensions
 
@@ -1354,6 +1384,7 @@ This draft and its companion model retain the unresolved design questions while 
 7. Concrete logical-request and transformation record APIs, stable hook invocation ID/occurrence formats, hook definition/version/configuration capture, and the tool-hook failure state machine.
    Complete effective logical model inputs and at-least-once hook execution are settled; exact historical raw transport requests are outside scope.
    How disclosure, result withholding, destruction, and held-byte recovery interact remains open, without retaining denied bytes in hook traces.
+   Provider replay codecs, ordered item envelopes, occurrence-specific canonical-call bindings, and compatibility/fork/compaction/provider-switch contracts remain interface work; reserving richer representation does not authorize incremental response acceptance or new retry behavior.
 8. Compatibility/dependency summary versions and artifact references, bounded causal reference scopes/remapping, and concrete conformance/fault-injection contracts across adapters.
 9. Development staging or coexistence with current paths versus a clean runtime cutover.
    The first-cutover storage break and absence of legacy migration remain fixed; no long-lived branch or side-package strategy is selected here.
@@ -1382,6 +1413,8 @@ These names describe domain concepts, not finalized API types or wire encodings.
 | Continuation-critical | A type whose interpretation is required to reconstruct state or continue safely, unlike optional display-only detail. |
 | Request / intent / result | The model's requested tool call / the effective authorized call after trusted rewrites committed as its dispatch gate / its established or explicit recovery outcome. An intent is not proof of completion; no intent excludes tool dispatch, not pre-intent hook effects. |
 | `LogicalModelInput` | The complete reconstructible effective model request, including prompt, messages/media, declarations, selection/parameters, and relevant private continuation, not raw transport bytes. |
+| `ProviderReplay` | Versioned, provider-owned private ordered output items and occurrence-specific bindings retained with canonical history; payload meaning belongs to the LLM boundary, not executable tool objects or display projections. |
+| `ToolCallID` / provider keys | Globally unique engine call identity / provider pairing or item identifiers scoped by their producing occurrence; provider keys may repeat and never substitute for engine identity. |
 | `HookInvocation` / hook invocation identity | One anchored logical hook execution / its stable harness-supplied identity, reused on retries with the same definition/input/parameters and distinct from ordinary tool execution or a physical attempt. |
 | `SteerSlot` / `SteerRevision` | Replaceable pending input for one source / an identified committed version of its content and disposition. Revision-specific consumption cannot erase a newer replacement. |
 | Safe model-input boundary | Before a next model request, when the engine can incorporate pending input without interrupting a request or bypassing approvals and outcome commits. |
