@@ -55,14 +55,25 @@ func k8sDeprecationWarnings(t *testing.T, argv ...string) []string {
 }
 
 func TestDeprecatedAliasesStillResolve(t *testing.T) {
-	for _, tc := range []struct{ posture, token string }{
-		{"strict", "default"}, {"trusted", "trusted"}, {"auto", "auto"}, {"yolo", "yolo"},
+	// Each deprecated --posture alias must resolve to the correct posture and emit
+	// exactly one deprecation WARN naming the replacement --permission-mode token.
+	// Session mode for deprecated paths is set inside Build (not at flag-parse time).
+	for _, tc := range []struct {
+		posture     string
+		wantPosture app.Posture
+		token       string
+	}{
+		{"strict", app.PostureStrict, "default"},
+		{"auto", app.PostureAuto, "auto"},
+		{"yolo", app.PostureYolo, "yolo"},
 	} {
 		t.Run(tc.posture, func(t *testing.T) {
-			aliasPosture, aliasMode, _ := k8sPair(t, "--posture", tc.posture)
-			tokPosture, tokMode, _ := k8sPair(t, "--permission-mode", tc.token)
-			if aliasPosture != tokPosture || aliasMode != tokMode {
-				t.Fatalf("--posture %s = (%s, %s), want the %q token's (%s, %s)", tc.posture, aliasPosture, aliasMode, tc.token, tokPosture, tokMode)
+			aliasPosture, _, ac := k8sPair(t, "--posture", tc.posture)
+			if aliasPosture != tc.wantPosture {
+				t.Fatalf("--posture %s posture = %s, want %s", tc.posture, aliasPosture, tc.wantPosture)
+			}
+			if ac.DefaultSessionMode != "" {
+				t.Fatalf("--posture %s: cmd layer must not set DefaultSessionMode (got %q); Build sets it", tc.posture, ac.DefaultSessionMode)
 			}
 			warns := k8sDeprecationWarnings(t, "--posture", tc.posture)
 			if len(warns) != 1 || !strings.Contains(warns[0], "--permission-mode "+tc.token) {
@@ -113,30 +124,44 @@ func TestDefaultsReproduceCurrentBehaviour(t *testing.T) {
 }
 
 func TestBareMecak8sRefusesWithoutCheckerChoice(t *testing.T) {
-	build := func(argv ...string) error {
-		cfg, err := parseFlags(argv)
-		if err != nil {
-			t.Fatalf("parseFlags(%q): %v", argv, err)
-		}
-		ac := appConfig(cfg, port.NopDiagnostics{}, observability{})
-		ac.RedisURL = ""
-		ac.SchedulerEnabled = false
-		ac.SessionLeaseK8sNamespace = ""
-		ac.Workspace = t.TempDir()
-		ac.MockProvider = mockllm.New()
-		built, err := buildIsolated(t, context.Background(), ac)
-		if err == nil {
-			built.Close()
-		}
-		return err
+	// The checker gate is now a startup WARN, not a refusal.
+	// Build succeeds; entering auto mode without a checker is refused at SetMode time.
+	var buf bytes.Buffer
+	diag := slogdiag.NewFromLogger(slog.New(slog.NewTextHandler(&buf, nil)))
+	cfg, err := parseFlags(nil)
+	if err != nil {
+		t.Fatalf("parseFlags: %v", err)
 	}
-	err := build()
-	if err == nil || !strings.Contains(err.Error(), "no guardrails checker") || !strings.Contains(err.Error(), "--guardrails off") {
-		t.Fatalf("bare mecak8s Build err = %v, want the checker refusal naming --guardrails off", err)
+	ac := appConfig(cfg, diag, observability{})
+	ac.RedisURL = ""
+	ac.SchedulerEnabled = false
+	ac.SessionLeaseK8sNamespace = ""
+	ac.Workspace = t.TempDir()
+	ac.MockProvider = mockllm.New()
+	built, err := buildIsolated(t, context.Background(), ac)
+	if err != nil {
+		t.Fatalf("bare mecak8s must start (checker gate is now a WARN): %v", err)
 	}
-	if err := build("--guardrails=off"); err != nil {
+	built.Close()
+	if !strings.Contains(buf.String(), "no guardrails checker") || !strings.Contains(buf.String(), "--guardrails off") {
+		t.Errorf("bare mecak8s must WARN naming --guardrails off; log:\n%s", buf.String())
+	}
+	// With --guardrails off, Build must still succeed (no checker needed).
+	cfgOff, err := parseFlags([]string{"--guardrails=off"})
+	if err != nil {
+		t.Fatalf("parseFlags --guardrails=off: %v", err)
+	}
+	acOff := appConfig(cfgOff, port.NopDiagnostics{}, observability{})
+	acOff.RedisURL = ""
+	acOff.SchedulerEnabled = false
+	acOff.SessionLeaseK8sNamespace = ""
+	acOff.Workspace = t.TempDir()
+	acOff.MockProvider = mockllm.New()
+	built2, err := buildIsolated(t, context.Background(), acOff)
+	if err != nil {
 		t.Fatalf("mecak8s with an explicit --guardrails=off: %v", err)
 	}
+	built2.Close()
 }
 
 func TestPermissionModeFlagConflictsAndUnknownTokens(t *testing.T) {

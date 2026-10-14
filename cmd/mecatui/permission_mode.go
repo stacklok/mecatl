@@ -114,12 +114,26 @@ func deprecatedPermissionFlagWarnings(c config) []string {
 	}
 	hint := "no single token names this combination; it still resolves as before"
 	posture := app.ResolveAliasPosture(app.ParsePosture(c.posture), c.allowAllTools, c.trustProject)
-	mode := c.mode
 	if !c.modeFlagSet {
-		mode = client.ModeDefaultString
-	}
-	if tok, ok := app.PermissionModeForPair(posture, sessionModeFromTUI(mode)); ok {
-		hint = "use --permission-mode " + tok.Name
+		// No explicit session mode: look up the replacement token by posture alone.
+		// auto and yolo have their own session modes (ModeAuto/ModeYolo); the
+		// strict-posture tiers use ModeDefault. PermissionModeForPair with ModeDefault
+		// would miss auto and yolo since their tokens now use their own modes.
+		switch posture {
+		case app.PostureAuto:
+			hint = "use --permission-mode auto"
+		case app.PostureYolo:
+			hint = "use --permission-mode yolo"
+		default:
+			if tok, ok := app.PermissionModeForPair(posture, session.ModeDefault); ok {
+				hint = "use --permission-mode " + tok.Name
+			}
+		}
+	} else {
+		mode := c.mode
+		if tok, ok := app.PermissionModeForPair(posture, sessionModeFromTUI(mode)); ok {
+			hint = "use --permission-mode " + tok.Name
+		}
 	}
 	var out []string
 	add := func(flagName string) {

@@ -305,7 +305,7 @@ func TestDefaultConfigPolicyEvaluatesWithoutPanic(t *testing.T) {
 	defer built.Close()
 	svc := built.Service
 
-	sess, err := svc.CreateSession(ctx, session.ModeDefault, defaultLimits())
+	sess, err := svc.CreateSession(ctx, "", defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -388,7 +388,7 @@ func TestSubproviderHalfAFullBuildE2E(t *testing.T) {
 	defer built.Close()
 	svc := built.Service
 
-	sess, err := svc.CreateSession(ctx, session.ModeDefault, defaultLimits())
+	sess, err := svc.CreateSession(ctx, "", defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

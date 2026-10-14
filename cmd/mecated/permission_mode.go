@@ -14,7 +14,7 @@ import (
 // both halves a token sets and their lifetimes, and lists every valid token from
 // the composition table so help and parsing cannot drift.
 var permissionModeHelp = "permission mode, one of: " + strings.Join(app.PermissionModeNames(), ", ") +
-	". Sets two things: the process-wide posture, fixed at startup (strict for plan, default, and accept-edits; trusted for trusted and trusted-accept-edits; auto; yolo), " +
+	". Sets two things: the process-wide posture, fixed at startup (strict for plan, default, and accept-edits; auto; yolo), " +
 	"and the session mode new sessions start in, which each session may change. Default: default. " +
 	"auto and yolo allow tools without asking, so they need a guardrails checker (--guardrails-model) or an explicit --guardrails off, and are refused for root unless MECATL_SANDBOX=1 or IS_SANDBOX=1. " +
 	"Deny rules and configured ask rules still apply. Replaces the deprecated --posture and --yolo; --trust-project still combines with it."
@@ -57,9 +57,15 @@ func warnDeprecatedPermissionFlags(diag port.Diagnostics, cfg config) {
 	}
 }
 
-// postureReplacementToken names the token equivalent to a legacy --posture
-// value with the default session mode (strict maps to default).
+// postureReplacementToken names the token that replaces a legacy --posture value.
+// auto and yolo are their own tokens; the strict-posture tiers map to "default".
 func postureReplacementToken(raw string) string {
+	switch app.ParsePosture(raw) {
+	case app.PostureAuto:
+		return "auto"
+	case app.PostureYolo:
+		return "yolo"
+	}
 	if tok, ok := app.PermissionModeForPair(app.ParsePosture(raw), session.ModeDefault); ok {
 		return tok.Name
 	}

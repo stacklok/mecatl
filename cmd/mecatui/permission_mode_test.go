@@ -109,7 +109,7 @@ func TestPermissionModeConflictsWithAliases(t *testing.T) {
 		}
 	}
 	_, _, err := parseTransportFlagsTest(t, modeLocal, []string{"--mock", "--workspace", "/abs", "--permission-mode", "accept-all"})
-	if err == nil || !strings.Contains(err.Error(), "trusted-accept-edits") {
+	if err == nil || !strings.Contains(err.Error(), "accept-edits") {
 		t.Fatalf("unknown token error = %v, want the valid token list", err)
 	}
 	if _, _, err := parseTransportFlagsTest(t, modeLocal, []string{"--mock", "--workspace", "/abs", "--permission-mode", "plan", "--trust-project"}); err != nil {
@@ -128,7 +128,7 @@ func TestConnectRefusesPostureHalf(t *testing.T) {
 	if mode, serverDefault := cfg.requestedSessionMode(); mode != "accept-edits" || serverDefault {
 		t.Errorf("connect session half = %q (server default %v), want accept-edits", mode, serverDefault)
 	}
-	for _, tok := range []string{"trusted", "trusted-accept-edits", "auto", "yolo"} {
+	for _, tok := range []string{"auto", "yolo"} {
 		_, _, err := parseTransportFlagsTest(t, modeConnect, []string{"--permission-mode", tok})
 		if err == nil {
 			t.Fatalf("connect --permission-mode %s: want an error", tok)
@@ -177,7 +177,7 @@ func TestDefaultsReproduceCurrentBehaviour(t *testing.T) {
 		{name: "unconfigured", args: nil, wantPosture: "strict", wantMode: "default"},
 		{name: "mode plan", args: []string{"--mode", "plan"}, wantPosture: "strict", wantMode: "plan"},
 		{name: "permission-mode plan", args: []string{"--permission-mode", "plan"}, wantPosture: "strict", wantMode: "plan"},
-		{name: "permission-mode trusted-accept-edits", args: []string{"--permission-mode", "trusted-accept-edits"}, wantPosture: "trusted", wantMode: "accept-edits"},
+		{name: "permission-mode accept-edits", args: []string{"--permission-mode", "accept-edits"}, wantPosture: "strict", wantMode: "accept-edits"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

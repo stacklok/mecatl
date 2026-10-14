@@ -63,9 +63,21 @@ type RuleResolver interface {
 // when nil, Evaluate consults only the static rules + learned rules (today's
 // behaviour), which is what the allow-all demo/forked-member policies want.
 type Policy struct {
-	eval     *governance.Evaluator
-	store    port.PermissionStore
-	resolver RuleResolver
+	eval      *governance.Evaluator // standard evaluator (no loose substitution)
+	evalLoose *governance.Evaluator // yolo evaluator (with loose substitution for ModeYolo)
+	store     port.PermissionStore
+	resolver  RuleResolver
+}
+
+// allowAllCLIRules returns the mode-driven allow-all rules injected by ModeAuto
+// and ModeYolo at evaluation time (not at startup). ScopeCLI is above the
+// built-in floor (ScopeBuiltinDefault), so a configured Deny or Ask in any
+// scope above the floor still wins — the same guarantee the startup yoloAllowAllRule
+// provided. It uses no Audience tag (AudienceAll), so it matches both main and
+// child evaluators; for child engines the child floor already covers mutates, so
+// this is harmless redundancy.
+func allowAllCLIRules() []governance.Rule {
+	return []governance.Rule{{Scope: governance.ScopeCLI, Effect: governance.Allow}}
 }
 
 // AllowAllFloorRules returns the CANONICAL "default child posture" ruleset: a
@@ -90,11 +102,17 @@ func AllowAllFloorRules() []governance.Rule {
 // per call by the underlying Evaluator. A nil store disables rule learning: Learn
 // is a no-op and Evaluate consults only the static rules.
 //
-// Optional governance.EvaluatorOptions (e.g. WithLooseSubstitution for the --yolo
-// posture) are forwarded to the underlying Evaluator. The resolver (file-based config)
+// Optional governance.EvaluatorOptions are forwarded to the underlying Evaluator.
+// A second evalLoose evaluator is built with WithLooseSubstitution(true) added;
+// it is selected by ModeYolo at Evaluate time. The resolver (file-based config)
 // is unset; use NewPolicyWithResolver to wire it.
 func NewPolicy(rules []governance.Rule, store port.PermissionStore, evalOpts ...governance.EvaluatorOption) *Policy {
-	return &Policy{eval: governance.NewEvaluator(rules, evalOpts...), store: store}
+	looseOpts := append(append([]governance.EvaluatorOption{}, evalOpts...), governance.WithLooseSubstitution(true))
+	return &Policy{
+		eval:      governance.NewEvaluator(rules, evalOpts...),
+		evalLoose: governance.NewEvaluator(rules, looseOpts...),
+		store:     store,
+	}
 }
 
 // NewPolicyWithResolver is NewPolicy plus a RuleResolver that supplies file-based
@@ -102,16 +120,20 @@ func NewPolicy(rules []governance.Rule, store port.PermissionStore, evalOpts ...
 // (issue #13). A nil resolver behaves exactly like NewPolicy. Optional
 // governance.EvaluatorOptions are forwarded to the underlying Evaluator.
 func NewPolicyWithResolver(rules []governance.Rule, store port.PermissionStore, resolver RuleResolver, evalOpts ...governance.EvaluatorOption) *Policy {
-	return &Policy{eval: governance.NewEvaluator(rules, evalOpts...), store: store, resolver: resolver}
+	looseOpts := append(append([]governance.EvaluatorOption{}, evalOpts...), governance.WithLooseSubstitution(true))
+	return &Policy{
+		eval:      governance.NewEvaluator(rules, evalOpts...),
+		evalLoose: governance.NewEvaluator(rules, looseOpts...),
+		store:     store,
+		resolver:  resolver,
+	}
 }
 
 // acceptEditsRules are the floor-loosening ALLOW rules session.ModeAccept
-// ("accept-edits") contributes: Edit and Write at ScopeCLI, the same scope the
-// --yolo allow-all posture rule uses (issue #32's childRules AllowAllTools
-// injection) for a runtime/session-level policy decision. Being scoped ABOVE
-// ScopeBuiltinDefault, it can only ever LOOSEN the built-in mutate-ask floor
+// ("accept-edits") contributes: Edit and Write at ScopeCLI. Being scoped ABOVE
+// ScopeBuiltinDefault, they can only ever LOOSEN the built-in mutate-ask floor
 // (resolveSimpleRule's existing issue-#13 mechanic: a higher-precedence Allow
-// may loosen ONLY an Ask scoped at ScopeBuiltinDefault) — it can never suppress
+// may loosen ONLY an Ask scoped at ScopeBuiltinDefault) — they can never suppress
 // a CONFIGURED deny/ask for Edit/Write from any scope above the floor, and Shell
 // is untouched (accept-edits auto-accepts file edits only, mirroring the
 // client-visible "accept edits" contract; it is not a broader auto-run mode).
@@ -121,20 +143,34 @@ var acceptEditsRules = []governance.Rule{
 }
 
 // Evaluate returns the permission decision for tool call c under mode, scoped to
-// sessionID and the session workspace ws. Plan mode (session.ModePlan) forces a
-// deny for mutating tools (Edit/Write and non read-only Shell) BEFORE any extra
-// rule is consulted. Accept-edits mode (session.ModeAccept) contributes the
-// floor-loosening acceptEditsRules into the extra set, so Edit/Write auto-allow
-// UNLESS a configured (above-floor) deny/ask says otherwise. All other modes
-// evaluate against the static rule set PLUS this session's learned allows (when
-// a store is configured) PLUS the file-based config rules that apply to ws (when
-// a resolver is configured). Because resolution is deny-dominant across the
-// whole merged set, an extra allow can never override a static (or config)
-// deny/ask.
+// sessionID and the session workspace ws.
+//
+// Mode drives the full effective policy at evaluation time:
+//   - ModePlan: hard-deny of mutating tools BEFORE any rule (plan-mode gate).
+//   - ModeAccept: injects acceptEditsRules (Edit/Write auto-allow).
+//   - ModeAuto: injects allowAllCLIRules() — a ScopeCLI allow-all that loosens
+//     the built-in mutate-ask floor. Configured deny/ask in any scope still win.
+//   - ModeYolo: same as ModeAuto plus loose substitution (the built-in
+//     substitution Ask floor is lifted so $()/backtick commands auto-run).
+//   - ModeDefault: static rules + learned allows only.
+//
+// Allow-all behavior is NOT baked into the evaluator's base rules at startup;
+// it is injected here based on the session's CURRENT mode. Switching from
+// yolo→default actually removes the allow-all floor. A configured Deny in any
+// scope and a deliberately configured Ask always win.
 func (p *Policy) Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) port.PermissionResult {
 	var extra []governance.Rule
-	if mode == session.ModeAccept {
+	planMode := mode == session.ModePlan
+	eval := p.eval // default: standard evaluator, no loose substitution
+
+	switch mode {
+	case session.ModeAccept:
 		extra = append(extra, acceptEditsRules...)
+	case session.ModeAuto:
+		extra = append(extra, allowAllCLIRules()...)
+	case session.ModeYolo:
+		extra = append(extra, allowAllCLIRules()...)
+		eval = p.evalLoose // yolo: loose substitution enabled
 	}
 	if p.store != nil {
 		extra = append(extra, p.store.Rules(sessionID)...)
@@ -142,7 +178,7 @@ func (p *Policy) Evaluate(ctx context.Context, sessionID session.SessionID, mode
 	if p.resolver != nil {
 		extra = append(extra, p.resolver.Resolve(ctx, ws)...)
 	}
-	return port.PermissionResult{Decision: p.eval.EvaluateWith(c.Name, c.Args, mode == session.ModePlan, extra)}
+	return port.PermissionResult{Decision: eval.EvaluateWith(c.Name, c.Args, planMode, extra)}
 }
 
 // Learn records a per-session allow rule for tool call c (the model's "allow

@@ -25,7 +25,8 @@ func TestBuildContextualReviewerAllowsNewFileWriteWithoutMissingEvidenceAsk(t *t
 		t.Fatal(err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{MaxTurns: 2})
+	// ModeYolo: Write is auto-allowed (allow-all rules); the guardrails block fires.
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeYolo, session.Limits{MaxTurns: 2})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1041,16 +1041,11 @@ type Config struct {
 	// mecatui defaults false.
 	Headless bool
 
-	// AllowAllTools, when set, injects a single ScopeCLI allow-all rule into BOTH
-	// the MAIN engine's static ruleset (mainRules, AudienceMain) AND the
-	// child/member ruleset (childRules, AudienceSubagent) via the shared
-	// yoloAllowAllRule. The RULE binds main AND children — it loosens the built-in
-	// mutate-ask floor for both. The built-in substitution Ask floor is
-	// additionally loosened ONLY for the main engine (mainEvaluatorOptions'
-	// WithLooseSubstitution; childEvaluatorOptions deliberately omits it), so a
-	// child's $()/backtick command still resolves through the child-ask model. A
-	// Deny in any scope and any CONFIGURED Ask still win (see
-	// docs/architecture/governance.md).
+	// AllowAllTools, when set by the cmd layer (--yolo flag), is the input that
+	// resolvePosture uses as the `yolo` alias to MAX-fold the posture to PostureYolo.
+	// It is NOT used for rule injection (that is now mode-driven: Policy.Evaluate
+	// injects allowAllCLIRules for ModeAuto/ModeYolo at call time). Setting it
+	// directly in Config maps to ModeYolo behavior via applyPosture's fallback.
 	AllowAllTools bool
 
 	// Posture is the graduated operator trust/automation tier (strict < trusted <
@@ -1068,13 +1063,12 @@ type Config struct {
 	// choose is a leak with no consenting author. Set via mecated --deployment-id,
 	// which bounds and validates it before it reaches here.
 	DeploymentID string
-	// LooseChildSubstitution loosens the built-in substitution Ask floor for
-	// CHILD/subagent/branch engines (childEvaluatorOptions adds WithLooseSubstitution
-	// when set), turning OFF the child prompt-injection defense so a $()/backtick/
-	// heredoc command auto-runs in a subagent. Derived by applyPosture: TRUE only
-	// under PostureYolo. strict/trusted/auto leave it false (the child substitution
-	// floor stands; a child's substitution still resolves through the child-ask
-	// model). NEVER set directly — it is a posture-derived knob.
+	// LooseChildSubstitution is now mode-driven: a child session in ModeYolo uses
+	// Policy's evalLoose evaluator (built with WithLooseSubstitution=true) rather
+	// than a startup-time evaluator option. This field is no longer set by
+	// applyPosture and is no longer consulted by childEvaluatorOptions.
+	// It is kept for backward compat with existing test fixtures; production code
+	// should use ModeYolo instead.
 	LooseChildSubstitution bool
 	// PostureFlagSet records whether the operator passed an explicit --posture flag.
 	// When true, foldOperatorPosture leaves the operator-YAML posture: value alone
@@ -1094,6 +1088,11 @@ type Config struct {
 	// (server.Config.DefaultMode). Empty means session.ModeDefault. It is only a
 	// starting point; a session may later change its own mode.
 	DefaultSessionMode session.PermissionMode
+	// MaxAllowedMode is the server ceiling: the most-permissive mode a session on
+	// this server is allowed to enter. SetMode rejects a mode above this ceiling.
+	// It is set by foldPermissionMode from the permission-mode token. Empty means
+	// no ceiling (all modes reachable). See internal/adapter/server/service.go SetMode.
+	MaxAllowedMode session.PermissionMode
 	// permissionModeName is the token the operator chose, for messages. Set by
 	// foldPermissionMode; empty when only the deprecated surface was used.
 	permissionModeName string
@@ -1695,8 +1694,10 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// scalar (read at construction from the user-global/CLI tiers) is taken here. The
 	// REAL cfg.permResolver is built below with the final (posture-raised)
 	// TrustProject. Aliases (--yolo ⇒ yolo, --trust-project ⇒ ≥trusted) raise the tier
-	// MAX-fold; applyPosture then derives AllowAllTools / LooseChildSubstitution /
-	// the TrustProject floor.
+	// MAX-fold; applyPosture then derives the TrustProject floor.
+	// AllowAllTools and LooseChildSubstitution are no longer derived by applyPosture;
+	// allow-all and loose-substitution behavior is now mode-driven (Policy.Evaluate
+	// injects allowAllCLIRules for ModeAuto/ModeYolo at evaluation time).
 	cfg.permResolver = buildPermResolver(cfg)
 	var modeErr error
 	if cfg, modeErr = foldPermissionMode(cfg); modeErr != nil {
@@ -1707,6 +1708,15 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	cfg = foldOperatorSteer(cfg)
 	cfg.Posture = resolvePosture(cfg, postureNoCeiling)
 	cfg = applyPosture(cfg)
+	// Backward-compat: the deprecated --yolo alias (AllowAllTools=true) only sets
+	// AllowAllTools, not DefaultSessionMode/MaxAllowedMode, which foldPermissionMode
+	// only sets when --permission-mode or --posture is explicitly given. Catch the
+	// remaining case here: if DefaultSessionMode is still unset after the full fold,
+	// derive it from the resolved posture so --yolo and Config{AllowAllTools:true}
+	// behave correctly (sessions start in ModeYolo, not ModeDefault).
+	if cfg.DefaultSessionMode == "" {
+		cfg.DefaultSessionMode, cfg.MaxAllowedMode = postureToSessionModes(cfg.Posture)
+	}
 	// AUTHORITATIVE root/no-sandbox refusal: applied HERE, after the full posture fold,
 	// so an allow-all tier set ONLY via the operator-global settings.yaml `posture:`
 	// key (which the cmd-layer CLI-only pre-check never sees) cannot escape the refusal
@@ -2098,11 +2108,10 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if !checkerConfigured {
 		_, _, checkerConfigured = resolveGuardrailsCheckerModel(cfg)
 	}
-	if err := checkerRefusal(cfg, checkerConfigured); err != nil {
-		return nil, err
-	}
+	checkerRefusal(cfg, checkerConfigured)
 	cfg = resolveAskReviewerDefault(cfg)
 	narratePermissionMode(cfg, checkerConfigured)
+	checker, _ := checkerState(cfg, checkerConfigured)
 	// Emit the build-once composition facts (token counter / compaction strategy /
 	// slash commands) EXACTLY ONCE here, through the injected Diagnostics — keyed to
 	// the resolved MAIN model. The per-derivation builders do not log these (they
@@ -2451,7 +2460,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		// The session half of the permission-mode token: the mode a
 		// CreateSession that leaves mode unspecified starts in. Empty keeps the
 		// server's own ModeDefault.
-		DefaultMode:          cfg.DefaultSessionMode,
+		DefaultMode:                cfg.DefaultSessionMode,
+		MaxAllowedMode:             cfg.MaxAllowedMode,
+		EnforcingCheckerConfigured: checker == checkerEnforcing,
 		BuildID:              buildinfo.BuildID,
 		ServerImplementation: cfg.ServerImplementation,
 		// GetServerInfo looks up only a caller-selected, already-known provider
@@ -9772,57 +9783,21 @@ func defaultRules() []governance.Rule {
 	}
 }
 
-// yoloAllowAllRule returns the single ScopeCLI allow-all rule the --yolo posture
-// (cfg.AllowAllTools) injects, pinned to the given audience. It is the ONE
-// definition shared by mainRules (AudienceMain) and childRules (AudienceSubagent)
-// so the main and child rulesets cannot drift: under --yolo the SAME blanket
-// allow-all rule binds BOTH the main engine and its children, loosening the
-// built-in mutate-ask floor for both. A Deny in any scope and any CONFIGURED
-// Ask still win (deny-dominance + the configured-ask floor are unaffected). The
-// substitution-floor LOOSENING (WithLooseSubstitution) is separate from this rule: it
-// rides mainEvaluatorOptions always, and childEvaluatorOptions only under posture yolo
-// (the tier-dependent child loosening) — see internal/app/posture.go and
-// docs/architecture/governance.md.
-func yoloAllowAllRule(audience governance.Audience) governance.Rule {
-	return governance.Rule{Scope: governance.ScopeCLI, Effect: governance.Allow, Audience: audience}
-}
 
-// mainRules returns the main engine's static ruleset: the built-in floor, plus
-// — when cfg.AllowAllTools — a single ScopeCLI allow-all rule (AudienceMain)
-// that loosens that floor (a Deny in any scope and any configured Ask still
-// win). The SAME rule (with AudienceSubagent) is injected into childRules under
-// allow-all (posture auto/yolo), so the allow-all RULE binds both main and children;
-// the substitution-floor LOOSENING is separate and tier-dependent (mainEvaluatorOptions
-// always; childEvaluatorOptions only under posture yolo).
-func mainRules(cfg Config) []governance.Rule {
-	base := defaultRules()
-	if cfg.AllowAllTools {
-		base = append([]governance.Rule{yoloAllowAllRule(governance.AudienceMain)}, base...)
-	}
-	return base
+// mainRules returns the main engine's static ruleset. The built-in mutate-ask
+// floor (defaultRules) applies to all modes; auto/yolo allow-all is injected
+// at evaluation time by Policy.Evaluate based on the session's current mode,
+// not baked in here at startup. This lets mode switches actually change behavior.
+func mainRules(_ Config) []governance.Rule {
+	return defaultRules()
 }
 
 // mainEvaluatorOptions returns the governance.Evaluator construction options for the
-// MAIN engine's policy. It ALWAYS pins the audience to AudienceMain (issue #32):
-// without it, subagent-tagged resolver extras (the permconfig `subagent:` block)
-// would bind the main engine too — the audience pin is what keeps a child-scoped
-// rule from leaking into the interactive engine. When cfg.AllowAllTools (posture
-// auto OR yolo) it additionally loosens the built-in substitution Ask floor
-// (WithLooseSubstitution) — consistent with the mutate-ask floor the ScopeCLI
-// allow-all rule already loosens, so a substitution command does not prompt on the
-// MAIN engine. A configured Deny/Ask in any scope still wins (deny-dominance and the
-// configured-ask floor are unaffected). The CHILD substitution loosening is
-// TIER-DEPENDENT, not main-only: childEvaluatorOptions(cfg) ALSO adds
-// WithLooseSubstitution under posture yolo (cfg.LooseChildSubstitution) — so at auto
-// the main loosens but children still resolve their substitution through the child-ask
-// model, while at yolo children loosen too (child prompt-injection defense OFF). See
-// childEvaluatorOptions and internal/app/posture.go.
-func mainEvaluatorOptions(cfg Config) []governance.EvaluatorOption {
-	opts := []governance.EvaluatorOption{governance.WithAudience(governance.AudienceMain)}
-	if cfg.AllowAllTools {
-		opts = append(opts, governance.WithLooseSubstitution(true))
-	}
-	return opts
+// main engine's policy. It pins the audience to AudienceMain (issue #32).
+// Loose-substitution is now mode-driven (ModeYolo via Policy's evalLoose evaluator),
+// not baked in at startup.
+func mainEvaluatorOptions(_ Config) []governance.EvaluatorOption {
+	return []governance.EvaluatorOption{governance.WithAudience(governance.AudienceMain)}
 }
 
 // buildPermResolver constructs the ONE file-based permission-config resolver
@@ -9899,59 +9874,21 @@ func (p pinnedResolver) Resolve(ctx context.Context, _ tool.WorkspaceReader) []g
 }
 
 // childRules returns the child/member engine's static ruleset: the canonical
-// allow-all-at-the-floor (permpolicy.AllowAllFloorRules — the ONE definition,
-// shared with every "default child posture" test fixture so they cannot
-// drift). Scoping the allow-all to the BUILT-IN floor rather than the zero
-// Scope (ScopeManaged) is behaviour-neutral with no config (allow-all still matches everything → Allow, and the
-// floor-exception in resolveSimple only keys on the ASK side's scope) — pinned
-// by TestChildRulesFloorScopeNeutral — but it is load-bearing for the issue-#32
-// decision bits: the floor allow-all must NOT register as a CONFIGURED Allow
-// (scope above the floor), or every substitution-floored child ask would
-// qualify for FlooredConfiguredAllow. Only a real config rule (the permconfig
-// `subagent:` block) may carry an above-floor scope.
-//
-// Under --yolo (cfg.AllowAllTools) a ScopeCLI/AudienceSubagent allow-all rule
-// (the yoloAllowAllRule sibling of mainRules') is PREPENDED to the floor. This
-// is a SYMMETRY / anti-drift change, NOT a behavioural fix: the child floor is
-// ALREADY a blanket allow-all, so a plain (non-substitution) mutate resolves
-// Allow for a child with or without --yolo — children have no mutate-ask floor
-// to loosen (unlike the main engine's defaultRules() mutate-ask). The shared
-// yoloAllowAllRule keeps the main and child rulesets from diverging and gives
-// the TestAllowAllToolsBindsMainAndChildren kill-switch a real structure to pin;
-// it becomes load-bearing only if the child floor ever tightens to carry a real
-// mutate-Ask. It cannot suppress a configured `subagent:` Ask, and it does NOT
-// touch the substitution floor: WithLooseSubstitution is deliberately STILL
-// absent from childEvaluatorOptions, so a child's substitution ($()/backtick/
-// heredoc) command still resolves through the child-ask model (flooredAllowSafe:
-// the inner must independently classify read-only) — the substitution-floor
-// loosening stays main-only.
-func childRules(cfg Config) []governance.Rule {
-	base := permpolicy.AllowAllFloorRules()
-	if cfg.AllowAllTools {
-		base = append([]governance.Rule{yoloAllowAllRule(governance.AudienceSubagent)}, base...)
-	}
-	return base
+// allow-all floor (permpolicy.AllowAllFloorRules). Children inherit the
+// session's mode and mode-driven policy (allowAllCLIRules for auto/yolo) is
+// injected at evaluation time by Policy.Evaluate.
+func childRules(_ Config) []governance.Rule {
+	return permpolicy.AllowAllFloorRules()
 }
 
 // childEvaluatorOptions returns the governance.Evaluator options for a
 // child/member policy: the AudienceSubagent pin (issue #32), so top-level
 // (AudienceMain) config allow/ask never bind a child while `subagent:`-block
-// rules and AudienceAll denies do. It is TIER-AWARE (posture ladder): under
-// PostureYolo (cfg.LooseChildSubstitution) it ALSO loosens the built-in
-// substitution Ask floor for children (WithLooseSubstitution) — the deliberate
-// child prompt-injection-defense-OFF behaviour yolo carries, so a child's
-// $()/backtick/heredoc command auto-runs. At strict/trusted/auto it deliberately
-// OMITS WithLooseSubstitution: even under --yolo's allow-all RULE (auto/yolo bind
-// children via childRules' AudienceSubagent variant), a child's substitution
-// floor still resolves through the child-ask model (floored-configured-allow /
-// isolation / surface / deny) UNLESS the operator opted into yolo. A configured
-// Deny/Ask in any scope still wins regardless. See internal/app/posture.go.
-func childEvaluatorOptions(cfg Config) []governance.EvaluatorOption {
-	opts := []governance.EvaluatorOption{governance.WithAudience(governance.AudienceSubagent)}
-	if cfg.LooseChildSubstitution {
-		opts = append(opts, governance.WithLooseSubstitution(true))
-	}
-	return opts
+// rules and AudienceAll denies do. Loose-substitution is now mode-driven: a
+// child session in ModeYolo uses Policy's evalLoose evaluator, not a
+// startup-time evaluator option.
+func childEvaluatorOptions(_ Config) []governance.EvaluatorOption {
+	return []governance.EvaluatorOption{governance.WithAudience(governance.AudienceSubagent)}
 }
 
 // childPermPolicy builds the shared child/member permission policy (issue #32):

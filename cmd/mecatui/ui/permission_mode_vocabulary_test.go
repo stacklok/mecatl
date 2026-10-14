@@ -97,16 +97,14 @@ func runModeCycle(t *testing.T, m Model, steps []modeCycleStep) Model {
 }
 
 // TestModeSwitchCyclesEveryMode pins that under strict the cycle lands on all
-// seven modes. The posture-raising ones change nothing and say what to
-// configure and restart; the strict ones apply live.
+// five modes. The posture-raising ones (auto, yolo) change nothing and say what
+// to configure and restart; the strict ones apply live.
 func TestModeSwitchCyclesEveryMode(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, mode: "default"}
 	m := permissionModeTestModel(t, conv, postureStrict, true)
 	m = runModeCycle(t, m, []modeCycleStep{
 		{token: "plan", setMode: true, status: []string{"mode plan"}},
 		{token: "accept-edits", setMode: true, status: []string{"mode accept-edits"}},
-		{token: "trusted", blocked: true, status: []string{"trusted needs a restart", "mecatui --permission-mode trusted", "esc back to accept-edits"}},
-		{token: "trusted-accept-edits", blocked: true, status: []string{"mecatui --permission-mode trusted-accept-edits"}},
 		{token: "auto", blocked: true, status: []string{"guardrails checker", "guardrails.model", "mecatui --permission-mode auto", "prompts and edits are paused"}},
 		{token: "yolo", blocked: true, status: []string{"guardrails checker", "mecatui --permission-mode yolo"}},
 		{token: "default", setMode: true, status: []string{"mode default"}},
@@ -121,25 +119,30 @@ func TestModeSwitchCyclesEveryMode(t *testing.T) {
 	}
 }
 
-// TestModeSwitchUnderTrustedPosture pins that modes matching the running
-// posture apply fully, a mode below it applies its session half and says the
-// posture stays, and a mode above it needs a restart.
+// TestModeSwitchUnderTrustedPosture pins that a server running with the legacy
+// trusted posture (reachable via deprecated --posture trusted) handles the
+// 5-token vocabulary correctly: strict-posture tokens apply their session half,
+// posture-raising tokens (auto, yolo) are blocked.
+// Since "trusted" is no longer a named token, the start position is the session
+// mode itself ("default"), and cycling visits all five tokens.
 func TestModeSwitchUnderTrustedPosture(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, mode: "default"}
 	m := permissionModeTestModel(t, conv, postureTrusted, true)
-	if got := m.currentModeToken(); got != "trusted" {
-		t.Fatalf("start position = %q, want trusted", got)
+	// No vocabulary entry for posture=trusted; acceptedModeToken falls back to
+	// the session mode string.
+	if got := m.currentModeToken(); got != "default" {
+		t.Fatalf("start position = %q, want default (no trusted token in vocabulary)", got)
 	}
 	runModeCycle(t, m, []modeCycleStep{
-		{token: "trusted-accept-edits", setMode: true, status: []string{"mode trusted-accept-edits"}},
-		{token: "auto", blocked: true, status: []string{"auto needs a guardrails checker", "esc back to trusted-accept-edits"}},
+		{token: "plan", setMode: true},
+		{token: "accept-edits", setMode: true},
+		// auto and yolo raise posture above trusted → blocked (need restart).
+		{token: "auto", blocked: true, status: []string{"auto needs a guardrails checker", "esc back to accept-edits"}},
 		{token: "yolo", blocked: true, status: []string{"yolo needs a guardrails checker"}},
 		{token: "default", setMode: true, status: []string{"mode default · posture trusted stays until restart"}},
 		{token: "plan", setMode: true},
-		{token: "accept-edits", setMode: true},
-		{token: "trusted", setMode: true, status: []string{"mode trusted"}},
 	})
-	want := []string{"accept-edits", "default", "plan", "accept-edits", "default"}
+	want := []string{"plan", "accept-edits", "default", "plan"}
 	if got := conv.setModes(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("SetMode calls = %v, want %v", got, want)
 	}
@@ -152,9 +155,8 @@ func TestModeSwitchConnectNamesServerRestart(t *testing.T) {
 	m := permissionModeTestModel(t, conv, postureStrict, false)
 	m.activeMode = "accept-edits"
 	m = runModeCycle(t, m, []modeCycleStep{
-		{token: "trusted", blocked: true, status: []string{"remote server", "restart mecated with --permission-mode trusted"}},
-		{token: "trusted-accept-edits", blocked: true},
 		{token: "auto", blocked: true, status: []string{"--permission-mode auto and a guardrails checker"}},
+		{token: "yolo", blocked: true, status: []string{"remote server"}},
 	})
 	if text := visibleModeText(m); strings.Contains(text, "mecatui --permission-mode") {
 		t.Fatalf("connect hint offers a local relaunch: %q", text)
@@ -177,7 +179,7 @@ func TestBlockedModeHoldsPromptUntilEscape(t *testing.T) {
 			m = runModeCycle(t, m, []modeCycleStep{
 				{token: "plan", setMode: true},
 				{token: "accept-edits", setMode: true},
-				{token: "trusted", blocked: true},
+				{token: "auto", blocked: true},
 			})
 			m.phase = phaseRunning
 			if phase == phaseIdle {
@@ -200,7 +202,7 @@ func TestBlockedModeHoldsPromptUntilEscape(t *testing.T) {
 			if len(m.queued) != 0 || m.phase != phase {
 				t.Fatalf("blocked enter queued %v / moved phase to %v", m.queued, m.phase)
 			}
-			if text := visibleModeText(m); !strings.Contains(text, "mode trusted is blocked") || strings.Contains(stripANSIstr(m.renderInput()), "keep this draft") {
+			if text := visibleModeText(m); !strings.Contains(text, "mode auto is blocked") || strings.Contains(stripANSIstr(m.renderInput()), "keep this draft") {
 				t.Fatalf("blocked input area = %q", text)
 			}
 
@@ -230,9 +232,10 @@ func TestBlockedModeHoldsPromptUntilEscape(t *testing.T) {
 // blocked does not auto-send the queued follow-up.
 func TestBlockedModeHoldsQueuedPrompt(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, mode: "default"}
-	m := permissionModeTestModel(t, conv, postureTrusted, true)
+	m := permissionModeTestModel(t, conv, postureStrict, true)
 	m = runModeCycle(t, m, []modeCycleStep{
-		{token: "trusted-accept-edits", setMode: true},
+		{token: "plan", setMode: true},
+		{token: "accept-edits", setMode: true},
 		{token: "auto", blocked: true},
 	})
 	m.queued = []string{"queued follow-up"}
@@ -256,12 +259,11 @@ func TestHelpOverlayShowsVocabularyAndScopeSplit(t *testing.T) {
 	body := stripANSIstr(m.helpBody())
 
 	// The token table, written out independently of PermissionModeVocabulary.
+	// 5-token vocabulary: trusted and trusted-accept-edits removed.
 	want := []struct{ token, posture, session string }{
 		{"plan", "strict", "plan"},
 		{"default", "strict", "default"},
 		{"accept-edits", "strict", "accept-edits"},
-		{"trusted", "trusted", "default"},
-		{"trusted-accept-edits", "trusted", "accept-edits"},
 		{"auto", "auto", "default"},
 		{"yolo", "yolo", "default"},
 	}

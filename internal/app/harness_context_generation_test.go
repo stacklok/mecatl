@@ -853,7 +853,7 @@ func TestHarnessGenerationServiceReloadOwnerAuthorization(t *testing.T) {
 	defer built.Close()
 	alice := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser})
 	bob := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "issuer", Subject: "bob", GrantType: session.GrantTypeUser})
-	s, err := built.Service.CreateSession(alice, session.ModeDefault, session.Limits{})
+	s, err := built.Service.CreateSession(alice, "", session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}

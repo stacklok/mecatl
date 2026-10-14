@@ -150,7 +150,8 @@ func TestGuardrailApproveOnceE2EInteractiveAllow(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	// ModeAuto: Shell is auto-allowed (allow-all rules); the guardrails block fires.
+	sess, err := built.Service.CreateSession(ctx, session.ModeAuto, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -207,7 +208,8 @@ func TestGuardrailApproveOnceE2EInteractiveDeny(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	// ModeAuto: Shell is auto-allowed (allow-all rules); the guardrails block fires.
+	sess, err := built.Service.CreateSession(ctx, session.ModeAuto, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -259,7 +261,8 @@ func TestGuardrailApproveOnceE2EHeadlessTerminalBlock(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	// ModeAuto: Shell is auto-allowed (allow-all rules); the guardrails block fires.
+	sess, err := built.Service.CreateSession(ctx, session.ModeAuto, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -296,7 +299,8 @@ func TestGuardrailApproveOnceE2EYoloAdvisory(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	// ModeYolo: Shell is auto-allowed (allow-all rules + loose evaluator); guardrails are advisory.
+	sess, err := built.Service.CreateSession(ctx, session.ModeYolo, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

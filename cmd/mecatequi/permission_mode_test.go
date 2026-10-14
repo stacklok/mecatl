@@ -21,7 +21,7 @@ import (
 
 func TestDeprecatedAliasesStillResolve(t *testing.T) {
 	for _, tc := range []struct{ posture, token string }{
-		{"strict", "default"}, {"trusted", "trusted"}, {"auto", "auto"}, {"yolo", "yolo"},
+		{"strict", "default"}, {"auto", "auto"}, {"yolo", "yolo"},
 	} {
 		t.Run(tc.posture, func(t *testing.T) {
 			alias, err := parseFlags([]string{"--prompt", "x", "--posture", tc.posture})

@@ -319,12 +319,13 @@ type PermissionModeEntry struct {
 // cannot import the composition layer, so this is a display copy; a test in the
 // mecatui main package pins it to app.ParsePermissionMode so the two never drift.
 func PermissionModeVocabulary() []PermissionModeEntry {
+	// 5-token vocabulary (trusted and trusted-accept-edits removed; auto and yolo
+	// now have their own session modes ModeAuto/ModeYolo, which the proto wire and
+	// TUI render as "default" via ModeString(ModeFromString(...))).
 	return []PermissionModeEntry{
 		{Name: "plan", Posture: postureStrict, SessionMode: "plan"},
 		{Name: "default", Posture: postureStrict, SessionMode: client.ModeDefaultString},
 		{Name: "accept-edits", Posture: postureStrict, SessionMode: "accept-edits"},
-		{Name: "trusted", Posture: postureTrusted, SessionMode: client.ModeDefaultString},
-		{Name: "trusted-accept-edits", Posture: postureTrusted, SessionMode: "accept-edits"},
 		{Name: "auto", Posture: postureAuto, SessionMode: client.ModeDefaultString},
 		{Name: "yolo", Posture: postureYolo, SessionMode: client.ModeDefaultString},
 	}

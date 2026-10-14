@@ -147,7 +147,8 @@ func TestHarnessContext_HelpdeskDeploymentAndServiceSources(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer b.Close()
-			sess, err := b.Service.CreateSessionWithProfile(t.Context(), session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileNoFS)
+			// Pass "" to use the server's DefaultMode (ModeYolo from AllowAllTools=true config).
+			sess, err := b.Service.CreateSessionWithProfile(t.Context(), "", session.Limits{}, server.ProviderSelector{}, server.ProfileNoFS)
 			if err != nil {
 				t.Fatal(err)
 			}

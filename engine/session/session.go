@@ -75,6 +75,16 @@ const (
 	ModePlan PermissionMode = "plan"
 	// ModeAccept auto-accepts edits (acceptEdits).
 	ModeAccept PermissionMode = "acceptEdits"
+	// ModeAuto runs autonomously using an enforcing guardrails checker in place of
+	// human approval: every tool call is approved by the checker instead of asking.
+	// A configured Deny in any scope and deliberately configured human-required asks
+	// still apply. Requires an enforcing checker; switching to this mode without one
+	// is refused by the server.
+	ModeAuto PermissionMode = "auto"
+	// ModeYolo runs gate-free: no routine prompts and no enforcing checker. Advisory
+	// monitoring may remain. Configured deny rules and deliberately required human
+	// asks still apply.
+	ModeYolo PermissionMode = "yolo"
 )
 
 // ApprovalVerdict is the client's resolution of a permission.ask. It widens an

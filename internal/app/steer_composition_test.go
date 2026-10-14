@@ -120,7 +120,7 @@ func TestSteer_EnabledByDefaultEndToEnd(t *testing.T) {
 		t.Fatal("steer capability = false, want true (DEFAULT ON)")
 	}
 
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(ctx, "", session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestSteer_DisabledCompositionInert(t *testing.T) {
 		t.Fatal("steer capability = true, want false (DisableSteer)")
 	}
 
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(ctx, "", session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

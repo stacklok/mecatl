@@ -35,7 +35,8 @@ func TestBuildOwnerlessSessionHydratesLearnedSkillIntoTool(t *testing.T) {
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	// Pass "" to use the server's DefaultMode (ModeYolo from AllowAllTools=true config).
+	sess, err := built.Service.CreateSession(context.Background(), "", session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +71,8 @@ func TestBuildRestartHydratesCallerBoundLearnedSkillIntoListAndTool(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	sess, err := built1.Service.CreateSession(aliceCtx, session.ModeDefault, session.Limits{})
+	// Pass "" to use the server's DefaultMode (ModeYolo from AllowAllTools=true config).
+	sess, err := built1.Service.CreateSession(aliceCtx, "", session.Limits{})
 	if err != nil {
 		built1.Close()
 		t.Fatal(err)
@@ -137,11 +139,12 @@ func TestReplicaHydrationConvergesAcrossReplacementAndRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer replicaB.Close()
-	aliceSession, err := replicaB.Service.CreateSession(aliceCtx, session.ModeDefault, session.Limits{})
+	// Pass "" to use the server's DefaultMode (ModeYolo from AllowAllTools=true config).
+	aliceSession, err := replicaB.Service.CreateSession(aliceCtx, "", session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	bobSession, err := replicaB.Service.CreateSession(bobCtx, session.ModeDefault, session.Limits{})
+	bobSession, err := replicaB.Service.CreateSession(bobCtx, "", session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -513,7 +513,8 @@ service HarnessService {
 
 // PermissionMode is the session-wide permission posture, mirroring
 // session.PermissionMode. Plan mode exposes a read-only toolset; acceptEdits
-// auto-accepts edits.
+// auto-accepts edits; auto runs autonomously with an enforcing guardrails
+// checker; yolo runs gate-free with no enforcing checker.
 enum PermissionMode {
   // PERMISSION_MODE_UNSPECIFIED defaults to DEFAULT at the server boundary.
   PERMISSION_MODE_UNSPECIFIED = 0;
@@ -523,6 +524,13 @@ enum PermissionMode {
   PERMISSION_MODE_PLAN = 2;
   // PERMISSION_MODE_ACCEPT_EDITS auto-accepts edits.
   PERMISSION_MODE_ACCEPT_EDITS = 3;
+  // PERMISSION_MODE_AUTO runs autonomously using an enforcing guardrails checker.
+  // Entering this mode requires a checker; the server rejects SetMode to AUTO
+  // without one.
+  PERMISSION_MODE_AUTO = 4;
+  // PERMISSION_MODE_YOLO runs gate-free with no enforcing checker. Advisory
+  // monitoring may remain. Configured deny rules still apply.
+  PERMISSION_MODE_YOLO = 5;
 }
 
 // Limits are the configured stop conditions for a session. A zero value in
@@ -1321,6 +1329,9 @@ message SetModeRequest {
   // session_id is the session to update.
   string session_id = 1 [(buf.validate.field).string.min_len = 1];
   // mode is the desired permission posture; unspecified defaults to DEFAULT.
+  // AUTO requires an enforcing guardrails checker; the server rejects SetMode
+  // to AUTO without one. The server may also enforce a MaxAllowedMode ceiling;
+  // requesting a mode above it is rejected with INVALID_ARGUMENT.
   PermissionMode mode = 2;
 }
 

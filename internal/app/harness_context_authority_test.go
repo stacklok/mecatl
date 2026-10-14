@@ -57,7 +57,8 @@ func TestHarnessContext_ChildAttenuationPreserved(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer b.Close()
-			sess, err := b.Service.CreateSessionWithProfile(t.Context(), session.ModeDefault, session.Limits{}, server.ProviderSelector{}, profile)
+			// Pass "" to use the server's DefaultMode (ModeYolo from AllowAllTools=true config).
+			sess, err := b.Service.CreateSessionWithProfile(t.Context(), "", session.Limits{}, server.ProviderSelector{}, profile)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -132,7 +133,8 @@ func testHarnessChildFactoryLifetime(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer built.Close()
-			parent, err := built.Service.CreateSessionWithProfile(t.Context(), session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithPlacementBinding(placement))
+			// Pass "" to use the server's DefaultMode (ModeYolo from AllowAllTools=true config).
+			parent, err := built.Service.CreateSessionWithProfile(t.Context(), "", session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithPlacementBinding(placement))
 			if err != nil {
 				t.Fatal(err)
 			}
