@@ -448,6 +448,40 @@ describe("ordinary approval interactions", () => {
     ).toEqual([]);
   });
 
+  it("sends one POST when an ordinary verdict button is double-clicked", async () => {
+    for (const side of [false, true]) {
+      const fixture = new Fixture();
+      fixture.verdicts.push(Promise.resolve(new Response(null, { status: 204 })));
+      await mount(fixture, side);
+      const sessionId = side ? "thread-a" : "chat-a";
+      await act(async () => {
+        fixture.stream.send({ runId: "run-a", sessionId, type: "run.started" });
+      });
+      expect(await screen.findByText("Esc to Stop")).toBeTruthy();
+      await act(async () => {
+        fixture.stream.send(
+          event("permission.ask", "1", "run-a", {
+            askId: "ask-a",
+            args: editArgs,
+            callId: "call-a",
+            tool: "Edit",
+          }),
+        );
+      });
+      const card = await screen.findByRole("region", { name: "Permission required: Edit" });
+      const button = within(card).getByRole("button", { name: "Allow once" });
+      // Both clicks land before React re-renders the button as disabled.
+      await act(async () => {
+        button.click();
+        button.click();
+      });
+      await waitFor(() => expect(fixture.posts()).toHaveLength(1));
+      expect(fixture.posts()).toHaveLength(1);
+      cleanup();
+      fixture.stream.close();
+    }
+  });
+
   it("submits one ordinary verdict for the exact active run and ask", async () => {
     for (const side of [false, true]) {
       const fixture = new Fixture();
