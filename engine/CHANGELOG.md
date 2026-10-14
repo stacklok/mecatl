@@ -13,6 +13,13 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **`ModeAuto` and `ModeYolo` permission modes** — adds `session.ModeAuto = "auto"`
+  and `session.ModeYolo = "yolo"` to `session.PermissionMode`. These complete the
+  five-mode vocabulary (`plan`, `default`, `acceptEdits`, `auto`, `yolo`) that the
+  unified permission-mode architecture requires; `Policy.Evaluate` now injects
+  allow-all and loose-substitution at evaluation time based on the session's current
+  mode, so mode switches are fully effective at runtime. Added (minor).
+
 - **Schedule-store claim and retry conformance** — adds
   `scheduleconformance.RunClaimAndRetryConformance` with the complete shared
   suite plus unresolved prior-claim rejection, late-result isolation, and

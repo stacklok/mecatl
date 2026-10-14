@@ -60,13 +60,12 @@ func warnDeprecatedPermissionFlags(diag port.Diagnostics, cfg config) {
 // postureReplacementToken names the token that replaces a legacy --posture value.
 // auto and yolo are their own tokens; the strict-posture tiers map to "default".
 func postureReplacementToken(raw string) string {
-	switch app.ParsePosture(raw) {
-	case app.PostureAuto:
-		return "auto"
-	case app.PostureYolo:
-		return "yolo"
+	p := app.ParsePosture(raw)
+	switch p {
+	case app.PostureAuto, app.PostureYolo:
+		return p.String() // "auto" or "yolo", matching the token name
 	}
-	if tok, ok := app.PermissionModeForPair(app.ParsePosture(raw), session.ModeDefault); ok {
+	if tok, ok := app.PermissionModeForPair(p, session.ModeDefault); ok {
 		return tok.Name
 	}
 	return "default"

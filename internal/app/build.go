@@ -2463,8 +2463,8 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		DefaultMode:                cfg.DefaultSessionMode,
 		MaxAllowedMode:             cfg.MaxAllowedMode,
 		EnforcingCheckerConfigured: checker == checkerEnforcing,
-		BuildID:              buildinfo.BuildID,
-		ServerImplementation: cfg.ServerImplementation,
+		BuildID:                    buildinfo.BuildID,
+		ServerImplementation:       cfg.ServerImplementation,
 		// GetServerInfo looks up only a caller-selected, already-known provider
 		// in this immutable composition registry. It intentionally does not
 		// inspect session selectors, discover providers, or re-read configuration.
@@ -9782,7 +9782,6 @@ func defaultRules() []governance.Rule {
 		{Scope: governance.ScopeBuiltinDefault, Tool: agent.ScheduleQueryToolName, Effect: governance.Allow},
 	}
 }
-
 
 // mainRules returns the main engine's static ruleset. The built-in mutate-ask
 // floor (defaultRules) applies to all modes; auto/yolo allow-all is injected

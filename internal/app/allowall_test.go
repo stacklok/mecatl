@@ -276,7 +276,7 @@ func TestSubstitutionLooseningIsModeDriven(t *testing.T) {
 		want want
 	}{
 		{session.ModeDefault, want{governance.Ask, governance.Ask}},
-		{session.ModeAuto, want{governance.Ask, governance.Ask}},   // auto: standard evaluator, substitution floor stands
+		{session.ModeAuto, want{governance.Ask, governance.Ask}},     // auto: standard evaluator, substitution floor stands
 		{session.ModeYolo, want{governance.Allow, governance.Allow}}, // yolo: evalLoose, substitution allowed
 	}
 	for _, tc := range cases {

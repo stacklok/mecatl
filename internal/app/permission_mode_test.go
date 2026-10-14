@@ -110,7 +110,6 @@ func TestTrustedKeepsCurrentMeaning(t *testing.T) {
 	}
 }
 
-
 func TestAllowAllTokenRequiresChecker(t *testing.T) {
 	// The checker gate is now a runtime WARN, not a startup refusal.
 	// Build succeeds; entering auto mode without a checker is refused at SetMode time.

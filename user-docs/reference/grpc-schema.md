@@ -3243,7 +3243,7 @@ SetModeRequest changes a session&#39;s permission posture.
 | Field | Type | Label | Oneof | Description |
 |---|---|---|---|---|
 | `session_id` | `string` |  |  | session_id is the session to update. |
-| `mode` | `PermissionMode` |  |  | mode is the desired permission posture; unspecified defaults to DEFAULT. |
+| `mode` | `PermissionMode` |  |  | mode is the desired permission posture; unspecified defaults to DEFAULT. AUTO requires an enforcing guardrails checker; the server rejects SetMode to AUTO without one. The server may also enforce a MaxAllowedMode ceiling; requesting a mode above it is rejected with INVALID_ARGUMENT. |
 
 
 
@@ -4102,7 +4102,8 @@ its prose.
 
 PermissionMode is the session-wide permission posture, mirroring
 session.PermissionMode. Plan mode exposes a read-only toolset; acceptEdits
-auto-accepts edits.
+auto-accepts edits; auto runs autonomously with an enforcing guardrails
+checker; yolo runs gate-free with no enforcing checker.
 
 | Name | Number | Description |
 |---|---|---|
@@ -4110,6 +4111,8 @@ auto-accepts edits.
 | `PERMISSION_MODE_DEFAULT` | `1` | PERMISSION_MODE_DEFAULT is the standard deny -&gt; ask -&gt; allow posture. |
 | `PERMISSION_MODE_PLAN` | `2` | PERMISSION_MODE_PLAN enforces a read-only toolset. |
 | `PERMISSION_MODE_ACCEPT_EDITS` | `3` | PERMISSION_MODE_ACCEPT_EDITS auto-accepts edits. |
+| `PERMISSION_MODE_AUTO` | `4` | PERMISSION_MODE_AUTO runs autonomously using an enforcing guardrails checker. Entering this mode requires a checker; the server rejects SetMode to AUTO without one. |
+| `PERMISSION_MODE_YOLO` | `5` | PERMISSION_MODE_YOLO runs gate-free with no enforcing checker. Advisory monitoring may remain. Configured deny rules still apply. |
 
 #### `mecatl.v1.RetryDisposition`
 
