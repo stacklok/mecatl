@@ -266,7 +266,9 @@ func TestServeOverLimitFrameErrorsNotHang(t *testing.T) {
 	wire := append(over, '\n')
 	c := NewConn(bytes.NewReader(wire), &bytes.Buffer{}, nil)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	// Generous: scanning 16 MiB under -race on a loaded CI runner can exceed a
+	// couple of seconds. This only has to tell "slow" from "never returns".
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- c.Serve(ctx) }()
