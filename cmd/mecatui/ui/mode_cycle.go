@@ -108,6 +108,14 @@ func (m Model) cycleMode() (tea.Model, tea.Cmd) {
 
 // headerMode is the session mode the header shows: the mode the cycle landed
 // on when it did, else the session's mode, marked blocked or pending.
+//
+// "pending" means a SetMode round-trip is in flight. When the pending mode
+// equals the server-confirmed active mode (m.pendingMode == m.activeMode) the
+// session IS already in the target mode; the in-flight call is a no-op
+// confirmation. Showing "pending" in that case is misleading — e.g. cycling
+// through other modes and back to the starting auto mode would flash
+// "auto pending" even though the session never left auto from the user's
+// perspective. Skip the suffix in that case.
 func (m Model) headerMode() string {
 	mode := m.activeMode
 	if mode == "" {
@@ -122,7 +130,9 @@ func (m Model) headerMode() string {
 	switch {
 	case m.modeBlocked():
 		mode += modeBlockedSuffix
-	case m.pendingMode != "":
+	case m.pendingMode != "" && m.pendingMode != m.activeMode:
+		// Only show "pending" when the in-flight mode differs from what the
+		// server has already confirmed — a genuine transition, not a no-op.
 		mode += " pending"
 	}
 	return mode

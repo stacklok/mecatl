@@ -262,12 +262,13 @@ func TestHelpOverlayShowsVocabularyAndScopeSplit(t *testing.T) {
 
 	// The token table, written out independently of PermissionModeVocabulary.
 	// 5-token vocabulary: trusted and trusted-accept-edits removed.
+	// auto and yolo sessions start in their own named modes, not "default".
 	want := []struct{ token, posture, session string }{
 		{"plan", "strict", "plan"},
 		{"default", "strict", "default"},
 		{"accept-edits", "strict", "accept-edits"},
-		{"auto", "auto", "default"},
-		{"yolo", "yolo", "default"},
+		{"auto", "auto", "auto"},
+		{"yolo", "yolo", "yolo"},
 	}
 	for _, w := range want {
 		row := "posture " + w.posture + " (process-wide) · new sessions start in " + w.session
@@ -331,35 +332,55 @@ func TestHeaderShowsPostureWhenAboveStrict(t *testing.T) {
 	}
 }
 
-// TestHeaderKeepsPostureAcrossModeCycle pins that under auto, cycling
-// through yolo (which needs a restart), default, plan, and accept-edits keeps the
-// auto badge on every frame, including the pending frame before the server
+// TestHeaderKeepsPostureAcrossModeCycle pins that under auto, cycling through
+// yolo (blocked: above the auto ceiling), then through lower modes keeps the
+// auto badge on every frame, including the pending frames before the server
 // confirms each switch.
+//
+// A session on an auto-posture server starts in "auto" mode. The cycle order
+// from "auto" is: yolo (blocked) → default → plan → accept-edits → auto → …
+// Yolo is the only mode that needs a restart; every other landing sends a
+// SetMode and shows "pending" until the server confirms.
 func TestHeaderKeepsPostureAcrossModeCycle(t *testing.T) {
-	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, mode: "default"}
-	m := permissionModeTestModel(t, conv, postureAuto, true)
+	// Session starts in "auto" mode — the natural default on an auto-posture server.
+	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, mode: "auto"}
+	m := newTestModelFromDeps(Deps{
+		Session:  conv,
+		Conv:     conv,
+		Theme:    theme.New("aztec", theme.AztecPalette()),
+		Mode:     "auto",
+		Embedded: true,
+		Ctx:      context.Background(),
+	})
+	m = applyAll(m,
+		tea.WindowSizeMsg{Width: 140, Height: 30},
+		client.SessionReadyMsg{SessionID: "sess-auto-cycle", Mode: "auto", Capabilities: client.Capabilities{Posture: postureAuto}},
+	)
+
 	assertAuto := func(step, wantMode string) {
 		t.Helper()
 		header := stripANSIstr(m.renderHeader())
 		if !strings.Contains(header, autoBadgeText) {
-			t.Fatalf("%s: header lost the auto posture: %q", step, header)
+			t.Fatalf("%s: header lost the auto posture badge: %q", step, header)
 		}
 		if got := statusMode(m); got != wantMode {
-			t.Fatalf("%s: status mode = %q, want %s", step, got, wantMode)
+			t.Fatalf("%s: status mode = %q, want %q", step, got, wantMode)
 		}
 	}
-	assertAuto("start", "default")
-	// yolo needs a restart, and default is the session half auto already runs:
-	// neither press needs a server round trip.
-	for _, step := range []struct{ token, header string }{{"yolo", "yolo blocked"}, {"default", "default"}} {
-		mm, cmd := m.Update(modeKey())
-		m = mm.(Model)
-		if cmd != nil {
-			t.Fatalf("landing on %s issued a command", step.token)
-		}
-		assertAuto("landed "+step.token, step.header)
+	assertAuto("start", "auto")
+
+	// yolo is above the auto ceiling → blocked, no server round trip.
+	mm, cmd := m.Update(modeKey())
+	m = mm.(Model)
+	if cmd != nil {
+		t.Fatalf("landing on yolo issued a command: should be blocked, not switched")
 	}
-	for _, next := range []string{"plan", "accept-edits"} {
+	assertAuto("landed yolo", "yolo blocked")
+
+	// Switching to modes below auto (default, plan, accept-edits) all require
+	// a SetMode round trip: the session is in "auto", switching to anything lower
+	// is a genuine change.
+	for _, next := range []string{"default", "plan", "accept-edits"} {
 		mm, cmd := m.Update(modeKey())
 		m = mm.(Model)
 		if cmd == nil {
@@ -369,6 +390,17 @@ func TestHeaderKeepsPostureAcrossModeCycle(t *testing.T) {
 		m = applyAll(m, cmd())
 		assertAuto("confirmed "+next, next)
 	}
+
+	// Cycling back to auto from accept-edits: pendingMode="auto" != activeMode="accept-edits"
+	// → genuine transition, shows "auto pending" until server confirms.
+	mm, cmd = m.Update(modeKey())
+	m = mm.(Model)
+	if cmd == nil {
+		t.Fatalf("cycling back to auto issued no command")
+	}
+	assertAuto("pending auto", "auto pending")
+	m = applyAll(m, cmd())
+	assertAuto("confirmed auto", "auto")
 }
 
 // TestHelpOverlayNamesWhoseRestart pins that the embedded server's
