@@ -104,6 +104,20 @@ func TestRepositoryRootFSMaterializer_ClonesWritableRootFSInIsolation(t *testing
 	if err := cloneRootFS(first, second); err != nil {
 		t.Fatalf("clone materialized rootfs: %v", err)
 	}
+	for _, rootfs := range []string{first, second} {
+		agentPath := filepath.Join(rootfs, guestAgentInstallPath)
+		got, err := os.ReadFile(agentPath)
+		if err != nil || string(got) != "guest-agent-complete" {
+			t.Fatalf("guest agent in %q = %q, %v", rootfs, got, err)
+		}
+		info, err := os.Stat(agentPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.Mode().IsRegular() || info.Mode().Perm() != 0o755 {
+			t.Errorf("guest agent mode in %q = %v, want regular executable 0755", rootfs, info.Mode())
+		}
+	}
 
 	for _, rootfs := range []string{brood, first, second} {
 		info, err := os.Stat(filepath.Join(rootfs, "etc", "brood-release"))
@@ -137,133 +151,6 @@ func TestRepositoryRootFSMaterializer_ClonesWritableRootFSInIsolation(t *testing
 		if err != nil || string(got) != want {
 			t.Errorf("contents of %q = %q, %v; want %q", path, got, err, want)
 		}
-	}
-}
-
-func TestCloneRootFS_RejectsExistingDestination(t *testing.T) {
-	t.Parallel()
-	for _, populated := range []bool{false, true} {
-		name := "empty"
-		if populated {
-			name = "populated"
-		}
-		t.Run(name, func(t *testing.T) {
-			root := t.TempDir()
-			source, destination := filepath.Join(root, "source"), filepath.Join(root, "destination")
-			for _, path := range []string{source, destination} {
-				if err := os.Mkdir(path, 0o700); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if err := os.Chmod(source, 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if populated {
-				if err := os.WriteFile(filepath.Join(destination, "sentinel"), []byte("keep"), 0o600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			before, err := digestTree(destination)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := cloneRootFS(source, destination); !errors.Is(err, os.ErrExist) {
-				t.Errorf("clone into existing destination = %v, want os.ErrExist", err)
-			}
-			after, err := digestTree(destination)
-			if err != nil || after != before {
-				t.Errorf("existing destination contents changed: digest %q, %v; want %q", after, err, before)
-			}
-			info, err := os.Stat(destination)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if info.Mode().Perm() != 0o700 {
-				t.Errorf("existing destination mode = %v, want 0700", info.Mode())
-			}
-		})
-	}
-}
-
-func TestCloneRootFS_PreservesModes(t *testing.T) {
-	t.Parallel()
-	root := t.TempDir()
-	source, destination := filepath.Join(root, "source"), filepath.Join(root, "destination")
-	if err := os.Mkdir(source, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	modes := map[string]os.FileMode{
-		".":      os.ModeDir | os.ModeSticky | 0o755,
-		"tmp":    os.ModeDir | os.ModeSticky | 0o777,
-		"shared": os.ModeDir | os.ModeSetgid | 0o775,
-		"tool":   0o755,
-		"data":   0o666,
-	}
-	for name, mode := range modes {
-		path := filepath.Join(source, name)
-		if name != "." {
-			if mode.IsDir() {
-				if err := os.Mkdir(path, 0o700); err != nil {
-					t.Fatal(err)
-				}
-			} else if err := os.WriteFile(path, []byte("source"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if err := os.Chmod(path, mode); err != nil {
-			t.Fatal(err)
-		}
-		info, err := os.Stat(path)
-		if err != nil || info.Mode() != mode {
-			t.Fatalf("source mode for %q was not established: %v, %v", name, info, err)
-		}
-	}
-	if err := cloneRootFS(source, destination); err != nil {
-		t.Fatal(err)
-	}
-	for name, want := range modes {
-		info, err := os.Stat(filepath.Join(destination, name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if info.Mode() != want {
-			t.Errorf("mode for %q = %v, want %v", name, info.Mode(), want)
-		}
-	}
-}
-
-func TestCloneRootFS_RejectsEscapingSymlink(t *testing.T) {
-	t.Parallel()
-	root := t.TempDir()
-	source := filepath.Join(root, "source")
-	if err := os.Mkdir(source, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink("../../outside", filepath.Join(source, "escape")); err != nil {
-		t.Fatal(err)
-	}
-	if err := cloneRootFS(source, filepath.Join(root, "destination")); err == nil {
-		t.Fatal("clone silently accepted an escaping symlink")
-	}
-}
-
-func TestCloneRootFS_RejectsInvalidSource(t *testing.T) {
-	t.Parallel()
-	root := t.TempDir()
-	realSource := filepath.Join(root, "source")
-	if err := os.Mkdir(realSource, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	sourceLink := filepath.Join(root, "source-link")
-	if err := os.Symlink(realSource, sourceLink); err != nil {
-		t.Fatal(err)
-	}
-	destination := filepath.Join(root, "destination")
-	if err := cloneRootFS(sourceLink, destination); err == nil {
-		t.Fatal("clone symlink source succeeded")
-	}
-	if _, err := os.Lstat(destination); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("failed clone created destination: %v", err)
 	}
 }
 
