@@ -66,8 +66,8 @@ import {
   retractApproval,
   unmatchedApprovals,
 } from "./chat-state";
-import { Message } from "./chat-workspace";
 import { EscapeHintContext } from "./escape-hint-context";
+import { Message } from "./message";
 import { groupModels, ModelEffortMenu } from "./model-effort-menu";
 import { PendingAskCard, pendingAskKey } from "./pending-ask-card";
 import { exactPlanControlAvailability, followPlanContinuationFromBff } from "./plan-continuation";

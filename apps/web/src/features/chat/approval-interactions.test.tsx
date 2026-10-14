@@ -23,8 +23,9 @@ import { ShortcutProvider } from "../shortcuts/shortcut-provider";
 import type { ApprovalRequest } from "./approval-panel";
 import { applyRunDelivery, type ChatMessage, initialRunDeliveryState } from "./chat-state";
 import { ChatTranscript } from "./chat-transcript";
-import { ChatWorkspace, Message } from "./chat-workspace";
+import { ChatWorkspace } from "./chat-workspace";
 import { EscapeHintContext } from "./escape-hint-context";
+import { Message } from "./message";
 import { PlanReviewCard } from "./plan-review-card";
 import { SideThreadPanel } from "./side-thread-panel";
 
