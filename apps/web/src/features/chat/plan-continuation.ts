@@ -21,6 +21,15 @@ export interface PlanActivityFrame {
 
 export type OpenPlanActivity = (resumeFrom?: string) => Promise<AsyncIterable<PlanActivityFrame>>;
 
+/** What a plan verdict surfaces to the reader, shared by every chat surface. */
+export const PLAN_STALE_REASON =
+  "This plan ask is stale or its exact run is unavailable. Refresh activity.";
+export const PLAN_ITERATE_NOTICE = "Plan iteration requested.";
+export const PLAN_ACCEPTED_NOTICE = "Plan approval accepted; checking whether execution started.";
+export const PLAN_START_FAILED_ERROR = "Plan approval was recorded, but execution could not start.";
+export const PLAN_START_UNCONFIRMED_ERROR =
+  "Plan approval was recorded, but could not confirm whether execution started. Refresh activity to check.";
+
 /** Only the advertised strict control may make a plan card actionable. */
 export function exactPlanControlAvailability(features?: readonly string[]): {
   available: boolean;

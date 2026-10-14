@@ -10,7 +10,6 @@ import {
   cancelAuthorization,
   cancelRun,
   recheckAuthorization,
-  resolvePlanAsk,
   resolveRunPermission,
   retrySession,
   startRun,
@@ -186,8 +185,6 @@ import { appendCanvasQuote, useLocalCanvas } from "./local-canvas";
 import { type ImageAttachment, imagePreview } from "./local-file-preview";
 import { MessageMinimap } from "./message-minimap";
 import { PermissionModeBadge } from "./permission-mode-badge";
-import { exactPlanControlAvailability, followPlanContinuationFromBff } from "./plan-continuation";
-import type { PlanVerdict } from "./plan-review-card";
 import { QueuedMessageStrip } from "./queued-message-strip";
 import {
   abortsOnSessionSwitch,
@@ -245,6 +242,7 @@ import { formatTurnStat, usageMenuLines } from "./turn-stats";
 import { useChatMessages } from "./use-chat-messages";
 import { shouldRefreshTranscriptAfterInventory } from "./use-delivery-follow";
 import { useLatestChatAutoOpen } from "./use-latest-chat-auto-open";
+import { usePlanVerdictControl } from "./use-plan-verdict-control";
 import { VerdictLedger } from "./verdict-ledger";
 
 /** A pending destructive confirmation, rendered as one shared AlertDialog. */
@@ -429,7 +427,6 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   );
   const [reattached, setReattached] = useState(false);
   const [reattachEpoch, setReattachEpoch] = useState(0);
-  const [planContinuationActive, setPlanContinuationActive] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarHidden, setSidebarHidden] = useState(false);
   const [contentPreview, setContentPreview] = useState<ContentPreview>();
@@ -439,9 +436,6 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const activityRefresh = useRef<
     { authorizationId: string; callId: string; cursor: string; sessionId: string } | undefined
   >(undefined);
-  const planReattach = useRef<{ cursor?: string; runId: string; sessionId: string } | undefined>(
-    undefined,
-  );
   const [, setAuthorizationUncertainEpoch] = useState(0);
   const [authorizationBusy, setAuthorizationBusy] = useState<string>();
   const [inspection, setInspection] = useState<{ sessionId: string; view: InspectionView }>();
@@ -503,8 +497,29 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const [steerTrace, setSteerTrace] = useState<SteerTraceEntry[]>([]);
   const [showSteerTrace, setShowSteerTrace] = useState(false);
   const [controlPending, setControlPending] = useState(false);
-  const planFollowController = useRef<AbortController | undefined>(undefined);
   const viewedSessionId = useRef(sessionId);
+  const plan = usePlanVerdictControl({
+    activeTarget: () => controlTarget(runTarget, sessionId),
+    controlPending,
+    features: runtime.data?.features,
+    isViewed: (id) => id === viewedSessionId.current,
+    ledger: verdicts.current,
+    onStarted: ({ runId, sessionId: startedSessionId }) => {
+      activeRun.current?.controller.abort();
+      activeRun.current = undefined;
+      setRunTarget({ runId, sessionId: startedSessionId });
+      setReattachEpoch((current) => current + 1);
+    },
+    onUncertain: () => setVerdictEpoch((value) => value + 1),
+    retract: (target) => {
+      settledAskKeys.current.add(settledAskKey(target.runId, target.askId));
+      if (viewedSessionId.current === target.sessionId)
+        setApprovals((current) => retractApproval(current, target.askId, target.runId));
+    },
+    setControlPending,
+    setError,
+    setNotice,
+  });
   const [titleCache, setTitleCache] = useState(() => new Map<string, SessionTitleRevision>());
   const awayTracker = useRef(new AwayNoticeTracker());
   const awayFacts = useRef<AwayFacts | undefined>(undefined);
@@ -634,11 +649,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
 
   useEffect(() => {
     viewedSessionId.current = sessionId;
-    planFollowController.current?.abort();
-    planFollowController.current = undefined;
+    plan.reset();
     activityRefresh.current = undefined;
-    planReattach.current = undefined;
-    setPlanContinuationActive(false);
     authorizationActivityCursor.current = undefined;
     activityFollowedSession.current = undefined;
     interruptedSettledSession.current = undefined;
@@ -687,14 +699,14 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       // into a view that has already left its session.
       if (viewedSessionId.current === sessionId) viewedSessionId.current = undefined;
     };
-  }, [sessionId, setMessages]);
+  }, [sessionId, setMessages, plan.reset]);
 
   useEffect(
     () => () => {
       activeRun.current?.controller.abort();
-      planFollowController.current?.abort();
+      plan.abort();
     },
-    [],
+    [plan.abort],
   );
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: follow every streamed message update while the reader remains at the bottom
@@ -925,7 +937,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const watchable =
     Boolean(selectedSession && isProvenChatSession(selectedSession)) &&
     isActiveSessionState(selectedSession?.state);
-  const shouldWatch = watchable || planContinuationActive;
+  const shouldWatch = watchable || plan.continuationActive;
   const settledState = selectedSession?.state ?? sessionDetail.data?.state;
   const settled =
     settledState === "idle" ||
@@ -1009,7 +1021,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: helpers and QueryClient are stable for this lifetime
   useEffect(() => {
     const refresh = activityRefresh.current;
-    const planRefresh = planReattach.current;
+    const planRefresh = plan.reattachRef.current;
     if (
       !sessionId ||
       (!shouldWatch && refresh?.sessionId !== sessionId && planRefresh?.sessionId !== sessionId) ||
@@ -1025,7 +1037,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           ? refresh.cursor
           : undefined;
     activityRefresh.current = undefined;
-    planReattach.current = undefined;
+    plan.reattachRef.current = undefined;
     const uncertain = refresh
       ? authorizationUncertain.current.get(`${sessionId}\u0000${refresh.authorizationId}`)
       : undefined;
@@ -1109,7 +1121,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             if (end.kind === "settled") end = { kind: "uncertain" };
           }
           activeRun.current = undefined;
-          if (planRefresh?.sessionId === sessionId) setPlanContinuationActive(false);
+          if (planRefresh?.sessionId === sessionId) plan.endContinuation();
           if (end.kind === "settled" || end.kind === "authorization") setRunTarget(undefined);
           setApprovals((current) => retainUncertainApprovals(current));
           setIsRunning(false);
@@ -2524,93 +2536,6 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     }
   }
 
-  function planUnavailableReason(candidate: ApprovalRequest): string | undefined {
-    const featureReason = exactPlanControlAvailability(runtime.data?.features).reason;
-    if (featureReason) return featureReason;
-    const activeTarget = controlTarget(runTarget, sessionId);
-    const target = candidate.controlTarget;
-    return !target ||
-      target.askId !== candidate.askId ||
-      target.sessionId !== activeTarget?.sessionId ||
-      target.runId !== activeTarget?.runId ||
-      target.sessionId !== viewedSessionId.current
-      ? "This plan ask is stale or its exact run is unavailable. Refresh activity."
-      : undefined;
-  }
-
-  async function respondToPlan(candidate: ApprovalRequest, verdict: PlanVerdict) {
-    if (
-      candidate.tool !== "PresentPlan" ||
-      planUnavailableReason(candidate) ||
-      approvalDisabled(candidate)
-    )
-      return;
-    const target = candidate.controlTarget;
-    if (!target) return;
-    if (!verdicts.current.begin(target)) return;
-    const askId = target.askId;
-    setControlPending(true);
-    setError(undefined);
-    try {
-      await resolvePlanAsk({
-        body: { verdict },
-        path: { askId, runId: target.runId, sessionId: target.sessionId },
-        throwOnError: true,
-      });
-      verdicts.current.acknowledge(target);
-      settledAskKeys.current.add(settledAskKey(target.runId, askId));
-      if (viewedSessionId.current === target.sessionId) {
-        setApprovals((current) => retractApproval(current, askId, target.runId));
-      }
-      if (viewedSessionId.current !== target.sessionId) return;
-      if (verdict === "iterate") {
-        if (viewedSessionId.current === target.sessionId) setNotice("Plan iteration requested.");
-        return;
-      }
-      if (viewedSessionId.current === target.sessionId) {
-        setNotice("Plan approval accepted; checking whether execution started.");
-      }
-      const controller = new AbortController();
-      planFollowController.current = controller;
-      const evidence = await followPlanContinuationFromBff(
-        { askId, planRunId: target.runId, sessionId: target.sessionId },
-        controller.signal,
-      );
-      if (controller.signal.aborted || viewedSessionId.current !== target.sessionId) return;
-      if (evidence.kind === "started") {
-        // The verdict watcher establishes the new run and a durable replay
-        // checkpoint. Transfer this view's one reader to that run so its
-        // transcript and controls follow the same evidence.
-        planReattach.current = {
-          cursor: evidence.resumeFrom,
-          runId: evidence.runId,
-          sessionId: target.sessionId,
-        };
-        setPlanContinuationActive(true);
-        activeRun.current?.controller.abort();
-        activeRun.current = undefined;
-        setRunTarget({ runId: evidence.runId, sessionId: target.sessionId });
-        setReattachEpoch((current) => current + 1);
-      } else if (evidence.kind === "failed") {
-        setNotice(undefined);
-        setError("Plan approval was recorded, but execution could not start.");
-      } else {
-        setNotice(undefined);
-        setError(
-          "Plan approval was recorded, but could not confirm whether execution started. Refresh activity to check.",
-        );
-      }
-    } catch (caught) {
-      verdicts.current.markUncertain(target);
-      setVerdictEpoch((value) => value + 1);
-      if (viewedSessionId.current === target.sessionId)
-        setError(`Could not confirm this verdict: ${errorMessage(caught)}`);
-    } finally {
-      planFollowController.current = undefined;
-      if (viewedSessionId.current === target.sessionId) setControlPending(false);
-    }
-  }
-
   async function changeMode(mode: DraftChatConfiguration["mode"]) {
     if (!sessionId || isRunning) return;
     setError(undefined);
@@ -2763,13 +2688,13 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     },
     onHintChange: setEscapeClearHint,
     onIteratePlan: () => {
-      if (escapeAsk) void respondToPlan(escapeAsk, "iterate");
+      if (escapeAsk) void plan.respondToPlan(escapeAsk, "iterate");
     },
     onStopRun: () => void stopRun(),
     onUnavailablePlan: () =>
       setError(
         escapeAsk
-          ? (planUnavailableReason(escapeAsk) ??
+          ? (plan.planUnavailableReason(escapeAsk) ??
               "Exact plan verdict is unavailable. Refresh activity.")
           : "Exact plan verdict is unavailable.",
       ),
@@ -2791,7 +2716,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       inspectionOpen || Boolean(debugTarget) || Boolean(confirmPrompt) || Boolean(textPrompt),
     panelOpen: Boolean(contentPreview || sidebarOpen),
     pendingAsk: escapeAsk?.tool === "PresentPlan" ? "plan" : escapeAsk ? "ordinary" : "none",
-    planAvailable: escapeAsk?.tool === "PresentPlan" && !planUnavailableReason(escapeAsk),
+    planAvailable: escapeAsk?.tool === "PresentPlan" && !plan.planUnavailableReason(escapeAsk),
     runActive: isRunning && Boolean(controlTarget(runTarget, sessionId)),
   });
   const openApprovalDetail = useCallback(
@@ -3384,9 +3309,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                           void respondToApproval(candidate, verdict)
                         }
                         onRespondToPlan={(candidate, verdict) =>
-                          void respondToPlan(candidate, verdict)
+                          void plan.respondToPlan(candidate, verdict)
                         }
-                        planUnavailableReason={planUnavailableReason}
+                        planUnavailableReason={plan.planUnavailableReason}
                         showToolCalls={showToolCalls}
                         streamingMessageId={
                           isRunning && messages.at(-1)?.role === "assistant"
