@@ -119,6 +119,7 @@ import {
 import { useIsMobile } from "../../lib/use-mobile";
 import { cn } from "../../lib/utils";
 import { useAuthRecovery } from "../auth/auth-recovery-context";
+import { useSteerAvailable } from "../runtime/use-steer-available";
 import { useShortcut, useShortcutSuppression } from "../shortcuts/shortcut-provider";
 import { ApprovalDetailContext } from "./approval-detail-context";
 import { ApprovalPanel, type ApprovalRequest, type ApprovalVerdict } from "./approval-panel";
@@ -476,6 +477,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const [draftConfiguration, setDraftConfiguration] = useState(defaultDraftConfiguration);
   const [composerDraftPresent, setComposerDraftPresent] = useState(false);
   const [clearDraftSignal, setClearDraftSignal] = useState(0);
+  const [focusComposerSignal, setFocusComposerSignal] = useState(0);
   const [steeringQueuedId, setSteeringQueuedId] = useState<string>();
   /** The queued message a steer is delivering; the queue drain skips it. */
   const steeringQueuedRef = useRef<string | undefined>(undefined);
@@ -583,7 +585,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const { setValue: setShowToolCalls, value: showToolCalls } = useShowToolCalls();
   const { setValue: setExpandDetails, value: expandDetails } = useExpandDetails();
   const disabledModels = useDisabledModels().disabled;
+  const steerAvailable = useSteerAvailable();
   const enterSendBehavior = useEnterSendBehavior().value;
+  const workingBehavior = steerAvailable ? enterSendBehavior : "queue";
   const queuedMessages = useQueuedMessages(provenChat ? (sessionId ?? "") : "");
   const canvas = useLocalCanvas(sessionId ?? "draft");
   const isMobile = useIsMobile();
@@ -2870,9 +2874,15 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   // doesn't show.
   const detailClosesOnEscape = detailApproval !== undefined && detailApproval !== escapeAsk;
   // The detail panel shows a live ask only: once the ledger settles it (or the
-  // stream retracts it) the panel closes with its card.
+  // stream retracts it) the panel closes with its card. Focus that fell with the
+  // panel goes to the composer, never to a verdict button; focus the reader has
+  // already moved elsewhere stays put.
   useEffect(() => {
-    if (contentPreview?.kind === "approval" && !detailApproval) setContentPreview(undefined);
+    if (contentPreview?.kind !== "approval" || detailApproval) return;
+    const focused = document.activeElement;
+    setContentPreview(undefined);
+    if (!focused || focused === document.body || focused.closest('[data-chat-surface="approval"]'))
+      setFocusComposerSignal((signal) => signal + 1);
   }, [contentPreview, detailApproval]);
 
   const copyItems = sessionId ? (
@@ -3569,7 +3579,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             onDelete={queuedMessages.remove}
             onEdit={queuedMessages.update}
             onSteer={
-              isRunning && controlTarget(runTarget, sessionId)
+              steerAvailable && isRunning && controlTarget(runTarget, sessionId)
                 ? (id) => void steerQueuedMessage(id)
                 : undefined
             }
@@ -3597,6 +3607,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             appendText={appendText}
             canForkModel={displayedDetail?.capabilities.modelSelection === true}
             clearDraftSignal={clearDraftSignal}
+            focusComposerSignal={focusComposerSignal}
             executionInventory={templates.data}
             executionStatus={
               !runtime.data
@@ -3685,7 +3696,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
               isRunning ||
               (statusFacts.phase === "closed" && Boolean(controlTarget(runTarget, sessionId)))
             }
-            workingBehavior={enterSendBehavior}
+            steerAvailable={steerAvailable}
+            workingBehavior={workingBehavior}
           />
         </section>
       )}

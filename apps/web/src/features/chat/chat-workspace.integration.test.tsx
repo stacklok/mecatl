@@ -58,8 +58,13 @@ function json(body: unknown, status = 200): Response {
 function runtimeResponse(
   connection: RuntimeResponse["connection"] = "online",
   features: string[] = [],
+  steer?: boolean,
 ): Response {
-  return json({ capabilities: { image: false, posture: "managed" }, connection, features });
+  return json({
+    capabilities: { image: false, posture: "managed", ...(steer === undefined ? {} : { steer }) },
+    connection,
+    features,
+  });
 }
 
 function detailResponse(
@@ -237,6 +242,7 @@ class BffFixture {
   readonly activityResponses = new Map<string, Response[]>();
   runtimeConnection: RuntimeResponse["connection"] = "online";
   runtimeFeatures: string[] = [];
+  runtimeSteer: boolean | undefined;
   retryResponse = completedStream(
     runStarted("chat-a", "run-retry"),
     runEvent("result", "9", "", "run-retry", { stop: "end_turn" }),
@@ -273,7 +279,7 @@ class BffFixture {
     const queuedReply = this.nextReplies.get(pathname)?.shift();
     if (queuedReply) return queuedReply;
     if (request.method === "GET" && pathname === "/api/v1/runtime") {
-      return runtimeResponse(this.runtimeConnection, this.runtimeFeatures);
+      return runtimeResponse(this.runtimeConnection, this.runtimeFeatures, this.runtimeSteer);
     }
     if (request.method === "GET" && pathname === "/api/v1/settings/runtime") {
       return json({ models: [], modelsSupported: true });
@@ -2081,6 +2087,37 @@ describe("mounted chat workspace BFF boundary", () => {
     expect(bff.requestsFor("POST", "/cancel")[0]?.pathname).toBe(
       "/api/v1/sessions/chat-a/runs/run-a/cancel",
     );
+  });
+
+  it("queues instead of steering when the daemon cannot steer, whatever is stored", async () => {
+    window.localStorage.setItem("studio.chat.composer.enterToSend", "steer");
+    const bff = new BffFixture(session("chat-a", "running"));
+    bff.runtimeSteer = false;
+    const activity = heldStream();
+    bff.activityResponses.set("", [activity.response]);
+    window.localStorage.setItem(
+      "studio.chat.queue.chat-a",
+      JSON.stringify([{ createdAt: 1, id: "queued-1", text: "already waiting" }]),
+    );
+    await mountWorkspace(bff, "chat-a");
+    await waitFor(() => expect(bff.requestsFor("GET", "/activity")).toHaveLength(1));
+    await act(async () => activity.send(runStarted()));
+    await screen.findByRole("button", { name: "Stop" });
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Queue message" })).toBeTruthy());
+    typePrompt("keep going");
+    fireEvent.click(screen.getByRole("button", { name: "Queue message" }));
+    expect(await screen.findByText("Message queued for the next run.")).toBeTruthy();
+    expect(bff.requestsFor("POST", "/steer")).toHaveLength(0);
+    expect(window.localStorage.getItem("studio.chat.queue.chat-a")).toContain("keep going");
+    // The stored preference is left alone for a later daemon that can steer.
+    expect(window.localStorage.getItem("studio.chat.composer.enterToSend")).toBe("steer");
+
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Actions for queued message 1" }));
+    expect(await screen.findByRole("menuitem", { name: "Edit" })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: "Steer" })).toBeNull();
   });
 
   it("steers a queued message into the live run and keeps it queued when the run has ended", async () => {

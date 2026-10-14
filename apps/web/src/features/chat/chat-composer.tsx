@@ -92,6 +92,8 @@ interface ChatComposerProps {
   /** Text to add to the draft, after a blank line (a transcript selection's "Add to chat"). */
   appendText?: string;
   clearDraftSignal?: number;
+  /** Moves focus into the box when it changes while mounted (the approval panel just closed). */
+  focusComposerSignal?: number;
   /** A draft's settings. Absent on a live chat, whose settings come from the `live*` props. */
   configuration?: DraftChatConfiguration;
   /**
@@ -148,6 +150,8 @@ interface ChatComposerProps {
   sheetFooter?: ReactNode;
   working?: boolean;
   workingBehavior?: EnterSendBehavior;
+  /** False when the daemon cannot steer: Enter and Shift+Enter both queue while the agent works. */
+  steerAvailable?: boolean;
 }
 
 /** The send in flight, and where its text lives while it settles. */
@@ -185,6 +189,7 @@ export function ChatComposer({
   canForkModel = false,
   appendText,
   clearDraftSignal = 0,
+  focusComposerSignal = 0,
   configuration,
   createdChatKey,
   disabled = false,
@@ -215,6 +220,7 @@ export function ChatComposer({
   sheetFooter,
   working = false,
   workingBehavior = "queue",
+  steerAvailable = true,
 }: ChatComposerProps) {
   const [prompt, setPrompt] = useState(() => (draftKey === undefined ? "" : readDraft(draftKey)));
   const [draftOwner, setDraftOwner] = useState(draftKey);
@@ -301,6 +307,12 @@ export function ChatComposer({
     setAttachmentError("");
     setSeedConfirmation(undefined);
   }, [clearDraftSignal]);
+  const handledFocusSignal = useRef(focusComposerSignal);
+  useEffect(() => {
+    if (focusComposerSignal === handledFocusSignal.current) return;
+    handledFocusSignal.current = focusComposerSignal;
+    textarea.current?.focus();
+  }, [focusComposerSignal]);
 
   // A starter-prompt chip seeds the draft text without sending it — the
   // caller clears seedText (onSeedConsumed) once applied so re-clicking the
@@ -513,6 +525,7 @@ export function ChatComposer({
     const action = resolveComposerAction({
       behavior: workingBehavior,
       shift: event.shiftKey,
+      steerAvailable,
       working,
     });
     if (event.key === "Enter" && action !== "newline") {
@@ -1075,13 +1088,16 @@ export function AttachmentPill({
 export function resolveComposerAction({
   behavior,
   shift,
+  steerAvailable = true,
   working,
 }: {
   behavior: EnterSendBehavior;
   shift: boolean;
+  steerAvailable?: boolean;
   working: boolean;
 }): ComposerEnterAction {
   if (!working) return shift ? "newline" : "send";
+  if (!steerAvailable) return "queue";
   if (!shift) return behavior;
   return behavior === "queue" ? "steer" : "queue";
 }

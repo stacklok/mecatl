@@ -462,6 +462,17 @@ describe("describeShortcut", () => {
     );
   });
 
+  it("says both keys queue when steering is off, whatever Enter is set to", () => {
+    for (const behavior of ["queue", "steer"] as const) {
+      expect(describeShortcut(send, behavior, false)).toBe(
+        "Send message — while the agent is replying: queue the message",
+      );
+      expect(describeShortcut(newline, behavior, false)).toBe(
+        "Insert a new line — while the agent is replying: queue the message (steering is off)",
+      );
+    }
+  });
+
   it("agrees with what the composer does while the agent is replying", () => {
     for (const behavior of ["queue", "steer"] as const) {
       const enter = resolveComposerAction({ behavior, shift: false, working: true });

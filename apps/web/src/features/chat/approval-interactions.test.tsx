@@ -1141,6 +1141,62 @@ describe("prototype approval UI on the workspace ledger", () => {
     ]);
   });
 
+  it("moves focus to the composer when the detail panel closes after a verdict", async () => {
+    const fixture = new Fixture();
+    await mount(fixture);
+    const card = await startAsk(fixture, "chat-a", "run-f", "Focus ask");
+    // A real click focuses the opener, which leaves with its card once the ask settles.
+    const opener = within(card).getByRole("button", { name: "Open in detail panel" });
+    opener.focus();
+    fireEvent.click(opener);
+    const panel = await screen.findByRole("complementary", { name: "Edit" });
+    const deny = within(panel).getByRole("button", { name: "Deny" });
+    deny.focus();
+    fixture.verdicts.push(Promise.resolve(new Response(null, { status: 204 })));
+    fireEvent.click(deny);
+    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Edit" })).toBeNull());
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Message Mecatl" })),
+    );
+  });
+
+  it("moves focus to the composer when the stream retracts the ask under the panel", async () => {
+    const fixture = new Fixture();
+    await mount(fixture);
+    const card = await startAsk(fixture, "chat-a", "run-g", "Retracted ask");
+    // A real click focuses the opener, which leaves with its card once the ask settles.
+    const opener = within(card).getByRole("button", { name: "Open in detail panel" });
+    opener.focus();
+    fireEvent.click(opener);
+    const panel = await screen.findByRole("complementary", { name: "Edit" });
+    within(panel).getByRole("button", { name: "Deny" }).focus();
+    await act(async () =>
+      fixture.stream.send(event("approval", "2", "run-g", { askId: "ask-run-g" })),
+    );
+    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Edit" })).toBeNull());
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Message Mecatl" })),
+    );
+  });
+
+  it("leaves focus alone when the reader already moved it before the panel closed", async () => {
+    const fixture = new Fixture();
+    await mount(fixture);
+    const card = await startAsk(fixture, "chat-a", "run-h", "Elsewhere ask");
+    // A real click focuses the opener, which leaves with its card once the ask settles.
+    const opener = within(card).getByRole("button", { name: "Open in detail panel" });
+    opener.focus();
+    fireEvent.click(opener);
+    const panel = await screen.findByRole("complementary", { name: "Edit" });
+    const elsewhere = screen.getByRole("button", { name: "Chat options" });
+    elsewhere.focus();
+    await act(async () =>
+      fixture.stream.send(event("approval", "2", "run-h", { askId: "ask-run-h" })),
+    );
+    await waitFor(() => expect(panel.isConnected).toBe(false));
+    expect(document.activeElement).toBe(elsewhere);
+  });
+
   it("offers the detail panel only where the surface has a panel slot", async () => {
     const fixture = new Fixture();
     await mount(fixture, true);

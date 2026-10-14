@@ -46,6 +46,7 @@ export function ShortcutReference() {
     ...freshDeploymentQuery,
     enabled: browserOnline,
   });
+  const steerAvailable = runtime.data?.capabilities.steer !== false;
   const runtimeValidating = useRefreshOnEntry(
     "shortcuts:runtime",
     browserOnline,
@@ -89,7 +90,7 @@ export function ShortcutReference() {
                 .map((shortcut) => (
                   <li className="flex items-center justify-between gap-4" key={shortcut.id}>
                     <span className="text-sm text-foreground">
-                      {describeShortcut(shortcut, enterBehavior)}
+                      {describeShortcut(shortcut, enterBehavior, steerAvailable)}
                     </span>
                     <span className="flex shrink-0 items-center gap-1">
                       {keycaps(shortcut.combo, mac).map((keycap) => (

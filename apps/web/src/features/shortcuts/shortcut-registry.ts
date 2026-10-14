@@ -247,20 +247,24 @@ export function shortcutWorksWhileTyping(combo: string): boolean {
  * rows follow the user's Enter preference (`useEnterSendBehavior`), so the page
  * says what Enter and Shift+Enter do while the agent is replying instead of
  * pointing at the setting. Mirrors `resolveComposerAction` in `chat-composer.tsx`:
- * Enter does the preference and Shift+Enter the opposite. Every other row keeps
+ * Enter does the preference and Shift+Enter the opposite; without steering both
+ * queue. Every other row keeps
  * its registry description.
  */
 export function describeShortcut(
   shortcut: Pick<ShortcutDefinition, "description" | "id">,
   enterBehavior: EnterSendBehavior,
+  steerAvailable = true,
 ): string {
   const steer = "steer the agent";
   const queue = "queue the message";
   switch (shortcut.id) {
     case "composer.send":
-      return `${shortcut.description} — while the agent is replying: ${enterBehavior === "steer" ? steer : queue}`;
+      return `${shortcut.description} — while the agent is replying: ${enterBehavior === "steer" && steerAvailable ? steer : queue}`;
     case "composer.newline":
-      return `${shortcut.description} — while the agent is replying: ${enterBehavior === "steer" ? queue : steer}`;
+      return `${shortcut.description} — while the agent is replying: ${
+        !steerAvailable ? `${queue} (steering is off)` : enterBehavior === "steer" ? queue : steer
+      }`;
     default:
       return shortcut.description;
   }
