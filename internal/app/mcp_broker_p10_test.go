@@ -205,15 +205,19 @@ func TestWorkspaceEnrollmentAuthority_Scenario1_PreservesConfiguredBrokerDeny(t 
 		t.Fatalf("StartRun: %v", err)
 	}
 	defer built.Service.FinishRun(sess.ID, run)
+	// Drain to the end: FinishRun must not race the engine's follow-up turn.
+	denied := false
 	for event := range run.Events() {
 		if event.Type == session.EvToolResult && event.ToolResult != nil && event.ToolResult.IsError {
-			if got := calls.Load(); got != 0 {
-				t.Fatalf("configured deny executed broker tool %d times", got)
-			}
-			return
+			denied = true
 		}
 	}
-	t.Fatal("configured permissions.deny did not reject the broker tool")
+	if !denied {
+		t.Fatal("configured permissions.deny did not reject the broker tool")
+	}
+	if got := calls.Load(); got != 0 {
+		t.Fatalf("configured deny executed broker tool %d times", got)
+	}
 }
 
 func TestBuiltMountsFixedMCPBrokerHandlerBundle(t *testing.T) {
