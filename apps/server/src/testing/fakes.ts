@@ -114,6 +114,7 @@ export function fakeRuntime(overrides: Partial<MecatlRuntime> = {}): MecatlRunti
     authMode: "none",
     client: fakeClient(),
     close: async () => undefined,
+    compatibility: () => sampleCompatibility(),
     ready: async () => undefined,
     runWithCredential: async (_accessToken, operation) => operation(),
     snapshot: () => sampleSnapshot(),

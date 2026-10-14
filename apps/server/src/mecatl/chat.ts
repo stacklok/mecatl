@@ -23,12 +23,13 @@ import {
   type PermissionVerdict,
   type PlanApprovalVerdict,
   type Run,
-  ServerFeature,
+  type ServerCompatibility,
   SessionMode,
   textPart,
 } from "@stacklok-oss/mecatl-sdk";
 import { sanitizeUpstreamDetail } from "../http/problem.js";
 import { projectDeliveryNote } from "./delivery-note.js";
+import { RuntimeNotReadyError } from "./runtime.js";
 
 const maximumInventoryPages = 20;
 const inventoryPageSize = 100;
@@ -114,7 +115,16 @@ export interface ChatService {
   transcript(sessionId: string, signal?: AbortSignal): Promise<SessionTranscriptResponse>;
 }
 
-export function createMecatlChatService(client: Client): ChatService {
+/**
+ * `compatibility` returns the runtime's cached negotiation so reads such as
+ * `detail` need no RPC per request; it defaults to "not ready".
+ */
+export function createMecatlChatService(
+  client: Client,
+  compatibility: () => ServerCompatibility = () => {
+    throw new RuntimeNotReadyError();
+  },
+): ChatService {
   return {
     async *activity(sessionId, request) {
       const { cursor, replayMax, signal } = request;
@@ -306,10 +316,8 @@ export function createMecatlChatService(client: Client): ChatService {
 
     async detail(sessionId, signal) {
       const session = await client.sessions.get(sessionId, { signal });
-      const [snapshot, compatibility] = await Promise.all([
-        session.snapshot({ signal }),
-        client.server.compatibility(),
-      ]);
+      const snapshot = await session.snapshot({ signal });
+      const { capabilities } = compatibility();
       const resolvedModel = snapshot.resolvedModel;
       return {
         capabilities: {
@@ -317,8 +325,8 @@ export function createMecatlChatService(client: Client): ChatService {
           builtInShell: snapshot.sessionCapabilities?.builtInShell === true,
           executionFiles: snapshot.sessionCapabilities?.executionFiles === true,
           image: snapshot.sessionCapabilities?.image === true,
-          manualCompaction: compatibility.capabilities.manualCompaction,
-          modelSelection: compatibility.capabilities.modelSelection,
+          manualCompaction: capabilities.manualCompaction,
+          modelSelection: capabilities.modelSelection,
         },
         id: snapshot.sessionId,
         kind: snapshot.kind,
@@ -453,8 +461,8 @@ export function createMecatlChatService(client: Client): ChatService {
     },
 
     async resolvePlanAsk(sessionId, runId, askId, verdict) {
-      const compatibility = await client.server.compatibility();
-      if (!compatibility.features.has(ServerFeature.ExactPlanAskControl)) return "unavailable";
+      // The SDK checks ExactPlanAskControl from its cached features and throws
+      // `unsupported_feature`, mapped to "unavailable" below.
       try {
         const session = await client.sessions.get(sessionId);
         await session.controls(runId).resolvePlanAsk(askId, verdict);

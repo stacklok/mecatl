@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { type Client, type Event, MecatlError, SessionMode } from "@stacklok-oss/mecatl-sdk";
+import {
+  type Client,
+  type Event,
+  MecatlError,
+  type ServerCompatibility,
+  SessionMode,
+} from "@stacklok-oss/mecatl-sdk";
 import { describe, expect, it, vi } from "vitest";
 import { createMecatlChatService, runError, serializeEvent } from "./chat";
 
@@ -156,30 +162,33 @@ describe("Mecatl chat sessions", () => {
       ],
       inventoryRevision: "rev",
     };
-    const service = createMecatlChatService({
-      server: {
-        executionTemplates: vi.fn().mockResolvedValue(inventory),
-        compatibility: vi
-          .fn()
-          .mockResolvedValue({ capabilities: { manualCompaction: false, modelSelection: false } }),
-      },
-      sessions: {
-        get: vi.fn().mockResolvedValue({
-          snapshot: vi.fn().mockResolvedValue({
-            sessionId: "s",
-            mode: 1,
-            state: "idle",
-            sessionCapabilities: {
-              image: true,
-              audio: false,
-              executionFiles: true,
-              builtInShell: false,
-            },
-            tokenUsage: {},
+    const service = createMecatlChatService(
+      {
+        server: {
+          executionTemplates: vi.fn().mockResolvedValue(inventory),
+        },
+        sessions: {
+          get: vi.fn().mockResolvedValue({
+            snapshot: vi.fn().mockResolvedValue({
+              sessionId: "s",
+              mode: 1,
+              state: "idle",
+              sessionCapabilities: {
+                image: true,
+                audio: false,
+                executionFiles: true,
+                builtInShell: false,
+              },
+              tokenUsage: {},
+            }),
           }),
-        }),
-      },
-    } as unknown as Client);
+        },
+      } as unknown as Client,
+      () =>
+        ({
+          capabilities: { manualCompaction: false, modelSelection: false },
+        }) as ServerCompatibility,
+    );
     expect(await service.executionTemplates?.()).toEqual(inventory);
     expect((await service.detail("s")).capabilities).toMatchObject({
       image: true,
@@ -352,14 +361,13 @@ describe("Mecatl chat sessions", () => {
         },
       },
     });
-    const service = createMecatlChatService({
-      server: {
-        compatibility: vi.fn().mockResolvedValue({
-          capabilities: { manualCompaction: true, modelSelection: true },
-        }),
-      },
-      sessions: { get: vi.fn().mockResolvedValue({ snapshot }) },
-    } as unknown as Client);
+    const service = createMecatlChatService(
+      {
+        sessions: { get: vi.fn().mockResolvedValue({ snapshot }) },
+      } as unknown as Client,
+      () =>
+        ({ capabilities: { manualCompaction: true, modelSelection: true } }) as ServerCompatibility,
+    );
 
     await expect(service.detail("session-1")).resolves.toEqual({
       capabilities: {
@@ -521,14 +529,15 @@ describe("Mecatl chat sessions", () => {
         mode: SessionMode.Default,
         tokenUsage: {},
       });
-      const service = createMecatlChatService({
-        server: {
-          compatibility: vi.fn().mockResolvedValue({
+      const service = createMecatlChatService(
+        {
+          sessions: { get: vi.fn().mockResolvedValue({ snapshot }) },
+        } as unknown as Client,
+        () =>
+          ({
             capabilities: { manualCompaction: false, modelSelection: false },
-          }),
-        },
-        sessions: { get: vi.fn().mockResolvedValue({ snapshot }) },
-      } as unknown as Client);
+          }) as ServerCompatibility,
+      );
 
       await expect(service.detail("session-1")).resolves.toMatchObject({
         model: { reasoningEffort },
@@ -657,12 +666,45 @@ describe("Mecatl chat sessions", () => {
     expect(controls).toHaveBeenCalledWith("run-plan");
     expect(resolvePlan).not.toHaveBeenCalled();
 
-    compatibility.mockResolvedValue({ features: new Set() });
-    resolvePlanAsk.mockClear();
+    resolvePlanAsk.mockRejectedValue(
+      new MecatlError("unsupported", {
+        code: "unsupported_feature",
+        status: 501,
+        transport: "http",
+      }),
+    );
     await expect(
       service.resolvePlanAsk("session-1", "run-plan", "ask-plan", "approve"),
     ).resolves.toBe("unavailable");
-    expect(resolvePlanAsk).not.toHaveBeenCalled();
+    expect(compatibility).not.toHaveBeenCalled();
+  });
+
+  it("reads detail capabilities from the cached negotiation without a compatibility RPC", async () => {
+    const compatibility = vi.fn();
+    const service = createMecatlChatService(
+      {
+        server: { compatibility },
+        sessions: {
+          get: vi.fn().mockResolvedValue({
+            snapshot: vi.fn().mockResolvedValue({
+              sessionId: "s",
+              mode: 1,
+              state: "idle",
+              tokenUsage: {},
+            }),
+          }),
+        },
+      } as unknown as Client,
+      () =>
+        ({
+          capabilities: { manualCompaction: true, modelSelection: false },
+        }) as ServerCompatibility,
+    );
+
+    await expect(service.detail("s")).resolves.toMatchObject({
+      capabilities: { manualCompaction: true, modelSelection: false },
+    });
+    expect(compatibility).not.toHaveBeenCalled();
   });
 
   it("treats a live run that owns its plan continuation as a stale plan ask", async () => {

@@ -233,7 +233,9 @@ export function createApp(dependencies: AppDependencies = {}) {
 
   const chat =
     dependencies.chat ??
-    (runtime === undefined ? undefined : createMecatlChatService(runtime.client));
+    (runtime === undefined
+      ? undefined
+      : createMecatlChatService(runtime.client, () => runtime.compatibility()));
   registerChatRoutes(app, chat, dependencies.activity);
   // Capability read LIVE from the negotiated snapshot: false until negotiation
   // completes or when the deployment has scheduling off.
