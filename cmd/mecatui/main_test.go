@@ -114,8 +114,10 @@ func TestEmbeddedGuardrailsAdvisoryWarning(t *testing.T) {
 			wantFact: "guardrails: OFF",
 		},
 		{
+			// yolo with no checker refuses to start unless the kill switch declares
+			// the choice; with it, no checker runs and nothing is advisory.
 			name:     "no checker yolo from operator settings",
-			settings: "execution:\n  default_placement: host-local\nposture: yolo\n",
+			settings: "execution:\n  default_placement: host-local\nposture: yolo\nguardrails:\n  disabled: true\n",
 			wantFact: "guardrails: OFF",
 		},
 		{
