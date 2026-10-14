@@ -1157,9 +1157,10 @@ describe("approval focus scope", () => {
     fixture: Fixture,
     runId: string,
     asks: Array<{ askId: string; reason: string }>,
+    sessionId = "chat-a",
   ) {
     await act(async () => {
-      fixture.stream.send({ runId, sessionId: "chat-a", type: "run.started" });
+      fixture.stream.send({ runId, sessionId, type: "run.started" });
       for (const [index, { askId, reason }] of asks.entries()) {
         fixture.stream.send(
           event("permission.ask", String(index + 1), runId, {
@@ -1325,5 +1326,50 @@ describe("approval focus scope", () => {
       method: "POST",
       pathname: "/api/v1/sessions/chat-a/runs/run-a/permissions/ask-1",
     });
+  });
+
+  it("denies the active ask on Escape from its own card or from outside every card", async () => {
+    for (const side of [false, true]) {
+      const fixture = new Fixture();
+      await mount(fixture, side);
+      const sessionId = side ? "thread-a" : "chat-a";
+      const [first, second] = (await sendAsks(fixture, "run-a", pair, sessionId)) as [
+        HTMLElement,
+        HTMLElement,
+      ];
+      const user = userEvent.setup();
+      const deny = (askId: string) => ({
+        body: { verdict: "deny" },
+        method: "POST",
+        pathname: `/api/v1/sessions/${sessionId}/runs/run-a/permissions/${askId}`,
+      });
+
+      // From inside the active ask's own card: a held key denies nothing, a press denies it.
+      expect(within(first).getByText("Esc to Deny")).toBeTruthy();
+      const denyButton = within(first).getByRole("button", { name: "Deny" });
+      denyButton.focus();
+      fireEvent.keyDown(denyButton, { key: "Escape", repeat: true });
+      fireEvent.keyUp(denyButton, { key: "Escape" });
+      expect(fixture.posts()).toEqual([]);
+      fixture.verdicts.push(Promise.resolve(new Response(null, { status: 204 })));
+      await user.keyboard("{Escape}");
+      await waitFor(() => expect(screen.queryByText("First ask")).toBeNull());
+      expect(fixture.posts()).toEqual([deny("ask-1")]);
+
+      // From outside every card, now that the second ask is the active one: the
+      // workspace's composer, or a thread control (the thread's composer is
+      // disabled while its run waits).
+      expect(within(second).getByText("Esc to Deny")).toBeTruthy();
+      screen
+        .getByRole(side ? "button" : "textbox", {
+          name: side ? "Thread options" : "Message Mecatl",
+        })
+        .focus();
+      fixture.verdicts.push(Promise.resolve(new Response(null, { status: 204 })));
+      await user.keyboard("{Escape}");
+      await waitFor(() => expect(screen.queryByText("Second ask")).toBeNull());
+      expect(fixture.posts()).toEqual([deny("ask-1"), deny("ask-2")]);
+      cleanup();
+    }
   });
 });
