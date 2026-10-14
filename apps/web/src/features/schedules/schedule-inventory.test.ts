@@ -2,7 +2,11 @@
 
 import type { ListSchedulesResponse } from "@mecatl-studio/contracts/generated";
 import { describe, expect, it } from "vitest";
-import { deriveMobileScheduleInventory, deriveScheduleInventory } from "./schedule-inventory";
+import {
+  deriveMobileScheduleInventory,
+  deriveScheduleInventory,
+  filterScheduleInventory,
+} from "./schedule-inventory";
 
 type Schedule = ListSchedulesResponse["items"][number];
 
@@ -36,10 +40,12 @@ describe("schedule inventory", () => {
       schedule({ name: "Cleanup", prompt: "Remove stale previews", status: "paused" }),
     ];
 
-    expect(deriveScheduleInventory(source, "STALE", "name").map((item) => item.name)).toEqual([
-      "Cleanup",
-    ]);
-    expect(deriveScheduleInventory(source, "Ada", "name")).toEqual([]);
+    expect(
+      deriveScheduleInventory(filterScheduleInventory(source, "STALE"), "name").map(
+        (item) => item.name,
+      ),
+    ).toEqual(["Cleanup"]);
+    expect(deriveScheduleInventory(filterScheduleInventory(source, "Ada"), "name")).toEqual([]);
     expect(source.map((item) => item.name)).toEqual(["Daily report", "Cleanup"]);
   });
 
@@ -57,12 +63,16 @@ describe("schedule inventory", () => {
     ];
 
     expect(
-      deriveScheduleInventory(source, "Europe/Rome", "status").map((item) => item.name),
+      deriveScheduleInventory(filterScheduleInventory(source, "Europe/Rome"), "status").map(
+        (item) => item.name,
+      ),
     ).toEqual(["Rome report"]);
-    expect(deriveScheduleInventory(source, "weekdays", "status").map((item) => item.name)).toEqual([
-      "Rome report",
-    ]);
-    expect(deriveScheduleInventory(source, "", "status").map((item) => item.name)).toEqual([
+    expect(
+      deriveScheduleInventory(filterScheduleInventory(source, "weekdays"), "status").map(
+        (item) => item.name,
+      ),
+    ).toEqual(["Rome report"]);
+    expect(deriveScheduleInventory(source, "status").map((item) => item.name)).toEqual([
       "Live",
       "Waiting",
       "Rome report",
@@ -78,12 +88,12 @@ describe("schedule inventory", () => {
       schedule({ name: "Beta", status: "running" }),
     ];
 
-    expect(deriveScheduleInventory(source, "", "name", "desc").map((item) => item.name)).toEqual([
+    expect(deriveScheduleInventory(source, "name", "desc").map((item) => item.name)).toEqual([
       "Zulu",
       "Beta",
       "Alpha",
     ]);
-    expect(deriveMobileScheduleInventory(source, "").map((item) => item.name)).toEqual([
+    expect(deriveMobileScheduleInventory(source).map((item) => item.name)).toEqual([
       "Beta",
       "Zulu",
       "Alpha",
@@ -120,11 +130,11 @@ describe("schedule inventory", () => {
 
     for (const [key, ascending, descending] of cases) {
       expect(
-        deriveScheduleInventory(source, "", key, "asc").map((item) => item.name),
+        deriveScheduleInventory(source, key, "asc").map((item) => item.name),
         key,
       ).toEqual(ascending);
       expect(
-        deriveScheduleInventory(source, "", key, "desc").map((item) => item.name),
+        deriveScheduleInventory(source, key, "desc").map((item) => item.name),
         `${key} desc`,
       ).toEqual(descending);
     }
@@ -139,7 +149,7 @@ describe("schedule inventory", () => {
       schedule({ name: "Invalid", nextFireAt: "not-a-date" }),
     ];
 
-    expect(deriveScheduleInventory(source, "", "nextRun").map((item) => item.name)).toEqual([
+    expect(deriveScheduleInventory(source, "nextRun").map((item) => item.name)).toEqual([
       "Sooner",
       "Later",
       "Invalid",
@@ -171,7 +181,7 @@ describe("schedule column ordering and cadence search", () => {
       cron("custom", "0 9 1 1 *"),
     ];
 
-    expect(names(deriveScheduleInventory(source, "", "schedule", "asc"))).toEqual([
+    expect(names(deriveScheduleInventory(source, "schedule", "asc"))).toEqual([
       "every-15m",
       "every-hour",
       "daily-midnight",
@@ -204,16 +214,28 @@ describe("schedule column ordering and cadence search", () => {
       ["monthly", "d-monthly"],
       ["interval", "e-interval"],
     ] as const) {
-      expect(names(deriveScheduleInventory(source, word, "name")), word).toContain(expected);
+      expect(
+        names(deriveScheduleInventory(filterScheduleInventory(source, word), "name")),
+        word,
+      ).toContain(expected);
     }
-    expect(names(deriveScheduleInventory(source, "weekly", "name"))).not.toContain("a-daily");
+    expect(
+      names(deriveScheduleInventory(filterScheduleInventory(source, "weekly"), "name")),
+    ).not.toContain("a-daily");
     // A list of times is still the same cadence.
     expect(
-      names(deriveScheduleInventory([cron("lists", "15 9,13,17 * * 1-5")], "weekdays", "name")),
+      names(
+        deriveScheduleInventory(
+          filterScheduleInventory([cron("lists", "15 9,13,17 * * 1-5")], "weekdays"),
+          "name",
+        ),
+      ),
     ).toEqual(["lists"]);
     // The described wording still matches.
-    expect(names(deriveScheduleInventory(source, "monday through friday", "name"))).toEqual([
-      "b-weekdays",
-    ]);
+    expect(
+      names(
+        deriveScheduleInventory(filterScheduleInventory(source, "monday through friday"), "name"),
+      ),
+    ).toEqual(["b-weekdays"]);
   });
 });

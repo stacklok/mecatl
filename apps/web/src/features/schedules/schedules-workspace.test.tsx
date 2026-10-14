@@ -1,15 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 // @vitest-environment happy-dom
 
+import { client as apiClient } from "@mecatl-studio/contracts/client";
 import type { ListSchedulesResponse } from "@mecatl-studio/contracts/generated";
-import { listSchedulesQueryKey } from "@mecatl-studio/contracts/query";
+import { listScheduleFiresQueryKey, listSchedulesQueryKey } from "@mecatl-studio/contracts/query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { createMemoryHistory, createRouter, RouterContextProvider } from "@tanstack/react-router";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  RouterContextProvider,
+  RouterProvider,
+} from "@tanstack/react-router";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 import { routeTree } from "../../routeTree.gen";
 import { ShortcutProvider } from "../shortcuts/shortcut-provider";
+import { ScheduleDetail } from "./schedule-detail";
 import { SchedulesWorkspace, scheduleInventoryPolling } from "./schedules-workspace";
 
 type Schedule = ListSchedulesResponse["items"][number];
@@ -37,7 +46,44 @@ function schedule(overrides: Partial<Schedule> & Pick<Schedule, "name">): Schedu
   };
 }
 
-afterEach(cleanup);
+const initialApiConfig = apiClient.getConfig();
+
+afterEach(() => {
+  cleanup();
+  apiClient.setConfig({ baseUrl: initialApiConfig.baseUrl, fetch: initialApiConfig.fetch });
+});
+
+function problem(detail: string, status = 500) {
+  return new Response(
+    JSON.stringify({ code: "", detail, instance: "", status, title: "", type: "" }),
+    {
+      headers: { "content-type": "application/problem+json" },
+      status,
+    },
+  );
+}
+
+/** Fakes the BFF; a handler returns undefined for "204 No Content". */
+function fakeApi(
+  handler: (method: string, path: string) => Response | Promise<Response> | undefined,
+) {
+  apiClient.setConfig({
+    baseUrl: window.location.origin,
+    fetch: async (input, init) => {
+      const request = new Request(input, init);
+      const answer = handler(request.method, new URL(request.url).pathname);
+      return (await answer) ?? new Response(null, { status: 204 });
+    },
+  });
+}
+
+function listResponse(items: Schedule[]) {
+  return jsonResponse({ items, reason: "", supported: true });
+}
+
+function jsonResponse(body: unknown) {
+  return new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
+}
 
 describe("schedule inventory controls", () => {
   it("polls every five seconds without polling background tabs", () => {
@@ -111,6 +157,20 @@ describe("schedule inventory controls", () => {
       screen.getByRole<HTMLInputElement>("textbox", { name: "Filter scheduled tasks" }).value,
     ).toBe("");
     expect(renderedDesktopNames()).toEqual(["Alpha"]);
+  });
+
+  it("applies the search query to both the desktop and mobile layouts", async () => {
+    const user = userEvent.setup();
+    mount([
+      schedule({ name: "Alpha", prompt: "Publish the report" }),
+      schedule({ name: "Beta", prompt: "Remove stale previews" }),
+    ]);
+
+    await user.type(screen.getByRole("textbox", { name: "Filter scheduled tasks" }), "report");
+    expect(renderedDesktopNames()).toEqual(["Alpha"]);
+    const mobile = document.querySelector<HTMLElement>("[data-schedule-mobile-list]");
+    expect(within(mobile as HTMLElement).queryAllByRole("link").length).toBe(1);
+    expect(within(mobile as HTMLElement).getByText("Alpha")).toBeTruthy();
   });
 
   it("focuses search with slash and clears then blurs with Escape", async () => {
@@ -194,6 +254,90 @@ describe("schedule inventory controls", () => {
   });
 });
 
+describe("schedule actions refresh run history", () => {
+  const firesKeyFor = () => listScheduleFiresQueryKey({ path: { scheduleName: "Alpha" } });
+  const alpha = schedule({ name: "Alpha" });
+
+  async function runNow(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByRole("button", { name: "Actions for Alpha" }));
+    await user.click(screen.getByRole("menuitem", { name: "Run now" }));
+  }
+
+  it("invalidates the schedule's fires after Run now", async () => {
+    const user = userEvent.setup();
+    fakeApi((method) => (method === "GET" ? listResponse([alpha]) : undefined));
+    const { queryClient } = mount([alpha]);
+    queryClient.setQueryData(firesKeyFor(), { items: [] });
+
+    await runNow(user);
+    await waitFor(() => expect(queryClient.getQueryState(firesKeyFor())?.isInvalidated).toBe(true));
+  });
+
+  it("still invalidates the fires when the fire is rejected", async () => {
+    const user = userEvent.setup();
+    fakeApi((method) => (method === "POST" ? problem("daemon refused") : listResponse([alpha])));
+    const { queryClient } = mount([alpha]);
+    queryClient.setQueryData(firesKeyFor(), { items: [] });
+
+    await runNow(user);
+    expect(await screen.findByText("daemon refused")).toBeTruthy();
+    expect(queryClient.getQueryState(firesKeyFor())?.isInvalidated).toBe(true);
+  });
+
+  it("does not touch the fires after Pause", async () => {
+    const user = userEvent.setup();
+    const listFetches: string[] = [];
+    fakeApi((method, path) => {
+      if (method !== "GET") return undefined;
+      if (path === "/api/v1/schedules") listFetches.push(path);
+      return listResponse([alpha]);
+    });
+    const { queryClient } = mount([alpha]);
+    queryClient.setQueryData(firesKeyFor(), { items: [] });
+
+    await user.click(screen.getByRole("button", { name: "Actions for Alpha" }));
+    await user.click(screen.getByRole("menuitem", { name: "Pause" }));
+    await waitFor(() => expect(listFetches.length).toBe(1));
+    expect(queryClient.getQueryState(firesKeyFor())?.isInvalidated).toBe(false);
+  });
+});
+
+describe("schedule detail delete", () => {
+  async function confirmDelete(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(await screen.findByRole("button", { name: "Actions for Alpha" }));
+    await user.click(screen.getByRole("menuitem", { name: "Delete" }));
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+  }
+
+  it("leaves for the list without flashing not-found while the list refetch is pending", async () => {
+    const user = userEvent.setup();
+    fakeApi((method, path) => {
+      if (method === "GET" && path.endsWith("/fires")) return jsonResponse({ items: [] });
+      if (method === "GET") return new Promise<Response>(() => {});
+      return undefined;
+    });
+    const { router } = mountDetail([schedule({ name: "Alpha" })]);
+
+    await confirmDelete(user);
+    await waitFor(() => expect(router.history.location.pathname).toBe("/workspace/schedules"));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("reports a rejected delete and stays on the page", async () => {
+    const user = userEvent.setup();
+    fakeApi((method, path) => {
+      if (method === "GET" && path.endsWith("/fires")) return jsonResponse({ items: [] });
+      return method === "DELETE" ? problem("delete refused") : undefined;
+    });
+    const { router } = mountDetail([schedule({ name: "Alpha" })]);
+
+    await confirmDelete(user);
+    expect(await screen.findByText("delete refused")).toBeTruthy();
+    expect(router.history.location.pathname).toBe("/workspace/schedules/Alpha");
+  });
+});
+
 function mount(items: Schedule[]) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
@@ -216,10 +360,46 @@ function mount(items: Schedule[]) {
       </RouterContextProvider>
     </QueryClientProvider>,
   );
+  return { queryClient, router };
 }
 
 function renderedDesktopNames() {
   return within(screen.getByRole("table"))
     .queryAllByRole("link")
     .map((link) => link.textContent);
+}
+
+/** A two-route router so the detail page can really navigate away to the list. */
+function mountDetail(items: Schedule[]) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+  });
+  queryClient.setQueryData<ListSchedulesResponse>(listSchedulesQueryKey(), {
+    items,
+    reason: "",
+    supported: true,
+  });
+  const root = createRootRoute();
+  const list = createRoute({
+    component: SchedulesWorkspace,
+    getParentRoute: () => root,
+    path: "/workspace/schedules",
+  });
+  const detail = createRoute({
+    component: () => <ScheduleDetail scheduleName="Alpha" />,
+    getParentRoute: () => root,
+    path: "/workspace/schedules/$scheduleName",
+  });
+  const router = createRouter({
+    history: createMemoryHistory({ initialEntries: ["/workspace/schedules/Alpha"] }),
+    routeTree: root.addChildren([list, detail]),
+  });
+  render(
+    <QueryClientProvider client={queryClient}>
+      <ShortcutProvider>
+        <RouterProvider router={router} />
+      </ShortcutProvider>
+    </QueryClientProvider>,
+  );
+  return { queryClient, router };
 }

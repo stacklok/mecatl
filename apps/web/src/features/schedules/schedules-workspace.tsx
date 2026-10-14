@@ -5,6 +5,7 @@ import {
   actOnScheduleMutation,
   createScheduleMutation,
   deleteScheduleMutation,
+  listScheduleFiresQueryKey,
   listSchedulesOptions,
   listSchedulesQueryKey,
   updateScheduleMutation,
@@ -61,6 +62,7 @@ import { canEditSchedule, ScheduleForm } from "./schedule-form";
 import {
   deriveMobileScheduleInventory,
   deriveScheduleInventory,
+  filterScheduleInventory,
   type ScheduleInventoryOrder,
   scheduleTriggerLabel,
 } from "./schedule-inventory";
@@ -142,14 +144,12 @@ export function SchedulesWorkspace() {
       ),
     [filter, schedules.data?.items],
   );
+  const visible = useMemo(() => filterScheduleInventory(filtered, query), [filtered, query]);
   const items = useMemo(
-    () => deriveScheduleInventory(filtered, query, sort.key, sort.dir),
-    [filtered, query, sort.dir, sort.key],
+    () => deriveScheduleInventory(visible, sort.key, sort.dir),
+    [visible, sort.dir, sort.key],
   );
-  const mobileItems = useMemo(
-    () => deriveMobileScheduleInventory(filtered, query),
-    [filtered, query],
-  );
+  const mobileItems = useMemo(() => deriveMobileScheduleInventory(visible), [visible]);
 
   function openEditor(next: Schedule | "new") {
     editorOpener.current = document.activeElement as HTMLElement | null;
@@ -186,9 +186,16 @@ export function SchedulesWorkspace() {
     setError(undefined);
     try {
       await action.mutateAsync({ body: { action: name }, path: { scheduleName: schedule.name } });
-      await refresh();
     } catch (caught) {
       setError(errorMessage(caught));
+    } finally {
+      // A failed fire still records a fire row, so history is stale either way.
+      if (name === "fire") {
+        void queryClient.invalidateQueries({
+          queryKey: listScheduleFiresQueryKey({ path: { scheduleName: schedule.name } }),
+        });
+      }
+      await refresh();
     }
   }
 

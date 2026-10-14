@@ -37,13 +37,11 @@ export type ScheduleInventoryOrder =
  */
 export function deriveScheduleInventory(
   schedules: readonly Schedule[],
-  query: string,
   order: ScheduleInventoryOrder,
   direction: SortDir = "asc",
 ): Schedule[] {
-  const visible = filterScheduleInventory(schedules, query);
   const sign = direction === "asc" ? 1 : -1;
-  return visible.sort((left, right) => {
+  return [...schedules].sort((left, right) => {
     let comparison: number;
     switch (order) {
       case "fires":
@@ -70,11 +68,8 @@ export function deriveScheduleInventory(
 }
 
 /** Mobile has no sortable headers and always keeps live work first. */
-export function deriveMobileScheduleInventory(
-  schedules: readonly Schedule[],
-  query: string,
-): Schedule[] {
-  return filterScheduleInventory(schedules, query).sort(
+export function deriveMobileScheduleInventory(schedules: readonly Schedule[]): Schedule[] {
+  return [...schedules].sort(
     (left, right) => statusRank(left.status) - statusRank(right.status) || compareName(left, right),
   );
 }
@@ -85,7 +80,8 @@ export function scheduleTriggerLabel(schedule: Schedule) {
     : `Once ${formatDate(schedule.trigger.at)}`;
 }
 
-function filterScheduleInventory(schedules: readonly Schedule[], query: string) {
+/** Callers filter once and derive each layout's order from the same visible list. */
+export function filterScheduleInventory(schedules: readonly Schedule[], query: string) {
   const needle = query.trim().toLocaleLowerCase();
   if (!needle) return [...schedules];
   return schedules.filter((schedule) =>

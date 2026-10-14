@@ -8,6 +8,7 @@ import {
   actOnScheduleMutation,
   deleteScheduleMutation,
   listScheduleFiresOptions,
+  listScheduleFiresQueryKey,
   listSchedulesOptions,
   listSchedulesQueryKey,
   updateScheduleMutation,
@@ -54,7 +55,7 @@ import {
   TableRow,
 } from "../../components/ui/table";
 import { errorMessage } from "../../lib/error-message";
-import { formatDate } from "../../lib/formatters";
+import { formatDate, formatRelativeTime, formatUntilTime } from "../../lib/formatters";
 import { pageTitleClass } from "../../lib/typography";
 import { describeCron } from "./describe-cron";
 import { canEditSchedule, ScheduleForm } from "./schedule-form";
@@ -136,9 +137,11 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
     setError(undefined);
     try {
       await action.mutateAsync({ body: { action: name }, path: { scheduleName } });
-      await refresh();
     } catch (caught) {
       setError(errorMessage(caught));
+    } finally {
+      // A failed fire still records a fire row, so history is stale either way.
+      await refresh();
     }
   }
 
@@ -146,12 +149,26 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
     setError(undefined);
     try {
       await remove.mutateAsync({ path: { scheduleName } });
-      await queryClient.invalidateQueries({ queryKey: listSchedulesQueryKey() });
-      await navigate({ to: "/workspace/schedules" });
     } catch (caught) {
       setError(errorMessage(caught));
       closeDelete();
+      return;
     }
+    // Drop the item from the cache before leaving so the refetch cannot render
+    // "not found" while navigation is in flight.
+    queryClient.setQueryData<ListSchedulesResponse>(
+      listSchedulesQueryKey(),
+      (current) =>
+        current && {
+          ...current,
+          items: current.items.filter((item) => item.name !== scheduleName),
+        },
+    );
+    queryClient.removeQueries({
+      queryKey: listScheduleFiresQueryKey({ path: { scheduleName } }),
+    });
+    await navigate({ to: "/workspace/schedules" });
+    void queryClient.invalidateQueries({ queryKey: listSchedulesQueryKey() });
   }
 
   if (schedules.isPending) return <DetailState loading text="Loading scheduled task…" />;
@@ -491,33 +508,23 @@ export function timezoneLabel(timezone: string) {
   return timezone || "UTC";
 }
 
-/** Bare span between two instants ("5m", "2h", "3d"); a due-or-past gap reads "<1m". */
-function formatSpan(milliseconds: number) {
-  const minutes = Math.floor(milliseconds / 60_000);
-  if (minutes < 1) return "<1m";
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  return hours < 24 ? `${hours}h` : `${Math.floor(hours / 24)}d`;
-}
-
 /** A paused or completed schedule will not fire, so it has no next run to promise. */
-export function describeNextRun(
-  schedule: Pick<Schedule, "enabled" | "nextFireAt">,
-  now = Date.now(),
-) {
+export function describeNextRun(schedule: Pick<Schedule, "enabled" | "nextFireAt">) {
   const at = Date.parse(schedule.nextFireAt);
   if (!schedule.enabled || Number.isNaN(at)) return "—";
-  return `in ${formatSpan(at - now)}`;
+  return `in ${formatUntilTime(at)}`;
 }
 
-export function describeLastRun(schedule: Pick<Schedule, "lastFireAt">, now = Date.now()) {
+export function describeLastRun(schedule: Pick<Schedule, "lastFireAt">) {
   const at = Date.parse(schedule.lastFireAt);
   if (Number.isNaN(at)) return "Never";
-  return `${formatSpan(now - at)} ago`;
+  return `${formatRelativeTime(at)} ago`;
 }
 
 export function describeRuns(schedule: Pick<Schedule, "fireCount" | "maxFires">) {
-  if (schedule.fireCount === 0) return "None yet";
+  if (schedule.fireCount === 0) {
+    return schedule.maxFires > 0 ? `None yet · up to ${schedule.maxFires}` : "None yet";
+  }
   if (schedule.maxFires <= 0) return String(schedule.fireCount);
   const base = `${schedule.fireCount} of ${schedule.maxFires}`;
   return schedule.fireCount >= schedule.maxFires ? `${base} — limit reached` : base;
