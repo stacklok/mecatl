@@ -290,8 +290,7 @@ move between the verdict buttons. A new request never takes focus, so a key you
 type as it arrives answers nothing: press Tab or click to move focus into its
 card first. These keys never act from outside the request's card or panel, while
 you type in the composer or another field, while a verdict is being sent, or
-when its outcome is uncertain. Escape denies the active request; in a detail
-panel showing a different request, Escape closes the panel instead.
+when its outcome is uncertain.
 
 The card is red when a word in the tool name is delete, remove, drop, revoke,
 destroy, purge, rm, or rmdir, in any naming style, such as `delete_file` or
@@ -307,22 +306,12 @@ plan review for these controls to be available. Otherwise, Studio explains why
 the review is read-only. If Studio cannot confirm a tool or plan decision,
 select **Refresh activity** before deciding again.
 
-Each press of Escape handles one action. An open dialog or menu closes first
-and returns focus to its trigger. Otherwise, Escape acts in this order:
-
-1. Clear a text selection.
-1. Deny a pending tool request or select **Iterate** for a plan review, when the
-   review controls are available.
-1. Close a side panel.
-1. Stop the active run.
-
-Escape stops at a pending review even when its controls are unavailable.
-
-If none of these actions applies and you have an unsent draft, press Escape,
-release it, then press it again within half a second to clear the draft. The
-visible hint shows the available action. Pressing Enter or Space on a focused
-approval button selects that decision without sending your draft. The
-**Keyboard shortcuts** page lists these bindings.
+Each press of Escape handles one action. A pending tool or plan review stops
+Escape from reaching anything below it, even when the review's controls are
+unavailable. To clear an unsent draft, press Escape, release it, then press it
+again within half a second. Pressing Enter or Space on a focused approval button
+selects that decision without sending your draft. The **Keyboard shortcuts**
+page lists the full Escape order and the other bindings.
 
 ### Review external authorization
 
