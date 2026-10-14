@@ -326,8 +326,8 @@ func PermissionModeVocabulary() []PermissionModeEntry {
 		{Name: "plan", Posture: postureStrict, SessionMode: "plan"},
 		{Name: "default", Posture: postureStrict, SessionMode: client.ModeDefaultString},
 		{Name: "accept-edits", Posture: postureStrict, SessionMode: "accept-edits"},
-		{Name: "auto", Posture: postureAuto, SessionMode: client.ModeDefaultString},
-		{Name: "yolo", Posture: postureYolo, SessionMode: client.ModeDefaultString},
+		{Name: "auto", Posture: postureAuto, SessionMode: "auto"},
+		{Name: "yolo", Posture: postureYolo, SessionMode: "yolo"},
 	}
 }
 

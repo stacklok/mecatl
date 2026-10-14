@@ -714,6 +714,10 @@ func ModeFromString(s string) mecatlv1.PermissionMode {
 		return mecatlv1.PermissionMode_PERMISSION_MODE_ACCEPT_EDITS
 	case ModeDefaultString, "":
 		return mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT
+	case "auto":
+		return mecatlv1.PermissionMode_PERMISSION_MODE_AUTO
+	case "yolo":
+		return mecatlv1.PermissionMode_PERMISSION_MODE_YOLO
 	default:
 		return mecatlv1.PermissionMode_PERMISSION_MODE_UNSPECIFIED
 	}
@@ -738,6 +742,10 @@ func ModeString(m mecatlv1.PermissionMode) string {
 		return modePlanString
 	case mecatlv1.PermissionMode_PERMISSION_MODE_ACCEPT_EDITS:
 		return "accept-edits"
+	case mecatlv1.PermissionMode_PERMISSION_MODE_AUTO:
+		return "auto"
+	case mecatlv1.PermissionMode_PERMISSION_MODE_YOLO:
+		return "yolo"
 	case mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT, mecatlv1.PermissionMode_PERMISSION_MODE_UNSPECIFIED:
 		return ModeDefaultString
 	default:
