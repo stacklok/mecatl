@@ -257,10 +257,12 @@ func TestPostureSummary(t *testing.T) {
 		posture string
 		want    []string // substrings that MUST be present
 	}{
-		{"strict", []string{"posture strict", "allow-all off", "child $()/heredoc auto-run (injection-defense off) off", "project-trust off"}},
-		{"trusted", []string{"posture trusted", "allow-all off", "project-trust on"}},
-		{"auto", []string{"posture auto", "allow-all on", "main $()/heredoc auto-run on", "child $()/heredoc auto-run (injection-defense off) off", "project-trust on"}},
-		{"yolo", []string{"posture yolo", "allow-all on", "child $()/heredoc auto-run (injection-defense off) on", "project-trust on"}},
+		// allow-all is now session-mode-driven (not posture-driven), so the summary
+		// names the ceiling and trust, not an always-on allow-all flag.
+		{"strict", []string{"posture strict", "ceiling default/plan/accept-edits", "project-trust off", "allow-all is mode-driven"}},
+		{"trusted", []string{"posture trusted", "project-trust on"}},
+		{"auto", []string{"posture auto", "ceiling up to and including auto", "child $()/heredoc auto-run when in yolo mode (injection-defense off) off", "project-trust on"}},
+		{"yolo", []string{"posture yolo", "ceiling all modes including yolo", "child $()/heredoc auto-run when in yolo mode (injection-defense off) on", "project-trust on"}},
 	}
 	for _, tc := range cases {
 		got := postureSummary(tc.posture)

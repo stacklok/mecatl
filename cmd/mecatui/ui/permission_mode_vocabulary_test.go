@@ -139,7 +139,9 @@ func TestModeSwitchUnderTrustedPosture(t *testing.T) {
 		// auto and yolo raise posture above trusted → blocked (need restart).
 		{token: "auto", blocked: true, status: []string{"auto needs a guardrails checker", "esc back to accept-edits"}},
 		{token: "yolo", blocked: true, status: []string{"yolo needs a guardrails checker"}},
-		{token: "default", setMode: true, status: []string{"mode default · posture trusted stays until restart"}},
+		// In the new architecture, switching to a lower-ceiling mode is fully effective:
+		// the session mode drives allow-all, so "posture stays" no longer applies.
+		{token: "default", setMode: true, status: []string{"mode default"}},
 		{token: "plan", setMode: true},
 	})
 	want := []string{"plan", "accept-edits", "default", "plan"}

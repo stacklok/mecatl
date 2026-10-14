@@ -195,12 +195,11 @@ func (m Model) renderModeBlocked() string {
 	return style.Render(strings.Join(lines, "\n"))
 }
 
-// modeLabel names a landed mode for the footer. A mode below the running
-// posture applies only its session half, so the label says the posture stays.
+// modeLabel names a landed mode for the footer. All modes at or below the
+// server ceiling are fully effective — allow-all and loose-substitution are
+// session-mode-driven, not posture-driven, so switching to a lower mode
+// actually changes behavior and nothing "stays until restart".
 func (m Model) modeLabel(e PermissionModeEntry) string {
-	if postureRank(e.Posture) < postureRank(m.caps.Posture) {
-		return e.Name + " · posture " + m.caps.Posture + " stays until restart"
-	}
 	return e.Name
 }
 

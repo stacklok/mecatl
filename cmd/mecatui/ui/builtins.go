@@ -638,12 +638,18 @@ func (m Model) runDebugAsk() (tea.Model, tea.Cmd) {
 }
 
 // postureSummary renders the one-line /posture summary for a posture token. It is
-// pure (no Model) so it is directly testable. allow-all + main-substitution are on at
-// auto+yolo; the CHILD substitution (prompt-injection defense OFF) is yolo-only;
-// project-trust is on at trusted+. An empty/unknown token degrades to a bare label.
+// pure (no Model) so it is directly testable.
+//
+// Posture sets the server ceiling (which modes a session may enter) and the
+// project-trust floor. Allow-all and substitution loosening are now session-mode
+// behaviors: auto/yolo sessions inject the allow-all rule per-evaluate, so the
+// description names the ceiling rather than claiming allow-all is always on.
+// Project-trust is raised for trusted+ on interactive roots. An empty/unknown
+// token degrades to a bare label.
 func postureSummary(p string) string {
-	allowAll := p == postureAuto || p == postureYolo
-	childDefenseOff := p == postureYolo
+	ceilingAuto := p == postureAuto
+	ceilingYolo := p == postureYolo
+	childDefenseOff := p == postureYolo // yolo session mode loosens child substitution
 	trust := p == postureTrusted || p == postureAuto || p == postureYolo
 	onoff := func(b bool) string {
 		if b {
@@ -655,12 +661,17 @@ func postureSummary(p string) string {
 	if label == "" {
 		label = unknownLabel
 	}
+	ceiling := "default/plan/accept-edits"
+	if ceilingYolo {
+		ceiling = "all modes including yolo"
+	} else if ceilingAuto {
+		ceiling = "up to and including auto"
+	}
 	return "posture " + label +
-		" — allow-all " + onoff(allowAll) +
-		"; main $()/heredoc auto-run " + onoff(allowAll) +
-		"; child $()/heredoc auto-run (injection-defense off) " + onoff(childDefenseOff) +
+		" — ceiling " + ceiling +
+		"; child $()/heredoc auto-run when in yolo mode (injection-defense off) " + onoff(childDefenseOff) +
 		"; project-trust " + onoff(trust) +
-		" (Deny & configured Ask always apply)"
+		" (allow-all is mode-driven: auto/yolo sessions inject it; Deny & configured Ask always apply)"
 }
 
 type builtinName struct {
