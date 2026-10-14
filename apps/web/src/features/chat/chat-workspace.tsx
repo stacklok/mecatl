@@ -141,7 +141,6 @@ import { takeNextQueuedMessage, useQueuedMessages } from "./chat-queue";
 import { consumeChatSeed } from "./chat-seed";
 import { SessionExecutionStatus, SessionUsageControls } from "./chat-session-controls";
 import {
-  approvalKey,
   type ChatMessage,
   enqueueApproval,
   failureFromResult,
@@ -153,6 +152,7 @@ import {
   type RunFailure,
   rawResultPayload,
   retractApproval,
+  settledAskKey,
   startsNewRun,
   stopReasonFromResult,
   toolCall,
@@ -245,6 +245,7 @@ import { formatTurnStat, usageMenuLines } from "./turn-stats";
 import { useChatMessages } from "./use-chat-messages";
 import { shouldRefreshTranscriptAfterInventory } from "./use-delivery-follow";
 import { useLatestChatAutoOpen } from "./use-latest-chat-auto-open";
+import { VerdictLedger } from "./verdict-ledger";
 
 /** A pending destructive confirmation, rendered as one shared AlertDialog. */
 interface ConfirmPrompt {
@@ -454,10 +455,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const [notice, setNotice] = useState<string>();
   const [runTarget, setRunTarget] = useState<RunTarget>();
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
-  const ordinaryVerdictsInFlight = useRef(new Set<string>());
-  const ordinaryVerdictsUncertain = useRef(new Set<string>());
+  const verdicts = useRef(new VerdictLedger());
+  const [verdictEpoch, setVerdictEpoch] = useState(0);
   const settledAskKeys = useRef(new Set<string>());
-  const [ordinaryVerdictEpoch, setOrdinaryVerdictEpoch] = useState(0);
   const [failedRun, setFailedRun] = useState<RunFailure>();
   const [draftConfiguration, setDraftConfiguration] = useState(defaultDraftConfiguration);
   const [composerDraftPresent, setComposerDraftPresent] = useState(false);
@@ -503,9 +503,6 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const [steerTrace, setSteerTrace] = useState<SteerTraceEntry[]>([]);
   const [showSteerTrace, setShowSteerTrace] = useState(false);
   const [controlPending, setControlPending] = useState(false);
-  const planVerdictsInFlight = useRef(new Set<string>());
-  const planVerdictsUncertain = useRef(new Set<string>());
-  const [planVerdictEpoch, setPlanVerdictEpoch] = useState(0);
   const planFollowController = useRef<AbortController | undefined>(undefined);
   const viewedSessionId = useRef(sessionId);
   const [titleCache, setTitleCache] = useState(() => new Map<string, SessionTitleRevision>());
@@ -666,11 +663,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     setReturnNotice(undefined);
     awayTracker.current.clear();
     setApprovals([]);
-    ordinaryVerdictsInFlight.current.clear();
-    ordinaryVerdictsUncertain.current.clear();
-    planVerdictsInFlight.current.clear();
-    planVerdictsUncertain.current.clear();
+    verdicts.current.clear();
     settledAskKeys.current.clear();
+    setControlPending(false);
     setFailedRun(sessionId ? readFailedRun(sessionId) : undefined);
     setLiveUsage(undefined);
     setSteerTrace([]);
@@ -2171,7 +2166,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           }
         } else if (event.kind === "permission.ask") {
           const approval = permissionAsk(event.payload);
-          if (approval && !settledAskKeys.current.has(`${event.runId}\u0000${approval.askId}`)) {
+          if (approval && !settledAskKeys.current.has(settledAskKey(event.runId, approval.askId))) {
             const controlTarget =
               owner.sessionId && event.runId
                 ? { askId: approval.askId, runId: event.runId, sessionId: owner.sessionId }
@@ -2183,26 +2178,20 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         } else if (event.kind === "permission.retract") {
           const askId = permissionAskId(event.payload);
           if (askId) {
-            settledAskKeys.current.add(`${event.runId}\u0000${askId}`);
-            if (owner.sessionId) {
-              const key = approvalKey({ askId, runId: event.runId, sessionId: owner.sessionId });
-              ordinaryVerdictsUncertain.current.delete(key);
-              planVerdictsUncertain.current.delete(key);
-            }
-            setOrdinaryVerdictEpoch((value) => value + 1);
+            settledAskKeys.current.add(settledAskKey(event.runId, askId));
+            if (owner.sessionId)
+              verdicts.current.reset({ askId, runId: event.runId, sessionId: owner.sessionId });
+            setVerdictEpoch((value) => value + 1);
           }
           setApprovals((current) => retractApproval(current, askId, event.runId || undefined));
           if (owner.sessionId) awayTracker.current.record(owner.sessionId, "approval-resolved");
         } else if (event.kind === "approval") {
           const askId = permissionAskId(event.payload);
           if (askId) {
-            settledAskKeys.current.add(`${event.runId}\u0000${askId}`);
-            if (owner.sessionId) {
-              const key = approvalKey({ askId, runId: event.runId, sessionId: owner.sessionId });
-              ordinaryVerdictsUncertain.current.delete(key);
-              planVerdictsUncertain.current.delete(key);
-            }
-            setOrdinaryVerdictEpoch((value) => value + 1);
+            settledAskKeys.current.add(settledAskKey(event.runId, askId));
+            if (owner.sessionId)
+              verdicts.current.reset({ askId, runId: event.runId, sessionId: owner.sessionId });
+            setVerdictEpoch((value) => value + 1);
           }
           setApprovals((current) => retractApproval(current, askId, event.runId || undefined));
           if (owner.sessionId) awayTracker.current.record(owner.sessionId, "approval-resolved");
@@ -2477,21 +2466,18 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   function retainUncertainApprovals(current: ApprovalRequest[]): ApprovalRequest[] {
     return current.filter(
       (candidate) =>
-        candidate.controlTarget &&
-        (ordinaryVerdictsUncertain.current.has(approvalKey(candidate.controlTarget)) ||
-          planVerdictsUncertain.current.has(approvalKey(candidate.controlTarget))),
+        candidate.controlTarget && verdicts.current.phase(candidate.controlTarget) === "uncertain",
     );
   }
 
-  function ordinaryApprovalUncertain(candidate: ApprovalRequest): boolean {
-    void ordinaryVerdictEpoch;
+  function approvalUncertain(candidate: ApprovalRequest): boolean {
+    void verdictEpoch;
     return Boolean(
-      candidate.controlTarget &&
-        ordinaryVerdictsUncertain.current.has(approvalKey(candidate.controlTarget)),
+      candidate.controlTarget && verdicts.current.phase(candidate.controlTarget) === "uncertain",
     );
   }
 
-  function ordinaryApprovalDisabled(candidate: ApprovalRequest): boolean {
+  function approvalDisabled(candidate: ApprovalRequest): boolean {
     const target = candidate.controlTarget;
     const activeTarget = controlTarget(runTarget, sessionId);
     return Boolean(
@@ -2501,8 +2487,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         target.runId !== activeTarget?.runId ||
         target.sessionId !== viewedSessionId.current ||
         controlPending ||
-        ordinaryVerdictsInFlight.current.has(approvalKey(target)) ||
-        ordinaryVerdictsUncertain.current.has(approvalKey(target)),
+        verdicts.current.blocks(target),
     );
   }
 
@@ -2510,13 +2495,12 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     if (
       candidate.tool === "PresentPlan" ||
       (verdict !== "deny" && !candidate.args.trim()) ||
-      ordinaryApprovalDisabled(candidate)
+      approvalDisabled(candidate)
     )
       return;
     const target = candidate.controlTarget;
     if (!target) return;
-    const key = approvalKey(target);
-    ordinaryVerdictsInFlight.current.add(key);
+    if (!verdicts.current.begin(target)) return;
     setControlPending(true);
     try {
       await resolveRunPermission({
@@ -2524,19 +2508,19 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         path: { askId: target.askId, runId: target.runId, sessionId: target.sessionId },
         throwOnError: true,
       });
-      settledAskKeys.current.add(`${target.runId}\u0000${target.askId}`);
+      verdicts.current.acknowledge(target);
+      settledAskKeys.current.add(settledAskKey(target.runId, target.askId));
       if (viewedSessionId.current === target.sessionId) {
         setApprovals((current) => retractApproval(current, target.askId, target.runId));
         setNotice(`Permission ${verdict.replaceAll("_", " ")} recorded.`);
       }
     } catch (caught) {
-      ordinaryVerdictsUncertain.current.add(key);
-      setOrdinaryVerdictEpoch((value) => value + 1);
+      verdicts.current.markUncertain(target);
+      setVerdictEpoch((value) => value + 1);
       if (viewedSessionId.current === target.sessionId)
         setError(`Could not confirm this verdict: ${errorMessage(caught)}`);
     } finally {
-      ordinaryVerdictsInFlight.current.delete(key);
-      setControlPending(false);
+      if (viewedSessionId.current === target.sessionId) setControlPending(false);
     }
   }
 
@@ -2554,38 +2538,16 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       : undefined;
   }
 
-  function planApprovalDisabled(candidate: ApprovalRequest): boolean {
-    void planVerdictEpoch;
-    const target = candidate.controlTarget;
-    return Boolean(
-      !target ||
-        controlPending ||
-        planVerdictsInFlight.current.has(approvalKey(target)) ||
-        planVerdictsUncertain.current.has(approvalKey(target)),
-    );
-  }
-
-  function planApprovalUncertain(candidate: ApprovalRequest): boolean {
-    void planVerdictEpoch;
-    return Boolean(
-      candidate.controlTarget &&
-        planVerdictsUncertain.current.has(approvalKey(candidate.controlTarget)),
-    );
-  }
-
   async function respondToPlan(candidate: ApprovalRequest, verdict: PlanVerdict) {
     if (
       candidate.tool !== "PresentPlan" ||
       planUnavailableReason(candidate) ||
-      planApprovalDisabled(candidate)
-    ) {
-      setError("This plan ask is stale. Refresh activity before deciding.");
+      approvalDisabled(candidate)
+    )
       return;
-    }
     const target = candidate.controlTarget;
     if (!target) return;
-    const key = approvalKey(target);
-    planVerdictsInFlight.current.add(key);
+    if (!verdicts.current.begin(target)) return;
     const askId = target.askId;
     setControlPending(true);
     setError(undefined);
@@ -2595,7 +2557,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         path: { askId, runId: target.runId, sessionId: target.sessionId },
         throwOnError: true,
       });
-      settledAskKeys.current.add(`${target.runId}\u0000${askId}`);
+      verdicts.current.acknowledge(target);
+      settledAskKeys.current.add(settledAskKey(target.runId, askId));
       if (viewedSessionId.current === target.sessionId) {
         setApprovals((current) => retractApproval(current, askId, target.runId));
       }
@@ -2638,14 +2601,13 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         );
       }
     } catch (caught) {
-      planVerdictsUncertain.current.add(key);
-      setPlanVerdictEpoch((value) => value + 1);
+      verdicts.current.markUncertain(target);
+      setVerdictEpoch((value) => value + 1);
       if (viewedSessionId.current === target.sessionId)
         setError(`Could not confirm this verdict: ${errorMessage(caught)}`);
     } finally {
       planFollowController.current = undefined;
-      planVerdictsInFlight.current.delete(key);
-      setControlPending(false);
+      if (viewedSessionId.current === target.sessionId) setControlPending(false);
     }
   }
 
@@ -2778,11 +2740,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     }) ?? approvals.find((candidate) => candidate.controlTarget?.sessionId === sessionId);
   useChatEscape({
     active: true,
-    askAvailable: escapeAsk
-      ? escapeAsk.tool === "PresentPlan"
-        ? !planApprovalDisabled(escapeAsk)
-        : !ordinaryApprovalDisabled(escapeAsk)
-      : false,
+    askAvailable: escapeAsk ? !approvalDisabled(escapeAsk) : false,
     draft: composerDraftPresent,
     onClearDraft: () => setClearDraftSignal((value) => value + 1),
     onClosePanel: () => {
@@ -3387,16 +3345,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                       <ChatTranscript
                         agentAvatar={agentAvatar}
                         agentName={agentName}
-                        approvalDisabled={(candidate) =>
-                          candidate.tool === "PresentPlan"
-                            ? planApprovalDisabled(candidate)
-                            : ordinaryApprovalDisabled(candidate)
-                        }
-                        approvalUncertain={(candidate) =>
-                          candidate.tool === "PresentPlan"
-                            ? planApprovalUncertain(candidate)
-                            : ordinaryApprovalUncertain(candidate)
-                        }
+                        approvalDisabled={approvalDisabled}
+                        approvalUncertain={approvalUncertain}
                         approvals={approvals}
                         delegationsByMessageId={delegationPlacement.byMessageId}
                         legacyThreadSessionIdForMessage={(message) => {
@@ -3724,11 +3674,11 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                     disabled:
                       detailApproval.tool === "PresentPlan" ||
                       !detailApproval.controlTarget ||
-                      ordinaryApprovalDisabled(detailApproval),
+                      approvalDisabled(detailApproval),
                     onRespond: (verdict) => void respondToApproval(detailApproval, verdict),
                     position: detailIndex + 1,
                     total: approvals.length,
-                    uncertain: ordinaryApprovalUncertain(detailApproval),
+                    uncertain: approvalUncertain(detailApproval),
                   }
                 : undefined
             }

@@ -15,6 +15,7 @@ import {
 } from "@tanstack/react-router";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearUserScopedStorage } from "../../lib/account-storage";
 import { setRequestRecoveryState } from "../../lib/api-client";
@@ -181,7 +182,15 @@ class Fixture {
   }
 }
 
-async function mount(fixture: Fixture, side = false) {
+let switchWorkspaceSession: (sessionId: string) => void = () => {};
+
+function SwitchableWorkspace() {
+  const [sessionId, setSessionId] = useState("chat-a");
+  switchWorkspaceSession = setSessionId;
+  return <ChatWorkspace sessionId={sessionId} />;
+}
+
+async function mount(fixture: Fixture, side = false, switchable = false) {
   setRequestRecoveryState({ identityEpoch: 0, phase: "ready", workspaceMounted: true });
   vi.stubGlobal("fetch", fixture.fetch);
   client.setConfig({ baseUrl: "http://studio.test" });
@@ -204,6 +213,8 @@ async function mount(fixture: Fixture, side = false) {
           parentSessionId="chat-a"
           sessionId="thread-a"
         />
+      ) : switchable ? (
+        <SwitchableWorkspace />
       ) : (
         <ChatWorkspace sessionId="chat-a" />
       ),
@@ -1521,5 +1532,94 @@ describe("approval focus scope", () => {
     ]);
     // The plan is now the active ask, and its card says Escape iterates it.
     expect(within(plan).getByText("Esc to Iterate")).toBeTruthy();
+  });
+});
+
+describe("one verdict ledger per surface", () => {
+  it("blocks a racing plan verdict silently on both surfaces, without calling the ask stale", async () => {
+    for (const side of [false, true]) {
+      const fixture = new Fixture();
+      fixture.runtimeFeatures = ["exact_plan_ask_control"];
+      fixture.verdicts.push(new Promise<Response>(() => {}));
+      await mount(fixture, side);
+      const sessionId = side ? "thread-a" : "chat-a";
+      await act(async () => {
+        fixture.stream.send({ runId: "run-plan", sessionId, type: "run.started" });
+        fixture.stream.send(
+          event("permission.ask", "1", "run-plan", {
+            args: '{"plan":"Ship"}',
+            askId: "ask-plan",
+            tool: "PresentPlan",
+          }),
+        );
+      });
+      const iterate = screen.getByRole("button", { name: "Iterate" });
+      // Both clicks land before React re-renders the buttons disabled.
+      act(() => {
+        iterate.click();
+        iterate.click();
+      });
+      await waitFor(() =>
+        expect(
+          fixture.requests.filter((request) => request.pathname.includes("/plan-asks/")),
+        ).toHaveLength(1),
+      );
+      expect(screen.queryByText(/plan ask is stale/i)).toBeNull();
+      cleanup();
+    }
+  });
+
+  it("keeps one session's verdict from touching the next session's controls", async () => {
+    const fixture = new Fixture();
+    const next = heldStream();
+    fixture.activityResponses.push(fixture.stream.response, next.response);
+    let answerFirst!: (response: Response) => void;
+    fixture.verdicts.push(
+      new Promise<Response>((resolve) => {
+        answerFirst = resolve;
+      }),
+      new Promise<Response>(() => {}),
+    );
+    await mount(fixture, false, true);
+    await act(async () => {
+      fixture.stream.send({ runId: "run-a", sessionId: "chat-a", type: "run.started" });
+      fixture.stream.send(
+        event("permission.ask", "1", "run-a", { askId: "ask-a", args: editArgs, tool: "Edit" }),
+      );
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Allow once" }));
+    await waitFor(() => expect(fixture.posts()).toHaveLength(1));
+
+    act(() => switchWorkspaceSession("thread-a"));
+    await waitFor(() => expect(fixture.activityRequests).toHaveLength(2));
+    await act(async () => {
+      next.send({ runId: "run-b", sessionId: "thread-a", type: "run.started" });
+      for (const [seq, askId] of [
+        ["1", "ask-b1"],
+        ["2", "ask-b2"],
+      ] as const)
+        next.send(
+          event("permission.ask", seq, "run-b", {
+            askId,
+            args: editArgs,
+            reason: `Ask ${askId}`,
+            tool: "Edit",
+          }),
+        );
+    });
+    const allowOnce = (askId: string) =>
+      within(screen.getByText(`Ask ${askId}`).closest("section") as HTMLElement).getByRole(
+        "button",
+        { name: "Allow once" },
+      ) as HTMLButtonElement;
+    // The first session's pending verdict does not freeze the new session.
+    expect(allowOnce("ask-b1").disabled).toBe(false);
+    fireEvent.click(allowOnce("ask-b1"));
+    await waitFor(() => expect(fixture.posts()).toHaveLength(2));
+    expect(allowOnce("ask-b2").disabled).toBe(true);
+
+    // The first session's verdict settling must not release the new session's pending state.
+    await act(async () => answerFirst(new Response(null, { status: 204 })));
+    expect(allowOnce("ask-b2").disabled).toBe(true);
   });
 });
