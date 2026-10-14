@@ -6950,6 +6950,19 @@
                           "inFlight": {
                             "type": "boolean"
                           },
+                          "outcome": {
+                            "type": "string",
+                            "enum": [
+                              "claimed",
+                              "in_flight",
+                              "completed",
+                              "failed",
+                              "cancelled",
+                              "timed_out",
+                              "limit_reached",
+                              "stopped"
+                            ]
+                          },
                           "progressAt": {
                             "type": "string",
                             "nullable": true
@@ -6974,6 +6987,7 @@
                           "firedAt",
                           "id",
                           "inFlight",
+                          "outcome",
                           "progressAt",
                           "scheduleName",
                           "sessionId",

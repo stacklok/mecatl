@@ -2281,6 +2281,7 @@ export type ListScheduleFiresResponses = {
             firedAt: string;
             id: string;
             inFlight: boolean;
+            outcome: 'claimed' | 'in_flight' | 'completed' | 'failed' | 'cancelled' | 'timed_out' | 'limit_reached' | 'stopped';
             progressAt: string;
             scheduleName: string;
             sessionId: string;

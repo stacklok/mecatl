@@ -473,19 +473,11 @@ function ScheduleFireHistory({
 }
 
 function FireOutcome({ compact, fire }: { compact?: boolean; fire: ScheduleFire }) {
-  const outcome = fireOutcome(fire);
-  const variant =
-    outcome === "In flight" || outcome === "Claimed"
-      ? "success"
-      : outcome === "Failed"
-        ? "destructive"
-        : outcome === "Timed out" || outcome === "Limit reached"
-          ? "warning"
-          : "muted";
+  const outcome = fireOutcomeLabel(fire);
   const rawStop = fire.stop.trim();
   return (
     <div className={`flex flex-col gap-1 ${compact ? "items-end text-right" : "items-start"}`}>
-      <Badge variant={variant}>{outcome}</Badge>
+      <Badge variant={fireOutcomeVariant(fire)}>{outcome}</Badge>
       {!fire.inFlight && rawStop && rawStop.toLocaleLowerCase() !== outcome.toLocaleLowerCase() && (
         <span className="text-xs text-muted-foreground">Stop: {rawStop}</span>
       )}
@@ -547,37 +539,55 @@ export function sortScheduleFires(
   const multiplier = direction === "asc" ? 1 : -1;
   return [...fires].sort((left, right) => {
     let comparison: number;
-    if (key === "outcome") comparison = fireOutcome(left).localeCompare(fireOutcome(right));
-    else comparison = dateValue(left.firedAt) - dateValue(right.firedAt);
+    if (key === "outcome") {
+      comparison = fireOutcomeLabel(left).localeCompare(fireOutcomeLabel(right));
+    } else comparison = dateValue(left.firedAt) - dateValue(right.firedAt);
     return comparison * multiplier || dateValue(right.firedAt) - dateValue(left.firedAt);
   });
 }
 
 /**
- * DECISION: The outcome is read from the recorded `session.StopReason`, not by
- * matching substrings. A timeout is recorded with both `timeout` and an error
- * (`scheduler_fire.go`), so the stop reason is checked before the error. A
- * limit stop is neither a success nor a failure, and an unknown future reason
- * reads "Stopped" rather than claiming completion.
+ * DECISION: The BFF owns the mapping from the daemon's stop reason to
+ * `outcome`, so every client reads one vocabulary; the web only labels it. A
+ * Record over the generated union makes a new value a compile error here, and
+ * a value this build does not know reads "Stopped" rather than claiming
+ * completion.
  */
-const COMPLETED_STOPS = new Set([
-  "",
-  "end_turn",
-  "structured_output",
-  "plan_approved",
-  "plan_iterate",
-]);
-const LIMIT_STOPS = new Set(["max_turns", "max_tool_calls", "budget"]);
-const FAILED_STOPS = new Set(["error", "max_consecutive_failures"]);
+type Outcome = ScheduleFire["outcome"];
+type BadgeVariant = React.ComponentProps<typeof Badge>["variant"];
 
-export function fireOutcome(fire: ScheduleFire) {
-  if (fire.inFlight) return fire.startedAt ? "In flight" : "Claimed";
-  const stop = fire.stop.trim().toLocaleLowerCase();
-  if (stop === "timeout") return "Timed out";
-  if (stop === "cancelled") return "Cancelled";
-  if (fire.error || FAILED_STOPS.has(stop)) return "Failed";
-  if (LIMIT_STOPS.has(stop)) return "Limit reached";
-  return COMPLETED_STOPS.has(stop) ? "Completed" : "Stopped";
+const OUTCOME_LABEL: Record<Outcome, string> = {
+  cancelled: "Cancelled",
+  claimed: "Claimed",
+  completed: "Completed",
+  failed: "Failed",
+  in_flight: "In flight",
+  limit_reached: "Limit reached",
+  stopped: "Stopped",
+  timed_out: "Timed out",
+};
+
+const OUTCOME_VARIANT: Record<Outcome, BadgeVariant> = {
+  cancelled: "muted",
+  claimed: "success",
+  completed: "muted",
+  failed: "destructive",
+  in_flight: "success",
+  limit_reached: "warning",
+  stopped: "muted",
+  timed_out: "warning",
+};
+
+function outcomeOf(fire: ScheduleFire): Outcome {
+  return Object.hasOwn(OUTCOME_LABEL, fire.outcome) ? fire.outcome : "stopped";
+}
+
+export function fireOutcomeLabel(fire: ScheduleFire) {
+  return OUTCOME_LABEL[outcomeOf(fire)];
+}
+
+export function fireOutcomeVariant(fire: ScheduleFire) {
+  return OUTCOME_VARIANT[outcomeOf(fire)];
 }
 
 function dateValue(value: string | null) {
