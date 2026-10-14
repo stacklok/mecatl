@@ -1588,8 +1588,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	var discovery *providerDiscovery
 	closeProfiles := sync.OnceFunc(func() {
 		discovery.Close()
-		cfg.MCPProfileLifecycle = mcpProfileLifecycle
-		closeMCPProfileLifecycle(ctx, cfg)
+		profileCfg := cfg
+		profileCfg.MCPProfileLifecycle = mcpProfileLifecycle
+		closeMCPProfileLifecycle(ctx, profileCfg)
 		if providerCredentialLifecycle != nil {
 			_ = providerCredentialLifecycle.Close()
 		}
@@ -2190,13 +2191,6 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		defer assets.buildRuntimeRelease()
 	}
 	logMCPInventory(ctx, cfg.diag(), mcpInventory)
-	reservations := newAutomaticReservationReconciliationLoop(ctx, assets.automaticAdmissionLedger, assets.attemptRepository, defaultAutomaticReconcileInterval, func(error) {
-		cfg.diag().Log(ctx, port.LevelWarn, "durable automatic reservation reconciliation unavailable")
-	})
-	if reservations != nil {
-		previousClose := mcpClose
-		mcpClose = func() { reservations.Close(); previousClose() }
-	}
 
 	var brokerRuntime *mcpbroker.Runtime
 	var brokerProcess *mcpbroker.Process
@@ -2288,6 +2282,16 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			_ = brokerRuntime.Close()
 		}
 	}
+	defer func() {
+		if !profilesTransferred {
+			childLiveness.Close()
+			closeBroker()
+			mcpClose()
+			agentClose()
+			storeClose()
+			commandConnClose()
+		}
+	}()
 
 	// Stash the resolved skill seam's command-bridge inputs onto the Build-scope
 	// cfg (the commandSource precedent) so buildCommandLister — which runs HERE,
@@ -2372,11 +2376,6 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			return nil, fmt.Errorf("validate default placement: %w", err)
 		}
 		placementProvider = profiledProvider
-	}
-	attempts := startAttemptRecovery(ctx, cfg, reg, store, eventLog, assets.attemptRepository, assets.reflectionRepository, assets, placementProvider, placementScope)
-	if attempts != nil {
-		previousClose := mcpClose
-		mcpClose = func() { attempts.Close(); previousClose() }
 	}
 	var mcpRefresh func(context.Context) (server.MCPRefreshSnapshot, error)
 	var mcpStatus func() server.MCPSourceStatus
@@ -2910,12 +2909,6 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 
 	svc, err := server.NewService(svcCfg)
 	if err != nil {
-		closeBroker()
-		childLiveness.Close()
-		mcpClose()
-		agentClose()
-		storeClose()
-		commandConnClose()
 		return nil, fmt.Errorf("build service: %w", err)
 	}
 
@@ -2939,12 +2932,6 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if err != nil {
 		refreshClose()
 		svc.Close()
-		childLiveness.Close()
-		closeBroker()
-		mcpClose()
-		agentClose()
-		storeClose()
-		commandConnClose()
 		return nil, err
 	}
 	// The cadence floor guards the SHARED create-seam (validateScheduleSpec)
@@ -2957,9 +2944,10 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// because the sweep's liveness and maintenance-exclusion predicates are the
 	// Service's process-wide truth. No worker is started when exclusion is
 	// permanently unavailable; runtime loss stickily settles health unavailable.
-	cfg.maintenanceMutationAvailable = svc.MaintenanceMutationAvailable
-	managedTempWorkerClose := startManagedTempWorker(ctx, cfg)
-	childGCClose := startChildGC(ctx, cfg, store, svc.IsLive, svc.DeleteSessionForRetentionCandidate)
+	maintenanceCfg := cfg
+	maintenanceCfg.maintenanceMutationAvailable = svc.MaintenanceMutationAvailable
+	managedTempWorkerClose := startManagedTempWorker(ctx, maintenanceCfg)
+	childGCClose := startChildGC(ctx, maintenanceCfg, store, svc.IsLive, svc.DeleteSessionForRetentionCandidate)
 
 	// Crash-orphaned running-session sweep (issue #475 Step 4): repairs a
 	// StateRunning session a process crash left behind, INCLUDING the
@@ -2973,7 +2961,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// the live-model refresh goroutine and closes the session-store driver
 	// connection (LAST — everything before it may still persist; a no-op for the
 	// local stores, and once-guarded if the memory driver shares the conn).
+	var attempts *attemptRecovery
+	var reservations *automaticReservationReconciliationLoop
 	closeAll := sync.OnceFunc(func() {
+		attempts.Close()
+		reservations.Close()
 		if assets.reflectionLifecycle != nil {
 			assets.reflectionLifecycle.close()
 		}
@@ -3006,6 +2998,13 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	managedTempTransferred = true
 	harnessContextTransferred = true
 	commandResolverTransferred = true
+	// Recovery may reattach placements and publish immediately. Launch only after
+	// composition succeeds, with cleanup owning the loops before their dependencies.
+	diag := cfg.diag()
+	reservations = newAutomaticReservationReconciliationLoop(ctx, assets.automaticAdmissionLedger, assets.attemptRepository, defaultAutomaticReconcileInterval, func(error) {
+		diag.Log(ctx, port.LevelWarn, "durable automatic reservation reconciliation unavailable")
+	})
+	attempts = startAttemptRecovery(ctx, cfg, reg, store, eventLog, assets.attemptRepository, assets.reflectionRepository, assets, placementProvider, placementScope)
 	return &Built{Service: svc, MCPBroker: brokerRuntime, MCPBrokerHandlers: brokerHandlers, MCPBrokerCallbackPath: brokerCallbackPath, GuardrailsAdvisory: guardrailConfigured && cfg.Posture >= PostureYolo, Close: closeAll}, nil
 }
 

@@ -990,6 +990,38 @@ func TestChildGCMaintenanceExclusionUnavailableNeverStartsOrSchedules(t *testing
 	}
 }
 
+func TestChildGCLiveMaintenanceAvailabilityLossStopsBeforeNextScan(t *testing.T) {
+	store := &countingPrunable{Store: memstore.New(), listed: make(chan struct{}, 1)}
+	health := &storageMaintenanceState{}
+	unavailable := make(chan struct{})
+	var checks atomic.Int32
+	closeGC := startChildGC(context.Background(), Config{
+		ChildRetention: time.Hour, ChildGCInterval: time.Millisecond,
+		Diagnostics: port.NopDiagnostics{}, storageMaintenance: health,
+		maintenanceMutationAvailable: func() bool {
+			// Admission and the startup sweep succeed; exclusion is then lost.
+			if checks.Add(1) <= 2 {
+				return true
+			}
+			close(unavailable)
+			return false
+		},
+	}, store, func(session.SessionID) bool { return false })
+	defer closeGC()
+	select {
+	case <-unavailable:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not recheck live maintenance availability")
+	}
+	waitChildGCClose(t, closeGC)
+	if got := store.lists.Load(); got != 1 {
+		t.Fatalf("storage scans = %d, want only the available startup scan", got)
+	}
+	if got := health.snapshot(); got.ActiveJob != "" || !got.LastSweepAvailable || got.NextSweepAvailable || got.LastFailure != "retention sweep unavailable" {
+		t.Fatalf("health after live availability loss = %+v", got)
+	}
+}
+
 func TestChildGCRuntimeMaintenanceUnsupportedSettlesUnavailable(t *testing.T) {
 	now := time.Now()
 	store := &countingPrunable{Store: memstore.New(memstore.WithNow(func() time.Time { return now.Add(-2 * time.Hour) }))}
