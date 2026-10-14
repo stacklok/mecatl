@@ -559,6 +559,16 @@ type Config struct {
 	// DefaultMode is applied when a CreateSession request leaves mode
 	// unspecified. Defaults to session.ModeDefault when empty.
 	DefaultMode session.PermissionMode
+	// MaxAllowedMode is the server ceiling: the most-permissive mode sessions may
+	// enter. SetMode rejects a requested mode above this ceiling with ErrInvalidArgument.
+	// Empty means no ceiling (all modes reachable). Populated by the composition layer
+	// from Config.MaxAllowedMode via the permission-mode token.
+	MaxAllowedMode session.PermissionMode
+	// EnforcingCheckerConfigured reports whether a guardrails checker is configured
+	// in enforcing (not advisory) mode. Used by SetMode to gate entry into ModeAuto,
+	// which requires an enforcing checker. Set by the composition root from the
+	// resolved checker state at startup.
+	EnforcingCheckerConfigured bool
 	// DefaultLimits are the stop limits applied to a session created without
 	// explicit limits. Because a zero Limits value DISABLES every stop condition
 	// by design in package session, the composition root injects non-zero
@@ -4744,6 +4754,14 @@ func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode sessio
 	if mode == "" {
 		return nil, fmt.Errorf("%w: mode is required", ErrInvalidArgument)
 	}
+	// Ceiling check: refuse modes that exceed the server's configured ceiling.
+	if s.cfg.MaxAllowedMode != "" && !modeWithinCeiling(mode, s.cfg.MaxAllowedMode) {
+		return nil, fmt.Errorf("%w: mode %q exceeds the server ceiling %q; the server must be relaunched with a higher --permission-mode to allow it", ErrInvalidArgument, mode, s.cfg.MaxAllowedMode)
+	}
+	// Checker check: auto mode requires an enforcing checker.
+	if mode == session.ModeAuto && !s.hasEnforcingChecker() {
+		return nil, fmt.Errorf("%w: mode %q requires an enforcing guardrails checker; configure one with --guardrails-model <model> or bind the guardrail model slot, or use yolo for gate-free autonomous operation", ErrInvalidArgument, mode)
+	}
 	// Ownership is established before caller-selected coordination, then
 	// revalidated under runEntryMu before and after lease acquisition.
 	if _, err := s.GetSession(ctx, id); err != nil {
@@ -4798,6 +4816,37 @@ func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode sessio
 		return nil, fmt.Errorf("server: persist session: %w", err)
 	}
 	return sess, nil
+}
+
+// modeWithinCeiling reports whether mode is at or below ceiling in the
+// permission-mode ordering: plan < default < accept-edits < auto < yolo.
+func modeWithinCeiling(mode, ceiling session.PermissionMode) bool {
+	return modeRank(mode) <= modeRank(ceiling)
+}
+
+// modeRank assigns an integer rank to session.PermissionMode for ceiling
+// comparison. Unknown modes get rank 0 (treated as most restrictive).
+func modeRank(mode session.PermissionMode) int {
+	switch mode {
+	case session.ModePlan:
+		return 1
+	case session.ModeDefault:
+		return 2
+	case session.ModeAccept:
+		return 3
+	case session.ModeAuto:
+		return 4
+	case session.ModeYolo:
+		return 5
+	default:
+		return 0
+	}
+}
+
+// hasEnforcingChecker reports whether the service has a guardrails checker
+// configured in enforcing mode. It is used to gate ModeAuto entry at SetMode time.
+func (s *Service) hasEnforcingChecker() bool {
+	return s.cfg.EnforcingCheckerConfigured
 }
 
 // LoadSession resumes a previously-persisted session so a subsequent StartRun

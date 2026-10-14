@@ -57,24 +57,26 @@ func deprecationWarnings(t *testing.T, argv ...string) []string {
 }
 
 func TestDeprecatedAliasesStillResolve(t *testing.T) {
+	// Each deprecated alias must resolve to the correct posture and emit exactly
+	// one deprecation WARN naming the replacement --permission-mode token.
+	// Session mode is set inside Build (via foldPermissionMode), not at flag-parse
+	// time, so the pre-Build resolvedPair returns ModeDefault for deprecated paths.
 	cases := []struct {
-		name  string
-		alias []string
-		token string
+		name        string
+		alias       []string
+		wantPosture app.Posture
+		wantToken   string
 	}{
-		{"posture strict", []string{"--posture", "strict"}, "default"},
-		{"posture trusted", []string{"--posture", "trusted"}, "trusted"},
-		{"posture auto", []string{"--posture", "auto"}, "auto"},
-		{"posture yolo", []string{"--posture", "yolo"}, "yolo"},
-		{"yolo", []string{"--yolo"}, "yolo"},
+		{"posture strict", []string{"--posture", "strict"}, app.PostureStrict, "default"},
+		{"posture auto", []string{"--posture", "auto"}, app.PostureAuto, "auto"},
+		{"posture yolo", []string{"--posture", "yolo"}, app.PostureYolo, "yolo"},
+		{"yolo", []string{"--yolo"}, app.PostureYolo, "yolo"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			aliasPosture, aliasMode, _ := resolvedPair(t, tc.alias...)
-			tokPosture, tokMode, _ := resolvedPair(t, "--permission-mode", tc.token)
-			if aliasPosture != tokPosture || aliasMode != tokMode {
-				t.Fatalf("%q resolved to (%s, %s), want the %q token's (%s, %s)",
-					tc.alias, aliasPosture, aliasMode, tc.token, tokPosture, tokMode)
+			aliasPosture, _, _ := resolvedPair(t, tc.alias...)
+			if aliasPosture != tc.wantPosture {
+				t.Fatalf("%q posture = %s, want %s", tc.alias, aliasPosture, tc.wantPosture)
 			}
 			warns := deprecationWarnings(t, tc.alias...)
 			if len(warns) != 1 {
@@ -83,8 +85,8 @@ func TestDeprecatedAliasesStillResolve(t *testing.T) {
 			if !strings.Contains(warns[0], "--permission-mode") {
 				t.Fatalf("deprecation WARN does not name --permission-mode: %s", warns[0])
 			}
-			if !strings.Contains(warns[0], "--permission-mode "+tc.token) {
-				t.Fatalf("deprecation WARN does not name the replacement token %q: %s", tc.token, warns[0])
+			if !strings.Contains(warns[0], "--permission-mode "+tc.wantToken) {
+				t.Fatalf("deprecation WARN does not name the replacement token %q: %s", tc.wantToken, warns[0])
 			}
 		})
 	}
@@ -99,16 +101,18 @@ func TestAliasCombinationsStillResolve(t *testing.T) {
 		name        string
 		argv        []string
 		wantPosture app.Posture
+		wantMode    session.PermissionMode
 		wantTrust   bool
 		wantAllow   bool
 	}{
 		// Interactive root: --trust-project raises an explicit strict to trusted, today's MAX fold.
-		{"posture strict trust-project interactive", []string{"--posture", "strict", "--trust-project"}, app.PostureTrusted, true, false},
+		{"posture strict trust-project interactive", []string{"--posture", "strict", "--trust-project"}, app.PostureTrusted, session.ModeDefault, true, false},
 		// Headless root: no token grants trust on headless, so yolo plus explicit trust has no single-token spelling.
-		{"yolo trust-project headless", []string{"--headless", "--yolo", "--trust-project"}, app.PostureYolo, true, true},
-		{"posture auto yolo", []string{"--posture", "auto", "--yolo"}, app.PostureYolo, false, true},
+		{"yolo trust-project headless", []string{"--headless", "--yolo", "--trust-project"}, app.PostureYolo, session.ModeDefault, true, true},
+		{"posture auto yolo", []string{"--posture", "auto", "--yolo"}, app.PostureYolo, session.ModeDefault, false, true},
 		// --trust-project is not deprecated and still combines with the new flag.
-		{"permission-mode auto trust-project headless", []string{"--headless", "--permission-mode", "auto", "--trust-project"}, app.PostureAuto, true, false},
+		// --permission-mode auto sets session mode to ModeAuto via the token table.
+		{"permission-mode auto trust-project headless", []string{"--headless", "--permission-mode", "auto", "--trust-project"}, app.PostureAuto, session.ModeAuto, true, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -116,8 +120,8 @@ func TestAliasCombinationsStillResolve(t *testing.T) {
 			if posture != tc.wantPosture {
 				t.Fatalf("%q posture = %s, want %s", tc.argv, posture, tc.wantPosture)
 			}
-			if mode != session.ModeDefault {
-				t.Fatalf("%q session mode = %s, want default", tc.argv, mode)
+			if mode != tc.wantMode {
+				t.Fatalf("%q session mode = %s, want %s", tc.argv, mode, tc.wantMode)
 			}
 			if ac.TrustProject != tc.wantTrust {
 				t.Fatalf("%q TrustProject = %v, want %v", tc.argv, ac.TrustProject, tc.wantTrust)

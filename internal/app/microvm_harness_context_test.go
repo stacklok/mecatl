@@ -439,7 +439,8 @@ func TestMicroVMSuccessorRetainsPlacementAndContext(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer built.Close()
-			parent, err := built.Service.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
+			// Pass "" to use the server's DefaultMode (ModeYolo from AllowAllTools=true config).
+			parent, err := built.Service.CreateSession(t.Context(), "", session.Limits{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -612,7 +613,8 @@ func TestMicroVMSelectedContextFreshnessAndReadEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
+	// Pass "" to use the server's DefaultMode (ModeYolo from AllowAllTools=true config).
+	sess, err := built.Service.CreateSession(t.Context(), "", session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}

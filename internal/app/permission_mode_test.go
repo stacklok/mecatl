@@ -46,16 +46,14 @@ func TestTokenTableResolvesExactPairs(t *testing.T) {
 		posture Posture
 		mode    session.PermissionMode
 	}{
-		"plan":                 {PostureStrict, session.ModePlan},
-		"default":              {PostureStrict, session.ModeDefault},
-		"accept-edits":         {PostureStrict, session.ModeAccept},
-		"trusted":              {PostureTrusted, session.ModeDefault},
-		"trusted-accept-edits": {PostureTrusted, session.ModeAccept},
-		"auto":                 {PostureAuto, session.ModeDefault},
-		"yolo":                 {PostureYolo, session.ModeDefault},
+		"plan":         {PostureStrict, session.ModePlan},
+		"default":      {PostureStrict, session.ModeDefault},
+		"accept-edits": {PostureStrict, session.ModeAccept},
+		"auto":         {PostureAuto, session.ModeAuto},
+		"yolo":         {PostureYolo, session.ModeYolo},
 	}
-	if got := PermissionModeNames(); len(got) != len(want) {
-		t.Fatalf("token set = %v, want exactly the %d tokens", got, len(want))
+	if got := PermissionModeNames(); len(got) != 5 {
+		t.Fatalf("token set = %v, want exactly the 5 tokens", got)
 	}
 	for name, pair := range want {
 		tok, err := ParsePermissionMode(name)
@@ -91,96 +89,78 @@ func TestTokenTableResolvesExactPairs(t *testing.T) {
 			t.Errorf("unknown-token error must name the valid set; missing %q in %v", name, err)
 		}
 	}
-	if _, err := buildIsolated(t, context.Background(), permissionModeCfg(t, "autonomous", port.NopDiagnostics{})); err == nil || !strings.Contains(err.Error(), "trusted-accept-edits") {
+	if _, err := buildIsolated(t, context.Background(), permissionModeCfg(t, "autonomous", port.NopDiagnostics{})); err == nil || !strings.Contains(err.Error(), "accept-edits") {
 		t.Fatalf("Build with an unknown token must fail naming the valid set; got %v", err)
 	}
 }
 
 func TestTrustedKeepsCurrentMeaning(t *testing.T) {
-	cfg := permissionModeCfg(t, "trusted", port.NopDiagnostics{})
+	// The deprecated --posture trusted still resolves to PostureTrusted.
 	legacy := Config{Workspace: t.TempDir(), Model: "mock", UseMock: true, NoSoul: true, Posture: PostureTrusted, PostureFlagSet: true}
-	for name, c := range map[string]Config{"token": cfg, "--posture trusted": legacy} {
-		built, err := buildIsolated(t, context.Background(), c)
-		if err != nil {
-			t.Fatalf("%s: Build: %v", name, err)
-		}
-		if got := postureEchoFromBuild(t, built); got != "trusted" {
-			t.Errorf("%s: posture %q, want trusted", name, got)
-		}
-		if got := builtDefaultSessionMode(t, built); got != session.ModeDefault {
-			t.Errorf("%s: session mode %q, want default", name, got)
-		}
-		built.Close()
-	}
-}
-
-func TestTrustedAcceptEditsIsNameable(t *testing.T) {
-	built, err := buildIsolated(t, context.Background(), permissionModeCfg(t, "trusted-accept-edits", port.NopDiagnostics{}))
+	built, err := buildIsolated(t, context.Background(), legacy)
 	if err != nil {
-		t.Fatalf("Build: %v", err)
+		t.Fatalf("--posture trusted: Build: %v", err)
 	}
 	defer built.Close()
 	if got := postureEchoFromBuild(t, built); got != "trusted" {
-		t.Errorf("posture %q, want trusted", got)
+		t.Errorf("--posture trusted: posture %q, want trusted", got)
 	}
-	if got := builtDefaultSessionMode(t, built); got != session.ModeAccept {
-		t.Errorf("session mode %q, want acceptEdits", got)
+	if got := builtDefaultSessionMode(t, built); got != session.ModeDefault {
+		t.Errorf("--posture trusted: session mode %q, want default", got)
 	}
 }
 
+
 func TestAllowAllTokenRequiresChecker(t *testing.T) {
+	// The checker gate is now a runtime WARN, not a startup refusal.
+	// Build succeeds; entering auto mode without a checker is refused at SetMode time.
 	for _, token := range []string{"auto", "yolo"} {
-		_, err := buildIsolated(t, context.Background(), permissionModeCfg(t, token, port.NopDiagnostics{}))
-		if err == nil {
-			t.Fatalf("%s with no checker and no kill-switch must refuse to start", token)
+		rec := slogdiagBuffer(t)
+		cfg := permissionModeCfg(t, token, rec.diag)
+		built, err := buildIsolated(t, context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("%s with no checker must still start (checker gate is now a WARN): %v", token, err)
 		}
-		// The deprecated surface reaches the same resolved posture and the same gate.
-		legacy := Config{Workspace: t.TempDir(), Model: "mock", UseMock: true, NoSoul: true, AllowAllTools: true}
-		if _, err := buildIsolated(t, context.Background(), legacy); err == nil {
-			t.Fatal("--yolo with no checker must refuse to start too: the gate keys on the resolved posture")
+		built.Close()
+		if !strings.Contains(rec.String(), "no guardrails checker") {
+			t.Errorf("%s without checker must WARN about missing checker; log:\n%s", token, rec.String())
 		}
-		// Either declared choice satisfies it.
+		// Either declared choice keeps the WARN from appearing.
 		off := permissionModeCfg(t, token, port.NopDiagnostics{})
 		off.GuardrailsDisabled = true
-		built, err := buildIsolated(t, context.Background(), off)
+		built2, err := buildIsolated(t, context.Background(), off)
 		if err != nil {
 			t.Fatalf("%s with --guardrails off must start: %v", token, err)
 		}
-		built.Close()
+		built2.Close()
 		checked := permissionModeCfg(t, token, port.NopDiagnostics{})
 		checked.GuardrailsModel = "mock-checker"
-		built, err = buildIsolated(t, context.Background(), checked)
+		built3, err := buildIsolated(t, context.Background(), checked)
 		if err != nil {
 			t.Fatalf("%s with a configured checker must start: %v", token, err)
 		}
-		built.Close()
+		built3.Close()
 	}
 }
 
 func TestCheckerRefusalNamesEveryFix(t *testing.T) {
-	_, err := buildIsolated(t, context.Background(), permissionModeCfg(t, "auto", port.NopDiagnostics{}))
-	if err == nil {
-		t.Fatal("auto with no checker must refuse")
+	// Checker absence is now a startup WARN (not a refusal); the WARN must name every fix.
+	rec := slogdiagBuffer(t)
+	cfg := permissionModeCfg(t, "auto", rec.diag)
+	built, err := buildIsolated(t, context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("auto with no checker must start (WARN only); got error: %v", err)
 	}
-	for _, want := range []string{`"auto"`, "--guardrails-model", "`guardrail` model slot", "--guardrails off"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("refusal must name %q; got: %v", want, err)
+	built.Close()
+	for _, want := range []string{"no guardrails checker", "--guardrails-model", "`guardrail` model slot", "--guardrails off"} {
+		if !strings.Contains(rec.String(), want) {
+			t.Errorf("checker-absent WARN must name %q; log:\n%s", want, rec.String())
 		}
 	}
 }
 
 func TestGateFreeTokenStatesCheckerIsAdvisoryOnly(t *testing.T) {
 	properties := []string{"pre-tool veto", "approve-once human ask", "fail-closed"}
-
-	_, err := buildIsolated(t, context.Background(), permissionModeCfg(t, "yolo", port.NopDiagnostics{}))
-	if err == nil {
-		t.Fatal("yolo with no checker must refuse")
-	}
-	for _, p := range properties {
-		if !strings.Contains(err.Error(), p) {
-			t.Errorf("yolo refusal must name %q as a property the checker lacks; got: %v", p, err)
-		}
-	}
 
 	rec := slogdiagBuffer(t)
 	cfg := permissionModeCfg(t, "yolo", rec.diag)
@@ -202,7 +182,7 @@ func TestGateFreeTokenStatesCheckerIsAdvisoryOnly(t *testing.T) {
 }
 
 func TestNonAllowAllTokensRequireNoChecker(t *testing.T) {
-	for _, token := range []string{"plan", "default", "accept-edits", "trusted", "trusted-accept-edits"} {
+	for _, token := range []string{"plan", "default", "accept-edits"} {
 		built, err := buildIsolated(t, context.Background(), permissionModeCfg(t, token, port.NopDiagnostics{}))
 		if err != nil {
 			t.Fatalf("%s must start with no checker: %v", token, err)
@@ -218,7 +198,7 @@ func TestStartupLineNamesCheckerState(t *testing.T) {
 		want string
 	}{
 		{"enforcing", Config{Posture: PostureAuto, GuardrailsModel: "m"}, "enforcing"},
-		{"advisory at yolo", Config{Posture: PostureYolo, GuardrailsModel: "m"}, "advisory"},
+		{"advisory at yolo", Config{Posture: PostureYolo, MaxAllowedMode: session.ModeYolo, GuardrailsModel: "m"}, "advisory"},
 		{"kill-switch", Config{Posture: PostureAuto, GuardrailsDisabled: true}, "disabled"},
 		{"none at strict", Config{}, "disabled"},
 	}
@@ -252,22 +232,47 @@ func headlessCfg(t *testing.T, token string, diag port.Diagnostics) Config {
 }
 
 func TestHeadlessTrustTokenRefused(t *testing.T) {
-	for _, token := range []string{"trusted", "trusted-accept-edits"} {
-		_, err := buildIsolated(t, context.Background(), headlessCfg(t, token, port.NopDiagnostics{}))
-		if err == nil {
-			t.Fatalf("%s on a headless root with no trust source must refuse", token)
-		}
-		for _, want := range []string{"--trust-project", "trustedWorkspaces", "default or auto"} {
-			if !strings.Contains(err.Error(), want) {
-				t.Errorf("%s refusal must name %q; got: %v", token, want, err)
-			}
+	// The trust-raising posture (PostureTrusted) on a headless root with no trust
+	// source is refused. Reachable via the deprecated --posture trusted flag.
+	withTrustEnv(t, trustSettingsEnv(t.TempDir(), nil))
+	cfg := Config{
+		Workspace:      t.TempDir(),
+		Model:          "mock",
+		UseMock:        true,
+		NoSoul:         true,
+		Headless:       true,
+		Posture:        PostureTrusted,
+		PostureFlagSet: true,
+		Diagnostics:    port.NopDiagnostics{},
+	}
+	_, err := buildIsolated(t, context.Background(), cfg)
+	if err == nil {
+		t.Fatal("--posture trusted on a headless root with no trust source must refuse")
+	}
+	for _, want := range []string{"--trust-project", "trustedWorkspaces", "default or auto"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal must name %q; got: %v", want, err)
 		}
 	}
 }
 
 func TestHeadlessTrustTokenAcceptsEveryTrustSource(t *testing.T) {
+	baseHeadlessTrusted := func(t *testing.T) Config {
+		t.Helper()
+		withTrustEnv(t, trustSettingsEnv(t.TempDir(), nil))
+		return Config{
+			Workspace:      t.TempDir(),
+			Model:          "mock",
+			UseMock:        true,
+			NoSoul:         true,
+			Headless:       true,
+			Posture:        PostureTrusted,
+			PostureFlagSet: true,
+			Diagnostics:    port.NopDiagnostics{},
+		}
+	}
 	t.Run("explicit --trust-project", func(t *testing.T) {
-		cfg := headlessCfg(t, "trusted", port.NopDiagnostics{})
+		cfg := baseHeadlessTrusted(t)
 		cfg.TrustProject = true
 		built, err := buildIsolated(t, context.Background(), cfg)
 		if err != nil {
@@ -278,12 +283,19 @@ func TestHeadlessTrustTokenAcceptsEveryTrustSource(t *testing.T) {
 	t.Run("declared trustedWorkspaces", func(t *testing.T) {
 		ws := t.TempDir()
 		withTrustEnv(t, trustSettingsEnv(t.TempDir(), []byte("trustedWorkspaces:\n  - "+ws+"\n")))
-		cfg := permissionModeCfg(t, "trusted-accept-edits", port.NopDiagnostics{})
-		cfg.Headless = true
-		cfg.Workspace = ws
+		cfg := Config{
+			Workspace:      ws,
+			Model:          "mock",
+			UseMock:        true,
+			NoSoul:         true,
+			Headless:       true,
+			Posture:        PostureTrusted,
+			PostureFlagSet: true,
+			Diagnostics:    port.NopDiagnostics{},
+		}
 		built, err := buildIsolated(t, context.Background(), cfg)
 		if err != nil {
-			t.Fatalf("declared trust must satisfy the gate, because it runs after the trust fold: %v", err)
+			t.Fatalf("declared trust must satisfy the gate: %v", err)
 		}
 		built.Close()
 	})
@@ -311,7 +323,15 @@ func TestHeadlessAllowAllStartsWithoutTrust(t *testing.T) {
 func TestInteractiveTrustTokenGrantsTrust(t *testing.T) {
 	withTrustEnv(t, trustSettingsEnv(t.TempDir(), nil))
 	rec := slogdiagBuffer(t)
-	built, err := buildIsolated(t, context.Background(), permissionModeCfg(t, "trusted", rec.diag))
+	built, err := buildIsolated(t, context.Background(), Config{
+		Workspace:      t.TempDir(),
+		Model:          "mock",
+		UseMock:        true,
+		NoSoul:         true,
+		Posture:        PostureTrusted,
+		PostureFlagSet: true,
+		Diagnostics:    rec.diag,
+	})
 	if err != nil {
 		t.Fatalf("interactive trusted must start: %v", err)
 	}
@@ -359,7 +379,7 @@ func TestHeadlessAllowAllDefaultsReviewerOn(t *testing.T) {
 	}
 
 	// The model resolves through the existing slot, then the parent model.
-	cfg := Config{Posture: PostureAuto, Model: "parent-model", Diagnostics: port.NopDiagnostics{}}
+	cfg := Config{Posture: PostureAuto, MaxAllowedMode: session.ModeAuto, Model: "parent-model", Diagnostics: port.NopDiagnostics{}}
 	cfg = resolveAskReviewerDefault(cfg)
 	if !cfg.askReviewerDefaultOn {
 		t.Fatal("resolveAskReviewerDefault must engage the reviewer")
@@ -407,7 +427,7 @@ func TestReviewerDefaultIsOptOutAndNarrated(t *testing.T) {
 
 func TestReviewerDefaultDegradesToTodayBehaviour(t *testing.T) {
 	rec := slogdiagBuffer(t)
-	cfg := resolveAskReviewerDefault(Config{Posture: PostureAuto, Diagnostics: rec.diag})
+	cfg := resolveAskReviewerDefault(Config{Posture: PostureAuto, MaxAllowedMode: session.ModeAuto, Diagnostics: rec.diag})
 	if cfg.askReviewerDefaultOn {
 		t.Fatal("with no resolvable reviewer model the default must stay off")
 	}
@@ -421,7 +441,7 @@ func TestReviewerDefaultDegradesToTodayBehaviour(t *testing.T) {
 
 func TestReviewerDefaultIsConfinedToHeadlessAllowAll(t *testing.T) {
 	for name, cfg := range map[string]Config{
-		"interactive auto": {Posture: PostureAuto, Interactive: true, Model: "m"},
+		"interactive auto": {Posture: PostureAuto, MaxAllowedMode: session.ModeAuto, Interactive: true, Model: "m"},
 		"headless strict":  {Posture: PostureStrict, Model: "m"},
 		"headless trusted": {Posture: PostureTrusted, Model: "m"},
 	} {
@@ -458,20 +478,22 @@ func TestReviewerAndCheckerNarratedSeparately(t *testing.T) {
 
 func TestStartupLineReportsTokenBothHalvesCheckerAndReviewer(t *testing.T) {
 	rec := slogdiagBuffer(t)
-	built, err := buildIsolated(t, context.Background(), permissionModeCfg(t, "trusted-accept-edits", rec.diag))
+	cfg := permissionModeCfg(t, "auto", rec.diag)
+	cfg.GuardrailsModel = "mock-checker"
+	built, err := buildIsolated(t, context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
 	built.Close()
 	line := rec.lineContaining(`msg="permission mode"`)
 	for _, want := range []string{
-		"permission_mode=trusted-accept-edits",
-		"posture=trusted",
-		"session_mode=acceptEdits",
+		"permission_mode=auto",
+		"posture=auto",
+		"session_mode=auto",
 		"process-wide",
 		"a session may change it",
-		"guardrails_checker=disabled",
-		"subagent_ask_reviewer=off",
+		"guardrails_checker=enforcing",
+		"subagent_ask_reviewer=",
 	} {
 		if !strings.Contains(line, want) {
 			t.Errorf("startup line must carry %q; line: %q", want, line)
@@ -497,14 +519,14 @@ func TestPermissionModeIsOperatorTierOnly(t *testing.T) {
 
 	t.Run("CLI tier honoured", func(t *testing.T) {
 		cfg := base(t)
-		cfg.PermissionConfigs = []string{operatorFile(t, "trusted-accept-edits")}
+		cfg.PermissionConfigs = []string{operatorFile(t, "accept-edits")}
 		built, err := buildIsolated(t, context.Background(), cfg)
 		if err != nil {
 			t.Fatalf("Build: %v", err)
 		}
 		defer built.Close()
-		if got := postureEchoFromBuild(t, built); got != "trusted" {
-			t.Errorf("posture %q, want trusted", got)
+		if got := postureEchoFromBuild(t, built); got != "strict" {
+			t.Errorf("posture %q, want strict", got)
 		}
 		if got := builtDefaultSessionMode(t, built); got != session.ModeAccept {
 			t.Errorf("session mode %q, want acceptEdits", got)
@@ -527,7 +549,7 @@ func TestPermissionModeIsOperatorTierOnly(t *testing.T) {
 	})
 	t.Run("explicit flag outranks the key", func(t *testing.T) {
 		cfg := permissionModeCfg(t, "plan", port.NopDiagnostics{})
-		cfg.PermissionConfigs = []string{operatorFile(t, "trusted")}
+		cfg.PermissionConfigs = []string{operatorFile(t, "default")}
 		built, err := buildIsolated(t, context.Background(), cfg)
 		if err != nil {
 			t.Fatalf("Build: %v", err)
@@ -573,27 +595,49 @@ func TestPermissionModeIsOperatorTierOnly(t *testing.T) {
 	})
 }
 
-// TestInvariant_NoWireOrDomainSurfaceChanged pins that the vocabulary added no
-// session-selectable value: the domain keeps its three
-// modes with their strings, the proto enum keeps its four values, and an old
-// snapshot's mode string still round-trips. `task api:check` covers the engine
-// API surface itself.
+// TestInvariant_NoWireOrDomainSurfaceChanged pins that:
+//   - the five session mode wire strings are stable;
+//   - the proto enum has exactly the six approved values (UNSPECIFIED, DEFAULT,
+//     PLAN, ACCEPT_EDITS, AUTO, YOLO — AUTO and YOLO added with the unified
+//     permission-mode architecture, intentional additive wire change);
+//   - the token table only writes the five known session modes.
+//
+// `task api:check` covers the engine API surface itself.
 func TestInvariant_NoWireOrDomainSurfaceChanged(t *testing.T) {
-	if got := []session.PermissionMode{session.ModeDefault, session.ModePlan, session.ModeAccept}; !slices.Equal(got, []session.PermissionMode{"default", "plan", "acceptEdits"}) {
-		t.Fatalf("session modes changed: %v", got)
+	modes := []session.PermissionMode{
+		session.ModeDefault, session.ModePlan, session.ModeAccept,
+		session.ModeAuto, session.ModeYolo,
+	}
+	want := []session.PermissionMode{"default", "plan", "acceptEdits", "auto", "yolo"}
+	if !slices.Equal(modes, want) {
+		t.Fatalf("session mode wire strings changed: %v", modes)
 	}
 	names := make([]string, 0, len(mecatlv1.PermissionMode_value))
 	for name := range mecatlv1.PermissionMode_value {
 		names = append(names, name)
 	}
 	slices.Sort(names)
-	want := []string{"PERMISSION_MODE_ACCEPT_EDITS", "PERMISSION_MODE_DEFAULT", "PERMISSION_MODE_PLAN", "PERMISSION_MODE_UNSPECIFIED"}
-	if !slices.Equal(names, want) {
-		t.Fatalf("proto PermissionMode values = %v, want %v", names, want)
+	// AUTO and YOLO are intentional additive additions (no break: existing clients
+	// receive unknown enum values and must ignore them per the proto compatibility
+	// contract; they do not need to send or recognise them to stay correct).
+	wantProto := []string{
+		"PERMISSION_MODE_ACCEPT_EDITS",
+		"PERMISSION_MODE_AUTO",
+		"PERMISSION_MODE_DEFAULT",
+		"PERMISSION_MODE_PLAN",
+		"PERMISSION_MODE_UNSPECIFIED",
+		"PERMISSION_MODE_YOLO",
+	}
+	if !slices.Equal(names, wantProto) {
+		t.Fatalf("proto PermissionMode values = %v, want %v", names, wantProto)
+	}
+	knownModes := []session.PermissionMode{
+		session.ModeDefault, session.ModePlan, session.ModeAccept,
+		session.ModeAuto, session.ModeYolo,
 	}
 	for _, tok := range permissionModeTable {
-		if !slices.Contains([]session.PermissionMode{session.ModeDefault, session.ModePlan, session.ModeAccept}, tok.SessionMode) {
-			t.Errorf("token %s writes a session mode outside the domain's three: %q", tok.Name, tok.SessionMode)
+		if !slices.Contains(knownModes, tok.SessionMode) {
+			t.Errorf("token %s writes an unknown session mode %q", tok.Name, tok.SessionMode)
 		}
 	}
 }

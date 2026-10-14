@@ -191,7 +191,8 @@ func TestADR_0369_Scenario1_UniversalAliasTargets(t *testing.T) {
 			t.Fatalf("Build pair child default: %v", err)
 		}
 		defer built.Close()
-		sess, err := built.Service.CreateSession(t.Context(), session.ModeDefault, defaultLimits())
+		// Pass "" to use the server's DefaultMode (ModeYolo from AllowAllTools=true config).
+		sess, err := built.Service.CreateSession(t.Context(), "", defaultLimits())
 		if err != nil {
 			t.Fatalf("CreateSession: %v", err)
 		}

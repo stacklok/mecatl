@@ -214,7 +214,14 @@ permissions:
 // TestChildPolicyAutoApprovesNonSubstitution; asserted here only to document the
 // contrast with the still-floored substitution case at auto.
 func TestAutoTierChildLoosensMutateFloorNotSubstitution(t *testing.T) {
-	// AUTO tier: allow-all, but the child substitution defense stays ON.
+	// In the unified permission-mode architecture, allow-all and substitution-loosening
+	// are mode-driven (Policy.Evaluate), not baked in at policy construction.
+	// - ModeAuto: allowAllCLIRules injected → mutates Allowed; standard evaluator →
+	//   substitution still Asks (the defense stays ON at auto).
+	// - ModeYolo: allowAllCLIRules + evalLoose injected → both mutates and substitutions
+	//   Allowed on the MAIN policy.
+	// - Children in ModeAuto: blanket Allow floor for mutates (no ask-floor to loosen),
+	//   Ask for substitutions (defense stays ON — the load-bearing safety assertion).
 	cfg := Config{Workspace: "", Model: "mock", AllowAllTools: true, LooseChildSubstitution: false}
 	mutateArgs, _ := json.Marshal(map[string]string{"command": "zap -rf build"}) // unknown-verb mutate stand-in
 	mutateCall := session.NewToolCall("c1", "Shell", mutateArgs)
@@ -224,19 +231,27 @@ func TestAutoTierChildLoosensMutateFloorNotSubstitution(t *testing.T) {
 	// Mirror buildEngine's main-policy construction (rules + evaluator options +
 	// the build-once resolver — nil here, no config sources).
 	mainPolicy := permpolicy.NewPolicyWithResolver(mainRules(cfg), nil, cfg.permResolver, mainEvaluatorOptions(cfg)...)
-	if got := mainPolicy.Evaluate(context.Background(), "s1", session.ModeDefault, subCall, nil); got.Decision.Effect != governance.Allow {
-		t.Fatalf("auto-tier main policy should loosen the substitution floor; got %+v", got)
+	// ModeAuto: allow-all rules + standard evaluator → plain mutate Allows, substitution Asks.
+	if got := mainPolicy.Evaluate(context.Background(), "s1", session.ModeAuto, mutateCall, nil); got.Decision.Effect != governance.Allow {
+		t.Fatalf("auto-tier main policy should Allow a plain mutate; got %+v", got)
+	}
+	if got := mainPolicy.Evaluate(context.Background(), "s1", session.ModeAuto, subCall, nil); got.Decision.Effect != governance.Ask {
+		t.Fatalf("auto-tier main policy must NOT loosen the substitution floor (ModeAuto uses standard evaluator); got %+v", got)
+	}
+	// ModeYolo: allow-all rules + evalLoose evaluator → both mutates and substitutions Allowed.
+	if got := mainPolicy.Evaluate(context.Background(), "s1", session.ModeYolo, subCall, nil); got.Decision.Effect != governance.Allow {
+		t.Fatalf("yolo-tier main policy should loosen the substitution floor (evalLoose); got %+v", got)
 	}
 
 	childPolicy := childPermPolicy(cfg)
 	// Plain mutate: the blanket child floor allows it (no mutate-ask floor exists
 	// for a child to loosen) → Allow regardless of tier.
-	if got := childPolicy.Evaluate(context.Background(), "s1", session.ModeDefault, mutateCall, nil); got.Decision.Effect != governance.Allow {
+	if got := childPolicy.Evaluate(context.Background(), "s1", session.ModeAuto, mutateCall, nil); got.Decision.Effect != governance.Allow {
 		t.Fatalf("child plain mutate should be Allow (blanket floor); got %+v", got)
 	}
 	// Substitution with a non-read-only inner: at AUTO the child loosening is OFF, so the
 	// child still floors at Ask — the load-bearing safety assertion.
-	if got := childPolicy.Evaluate(context.Background(), "s1", session.ModeDefault, subCall, nil); got.Decision.Effect != governance.Ask {
+	if got := childPolicy.Evaluate(context.Background(), "s1", session.ModeAuto, subCall, nil); got.Decision.Effect != governance.Ask {
 		t.Fatalf("auto tier must NOT loosen a CHILD's substitution floor; got %+v", got)
 	}
 }

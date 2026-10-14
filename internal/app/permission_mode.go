@@ -20,29 +20,36 @@ import (
 // so no total order over the tokens exists and none may be inferred from their
 // position in the table.
 
-// PermissionModeToken is one named combination of posture and default session
-// mode.
+// PermissionModeToken is one named combination of server ceiling and default
+// session mode.
 type PermissionModeToken struct {
 	// Name is the CLI/YAML spelling.
 	Name string
-	// Posture is the process-wide half, fixed at startup.
+	// Posture is the process-wide posture tier, used for TrustProject floor and
+	// for checker/reviewer gating. No longer drives allow-all rule injection
+	// (that is now mode-driven in Policy.Evaluate).
 	Posture Posture
-	// SessionMode is the session half: only the default a new session starts in.
+	// SessionMode is the default mode new sessions start in.
 	SessionMode session.PermissionMode
+	// MaxMode is the server ceiling: the most-permissive mode sessions on this
+	// server are allowed to enter. SetMode rejects a mode above this ceiling.
+	MaxMode session.PermissionMode
 }
 
-// permissionModeTable is the token contract. Redundant products (an
-// accept-edits variant of auto or yolo) are deliberately absent: allow-all
-// already permits edits.
+// permissionModeTable is the token contract. 5 modes (plan, default,
+// accept-edits, auto, yolo). Redundant products (an accept-edits variant of
+// auto or yolo) are deliberately absent: allow-all already permits edits.
+// trusted and trusted-accept-edits are dropped as modes; project trust is
+// raised via --trust-project combined with any mode.
 var permissionModeTable = []PermissionModeToken{
-	{Name: "plan", Posture: PostureStrict, SessionMode: session.ModePlan},
-	{Name: "default", Posture: PostureStrict, SessionMode: session.ModeDefault},
-	{Name: "accept-edits", Posture: PostureStrict, SessionMode: session.ModeAccept},
-	// The three single-word tokens above strict share their posture's name.
-	{Name: PostureTrusted.String(), Posture: PostureTrusted, SessionMode: session.ModeDefault},
-	{Name: "trusted-accept-edits", Posture: PostureTrusted, SessionMode: session.ModeAccept},
-	{Name: PostureAuto.String(), Posture: PostureAuto, SessionMode: session.ModeDefault},
-	{Name: PostureYolo.String(), Posture: PostureYolo, SessionMode: session.ModeDefault},
+	{Name: "plan", Posture: PostureStrict, SessionMode: session.ModePlan, MaxMode: session.ModePlan},
+	{Name: "default", Posture: PostureStrict, SessionMode: session.ModeDefault, MaxMode: session.ModeDefault},
+	{Name: "accept-edits", Posture: PostureStrict, SessionMode: session.ModeAccept, MaxMode: session.ModeAccept},
+	// auto and yolo: sessions start in the named mode. The allow-all and
+	// loose-substitution behaviors are injected at evaluation time by
+	// Policy.Evaluate based on the session's current mode, NOT from Posture.
+	{Name: PostureAuto.String(), Posture: PostureAuto, SessionMode: session.ModeAuto, MaxMode: session.ModeAuto},
+	{Name: PostureYolo.String(), Posture: PostureYolo, SessionMode: session.ModeYolo, MaxMode: session.ModeYolo},
 }
 
 // PermissionModeNames lists the valid tokens in table order, for help text and
@@ -87,9 +94,10 @@ func PermissionModeForPair(p Posture, mode session.PermissionMode) (PermissionMo
 // Precedence: an explicit --permission-mode flag, then the operator-tier
 // permissionMode: key, then the deprecated surface (--posture/--yolo and the
 // operator-tier posture: key, handled by foldOperatorPosture). A token writes
-// cfg.Posture and cfg.DefaultSessionMode and marks the posture explicit, so the
-// deprecated posture: key cannot override it. --trust-project and --yolo still
-// fold MAX-tier on top in resolvePosture, exactly as they do over --posture.
+// cfg.Posture, cfg.DefaultSessionMode, and cfg.MaxAllowedMode and marks the
+// posture explicit, so the deprecated posture: key cannot override it.
+// --trust-project and --yolo still fold MAX-tier on top in resolvePosture,
+// exactly as they do over --posture.
 func foldPermissionMode(cfg Config) (Config, error) {
 	raw := ""
 	source := ""
@@ -97,8 +105,11 @@ func foldPermissionMode(cfg Config) (Config, error) {
 	case cfg.PermissionModeFlagSet:
 		raw, source = cfg.PermissionMode, "--permission-mode"
 	case cfg.PostureFlagSet:
-		// An explicit (deprecated) --posture is a CLI flag and out-ranks the
-		// operator YAML, the rule --posture already follows for posture:.
+		// Deprecated --posture: set DefaultSessionMode and MaxAllowedMode from the
+		// resolved posture for backward compat. The posture is already on cfg.Posture
+		// (set by the cmd layer); foldOperatorPosture would no-op since PostureFlagSet.
+		cfg.DefaultSessionMode, cfg.MaxAllowedMode = postureToSessionModes(cfg.Posture)
+		return foldOperatorPosture(cfg), nil
 	default:
 		if res, ok := cfg.permResolver.(*permconfig.Resolver); ok && res != nil {
 			if v := strings.TrimSpace(res.OperatorPermissionMode()); v != "" {
@@ -116,26 +127,38 @@ func foldPermissionMode(cfg Config) (Config, error) {
 	cfg.Posture = tok.Posture
 	cfg.PostureFlagSet = true
 	cfg.DefaultSessionMode = tok.SessionMode
+	cfg.MaxAllowedMode = tok.MaxMode
 	cfg.permissionModeName = tok.Name
 	return cfg, nil
 }
 
-// checkerRefusal is the allow-all admission gate. A
-// posture that waives the built-in mutate-ask floor leaves the guardrails
-// checker as the only inspection of tool content, so starting one with no
-// checker and no explicit kill-switch is refused. It keys on the RESOLVED
-// posture with no exemption for a flag default; shipped defaults declare their
-// choice instead.
-func checkerRefusal(cfg Config, checkerConfigured bool) error {
-	if cfg.Posture < PostureAuto || checkerConfigured || cfg.GuardrailsDisabled {
-		return nil
+// postureToSessionModes maps a Posture to (DefaultSessionMode, MaxAllowedMode)
+// for the deprecated --posture flag path, maintaining backward compat.
+func postureToSessionModes(p Posture) (session.PermissionMode, session.PermissionMode) {
+	switch p {
+	case PostureAuto:
+		return session.ModeAuto, session.ModeAuto
+	case PostureYolo:
+		return session.ModeYolo, session.ModeYolo
+	default: // PostureStrict, PostureTrusted → default mode
+		return session.ModeDefault, session.ModeDefault
 	}
-	msg := fmt.Sprintf("permission mode %q allows every tool without asking, but no guardrails checker is configured, so nothing would inspect tool content. Fix it one of three ways: set a checker with --guardrails-model <model>; bind the `guardrail` model slot (--model-slot guardrail=<model> or models.slots.guardrail in settings.yaml); or run unsupervised on purpose with --guardrails off",
+}
+
+// checkerRefusal WARNs (no longer refuses) when an allow-all mode is configured
+// but no guardrails checker is set. In the new architecture the checker
+// requirement is enforced at SetMode time (entering ModeAuto requires a checker);
+// the startup check is advisory so the operator sees the misconfiguration early.
+func checkerRefusal(cfg Config, checkerConfigured bool) {
+	if cfg.Posture < PostureAuto || checkerConfigured || cfg.GuardrailsDisabled {
+		return
+	}
+	msg := fmt.Sprintf("permission mode %q: no guardrails checker configured; entering auto mode will be refused at runtime. Fix it by setting a checker with --guardrails-model <model> or binding the guardrail model slot, or run unsupervised with --guardrails off",
 		cfg.resolvedPermissionModeName())
 	if cfg.Posture >= PostureYolo {
 		msg += ". " + yoloCheckerAdvisoryNote
 	}
-	return fmt.Errorf("%s", msg)
+	cfg.diag().Log(context.Background(), port.LevelWarn, msg)
 }
 
 // yoloCheckerAdvisoryNote states what a configured checker does NOT do at the
@@ -145,14 +168,13 @@ const yoloCheckerAdvisoryNote = "At yolo a configured checker is observability-o
 
 // headlessTrustRefusal is the headless admission gate.
 // It runs AFTER resolveTrust, so any legitimate trust source satisfies it, and
-// applies only to the trust-naming posture: trust is not auto's or yolo's
+// applies only to the trust-raising posture: trust is not auto's or yolo's
 // defining increment, so those WARN instead (narrateWithheldTrust).
 func headlessTrustRefusal(cfg Config) error {
 	if !cfg.Headless || cfg.Posture != PostureTrusted || cfg.TrustProject {
 		return nil
 	}
-	return fmt.Errorf("permission mode %q honours this project's instructions and rules, but a headless root never gains project trust from the permission mode and no trust source is present. Fix it one of three ways: pass --trust-project; add this workspace to trustedWorkspaces in your user-global settings.yaml; or choose a mode that does not name project trust, such as default or auto",
-		cfg.resolvedPermissionModeName())
+	return fmt.Errorf("the trust-raising posture requires a trust source on a headless root, but none is present. Fix it one of three ways: pass --trust-project; add this workspace to trustedWorkspaces in your user-global settings.yaml; or choose a mode that does not raise project trust, such as default or auto")
 }
 
 // narrateWithheldTrust WARNs when a headless allow-all root starts without
@@ -199,8 +221,8 @@ func checkerState(cfg Config, configured bool) (state, reason string) {
 		return checkerDisabled, "kill-switch (--guardrails off)"
 	case !configured:
 		return checkerDisabled, "no checker configured"
-	case cfg.Posture >= PostureYolo:
-		return checkerAdvisory, "demoted by posture yolo"
+	case cfg.MaxAllowedMode == session.ModeYolo:
+		return checkerAdvisory, "demoted: yolo mode has no enforcing checker"
 	}
 	specs, _ := effectiveGuardrailSpecs(cfg)
 	if highestSeverityGuardrailMode(specs) == string(modelhook.ModeAdvisory) {
@@ -239,9 +261,10 @@ func narratePermissionMode(cfg Config, checkerConfigured bool) {
 	attrs := []any{
 		"permission_mode", cfg.resolvedPermissionModeName(),
 		"posture", cfg.Posture.String(),
-		"posture_scope", "process-wide, fixed at startup; cycling the session mode never changes it",
+		"posture_scope", "process-wide, fixed at startup; sets TrustProject floor and checker/reviewer gating",
 		"session_mode", string(mode),
-		"session_mode_scope", "default for new sessions; a session may change it",
+		"session_mode_scope", "default for new sessions; a session may change it up to the server ceiling",
+		"max_allowed_mode", string(cfg.MaxAllowedMode),
 		"guardrails_checker", checker,
 		"subagent_ask_reviewer", reviewerState(cfg),
 	}
@@ -254,7 +277,7 @@ func narratePermissionMode(cfg Config, checkerConfigured bool) {
 	cfg.diag().Log(context.Background(), port.LevelInfo, "permission mode", attrs...)
 	if cfg.Posture == PostureAuto {
 		cfg.diag().Log(context.Background(), port.LevelInfo,
-			"permission mode auto: subagents KEEP the command-substitution guard the main agent loses, so a subagent's $(...), backtick, or subshell command that cannot be proved read-only is not auto-run. Headless, the subagent ask reviewer adjudicates it instead of denying it (--subagent-ask-reviewer)")
+			"permission mode auto: subagents KEEP the command-substitution guard the main agent loses at auto mode, so a subagent's $(...), backtick, or subshell command that cannot be proved read-only is not auto-run. Headless, the subagent ask reviewer adjudicates it instead of denying it (--subagent-ask-reviewer)")
 	}
 }
 
@@ -266,12 +289,13 @@ func isAskReviewerOptOut(s string) bool {
 
 // resolveAskReviewerDefault decides whether the headless subagent ask reviewer
 // is on by default: headless (no human approver), an
-// allow-all posture, no explicit reviewer model, and no explicit opt-out. It
+// allow-all mode, no explicit reviewer model, and no explicit opt-out. It
 // resolves its model through the existing ask-reviewer slot with the
 // parent-model fallback; when neither resolves, behaviour stays today's
 // denial and a WARN names the fix.
 func resolveAskReviewerDefault(cfg Config) Config {
-	if cfg.Interactive || cfg.Posture < PostureAuto || cfg.SubagentAskReviewerModel != "" || cfg.askReviewerOptOut {
+	isAllowAll := cfg.MaxAllowedMode == session.ModeAuto || cfg.MaxAllowedMode == session.ModeYolo
+	if cfg.Interactive || !isAllowAll || cfg.SubagentAskReviewerModel != "" || cfg.askReviewerOptOut {
 		return cfg
 	}
 	if _, ok := resolveSlotModel(cfg, slotAskReviewer, cfg.Model); !ok && strings.TrimSpace(cfg.Model) == "" {

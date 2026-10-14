@@ -160,7 +160,7 @@ func TestServerProviderRecovery_Scenario2_EffectiveDelayNeverRetriesEarly_Compos
 			if err != nil {
 				t.Fatal(err)
 			}
-			sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
+			sess, err := built.Service.CreateSession(ctx, "", defaultLimits())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -349,7 +349,7 @@ func TestServerProviderRecovery_Scenario1_RootAndDirectWriteChildRecoverBeforeTe
 		t.Fatal(err)
 	}
 	defer built.Close()
-	parent, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
+	parent, err := built.Service.CreateSession(ctx, "", defaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -119,7 +119,7 @@ func TestSessionMCPAuthorization_GrantRegressionParksAndResumes(t *testing.T) {
 	owner := &session.Principal{Issuer: "https://identity.example", Subject: "alice", GrantType: session.GrantTypeUser}
 	ownerCtx := session.WithPrincipal(ctx, owner)
 	intruderCtx := session.WithPrincipal(ctx, &session.Principal{Issuer: owner.Issuer, Subject: "mallory", GrantType: session.GrantTypeUser})
-	sess, err := built.Service.CreateSession(ownerCtx, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(ownerCtx, "", session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

@@ -102,7 +102,8 @@ func TestDefaultHarnessInstructionsFlowToChildren(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer built.Close()
-			sess, err := built.Service.CreateSessionWithProfile(t.Context(), session.ModeDefault, session.Limits{}, server.ProviderSelector{}, tc.profile)
+			// Pass "" to use the server's DefaultMode (ModeYolo from AllowAllTools=true config).
+			sess, err := built.Service.CreateSessionWithProfile(t.Context(), "", session.Limits{}, server.ProviderSelector{}, tc.profile)
 			if err != nil {
 				t.Fatal(err)
 			}

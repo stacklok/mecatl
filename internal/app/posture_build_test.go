@@ -39,7 +39,7 @@ func postureEchoFromBuild(t *testing.T, built *Built) string {
 // silently disconnect, and the input to the #1 security fix.
 //
 //	(a) operator-tier `posture: auto` → echoed posture "auto" AND the narrated
-//	    composition fact reports allow_all=true (applyPosture derived the knob in Build).
+//	    composition fact reports trust_project= (the posture ladder set it in Build).
 //	(b) a PROJECT-tier `posture: yolo` fixture is IGNORED → echoed posture stays "strict".
 //	(c) user-global `posture: yolo` + a PRIVILEGED Config → Build REFUSES (the
 //	    operator-YAML tier cannot escape the root/no-sandbox refusal).
@@ -68,8 +68,8 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 		if fact == "" {
 			t.Fatalf("expected the narratePosture composition fact; log:\n%s", diag.String())
 		}
-		if !strings.Contains(fact, "allow_all=true") {
-			t.Fatalf("auto must derive allow_all=true in Build; fact: %q", fact)
+		if !strings.Contains(fact, "trust_project=") {
+			t.Fatalf("auto posture must narrate trust_project in Build; fact: %q", fact)
 		}
 	})
 

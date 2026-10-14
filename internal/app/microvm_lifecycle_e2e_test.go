@@ -495,7 +495,7 @@ func TestMicroVMDefaultPlacementRetainsOneExactAttachmentUntilCloseSession(t *te
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(ctx, "", session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -566,11 +566,11 @@ harness_context:
 	}
 	defer built.Close()
 
-	first, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	first, err := built.Service.CreateSession(ctx, "", session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	second, err := built.Service.CreateSession(ctx, "", session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -675,7 +675,7 @@ func TestMicroVMOperatorJourneyIsLazyIsolatedAndRestartExact(t *testing.T) {
 		t.Fatalf("composition allocated a microVM: readiness=%d create=%d", manager.calls, daemon.operationCount("create"))
 	}
 
-	noFS, err := first.Service.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileNoFS)
+	noFS, err := first.Service.CreateSessionWithProfile(ctx, "", session.Limits{}, server.ProviderSelector{}, server.ProfileNoFS)
 	if err != nil {
 		first.Close()
 		t.Fatalf("create no-fs session: %v", err)
@@ -685,12 +685,12 @@ func TestMicroVMOperatorJourneyIsLazyIsolatedAndRestartExact(t *testing.T) {
 		t.Fatalf("no-fs touched microVM state: ref=%+v readiness=%d create=%d", noFS.EnvironmentRef, manager.calls, daemon.operationCount("create"))
 	}
 
-	one, err := first.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	one, err := first.Service.CreateSession(ctx, "", session.Limits{})
 	if err != nil {
 		first.Close()
 		t.Fatalf("create first default session: %v", err)
 	}
-	two, err := first.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	two, err := first.Service.CreateSession(ctx, "", session.Limits{})
 	if err != nil {
 		first.Close()
 		t.Fatalf("create second default session: %v", err)
@@ -831,7 +831,7 @@ func TestMicroVMScheduledPlacementSurvivesFiresRestartAndDeletion(t *testing.T) 
 		mockllm.ToolCallTurn(session.NewToolCall("write-first", "Shell", json.RawMessage(`{"command":"printf first > shared.txt"}`))),
 		mockllm.TextTurn("first fire complete"),
 	))
-	origin, err := first.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	origin, err := first.Service.CreateSession(ctx, "", session.Limits{})
 	if err != nil {
 		first.Close()
 		t.Fatal(err)

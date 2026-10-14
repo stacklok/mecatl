@@ -107,7 +107,8 @@ func TestHarnessContext_PrincipalScopedBindingIsolation(t *testing.T) {
 		}
 	}
 	ctx := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser})
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	// Pass "" to use the server's DefaultMode (ModeYolo from AllowAllTools=true config).
+	sess, err := built.Service.CreateSession(ctx, "", session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}

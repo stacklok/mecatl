@@ -89,7 +89,7 @@ func TestRoutableDefRoutesToClassifiedModelE2E(t *testing.T) {
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
+	sess, err := built.Service.CreateSession(ctx, "", defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestPinnedInheritDefDoesNotRouteE2E(t *testing.T) {
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
+	sess, err := built.Service.CreateSession(ctx, "", defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestRoutableDefHallucinatedCategoryFailSoftE2E(t *testing.T) {
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
+	sess, err := built.Service.CreateSession(ctx, "", defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

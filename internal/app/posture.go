@@ -13,18 +13,24 @@ import (
 // trust/automation ladder that folds the --yolo / --trust-project
 // switches into ONE ordered tier (strict < trusted < auto < yolo). Like trust.go
 // it is a pure composition concern — engine/governance stays session-free and
-// posture-unaware; posture only COMPOSES the derived knobs (the allow-all rule,
-// the evaluator's loose-substitution option, and the root-aware project-trust
-// floor) and every decision still goes THROUGH governance.Evaluate, never a bypass.
+// posture-unaware; posture only COMPOSES the derived knobs (the root-aware
+// project-trust floor and checker/reviewer gating) and every decision still goes
+// THROUGH governance.Evaluate, never a bypass.
 //
 // The ladder (owner-approved), and the knobs each tier derives in applyPosture:
 //
-//	posture | AllowAllTools | main loose-subst | child loose-subst     | TrustProject floor
-//	--------|---------------|------------------|----------------------|-------------------
-//	strict  | false         | false            | false                | (trust sources only)
-//	trusted | false         | false            | false                | interactive-only
-//	auto    | true          | true             | false (child def ON) | interactive-only
-//	yolo    | true          | true             | TRUE  (child def OFF)| interactive-only
+//	posture | TrustProject floor        | DefaultSessionMode (via postureToSessionModes)
+//	--------|---------------------------|---------------------------------------------
+//	strict  | (trust sources only)      | default
+//	trusted | interactive-only          | default
+//	auto    | interactive-only          | auto (allow-all via ModeAuto at eval time)
+//	yolo    | interactive-only          | yolo (allow-all + loose-subst at eval time)
+//
+// Allow-all and loose-substitution are now mode-driven: Policy.Evaluate injects
+// allowAllCLIRules() for ModeAuto/ModeYolo and selects the loose evaluator for
+// ModeYolo, at call time. Switching a session from yolo→default actually removes
+// the allow-all floor. AllowAllTools and LooseChildSubstitution in Config are kept
+// for backward compat with test fixtures but no longer drive rule injection.
 //
 // Issue #359. TrustProject is the ONE effective positive workspace-trust
 // decision after resolveTrust. It gates project-tier ingestion through the named
@@ -36,13 +42,6 @@ import (
 // root keeps the trusted/auto/yolo floor shown in the table. Thus an untrusted headless
 // repo gets neither steering nor a read-only child shell, while every legitimate
 // trust source admits both.
-//
-// "child loose-subst" is the NEW Config.LooseChildSubstitution: under yolo a
-// child/subagent/branch engine ALSO loosens the built-in substitution Ask floor
-// (so a $()/backtick/heredoc command auto-runs), turning OFF the child
-// prompt-injection defense — the deliberate behaviour change yolo now carries.
-// strict/trusted/auto keep that defense ON (childEvaluatorOptions omits
-// WithLooseSubstitution), so only yolo lets a child auto-run a substitution.
 //
 // PostureStrict is iota-zero by design: a zero/unrecognised value fails CLOSED to
 // the safest tier, the structural backstop that mirrors the rest of the harness's
@@ -206,19 +205,20 @@ func resolvePosture(cfg Config, ceiling Posture) Posture {
 	return resolved
 }
 
-// applyPosture maps the resolved tier to the derived composition knobs per the
-// ladder table: AllowAllTools (the allow-all rule, main + children),
-// LooseChildSubstitution (child substitution loosening, yolo only), and the
-// project-trust floor. The floor is raised for trusted/auto/yolo on INTERACTIVE
-// roots only; a HEADLESS root's ladder never raises TrustProject. Explicit trust
-// survives because this function only raises. It MUST run BEFORE resolveTrust so
-// the trust fold and permission resolver see the posture-derived interactive
-// floor.
+// applyPosture maps the resolved tier to the project-trust floor. The floor is
+// raised for trusted/auto/yolo on INTERACTIVE roots only; a HEADLESS root's
+// ladder never raises TrustProject. Explicit trust survives because this
+// function only raises. It MUST run BEFORE resolveTrust so the trust fold and
+// permission resolver see the posture-derived interactive floor.
+//
+// Allow-all and loose-substitution are no longer derived here: they are
+// mode-driven (Policy.Evaluate injects allowAllCLIRules for ModeAuto/ModeYolo
+// at call time). DefaultSessionMode and MaxAllowedMode are set by foldPermissionMode
+// (for explicit token/posture flags) or by the backward-compat fallback in Build()
+// (for the deprecated --yolo alias path).
 func applyPosture(cfg Config) Config {
 	switch cfg.Posture {
 	case PostureYolo:
-		cfg.AllowAllTools = true
-		cfg.LooseChildSubstitution = true
 		// TrustProject floor: INTERACTIVE-only. On a HEADLESS root the ladder does
 		// NOT raise TrustProject — the fail-safe default (an untrusted clone gets no
 		// ingestion and no subagent shell without an explicit --trust-project).
@@ -226,8 +226,6 @@ func applyPosture(cfg Config) Config {
 			cfg.TrustProject = true
 		}
 	case PostureAuto:
-		cfg.AllowAllTools = true
-		cfg.LooseChildSubstitution = false
 		if !cfg.Headless {
 			cfg.TrustProject = true
 		}
@@ -291,12 +289,11 @@ func ResolveAuthoritativePosture(cfg Config) Posture {
 // resolveTrust, so it cannot contradict the following workspace-trust narration.
 // It is the sole observation/debug surface for the resolved posture + per-defence
 // state; there is no separate print-and-exit CLI.
+// Allow-all and loose-substitution are now mode-driven (not posture-derived),
+// so they are not included here.
 func narratePosture(diag port.Diagnostics, p Posture, trustProject bool) {
 	diag.Log(context.Background(), port.LevelInfo, "operator posture",
 		"posture", p.String(),
-		"allow_all", p >= PostureAuto,
-		"main_loose_substitution", p >= PostureAuto,
-		"child_loose_substitution", p == PostureYolo,
 		"project_ingestion", trustProject,
 		"trust_project", trustProject)
 }

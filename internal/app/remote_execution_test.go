@@ -59,7 +59,7 @@ func TestRemoteScheduleCatalogAndPromptThroughFactory(t *testing.T) {
 	}
 	defer built.Close()
 	ctx := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser})
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(ctx, "", session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +246,7 @@ func TestRemoteExecutionPreservesOperatorPermissionsUnderAuto(t *testing.T) {
 			}
 			defer built.Close()
 			ctx := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser})
-			sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+			sess, err := built.Service.CreateSession(ctx, "", session.Limits{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -364,7 +364,9 @@ func TestRemoteExecutionRealFactoryCarriesPostureAndAttenuatedCatalog(t *testing
 	defer built.Close()
 	principal := &session.Principal{Issuer: "https://issuer.example", Subject: "alice", GrantType: session.GrantTypeUser}
 	ctx := session.WithPrincipal(context.Background(), principal)
-	sess, err := built.Service.CreateSession(ctx, session.ModeAccept, session.Limits{})
+	// Pass "" to use the server's DefaultMode (ModeYolo from AllowAllTools=true config),
+	// so all tool calls are auto-allowed and unsupported remote tools return model-visible errors.
+	sess, err := built.Service.CreateSession(ctx, "", session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}

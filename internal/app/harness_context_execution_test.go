@@ -36,7 +36,10 @@ func harnessRun(t *testing.T, b *Built, ctx context.Context, id session.SessionI
 //nolint:revive // Test helpers consistently take testing.T first.
 func harnessCreate(t *testing.T, b *Built, ctx context.Context) session.SessionID {
 	t.Helper()
-	s, err := b.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	// Pass "" (empty) so the session starts in the server's configured DefaultMode:
+	// for allow-all configs (PostureYolo/PostureAuto) this is ModeYolo/ModeAuto, which
+	// injects the allow-all rules; for strict configs it is ModeDefault.
+	s, err := b.Service.CreateSession(ctx, "", session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}

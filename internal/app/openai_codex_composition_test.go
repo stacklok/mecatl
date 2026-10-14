@@ -139,7 +139,7 @@ func TestOpenAICodexCompositionScenario(t *testing.T) {
 		t.Fatalf("ListModels provider inventory = Codex:%t API-OpenAI:%t, want both independently selectable", sawCodex, sawAPI)
 	}
 
-	codexSession, err := built.Service.CreateSessionWithProvider(ctx, session.ModeDefault, defaultLimits(),
+	codexSession, err := built.Service.CreateSessionWithProvider(ctx, "", defaultLimits(),
 		server.ProviderSelector{ProviderID: providerOpenAICodex, ModelID: "gpt-5"})
 	if err != nil {
 		t.Fatalf("create Codex session: %v", err)
@@ -159,7 +159,7 @@ func TestOpenAICodexCompositionScenario(t *testing.T) {
 		t.Fatalf("continuation request omitted the real Read result: %s", bodies[1])
 	}
 
-	apiSession, err := built.Service.CreateSessionWithProvider(ctx, session.ModeDefault, defaultLimits(),
+	apiSession, err := built.Service.CreateSessionWithProvider(ctx, "", defaultLimits(),
 		server.ProviderSelector{ProviderID: providerOpenAI, ModelID: "gpt-5"})
 	if err != nil {
 		t.Fatalf("create API OpenAI session: %v", err)
@@ -337,7 +337,7 @@ func TestOpenAICodexExplicitSelectorRehydrates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build #1: %v", err)
 	}
-	sess, err := built1.Service.CreateSessionWithProvider(ctx, session.ModeDefault, defaultLimits(),
+	sess, err := built1.Service.CreateSessionWithProvider(ctx, "", defaultLimits(),
 		server.ProviderSelector{ProviderID: providerOpenAICodex, ModelID: "gpt-5", ReasoningEffort: "high"})
 	if err != nil {
 		built1.Close()
@@ -382,7 +382,7 @@ func TestZeroSelectorStillFollowsDeploymentDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build #1: %v", err)
 	}
-	sess, err := built1.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
+	sess, err := built1.Service.CreateSession(ctx, "", defaultLimits())
 	if err != nil {
 		built1.Close()
 		t.Fatalf("CreateSession: %v", err)
@@ -463,7 +463,7 @@ func TestOpenAICodexSecretSentinels(t *testing.T) {
 	}
 	addArtifact("provider status", statusJSON)
 
-	sess, err := built.Service.CreateSessionWithProvider(ctx, session.ModeDefault, defaultLimits(),
+	sess, err := built.Service.CreateSessionWithProvider(ctx, "", defaultLimits(),
 		server.ProviderSelector{ProviderID: providerOpenAICodex, ModelID: "gpt-5"})
 	if err != nil {
 		built.Close()
