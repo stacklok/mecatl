@@ -12,14 +12,12 @@ import {
 } from "@mecatl-studio/contracts/query";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ChevronDown, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import { useMemo, useState } from "react";
-import { PageShell } from "../../components/shell/page-shell";
 import { Badge } from "../../components/ui/badge";
 import { Input } from "../../components/ui/input";
 import { Switch } from "../../components/ui/switch";
 import { modelPreferenceId, useDisabledModels } from "../../lib/model-preferences";
-import { pageTitleClass } from "../../lib/typography";
 import { cn } from "../../lib/utils";
 import { LearningSettingsPage } from "../learning/learning-settings-page";
 import { MemorySettingsPage } from "../memory/memory-settings-page";
@@ -43,7 +41,8 @@ import {
   useBrowserOnline,
   useRefreshOnEntry,
 } from "./settings-connection";
-import { type SettingsSection, settingsGroups, settingsItem } from "./settings-sections";
+import { SettingsSectionFrame, SettingsTitle } from "./settings-header";
+import { type SettingsSection, settingsGroups } from "./settings-sections";
 import { StorageSettings } from "./storage-settings";
 
 type Model = GetRuntimeSettingsResponse["models"][number];
@@ -139,49 +138,11 @@ export function SettingsWorkspace({
       <RuntimeStatusLine state={state} />
     </SettingsCard>
   );
-  const CurrentIcon = settingsItem(section).icon;
 
   return (
-    <PageShell>
+    <SettingsSectionFrame section={section}>
       <div className="space-y-6">
-        <h1 className={pageTitleClass()}>Settings</h1>
-
-        <div className="min-[500px]:hidden">
-          <label
-            className="block px-4 pb-2 text-[13px] font-medium text-muted-foreground"
-            htmlFor="settings-section"
-          >
-            Settings section
-          </label>
-          {/* The prototype's drill-down row look, kept on the native picker that
-              Studio's one-route-per-section navigation relies on. */}
-          <div className="relative">
-            <CurrentIcon
-              aria-hidden="true"
-              className="pointer-events-none absolute top-1/2 left-4 size-[18px] -translate-y-1/2 text-muted-foreground"
-            />
-            <select
-              className="min-h-11 w-full appearance-none rounded-2xl border border-muted-foreground bg-muted/50 py-2 pr-10 pl-11 text-[15px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              id="settings-section"
-              onChange={(event) => onSectionChange?.(event.target.value as SettingsSection)}
-              value={section}
-            >
-              {settingsGroups.map((group) => (
-                <optgroup key={group.title} label={group.title}>
-                  {group.items.map((item) => (
-                    <option key={item.value} value={item.value}>
-                      {item.label}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-            <ChevronDown
-              aria-hidden="true"
-              className="pointer-events-none absolute top-1/2 right-4 size-4 -translate-y-1/2 text-muted-foreground"
-            />
-          </div>
-        </div>
+        <SettingsTitle />
 
         <div className="flex flex-col gap-6 min-[500px]:flex-row min-[500px]:items-start min-[500px]:gap-10">
           {/* Sticky and scrollable on its own, so a short window keeps every
@@ -348,7 +309,7 @@ export function SettingsWorkspace({
           </div>
         </div>
       </div>
-    </PageShell>
+    </SettingsSectionFrame>
   );
 }
 

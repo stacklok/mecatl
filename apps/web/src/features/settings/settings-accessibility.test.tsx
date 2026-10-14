@@ -12,13 +12,19 @@ import {
 } from "@mecatl-studio/contracts/query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryHistory, createRouter, RouterContextProvider } from "@tanstack/react-router";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { routeTree } from "../../routeTree.gen";
 import { ShortcutReference } from "../shortcuts/shortcut-reference";
 import { AvatarPicker } from "./avatar-picker";
 import { ProviderDetail } from "./provider-detail";
+import { SettingsIndex } from "./settings-index";
+import { settingsGroups } from "./settings-sections";
 import { SettingsWorkspace } from "./settings-workspace";
+
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 function render(path: string, element: React.ReactNode, client = new QueryClient()): HTMLElement {
   const router = createRouter({
@@ -32,6 +38,37 @@ function render(path: string, element: React.ReactNode, client = new QueryClient
     </QueryClientProvider>,
   );
   return host;
+}
+
+/** Renders in a phone window, where Settings shows its back bar instead of the section nav. */
+async function renderOnPhone(path: string, element: React.ReactNode) {
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    addEventListener: () => {},
+    matches: query.includes("max-width"),
+    media: query,
+    removeEventListener: () => {},
+  }));
+  const router = createRouter({
+    history: createMemoryHistory({ initialEntries: [path] }),
+    routeTree,
+  });
+  await router.load();
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () =>
+    root.render(
+      <QueryClientProvider client={new QueryClient()}>
+        <RouterContextProvider router={router}>{element}</RouterContextProvider>
+      </QueryClientProvider>,
+    ),
+  );
+  const markup = host.innerHTML;
+  await act(async () => root.unmount());
+  host.remove();
+  const page = document.createElement("div");
+  page.innerHTML = markup;
+  return page;
 }
 
 const settingsFixture: GetRuntimeSettingsResponse = {
@@ -51,14 +88,11 @@ const settingsFixture: GetRuntimeSettingsResponse = {
 };
 
 describe("settings responsive accessibility", () => {
-  it("identifies the selected section in both navigation modes and sizes each target for touch", () => {
+  it("identifies the current section in both navigation modes and sizes each target for touch", async () => {
+    // From 500px: the section nav marks the current section.
     const page = render("/workspace/settings/models", <SettingsWorkspace section="models" />);
-    const selector = page.querySelector<HTMLSelectElement>("#settings-section");
     const navigation = page.querySelector<HTMLElement>('nav[aria-label="Settings sections"]');
     const buttons = navigation?.querySelectorAll<HTMLButtonElement>("button");
-    expect(selector?.querySelector('option[value="models"]')?.hasAttribute("selected")).toBe(true);
-    expect(selector?.classList.contains("min-h-11")).toBe(true);
-    expect(selector?.className).toContain("focus-visible:");
     expect(buttons?.length).toBe(13);
     expect(navigation?.querySelectorAll('button[aria-current="page"]')).toHaveLength(1);
     expect(navigation?.querySelector('button[aria-current="page"]')?.textContent).toBe("Models");
@@ -66,6 +100,38 @@ describe("settings responsive accessibility", () => {
       expect(button.classList.contains("min-h-11"), button.textContent ?? "").toBe(true);
       expect(button.className, button.textContent ?? "").toContain("focus-visible:");
     }
+
+    // On a phone: the index reaches every section, in order, through rows the
+    // prototype's fixed 46px tall.
+    const index = render("/workspace/settings", <SettingsIndex />);
+    const rows = index.querySelectorAll<HTMLAnchorElement>('nav[aria-label="Settings sections"] a');
+    expect([...rows].map((row) => row.getAttribute("href"))).toEqual(
+      settingsGroups.flatMap((group) =>
+        group.items.map((item) => `/workspace/settings/${item.value}`),
+      ),
+    );
+    for (const row of rows) {
+      const body = [...row.children].find((child) => child.classList.contains("min-h-[46px]"));
+      expect(body, row.textContent ?? "").toBeDefined();
+      expect(row.className, row.textContent ?? "").toContain("focus-visible:");
+    }
+
+    // A section page's back bar announces the section as the page's only heading,
+    // and offers a named, focusable 44px way back to the index.
+    const phone = await renderOnPhone(
+      "/workspace/settings/models",
+      <SettingsWorkspace section="models" />,
+    );
+    expect([...phone.querySelectorAll("h1")].map((heading) => heading.textContent)).toEqual([
+      "Models",
+    ]);
+    const back = phone.querySelector<HTMLAnchorElement>('a[aria-label="Back to Settings"]');
+    expect(back?.getAttribute("href")).toBe("/workspace/settings");
+    expect(back?.classList.contains("size-11")).toBe(true);
+    expect(back?.className).toContain("focus-visible:");
+
+    // No native picker remains in either mode.
+    for (const view of [page, index, phone]) expect(view.querySelector("select")).toBeNull();
   });
 
   it("offers a named, focusable 44px return link on the provider detail and shortcuts", () => {

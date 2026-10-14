@@ -20,6 +20,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { clearUserScopedStorage } from "@/lib/account-storage";
 import { routeTree } from "@/routeTree.gen";
 import { DraftGreeting, STARTER_PROMPTS } from "../chat/draft-greeting";
+import { SettingsIndex } from "./settings-index";
 import { type SettingsSection, settingsGroups } from "./settings-sections";
 import { SettingsWorkspace } from "./settings-workspace";
 
@@ -142,14 +143,43 @@ describe("settings navigation in the prototype's grammar", () => {
     expect(nav?.querySelector('[aria-current="page"]')?.textContent).toBe("Personalise");
     expect(nav?.className).toContain("min-[500px]:flex");
 
-    // The phone picker carries the current section's icon, decorative only.
-    const picker = page.querySelector("select#settings-section")?.parentElement;
-    const icons = picker?.querySelectorAll('svg[aria-hidden="true"]');
-    expect(icons?.length).toBe(2);
-    expect(icons?.[0]?.getAttribute("class")).toContain("lucide-palette");
-    expect(
-      page.querySelector("select#settings-section")?.closest(".min-\\[500px\\]\\:hidden"),
-    ).not.toBeNull();
+    // The phone index (#2261, in place of the picker) shows below the pivot only,
+    // in the same groups, and gives each row its section's icon and a chevron,
+    // both decorative only.
+    const router = createRouter({
+      history: createMemoryHistory({ initialEntries: ["/workspace/settings"] }),
+      routeTree,
+    });
+    const index = new DOMParser().parseFromString(
+      renderToStaticMarkup(
+        <QueryClientProvider client={client()}>
+          <RouterContextProvider router={router}>
+            <SettingsIndex />
+          </RouterContextProvider>
+        </QueryClientProvider>,
+      ),
+      "text/html",
+    ).body;
+    const phoneNav = index.querySelector('nav[aria-label="Settings sections"]');
+    expect(phoneNav?.classList.contains("min-[500px]:hidden")).toBe(true);
+    expect([...(phoneNav?.querySelectorAll("p") ?? [])].map((title) => title.textContent)).toEqual([
+      "Preferences",
+      "Agent runtime",
+      "Experimental",
+      "Support",
+    ]);
+    const rows = [...(phoneNav?.querySelectorAll("a") ?? [])];
+    expect(rows.map((row) => row.textContent)).toEqual(
+      settingsGroups.flatMap((group) => group.items.map((item) => item.label)),
+    );
+    for (const row of rows) {
+      const icons = row.querySelectorAll('svg[aria-hidden="true"]');
+      expect(icons.length, row.textContent ?? "").toBe(2);
+      expect(icons[1]?.getAttribute("class"), row.textContent ?? "").toContain(
+        "lucide-chevron-right",
+      );
+    }
+    expect(rows[1]?.querySelector("svg")?.getAttribute("class")).toContain("lucide-palette");
   });
 
   it("pivots at 500px instead of sm: or md: across the sections it owns", async () => {

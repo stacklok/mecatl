@@ -20,6 +20,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { stringSearchParams } from "../../lib/search-params";
 import { routeTree } from "../../routeTree.gen";
 import { DraftGreeting, STARTER_PROMPTS } from "../chat/draft-greeting";
+import { SettingsIndex } from "./settings-index";
 import { isSettingsSection, type SettingsSection, settingsGroups } from "./settings-sections";
 import { SettingsWorkspace } from "./settings-workspace";
 
@@ -195,17 +196,25 @@ describe("settings alignment pins", () => {
   it("keeps both navigation modes over the same thirteen sections", async () => {
     const page = await render("storage", client());
     const nav = page.querySelector('nav[aria-label="Settings sections"]');
-    const select = page.querySelector<HTMLSelectElement>("select#settings-section");
     expect(nav?.querySelectorAll("button")).toHaveLength(slugs.length);
     expect(nav?.querySelectorAll('[aria-current="page"]')).toHaveLength(1);
     expect(nav?.querySelector('[aria-current="page"]')?.textContent).toBe("Storage");
-    expect([...(select?.querySelectorAll("option") ?? [])].map((option) => option.value)).toEqual([
-      ...slugs,
-    ]);
-    expect(select?.querySelector("option[selected]")?.getAttribute("value")).toBe("storage");
-    expect(page.querySelector('label[for="settings-section"]')?.textContent).toBe(
-      "Settings section",
-    );
+    // #2261: the phone's native picker became the prototype's section index, with
+    // the same thirteen sections in the same order, labelled as a whole.
+    const index = new DOMParser().parseFromString(
+      renderToStaticMarkup(
+        <QueryClientProvider client={client()}>
+          <RouterContextProvider router={await load("/workspace/settings/storage")}>
+            <SettingsIndex />
+          </RouterContextProvider>
+        </QueryClientProvider>,
+      ),
+      "text/html",
+    ).body;
+    const phoneNav = index.querySelector('nav[aria-label="Settings sections"]');
+    expect(
+      [...(phoneNav?.querySelectorAll("a") ?? [])].map((link) => link.getAttribute("href")),
+    ).toEqual(slugs.map((slug) => `/workspace/settings/${slug}`));
 
     const onSectionChange = vi.fn();
     const host = document.createElement("div");
@@ -213,6 +222,13 @@ describe("settings alignment pins", () => {
     const root = createRoot(host);
     const router = await load("/workspace/settings/storage");
     try {
+      // On a phone, the section page names the current section in its back bar.
+      vi.stubGlobal("matchMedia", (query: string) => ({
+        addEventListener: () => {},
+        matches: query.includes("max-width"),
+        media: query,
+        removeEventListener: () => {},
+      }));
       await act(async () => {
         root.render(
           <QueryClientProvider client={client()}>
@@ -222,17 +238,32 @@ describe("settings alignment pins", () => {
           </QueryClientProvider>,
         );
       });
-      const mobile = host.querySelector<HTMLSelectElement>("select#settings-section");
-      await act(async () => {
-        if (mobile) mobile.value = "about";
-        mobile?.dispatchEvent(new Event("change", { bubbles: true }));
-      });
-      expect(onSectionChange).toHaveBeenLastCalledWith("about");
+      expect([...host.querySelectorAll("h1")].map((heading) => heading.textContent)).toEqual([
+        "Storage",
+      ]);
+      const back = host.querySelector<HTMLAnchorElement>('a[aria-label="Back to Settings"]');
+      expect(back?.getAttribute("href")).toBe("/workspace/settings");
       const permissions = [
         ...host.querySelectorAll<HTMLButtonElement>('nav[aria-label="Settings sections"] button'),
       ].find((button) => button.textContent === "Permissions");
       await act(async () => permissions?.click());
       expect(onSectionChange).toHaveBeenLastCalledWith("permissions");
+
+      // An index row opens its section.
+      await act(async () =>
+        root.render(
+          <QueryClientProvider client={client()}>
+            <RouterContextProvider router={router}>
+              <SettingsIndex />
+            </RouterContextProvider>
+          </QueryClientProvider>,
+        ),
+      );
+      const about = host.querySelector<HTMLAnchorElement>('a[href="/workspace/settings/about"]');
+      await act(async () => about?.click());
+      await vi.waitFor(() =>
+        expect(router.state.location.pathname).toBe("/workspace/settings/about"),
+      );
     } finally {
       await act(async () => root.unmount());
       host.remove();
@@ -303,10 +334,11 @@ describe("settings alignment pins", () => {
         inputs.map((input) => input.getAttribute("aria-label")),
         section,
       ).toEqual(allowedInputs[section] ?? []);
+      // #2261 removed the phone section picker, the one select this allowed.
       expect(
         [...page.querySelectorAll("select")].map((select) => select.id),
         section,
-      ).toEqual(["settings-section"]);
+      ).toEqual([]);
       const writes = [...page.querySelectorAll("button, a")].filter((control) =>
         /\bsave\b|\bapply\b|clean up|change posture|connect gateway|sign in to the gateway/i.test(
           `${control.getAttribute("aria-label") ?? ""} ${control.textContent ?? ""}`,

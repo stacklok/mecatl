@@ -245,10 +245,19 @@ const surfaces: ReadonlyArray<{
     },
   },
   {
+    name: "settings index",
+    path: "/workspace/settings",
+    ready: async (page) => {
+      await expect(page.getByRole("heading", { level: 1, name: "Settings" })).toBeVisible();
+      await expect(page.getByRole("link", { name: "Diagnostics", exact: true })).toBeVisible();
+    },
+  },
+  {
     name: "settings",
     path: "/workspace/settings/models",
     ready: async (page) => {
-      await expect(page.getByRole("heading", { level: 1, name: "Settings" })).toBeVisible();
+      // On a phone, a section page's back bar names the section (#2261).
+      await expect(page.getByRole("heading", { level: 1, name: "Models" })).toBeVisible();
       await expect(page.getByText("Claude Sonnet").first()).toBeVisible();
     },
   },

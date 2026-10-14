@@ -267,28 +267,27 @@ function contrast(first: string, second: string): number {
 }
 
 for (const theme of ["light", "dark"] as const) {
-  test(`the phone section picker reads as a control in ${theme} mode`, async ({
+  test(`the phone back control reads as a control in ${theme} mode`, async ({
     offlineBff,
     page,
   }, testInfo) => {
-    test.skip(testInfo.project.name !== "chromium-mobile", "the picker only shows on a phone");
+    test.skip(testInfo.project.name !== "chromium-mobile", "the back bar only shows on a phone");
     await page.addInitScript((value) => {
       localStorage.setItem("mecatl-studio-theme", value);
       localStorage.setItem("studio.account", "opaque-a");
     }, theme);
     stub(offlineBff);
     await page.goto("/workspace/settings/profile");
-    const picker = page.getByRole("combobox", { name: "Settings section", exact: true });
-    await expect(picker).toBeVisible();
-    const colors = await picker.evaluate((select) => {
-      const style = getComputedStyle(select);
-      const page = getComputedStyle(select.closest("main") ?? document.body).backgroundColor;
-      return {
-        border: Number.parseFloat(style.borderTopWidth) >= 1 ? style.borderTopColor : page,
-        page,
-      };
-    });
-    // WCAG 1.4.11: the control's boundary needs 3:1 against what surrounds it.
-    expect(contrast(colors.border, colors.page), JSON.stringify(colors)).toBeGreaterThanOrEqual(3);
+    // The phone's section index replaced the native section picker (#2261); a section
+    // page's way back to it is the back bar's arrow.
+    const back = page.getByRole("link", { name: "Back to Settings", exact: true });
+    await expect(back).toBeVisible();
+    const colors = await back.evaluate((link) => ({
+      glyph: getComputedStyle(link.querySelector("svg") ?? link).color,
+      page: getComputedStyle(link.closest("main") ?? document.body).backgroundColor,
+    }));
+    // WCAG 1.4.11: the arrow is the control's only visual cue, so it needs 3:1 against
+    // what surrounds it.
+    expect(contrast(colors.glyph, colors.page), JSON.stringify(colors)).toBeGreaterThanOrEqual(3);
   });
 }
