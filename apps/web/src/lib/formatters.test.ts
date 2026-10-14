@@ -2,7 +2,6 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  describeCron,
   formatBytes,
   formatContextWindow,
   formatDate,
@@ -119,32 +118,6 @@ describe("ordinal", () => {
     expect(ordinal(13)).toBe("13th");
     expect(ordinal(21)).toBe("21st");
     expect(ordinal(28)).toBe("28th");
-  });
-});
-
-describe("describeCron", () => {
-  it("describes the shapes the schedule builder emits in 12-hour time", () => {
-    expect(describeCron("0 9 * * *")).toBe("At 09:00 AM");
-    expect(describeCron("30 17 * * 1-5")).toBe("At 05:30 PM, Monday through Friday");
-    expect(describeCron("15 8 * * 5")).toBe("At 08:15 AM, only on Friday");
-    expect(describeCron("0 12 1 * *")).toBe("At 12:00 PM, on day 1 of the month");
-  });
-
-  it("describes the interval shapes", () => {
-    expect(describeCron("*/5 * * * *")).toBe("Every 5 minutes");
-    expect(describeCron("*/1 * * * *")).toBe("Every minute");
-    expect(describeCron("0 * * * *")).toBe("Every hour");
-    expect(describeCron("0 */2 * * *")).toBe("On the hour, every 2 hours");
-  });
-
-  it("falls back to the raw expression when it cannot be described", () => {
-    for (const raw of [
-      "0 9 32 * *", // out-of-range day of month
-      "0 9 * *", // four fields
-      "@daily", // macro
-    ]) {
-      expect(describeCron(raw)).toBe(raw);
-    }
   });
 });
 

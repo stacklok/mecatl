@@ -54,8 +54,9 @@ import {
   TableRow,
 } from "../../components/ui/table";
 import { errorMessage } from "../../lib/error-message";
-import { describeCron, formatDate } from "../../lib/formatters";
+import { formatDate } from "../../lib/formatters";
 import { pageTitleClass } from "../../lib/typography";
+import { describeCron } from "./describe-cron";
 import { canEditSchedule, ScheduleForm } from "./schedule-form";
 import { ScheduleStatusBadge } from "./schedule-status";
 

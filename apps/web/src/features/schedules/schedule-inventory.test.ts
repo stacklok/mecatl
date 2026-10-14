@@ -59,9 +59,9 @@ describe("schedule inventory", () => {
     expect(
       deriveScheduleInventory(source, "Europe/Rome", "status").map((item) => item.name),
     ).toEqual(["Rome report"]);
-    expect(
-      deriveScheduleInventory(source, "Monday through Friday", "status").map((item) => item.name),
-    ).toEqual(["Rome report"]);
+    expect(deriveScheduleInventory(source, "weekdays", "status").map((item) => item.name)).toEqual([
+      "Rome report",
+    ]);
     expect(deriveScheduleInventory(source, "", "status").map((item) => item.name)).toEqual([
       "Live",
       "Waiting",
@@ -98,7 +98,7 @@ describe("schedule inventory", () => {
         name: "Alpha",
         nextFireAt: "2026-10-08T10:00:00Z",
         status: "paused",
-        trigger: { expression: "0 5 * * *", kind: "cron", timezone: "" },
+        trigger: { expression: "0 9 * * *", kind: "cron", timezone: "" },
       }),
       schedule({
         fireCount: 1,
@@ -145,6 +145,75 @@ describe("schedule inventory", () => {
       "Invalid",
       "None",
       "Paused",
+    ]);
+  });
+});
+
+describe("schedule column ordering and cadence search", () => {
+  const cron = (name: string, expression: string) =>
+    schedule({ name, trigger: { expression, kind: "cron", timezone: "" } });
+  const names = (items: Schedule[]) => items.map((item) => item.name);
+
+  it("orders the Schedule column by cadence and time of day, not by the English label", () => {
+    const source = [
+      schedule({ name: "once-later", trigger: { at: "2026-12-01T09:00:00Z", kind: "once" } }),
+      cron("monthly", "0 9 1 * *"),
+      cron("weekly-fri", "0 9 * * 5"),
+      cron("weekly-mon", "0 9 * * 1"),
+      cron("weekdays", "30 17 * * 1-5"),
+      cron("daily-1pm", "0 13 * * *"),
+      cron("daily-9am", "0 9 * * *"),
+      cron("daily-midnight", "0 0 * * *"),
+      cron("daily-11pm", "0 23 * * *"),
+      cron("every-hour", "0 * * * *"),
+      cron("every-15m", "*/15 * * * *"),
+      schedule({ name: "once-sooner", trigger: { at: "2026-11-01T09:00:00Z", kind: "once" } }),
+      cron("custom", "0 9 1 1 *"),
+    ];
+
+    expect(names(deriveScheduleInventory(source, "", "schedule", "asc"))).toEqual([
+      "every-15m",
+      "every-hour",
+      "daily-midnight",
+      "daily-9am",
+      "daily-1pm",
+      "daily-11pm",
+      "weekdays",
+      "weekly-mon",
+      "weekly-fri",
+      "monthly",
+      "custom",
+      "once-sooner",
+      "once-later",
+    ]);
+  });
+
+  it("finds a schedule by its cadence word as well as its description", () => {
+    const source = [
+      cron("a-daily", "0 9 * * *"),
+      cron("b-weekdays", "30 17 * * 1-5"),
+      cron("c-weekly", "15 8 * * 5"),
+      cron("d-monthly", "0 12 1 * *"),
+      cron("e-interval", "*/15 * * * *"),
+    ];
+
+    for (const [word, expected] of [
+      ["daily", "a-daily"],
+      ["weekdays", "b-weekdays"],
+      ["weekly", "c-weekly"],
+      ["monthly", "d-monthly"],
+      ["interval", "e-interval"],
+    ] as const) {
+      expect(names(deriveScheduleInventory(source, word, "name")), word).toContain(expected);
+    }
+    expect(names(deriveScheduleInventory(source, "weekly", "name"))).not.toContain("a-daily");
+    // A list of times is still the same cadence.
+    expect(
+      names(deriveScheduleInventory([cron("lists", "15 9,13,17 * * 1-5")], "weekdays", "name")),
+    ).toEqual(["lists"]);
+    // The described wording still matches.
+    expect(names(deriveScheduleInventory(source, "monday through friday", "name"))).toEqual([
+      "b-weekdays",
     ]);
   });
 });

@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import cronstrue from "cronstrue";
-
 export function formatRelativeTime(ts: number): string {
   if (!ts || ts < 1000) return "";
   try {
@@ -98,21 +96,6 @@ export function ordinal(n: number): string {
   if (rem10 === 2 && rem100 !== 12) return `${n}nd`;
   if (rem10 === 3 && rem100 !== 13) return `${n}rd`;
   return `${n}th`;
-}
-
-/**
- * Render a standard 5-field cron expression in plain English. Anything cronstrue
- * cannot parse falls back to the raw expression, so the exact cron is still
- * available (shown in a tooltip alongside).
- */
-export function describeCron(expr: string): string {
-  const cron = expr.trim();
-  if (cron.split(/\s+/).length !== 5) return expr;
-  try {
-    return cronstrue.toString(cron, { use24HourTimeFormat: false });
-  } catch {
-    return expr;
-  }
 }
 
 export function formatMessageTime(ts: number): string {

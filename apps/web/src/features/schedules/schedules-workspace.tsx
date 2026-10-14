@@ -388,7 +388,16 @@ function ScheduleInventory({
                   <p className="line-clamp-1 text-xs text-muted-foreground">{schedule.prompt}</p>
                 </TableCell>
                 <TableCell className="text-muted-foreground">
-                  {scheduleTriggerLabel(schedule)}
+                  <span
+                    className="block max-w-56 truncate"
+                    title={
+                      schedule.trigger.kind === "cron"
+                        ? schedule.trigger.expression
+                        : scheduleTriggerLabel(schedule)
+                    }
+                  >
+                    {scheduleTriggerLabel(schedule)}
+                  </span>
                 </TableCell>
                 <TableCell className="text-muted-foreground">
                   {schedule.enabled && schedule.nextFireAt ? formatDate(schedule.nextFireAt) : "—"}

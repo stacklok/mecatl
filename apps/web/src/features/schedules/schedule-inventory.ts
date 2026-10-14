@@ -2,7 +2,8 @@
 
 import type { ListSchedulesResponse } from "@mecatl-studio/contracts/generated";
 import type { SortDir } from "@/components/sortable-head";
-import { describeCron, formatDate } from "../../lib/formatters";
+import { formatDate } from "../../lib/formatters";
+import { describeCron } from "./describe-cron";
 
 type Schedule = ListSchedulesResponse["items"][number];
 
@@ -58,7 +59,7 @@ export function deriveScheduleInventory(
         comparison = nextRunValue(left) - nextRunValue(right);
         break;
       case "schedule":
-        comparison = scheduleTriggerLabel(left).localeCompare(scheduleTriggerLabel(right));
+        comparison = compareCadence(left, right);
         break;
       case "status":
         comparison = statusRank(left.status) - statusRank(right.status);
@@ -97,8 +98,81 @@ function filterScheduleInventory(schedules: readonly Schedule[], query: string) 
 
 function triggerSearchText(schedule: Schedule) {
   return schedule.trigger.kind === "cron"
-    ? `${scheduleTriggerLabel(schedule)} ${schedule.trigger.expression} ${schedule.trigger.timezone || "UTC"}`
-    : `${scheduleTriggerLabel(schedule)} ${schedule.trigger.at}`;
+    ? `${scheduleTriggerLabel(schedule)} ${cadenceWords(schedule.trigger.expression)} ${schedule.trigger.expression} ${schedule.trigger.timezone || "UTC"}`
+    : `${scheduleTriggerLabel(schedule)} once ${schedule.trigger.at}`;
+}
+
+/**
+ * DECISION: The Schedule column sorts on the cadence, not on the English label,
+ * so "At 01:00 PM" does not sort before "At 09:00 AM" and midnight does not sort
+ * after 11 PM. Recurring schedules order by cadence, then by how far into the
+ * cadence they fire; one-shots follow, soonest first.
+ */
+const CADENCES = ["interval", "daily", "weekdays", "weekly", "monthly", "custom"] as const;
+type Cadence = (typeof CADENCES)[number];
+
+/** Words a person types to find a cadence; they stay stable if the label wording changes. */
+const CADENCE_WORDS: Record<Cadence, string> = {
+  custom: "custom",
+  daily: "daily every day",
+  interval: "every interval",
+  monthly: "monthly every month",
+  weekdays: "weekdays weekday",
+  weekly: "weekly every week",
+};
+
+function cadenceWords(expression: string) {
+  return CADENCE_WORDS[cronCadence(expression).cadence];
+}
+
+/**
+ * Classifies a five-field cron by the builder's cadences. `position` is the
+ * minutes into the cadence (the period for an interval, minutes since midnight
+ * for a daily time, and so on), so an earlier time orders first within a cadence.
+ */
+function cronCadence(expression: string): { cadence: Cadence; position: number } {
+  const [minute = "", hour = "", dayOfMonth = "", month = "", dayOfWeek = ""] = expression
+    .trim()
+    .split(/\s+/);
+  // A list such as "9,13,17" orders by its first value.
+  const first = (field: string) => /^\d+/.exec(field)?.[0];
+  const time = Number(first(hour) ?? 0) * 60 + Number(first(minute) ?? 0);
+  const everyMinutes = /^\*\/(\d+)$/.exec(minute);
+  const everyHours = /^\*\/(\d+)$/.exec(hour);
+  if (month === "*" && dayOfMonth === "*" && dayOfWeek === "*") {
+    if (hour === "*") {
+      return { cadence: "interval", position: everyMinutes ? Number(everyMinutes[1]) : 60 };
+    }
+    if (everyHours) return { cadence: "interval", position: Number(everyHours[1]) * 60 };
+    return { cadence: "daily", position: time };
+  }
+  if (month === "*") {
+    if (dayOfMonth === "*" && dayOfWeek === "1-5") return { cadence: "weekdays", position: time };
+    if (dayOfMonth === "*" && /^[0-6]$/.test(dayOfWeek)) {
+      return { cadence: "weekly", position: Number(dayOfWeek) * 1440 + time };
+    }
+    if (dayOfWeek === "*" && /^\d+$/.test(dayOfMonth)) {
+      return { cadence: "monthly", position: Number(dayOfMonth) * 1440 + time };
+    }
+  }
+  return { cadence: "custom", position: 0 };
+}
+
+function compareCadence(left: Schedule, right: Schedule) {
+  if (left.trigger.kind === "cron" && right.trigger.kind === "cron") {
+    const a = cronCadence(left.trigger.expression);
+    const b = cronCadence(right.trigger.expression);
+    return (
+      CADENCES.indexOf(a.cadence) - CADENCES.indexOf(b.cadence) ||
+      a.position - b.position ||
+      left.trigger.expression.localeCompare(right.trigger.expression)
+    );
+  }
+  if (left.trigger.kind === "once" && right.trigger.kind === "once") {
+    return dateValue(left.trigger.at, 0) - dateValue(right.trigger.at, 0);
+  }
+  // Recurring schedules first, then one-shots.
+  return left.trigger.kind === "cron" ? -1 : 1;
 }
 
 function statusRank(status: Schedule["status"]) {

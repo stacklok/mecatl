@@ -23,13 +23,14 @@ import {
 import { Switch } from "../../components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { Textarea } from "../../components/ui/textarea";
-import { describeCron, ordinal } from "../../lib/formatters";
+import { ordinal } from "../../lib/formatters";
 import {
   builderToCron,
   type CronIntervalUnit,
   type CronRepeat,
   cronToBuilder,
 } from "./cron-builder";
+import { describeCron } from "./describe-cron";
 import {
   bodyFromValue,
   displayedValue,
