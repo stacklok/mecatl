@@ -3,7 +3,9 @@
 import { listSkillFilesOptions } from "@mecatl-studio/contracts/query";
 import { useQuery } from "@tanstack/react-query";
 import { bundledLanguages } from "shiki/langs";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { errorMessage } from "../../lib/error-message";
+import { formatBytes } from "../../lib/formatters";
 import { HighlightedCode } from "../chat/code-highlight";
 
 /**
@@ -20,9 +22,15 @@ import { HighlightedCode } from "../chat/code-highlight";
  * themes and renders tokens as text, never as markup. Rejected: a second highlighter, and an
  * editor component (Studio has none, and files here are read-only).
  *
- * DECISION: a daemon that predates the skill-file RPCs gets no fallback; the panel shows the
- * error. Reason: Studio and the daemon are released together and Studio is early-access, so no
- * client runs against an older daemon that needs migrating.
+ * DECISION: a daemon that predates the skill-file RPCs gets no fallback; the BFF answers 501 with a
+ * short explanation and the panel shows it. Reason: Studio is built from the same commit as the
+ * daemon contract it targets, so no client runs against an older daemon that needs migrating.
+ *
+ * DECISION: the skill's instructions are labelled as such, from the `instructions` flag, and not
+ * from the name. Reason: the daemon lists the instruction body, without its frontmatter, under the
+ * name SKILL.md, so it is not the raw file and its size is the body's size. Without the label a
+ * reader looking for `allowed-tools` would assume it is missing. Rejected: showing it as a plain
+ * SKILL.md. Showing the frontmatter fields is tracked in #2301.
  *
  * LIMITATION (intentional): only the first files are shown, and a line says how many more exist.
  * There is no paging, virtualization, or load-more. Reason: a skill with dozens of files is very
@@ -31,19 +39,29 @@ import { HighlightedCode } from "../chat/code-highlight";
  * daemon refuses non-text files by design (reads return text only), so a download would need a new
  * byte-level contract first.
  *
- * SPEC: file text renders as text inside a bounded, scrollable block, never as markup. A block that
+ * SPEC: file text renders as text inside a bounded, scrollable block, never as markup. Keyboard
+ * users reach a block that scrolls by Tab in Chromium and Firefox, which focus scrollable areas on
+ * their own (checked); Safari was not tested, and the repo's a11y lint forbids `tabIndex` on a `pre`. A block that
  * scrolls fades at the edge it can still scroll toward (the shadcn `scroll-fade-y` utility).
  * SPEC: a file whose text could not be loaded still appears, with its name, size, and a one-line
  * reason in place of the text; one such file never hides the others.
- * DECISION: a learned skill's page (a dialog today) shows no Files section. Reason: a learned skill
- * is body-only (its one file is SKILL.md) and the dialog already shows that body. Rejected: a Files
- * list with a single entry that repeats the dialog.
+ * DECISION: a learned skill reviewed from the Learned view opens a dialog that shows its body, with no
+ * Files section. An active learned skill is also in the All list and opens this page, whose Files
+ * section lists its one file, the instructions. Reason: a learned skill is body-only, and the
+ * baseline gives agent-owned skills the same page. Rejected: hiding Files for agent-owned skills.
  */
 export function SkillFiles({ name }: { name: string }) {
   const query = useQuery(listSkillFilesOptions({ path: { name } }));
 
-  if (query.isPending) return <Panel text="Loading files…" />;
-  if (query.isError) return <Panel destructive text={errorMessage(query.error)} />;
+  // A failed background refetch leaves the files already loaded in place; only show an error when
+  // there is nothing to show.
+  if (query.data === undefined) {
+    return query.isError ? (
+      <Panel destructive text={errorMessage(query.error)} />
+    ) : (
+      <Panel text="Loading files…" />
+    );
+  }
   const { files, omitted } = query.data;
   if (files.length === 0) return <Panel text="This skill has no files." />;
   return (
@@ -51,7 +69,21 @@ export function SkillFiles({ name }: { name: string }) {
       {files.map((file) => (
         <div className="overflow-hidden rounded-lg border bg-background" key={file.name}>
           <div className="flex items-center justify-between gap-3 border-b px-4 py-2 text-xs">
-            <span className="min-w-0 truncate font-mono font-medium">{file.name}</span>
+            <span className="flex min-w-0 items-baseline gap-2">
+              <Tooltip onlyWhenTruncated>
+                <TooltipTrigger asChild>
+                  <span className="min-w-0 truncate font-mono font-medium">{file.name}</span>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-[min(32rem,calc(100vw-2rem))] break-words font-mono">
+                  {file.name}
+                </TooltipContent>
+              </Tooltip>
+              {file.instructions && (
+                <span className="shrink-0 text-muted-foreground">
+                  Instructions, without frontmatter
+                </span>
+              )}
+            </span>
             <span className="shrink-0 text-muted-foreground">{formatBytes(file.size)}</span>
           </div>
           {file.unavailable ? (
@@ -89,9 +121,4 @@ function Panel({ destructive, text }: { destructive?: boolean; text: string }) {
       </p>
     </div>
   );
-}
-
-function formatBytes(size: number) {
-  if (size < 1024) return `${size} B`;
-  return `${(size / 1024).toFixed(1)} KB`;
 }

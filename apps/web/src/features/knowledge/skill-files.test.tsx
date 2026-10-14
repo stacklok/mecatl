@@ -18,7 +18,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-async function renderFiles(respond: () => Response) {
+async function renderFiles(respond: () => Response, client?: QueryClient) {
   vi.stubGlobal("fetch", async () => respond());
   const container = document.createElement("div");
   document.body.append(container);
@@ -26,7 +26,7 @@ async function renderFiles(respond: () => Response) {
   await act(async () =>
     root?.render(
       <QueryClientProvider
-        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+        client={client ?? new QueryClient({ defaultOptions: { queries: { retry: false } } })}
       >
         <SkillFiles name="deploy" />
       </QueryClientProvider>,
@@ -46,7 +46,7 @@ it("lists every file in the order given, with its size and text", async () => {
   const container = await renderFiles(() =>
     json({
       files: [
-        { content: "# Deploy", name: "SKILL.md", size: 8, unavailable: "" },
+        { content: "# Deploy", instructions: true, name: "SKILL.md", size: 8, unavailable: "" },
         { content: "API notes", name: "references/api.md", size: 2048, unavailable: "" },
       ],
       omitted: 0,
@@ -55,7 +55,7 @@ it("lists every file in the order given, with its size and text", async () => {
   const names = [...container.querySelectorAll("span.font-mono")].map((n) => n.textContent);
   expect(names).toEqual(["SKILL.md", "references/api.md"]);
   expect(container.textContent).toContain("8 B");
-  expect(container.textContent).toContain("2.0 KB");
+  expect(container.textContent).toContain("2 KB");
   expect(container.textContent).toContain("# Deploy");
   expect(container.textContent).toContain("API notes");
 });
@@ -97,6 +97,64 @@ it("renders file text as text, never as markup", async () => {
   expect(container.querySelector("pre b")).toBeNull();
   expect(container.querySelector("pre img")).toBeNull();
   expect(container.querySelector("pre")?.textContent).toContain("<b>bold</b>");
+});
+
+it("labels the instructions entry, and only that one, as the body without frontmatter", async () => {
+  const container = await renderFiles(() =>
+    json({
+      files: [
+        { content: "# Deploy", instructions: true, name: "SKILL.md", size: 8, unavailable: "" },
+        {
+          content: "API",
+          instructions: false,
+          name: "references/api.md",
+          size: 3,
+          unavailable: "",
+        },
+      ],
+      omitted: 0,
+    }),
+  );
+  const labels = container.textContent?.match(/Instructions, without frontmatter/g) ?? [];
+  expect(labels).toHaveLength(1);
+  const first = container.querySelector("div.overflow-hidden");
+  expect(first?.textContent).toContain("Instructions, without frontmatter");
+});
+
+it("keeps the files on screen when a background refetch fails", async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  let fail = false;
+  const container = await renderFiles(
+    () =>
+      fail
+        ? json(
+            { code: "unavailable", detail: "Mecatl is unreachable.", status: 503, title: "x" },
+            503,
+          )
+        : json({
+            files: [
+              {
+                content: "# Deploy",
+                instructions: true,
+                name: "SKILL.md",
+                size: 8,
+                unavailable: "",
+              },
+            ],
+            omitted: 0,
+          }),
+    client,
+  );
+  expect(container.textContent).toContain("# Deploy");
+  fail = true;
+  await act(async () => {
+    await client.refetchQueries();
+    // The query cache tells React about the failure a tick later.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+  expect(client.getQueryCache().getAll()[0]?.state.status).toBe("error");
+  expect(container.textContent).toContain("# Deploy");
+  expect(container.textContent).not.toContain("Mecatl is unreachable.");
 });
 
 it("shows the BFF's message when the request fails", async () => {

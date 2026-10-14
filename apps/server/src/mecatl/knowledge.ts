@@ -45,6 +45,8 @@ export interface KnowledgeCapabilities {
   learningProposals: boolean;
   memoryConsolidation: Record<MemoryConsolidationTarget, MemoryConsolidationCapability>;
   reflection: boolean;
+  /** The daemon announces the skill-file RPCs (the `skill_files` feature). */
+  skillFiles: boolean;
   skills: boolean;
   userModel: boolean;
 }
@@ -272,23 +274,27 @@ export function createMecatlKnowledgeService(
         name,
       });
       const shown = listing.files.slice(0, maxSkillFilesShown);
-      const files = await Promise.all(
-        shown.map(async (file) => {
-          const base = { content: "", name: file.name, size: Number(file.size), unavailable: "" };
-          try {
-            const response = await client.skills.readFile({
-              $typeName: "mecatl.v1.ReadSkillFileRequest",
-              file: file.name,
-              name,
-            });
-            return { ...base, content: response.content };
-          } catch (error) {
-            const reason = skillFileUnavailableReason(error);
-            if (reason === undefined) throw error;
-            return { ...base, unavailable: reason };
-          }
-        }),
-      );
+      const files = await mapWithConcurrency(shown, skillFileReadConcurrency, async (file) => {
+        const base = {
+          content: "",
+          instructions: file.instructions,
+          name: file.name,
+          size: Number(file.size),
+          unavailable: "",
+        };
+        // The daemon would refuse it anyway; skip the call.
+        if (file.size > maxSkillFileReadBytes) return { ...base, unavailable: tooLargeReason };
+        try {
+          const response = await client.skills.readFile({
+            $typeName: "mecatl.v1.ReadSkillFileRequest",
+            file: file.name,
+            name,
+          });
+          return { ...base, content: response.content };
+        } catch (error) {
+          return { ...base, unavailable: skillFileUnavailableReason(error) };
+        }
+      });
       return { files, omitted: listing.files.length - shown.length };
     },
 
@@ -522,7 +528,16 @@ function memoryParticipantFromSdk(participant: DreamParticipant | undefined) {
  * DECISION: the BFF loads a skill's file contents in one response, so the browser makes a single
  * request. Reason: real skills have few files (on one machine, 95 skills averaged 1.3 assets, the
  * most 6), so a request per file is cost with no benefit. Rejected: load on click, and a bulk RPC
- * in the daemon contract.
+ * in the daemon contract. How a large skill should load is tracked in #2301.
+ *
+ * DECISION: the file reads run at most `skillFileReadConcurrency` at a time, and a file already
+ * listed as over the daemon's read cap is not requested. Reason: every daemon read queues behind the
+ * caller's skill-publication lock, and a rate-limited daemon rejects a burst. Rejected: all reads at
+ * once (up to 33 daemon calls in one instant).
+ *
+ * SPEC: a file whose text cannot be read still comes back, with a one-line reason in place of the
+ * text, and never fails the other files. The one exception is a rejected session, which must still
+ * reach the sign-in flow.
  *
  * LIMITATION (intentional): only the first `maxSkillFilesShown` files are loaded, and the response
  * says how many more exist. There is no paging, virtualization, or load-more. Reason: a skill with
@@ -530,20 +545,46 @@ function memoryParticipantFromSdk(participant: DreamParticipant | undefined) {
  * not exist yet. Each file is at most the daemon's 25,000-byte cap, so the response stays bounded.
  */
 const maxSkillFilesShown = 32;
+const skillFileReadConcurrency = 4;
+/** The daemon's cap on one file read (`skillfs.MaxOutputBytes`); a longer file is refused. */
+const maxSkillFileReadBytes = 25_000;
 
-/** One line saying why a file's text is not shown, or undefined when the failure is not about the file. */
-function skillFileUnavailableReason(error: unknown): string | undefined {
-  if (!(error instanceof MecatlError)) return undefined;
-  switch (error.code) {
-    case "skill_file_too_large":
-      return "Too large to show here.";
-    case "skill_file_not_text":
-      return "This is a binary file, so it can't be shown here.";
-    case "skill_file_not_found":
-      return "No longer available.";
-    default:
-      return undefined;
+const tooLargeReason = "Too large to show here.";
+
+/** One line saying why a file's text is not shown. A rejected session is rethrown. */
+function skillFileUnavailableReason(error: unknown): string {
+  if (error instanceof MecatlError) {
+    switch (error.code) {
+      case "skill_file_too_large":
+        return tooLargeReason;
+      case "skill_file_not_text":
+        return "This is a binary file, so it can't be shown here.";
+      case "skill_file_not_found":
+        return "No longer available.";
+      case "unauthenticated":
+      case "authentication":
+        throw error;
+    }
   }
+  return "Couldn't load this file.";
+}
+
+/** Runs `task` over `items` with at most `limit` in flight, keeping the order of the results. */
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  task: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await task(items[index] as T);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
 }
 
 function learnedSkillFromSdk(skill: LearnedSkillVersion | undefined): LearnedSkillResponse {

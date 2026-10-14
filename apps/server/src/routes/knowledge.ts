@@ -383,11 +383,11 @@ export function registerKnowledgeRoutes(
   });
   app.openapi(listSkillFilesRoute, async (context) => {
     if (!knowledge) return unavailable(context);
-    if (!knowledge.capabilities.skills)
+    if (!knowledge.capabilities.skillFiles)
       return unsupported(
         context,
-        "skills_unsupported",
-        "Skills are not enabled on this deployment.",
+        "skill_files_unsupported",
+        "This Mecatl server cannot show a skill's files.",
       );
     const { name } = context.req.valid("param");
     return context.json(await knowledge.listSkillFiles(name), 200);

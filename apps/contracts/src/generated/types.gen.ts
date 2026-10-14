@@ -2410,6 +2410,7 @@ export type ListSkillFilesResponses = {
     200: {
         files: Array<{
             content: string;
+            instructions: boolean;
             name: string;
             size: number;
             unavailable: string;

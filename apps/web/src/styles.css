@@ -407,8 +407,9 @@
  * Vertical scroll fade, copied unmodified in behavior from shadcn/ui's `tailwind.css` (MIT):
  * `scroll-fade-y` fades a scroll container's top edge once it is scrolled away from the top, and
  * its bottom edge until it reaches the bottom, using CSS scroll-driven animations. Browsers
- * without them (`animation-timeline`) get both edges faded all the time. Only the vertical
- * pieces are copied; the rest of that stylesheet is not used here.
+ * without them (`animation-timeline`) get no fade, unlike shadcn's fallback, which fades both edges
+ * of every block even when it does not scroll. Only the vertical pieces are copied; the rest of
+ * that stylesheet is not used here.
  */
 @property --scroll-fade-t {
   syntax: "<length-percentage>";
@@ -482,10 +483,5 @@
       0 var(--scroll-fade-reveal, calc(var(--spacing) * 24)),
       calc(100% - var(--scroll-fade-reveal, calc(var(--spacing) * 24))) 100%;
     animation-fill-mode: both;
-  }
-
-  @supports not (animation-timeline: scroll()) {
-    --scroll-fade-t: var(--_scroll-fade-size-t);
-    --scroll-fade-b: var(--_scroll-fade-size-b);
   }
 }

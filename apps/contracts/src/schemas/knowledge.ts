@@ -23,6 +23,8 @@ export const configuredSkillsResponseSchema = z.object({
  */
 export const skillFileSchema = z.object({
   content: z.string(),
+  /** True for the skill's instructions, which are the text after the frontmatter, not the raw file. */
+  instructions: z.boolean(),
   name: z.string(),
   size: z.number().int().nonnegative(),
   unavailable: z.string(),

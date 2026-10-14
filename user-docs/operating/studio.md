@@ -117,6 +117,14 @@ the Skill tool, a banner explains that the agent loads no skills.
 Select a skill to see its description and slug. Agent-owned skills also show
 the owner and active version.
 
+The **Files** section lists the skill's files with their text, highlighted by
+file type, each in its own scrolling block. The first entry is the skill's
+instructions: the text after the frontmatter, not the raw `SKILL.md`, so
+frontmatter fields such as `allowed-tools` are not shown. An agent-owned skill
+has only that entry. Studio loads the first 32 files and says how many more the
+skill has. A file over 25,000 bytes, or one that is not text, stays in the list
+with a reason in place of its text.
+
 When the deployment enables learned skills, open the **Learned** view to see
 agent-drafted versions and their states. If you follow a direct link to this
 view when learned skills are disabled, Studio explains why it is unavailable.

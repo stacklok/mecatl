@@ -1,17 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { listConfiguredSkillsOptions } from "@mecatl-studio/contracts/query";
-import { useQuery } from "@tanstack/react-query";
+import { listConfiguredSkillsOptions, listSkillFilesOptions } from "@mecatl-studio/contracts/query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Ellipsis } from "lucide-react";
+import { useEffect } from "react";
 import { PageShell } from "../../components/shell/page-shell";
 import { Button } from "../../components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "../../components/ui/dropdown-menu";
 import { pageTitleClass } from "../../lib/typography";
 import { cn } from "../../lib/utils";
 import { NO_DESCRIPTION } from "./format";
@@ -19,34 +13,35 @@ import { humanizeSkillName } from "./humanize-skill-name";
 import { SkillFiles } from "./skill-files";
 
 /**
- * TERM: skill detail sections — Summary (what the daemon reports), Manage (lifecycle
- * actions), Files (the skill's content). Sections of one page, not tabs. Avoid: "tabs".
+ * TERM: skill detail sections — Summary (what the daemon reports) and Files (the skill's content).
+ * Sections of one page, not tabs. Avoid: "tabs".
  *
  * DECISION: the layout follows the Studio design baseline (#1779): back pill, serif title,
- * pill row, Summary and Manage in the left column, Files in the right. Rejected: tabs, which
- * the baseline does not have.
+ * pill row, Summary in the left column, Files in the right. Rejected: tabs, which the baseline
+ * does not have.
  *
- * DECISION: the Manage section (the baseline's Edit and Disable/Delete controls, permanently
- * disabled with an explanatory note) exists but is hidden behind a default-off flag,
- * SHOW_MANAGE_PLACEHOLDER. Reason: the issue holds configured-skill writes read-only until a write
- * contract is approved, and showing inert controls today only suggests a feature that is not there.
- * It stays in the code so the layout is ready when that work lands. Studio has no feature-flag
- * mechanism, so the flag is a module constant; delete it with the real Manage work.
- * Rejected: omitting the section from the code, and showing the placeholder.
+ * DECISION: there is no Manage section (the baseline's disabled Edit and Disable/Delete controls).
+ * Reason: the issue holds configured-skill writes read-only until a write contract is approved
+ * (#2184, #2185), and inert controls only suggest a feature that is not there. The code for the
+ * placeholder is in git history for that work. Rejected: showing it, and hiding it behind a flag.
  *
  * DECISION: Files lists every file of the skill with its text (see skill-files.tsx). It replaced
  * a "metadata-only" note once the daemon exposed a skill's files.
  *
+ * DECISION: the files request starts as soon as the page opens, without waiting for the inventory.
+ * Reason: the skill name is in the route, and waiting for the inventory made a cold load two
+ * requests in a row. A name the inventory does not know costs one request that fails quietly.
+ *
  * SPEC: a configured skill missing from the inventory renders "not found" with a link back,
  * never a blank page; an unsupported inventory shows the daemon's reason.
  */
-const MANAGED_NOTE = "Managed by the Mecatl deployment";
-
-/** Temporary and off by default; see the Manage decision above. */
-export const SHOW_MANAGE_PLACEHOLDER = false;
-
 export function ConfiguredSkillDetail({ name }: { name: string }) {
   const query = useQuery(listConfiguredSkillsOptions());
+  const queryClient = useQueryClient();
+  // SkillFiles reads the same cache entry, so this only moves the request earlier.
+  useEffect(() => {
+    void queryClient.prefetchQuery(listSkillFilesOptions({ path: { name } }));
+  }, [queryClient, name]);
 
   if (query.isPending) return <DetailState text="Loading skill…" />;
   if (query.isError) return <DetailState error text="The skill inventory could not be loaded." />;
@@ -84,39 +79,6 @@ export function ConfiguredSkillDetail({ name }: { name: string }) {
               {skill.description || NO_DESCRIPTION}
             </p>
           </div>
-          {SHOW_MANAGE_PLACEHOLDER && (
-            <div className="space-y-3">
-              <h2 className="text-base font-semibold">Manage</h2>
-              <div className="flex items-center gap-2">
-                <Button className="rounded-full" disabled title={MANAGED_NOTE} variant="outline">
-                  Edit
-                </Button>
-                <DropdownMenu modal={false}>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      aria-label={`More actions for ${skill.name}`}
-                      className="size-9 rounded-full"
-                      disabled
-                      size="icon"
-                      title={MANAGED_NOTE}
-                      variant="outline"
-                    >
-                      <Ellipsis className="size-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start">
-                    <DropdownMenuItem disabled>Disable</DropdownMenuItem>
-                    <DropdownMenuItem disabled variant="destructive">
-                      Delete
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                {MANAGED_NOTE}. Change the deployment&rsquo;s own skills directory instead.
-              </p>
-            </div>
-          )}
         </aside>
 
         <section className="flex min-w-0 flex-1 flex-col gap-3">

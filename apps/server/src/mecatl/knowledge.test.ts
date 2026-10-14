@@ -84,6 +84,7 @@ const allCapabilities = {
   learningProposals: true,
   memoryConsolidation: allConsolidation,
   reflection: true,
+  skillFiles: true,
   skills: true,
   userModel: true,
 };
@@ -169,6 +170,7 @@ describe("Mecatl knowledge adapter", () => {
         user_model: { decide: true, generate: false, unavailableReason: "needs a model" },
       },
       reflection: true,
+      skillFiles: false,
       skills: false,
       userModel: true,
     });
@@ -196,6 +198,7 @@ describe("Mecatl knowledge adapter", () => {
         },
       },
       reflection: false,
+      skillFiles: false,
       skills: false,
       userModel: false,
     });
@@ -241,6 +244,7 @@ describe("Mecatl knowledge adapter", () => {
       learningProposals: true,
       memoryConsolidation: allConsolidation,
       reflection: true,
+      skillFiles: true,
       skills: true,
       userModel: true,
     });
@@ -338,6 +342,7 @@ describe("Mecatl knowledge adapter", () => {
           learningProposals: true,
           memoryConsolidation: allConsolidation,
           reflection: true,
+          skillFiles: true,
           skills: true,
           userModel: true,
         },
@@ -364,6 +369,7 @@ describe("Mecatl knowledge adapter", () => {
         learningProposals: true,
         memoryConsolidation: allConsolidation,
         reflection: true,
+        skillFiles: true,
         skills: true,
         userModel: true,
       },
@@ -620,18 +626,26 @@ describe("listSkillFiles", () => {
       user_model: { decide: false, generate: false, unavailableReason: "" },
     },
     reflection: false,
+    skillFiles: true,
     skills: true,
     userModel: false,
   };
   const refusal = (code: string) =>
     new MecatlError("refused", { code: code as never, transport: "grpc" });
 
+  // The daemon marks only the instruction body, which it names SKILL.md.
+  const listed = (name: string, size: number) => ({
+    instructions: name === "SKILL.md",
+    name,
+    size,
+  });
+
   function serviceWith(
     files: Array<{ name: string; size: number }>,
     read: (file: string) => string,
   ) {
     const readFile = vi.fn(async ({ file }: { file: string }) => ({ content: read(file) }));
-    const listFiles = vi.fn(async () => ({ files }));
+    const listFiles = vi.fn(async () => ({ files: files.map((f) => listed(f.name, f.size)) }));
     const service = createMecatlKnowledgeService(
       { skills: { listFiles, readFile } } as unknown as Client,
       caps,
@@ -655,17 +669,25 @@ describe("listSkillFiles", () => {
     expect(readFile).toHaveBeenCalledTimes(2);
     expect(result.omitted).toBe(0);
     expect(result.files).toEqual([
-      { content: "text of SKILL.md", name: "SKILL.md", size: 5, unavailable: "" },
-      { content: "text of references/api.md", name: "references/api.md", size: 3, unavailable: "" },
+      {
+        content: "text of SKILL.md",
+        instructions: true,
+        name: "SKILL.md",
+        size: 5,
+        unavailable: "",
+      },
+      {
+        content: "text of references/api.md",
+        instructions: false,
+        name: "references/api.md",
+        size: 3,
+        unavailable: "",
+      },
     ]);
   });
 
-  it("shows a refused file as unavailable instead of failing the whole skill", async () => {
-    const files = [
-      { name: "SKILL.md", size: 5 },
-      { name: "big.txt", size: 90000 },
-      { name: "blob.bin", size: 3 },
-    ];
+  it("shows a file the daemon refuses as unavailable instead of failing the whole skill", async () => {
+    const files = [listed("SKILL.md", 5), listed("big.txt", 100), listed("blob.bin", 3)];
     const readFile = vi.fn(async ({ file }: { file: string }) => {
       if (file === "big.txt") throw refusal("skill_file_too_large");
       if (file === "blob.bin") throw refusal("skill_file_not_text");
@@ -683,6 +705,20 @@ describe("listSkillFiles", () => {
     ]);
   });
 
+  it("does not request a file already listed as over the read cap", async () => {
+    const { readFile, service } = serviceWith(
+      [
+        { name: "SKILL.md", size: 5 },
+        { name: "exact.txt", size: 25_000 },
+        { name: "huge.txt", size: 25_001 },
+      ],
+      () => "x",
+    );
+    const result = await service.listSkillFiles("deploy");
+    expect(readFile.mock.calls.map(([request]) => request.file)).toEqual(["SKILL.md", "exact.txt"]);
+    expect(result.files.map((f) => f.unavailable)).toEqual(["", "", "Too large to show here."]);
+  });
+
   it("loads only the first files and says how many more there are", async () => {
     const files = Array.from({ length: 40 }, (_, i) => ({
       name: `f${String(i).padStart(2, "0")}.md`,
@@ -695,13 +731,57 @@ describe("listSkillFiles", () => {
     expect(readFile).toHaveBeenCalledTimes(32);
   });
 
-  it("lets a failure that is not about a file propagate", async () => {
+  it("reads at most four files at a time and keeps the daemon's order", async () => {
+    const files = Array.from({ length: 12 }, (_, i) => listed(`f${i}.md`, 1));
+    let inFlight = 0;
+    let peak = 0;
+    const readFile = vi.fn(async ({ file }: { file: string }) => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight -= 1;
+      return { content: file };
+    });
+    const service = createMecatlKnowledgeService(
+      { skills: { listFiles: async () => ({ files }), readFile } } as unknown as Client,
+      caps,
+    );
+    const result = await service.listSkillFiles("deploy");
+    expect(peak).toBeLessThanOrEqual(4);
+    expect(peak).toBeGreaterThan(1);
+    expect(result.files.map((f) => f.content)).toEqual(files.map((f) => f.name));
+  });
+
+  it("shows any other failure on that file only, so one failure never hides the rest", async () => {
+    // A rate-limited daemon rejects part of a burst; the other files must still come back.
+    const files = [listed("SKILL.md", 5), listed("a.md", 1), listed("b.md", 1)];
+    const readFile = vi.fn(async ({ file }: { file: string }) => {
+      if (file === "a.md")
+        throw new MecatlError("rate limit exceeded", {
+          code: "unknown" as never,
+          transport: "http",
+        });
+      return { content: `text of ${file}` };
+    });
+    const service = createMecatlKnowledgeService(
+      { skills: { listFiles: async () => ({ files }), readFile } } as unknown as Client,
+      caps,
+    );
+    const result = await service.listSkillFiles("deploy");
+    expect(result.files.map((f) => [f.name, f.content, f.unavailable])).toEqual([
+      ["SKILL.md", "text of SKILL.md", ""],
+      ["a.md", "", "Couldn't load this file."],
+      ["b.md", "text of b.md", ""],
+    ]);
+  });
+
+  it("still lets a rejected session propagate, so sign-in can start", async () => {
     const service = createMecatlKnowledgeService(
       {
         skills: {
-          listFiles: async () => ({ files: [{ name: "SKILL.md", size: 1 }] }),
+          listFiles: async () => ({ files: [listed("SKILL.md", 1)] }),
           readFile: async () => {
-            throw refusal("unavailable");
+            throw refusal("unauthenticated");
           },
         },
       } as unknown as Client,

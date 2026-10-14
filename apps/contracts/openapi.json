@@ -7273,6 +7273,9 @@
                           "content": {
                             "type": "string"
                           },
+                          "instructions": {
+                            "type": "boolean"
+                          },
                           "name": {
                             "type": "string"
                           },
@@ -7286,6 +7289,7 @@
                         },
                         "required": [
                           "content",
+                          "instructions",
                           "name",
                           "size",
                           "unavailable"

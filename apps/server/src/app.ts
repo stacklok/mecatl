@@ -6,7 +6,7 @@ import {
   problemDetailsSchema,
   runtimeResponseSchema,
 } from "@mecatl-studio/contracts";
-import { MecatlError } from "@stacklok-oss/mecatl-sdk";
+import { MecatlError, ServerFeature } from "@stacklok-oss/mecatl-sdk";
 import { HTTPException } from "hono/http-exception";
 import type { AuthenticationService } from "./auth/service.js";
 import { studioBuildId as bakedStudioBuildId } from "./build-info.js";
@@ -393,8 +393,11 @@ export function createApp(dependencies: AppDependencies = {}) {
  */
 export function knowledgeCapabilities(runtime: MecatlRuntime): KnowledgeCapabilities {
   let capabilities: ReturnType<MecatlRuntime["snapshot"]>["capabilities"] | undefined;
+  let features: readonly string[] = [];
   try {
-    capabilities = runtime.snapshot().capabilities;
+    const snapshot = runtime.snapshot();
+    capabilities = snapshot.capabilities;
+    features = snapshot.features;
   } catch {
     capabilities = undefined;
   }
@@ -414,6 +417,7 @@ export function knowledgeCapabilities(runtime: MecatlRuntime): KnowledgeCapabili
       user_model: consolidation(capabilities?.manualDream?.userModel),
     },
     reflection: capabilities?.reflection ?? false,
+    skillFiles: features.includes(ServerFeature.SkillFiles),
     skills: capabilities?.skills ?? false,
     userModel: capabilities?.userModel ?? false,
   };
