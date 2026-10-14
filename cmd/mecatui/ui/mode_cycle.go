@@ -209,7 +209,7 @@ func (m Model) renderModeBlocked() string {
 // server ceiling are fully effective — allow-all and loose-substitution are
 // session-mode-driven, not posture-driven, so switching to a lower mode
 // actually changes behavior and nothing "stays until restart".
-func (m Model) modeLabel(e PermissionModeEntry) string {
+func (Model) modeLabel(e PermissionModeEntry) string {
 	return e.Name
 }
 

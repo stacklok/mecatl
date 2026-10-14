@@ -95,8 +95,8 @@ func TestPostureResolutionTable(t *testing.T) {
 		}
 	}{
 		{"headless", true, []struct {
-			name             string
-			posture          Posture
+			name               string
+			posture            Posture
 			trustFlag, trusted bool
 		}{
 			{"strict+no-trust", PostureStrict, false, false},
@@ -109,8 +109,8 @@ func TestPostureResolutionTable(t *testing.T) {
 			{"yolo+trust", PostureYolo, true, true},
 		}},
 		{"interactive", false, []struct {
-			name             string
-			posture          Posture
+			name               string
+			posture            Posture
 			trustFlag, trusted bool
 		}{
 			{"strict+no-trust", PostureStrict, false, false},
