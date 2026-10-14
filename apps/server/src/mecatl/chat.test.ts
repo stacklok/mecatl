@@ -665,6 +665,28 @@ describe("Mecatl chat sessions", () => {
     expect(resolvePlanAsk).not.toHaveBeenCalled();
   });
 
+  it("treats a live run that owns its plan continuation as a stale plan ask", async () => {
+    const resolvePlanAsk = vi.fn().mockRejectedValue(
+      new MecatlError("run owns its plan continuation", {
+        code: "failed_precondition",
+        status: 412,
+        transport: "http",
+      }),
+    );
+    const service = createMecatlChatService({
+      server: {
+        compatibility: vi.fn().mockResolvedValue({ features: new Set(["exact_plan_ask_control"]) }),
+      },
+      sessions: {
+        get: vi.fn().mockResolvedValue({ controls: vi.fn().mockReturnValue({ resolvePlanAsk }) }),
+      },
+    } as unknown as Client);
+
+    await expect(
+      service.resolvePlanAsk("session-1", "run-plan", "ask-plan", "approve"),
+    ).resolves.toBe("stale");
+  });
+
   it("resolves a permission on a reattached run through its exact durable run handle", async () => {
     const resolveAsk = vi.fn().mockResolvedValue(undefined);
     const controls = vi.fn().mockReturnValue({ resolveAsk });

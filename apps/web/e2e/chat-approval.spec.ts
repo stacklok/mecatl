@@ -115,7 +115,10 @@ test("approves and denies exact asks through the browser journey", async ({
       return status === 204
         ? { status }
         : {
-            body: JSON.stringify({ code: "stale_run_control", detail: "Ask already resolved" }),
+            body: JSON.stringify({
+              code: runId.startsWith("plan") ? "stale_plan_ask" : "stale_run_control",
+              detail: "Ask already resolved",
+            }),
             contentType: "application/problem+json",
             status,
           };
@@ -294,7 +297,7 @@ test("approves and denies exact asks through the browser journey", async ({
     .getByRole("button", { name: "Approve & run" })
     .click();
   await expect(other.getByText(/outcome is uncertain/i)).toBeVisible();
-  expect(realRejection).toEqual({ code: "stale_run_control", status: 409 });
+  expect(realRejection).toEqual({ code: "stale_plan_ask", status: 409 });
   expect(offlineBff.requestsFor("POST", sharedPath)).toHaveLength(2);
   await other.close();
 
@@ -521,7 +524,7 @@ test("accepts real ordinary and plan asks once, then rejects their exact duplica
             })
             .click();
           await expect.poll(() => duplicateStatus).toBe(409);
-          expect(duplicateCode).toBe(kind === "ordinary" ? "ask_not_pending" : "stale_run_control");
+          expect(duplicateCode).toBe(kind === "ordinary" ? "ask_not_pending" : "stale_plan_ask");
           expect(offlineBff.requestsFor("POST", path)).toHaveLength(2);
           await second.close();
           if (kind === "ordinary") {

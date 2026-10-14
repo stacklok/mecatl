@@ -640,7 +640,7 @@ describe("mounted chat workspace BFF boundary", () => {
     });
     await waitFor(() => expect(bff.requestsAt("POST", planPath)).toHaveLength(1));
     await act(async () => {
-      acknowledgement.resolve(json({ code: "stale_run_control", detail: "stale" }, 409));
+      acknowledgement.resolve(json({ code: "stale_plan_ask", detail: "stale" }, 409));
     });
     expect(await screen.findByText(/outcome is uncertain/i)).toBeTruthy();
     fireEvent.click(button);

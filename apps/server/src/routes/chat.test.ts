@@ -870,7 +870,7 @@ describe("chat routes", () => {
       send(secondBff, "run-plan", "ask-unopted", "iterate"),
     ])) {
       expect(response.status).toBe(409);
-      await expect(response.json()).resolves.toMatchObject({ code: "stale_run_control" });
+      await expect(response.json()).resolves.toMatchObject({ code: "stale_plan_ask" });
     }
     expect((await send(secondBff, "run-plan", "ask-3", "accept_edits")).status).toBe(204);
     expect((await send(firstBff, "run-plan", "ask-4", "iterate")).status).toBe(204);
