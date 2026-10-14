@@ -15,9 +15,9 @@ import {
 } from "@tanstack/react-router";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { routeTree } from "../../routeTree.gen";
-import { ShortcutProvider } from "../shortcuts/shortcut-provider";
+import { ShortcutProvider, useShortcut } from "../shortcuts/shortcut-provider";
 import { ScheduleDetail } from "./schedule-detail";
 import { SchedulesWorkspace, scheduleInventoryPolling } from "./schedules-workspace";
 
@@ -397,15 +397,140 @@ describe("schedule detail delete", () => {
   });
 });
 
-function mount(items: Schedule[]) {
+describe("schedule keyboard focus and shortcuts", () => {
+  const alpha = schedule({ name: "Alpha" });
+
+  function slash(target: Element = document.body) {
+    // fireEvent returns false when a listener called preventDefault.
+    return !fireEvent.keyDown(target, { key: "/" });
+  }
+
+  it("leaves / alone while loading and while nothing is scheduled", () => {
+    fakeApi(() => new Promise<Response>(() => {}));
+    mount();
+    expect(screen.getByRole("status")).toBeTruthy();
+    expect(slash()).toBe(false);
+    cleanup();
+
+    mount([]);
+    expect(screen.getByText("Nothing scheduled yet")).toBeTruthy();
+    expect(slash()).toBe(false);
+  });
+
+  it("does not let / reach the search from a button inside the create dialog", async () => {
+    const user = userEvent.setup();
+    mount([alpha]);
+    await user.click(screen.getByRole("button", { name: "Schedule task" }));
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+    cancel.focus();
+
+    // Radix pulls stray focus back into the dialog, so the claimed keystroke,
+    // not the focus position, is what shows the page behind is still listening.
+    expect(slash(cancel)).toBe(false);
+  });
+
+  it("does not let / reach the search from the delete confirmation", async () => {
+    const user = userEvent.setup();
+    mount([alpha]);
+    await user.click(screen.getByRole("button", { name: "Actions for Alpha" }));
+    await user.click(screen.getByRole("menuitem", { name: "Delete" }));
+    const cancel = within(await screen.findByRole("alertdialog")).getByRole("button", {
+      name: "Cancel",
+    });
+    cancel.focus();
+
+    // Radix pulls stray focus back into the dialog, so the claimed keystroke,
+    // not the focus position, is what shows the page behind is still listening.
+    expect(slash(cancel)).toBe(false);
+  });
+
+  it("returns focus to the row's Actions button after cancelling Edit from its menu", async () => {
+    const user = userEvent.setup();
+    mount([alpha]);
+    const actions = screen.getByRole("button", { name: "Actions for Alpha" });
+    await user.click(actions);
+    await user.click(screen.getByRole("menuitem", { name: "Edit" }));
+    await user.click(await screen.findByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => expect(document.activeElement).toBe(actions));
+  });
+
+  describe("on the detail page", () => {
+    function Probe({ handler }: { handler: () => void }) {
+      useShortcut("schedules.filter", handler);
+      return null;
+    }
+
+    function detailApi() {
+      fakeApi((method, path) => {
+        if (method !== "GET") return undefined;
+        return path.endsWith("/fires") ? jsonResponse({ items: [] }) : listResponse([alpha]);
+      });
+    }
+
+    async function openEdit(user: ReturnType<typeof userEvent.setup>) {
+      const actions = await screen.findByRole("button", { name: "Actions for Alpha" });
+      await user.click(actions);
+      await user.click(screen.getByRole("menuitem", { name: "Edit" }));
+      return actions;
+    }
+
+    it("returns focus to the actions menu after cancelling Edit", async () => {
+      const user = userEvent.setup();
+      detailApi();
+      mountDetail([alpha]);
+      const actions = await openEdit(user);
+      await user.click(await screen.findByRole("button", { name: "Cancel" }));
+
+      await waitFor(() => expect(document.activeElement).toBe(actions));
+    });
+
+    it("returns focus to the actions menu after saving an edit", async () => {
+      const user = userEvent.setup();
+      detailApi();
+      mountDetail([alpha]);
+      const actions = await openEdit(user);
+      await user.click(await screen.findByRole("button", { name: "Save changes" }));
+
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      await waitFor(() => expect(document.activeElement).toBe(actions));
+    });
+
+    it("blocks global shortcuts while the edit form or delete confirmation is open", async () => {
+      const user = userEvent.setup();
+      const handler = vi.fn();
+      detailApi();
+      mountDetail([alpha], <Probe handler={handler} />);
+      await openEdit(user);
+      const cancel = await screen.findByRole("button", { name: "Cancel" });
+      cancel.focus();
+      await user.keyboard("/");
+      expect(handler).not.toHaveBeenCalled();
+
+      await user.click(cancel);
+      await user.click(await screen.findByRole("button", { name: "Actions for Alpha" }));
+      await user.click(screen.getByRole("menuitem", { name: "Delete" }));
+      within(await screen.findByRole("alertdialog"))
+        .getByRole("button", { name: "Cancel" })
+        .focus();
+      await user.keyboard("/");
+      expect(handler).not.toHaveBeenCalled();
+    });
+  });
+});
+
+/** Without `items` the list query is left unseeded, so the page stays loading. */
+function mount(items?: Schedule[]) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
   });
-  queryClient.setQueryData<ListSchedulesResponse>(listSchedulesQueryKey(), {
-    items,
-    reason: "",
-    supported: true,
-  });
+  if (items) {
+    queryClient.setQueryData<ListSchedulesResponse>(listSchedulesQueryKey(), {
+      items,
+      reason: "",
+      supported: true,
+    });
+  }
   const router = createRouter({
     history: createMemoryHistory({ initialEntries: ["/workspace/schedules"] }),
     routeTree,
@@ -429,7 +554,7 @@ function renderedDesktopNames() {
 }
 
 /** A two-route router so the detail page can really navigate away to the list. */
-function mountDetail(items: Schedule[]) {
+function mountDetail(items: Schedule[], extra?: React.ReactNode) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
   });
@@ -456,6 +581,7 @@ function mountDetail(items: Schedule[]) {
   render(
     <QueryClientProvider client={queryClient}>
       <ShortcutProvider>
+        {extra}
         <RouterProvider router={router} />
       </ShortcutProvider>
     </QueryClientProvider>,

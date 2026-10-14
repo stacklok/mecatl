@@ -57,6 +57,7 @@ import {
 import { errorMessage } from "../../lib/error-message";
 import { formatDate, formatRelativeTime, formatUntilTime } from "../../lib/formatters";
 import { pageTitleClass } from "../../lib/typography";
+import { useShortcutSuppression } from "../shortcuts/shortcut-provider";
 import { describeCron } from "./describe-cron";
 import { canEditSchedule, ScheduleForm } from "./schedule-form";
 import { ScheduleStatusBadge } from "./schedule-status";
@@ -120,6 +121,13 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState<string>();
   const actionMenuRef = useRef<HTMLButtonElement | null>(null);
+
+  useShortcutSuppression(confirmDelete);
+
+  function closeEditor() {
+    setEditing(false);
+    queueMicrotask(() => actionMenuRef.current?.focus());
+  }
 
   function closeDelete() {
     setConfirmDelete(false);
@@ -325,11 +333,11 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
 
       {editing && (
         <ScheduleForm
-          onCancel={() => setEditing(false)}
+          onCancel={closeEditor}
           onSubmit={async (body) => {
             const { name: _name, ...updateBody } = body;
             await update.mutateAsync({ body: updateBody, path: { scheduleName } });
-            setEditing(false);
+            closeEditor();
             await refresh();
           }}
           schedule={schedule}

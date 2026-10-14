@@ -56,7 +56,7 @@ import { ToggleGroup, ToggleGroupItem } from "../../components/ui/toggle-group";
 import { errorMessage } from "../../lib/error-message";
 import { formatDate } from "../../lib/formatters";
 import { pageTitleClass } from "../../lib/typography";
-import { useShortcut } from "../shortcuts/shortcut-provider";
+import { useShortcut, useShortcutSuppression } from "../shortcuts/shortcut-provider";
 import { canRunNow, canTogglePause } from "./schedule-detail";
 import { canEditSchedule, ScheduleForm } from "./schedule-form";
 import {
@@ -131,7 +131,11 @@ export function SchedulesWorkspace() {
   const deleteOpener = useRef<HTMLButtonElement | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
-  useShortcut("schedules.filter", () => searchRef.current?.focus());
+  // The search renders only for a supported, non-empty inventory; elsewhere `/`
+  // stays unclaimed. Open dialogs suppress it (and every other global shortcut).
+  const searchable = Boolean(schedules.data?.supported && schedules.data.items.length > 0);
+  useShortcut("schedules.filter", () => searchRef.current?.focus(), searchable);
+  useShortcutSuppression(Boolean(confirmDelete));
 
   const filtered = useMemo(
     () =>
@@ -151,8 +155,13 @@ export function SchedulesWorkspace() {
   );
   const mobileItems = useMemo(() => deriveMobileScheduleInventory(visible), [visible]);
 
-  function openEditor(next: Schedule | "new") {
-    editorOpener.current = document.activeElement as HTMLElement | null;
+  // A menu item is gone once its menu closes, so a row's Edit passes its
+  // Actions button, as Delete does.
+  function openEditor(
+    next: Schedule | "new",
+    opener: HTMLElement | null = document.activeElement as HTMLElement | null,
+  ) {
+    editorOpener.current = opener;
     setEditor(next);
   }
 
@@ -360,7 +369,7 @@ function ScheduleInventory({
   mobileItems: Schedule[];
   onAction: (schedule: Schedule, action: "fire" | "pause" | "resume") => void;
   onDelete: (schedule: Schedule, opener: HTMLButtonElement) => void;
-  onEdit: (schedule: Schedule) => void;
+  onEdit: (schedule: Schedule, opener: HTMLButtonElement) => void;
   sort: TableSort<ScheduleInventoryOrder>;
 }) {
   return (
@@ -421,7 +430,7 @@ function ScheduleInventory({
                     busy={busy}
                     onAction={(name) => onAction(schedule, name)}
                     onDelete={(opener) => onDelete(schedule, opener)}
-                    onEdit={() => onEdit(schedule)}
+                    onEdit={(opener) => onEdit(schedule, opener)}
                     schedule={schedule}
                   />
                 </TableCell>
@@ -470,7 +479,7 @@ function ScheduleActions({
   busy: boolean;
   onAction: (action: "fire" | "pause" | "resume") => void;
   onDelete: (opener: HTMLButtonElement) => void;
-  onEdit: () => void;
+  onEdit: (opener: HTMLButtonElement) => void;
   schedule: Schedule;
 }) {
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -496,7 +505,10 @@ function ScheduleActions({
         >
           {schedule.enabled ? "Pause" : "Resume"}
         </DropdownMenuItem>
-        <DropdownMenuItem disabled={busy || !canEditSchedule(schedule)} onSelect={onEdit}>
+        <DropdownMenuItem
+          disabled={busy || !canEditSchedule(schedule)}
+          onSelect={() => triggerRef.current && onEdit(triggerRef.current)}
+        >
           Edit
         </DropdownMenuItem>
         <DropdownMenuItem

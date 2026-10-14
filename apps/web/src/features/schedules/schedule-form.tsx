@@ -24,6 +24,7 @@ import { Switch } from "../../components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { Textarea } from "../../components/ui/textarea";
 import { ordinal } from "../../lib/formatters";
+import { useShortcutSuppression } from "../shortcuts/shortcut-provider";
 import {
   builderToCron,
   type CronIntervalUnit,
@@ -91,6 +92,9 @@ export function ScheduleForm({
   onCancel: () => void;
   onSubmit: (body: ScheduleBody) => Promise<void>;
 }) {
+  // The form is mounted only while open: global shortcuts such as `/` must not
+  // act on the page behind it when focus sits on a button, tab, or switch.
+  useShortcutSuppression(true);
   const [value, setValue] = useState<FormValue>(() => valueFromSchedule(schedule));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string>();
