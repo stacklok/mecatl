@@ -190,6 +190,7 @@ describe("settings responsive accessibility", () => {
           displayName: "Model One",
           id: "model-one",
           image: true,
+          providerDisplayName: "Team/openai",
           providerId: "team/openai",
           reasoning: true,
         },

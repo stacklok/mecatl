@@ -1833,6 +1833,9 @@
                         "contextWindow": {
                           "type": "string"
                         },
+                        "providerDisplayName": {
+                          "type": "string"
+                        },
                         "reasoningEffort": {
                           "type": "string",
                           "enum": [
@@ -1849,6 +1852,7 @@
                         "id",
                         "providerId",
                         "contextWindow",
+                        "providerDisplayName",
                         "reasoningEffort"
                       ]
                     },
@@ -12721,6 +12725,9 @@
                           "image": {
                             "type": "boolean"
                           },
+                          "providerDisplayName": {
+                            "type": "string"
+                          },
                           "providerId": {
                             "type": "string"
                           },
@@ -12733,6 +12740,7 @@
                           "displayName",
                           "id",
                           "image",
+                          "providerDisplayName",
                           "providerId",
                           "reasoning"
                         ]
@@ -12758,6 +12766,9 @@
                           "defaultModelAutoSelected": {
                             "type": "boolean"
                           },
+                          "displayName": {
+                            "type": "string"
+                          },
                           "hint": {
                             "type": "string"
                           },
@@ -12775,6 +12786,7 @@
                         "required": [
                           "availableNotDefault",
                           "defaultModelAutoSelected",
+                          "displayName",
                           "hint",
                           "id",
                           "modelCount",
@@ -12924,6 +12936,9 @@
                           "image": {
                             "type": "boolean"
                           },
+                          "providerDisplayName": {
+                            "type": "string"
+                          },
                           "providerId": {
                             "type": "string"
                           },
@@ -12936,6 +12951,7 @@
                           "displayName",
                           "id",
                           "image",
+                          "providerDisplayName",
                           "providerId",
                           "reasoning"
                         ]
@@ -12949,6 +12965,9 @@
                         },
                         "defaultModelAutoSelected": {
                           "type": "boolean"
+                        },
+                        "displayName": {
+                          "type": "string"
                         },
                         "hint": {
                           "type": "string"
@@ -12967,6 +12986,7 @@
                       "required": [
                         "availableNotDefault",
                         "defaultModelAutoSelected",
+                        "displayName",
                         "hint",
                         "id",
                         "modelCount",

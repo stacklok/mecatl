@@ -170,6 +170,7 @@ class Bff {
         model: {
           id: "model-a",
           providerId: "provider-a",
+          providerDisplayName: "Provider A",
           reasoningEffort: "medium",
           contextWindow: "200000",
         },

@@ -88,6 +88,7 @@ const responses: Record<string, unknown> = {
         displayName: "Model One",
         id: "model-one",
         image: false,
+        providerDisplayName: "OpenAI",
         providerId: "openai",
         reasoning: false,
       },

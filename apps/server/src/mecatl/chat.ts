@@ -29,6 +29,7 @@ import {
 } from "@stacklok-oss/mecatl-sdk";
 import { sanitizeUpstreamDetail } from "../http/problem.js";
 import { projectDeliveryNote } from "./delivery-note.js";
+import { providerDisplayName } from "./provider-names.js";
 import { RuntimeNotReadyError } from "./runtime.js";
 
 const maximumInventoryPages = 20;
@@ -359,6 +360,7 @@ export function createMecatlChatService(
               model: {
                 contextWindow: resolvedModel.contextWindow.toString(),
                 id: resolvedModel.modelId,
+                providerDisplayName: providerDisplayName(resolvedModel.providerId),
                 providerId: resolvedModel.providerId,
                 reasoningEffort: toReasoningEffort(resolvedModel.reasoningEffort),
               },

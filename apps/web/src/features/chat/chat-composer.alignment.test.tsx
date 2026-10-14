@@ -29,8 +29,22 @@ const configuration: DraftChatConfiguration = {
 };
 
 const models = [
-  { id: "deep", image: false, label: "Deep model", providerId: "provider", reasoning: true },
-  { id: "plain", image: false, label: "Plain model", providerId: "provider", reasoning: false },
+  {
+    id: "deep",
+    image: false,
+    label: "Deep model",
+    providerId: "provider",
+    providerLabel: "Provider",
+    reasoning: true,
+  },
+  {
+    id: "plain",
+    image: false,
+    label: "Plain model",
+    providerId: "provider",
+    providerLabel: "Provider",
+    reasoning: false,
+  },
 ];
 
 function composerInput() {

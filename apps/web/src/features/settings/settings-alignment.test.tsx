@@ -54,6 +54,7 @@ const settingsFixture: GetRuntimeSettingsResponse = {
     {
       availableNotDefault: true,
       defaultModelAutoSelected: false,
+      displayName: "OpenAI",
       hint: "Add a key where the agent runs.",
       id: "openai",
       modelCount: 2,
@@ -286,7 +287,7 @@ describe("settings section pages", () => {
     const row = page.querySelector<HTMLAnchorElement>(
       'a[href="/workspace/provider?providerId=openai"]',
     );
-    expect(row?.textContent).toContain("Openai");
+    expect(row?.querySelector(".font-medium")?.textContent).toBe("OpenAI");
     expect(row?.textContent).toContain("Sign-in needed · 2 models");
     expect(row?.textContent).toContain("Add a key where the agent runs.");
     expect(row?.textContent).toContain("View provider details");

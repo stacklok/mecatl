@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { sessionDetailResponseSchema } from "@mecatl-studio/contracts";
 import {
   type Client,
   type Event,
@@ -386,6 +387,7 @@ describe("Mecatl chat sessions", () => {
       model: {
         contextWindow: "200000",
         id: "claude-sonnet",
+        providerDisplayName: "Anthropic",
         providerId: "anthropic",
         reasoningEffort: "high",
       },
@@ -544,6 +546,44 @@ describe("Mecatl chat sessions", () => {
       providerId: "team-gateway",
       reasoningEffort: "low",
     });
+  });
+
+  it("names the resolved model's provider, title-casing an unmapped ID", async () => {
+    for (const [providerId, providerDisplayName] of [
+      ["openai", "OpenAI"],
+      ["openrouter", "OpenRouter"],
+      ["team-gateway", "Team Gateway"],
+    ] as const) {
+      const snapshot = vi.fn().mockResolvedValue({
+        kind: "main",
+        resolvedModel: {
+          contextWindow: 128_000n,
+          modelId: "model-1",
+          providerId,
+          reasoningEffort: "high",
+        },
+        sessionId: "session-1",
+        state: "idle",
+        mode: SessionMode.Default,
+        tokenUsage: {},
+      });
+      const service = createMecatlChatService(
+        { sessions: { get: vi.fn().mockResolvedValue({ snapshot }) } } as unknown as Client,
+        () =>
+          ({
+            capabilities: { manualCompaction: false, modelSelection: true },
+          }) as ServerCompatibility,
+      );
+
+      const detail = await service.detail("session-1");
+      expect(detail.model, providerId).toMatchObject({ providerDisplayName, providerId });
+      // The contract requires the name, and the detail satisfies it unchanged.
+      expect(sessionDetailResponseSchema.parse(detail)).toEqual(detail);
+      const { providerDisplayName: _, ...unnamed } = detail.model ?? {};
+      expect(sessionDetailResponseSchema.safeParse({ ...detail, model: unnamed }).success).toBe(
+        false,
+      );
+    }
   });
 
   it("round-trips the extra-high and max reasoning-effort tiers", async () => {

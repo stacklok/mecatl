@@ -60,6 +60,8 @@ export interface ComposerModelOption {
   image: boolean;
   label: string;
   providerId: string;
+  /** The inventory's `providerDisplayName`: the BFF's name for the provider. */
+  providerLabel: string;
   /** The inventory's `reasoning` flag: whether the model reports a reasoning-effort tier. */
   reasoning?: boolean;
 }

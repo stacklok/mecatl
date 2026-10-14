@@ -149,7 +149,8 @@ function filterGroups(
             ? models.filter(
                 (candidate) =>
                   candidate.label.toLocaleLowerCase().includes(normalized) ||
-                  humanize(providerId).toLocaleLowerCase().includes(normalized),
+                  candidate.providerLabel.toLocaleLowerCase().includes(normalized) ||
+                  candidate.providerId.toLocaleLowerCase().includes(normalized),
               )
             : models,
         ] as const,
@@ -160,8 +161,8 @@ function filterGroups(
 const modelRowClass = "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm";
 
 /**
- * The Model submenu's body: a filter input (matching the model's label or its
- * provider) above the grouped list, for a catalogue too long to scan.
+ * The Model submenu's body: a filter input (matching the model's label, or its
+ * provider's name or ID) above the grouped list, for a catalogue too long to scan.
  */
 function ModelFilterList({
   allowUnset,
@@ -217,7 +218,7 @@ function ModelFilterList({
         {filteredGroups.map(([providerId, models]) => (
           <div key={providerId}>
             <p className="px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground">
-              {humanize(providerId)}
+              {models[0]?.providerLabel}
             </p>
             {models.map((candidate) => {
               const selected = sameModel(model, candidate);
@@ -305,7 +306,7 @@ export function ModelSheetSection({
         {filteredGroups.map(([providerId, models]) => (
           <div key={providerId}>
             <p className="px-4 py-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              {humanize(providerId)}
+              {models[0]?.providerLabel}
             </p>
             {models.map((candidate) => {
               const selected = sameModel(model, candidate);
@@ -330,12 +331,4 @@ export function ModelSheetSection({
       </div>
     </div>
   );
-}
-
-export function humanize(value: string): string {
-  return value
-    .split(/[-_]+/u)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
 }

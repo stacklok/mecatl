@@ -426,7 +426,7 @@ function ProviderRow({ provider }: { provider: GetRuntimeSettingsResponse["provi
       >
         <span aria-hidden="true" className={cn("size-2 shrink-0 rounded-full", state.dot)} />
         <span className="min-w-0 flex-1">
-          <span className="block text-sm font-medium">{humanize(provider.id)}</span>
+          <span className="block text-sm font-medium">{provider.displayName}</span>
           <span className="block truncate text-xs text-muted-foreground tabular-nums">
             {state.label} · {provider.modelCount} model{provider.modelCount === 1 ? "" : "s"}
           </span>
@@ -602,14 +602,6 @@ function providerState(state: string): { dot: string; label: string; ready: bool
 /** A short window cannot show the whole nav; keep the current section in view. */
 function keepInView(button: HTMLButtonElement | null) {
   button?.scrollIntoView?.({ block: "nearest" });
-}
-
-function humanize(value: string): string {
-  return value
-    .split(/[-_]+/u)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
 }
 
 function formatContextLimit(value: string): string {

@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  modelInventoryItemSchema,
+  providerInventoryItemSchema,
+  providerSettingsResponseSchema,
+  runtimeSettingsResponseSchema,
+} from "@mecatl-studio/contracts";
 import type { Client } from "@stacklok-oss/mecatl-sdk";
 import { describe, expect, it, vi } from "vitest";
 import { createMecatlSettingsService } from "./settings";
@@ -53,6 +59,7 @@ describe("Mecatl runtime settings", () => {
           displayName: "slash",
           id: "slash",
           image: false,
+          providerDisplayName: "Team/provider",
           providerId: "team/provider",
           reasoning: true,
         },
@@ -60,6 +67,7 @@ describe("Mecatl runtime settings", () => {
       provider: {
         availableNotDefault: true,
         defaultModelAutoSelected: false,
+        displayName: "Team/provider",
         hint: "Available",
         id: "team/provider",
         modelCount: 1,
@@ -129,6 +137,7 @@ describe("Mecatl runtime settings", () => {
       {
         availableNotDefault: false,
         defaultModelAutoSelected: false,
+        displayName: "Alpha",
         hint: "",
         id: "alpha",
         modelCount: 2,
@@ -137,6 +146,7 @@ describe("Mecatl runtime settings", () => {
       {
         availableNotDefault: true,
         defaultModelAutoSelected: false,
+        displayName: "Beta",
         hint: "set a default",
         id: "beta",
         modelCount: 1,
@@ -148,6 +158,7 @@ describe("Mecatl runtime settings", () => {
       displayName: "b-1",
       id: "b-1",
       image: false,
+      providerDisplayName: "Beta",
       providerId: "beta",
       reasoning: true,
     });
@@ -221,6 +232,84 @@ describe("Mecatl runtime settings", () => {
     expect(detail).toMatchObject({ displayEndpoint: "https://gateway.example.com/v1", provider });
     expect(detail?.models).toHaveLength(1);
     expect(detail?.models[0]).toMatchObject(model);
+  });
+
+  it("names each provider, and each model's provider, for the browser", async () => {
+    const status = (providerId: string) => ({
+      availableNotDefault: false,
+      defaultModelAutoSelected: false,
+      hint: "",
+      modelCount: 1,
+      providerId,
+      state: "ok",
+    });
+    const list = vi.fn().mockResolvedValue({
+      models: [
+        sdkModel("gpt-5", "openai"),
+        sdkModel("gateway-model", "team-gateway"),
+        sdkModel("claude", "anthropic"),
+      ],
+      // Anthropic reports no status, so its row is synthesised from its model.
+      providerStatus: [status("openai"), status("team-gateway")],
+    });
+    const service = createMecatlSettingsService(
+      { models: { list }, server: { info: vi.fn() } } as unknown as Client,
+      { modelSelection: true, serverInfo: false },
+    );
+
+    const settings = await service.get();
+    expect(settings.providers.map(({ displayName, id }) => [id, displayName])).toEqual([
+      ["anthropic", "Anthropic"],
+      ["openai", "OpenAI"],
+      ["team-gateway", "Team Gateway"],
+    ]);
+    expect(settings.models.map(({ id, providerDisplayName }) => [id, providerDisplayName])).toEqual(
+      [
+        ["gpt-5", "OpenAI"],
+        ["gateway-model", "Team Gateway"],
+        ["claude", "Anthropic"],
+      ],
+    );
+    // Parsing strips nothing and finds every required field.
+    expect(runtimeSettingsResponseSchema.parse(settings)).toEqual(settings);
+
+    const detail = await service.getProvider("openai");
+    expect(detail?.provider.displayName).toBe("OpenAI");
+    expect(detail?.models.map((model) => model.providerDisplayName)).toEqual(["OpenAI"]);
+    expect(providerSettingsResponseSchema.parse(detail)).toEqual(detail);
+  });
+
+  it("projects exactly the contract's provider and model fields", async () => {
+    const list = vi.fn().mockResolvedValue({
+      models: [{ ...sdkModel("gpt-5", "openai"), credential: "secret" }],
+      providerStatus: [
+        {
+          availableNotDefault: false,
+          defaultModelAutoSelected: true,
+          hint: "",
+          modelCount: 1,
+          providerId: "openai",
+          rawEndpoint: "https://user:secret@private.example",
+          state: "ok",
+        },
+      ],
+    });
+    const service = createMecatlSettingsService(
+      { models: { list }, server: { info: vi.fn() } } as unknown as Client,
+      { modelSelection: true, serverInfo: false },
+    );
+    const settings = await service.get();
+    const providerFields = Object.keys(providerInventoryItemSchema.shape).sort();
+    const modelFields = Object.keys(modelInventoryItemSchema.shape).sort();
+    expect(providerFields).toContain("displayName");
+    expect(modelFields).toContain("providerDisplayName");
+    expect(Object.keys(settings.providers[0] ?? {}).sort()).toEqual(providerFields);
+    expect(Object.keys(settings.models[0] ?? {}).sort()).toEqual(modelFields);
+
+    const { displayName: _, ...unnamedProvider } = settings.providers[0] ?? {};
+    expect(providerInventoryItemSchema.safeParse(unnamedProvider).success).toBe(false);
+    const { providerDisplayName: __, ...unnamedModel } = settings.models[0] ?? {};
+    expect(modelInventoryItemSchema.safeParse(unnamedModel).success).toBe(false);
   });
 
   it("skips the models call and server info when the capabilities are off", async () => {

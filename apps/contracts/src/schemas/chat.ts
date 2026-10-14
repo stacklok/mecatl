@@ -127,6 +127,8 @@ export const sessionDetailResponseSchema = z.object({
   model: sessionModelSelectionSchema
     .extend({
       contextWindow: z.string(),
+      /** The provider's display name, as in the settings inventory. */
+      providerDisplayName: z.string(),
       reasoningEffort: reasoningEffortSchema,
     })
     .optional(),

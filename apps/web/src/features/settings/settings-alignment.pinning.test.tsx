@@ -75,6 +75,7 @@ const settingsFixture: GetRuntimeSettingsResponse = {
       displayName: "Model One",
       id: "model-one",
       image: true,
+      providerDisplayName: "Team/openai",
       providerId: "team/openai",
       reasoning: true,
     },
@@ -86,6 +87,7 @@ const settingsFixture: GetRuntimeSettingsResponse = {
     {
       availableNotDefault: true,
       defaultModelAutoSelected: false,
+      displayName: "Team/openai",
       hint: "Ready through the gateway",
       id: "team/openai",
       modelCount: 1,

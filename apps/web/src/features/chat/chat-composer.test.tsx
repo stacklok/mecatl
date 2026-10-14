@@ -12,8 +12,20 @@ const configuration: DraftChatConfiguration = {
 };
 
 const models = [
-  { id: "image", image: true, label: "Image model", providerId: "provider" },
-  { id: "text", image: false, label: "Text model", providerId: "provider" },
+  {
+    id: "image",
+    image: true,
+    label: "Image model",
+    providerId: "provider",
+    providerLabel: "Provider",
+  },
+  {
+    id: "text",
+    image: false,
+    label: "Text model",
+    providerId: "provider",
+    providerLabel: "Provider",
+  },
 ];
 
 afterEach(() => cleanup());

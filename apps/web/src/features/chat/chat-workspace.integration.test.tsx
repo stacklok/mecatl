@@ -183,6 +183,7 @@ const inventoryModels = [
     displayName: "Current model",
     id: "current",
     image: false,
+    providerDisplayName: "Provider",
     providerId: "provider",
     reasoning: true,
   },
@@ -191,6 +192,7 @@ const inventoryModels = [
     displayName: "Allowed model",
     id: "allowed",
     image: true,
+    providerDisplayName: "Provider",
     providerId: "provider",
     reasoning: true,
   },
@@ -199,6 +201,7 @@ const inventoryModels = [
     displayName: "Hidden model",
     id: "hidden",
     image: false,
+    providerDisplayName: "Provider",
     providerId: "provider",
     reasoning: true,
   },
@@ -207,6 +210,7 @@ const inventoryModels = [
 const currentModel = {
   contextWindow: "128000",
   id: "current",
+  providerDisplayName: "Provider",
   providerId: "provider",
   reasoningEffort: "medium",
 } satisfies NonNullable<SessionDetailResponse["model"]>;
@@ -1876,6 +1880,36 @@ describe("mounted chat workspace BFF boundary", () => {
     await waitFor(() =>
       expect(bff.requestsAt("GET", "/api/v1/sessions/chat-b").length).toBeGreaterThan(0),
     );
+  });
+
+  it("groups the desktop model menu under the inventory's provider names", async () => {
+    const user = userEvent.setup();
+    const bff = new BffFixture();
+    bff.nextReplies.set("/api/v1/settings/runtime", [
+      Promise.resolve(
+        json({
+          models: [
+            {
+              contextLimit: "400000",
+              displayName: "GPT-5",
+              id: "gpt-5",
+              image: true,
+              providerDisplayName: "OpenAI",
+              providerId: "openai",
+              reasoning: true,
+            },
+          ] satisfies RuntimeSettingsResponse["models"],
+          modelsSupported: true,
+        }),
+      ),
+    ]);
+    await mountWorkspace(bff);
+
+    await user.click(await screen.findByRole("button", { name: /^Model Default/ }));
+    await user.hover(screen.getByRole("menuitem", { name: /^Model/ }));
+    expect(await screen.findByRole("menuitem", { name: "GPT-5" })).toBeTruthy();
+    expect(screen.getByText("OpenAI")).toBeTruthy();
+    expect(screen.queryByText("openai")).toBeNull();
   });
 
   it("creates a draft with the model, effort, mode, and execution picked from the desktop pills", async () => {

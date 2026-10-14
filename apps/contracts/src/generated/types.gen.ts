@@ -707,6 +707,7 @@ export type GetSessionDetailResponses = {
             id: string;
             providerId: string;
             contextWindow: string;
+            providerDisplayName: string;
             reasoningEffort: 'default' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
         };
         placement?: {
@@ -4112,6 +4113,7 @@ export type GetRuntimeSettingsResponses = {
             displayName: string;
             id: string;
             image: boolean;
+            providerDisplayName: string;
             providerId: string;
             reasoning: boolean;
         }>;
@@ -4121,6 +4123,7 @@ export type GetRuntimeSettingsResponses = {
         providers: Array<{
             availableNotDefault: boolean;
             defaultModelAutoSelected: boolean;
+            displayName: string;
             hint: string;
             id: string;
             modelCount: number;
@@ -4212,12 +4215,14 @@ export type GetProviderSettingsResponses = {
             displayName: string;
             id: string;
             image: boolean;
+            providerDisplayName: string;
             providerId: string;
             reasoning: boolean;
         }>;
         provider: {
             availableNotDefault: boolean;
             defaultModelAutoSelected: boolean;
+            displayName: string;
             hint: string;
             id: string;
             modelCount: number;

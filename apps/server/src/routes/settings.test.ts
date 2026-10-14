@@ -21,6 +21,7 @@ const settings: SettingsService = {
           displayName: "Example",
           id: "example",
           image: true,
+          providerDisplayName: "Test",
           providerId: "test",
           reasoning: true,
         },
@@ -28,6 +29,7 @@ const settings: SettingsService = {
       provider: {
         availableNotDefault: false,
         defaultModelAutoSelected: true,
+        displayName: "Test",
         hint: "",
         id: "test",
         modelCount: 1,
@@ -50,6 +52,7 @@ const settings: SettingsService = {
           displayName: "Example",
           id: "example",
           image: true,
+          providerDisplayName: "Test",
           providerId: "test",
           reasoning: true,
         },
@@ -61,6 +64,7 @@ const settings: SettingsService = {
         {
           availableNotDefault: false,
           defaultModelAutoSelected: true,
+          displayName: "Test",
           hint: "",
           id: "test",
           modelCount: 1,
@@ -232,6 +236,7 @@ describe("settings routes", () => {
           displayName: "Model",
           id: "model",
           image: false,
+          providerDisplayName: "Team/provider",
           providerId: "team/provider",
           reasoning: false,
         },
@@ -239,6 +244,7 @@ describe("settings routes", () => {
       provider: {
         availableNotDefault: false,
         defaultModelAutoSelected: true,
+        displayName: "Team/provider",
         hint: "ready",
         id: "team/provider",
         modelCount: 1,
@@ -369,6 +375,50 @@ describe("settings routes", () => {
       models: [model],
       provider,
     });
+  });
+  it("serves provider display names over HTTP, title-casing an unmapped ID", async () => {
+    const list = vi.fn().mockResolvedValue({
+      models: [
+        {
+          contextLimit: 128_000n,
+          displayName: "GPT-5",
+          id: "gpt-5",
+          image: true,
+          providerId: "openai",
+          reasoning: true,
+        },
+        {
+          contextLimit: 64_000n,
+          displayName: "Gateway Model",
+          id: "gateway-model",
+          image: false,
+          providerId: "team-gateway",
+          reasoning: false,
+        },
+      ],
+      providerStatus: [],
+    });
+    const app = createApp({
+      runtime: fakeRuntime(),
+      settings: createMecatlSettingsService(
+        { models: { list }, server: { info: vi.fn() } } as unknown as Client,
+        { modelSelection: true, serverInfo: false },
+      ),
+    });
+
+    const runtime = await (await app.request("/api/v1/settings/runtime")).json();
+    expect(runtime.providers).toEqual([
+      expect.objectContaining({ displayName: "OpenAI", id: "openai" }),
+      expect.objectContaining({ displayName: "Team Gateway", id: "team-gateway" }),
+    ]);
+    expect(runtime.models).toEqual([
+      expect.objectContaining({ id: "gpt-5", providerDisplayName: "OpenAI" }),
+      expect.objectContaining({ id: "gateway-model", providerDisplayName: "Team Gateway" }),
+    ]);
+
+    const detail = await (await app.request("/api/v1/settings/provider?providerId=openai")).json();
+    expect(detail.provider).toMatchObject({ displayName: "OpenAI", id: "openai" });
+    expect(detail.models).toEqual([expect.objectContaining({ providerDisplayName: "OpenAI" })]);
   });
   it("returns only safe runtime and model inventory", async () => {
     const response = await createApp({ settings }).request("/api/v1/settings/runtime");

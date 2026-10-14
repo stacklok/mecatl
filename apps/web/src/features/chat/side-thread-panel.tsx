@@ -136,6 +136,7 @@ export function SideThreadPanel({
         image: candidate.image,
         label: candidate.displayName,
         providerId: candidate.providerId,
+        providerLabel: candidate.providerDisplayName,
       })) ?? [];
   const busy = run.isRunning || forkSession.isPending;
   const escapeAsk =

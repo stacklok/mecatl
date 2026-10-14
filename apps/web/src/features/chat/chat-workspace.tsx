@@ -919,6 +919,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         image: model.image,
         label: model.displayName,
         providerId: model.providerId,
+        providerLabel: model.providerDisplayName,
         reasoning: model.reasoning,
       })) ?? [];
   const watchable =

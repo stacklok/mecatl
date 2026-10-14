@@ -93,7 +93,10 @@ export function ProviderDetail({ providerId }: { providerId: string }) {
       >
         <span aria-hidden="true">←&nbsp;</span>Providers
       </Link>
-      <h1 className="mt-5 break-all text-3xl font-semibold tracking-tight">{providerId}</h1>
+      {/* The BFF's name once this provider is described; the requested ID until then. */}
+      <h1 className="mt-5 break-words text-3xl font-semibold tracking-tight">
+        {detail.data?.provider.displayName ?? providerId}
+      </h1>
       <p className="mt-2 text-sm text-muted-foreground">
         Configuration is managed by the deployment.
       </p>
