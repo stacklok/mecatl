@@ -1,123 +1,157 @@
 # Credentials and lifecycle
 
-*This chapter describes the intended architecture, not current implementation status.*
+*This chapter describes the intended architecture, not current implementation status. Its decisions are recorded in the [credential flow rework](credential-flow-rework.md).*
 
-An agent instance can participate in multiple runs. Its instance credential identifies it to the broker; presenting that credential does not by itself authorize an MCP tool call. The harness manages run execution. In v1, the broker checks the acting instance's effective server/tool ceiling, its definition ceiling narrowed by its parent's, with Cedar, alongside existing user/connection checks and execution-context checks. User, resource, argument, and dynamic delegation policies are deferred; carrying run or delegation context does not mean Cedar evaluates those bounds. Renewing the instance credential does not itself extend or widen permission to call tools.
+An agent instance can participate in multiple runs. Its instance credential identifies it to the broker; presenting that credential does not by itself authorize an MCP tool call. The harness manages run execution. In v1, the broker checks the acting instance's effective server/tool ceiling, its definition ceiling narrowed by its parent's, with Cedar, alongside session and execution-context checks. User, resource, argument, and dynamic delegation policies are deferred. Renewing the instance credential does not itself extend or widen permission to call tools.
+
+The human enters the flow once, when Alice signs in through AS-1. AS-1 runs that sign-in itself, so every later statement about the human traces back to a login AS-1 witnessed, not to a report from the harness.
 
 ## Credential roles
 
-| Credential | What it establishes | Where it is presented |
+| Credential | What it establishes | Issuer → holder → verifier |
 | --- | --- | --- |
-| **Human login token** | The identity of the user making a request to Mecatl. | Human client → Mecatl's API. It is not forwarded as the downstream user token. |
-| **Workload credential** | Which Mecatl service is contacting the broker, not which user or agent it represents. | Mecatl → broker. |
-| **Agent-instance JWT-SVID** | Which agent instance is acting. It can span multiple runs. | Mecatl → broker; the broker also uses it as the actor token in the proposed ToolHive exchange. |
-| **Broker OAuth client credential** | Which OAuth client is requesting access from ToolHive. | Broker → ToolHive authorization server. |
-| **ToolHive user grant** | The user's authorization granted through ToolHive. Its access token supplies the user side of the exchange; its refresh token supports renewal. | Held by the broker; the access token is presented to ToolHive as `subject_token`. |
-| **Delegated access token** | The user and acting agent together: `sub=user`, `act.sub=instance`, with the protected MCP endpoint as audience. | Broker → protected MCP endpoint. |
-| **Native provider credential** | Access to the external provider under the connected account. | ToolHive → provider, such as GitHub. It stays outside Mecatl. |
+| **AS-1 access token** | Alice's identity for requests to the Mecatl API. | AS-1 → Alice's client (TUI or Studio) → mecak8s. Passed to the broker once, at session open. |
+| **Client refresh token** | The client's ability to renew its own AS-1 access token. | AS-1 → client only. Never leaves the client. |
+| **Workload credential** | Which Mecatl service contacts the broker and agent-instance issuer. | Platform → mecak8s → broker and issuer. It identifies neither Alice nor an agent instance. |
+| **Agent-instance JWT-SVID** | Which registered agent instance is acting. It can span multiple runs. | Agent-instance issuer → harness → broker, which forwards it to AS-1 as `actor_token`. |
+| **Broker refresh token** | Alice's delegated authority for one broker session, usable without her present. | AS-1 → broker → AS-1. Bound to client `mecatl` and to the session. |
+| **Broker client credential** | That the caller at AS-1 and AS-2 is the broker, OAuth client `mecatl`. | Broker's private key; each request carries a short-lived `private_key_jwt` assertion verified by AS-1 and AS-2. |
+| **ID-JAG** | Alice and the acting agent, for one redemption at AS-2. | AS-1 → broker → AS-2. Short-lived, single-use. |
+| **AS-2 access token (`V`)** | AS-2's native Alice, the acting agent, and client `mecatl`, for the vMCP resource. | AS-2 → broker → vMCP. Cached per session, instance, and gateway. |
+| **Upstream provider credential** | Access to Alice's GitHub account. | GitHub → gateway credential store → GitHub. Never leaves the gateway. |
+| **Signing keys** | Authority to issue credentials. | AS-1, AS-2, and the agent-instance issuer each keep their own key. Separate keys are not process isolation when components share a process. |
 
-These are roles, not necessarily seven credentials sent on every call. Enrollment, issuance, and refresh happen when needed.
+### Example nomenclature
 
-Run IDs, session attachments, and broker session references are separate from credentials. A broker session reference grants neither run execution nor MCP access; the proposed registration discussion distinguishes existing references from registration responsibilities.
+| Kind | Name | Meaning |
+| --- | --- | --- |
+| Identity | Company Alice `(https://login.example.com, alice-204)` | Alice at the company IdP. AS-1 represents her as subject `u-alice-91`; AS-2 as native user `usr-alice-7c1d`. |
+| Identity | `mecatl` | The broker's OAuth client at AS-1 and AS-2. Not a user or an agent. |
+| State | `hostS42`, `A42` | Host session ID, and prose alias for the existing opaque `BrokerSessionRef`. Neither is a credential. |
+| State | `main`, `reviewer`, `R41`, `R42`, `D42` | Registered agent instances, their runs, and the delegation from main to reviewer. |
+| Reference | `op-list-prs-001`, `op-pr42-001` | Correlation IDs for two tool operations. They identify operations, not people, and authorize nothing. |
+| Credential | `mainSVID`, `reviewerSVID` | Registered agent-instance credentials. |
+| Credential | `RT-A42` | The broker refresh token for session `A42`. |
+| Credential | `J-main`, `J-reviewer` | ID-JAGs naming Alice and each acting agent. |
+| Credential | `V-main`, `V-reviewer` | AS-2 access tokens naming native Alice and each acting agent. |
+
+No credential value belongs in the model's context.
 
 ## Interactive execution
 
-Alice, identified by company issuer `https://login.example.com` and subject `alice-204`, owns harness session `S42`. She asks Mecatl to list pull requests in `acme/payments` and review PR 42. Main run `R41` first calls `pull_request_list`. After the list returns, it delegates review of PR 42 through `D42` to reviewer run `R42`, which calls `pull_request_read`. These tool names and arguments are illustrative, not a selected MCP server contract. The main instance has incarnation `inc_cejrv7re4uy3ubxyzj2gfxfp2u`; its reviewer child has incarnation `inc_gh56irfcpnupjqgfdw7dhzzw4m`. Runs identify execution, not credentials. In the diagram, `main` and `reviewer` abbreviate the exact SPIFFE subjects in [example instance identities](#example-instance-identities). The reviewer uses definition `project/code-reviewer`. Creation ancestry and delegation `D42` are separate facts, even though the main both creates this reviewer and delegates this task to it.
+Alice owns harness session `hostS42`. She asks Mecatl to list pull requests in `acme/payments` and review PR 42. Main run `R41` calls `pull_request_list`. After the list returns, main delegates the review through `D42` to reviewer run `R42`, which calls `pull_request_read`. Tool names and arguments are illustrative. The reviewer uses definition `project/code-reviewer`; main both creates it and delegates the task to it, but creation and delegation remain separate facts. In the diagram, `main` and `reviewer` abbreviate the SPIFFE subjects in [example instance identities](#example-instance-identities).
 
-The diagram starts from the [fixed definition selection and workload-authenticated registration](agent-definitions.md#loading-definitions-for-a-session) supplied by mecak8s's trusted lifecycle code. The main is registered before execution; the reviewer is registered when created, using the selected reviewer definition and its own persisted agent-instance incarnation. Section (3) identifies the inputs for each. Registration records identity, not permission to spawn, run, or call tools. It trusts mecak8s lifecycle assertions and does not establish same-process isolation; the [registration contract and open questions](agent-definitions.md#registering-instances) remain proposed, not implemented behavior.
-
-Operation `op-list-prs-001` identifies the main's list call. Operation `op-pr42-001` identifies the reviewer's PR read; the detailed credential and audit examples below follow this second call. Times are Unix seconds around `1800000000`, matching the delegated token. Examples are fictional decoded payloads or credential references, never usable bearer values. Audit examples contain only selected metadata; they are not copies of credentials or implemented cross-service events. The common operation ID denotes desired correlation, not an established authenticated propagation mechanism. Audit placement does not specify durable-write ordering.
-
-For this example only, configured workload audience `https://broker.example.com` covers the combined broker's issuance and invocation endpoints. The instance credential has two explicit audiences: that broker and `https://toolhive.example.com/token`. This illustrates a multi-audience deployment so the same actor credential can reach both validators; it does not select the architecture over separately issued credentials. Each recipient requires its own configured audience and trust material, never endpoints chosen by token claims.
-
-Instance credential issuance, provider enrollment, and token exchange occur only when needed. The broker checks every requested operation (see [delegated authority](mcp-authorization.md#delegated-authority) and [operations and resources](mcp-authorization.md#operations-and-resources)).
-
-The diagram follows two successful calls, with enrollment already complete and usable provider credentials in custody. Failure handling, enrollment, and internal checks are in the linked legend rather than separate arrows. The numbered explanatory sections are not message order. Participants are logical roles, so grouping them does not establish process isolation.
+The gateway in this example is external, at `https://gateway.example.com`. Embedded mode follows the same steps with AS-2 and vMCP inside the Mecatl deployment.
 
 ```mermaid
 sequenceDiagram
-    actor U as Alice / human client
-    participant H as mecak8s (API / harness client)
-    box Combined broker
-        participant I as Agent-instance issuer
-        participant B as Tool authorization / broker OAuth client
-        participant A as ToolHive AS
-        participant V as Protected vMCP
+    actor U as Alice (TUI / Studio)
+    participant H as mecak8s
+    participant I as Agent-instance issuer
+    box Broker
+        participant B as Broker core
+        participant A1 as AS-1
+    end
+    participant IdP as Company IdP
+    box Gateway
+        participant A2 as AS-2
+        participant V as vMCP
+    end
+    participant G as GitHub
+
+    Note over U,IdP: (1) Sign-in, once per login session
+    U->>A1: Authorization code + PKCE<br/>(issuer from mecak8s protected-resource metadata)
+    A1->>IdP: Redirect to company sign-in<br/>(AS-1 is an ordinary OIDC client there)
+    IdP-->>A1: Alice authenticated
+    A1-->>U: AS-1 access token (aud mecak8s) + client refresh token
+
+    Note over U,A1: (2)(3) Session open
+    U->>H: PR review request + AS-1 access token
+    H->>H: Validate token, check ownership of hostS42
+    H->>B: OpenSession: workload JWT + AS-1 access token (once)
+    B->>A1: RFC 8693: subject_token = AS-1 access token<br/>requested_token_type = refresh_token<br/>client mecatl (private_key_jwt)
+    A1-->>B: RT-A42 (bound to A42, hard maximum lifetime)
+    B-->>H: SessionSnapshot (BrokerSessionRef A42)
+
+    rect rgb(245, 245, 245)
+        Note over H,I: (4) Main bootstrap, before R41
+        H->>I: registerDefinitions, registerInstance(main), workload JWT
+        I-->>H: mainRef + canonical main subject
+        H->>I: requestSVID(mainRef), workload JWT
+        I-->>H: mainSVID
     end
 
-    Note over H,I: Proposed session bootstrap with fixed definitions and host-allocated incarnations
-    H->>I: Register main under workload SA authentication<br/>Main incarnation + selected definition + no parent
-    I-->>H: Registered main reference and canonical subject
-    H->>I: Request main SVID<br/>Workload credential + registered main reference
-    I-->>H: Main JWT-SVID
+    Note over H,G: (6) Main call: pull_request_list
+    H->>B: InvokeTool: workload JWT, A42, op-list-prs-001, agentJwtSvid = mainSVID
+    B->>B: Check session, workload, actor, effective ceiling, route
+    opt No cached V for (A42, main, gateway)
+        B->>A1: (7) RFC 8693: subject_token = RT-A42<br/>actor_token = mainSVID<br/>requested_token_type = id-jag, audience = AS-2
+        A1->>A1: Session open, hard expiry not passed<br/>main registered to A42, build act
+        A1-->>B: J-main
+        B->>A2: (8) RFC 7523: assertion = J-main, client mecatl
+        A2->>A2: Map AS-1 subject to native user<br/>External mode: require consent link
+        A2-->>B: V-main (sub usr-alice-7c1d, act main, aud vMCP)
+    end
+    B->>V: (9) tools/call pull_request_list + Bearer V-main
+    V->>V: Validate V-main<br/>Load credential (gateway, usr-alice-7c1d, github)
+    V->>G: List PRs with Alice's GitHub token
+    G-->>V: Result
+    V-->>B: Result
+    B-->>H: Sanitized outcome
 
-    U->>H: List pull requests and review PR 42 in acme/payments<br/>API access token
-    Note over H,V: First call: main run R41 lists pull requests
-    H->>B: pull_request_list(repository=acme/payments)<br/>Workload + main SVID + R41 + op-list-prs-001
-    B->>B: Authenticate and check context<br/>Check main server/tool ceiling and connection access
-    B->>A: Exchange user subject_token + main actor_token<br/>Broker client authentication
-    A->>A: Validate user and main actor tokens and broker client<br/>Authorize requested MCP target and access bounds
-    A-->>B: Delegated token with sub=ToolHive user and act.sub=main
-    B->>V: pull_request_list with main's delegated token
-    V->>V: Authenticate delegated token and authorize list operation
-    V-->>B: Pull request list including PR 42
-    B-->>H: Sanitized list including PR 42 and observed outcome
+    rect rgb(245, 245, 245)
+        Note over H,I: Reviewer bootstrap, after the list succeeds
+        H->>H: Delegate review: D42 / R42
+        H->>I: registerInstance(reviewer, parentRef = mainRef), workload JWT
+        I-->>H: reviewerRef
+        H->>I: requestSVID(reviewerRef), workload JWT
+        I-->>H: reviewerSVID
+    end
 
-    H->>H: Main delegates PR 42 review via D42 to reviewer R42<br/>Allocate and persist child incarnation and definition
-    H->>I: Register reviewer under workload SA authentication<br/>Child persisted incarnation + registered reviewer definition + registered parent reference
-    I-->>H: Registered reviewer reference and child subject
-    H->>I: Request reviewer SVID<br/>Workload credential + registered reviewer reference
-    I-->>H: Reviewer's own JWT-SVID
-
-    Note over H,V: Second call: reviewer run R42 reads PR 42
-    H->>B: pull_request_read(repository=acme/payments, number=42)<br/>Workload + reviewer SVID + R42 + D42 + op-pr42-001
-    B->>B: Authenticate and check context<br/>Check reviewer server/tool ceiling and connection access
-    B->>A: Exchange user subject_token + reviewer actor_token<br/>Broker client authentication
-    A->>A: Validate user and reviewer actor tokens and broker client<br/>Authorize requested MCP target and delegated access bounds
-    A-->>B: Delegated token with sub=ToolHive user and act.sub=reviewer
-    B->>V: pull_request_read PR 42 with reviewer's delegated token
-    V->>V: Authenticate delegated token and authorize PR 42 read
-    V-->>B: PR 42 result
-    B-->>H: Sanitized PR result and observed outcome
-    H-->>U: Review produced from reviewer findings<br/>No credentials in model history
+    H->>B: InvokeTool: A42, op-pr42-001, agentJwtSvid = reviewerSVID
+    Note over B,G: Same checks and cache-miss path with actor_token = reviewerSVID<br/>J-reviewer and V-reviewer: act = reviewer, nested act = main
+    B-->>H: Sanitized outcome
+    H-->>U: Review outcome
 ```
 
-| Legend key | Explanatory check or record (not a chronological message) |
-| --- | --- |
-| [(1) API access token](#1-company-api-access-token) | After the API request and before the main run, mecak8s validates the token and checks its issuer and subject against the stored session owner; only then does it start `R41`. This authenticates the API request and enforces session ownership, not MCP dispatch authorization. |
-| [(2) Workload credential](#2-workload-credential) | The broker authenticates mecak8s for registration, issuance, and both invocations. This authenticates the service's lifecycle assertions, not isolation from compromised code in that service. Invalid workload credentials stop the request. |
-| [(3) Broker session and instance registration](#3-broker-session-and-instance-registration) | Before returning the registered reference and before (4), the issuer validates the workload and persisted registration records, then constructs the canonical subject. Registration remains identity recording only; it authorizes neither spawning, run execution, nor a tool call. |
-| [(4) Agent-instance JWT-SVID](#4-agent-instance-jwt-svid) | After the SVID is returned and before an invocation, mecak8s verifies its signature using the configured agent trust bundle and checks the registered subject, allowed algorithm, audience, and expiry. |
-| [(5) Enrollment](#5-enrollment-and-authorized-connection) | If an invocation reveals missing enrollment or a grant requiring user reauthorization, the broker returns an enrollment-required response without dispatch. mecak8s pauses, presents the broker link, and retries after completion through all checks. Enrollment is not permission to execute. Refreshable expiry is handled in custody where possible. |
-| [(6) Per-operation authorization](#6-per-operation-authorization) | Main's list and reviewer's read each pass local permissions and hooks, broker credential/context checks, the actor's effective ceiling, and connection checks before dispatch. `D42` is context, not v1 dynamic delegation policy. The [ceiling rules](mcp-authorization.md#definition-derived-ceiling) fail closed, including on any Cedar diagnostic error. |
-| [(7) Token exchange and delegated MCP access token](#7-token-exchange-and-delegated-mcp-access-token) | Before requesting exchange, the broker obtains a current user access token from custody or refreshes it when needed. Before returning the delegated token, ToolHive AS validates the user token, actor credential, presenter, and bounded access. The broker restricts any delegated token to the applicable execution context; reuse never exceeds those bounds. |
-| [(8) Dispatch and observed outcome](#8-dispatch-and-observed-outcome) | Before resolving the upstream grant or calling the provider, vMCP validates the delegated token and operation policy and resolves the authorized connection. It performs each GitHub operation using the native provider credential held by ToolHive, never an SVID as the provider credential. After the provider result and before returning the sanitized result, the broker records the observed outcome and provider correlation when available. |
+The diagram follows the successful path. Other outcomes:
 
-Decision, dispatch, and outcome require durable evidence; persistence ordering and cross-service propagation are unspecified. Every subsequent tool call repeats authorization.
+- **No upstream credential.** vMCP finds no stored GitHub credential for Alice and answers "needs authorization". The broker returns the existing `mcp_authorization_pending` outcome; the TUI or Studio opens the authorization URL and rechecks, and the parked run resumes.
+- **No consent link (external mode).** AS-2 refuses to redeem the ID-JAG. The broker returns the same pending outcome, and the URL first leads through AS-2's "Allow Mecatl" step.
+- **Denial or failure.** Any denial before dispatch prevents the provider call. Retrying requires authorization again.
+- **Unknown outcome.** If dispatch may have happened but no completion was observed, the outcome is unknown and is not replayed automatically.
 
-A child call uses the same invocation flow with the child's own JWT-SVID and attributed run and delegation context. It does not require or present the parent's SVID. The broker checks the child's registered parent-instance reference, not a parent token, when it constructs the child subject and computes the child's [effective ceiling](mcp-authorization.md#delegated-authority) from its definition ceiling and the main's. It evaluates that stored effective ceiling for the call. Broker enforcement of task-specific delegated bounds remains future work.
+Every later tool call repeats the broker checks, including calls served from the `V` cache.
 
-### (1) Company API access token
+### (1) AS-1 access token
 
-The company IdP issues an API access token to Alice's client, which presents it to Mecatl over TLS. The client holds it; it terminates at the API and is not retained for downstream access. This fictional JWT access-token payload is not an ID token.
+AS-1 is Mecatl's login authorization server. mecak8s's protected-resource metadata names AS-1, and the TUI and Studio already discover their issuer there, so neither client changes. AS-1 does not hold passwords: it redirects Alice to the company IdP as an ordinary OIDC client. The company IdP administrator registers one web application, AS-1, with AS-1's callback as redirect URI.
+
+The client receives an access token for the Mecatl API and keeps its own refresh token: the TUI in the OS keyring, Studio in sealed server-side cookies. A fictional decoded access token:
 
 ```json
 {
-  "iss": "https://login.example.com",
-  "sub": "alice-204",
+  "typ": "at+jwt",
+  "iss": "https://broker.example.com/as",
+  "sub": "u-alice-91",
+  "sub_id": {"format": "iss_sub", "iss": "https://login.example.com", "sub": "alice-204"},
   "aud": "https://mecatl.example.com/api",
+  "client_id": "mecatui",
   "iat": 1799999900,
-  "exp": 1800003500
+  "exp": 1800000800,
+  "jti": "at-alice-7731"
 }
 ```
 
-This example uses mecak8s with OIDC authentication and session ownership enforcement enabled. Alice submits her request to existing session `S42`, which belongs to her. mecak8s validates her access token and checks that its issuer and subject match the session's stored owner. If either check fails, it rejects the request. Otherwise, the harness starts main run `R41`.
+mecak8s validates it as a JWT access token (RFC 9068, including `typ`), checks `aud`, and checks that `(iss, sub)` owns `hostS42`. If either check fails, it rejects the request. An `id_token` is not accepted here: its audience is the client, not the API.
 
-**Illustrative API evidence:** mecak8s accepted request `req-pr42-001` from authenticated user `(https://login.example.com, alice-204)` for session `S42`. The user identity comes from the validated token; session ownership comes from server-side state. This records API authentication and session ownership only. The broker has not yet authorized an MCP call to read PR 42.
+Session ownership is keyed by `(iss, sub)`, so the owner's issuer becomes AS-1's. Existing sessions owned by the company issuer need a migration; `sub_id` carries the company identity so mecak8s can match existing owners during the transition. The company IdP sees only AS-1 as the application: per-application IdP policies can no longer distinguish the TUI from Studio.
+
+**Evidence:** mecak8s accepted request `req-pr42-001` from `(https://broker.example.com/as, u-alice-91)` for `hostS42`. This records API authentication and ownership only.
 
 ### (2) Workload credential
 
-Kubernetes supplies mecak8s with a projected ServiceAccount token. mecak8s presents it to the broker over TLS, keeping it outside model context. This fictional decoded payload identifies the calling service:
+Kubernetes supplies mecak8s with a projected ServiceAccount token. mecak8s presents it to the broker and agent-instance issuer over TLS, outside model context:
 
 ```json
 {
@@ -134,71 +168,91 @@ Kubernetes supplies mecak8s with a projected ServiceAccount token. mecak8s prese
 }
 ```
 
-The broker checks the signature using trusted cluster keys, the issuer, allowed signing algorithm, broker audience, and expiry. It then checks that the authenticated ServiceAccount is allowed to contact it. If either check fails, it rejects the request.
+The broker checks the signature against trusted cluster keys, the issuer, allowed algorithm, broker audience, and expiry, then checks that the ServiceAccount may contact it. This identifies the mecak8s service, not Alice or an agent instance. [SPIRE alternatives](#workload-authentication) replace this credential without changing its role.
 
-**Illustrative broker evidence:** the caller authenticated as `(https://kubernetes.example.com, system:serviceaccount:mecatl:mecak8s)`. This identifies the mecak8s service, not Alice or the reviewer instance, and does not authorize the PR 42 call.
+### (3) Session open and the broker refresh token
 
-[SPIRE alternatives](#workload-authentication) replace this workload credential without changing its role.
+At `OpenSession`, mecak8s passes Alice's current AS-1 access token to the broker once, alongside workload authentication. This replaces the harness reporting `human {issuer, subject}` as plain data: the broker now holds a token AS-1 signed for Alice's client, not mecak8s's statement about her.
 
-### (3) Broker session and instance registration
+The broker exchanges that token at AS-1:
 
-The broker session reference identifies broker-owned state; knowing it grants no access. The broker checks the calling service's authenticated identity and deployment. This associates the session with mecak8s, not with Alice, and is separate from harness session `S42`. See [pauses and restart](#pauses-and-restart) for attachment and recovery details.
+```text
+POST https://broker.example.com/as/oauth/token
+grant_type=urn:ietf:params:oauth:grant-type:token-exchange
+subject_token=<Alice's AS-1 access token, aud=mecak8s>
+subject_token_type=urn:ietf:params:oauth:token-type:access_token
+requested_token_type=urn:ietf:params:oauth:token-type:refresh_token
+client_id=mecatl
+client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+client_assertion=<JWT signed with the broker's private key>
+```
 
-For the diagram's main registration, mecak8s supplies the persisted main agent-instance incarnation and selected definition, with no parent. For the reviewer, it supplies the child's persisted incarnation, the already registered reviewer definition, and the registered main-instance reference, not the main's token. The broker constructs each canonical subject under the [registration checks](agent-definitions.md#registering-instances).
+AS-1 checks, in order:
 
-Alice's identity remains a separate API report, not established by the workload credential. The issuance example in (4) preserves that distinction. See [source records and policy representation](agent-definitions.md#source-records-and-policy-representation) for the open API, schema, per-operation context-binding, and same-process protection questions.
+1. **The client.** The `private_key_jwt` assertion verifies against `mecatl`'s registered key, with `iss` = `sub` = `mecatl`, `aud` = AS-1's issuer, a short expiry, and an unused `jti`.
+2. **The subject token.** AS-1 issued it, `aud` is mecak8s, it is still active, and its `jti` has not been converted before.
+3. **Policy.** Client `mecatl` may convert tokens from the TUI and Studio, once per session, with no wider scope than the original grant.
+
+AS-1 then issues `RT-A42`. The refresh token is opaque to the broker; its meaning lives in an AS-1 record:
+
+| Field | Purpose |
+| --- | --- |
+| Client `mecatl` | Only the authenticated broker can use it. |
+| User `u-alice-91` | Subject of every ID-JAG issued from it. |
+| `A42` | The session binding. |
+| `hostS42` and host incarnation | Restart and recovery continuity. |
+| Source access-token `jti` | One conversion per session. |
+| Issue time and hard expiry | Authority horizon. Rotation does not extend it. |
+| Rotation chain | Reuse detection. |
+
+The broker supplies `A42` when the record is created, so the session binding is broker-asserted. It contains bugs such as cross-session confusion and stale sessions; it does not protect against a compromised broker. In v1 the refresh token is not tied to Alice's AS-1 login session: disabling her company account takes effect at the hard expiry at the latest. Binding to the login session is later work.
+
+The existing broker session record under `A42` keeps the workload and host-session binding. The human authority now lives in `RT-A42`, not in a broker-local human record.
+
+**Alternative:** AS-1 could return a signed session assertion JWT instead of a refresh token. It needs less ToolHive work but still requires the AS-1 record for revocation and one-conversion checks, does not rotate, and is an extension to the ID-JAG profile. See the [rework record](credential-flow-rework.md#d3-login-and-session-admission).
+
+**Evidence:** AS-1 records the conversion: client `mecatl`, user `u-alice-91`, source token `jti`, session `A42`, and the hard expiry.
 
 ### (4) Agent-instance JWT-SVID
 
-The broker's agent issuer signs each registered instance's JWT-SVID. This payload shows the reviewer's credential for the second call. The harness client holds it outside model history and presents it to the broker; the broker later presents it as the actor token to ToolHive AS. The issuer retains its private signing key. This decoded example deliberately uses only required JWT-SVID claims:
+For the diagram's main registration, mecak8s supplies the persisted main agent-instance incarnation and selected definition, with no parent. For the reviewer, it supplies the child's persisted incarnation, the already registered reviewer definition, and the registered main-instance reference, not the main's token. The agent-instance issuer constructs each canonical subject under the [registration checks](agent-definitions.md#registering-instances). Registration records identity, not permission to spawn, run, or call tools.
+
+The broker's agent issuer signs each registered instance's JWT-SVID. This payload shows the reviewer's credential for the second call. Mecatl's harness holds it outside model history and presents it to the broker for invocation. The broker forwards it to AS-1 as `actor_token`; AS-2 receives only the actor claim in the ID-JAG. The configured broker audience is accepted by both the broker invocation validator and AS-1's actor validator. The agent issuer retains its private signing key. This fictional decoded example deliberately uses only required JWT-SVID claims:
 
 ```json
 {
   "sub": "spiffe://agents.example.com/mecatl/agent/system/main/inst/inc_cejrv7re4uy3ubxyzj2gfxfp2u/child/project/code-reviewer/inst/inc_gh56irfcpnupjqgfdw7dhzzw4m",
-  "aud": ["https://broker.example.com", "https://toolhive.example.com/token"],
+  "aud": ["https://broker.example.com"],
   "exp": 1800000600
 }
 ```
 
-Before issuance, the issuer checks the workload and reviewer instance against the proposed registration in step (3); a definition's existence alone is insufficient. The harness checks that the returned subject is the registered reviewer instance, then validates its signature, allowed algorithm, expiry, and intended audiences against the configured agent trust-domain bundle. The broker and ToolHive AS each require their own audience and a permitted presenter. JWT-SVID requires `sub`, `aud`, and `exp`, but not `iss` or `jti`.
-
-**Illustrative issuance evidence for (3) and (4):** only if mecak8s's proposed lifecycle registration supplies the definition provenance and instance association, and the API supplies its user report, could the broker correlate the issued subject with the following facts. Today's broker contract does not supply these registration/user proofs, and `AgentDef` has no source or revision fields today. This is conditional audit evidence, not implemented behavior, additional JWT claims, or a registration API; protection against same-process substitution remains unresolved.
-
-```json
-{
-  "issuance_ref": "issue-42",
-  "definition": {
-    "name": "project/code-reviewer",
-    "revision": "review-def-r17",
-    "source": "repo://acme/payments/.mecatl/agents/code-reviewer.md",
-    "evidence_source": "mecak8s lifecycle registration"
-  },
-  "initiating_user": {
-    "iss": "https://login.example.com",
-    "sub": "alice-204",
-    "evidence_source": "API report",
-    "request_ref": "req-pr42-001"
-  }
-}
-```
-
-The JWT's `sub` identifies the reviewer instance. It does not carry Alice's identity or the definition revision; the correlated evidence records those separately and preserves their different sources.
+Before issuance, the issuer checks the workload and reviewer instance against the registration; a definition's existence alone is insufficient. Mecatl checks that the returned subject is the registered reviewer instance, then validates its signature, allowed algorithm, expiry, and shared broker audience against the configured agent trust-domain bundle. The broker and AS-1 each validate the SVID for their configured audience and permitted presenter. JWT-SVID requires `sub`, `aud`, and `exp`, but not `iss` or `jti`. The agent-instance issuer and trust domain are distinct from OAuth AS-1 and AS-2; AS-1 uses the validated registered identity to form the ID-JAG's `act` claim.
 
 See [credential lifetimes and renewal](#credential-lifetimes-and-renewal) for renewal across runs.
 
-### (5) Enrollment and authorized connection
+### (5) Broker client authentication
 
-For this same PR read, `th-user-731` is the ToolHive-side subject associated with Alice **in this example**, not her company-login subject. The example assumes Alice is authorized to use that subject and provider account `github-account-731` through connection `github-conn-42` for `acme/payments`. The association mechanism remains open: referring to the same person, matching names or ID suffixes, and successful OAuth do not prove authorization. `github-account-731` is a distinct provider account ID; its shared suffix with the ToolHive subject has no evidentiary meaning. Model arguments cannot select another user's connection.
+The subject tokens the broker presents are bearer tokens: they prove whose authority is used, not who presents them. The broker therefore authenticates as OAuth client `mecatl` on every token-endpoint request, at AS-1 and at AS-2, with `private_key_jwt` (OIDC Core §9, RFC 7523 client assertion):
 
-If enrollment is needed, Alice completes it before the pending call is reauthorized. The broker holds the ToolHive user grant and uses its access token as `subject_token`; ToolHive holds the native provider grant for this connection. Neither grant reaches the harness or model. Client authentication and credential placeholders are shown once under [credential custody](#credential-custody); see also [provider-connection selection](#provider-connection-selection).
+```json
+{"alg": "ES256", "kid": "broker-2026-10"}
+{
+  "iss": "mecatl", "sub": "mecatl",
+  "aud": "https://broker.example.com/as",
+  "jti": "ca-7f3a", "iat": 1800000000, "exp": 1800000060
+}
+```
 
-**Illustrative enrollment evidence:** ToolHive records verified client `mecatl-broker`, authenticated subject `th-user-731`, enrollment `enroll-42`, connection `github-conn-42`, and the provider-reported account. The broker records connection readiness with Alice still API-reported. Records exclude tokens, client authentication material, codes, and transaction secrets.
+`aud` is the authorization server's issuer identifier, following current guidance on client-assertion audiences. The private key never leaves the broker and can live in a KMS or HSM. In external mode the gateway administrator registers the broker's `jwks_uri` once.
 
-Refresh behavior belongs in [credential lifetimes and renewal](#credential-lifetimes-and-renewal).
+This makes "accept only from the broker" enforceable. A leaked Alice access token or a leaked `RT-A42` is useless without the key. A refresh token issued to an authenticated confidential client is already sender-constrained (RFC 9449 §5). A `client_secret` is not used: it is shared, replayable once leaked, and rotated by hand. mTLS client authentication (RFC 8705) is an equivalent alternative.
+
+One client ID, `mecatl`, is used at both servers, because the ID-JAG's `client_id` must match the client that redeems it at AS-2.
 
 ### (6) Per-operation authorization
 
-Local permissions and hooks run before each call. For the second call, trusted harness client code presents the workload and reviewer credentials with operation `op-pr42-001`, run `R42`, delegation `D42`, and this illustrative request:
+Local permissions and hooks run before each call. For the reviewer's call, trusted harness client code sends `InvokeTool` with workload authorization metadata, `A42`, `call.id=op-pr42-001`, and `agentJwtSvid=reviewerSVID`. The model supplies only the tool content:
 
 ```json
 {
@@ -207,175 +261,170 @@ Local permissions and hooks run before each call. For the second call, trusted h
 }
 ```
 
-The broker checks main's list against the main's effective ceiling and this read against the reviewer's, following the [definition-derived ceiling rules](mcp-authorization.md#definition-derived-ceiling). Both calls require valid workload and actor credentials, execution-context checks, and authorization to use the ToolHive subject and provider connection; in v1, user, run, and delegation remain mecak8s-reported. The reviewer ceiling gives the same result for PR 43 on this server/tool pair: v1 does not verify PR-specific bounds from `D42`. Existing connection and downstream checks still apply; see [two requests, two authorization decisions](mcp-authorization.md#two-requests-two-authorization-decisions).
+Before any exchange or dispatch, the broker checks:
 
-**Illustrative broker evidence:** `op-pr42-001` passed policy revision `review-ceiling-r17-g1` without evaluation errors and was allowed after the required connection and context checks. The workload and reviewer credential were verified; Alice remains API-reported and `D42` reported execution context. This decision proves neither dispatch nor success. The [audit evidence shape](audit.md#illustrative-authorization-evidence) owns the full attribution, request, attempt, policy, and redaction requirements.
+- the session `A42` is open and bound to the authenticated workload and `hostS42`;
+- the SVID names an instance registered to `A42`;
+- the instance's stored effective ceiling allows this server and tool, with no Cedar evaluation errors;
+- the route to the gateway.
 
-Recovered authority remains subject to the original bounds described in [pauses and restart](#pauses-and-restart).
+A cache hit skips the token exchanges, never these checks. In v1, user, run, and delegation are not Cedar inputs; the reviewer ceiling gives the same result for PR 43. See [two requests, two authorization decisions](mcp-authorization.md#two-requests-two-authorization-decisions).
 
-### (7) Token exchange and delegated MCP access token
+User and connection authorization are enforced downstream: AS-2 redeems only for a mapped (and, in external mode, linked) user, and vMCP dispatches only with Alice's stored credential. Whether the broker additionally needs its own connection evidence before dispatch remains open.
 
-In this token exchange, ToolHive exchanges the user access token and agent-instance JWT-SVID for the access token that the broker presents to vMCP. This example proposes the [RFC 9068 JWT access-token profile](https://www.rfc-editor.org/rfc/rfc9068.html#section-2) with [RFC 8693 delegation claims](https://www.rfc-editor.org/rfc/rfc8693.html#section-4.1). It is a proposed contract, not a claim about existing ToolHive behavior. The exchange output is an OAuth access token, not a JWT-SVID.
+**Evidence:** `op-pr42-001` passed the effective-ceiling policy and session, workload, and actor checks. This decision proves neither dispatch nor success. The [audit chapter](audit.md#illustrative-authorization-evidence) owns the full evidence shape.
 
-Before reading the token: `sub=th-user-731` names Alice's assumed authorized subject in ToolHive's namespace, not `(https://login.example.com, alice-204)` from her company login. `act.sub` names the reviewer instance executing `R42` under delegation `D42`; `client_id=mecatl-broker` names the broker requesting the token, not another agent or user. The token is for the same PR read at `https://mcp.example.com/payments/mcp` through `github-conn-42`; it does not itself establish that connection association.
+### (7) ID-JAG from AS-1
 
-The decoded header and payload below use fictional values. A real token is signed; its signature and serialized bearer value are omitted here.
+On a cache miss, the broker asks AS-1 for an ID-JAG ([draft-ietf-oauth-identity-assertion-authz-grant-04](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/)):
 
-**Header:**
+```text
+POST https://broker.example.com/as/oauth/token
+grant_type=urn:ietf:params:oauth:grant-type:token-exchange
+subject_token=RT-A42
+subject_token_type=urn:ietf:params:oauth:token-type:refresh_token
+actor_token=reviewerSVID
+actor_token_type=urn:ietf:params:oauth:token-type:jwt
+requested_token_type=urn:ietf:params:oauth:token-type:id-jag
+audience=https://gateway.example.com
+client_id=mecatl + client assertion
+```
+
+AS-1 resolves `RT-A42` to its record and checks that the session is open, the hard expiry has not passed, and the token is bound to `mecatl`. It validates the SVID and checks that the reviewer is registered to `A42`. It authorizes the combination of client, subject, actor, and target AS-2, then issues:
 
 ```json
+{"typ": "oauth-id-jag+jwt", "alg": "ES256", "kid": "as1-key-1"}
 {
-  "typ": "at+jwt",
-  "alg": "RS256",
-  "kid": "toolhive-example-key-1"
+  "iss": "https://broker.example.com/as",
+  "sub": "u-alice-91",
+  "aud": "https://gateway.example.com",
+  "client_id": "mecatl",
+  "act": {"sub": "agent:reviewer-gh56", "act": {"sub": "agent:main-cejr"}},
+  "jti": "jag-pr42-001",
+  "iat": 1800000001,
+  "exp": 1800000121
 }
 ```
 
-**Payload:**
+- `act` names the acting instance with an opaque, stable `agent:` identifier, not the SPIFFE path, so internal structure does not cross into the gateway's domain. The nested `act` records the instance that delegated this task. Only the outer `act.sub` identifies the actor for vMCP session binding and gateway policy; inner levels serve audit. Depth is capped. The source of the delegating instance, the reported delegation context that `InvokeTool` does not carry today, remains to be specified.
+- `aud_sub` and `email`, recommended by the draft, are deliberately omitted: AS-1 does not know AS-2's subject, and an email address is not an identity link.
+- AS-1 and AS-2 are separate issuers with separate keys, also in embedded mode; the draft forbids an issuer redeeming its own ID-JAG (§9.3).
+
+ID-JAG is a profile of [identity chaining across trust domains](https://www.ietf.org/archive/id/draft-ietf-oauth-identity-chaining-17.html). It adds the `typ`, required `client_id` and `jti`, client-binding redemption checks, and security rules that a private chaining profile would otherwise have to define. Both drafts are Internet-Drafts, not RFCs.
+
+**Evidence:** AS-1 records the ID-JAG issuance: user, session `A42`, validated actor, target, and `jti`.
+
+### (8) AS-2 access token
+
+The broker redeems the ID-JAG at AS-2 with the [RFC 7523 JWT-bearer grant](https://www.rfc-editor.org/rfc/rfc7523.html#section-2.1), authenticating again as `mecatl`. AS-2 checks the `typ`, that `aud` is its own issuer, that `client_id` matches the authenticated client, and that `jti` is unused (§4.4.1). It then resolves the native user:
+
+| Mode | How AS-2 resolves and authorizes the user |
+| --- | --- |
+| Embedded | Users log in to AS-2 through AS-1, so the AS-1 subject maps directly. AS-1 is the SSO IdP AS-2 trusts (§4.1). Consent is implicit; AS-1, AS-2, and the credential store share one trust domain. |
+| External | Identity chaining across trust domains. AS-2's users log in through their own IdP, so the §4.1 SSO precondition does not hold. AS-2 redeems only for an AS-1 `(iss, sub)` with a consent link to a native user, created once through AS-2's own login. No just-in-time provisioning. |
+
+The consent link stops a compromised AS-1 from using the gateway credentials of a user who never chose Mecatl. Its creation flow, the link-swap attack it must resist, and the shared-IdP shortcut are in the [rework record](credential-flow-rework.md#d2-grant-redeemed-at-as-2). AS-2 never resolves users through `sub_id` (§9.5).
+
+AS-2 issues a short-lived access token and no refresh token (§4.4.3):
 
 ```json
+{"typ": "at+jwt", "alg": "RS256", "kid": "gateway-example-key-1"}
 {
-  "iss": "https://toolhive.example.com",
-  "sub": "th-user-731",
-  "act": {
-    "sub": "spiffe://agents.example.com/mecatl/agent/system/main/inst/inc_cejrv7re4uy3ubxyzj2gfxfp2u/child/project/code-reviewer/inst/inc_gh56irfcpnupjqgfdw7dhzzw4m"
-  },
-  "client_id": "mecatl-broker",
-  "aud": "https://mcp.example.com/payments/mcp",
-  "iat": 1800000000,
-  "exp": 1800000300,
-  "jti": "d680052b-7081-41aa-b777-147239446ab3"
+  "iss": "https://gateway.example.com",
+  "sub": "usr-alice-7c1d",
+  "act": {"sub": "agent:reviewer-gh56", "act": {"sub": "agent:main-cejr"}},
+  "client_id": "mecatl",
+  "aud": "https://gateway.example.com/mcp",
+  "iat": 1800000005,
+  "exp": 1800000120,
+  "jti": "access-pr42-001"
 }
 ```
 
-ToolHive AS validates the user access token, the instance SVID for its own audience, and the broker's client authentication. It checks that the broker may present this actor and that the requested MCP target and access bounds are authorized before issuing the token.
+The broker caches `V-reviewer` for `(A42, reviewer, gateway)` until it expires, then obtains a new ID-JAG. vMCP binds its session (`Mcp-Session-Id`) to the user and the outer `act.sub`, so each agent instance has its own vMCP session.
 
-The audience is vMCP, not GitHub. The token lasts five minutes. No scope was requested in this example; operation policy still bounds access, so omitting `scope` does not grant unrestricted access.
+**Evidence:** AS-2 records the redemption or denial: ID-JAG `jti`, client `mecatl`, native user, actor, resource, and decision.
 
-**Illustrative AS evidence:** exchange `exchange-42` records the verified user, actor, client, target, and issued token's `(iss, jti)`. Caller-supplied run context remains reported. The broker holds the bearer outside the harness and limits reuse to the applicable execution context.
+### (9) vMCP decision and upstream credential
 
-See [downstream token exchange](#downstream-token-exchange) for token correlation and actor-history limits, and [sender binding](#sender-binding) for replay protection beyond this bearer example.
+vMCP validates `V-reviewer` against AS-2's keys, `typ`, audience, and expiry, and authorizes the operation. It then loads the upstream credential keyed by **(gateway, native user, provider)**: here `(gateway.example.com, usr-alice-7c1d, github)`. One record per user and provider exists, refreshed as a single row with compare-and-swap; the enterprise connector gateway already stores credentials this way.
 
-### (8) Dispatch and observed outcome
+Open-source ToolHive keys stored credentials by `tsid`, a per-interactive-login session ID, and a delegated `V` carries none. A per-user lookup for delegated tokens is required in standalone deployments.
 
-The broker presents the delegated token from step (7) to vMCP with the PR 42 request. vMCP checks the expected token type, trusted issuer, allowed algorithm, signature against configured issuer keys, audience, and expiry before relying on its claims. It then checks the operation and arguments against policy and verifies authorization to use `github-conn-42`.
+If no credential is stored, vMCP answers "needs authorization" and the user connects GitHub through the existing authorization flow. A later call after connection passes every check again.
 
-ToolHive supplies the provider credential from custody for the authorized target. GitHub validates that native credential, not the SVID or delegated MCP token.
-
-**Illustrative vMCP evidence:**
-
-```json
-{
-  "event": "vmcp.authorization",
-  "time": 1800000002,
-  "operation_id": "op-pr42-001",
-  "provider_connection": "github-conn-42",
-  "token_ref": {
-    "iss": "https://toolhive.example.com",
-    "jti": "d680052b-7081-41aa-b777-147239446ab3"
-  },
-  "validated_identity": {
-    "subject": "th-user-731",
-    "actor": "spiffe://agents.example.com/mecatl/agent/system/main/inst/inc_cejrv7re4uy3ubxyzj2gfxfp2u/child/project/code-reviewer/inst/inc_gh56irfcpnupjqgfdw7dhzzw4m",
-    "oauth_client": "mecatl-broker"
-  },
-  "request": {
-    "tool": "pull_request_read",
-    "arguments": {
-      "repository": "acme/payments",
-      "number": 42
-    }
-  },
-  "authorization": {
-    "decision": "allow",
-    "source": "vmcp-policy-evaluation"
-  }
-}
-```
-
-This illustrative record captures validated claims and vMCP's policy decision, not a bearer credential or proof of dispatch.
-
-**Illustrative outcome evidence:** the broker and vMCP record their dispatch attempts and observed responses for `op-pr42-001`. vMCP retains provider reference `provider-request-42` only if returned and safe to store. The broker records the MCP response it received; the API returns a sanitized answer without credentials in model history. A successful response describes what the observer received, not guaranteed provider-side effects or a complete provider audit trail. Missing completion leaves an unknown outcome; see [pauses and restart](#pauses-and-restart).
-
-The [general audit contract](audit.md) requires durable decision, dispatch, and outcome evidence. Persistence ordering and authenticated cross-service propagation remain unspecified; recipients must label propagated context as reported unless independently verified.
+**Evidence:** vMCP records its decision with the access-token reference `(iss, jti)`, user, outer actor, tool, and outcome. Neither a successful MCP response nor an authorization record proves provider-side effects. Persistence ordering and authenticated cross-service propagation of `op-pr42-001` remain unspecified.
 
 ## User identity
 
-Mecatl identifies the authenticated user by the issuer and subject of the validated login token, represented by `session.Principal`. The user's association with the acting agent must remain traceable through delegation and audit. This design does not introduce a user SPIFFE path or a separate user SVID; the agent-instance SPIFFE ID identifies the agent, not the user.
+AS-1 runs Alice's sign-in through the company IdP and represents her as `u-alice-91`, carrying the company identity in `sub_id`. mecak8s uses the AS-1 identity for API authentication and session ownership. The broker receives Alice's AS-1 token once and converts it into `RT-A42`; every ID-JAG names the subject from that refresh token's record, not from caller input.
 
-The Mecatl user identity and the ToolHive user subject are not necessarily the same identifier. Their association with the authorized provider connection must be established rather than inferred from matching names or subjects.
+Compared with a harness report, a compromised mecak8s can misuse tokens of users currently passing through it but cannot name arbitrary users. A compromised broker or AS-1 can still act for any user whose authority it holds; in external mode the consent link limits that to users who linked Mecatl.
 
-The authority design proposes trusting Mecatl's authenticated API component to report the initiating user to the broker, rather than forwarding the original login token. The broker authenticates the reporting workload, but this does not independently prove the user's authentication. How the report is protected from substitution by the untrusted agent loop remains to be specified. Audit records must distinguish this reported identity from facts the broker verified itself.
+AS-2 resolves `u-alice-91` to native Alice `usr-alice-7c1d` through shared login (embedded) or the consent link (external). The native identifier need not equal either upstream subject. Never infer the mapping from matching names or email addresses.
+
+The agent remains the actor: AS-1 validates its SVID and the registered presenter combination and sets `act`. AS-2 receives neither the AS-1 access token nor the SVID. Run, delegation, and parent facts remain lifecycle and context evidence. This selects neither multiplayer support nor run-owner attribution in place of session ownership.
 
 ## Credential custody
 
-Human login tokens terminate at Mecatl's API. They are validated for incoming requests, not retained for downstream access or scheduled execution.
+The following custody boundaries do not imply a selected persistence implementation or process-isolation boundary.
 
-Mecatl's client code holds and presents agent-instance credentials without exposing them to the model. They stay out of tool arguments, results, conversation history, logs, and environment variables. Keeping credentials hidden from the model does not protect them from a compromised harness process or isolate agents sharing that process.
-
-The broker's issuer holds the agent signing authority. Mecatl receives signed instance credentials and public verification keys, never the issuer's private signing key.
-
-The broker authenticates as OAuth client `mecatl-broker` to ToolHive AS; ToolHive authenticates separately to the provider. Operators provision each client's authentication material and server-side registration. These references leave the authentication methods open; a client ID alone is not a credential.
-
-| OAuth client | Client ID | Authentication material held by that client |
+| Credential | Holder and use | Custody and renewal |
 | --- | --- | --- |
-| Broker → ToolHive AS | `mecatl-broker` | `<BROKER_CLIENT_CREDENTIAL_REF>` |
-| ToolHive → provider AS | `<TOOLHIVE_PROVIDER_CLIENT_ID>` | `<TOOLHIVE_UPSTREAM_CLIENT_CREDENTIAL_REF>` |
+| AS-1 access token | Client presents it to mecak8s; mecak8s passes it to the broker once at session open. | Not stored by the server side. |
+| Client refresh token | TUI keyring or Studio sealed cookie. | Never leaves the client. |
+| Workload credential | Platform-managed; mecak8s presents it to the issuer and broker. | Projected credential or configured SPIRE identity. Authenticates the workload, not a user or agent. |
+| Agent-instance JWT-SVID | Harness holds `mainSVID` / `reviewerSVID` outside model context; broker forwards it to AS-1 as `actor_token`. | Agent-instance issuer keeps its signing key. Renewal requires the same registered identity and does not widen authority. |
+| Broker session `A42` (state) | Broker owns the workload and host-session binding. | Recovered under workload and continuity checks. Possession of the reference grants nothing. |
+| Broker refresh token `RT-A42` | Broker; presented only to AS-1. | Bound to `mecatl` and `A42`; rotates; hard expiry; revoked when the session closes. |
+| Broker private key | Broker; signs client assertions for AS-1 and AS-2. | KMS or HSM where available; public key published through `jwks_uri`. |
+| ID-JAG | Broker, from issuance to redemption. | Single-use, short-lived. |
+| AS-2 access token `V` | Broker presents it to vMCP. | Cached per session, instance, and gateway; per-call checks still apply. No refresh token. |
+| Consent link (state) | AS-2, external mode. | Until revoked in the gateway UI or by Mecatl. |
+| Upstream provider credential | Gateway credential store. | Keyed by (gateway, user, provider); provider-specific renewal stays at the gateway. |
 
-Enrollment yields these opaque credential placeholders; their token formats are not selected:
-
-```json
-{
-  "toolhive": {
-    "access_token": "<TOOLHIVE_USER_ACCESS_TOKEN>",
-    "refresh_token": "<TOOLHIVE_USER_REFRESH_TOKEN>"
-  },
-  "provider": {
-    "access_token": "<PROVIDER_ACCESS_TOKEN>",
-    "refresh_token": "<PROVIDER_REFRESH_TOKEN_IF_ISSUED>"
-  }
-}
-```
-
-This groups examples for reading, not storage or transport. Each AS validates its OAuth client's authentication against its registration. ToolHive AS validates the ToolHive user grant, subject, intended use, and validity; the provider validates its native access token. Enrollment requires OAuth transaction protections; callbacks and code redemption are omitted. Client credentials and grants stay outside the harness and model.
-
-The broker holds its ToolHive user access and refresh tokens. ToolHive holds, refreshes, and injects native provider credentials for the authorized connection. Neither Mecatl nor the model receives those native provider credentials. This boundary concerns protected tool access; it does not relocate other harness credentials, such as those used to call an LLM provider.
-
-Agent-instance identity does not protect against compromise of the broker's signing authority or provider-credential storage. Separating issuance, authorization, and custody into modules does not create security boundaries against compromise of their shared process or host.
+Keep credential values out of model context, tool arguments, results, transcripts, logs, environment variables, audit records, diagnostics, and errors. Hiding a credential from the model does not protect it from a compromised process that holds it. This protected MCP path does not relocate other harness credentials, such as those used to call an LLM provider.
 
 ## Credential lifetimes and renewal
 
-An agent instance keeps its identity across runs, while its short-lived instance JWT-SVID can expire and be renewed. Renewing that credential establishes continued use of the same identity; the broker still authorizes each MCP tool call.
+An agent instance keeps its identity across runs. These lifetimes are independent.
 
-A single run may need several delegated access tokens, either for different protected MCP endpoints or because an earlier token expires. Each token has its own audience, expiry, and access limits. Obtaining or refreshing one does not widen permission to call tools.
+| Item | Expiry or loss of authority | Replacement |
+| --- | --- | --- |
+| AS-1 access token | AS-1 policy; short. Expiry ends API authentication, not the broker session. | The client refreshes with its own refresh token. |
+| Client refresh token | AS-1 policy and upstream sign-in status. | Sign in again. |
+| Workload JWT | Expired credentials are rejected. | Platform rotation for the same workload. |
+| `mainSVID` / `reviewerSVID` | Expiry prevents use as current actor evidence. | The agent-instance issuer renews for the same registered instance; the ceiling does not widen. |
+| `RT-A42` | Hard expiry, session close, revocation, or reuse detection. Rotation does not extend the hard expiry. | A new session open with a fresh AS-1 access token. |
+| ID-JAG | Short-lived and single-use. | A new exchange with `RT-A42` and a current SVID. |
+| `V` | Short-lived; every cached use still passes broker checks. | A new ID-JAG. |
+| Broker private key | Operator rotation. | New key published through `jwks_uri`. |
+| Consent link | Revocation at AS-2. | The user links again. |
+| Upstream provider credential | Provider expiry or revocation. | Refresh at the gateway, or the user connects again. |
 
-The broker presents its ToolHive refresh token to ToolHive AS with required client authentication to renew the user access token. ToolHive similarly presents an optional provider refresh token to the provider AS with required upstream client authentication. Each AS validates its refresh grant; custodians must safely store rotated replacements. Without a provider refresh token, renewal requires another supported path or enrollment.
+The example times are illustrative, not selected defaults: `J-reviewer` is valid `1800000001..1800000121`, `V-reviewer` `1800000005..1800000120`. The value of `RT-A42`'s hard expiry is not selected; it is the authority horizon for runs without Alice present and should be known to the company IdP administrator.
 
-The user's login token, the agent-instance credential, and downstream access tokens have separate lifetimes. Expiry of the login token used to start work does not, by itself, end that work. A provider connection can also remain available after that login token expires. Neither continued connectivity nor successful token refresh authorizes a later tool call without the broker's policy checks.
-
-Ending a run in the harness does not automatically invalidate tokens already issued. A recipient that validates a self-contained bearer token without checking current authorization state may accept it until expiry. The mechanism for communicating cancellation or withdrawal to the broker and downstream recipients remains to be specified.
+Closing or revoking the session revokes `RT-A42` and invalidates the broker's `V` cache for that session. A recipient validating only a self-contained token may still accept an already-issued `V` until it expires.
 
 ## Pauses and restart
 
-The broker's session reference and broker session incarnation are separate from the host session ID and [agent-instance incarnation](agent-definitions.md#definitions-and-executing-instances). An attachment binding identifies the exact logical attachment incarnation; separate recovery references and continuity checks govern stored-credential recovery. An existing stable broker session can recover a new process-local attachment and binding through those checks. Expired custody withdraws connected authority without necessarily destroying the broker session. Those references do not combine user, agent, definition, and authority into one record.
+The broker's session reference and broker session incarnation are separate from the host session ID and [agent-instance incarnation](agent-definitions.md#definitions-and-executing-instances). An existing stable broker session can recover a new process-local attachment through continuity checks. Those references do not combine user, agent, definition, and authority into one record.
 
-Workload-only session access checks the exact authenticated workload and configured deployment, rejecting caller-supplied owner assertions. A replacement Pod with the same workload identity can serve that partition; a different identity cannot assume access.
+Workload-only session access checks the exact authenticated workload and configured deployment, and rejects workload-supplied owner assertions. A replacement Pod with the same workload identity can serve the existing partition; a different identity cannot assume access.
 
-An approval wait or provider-enrollment pause leaves the current run unfinished. Before dispatching the pending MCP operation, the broker checks it against the applicable authorization policy. Connecting a provider account does not approve the pending operation.
+An approval wait or provider-connection pause leaves the current run unfinished. Before dispatching the pending operation, the broker checks it against the applicable policy again. Connecting a provider account does not approve the pending operation.
 
-After restart, recovering credentials is not enough to continue safely. The system must recover the unfinished execution context and establish the association between the user, acting agent, and provider connection. If that association cannot be established, the tool call must fail closed. The harness determines whether execution resumes; the broker authorizes subsequent MCP calls.
+After restart, recovering credentials is not enough to continue safely. Recovery must restore `A42` and its workload and host binding, find `RT-A42`'s AS-1 record still valid, and reestablish the registered actors and unfinished execution. If `RT-A42` has expired or been revoked, tool calls fail closed until a new session open supplies fresh authority. The harness decides whether execution resumes; the broker authorizes subsequent calls.
 
-Under the [identity and selection continuity rules](agent-definitions.md#identity-continuity-across-runs-and-restarts), continuation retains the unfinished run's original bounds. In v1, the broker rechecks the stored effective ceiling and existing connection restrictions; the harness retains its run/delegation restrictions. Broker evaluation of task-specific delegated bounds is deferred. Credential renewal does not widen recovered authority.
+Under the [identity and selection continuity rules](agent-definitions.md#identity-continuity-across-runs-and-restarts), continuation retains the unfinished run's original bounds. In v1, the broker rechecks the stored effective ceiling; the harness retains its run and delegation restrictions. Credential renewal does not widen recovered authority.
 
-An operation that may have been dispatched but has no recorded completion has an unknown outcome. Restoring credentials does not make replay safe. Reconciliation requires evidence about the original operation, such as provider status or an applicable idempotency mechanism.
+An operation that may have been dispatched but has no recorded completion has an unknown outcome. Restoring credentials does not make replay safe. Reconciliation requires evidence about the original operation, such as provider status or an idempotency mechanism.
 
 ## Scheduled runs
 
-A scheduled invocation executes without a live interactive user. Its recorded owner identifies on whose behalf the work was configured; audit records must distinguish scheduled execution from a fresh human request.
+A scheduled invocation runs without Alice present. Its recorded owner identifies on whose behalf the work was configured; audit records must distinguish scheduled execution from a fresh human request.
 
-Human login tokens are not retained for later invocations. Provider credentials remain in broker/ToolHive custody. A saved owner or an available provider connection does not, by itself, authorize an MCP operation.
-
-The harness starts and manages scheduled runs. The broker authorizes their MCP tool calls. The mechanism for establishing unattended authority is a separate design concern.
+A scheduled run uses the broker refresh token of the session it runs in. That refresh token's hard expiry is the limit of unattended authority: after it, or after revocation, the run's tool calls fail closed until Alice signs in again. A saved owner or an available provider connection does not authorize an MCP operation on its own. Each call still passes the broker checks, AS-2 redemption, and vMCP's credential lookup. What a scheduled run does when consent or a connection is missing, fail and notify or wait, remains open.
 
 ## Workload authentication
 
@@ -399,27 +448,21 @@ For SPIRE authentication, audit evidence identifies the configured trust domain/
 
 A workload credential alone cannot distinguish `code-reviewer` from `deployer` when both run in the same Mecatl service. A self-declared agent name does not establish that distinction for broker policy.
 
-## Downstream token exchange
+A future option is to authenticate the broker as OAuth client `mecatl` with its SPIFFE workload identity instead of a separate private key; ToolHive's authorization server already accepts SPIFFE client authentication.
 
-To obtain delegated access to a protected MCP endpoint, the broker presents three distinct credentials to ToolHive's authorization server: its ToolHive user access token as `subject_token`, the agent-instance JWT-SVID as `actor_token`, and its own OAuth client authentication.
+## AS-2 access-token use and actor history
 
-The instance credential must be valid for presentation to ToolHive's authorization server. Acceptance by the broker alone does not establish that audience.
+The broker redeems the ID-JAG as described in [step (8)](#8-as-2-access-token). AS-2 issues an access token naming its native user in `sub`, the acting agent in `act`, the OAuth client `mecatl`, and the vMCP resource in `aud`. The broker presents this token to vMCP; the SVID is not an AS-2 input.
 
-ToolHive issues a delegated access token identifying the user in `sub`, the acting instance in `act.sub`, and the broker OAuth client in `client_id`. Its audience is the protected MCP endpoint, not the external provider such as GitHub. These identities do not by themselves authorize particular tool arguments; the broker still checks the requested MCP operation.
+The ID-JAG `jti`, AS-2 token `(iss, jti)`, and operation ID are separate references. A token can be reused for multiple authorized calls, so its `jti` cannot replace a per-operation reference. Each recipient records only what it verifies or observes.
 
-The protected MCP endpoint validates the delegated token and applies operation policy. ToolHive resolves the authorized provider connection and uses its native credential for the external call. Validated claims identify the user and current actor directly; permissions and account associations can still require authoritative records.
-
-The issuer-qualified `jti` supports token correlation but does not prevent replay or replace a per-operation identifier: several calls can reuse one token. The walkthrough's shared operation ID expresses desired correlation, not an established authenticated join between services.
-
-The token's single `act` object identifies the current actor. RFC 8693 nested `act` objects describe previous actors and are informational for access control. Creation ancestry and current execution delegation remain separate evidence, not actor history inferred from the SPIFFE path or copied into nested claims.
+The outer `act` identifies the current actor ([RFC 8693 §4.1](https://www.rfc-editor.org/rfc/rfc8693.html#section-4.1)). The nested `act` records the instance that delegated the current task, a chain of prior actors in RFC 8693's sense; it does not record creation ancestry, which stays in the SPIFFE path inside Mecatl. Until the agent ceiling is also carried as scope or `authorization_details`, the gateway enforces user and connection, and the broker alone enforces the agent ceiling.
 
 ## Provider-connection selection
 
-ToolHive resolves the provider connection from validated identity and authoritative connection records.
+The vMCP gateway resolves the provider credential from the validated user and the route's provider, keyed by (gateway, native user, provider).
 
-The model cannot select another user's credentials or redirect them by supplying a URL, header, audience, or credential selector. The broker and ToolHive resolve the target and credentials within the authorized connection.
-
-If the required identity, connection, or authorization evidence is missing, invalid, stale, or revoked, the call fails closed. It must not fall back to a service credential, another user, or a more privileged agent. A denied tool call dispatches no backend operation.
+The model cannot select another user's credentials or redirect them by supplying a URL, header, audience, or credential selector. If required identity, link, connection, or authorization evidence is missing, invalid, stale, or revoked, the call fails closed. It does not fall back to a service credential, another user, or a more privileged agent. A denied tool call dispatches no backend operation. Missing credentials or consent surface through the existing `mcp_authorization_pending` flow; how an external gateway reports them to the broker as a structured outcome remains open.
 
 ## Instance identity and creation ancestry
 
@@ -455,8 +498,6 @@ These IDs describe instance identity and creation ancestry. The initiating user 
 
 ## Sender binding
 
-The walkthrough's delegated token is a bearer without sender binding. Its signature protects the claims from alteration but does not prove which holder presented it.
+`RT-A42`, the ID-JAG, and `V` are all presented only by the broker. `RT-A42` and the ID-JAG are usable only together with the broker's client authentication, so they are sender-constrained through `mecatl`'s private key. `V` remains a bearer token presented to vMCP; its signature protects the claims but does not prove the holder. DPoP-binding `V` to a broker key would close that gap; ToolHive supports DPoP in neither the authorization server nor vMCP today.
 
-Workload-level DPoP is follow-on work to bind the broker-facing OAuth credential to a presenting worker's key and reduce replay of stolen access tokens. It does not establish which agent inside that worker made a call, protect against a compromised worker using its own key, or bind the MCP arguments. Agent-instance identity and tool-call authorization remain separate checks.
-
-Key custody, renewal, restart behavior, and replay handling belong in the implementation design.
+Binding a credential to a worker's key would not establish which agent inside that worker made a call, protect against a compromised worker using its own key, or bind the MCP arguments. Agent-instance identity and tool-call authorization remain separate checks.

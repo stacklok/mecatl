@@ -41,29 +41,31 @@ The existing `AgentDef` structure currently combines instructions, execution set
 
 The agent loop uses those definitions to perform work, but it cannot decide which identities or permissions the rest of the system should trust. Definition loading, authorization, and audit therefore need trusted responsibilities outside the loop.
 
-The harness hosts the API and agent loop and authenticates the initiating user. An **agent-definition loader** supplies harness execution configuration and broker definition records and authority ceilings. An **identity broker** is a separate trusted service that governs access to protected tools. It issues agent credentials, checks requested operations against policy, and arranges downstream access using credentials it controls. It also records the decisions and actions it observes.
+The harness hosts the API and agent loop and validates the initiating user's AS-1 access token. An **agent-definition loader** supplies harness execution configuration and broker definition records and authority ceilings. An **identity broker** is a separate trusted service that governs access to protected tools. It issues agent credentials, checks requested operations against policy, and arranges downstream access using credentials it controls. It also records the decisions and actions it observes.
 
 This design scopes broker authorization to MCP tools. Extending that boundary to filesystem operations, Shell, and agent spawning is a [future direction](all-tool-mediation.md); their authorization and routing remain to be designed.
 
 ```mermaid
 flowchart LR
-    U["Client"] -->|"Session creation and requests"| H["mecak8s"]
+    U["Client"] -->|"Sign-in"| A1
+    U -->|"Session creation and requests, AS-1 access token"| H["mecak8s"]
     F["Agent-definition sources"] --> R["Agent-definition loader (mecak8s lifecycle)"]
     R -->|"Execution configuration"| H
     subgraph B["Identity broker"]
-        I["Identity issuance and authorization"]
-        G["Grant issuer (AS-1)"]
-        I --> G
+        I["Authorization and audit<br/>OAuth client mecatl"]
+        A1["AS-1: login and ID-JAG issuer"]
     end
+    A1 -->|"Redirect to company sign-in"| IdP["Company IdP"]
     subgraph W["vMCP gateway (embedded or external)"]
         T["Gateway AS (AS-2) and credential storage"]
         V["vMCP"]
         T --- V
     end
     R -->|"Workload-authenticated definition and instance registration"| I
-    H <-->|"User report, tool requests, and results"| I
-    G -->|"Chaining grant"| T
-    I <-->|"Authorized MCP calls"| V
+    H <-->|"Workload-authenticated MCP calls; AS-1 access token once at session open; agent SVID per call"| I
+    I -->|"RFC 8693: session refresh token, then ID-JAG per call"| A1
+    I -->|"RFC 7523: redeem ID-JAG for V"| T
+    I <-->|"Authorized MCP calls with V"| V
     V <-->|"Protected calls"| P["MCP backends / providers"]
     I -->|"Decisions and observed outcomes"| A["Audit records"]
 ```
@@ -72,15 +74,17 @@ The diagram shows the broker-backed remote architecture's MCP path. Local deploy
 
 Before the agent loop starts, mecak8s's trusted session lifecycle code [loads and persists the fixed definition selection](agent-definitions.md#loading-definitions-for-a-session), supplies execution configuration, and [registers definitions and the main instance](agent-definitions.md#registering-instances) with the broker under workload authentication. This loader responsibility is outside the untrusted loop, not a separate registrar or an isolation boundary. The registration API, durable schema, verified per-operation binding for reported context, and protection from same-process substitution remain open.
 
-The broker contains the agent trust issuer, the authorization and audit logic, and a grant issuer (AS-1). The vMCP gateway contains its own authorization server (AS-2), the provider credential storage, and the vMCP. The gateway can run inside the Mecatl deployment or be operated separately, such as an enterprise connector gateway. In both cases AS-1 vouches for the user and acting agent with a short-lived grant that AS-2 redeems; see [MCP gateway modes](mcp-gateway-modes.md). The tools themselves execute the operations.
+The broker contains the agent trust issuer, authorization and audit logic, and AS-1, Mecatl's login authorization server. The vMCP gateway contains AS-2, provider credential storage, and the vMCP. The gateway can run inside the Mecatl deployment or as an external gateway.
 
-The remaining trust question is how the broker knows that the reported user and agent definition are genuine. The agent loop must not be able to substitute either. Giving agents distinct credentials helps identify them, but does not isolate agents sharing one `mecak8s` process.
+Alice signs in through AS-1, which redirects her to the company IdP. Her client then calls mecak8s with an AS-1 access token. mecak8s validates that token and current session ownership. At session open it passes the token to the broker once, and the broker exchanges it at AS-1 for a refresh token bound to that broker session. On each tool call the broker presents that refresh token and the acting agent's JWT-SVID to AS-1, which returns an ID-JAG naming Alice and the agent. The broker redeems the ID-JAG at AS-2 for the vMCP access token `V`. The broker is a single OAuth client, `mecatl`, at both AS-1 and AS-2, and authenticates with `private_key_jwt`. AS-2 maps the AS-1 subject to its native user; an external gateway also requires a one-time consent link created at AS-2's own login. AS-2 receives neither Alice's AS-1 token nor the agent SVID. See [credentials and lifecycle](credentials-and-lifecycle.md#interactive-execution) for the walkthrough and [MCP gateway modes](mcp-gateway-modes.md) for the gateway side. The tools themselves execute the operations.
+
+AS-1 witnessed Alice's sign-in itself, checks that the acting instance is registered to the session, and authorizes the client, subject, actor, and target. It does not prove that the agent registration, ancestry, run, or delegation reported by trusted lifecycle code is genuine. The agent loop must not choose those facts, and distinct agent credentials do not isolate agents sharing one `mecak8s` process.
 
 ## Following an action through the architecture
 
 Alice asks her main agent to list pull requests and review PR 42. Once the session's definitions are loaded, the main calls `pull_request_list`, then delegates to `code-reviewer`. The reviewer calls `pull_request_read` for PR 42. Each call requires its own authorization decision.
 
-The broker checks the reviewer's effective server/tool ceiling, its definition ceiling narrowed by the main's, with Cedar and retains existing user/connection checks. V1 does not evaluate PR-specific delegated bounds or comprehensive enterprise user policy. If all required checks pass, ToolHive dispatches the call using Alice's GitHub credential, which stays outside `mecak8s`. If denied, no request reaches GitHub.
+The broker checks the reviewer's effective server/tool ceiling, its definition ceiling narrowed by the main's, with Cedar. User and connection are enforced downstream: AS-2 redeems only for a mapped, and in external mode linked, user, and vMCP dispatches only with Alice's stored credential. V1 does not evaluate PR-specific delegated bounds or comprehensive enterprise user policy. If all required checks pass, ToolHive dispatches the call through the authorized connection using its native provider credential. That credential stays outside the harness and model; in embedded mode it can reside inside the Mecatl deployment. If denied, no request reaches GitHub.
 
 GitHub sees access under Alice's account. The broker's audit record supplies the rest of the story: which reviewer acted, which agent delegated the work, why the call was permitted, and what result was observed. A missing result is recorded as unknown, not as proof that the operation never happened.
 
@@ -98,5 +102,6 @@ The proposed chapters develop each part of the architecture.
 | [MCP gateway modes](mcp-gateway-modes.md) | Chain the broker's grant issuer to the vMCP gateway's authorization server, so one protocol works with an embedded or an external gateway. |
 | [Credentials and lifecycle](credentials-and-lifecycle.md) | Follow one credential-to-outcome walkthrough with validation and audit evidence, then explain renewal and recovery. |
 | [All-tool mediation](all-tool-mediation.md) | Develop the broader authorization boundary for filesystem tools, Shell, and spawning. |
+| [Credential flow rework](credential-flow-rework.md) | Record in-progress decisions that replace the credential flow above with an AS-1-issued ID-JAG. Until the rework lands, it takes precedence where the two disagree. |
 
 The [implementation and verification companion](implementation.md) records integration requirements and checks. This broker-centered architecture supersedes the earlier identity model's harness-owned signing and audit responsibilities; the donor documents are retained in Git history.
