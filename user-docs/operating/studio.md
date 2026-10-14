@@ -273,10 +273,12 @@ temporary-storage scope, and other arguments show formatted JSON. Arguments
 that repeat a name, spell one in another case, or add one the tool doesn't
 define also show as formatted JSON, because the tool could read them
 differently from a diff or command view. In commands, formatted JSON, and raw
-arguments, each bidirectional control (U+202A to U+202E and U+2066 to U+2069)
-and zero-width character (U+200B to U+200D and U+FEFF) shows as a badge with
-its code point, and copied text keeps the original characters. Select
-**Raw arguments** to see the
+arguments, invisible formatting characters show as badges with their code
+point: bidirectional controls and marks (U+061C, U+200E, U+200F, U+202A to
+U+202E, and U+2066 to U+2069), zero-width characters (U+200B to U+200D and
+U+FEFF), the word joiner and invisible operators (U+2060 to U+2064), and tag
+characters (U+E0000 to U+E007F). Copied text keeps the original characters.
+Select **Raw arguments** to see the
 exact arguments, then choose **Allow once**, **Always allow**, or **Deny**. If
 the arguments are unavailable, only **Deny** is enabled. In a chat, **Open in
 detail panel** shows the same request in the side panel with its complete diff,

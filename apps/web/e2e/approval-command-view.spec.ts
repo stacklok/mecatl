@@ -163,9 +163,10 @@ test("invisible characters show as named badges, keep the text in order, and cop
   page,
 }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  const codePoints = [0x202e, 0x202c, 0x200b];
-  const [rlo, pdf, zwsp] = codePoints.map((codePoint) => String.fromCodePoint(codePoint));
-  const text = `echo one ${rlo}two three${pdf} four${zwsp}five`;
+  // A tag character is one code point stored as a surrogate pair.
+  const codePoints = [0x202e, 0x202c, 0x200b, 0xe0041];
+  const [rlo, pdf, zwsp, tag] = codePoints.map((codePoint) => String.fromCodePoint(codePoint));
+  const text = `echo one ${rlo}two three${pdf} four${zwsp}five six${tag}seven`;
   const args = JSON.stringify({ command: text });
   const card = await openAsk(offlineBff, page, args);
   await expect(card.getByText("Contains invisible characters", { exact: true })).toBeVisible();
@@ -199,6 +200,6 @@ test("invisible characters show as named badges, keep the text in order, and cop
   expect(lefts.two).toBeLessThan(lefts.three);
   expect(await copied(page, command)).toBe(text);
   await card.getByRole("button", { name: "Raw arguments" }).click();
-  await expect(command.getByRole("img")).toHaveCount(3);
+  await expect(command.getByRole("img")).toHaveCount(4);
   expect(await copied(page, command)).toBe(args);
 });

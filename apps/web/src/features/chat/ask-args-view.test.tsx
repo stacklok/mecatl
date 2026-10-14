@@ -22,6 +22,13 @@ const INVISIBLE_CODE_POINTS = [
   0xfeff,
 ];
 
+/** The ranges the set gained after review, beyond the issue's code points. */
+const ADDED_RANGES: Array<[string, number[]]> = [
+  ["the implicit bidi marks", [0x200e, 0x200f, 0x061c]],
+  ["the word joiner and the invisible operators", [0x2060, 0x2061, 0x2062, 0x2063, 0x2064]],
+  ["the tag block", Array.from({ length: 0x80 }, (_, index) => 0xe0000 + index)],
+];
+
 function code(codePoint: number): string {
   return `U+${codePoint.toString(16).toUpperCase().padStart(4, "0")}`;
 }
@@ -78,6 +85,20 @@ function expectBadge(scope: HTMLElement, codePoint: number) {
     expect(badge.textContent).toBe(String.fromCodePoint(codePoint));
   }
   return badges;
+}
+
+/** One badge per code point, in order: visible label, accessible name, and the character as its text. */
+function expectBadgesInOrder(scope: HTMLElement, codePoints: number[]) {
+  const badges = within(scope).getAllByRole("img", { name: /^invisible character U\+/ });
+  expect(badges.map((badge) => badge.getAttribute("aria-label"))).toEqual(
+    codePoints.map((codePoint) => `invisible character ${code(codePoint)}`),
+  );
+  badges.forEach((badge, index) => {
+    const codePoint = codePoints[index] as number;
+    expect(badge.getAttribute("data-label")).toBe(`⟨${code(codePoint)}⟩`);
+    expect(classes(badge)).toContain("before:content-[attr(data-label)]");
+    expect(badge.textContent).toBe(String.fromCodePoint(codePoint));
+  });
 }
 
 describe("approval card long command (#2259)", () => {
@@ -269,6 +290,55 @@ describe("approval card invisible characters (#2259)", () => {
     expectBadge(onlyPre(card), 0x200c);
   });
 
+  it.each(ADDED_RANGES)(
+    "shows every code point in %s as a named badge in the command, raw, and JSON views",
+    (_name, codePoints) => {
+      const command = `echo ${codePoints.map((codePoint) => `x${String.fromCodePoint(codePoint)}`).join("")}x`;
+      const args = JSON.stringify({ command });
+      const card = renderCard(args);
+      const pre = onlyPre(card);
+      expectBadgesInOrder(pre, codePoints);
+      expect(pre.textContent).toBe(command);
+      expect(within(card).getByText("Contains invisible characters")).toBeTruthy();
+
+      fireEvent.click(within(card).getByRole("button", { name: "Raw arguments" }));
+      const raw = onlyPre(card);
+      expectBadgesInOrder(raw, codePoints);
+      expect(raw.textContent).toBe(args);
+      cleanup();
+
+      const pretty = onlyPre(renderCard(JSON.stringify({ path: command }), "Read"));
+      expectBadgesInOrder(pretty, codePoints);
+      expect(pretty.textContent).toBe(`{\n  "path": ${JSON.stringify(command)}\n}`);
+    },
+  );
+
+  it("shows a tag character, one surrogate pair, as one badge and copies it as sent", () => {
+    const tag = String.fromCodePoint(0xe0041);
+    expect(tag).toHaveLength(2);
+    const command = `echo one${tag}two${tag}`;
+    const args = JSON.stringify({ command });
+    const card = renderCard(args);
+    const pre = onlyPre(card);
+    expectBadgesInOrder(pre, [0xe0041, 0xe0041]);
+    expect(within(pre).getAllByRole("img")).toHaveLength(2);
+    expect(selectAll(pre)).toBe(command);
+
+    fireEvent.click(within(card).getByRole("button", { name: "Raw arguments" }));
+    const raw = onlyPre(card);
+    expectBadgesInOrder(raw, [0xe0041, 0xe0041]);
+    expect(selectAll(raw)).toBe(args);
+  });
+
+  it("leaves emoji variation selectors as they are", () => {
+    const command = `echo ${String.fromCodePoint(0x2764, 0xfe0f)} ${String.fromCodePoint(0x2b50, 0xfe0e)} done`;
+    const card = renderCard(JSON.stringify({ command }));
+    const pre = onlyPre(card);
+    expect(pre.textContent).toBe(command);
+    expect(pre.children).toHaveLength(0);
+    expect(within(card).queryByText("Contains invisible characters")).toBeNull();
+  });
+
   it("copies the exact original text, never the badge labels", () => {
     const character = (codePoint: number) => String.fromCodePoint(codePoint);
     const command = `echo one${character(0x200b)}two${character(0x202e)}three\n${character(0x2066)}four${character(0x2069)}${character(0xfeff)}`;
@@ -297,11 +367,19 @@ describe("invisible character detection", () => {
     },
   );
 
+  it.each(ADDED_RANGES)("finds every code point in %s", (_name, codePoints) => {
+    for (const codePoint of codePoints) {
+      expect(hasInvisibleCharacters(`a${String.fromCodePoint(codePoint)}b`)).toBe(true);
+    }
+  });
+
+  // U+200E joined the set with the implicit bidi marks; these neighbours stay out,
+  // including the variation selectors U+FE00 and U+FE0F.
   it.each(
-    [0x200a, 0x200e, 0x2029, 0x202f, 0x2065, 0x206a, 0xfefe, 0xff00].map((codePoint) => [
-      code(codePoint),
-      codePoint,
-    ]),
+    [
+      0x061b, 0x061d, 0x200a, 0x2010, 0x2029, 0x202f, 0x205f, 0x2065, 0x206a, 0xfe00, 0xfe0f,
+      0xfefe, 0xff00, 0xdffff, 0xe0080,
+    ].map((codePoint) => [code(codePoint), codePoint]),
   )("leaves the neighbouring %s alone", (_name, codePoint) => {
     expect(hasInvisibleCharacters(`a${String.fromCodePoint(codePoint)}b`)).toBe(false);
   });

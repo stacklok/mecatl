@@ -5,12 +5,20 @@ import { Badge } from "@/components/ui/badge";
 import { ASK_ARGS_PARSE_LIMIT } from "./ask-args";
 
 /**
- * The characters an approval view shows as badges: the bidirectional controls
- * (U+202A–U+202E, U+2066–U+2069) and the zero-width characters (U+200B–U+200D,
- * U+FEFF). Each one renders as nothing or reorders the text around it, so the
- * text a reviewer reads could differ from the text that runs.
+ * The characters an approval view shows as badges. Each one renders as nothing
+ * or changes how the text around it reads, so the text a reviewer reads could
+ * differ from the text that runs:
+ * - the bidirectional controls (U+202A–U+202E, U+2066–U+2069) and the implicit
+ *   marks (U+200E, U+200F, U+061C);
+ * - the zero-width characters (U+200B–U+200D, U+FEFF), the word joiner
+ *   (U+2060), and the invisible operators (U+2061–U+2064);
+ * - the tag characters (U+E0000–U+E007F).
+ * The variation selectors (U+FE00–U+FE0F) stay out, so emoji keep their look.
  */
-const INVISIBLE = /[\u200B-\u200D\u202A-\u202E\u2066-\u2069\uFEFF]/u;
+const INVISIBLE =
+  /[\u061C\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\u{E0000}-\u{E007F}]/u;
+// The u flag reads a tag character's surrogate pair as one code point, so it
+// gets one badge.
 const EVERY_INVISIBLE = new RegExp(INVISIBLE.source, "gu");
 
 /** Whether `text` holds a character `VisibleText` shows as a badge. */
