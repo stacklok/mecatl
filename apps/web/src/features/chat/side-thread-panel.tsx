@@ -54,7 +54,7 @@ import {
   useUserDisplayName,
 } from "../../lib/profile-preferences";
 import { useAuthRecovery } from "../auth/auth-recovery-context";
-import { ApprovalPanel, type ApprovalRequest, type ApprovalVerdict } from "./approval-panel";
+import type { ApprovalRequest, ApprovalVerdict } from "./approval-panel";
 import type { ComposerModelOption } from "./chat-composer";
 import { useChatEscape } from "./chat-escape";
 import {
@@ -69,8 +69,9 @@ import {
 import { Message } from "./chat-workspace";
 import { EscapeHintContext } from "./escape-hint-context";
 import { groupModels, ModelEffortMenu } from "./model-effort-menu";
+import { PendingAskCard, pendingAskKey } from "./pending-ask-card";
 import { exactPlanControlAvailability, followPlanContinuationFromBff } from "./plan-continuation";
-import { PlanReviewCard, type PlanVerdict } from "./plan-review-card";
+import type { PlanVerdict } from "./plan-review-card";
 import {
   CATCHING_UP_NOTICE,
   decideTruncation,
@@ -289,26 +290,20 @@ export function SideThreadPanel({
                 ))}
               </div>
             )}
-            {unmatchedApprovals(run.approvals, run.messages).map((approval) =>
-              approval.tool === "PresentPlan" ? (
-                <PlanReviewCard
-                  approval={approval}
-                  disabled={run.approvalDisabled(approval)}
-                  key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
-                  onRespond={(verdict) => void run.respondToPlan(approval, verdict)}
-                  uncertain={run.approvalUncertain(approval)}
-                  unavailableReason={run.planUnavailableReason(approval)}
-                />
-              ) : (
-                <ApprovalPanel
-                  approval={approval}
-                  disabled={run.approvalDisabled(approval)}
-                  key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
-                  onRespond={(verdict) => void run.respondToApproval(approval, verdict)}
-                  uncertain={run.approvalUncertain(approval)}
-                />
-              ),
-            )}
+            {unmatchedApprovals(run.approvals, run.messages).map((approval) => (
+              <PendingAskCard
+                approval={approval}
+                controls={{
+                  approvalDisabled: run.approvalDisabled,
+                  approvalUncertain: run.approvalUncertain,
+                  onRespondToApproval: (target, verdict) =>
+                    void run.respondToApproval(target, verdict),
+                  onRespondToPlan: (target, verdict) => void run.respondToPlan(target, verdict),
+                  planUnavailableReason: run.planUnavailableReason,
+                }}
+                key={pendingAskKey(approval)}
+              />
+            ))}
           </div>
         </div>
 

@@ -122,7 +122,7 @@ import { useAuthRecovery } from "../auth/auth-recovery-context";
 import { useSteerAvailable } from "../runtime/use-steer-available";
 import { useShortcut, useShortcutSuppression } from "../shortcuts/shortcut-provider";
 import { ApprovalDetailContext } from "./approval-detail-context";
-import { ApprovalPanel, type ApprovalRequest, type ApprovalVerdict } from "./approval-panel";
+import type { ApprovalRequest, ApprovalVerdict } from "./approval-panel";
 import {
   type AuthorizationHandoff,
   type AuthorizationOperation,
@@ -196,9 +196,10 @@ import {
   messageRowClass,
 } from "./message-bubble";
 import { MessageMinimap } from "./message-minimap";
+import { PendingAskCard, pendingAskKey } from "./pending-ask-card";
 import { PermissionModeBadge } from "./permission-mode-badge";
 import { exactPlanControlAvailability, followPlanContinuationFromBff } from "./plan-continuation";
-import { PlanReviewCard, type PlanVerdict } from "./plan-review-card";
+import type { PlanVerdict } from "./plan-review-card";
 import { QueuedMessageStrip } from "./queued-message-strip";
 import { ReasoningDisclosure } from "./reasoning-disclosure";
 import {
@@ -3999,26 +4000,19 @@ export function Message({
             tools={message.tools}
           />
         )}
-        {unmatched.map((approval) =>
-          approval.tool === "PresentPlan" ? (
-            <PlanReviewCard
-              approval={approval}
-              disabled={!approval.controlTarget || (approvalDisabled?.(approval) ?? false)}
-              key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
-              onRespond={(verdict) => onRespondToPlan?.(approval, verdict)}
-              uncertain={approvalUncertain?.(approval)}
-              unavailableReason={planUnavailableReason?.(approval)}
-            />
-          ) : (
-            <ApprovalPanel
-              approval={approval}
-              disabled={!approval.controlTarget || (approvalDisabled?.(approval) ?? false)}
-              key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
-              onRespond={(verdict) => onRespondToApproval?.(approval, verdict)}
-              uncertain={approvalUncertain?.(approval)}
-            />
-          ),
-        )}
+        {unmatched.map((approval) => (
+          <PendingAskCard
+            approval={approval}
+            controls={{
+              approvalDisabled,
+              approvalUncertain,
+              onRespondToApproval,
+              onRespondToPlan,
+              planUnavailableReason,
+            }}
+            key={pendingAskKey(approval)}
+          />
+        ))}
         {!streaming && !message.failure && <StopReasonChip stopReason={message.stopReason ?? ""} />}
         {message.failure && (
           <FailedTurnCard

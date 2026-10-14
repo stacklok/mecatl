@@ -2,11 +2,11 @@
 
 import { ChevronRight, Plug, Server } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ApprovalPanel, type ApprovalRequest, type ApprovalVerdict } from "./approval-panel";
+import type { ApprovalRequest } from "./approval-panel";
 import { type AuthorizationHandoff, AuthorizationReviewTrigger } from "./authorization-review";
 import { approvalMatchesToolCall } from "./chat-state";
 import { ToolDiff } from "./edit-diff";
-import { PlanReviewCard, type PlanVerdict } from "./plan-review-card";
+import { PendingAskCard, type PendingAskControls, pendingAskKey } from "./pending-ask-card";
 import type { ToolActivity } from "./tool-activity";
 import { friendlyToolName, summarizeArgs, summarizeResult } from "./tool-summary";
 import { useDetailsOpen } from "./use-details-open";
@@ -53,14 +53,9 @@ export function activitySummary(tools: ToolActivity[]): { failed: string | null;
   };
 }
 
-interface ToolCallControls {
-  approvalDisabled?: (approval: ApprovalRequest) => boolean;
-  approvalUncertain?: (approval: ApprovalRequest) => boolean;
+interface ToolCallControls extends PendingAskControls {
   onPreview?: (tool: ToolActivity) => void;
-  onRespondToApproval?: (approval: ApprovalRequest, verdict: ApprovalVerdict) => void;
-  onRespondToPlan?: (approval: ApprovalRequest, verdict: PlanVerdict) => void;
   onReviewAuthorization?: (authorization: AuthorizationHandoff) => void;
-  planUnavailableReason?: (approval: ApprovalRequest) => string | undefined;
 }
 
 /**
@@ -145,26 +140,9 @@ function ToolCallRow({
           onReview={controls.onReviewAuthorization ?? (() => undefined)}
         />
       ))}
-      {approvals.map((approval) =>
-        approval.tool === "PresentPlan" ? (
-          <PlanReviewCard
-            approval={approval}
-            disabled={!approval.controlTarget || (controls.approvalDisabled?.(approval) ?? false)}
-            key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
-            onRespond={(verdict) => controls.onRespondToPlan?.(approval, verdict)}
-            uncertain={controls.approvalUncertain?.(approval)}
-            unavailableReason={controls.planUnavailableReason?.(approval)}
-          />
-        ) : (
-          <ApprovalPanel
-            approval={approval}
-            disabled={!approval.controlTarget || (controls.approvalDisabled?.(approval) ?? false)}
-            key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
-            onRespond={(verdict) => controls.onRespondToApproval?.(approval, verdict)}
-            uncertain={controls.approvalUncertain?.(approval)}
-          />
-        ),
-      )}
+      {approvals.map((approval) => (
+        <PendingAskCard approval={approval} controls={controls} key={pendingAskKey(approval)} />
+      ))}
     </li>
   );
 }
