@@ -324,6 +324,11 @@ type noopLauncher struct{}
 
 func (noopLauncher) Open(context.Context, string) error { return nil }
 
+// writerFunc adapts a function to io.Writer.
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
+
 // TestRunMCPLoginProductionOptionsKeepDCRPriorityThroughRealRuntime proves the
 // app-wiring layer, not just the isolated mcp/oauthlogin package: it captures the
 // EXACT oauthlogin.Options runMCPLoginContext builds in production (PinCallbackPath
@@ -381,16 +386,13 @@ func TestRunMCPLoginProductionOptionsKeepDCRPriorityThroughRealRuntime(t *testin
 		t.Fatalf("prepare real DCR registration: %v", err)
 	}
 
-	captured.Launcher = noopLauncher{}
-	runtime, err := oauthlogin.New(captured)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
 	var redirect string
-	err = runtime.AuthorizeWithCallbackPath(ctx, prepared.Issuer, dcrPath, func(ctx context.Context, got string, present func(context.Context, string) (oauthlogin.Result, error)) error {
-		redirect = got
+	// Production options run NoBrowser, so present writes the URL to URLWriter
+	// after it has recorded the expected state. Fire the callback from there so it
+	// cannot beat the state, as a real browser cannot.
+	urlWriter := captured.URLWriter
+	captured.Launcher = noopLauncher{}
+	captured.URLWriter = writerFunc(func(p []byte) (int, error) {
 		go func() {
 			req, _ := http.NewRequest(http.MethodGet, redirect+"?code=code&state=s&iss="+url.QueryEscape(prepared.Issuer), nil)
 			resp, doErr := (&http.Client{}).Do(req)
@@ -398,6 +400,16 @@ func TestRunMCPLoginProductionOptionsKeepDCRPriorityThroughRealRuntime(t *testin
 				resp.Body.Close()
 			}
 		}()
+		return urlWriter.Write(p)
+	})
+	runtime, err := oauthlogin.New(captured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	err = runtime.AuthorizeWithCallbackPath(ctx, prepared.Issuer, dcrPath, func(ctx context.Context, got string, present func(context.Context, string) (oauthlogin.Result, error)) error {
+		redirect = got
 		_, presentErr := present(ctx, "https://as.example.test/authorize?state=s")
 		return presentErr
 	})
