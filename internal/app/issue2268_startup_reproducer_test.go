@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"google.golang.org/grpc"
@@ -28,6 +29,10 @@ import (
 // persisted local placement. Missing event evidence is intentional: no model
 // execution is needed to exercise the formerly racy Build-owned callback.
 func TestIssue2268StartupConfigRace(t *testing.T) {
+	synctest.Test(t, testIssue2268StartupConfigRace)
+}
+
+func testIssue2268StartupConfigRace(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	workspace := osfsWSForTest(t, t.TempDir()).Root()
@@ -56,7 +61,7 @@ func TestIssue2268StartupConfigRace(t *testing.T) {
 	claimed, listing, finalized := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	repository := &issue2268GatedRepository{AttemptRepository: base, claimed: claimed, release: release, finalized: finalized}
 	ledger := automaticStoreForTest(t, t.TempDir(), defaultLearningAutomaticConfig())
-	remoteAddr := startSourceDriver(t, func(s *grpc.Server) {
+	remoteAddr, conns := startStartupLoopDriver(t, nil, func(s *grpc.Server) {
 		driverv1.RegisterLearningRepositoryCapabilitiesServiceServer(s, grpcdriver.NewLearningRepositoryCapabilitiesServer(grpcdriver.LearningRepositoryCapabilities{
 			AttemptRepository: true, ProposalRepository: true, SkillRepository: true,
 			ValidatedSkillActivation: true, AutomaticAdmissionLedger: true,
@@ -77,14 +82,14 @@ func TestIssue2268StartupConfigRace(t *testing.T) {
 			return nil, req.Context().Err()
 		}
 	})}
-	cfg := Config{
+	cfg := isolateConfig(t, Config{
 		Workspace: workspace, StoreDir: storeDir, UserModelDir: userModelDir,
 		NoSoul: true, NoShell: true, TrustProject: true,
 		LearningMode: learning.Auto, LearningAutomatic: defaultLearningAutomaticConfig(), LearningStoreURL: remoteAddr,
 		envDetector:         fakeEnv(map[string]string{"OPENROUTER_API_KEY": "offline"}),
 		providerConstructor: func(_ Config, _, _, _ string) port.LLMProvider { return mockllm.New() },
-		liveModelHTTPClient: client, liveModelRefreshSync: true,
-	}
+		liveModelHTTPClient: client, liveModelRefreshSync: true, driverConns: conns,
+	})
 	type result struct {
 		built *Built
 		err   error
@@ -107,6 +112,7 @@ func TestIssue2268StartupConfigRace(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("late startup listing did not enter")
 	}
+	synctest.Wait()
 	select {
 	case <-claimed:
 		t.Fatal("recovery claimed work before composition finished")
