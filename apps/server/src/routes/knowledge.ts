@@ -76,12 +76,15 @@ const errorResponse = {
   content: { "application/problem+json": { schema: problemDetailsSchema } },
   description: "The request could not be completed.",
 } as const;
+// The validation hook and `app.onError` can answer any route with these.
+const transportErrors = { 400: errorResponse, 429: errorResponse } as const;
 
 const listConfiguredSkillsRoute = createRoute({
   method: "get",
   operationId: "listConfiguredSkills",
   path: "/api/v1/skills",
   responses: {
+    ...transportErrors,
     200: {
       content: { "application/json": { schema: configuredSkillsResponseSchema } },
       description: "The configured skill inventory.",
@@ -96,6 +99,7 @@ const listLearnedSkillsRoute = createRoute({
   operationId: "listLearnedSkills",
   path: "/api/v1/learned-skills",
   responses: {
+    ...transportErrors,
     200: {
       content: { "application/json": { schema: learnedSkillsResponseSchema } },
       description: "The learned skill lifecycle inventory.",
@@ -117,6 +121,7 @@ const learnedSkillActionRoute = createRoute({
     params: learnedSkillParameters,
   },
   responses: {
+    ...transportErrors,
     200: {
       content: { "application/json": { schema: learnedSkillActionResponseSchema } },
       description:
@@ -134,6 +139,7 @@ const getLearnedSkillRoute = createRoute({
   path: "/api/v1/learned-skills/{skillId}",
   request: { params: learnedSkillParameters, query: learnedSkillLocatorQuery },
   responses: {
+    ...transportErrors,
     200: {
       content: { "application/json": { schema: learnedSkillSchema } },
       description: "One complete learned-skill version.",
@@ -150,6 +156,7 @@ const diffLearnedSkillVersionsRoute = createRoute({
   path: "/api/v1/learned-skills/{skillId}/diff",
   request: { params: learnedSkillParameters, query: learnedSkillDiffQuery },
   responses: {
+    ...transportErrors,
     200: {
       content: { "application/json": { schema: learnedSkillDiffResponseSchema } },
       description: "A unified diff between two learned-skill versions.",
@@ -165,6 +172,7 @@ const listLearnedSkillChangesRoute = createRoute({
   operationId: "listLearnedSkillChanges",
   path: "/api/v1/learned-skills/changes",
   responses: {
+    ...transportErrors,
     200: {
       content: { "application/json": { schema: learnedSkillChangesResponseSchema } },
       description: "Recent learned-skill lifecycle changes.",
@@ -180,6 +188,7 @@ const listMemoryRoute = createRoute({
   operationId: "listUserMemory",
   path: "/api/v1/user-memory",
   responses: {
+    ...transportErrors,
     200: {
       content: { "application/json": { schema: userMemoryResponseSchema } },
       description: "The user-model memory index.",
@@ -195,6 +204,7 @@ const listLearningProposalsRoute = createRoute({
   path: "/api/v1/learning-proposals",
   request: { query: learningProposalQuery },
   responses: {
+    ...transportErrors,
     200: {
       content: { "application/json": { schema: learningProposalsResponseSchema } },
       description: "The daemon-curated learning proposal review queue.",
@@ -210,6 +220,7 @@ const getLearningProposalRoute = createRoute({
   path: "/api/v1/learning-proposals/{proposalId}",
   request: { params: learningProposalParameters },
   responses: {
+    ...transportErrors,
     200: {
       content: { "application/json": { schema: learningProposalDetailSchema } },
       description:
@@ -235,6 +246,7 @@ const decideLearningProposalRoute = createRoute({
     params: learningProposalParameters,
   },
   responses: {
+    ...transportErrors,
     200: {
       content: { "application/json": { schema: learningProposalSchema } },
       description: "The proposal after the recorded review decision.",
@@ -258,6 +270,7 @@ const undoLearningPromotionRoute = createRoute({
     params: learningProposalParameters,
   },
   responses: {
+    ...transportErrors,
     200: {
       content: { "application/json": { schema: learningProposalSchema } },
       description: "The proposal after its promotion was reverted.",
@@ -275,6 +288,7 @@ const reflectSessionRoute = createRoute({
   path: "/api/v1/sessions/{sessionId}/reflection",
   request: { params: sessionParameters },
   responses: {
+    ...transportErrors,
     200: {
       content: { "application/json": { schema: reflectionReceiptSchema } },
       description: "The completed session reflection receipt.",
@@ -296,6 +310,7 @@ const generateMemoryConsolidationPlanRoute = createRoute({
     },
   },
   responses: {
+    ...transportErrors,
     201: {
       content: { "application/json": { schema: memoryConsolidationPlanSchema } },
       description: "A bounded daemon-curated consolidation plan for the requested memory store.",
@@ -318,6 +333,7 @@ const decideMemoryConsolidationPlanRoute = createRoute({
     params: memoryConsolidationPlanParameters,
   },
   responses: {
+    ...transportErrors,
     200: {
       content: { "application/json": { schema: memoryConsolidationReceiptSchema } },
       description: "The receipt for applying or dismissing the whole consolidation plan.",
@@ -337,6 +353,7 @@ const getMemoryRoute = createRoute({
   path: "/api/v1/user-memory/{memoryKey}",
   request: { params: memoryParameters },
   responses: {
+    ...transportErrors,
     200: {
       content: { "application/json": { schema: memoryDetailResponseSchema } },
       description: "One user-model memory entry and its revisions.",

@@ -258,6 +258,33 @@ function csrfApp(...args: Parameters<typeof createApp>) {
 
 const app = csrfApp({ knowledge });
 
+describe("knowledge route documentation", () => {
+  it("declares the transport errors the validation hook and error handler can return", () => {
+    const document = createApp({ knowledge }).getOpenAPIDocument({
+      info: { title: "test", version: "0" },
+      openapi: "3.1.0",
+    });
+    const knowledgePath =
+      /^\/api\/v1\/(skills|learned-skills|user-memory|learning-proposals|sessions\/\{sessionId\}\/reflection)/u;
+    const operations = Object.entries(document.paths ?? {})
+      .filter(([path]) => knowledgePath.test(path))
+      .flatMap(([path, item]) =>
+        Object.entries(item ?? {}).map(([method, operation]) => ({
+          method,
+          operation: operation as { responses?: Record<string, unknown> },
+          path,
+        })),
+      );
+
+    expect(operations).toHaveLength(15);
+    for (const { method, operation, path } of operations) {
+      expect(Object.keys(operation.responses ?? {}), `${method} ${path}`).toEqual(
+        expect.arrayContaining(["400", "429"]),
+      );
+    }
+  });
+});
+
 describe("knowledge routes", () => {
   it("lists configured skills", async () => {
     const response = await app.request("/api/v1/skills");

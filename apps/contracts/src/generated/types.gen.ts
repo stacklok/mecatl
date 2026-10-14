@@ -2303,6 +2303,28 @@ export type ListConfiguredSkillsErrors = {
     /**
      * The request could not be completed.
      */
+    400: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    429: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
     500: {
         code: string;
         detail: string;
@@ -2353,6 +2375,28 @@ export type ListLearnedSkillsData = {
 };
 
 export type ListLearnedSkillsErrors = {
+    /**
+     * The request could not be completed.
+     */
+    400: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    429: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
     /**
      * The request could not be completed.
      */
@@ -2419,6 +2463,28 @@ export type ListLearnedSkillChangesData = {
 };
 
 export type ListLearnedSkillChangesErrors = {
+    /**
+     * The request could not be completed.
+     */
+    400: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    429: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
     /**
      * The request could not be completed.
      */
@@ -2492,6 +2558,28 @@ export type GetLearnedSkillData = {
 };
 
 export type GetLearnedSkillErrors = {
+    /**
+     * The request could not be completed.
+     */
+    400: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    429: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
     /**
      * The request could not be completed.
      */
@@ -2573,6 +2661,28 @@ export type DiffLearnedSkillVersionsErrors = {
     /**
      * The request could not be completed.
      */
+    400: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    429: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
     500: {
         code: string;
         detail: string;
@@ -2636,6 +2746,28 @@ export type ActOnLearnedSkillData = {
 };
 
 export type ActOnLearnedSkillErrors = {
+    /**
+     * The request could not be completed.
+     */
+    400: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    429: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
     /**
      * The request could not be completed.
      */
@@ -2717,6 +2849,28 @@ export type ListLearningProposalsErrors = {
     /**
      * The request could not be completed.
      */
+    400: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    429: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
     500: {
         code: string;
         detail: string;
@@ -2792,6 +2946,17 @@ export type GetLearningProposalErrors = {
     /**
      * The request could not be completed.
      */
+    400: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
     404: {
         code: string;
         detail: string;
@@ -2804,6 +2969,17 @@ export type GetLearningProposalErrors = {
      * The request could not be completed.
      */
     409: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    429: {
         code: string;
         detail: string;
         instance: string;
@@ -2909,7 +3085,29 @@ export type DecideLearningProposalErrors = {
     /**
      * The request could not be completed.
      */
+    400: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
     409: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    429: {
         code: string;
         detail: string;
         instance: string;
@@ -3002,7 +3200,29 @@ export type UndoLearningPromotionErrors = {
     /**
      * The request could not be completed.
      */
+    400: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
     409: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    429: {
         code: string;
         detail: string;
         instance: string;
@@ -3093,6 +3313,28 @@ export type ReflectSessionErrors = {
     /**
      * The request could not be completed.
      */
+    400: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    429: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
     500: {
         code: string;
         detail: string;
@@ -3156,6 +3398,28 @@ export type GenerateMemoryConsolidationPlanData = {
 };
 
 export type GenerateMemoryConsolidationPlanErrors = {
+    /**
+     * The request could not be completed.
+     */
+    400: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    429: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
     /**
      * The request could not be completed.
      */
@@ -3242,6 +3506,17 @@ export type DecideMemoryConsolidationPlanErrors = {
     /**
      * The request could not be completed.
      */
+    400: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
     404: {
         code: string;
         detail: string;
@@ -3265,6 +3540,17 @@ export type DecideMemoryConsolidationPlanErrors = {
      * The request could not be completed.
      */
     410: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    429: {
         code: string;
         detail: string;
         instance: string;
@@ -3338,6 +3624,28 @@ export type ListUserMemoryErrors = {
     /**
      * The request could not be completed.
      */
+    400: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    429: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
     500: {
         code: string;
         detail: string;
@@ -3392,7 +3700,29 @@ export type GetUserMemoryErrors = {
     /**
      * The request could not be completed.
      */
+    400: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
     404: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    429: {
         code: string;
         detail: string;
         instance: string;
