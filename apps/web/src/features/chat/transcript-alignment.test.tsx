@@ -117,8 +117,20 @@ describe("tool call list", () => {
     window.localStorage.setItem("studio.profile.expand-details", "expanded");
     const preview = vi.fn();
     render(<ToolCallList onPreview={preview} tools={[mcp]} />);
-    fireEvent.click(screen.getByRole("button", { name: "Open GitHub · Issue write details" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open GitHub · Issue write details, running" }),
+    );
     expect(preview).toHaveBeenCalledWith(mcp);
+  });
+
+  it("names a call's status in its label, so a failed call is not announced like a finished one", () => {
+    window.localStorage.setItem("studio.profile.expand-details", "expanded");
+    render(
+      <ToolCallList onPreview={vi.fn()} tools={[{ ...mcp, isError: true, output: "denied" }]} />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Open GitHub · Issue write details, failed" }),
+    ).toBeTruthy();
   });
 });
 

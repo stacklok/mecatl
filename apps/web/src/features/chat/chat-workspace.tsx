@@ -1307,6 +1307,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     setForkStarting(true);
     setError(undefined);
     setNotice("Forking this conversation…");
+    const viewedAtStart = viewedSessionId.current;
     try {
       const detail = await queryClient.fetchQuery(
         getSessionDetailOptions({ path: { sessionId: row.id } }),
@@ -1323,7 +1324,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         path: { sessionId: row.id },
       });
       await queryClient.invalidateQueries({ queryKey: listSessionsQueryKey() });
-      await selectSession(successor.id);
+      // Someone who went to another chat while the fork ran is not pulled away; the fork is in the list.
+      if (viewedSessionId.current === viewedAtStart) await selectSession(successor.id);
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {

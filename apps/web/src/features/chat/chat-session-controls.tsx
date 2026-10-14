@@ -5,6 +5,7 @@ import { GitFork, Minimize2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { GHOST_TRIGGER_CLASS } from "./composer-option-menu";
 import { contextUtilization } from "./context-usage";
+import { formatTokens } from "./turn-stats";
 
 interface SessionUsageControlsProps {
   compacting: boolean;
@@ -168,16 +169,4 @@ function humanize(value: string) {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
-}
-
-function formatTokens(value: string) {
-  const count = BigInt(value);
-  if (count < 1_000n) return count.toString();
-  if (count < 1_000_000n) return `${compact(count, 1_000n)}k`;
-  return `${compact(count, 1_000_000n)}m`;
-}
-
-function compact(value: bigint, divisor: bigint) {
-  const tenths = (value * 10n) / divisor;
-  return tenths % 10n === 0n ? (tenths / 10n).toString() : `${tenths / 10n}.${tenths % 10n}`;
 }

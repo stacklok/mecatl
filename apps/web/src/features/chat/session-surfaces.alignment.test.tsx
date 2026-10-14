@@ -424,6 +424,40 @@ describe("chat list row menu", () => {
     );
   });
 
+  it("leaves someone who went to another chat during the fork where they are", async () => {
+    const bff = new Bff();
+    bff.rows = [
+      row("chat"),
+      { ...row("other"), title: "Other chat" },
+      row("third"),
+      row("successor"),
+    ];
+    let release!: () => void;
+    bff.heldDetail = { id: "other", release: new Promise((done) => (release = done)) };
+    const mounted = await mount(bff);
+    const user = userEvent.setup();
+    await screen.findByText("Saved answer");
+    await user.click(
+      screen.getByRole("button", { name: "Options for chat: Other chat", hidden: true }),
+    );
+    const item = await screen.findByRole("menuitem", { name: "Fork chat" });
+    item.focus();
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(bff.calls("/api/v1/sessions/other")).toHaveLength(1));
+
+    // The fork is still reading its model; the reader moves to another chat.
+    await act(async () => {
+      await mounted.router.navigate({ search: { sessionId: "third" }, to: "/workspace/chat" });
+    });
+    await act(async () => {
+      release();
+    });
+    await waitFor(() => expect(bff.calls("/api/v1/sessions/other/fork", "POST")).toHaveLength(1));
+    // The fork exists, and the reader stays on the chat they chose.
+    await waitFor(() => expect(bff.calls("/api/v1/sessions", "GET").length).toBeGreaterThan(1));
+    expect(mounted.router.state.location.search).toMatchObject({ sessionId: "third" });
+  });
+
   it("forks only once while a fork is in flight", async () => {
     const bff = new Bff();
     bff.rows = [

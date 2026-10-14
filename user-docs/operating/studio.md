@@ -320,10 +320,9 @@ approval button selects that decision without sending your draft. The
 
 ### Review external authorization
 
-If a tool needs external authorization, the chat header shows **Waiting for
-authorization**; on a phone, where the header has no room for the label, an amber
-key replaces the spinner that marks a working run. Select **Review authorization**
-in the chat. Select **Open authorization** to complete the external step in a new tab,
+If a tool needs external authorization, the chat shows **Waiting for
+authorization**. Select **Review authorization** on the tool call. Select
+**Open authorization** to complete the external step in a new tab,
 then return to Studio and select **Recheck**. The panel shows the observed
 status. **Cancel authorization** ends the pending handoff. Opening the external
 page alone does not grant access, and closing the review panel leaves the

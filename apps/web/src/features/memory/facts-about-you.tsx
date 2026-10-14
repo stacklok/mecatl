@@ -43,18 +43,18 @@ export function FactsAboutYou() {
             <TableHeader className="@max-[440px]:hidden">
               <TableRow className="hover:bg-transparent">
                 <SortableHead
-                  className="w-[280px] px-4 lg:w-[320px]"
+                  className="w-[280px] lg:w-[320px]"
                   label="Name"
                   sort={sort}
                   sortKey="name"
                 />
-                <SortableHead className="px-4" label="Remembers" sort={sort} sortKey="remembers" />
+                <SortableHead label="Remembers" sort={sort} sortKey="remembers" />
               </TableRow>
             </TableHeader>
             <TableBody>
               {rows.map((entry) => (
                 <TableRow key={entry.key}>
-                  <TableCell className="max-w-0 px-4 py-3 @max-[440px]:w-full">
+                  <TableCell className="max-w-0 @max-[440px]:w-full">
                     <Link
                       className="block truncate text-sm font-medium hover:underline"
                       search={{ item: entry.key }}
@@ -68,7 +68,7 @@ export function FactsAboutYou() {
                       {entry.description || NO_DESCRIPTION}
                     </p>
                   </TableCell>
-                  <TableCell className="max-w-0 px-4 py-3 @max-[440px]:hidden">
+                  <TableCell className="max-w-0 @max-[440px]:hidden">
                     <p className="line-clamp-1 whitespace-normal text-xs text-muted-foreground">
                       {entry.description || NO_DESCRIPTION}
                     </p>

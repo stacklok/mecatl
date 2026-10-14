@@ -334,7 +334,8 @@ function ProposalQueueCard() {
             ))}
           </ul>
         )}
-        {proposals.isFetchNextPageError && (
+        {/* A failed Load more or a failed background refresh keeps the rows it has. */}
+        {proposals.isError && items.length > 0 && (
           <p className="text-sm text-destructive" role="alert">
             {errorMessage(proposals.error)}
           </p>

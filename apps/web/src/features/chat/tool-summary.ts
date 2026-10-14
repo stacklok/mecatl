@@ -18,16 +18,41 @@ const BODY_KEYS: ReadonlySet<string> = new Set(["content", "new_string", "old_st
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** Clamps to `max` code points with a trailing ellipsis (never splits a pair). */
+/**
+ * How much of a tool's args or output a one-line preview ever looks at, in
+ * UTF-16 units. A row renders this on every mount, and an MCP tool's output
+ * has no upstream size cap, so a preview must not walk a multi-megabyte string.
+ */
+const SCAN_LIMIT = 4096;
+
+/** Largest text parsed as JSON for a shape summary; bigger payloads read as text. */
+const JSON_PARSE_LIMIT = 256 * 1024;
+
+/**
+ * Clamps to `max` code points with a trailing ellipsis (never splits a pair).
+ * Only a bounded head of the text is split into code points.
+ */
 export function clampChars(text: string, max: number): string {
-  const chars = [...text];
-  if (chars.length <= max) return text;
-  return `${chars.slice(0, Math.max(0, max - 1)).join("")}${ELLIPSIS}`;
+  if (text.length <= max) return text;
+  // A code point is at most two units, so more than `2 * max + 2` units is
+  // certainly more than `max` code points; a shorter text is checked exactly.
+  const head = [...text.slice(0, 2 * max + 2)];
+  if (head.length <= max) return text;
+  return `${head.slice(0, Math.max(0, max - 1)).join("")}${ELLIPSIS}`;
 }
 
 /** Folds every line break and run of whitespace into one space. */
 function flatten(text: string): string {
   return text.replace(/\s+/g, " ").trim();
+}
+
+/** Flattens and clamps a long text, reading only its first `SCAN_LIMIT` units. */
+function preview(text: string, max: number): string {
+  if (text.length <= SCAN_LIMIT) return clampChars(flatten(text), max);
+  const flat = flatten(text.slice(0, SCAN_LIMIT));
+  const clamped = clampChars(flat, max);
+  // More text follows what was read, so the preview always says it was cut.
+  return clamped === flat ? `${clampChars(flat, Math.max(0, max - 1))}${ELLIPSIS}` : clamped;
 }
 
 /** "N lines" for a body argument — the count the TUI's card shows. */
@@ -56,14 +81,15 @@ export function summarizeArgs(
   const maxKeys = options.maxKeys ?? 4;
   const maxValueChars = options.maxValueChars ?? 60;
   if (!rawArgs || rawArgs.trim() === "") return "";
+  if (rawArgs.length > JSON_PARSE_LIMIT) return preview(rawArgs, maxValueChars);
   let parsed: unknown;
   try {
     parsed = JSON.parse(rawArgs);
   } catch {
-    return clampChars(flatten(rawArgs), maxValueChars);
+    return preview(rawArgs, maxValueChars);
   }
   if (!isRecord(parsed)) {
-    return clampChars(flatten(rawArgs), maxValueChars);
+    return preview(rawArgs, maxValueChars);
   }
   const entries = Object.entries(parsed);
   const shown = entries.slice(0, maxKeys).map(([key, value]) => {
@@ -72,7 +98,7 @@ export function summarizeArgs(
       return `${key}: <${lines} line${lines === 1 ? "" : "s"}>`;
     }
     if (typeof value === "string") {
-      return `${key}: ${clampChars(flatten(value), maxValueChars)}`;
+      return `${key}: ${preview(value, maxValueChars)}`;
     }
     let rendered: string;
     try {
@@ -108,7 +134,7 @@ export function summarizeResult(
   if (!output) return "";
   const trimmed = output.trim();
   if (trimmed === "") return "";
-  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+  if (trimmed.length <= JSON_PARSE_LIMIT && (trimmed.startsWith("{") || trimmed.startsWith("["))) {
     try {
       const parsed: unknown = JSON.parse(trimmed);
       if (Array.isArray(parsed)) {
@@ -125,7 +151,7 @@ export function summarizeResult(
       // Not JSON after all — fall through to the text preview.
     }
   }
-  return clampChars(flatten(trimmed), maxChars);
+  return preview(trimmed, maxChars);
 }
 
 export interface FriendlyToolName {

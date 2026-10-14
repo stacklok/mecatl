@@ -236,6 +236,25 @@ describe("learning queue paging", () => {
     expect(titles()).toEqual(["p1"]);
   });
 
+  it("keeps the rows it has and says so when the refresh after a decision fails", async () => {
+    const user = userEvent.setup();
+    state.pages = { "staged|": { items: [proposal("p1")] } };
+    renderPage();
+    const item = await row("Title of p1");
+    await user.click(item.getByRole("button", { name: "Approve" }));
+    const dialog = await screen.findByRole("alertdialog");
+    // The decision succeeds, then the list refetch that follows it fails.
+    state.pages = { "staged|": () => problem(503, "unavailable", "The daemon is unreachable.") };
+    await user.click(within(dialog).getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(state.decide).toHaveLength(1));
+    expect(
+      (await screen.findAllByRole("alert")).some(
+        (alert) => alert.textContent === "The daemon is unreachable.",
+      ),
+    ).toBe(true);
+    expect(titles()).toEqual(["p1"]);
+  });
+
   it("restarts from the first page on Refresh", async () => {
     const user = userEvent.setup();
     state.pages = {

@@ -17,12 +17,11 @@ export function errorMessage(error: unknown): string {
 }
 
 /**
- * A daemon refusal rendered verbatim inline on a page (D7-43): a
+ * A daemon refusal rendered verbatim inline on a page: a
  * `whitespace-pre-wrap` block so a multi-line refusal keeps its line breaks,
- * on a soft destructive card. Shared so the skills/memory/learning restyle
- * passes apply it consistently instead of each hand-rolling the string, the
- * way `schedules-workspace.tsx`/`schedule-detail.tsx`/`schedule-dialog.tsx`
- * each did in Phase 7.
+ * on a soft destructive card. Shared so every page applies it consistently
+ * instead of hand-rolling the string, as `schedules-workspace.tsx`,
+ * `schedule-detail.tsx` and `schedule-dialog.tsx` each used to.
  */
 export const REFUSAL_BANNER_CLASS =
   "whitespace-pre-wrap rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive";

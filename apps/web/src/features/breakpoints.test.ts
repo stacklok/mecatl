@@ -57,13 +57,14 @@ function scanned(): string[] {
 }
 
 /** The viewport breakpoint variants the guard looks for, alone or after other variants. */
-const viewportVariants = new Set(["sm", "md", "max-sm", "max-md"]);
+const viewportVariants = new Set(["sm", "md", "min-sm", "min-md", "max-sm", "max-md"]);
 
 /**
  * The classes in a source text that carry a viewport `sm:` / `md:` variant,
- * in any position (`dark:sm:flex`, `[&>svg]:md:size-4`) and in its `max-`
- * form. A container query (`@md:`, `@max-md:`) reads its container, not the
- * viewport, so it passes.
+ * in any position (`dark:sm:flex`, `[&>svg]:md:size-4`) and in its `min-`
+ * and `max-` forms (`min-sm:` compiles to the same media query as `sm:`). A
+ * container query (`@md:`, `@max-md:`) reads its container, not the viewport,
+ * so it passes.
  */
 function breakpointClasses(text: string): string[] {
   return text.split(/[\s"'`{}()]+/u).filter((token) =>
@@ -75,10 +76,10 @@ function breakpointClasses(text: string): string[] {
 }
 
 describe("the breakpoint guard", () => {
-  it("finds a viewport breakpoint behind any variant, and in its max- form", () => {
+  it("finds a viewport breakpoint behind any variant, and in its min- and max- forms", () => {
     expect(
       breakpointClasses(
-        'cn("sm:flex", "dark:md:grid hover:sm:block", "[&>svg]:sm:size-4 max-sm:hidden max-md:p-2")',
+        'cn("sm:flex", "dark:md:grid hover:sm:block", "[&>svg]:sm:size-4 max-sm:hidden max-md:p-2 min-sm:flex min-md:grid")',
       ),
     ).toEqual([
       "sm:flex",
@@ -87,6 +88,8 @@ describe("the breakpoint guard", () => {
       "[&>svg]:sm:size-4",
       "max-sm:hidden",
       "max-md:p-2",
+      "min-sm:flex",
+      "min-md:grid",
     ]);
   });
 

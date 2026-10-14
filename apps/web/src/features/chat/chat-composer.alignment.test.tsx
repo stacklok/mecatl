@@ -847,4 +847,18 @@ describe("QueuedMessageStrip", () => {
     await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
     expect(onDelete).toHaveBeenCalledWith("q2");
   });
+
+  it("does not save an edit when Enter commits an IME composition", async () => {
+    const user = userEvent.setup();
+    const onEdit = vi.fn();
+    render(<QueuedMessageStrip items={items} onDelete={vi.fn()} onEdit={onEdit} />);
+    await user.click(screen.getByRole("button", { name: "Actions for queued message 1" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Edit" }));
+    const field = screen.getByRole<HTMLInputElement>("textbox", { name: "Edit queued message 1" });
+    fireEvent.keyDown(field, { isComposing: true, key: "Enter" });
+    fireEvent.keyDown(field, { key: "Enter", keyCode: 229 });
+    expect(onEdit).not.toHaveBeenCalled();
+    fireEvent.keyDown(field, { key: "Enter" });
+    expect(onEdit).toHaveBeenCalledTimes(1);
+  });
 });

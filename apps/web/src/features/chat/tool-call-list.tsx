@@ -123,7 +123,7 @@ function ToolCallRow({
     <li className="min-w-0">
       {controls.onPreview ? (
         <button
-          aria-label={`Open ${head.display} details`}
+          aria-label={`Open ${head.display} details, ${status}`}
           className="-mx-1 flex w-full min-w-0 items-center gap-2 rounded-md px-1 py-0.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/50 focus-visible:outline-2 focus-visible:outline-brand"
           onClick={() => controls.onPreview?.(tool)}
           type="button"

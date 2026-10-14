@@ -928,7 +928,7 @@ describe("mounted chat workspace BFF boundary", () => {
         }),
       );
     });
-    fireEvent.click(await screen.findByRole("button", { name: "Open Read details" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open Read details, running" }));
     const panel = screen.getByRole("complementary", { name: "Read result" });
     expect(panel.textContent).toContain("(still running)");
 

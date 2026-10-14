@@ -12,6 +12,11 @@ import {
 import { Input } from "../../components/ui/input";
 import type { QueuedMessage } from "./chat-queue";
 
+/** Whether a key event belongs to an IME composition (`keyCode` 229 covers Safari's commit Enter). */
+function isCompositionKey(event: KeyboardEvent) {
+  return event.isComposing || event.keyCode === 229;
+}
+
 /**
  * Messages held above the composer as one divided group, from the prototype's
  * `QueuedMessageStrip` (`stack-08`): a header with the count, then one row per
@@ -83,7 +88,10 @@ export function QueuedMessageStrip({
                       onChange={(event) => setDraft(event.target.value)}
                       onKeyDown={(event) => {
                         if (event.key === "Escape") setEditingId(undefined);
-                        if (event.key === "Enter") save(item.id);
+                        // Enter that commits an IME composition must not save a half-typed edit.
+                        if (event.key === "Enter" && !isCompositionKey(event.nativeEvent)) {
+                          save(item.id);
+                        }
                       }}
                       value={draft}
                     />
