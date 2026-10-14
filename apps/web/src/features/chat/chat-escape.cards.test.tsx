@@ -32,6 +32,7 @@ function ask(askId: string, reason: string, tool = "Read"): ApprovalRequest {
 const first = ask("ask-1", "First ask");
 const second = ask("ask-2", "Second ask");
 const firstPlan = ask("plan-1", "First plan", "PresentPlan");
+const secondPlan = ask("plan-2", "Second plan", "PresentPlan");
 
 /**
  * A chat surface in miniature: the pending asks' cards, a side panel that
@@ -41,10 +42,12 @@ const firstPlan = ask("plan-1", "First plan", "PresentPlan");
 function Surface({
   asks = [first, second],
   panelOpen = true,
+  planAvailable = true,
   runActive = true,
 }: {
   asks?: ApprovalRequest[];
   panelOpen?: boolean;
+  planAvailable?: boolean;
   runActive?: boolean;
 }) {
   const [pending, setPending] = useState(asks);
@@ -86,7 +89,7 @@ function Surface({
     overlayOpen: menu,
     panelOpen: panel,
     pendingAsk: !active ? "none" : active.tool === "PresentPlan" ? "plan" : "ordinary",
-    planAvailable: true,
+    planAvailable,
     runActive: running,
   });
   return (
@@ -99,6 +102,7 @@ function Surface({
               disabled={false}
               key={approval.askId}
               onRespond={() => record(`click ${approval.askId}`)}
+              unavailableReason={planAvailable ? undefined : "Exact plan review is unavailable."}
             />
           ) : (
             <ApprovalPanel
@@ -296,5 +300,85 @@ describe("chat Escape with approval cards on the surface", () => {
     expect(composer().value).toBe("");
     expect(actions()).toBe("clear");
     expect(screen.getByText("No hint")).toBeTruthy();
+  });
+});
+
+describe("chat Escape from another ask's card", () => {
+  it("answers no ask from another ask's card, and acts on no lower layer", () => {
+    render(<Surface />);
+    expect(within(card("First ask")).getByText("Esc to Deny")).toBeTruthy();
+    expect(within(card("Second ask")).queryByText("Esc to Deny")).toBeNull();
+    for (const name of ["Raw arguments", "Allow once", "Always allow", "Deny"]) {
+      within(card("Second ask")).getByRole("button", { name }).focus();
+      pressEscape();
+      pressEscape();
+    }
+    // Neither ask is answered, and the panel, the run, and the draft stay as they were.
+    expect(actions()).toBe("");
+    expect(screen.getByText("First ask")).toBeTruthy();
+    expect(screen.getByText("Second ask")).toBeTruthy();
+    expect(screen.getByRole("complementary", { name: "Canvas" })).toBeTruthy();
+    expect(screen.getByText("No hint")).toBeTruthy();
+
+    // The active ask's own card still denies it; then the second ask is the active one.
+    within(card("First ask")).getByRole("button", { name: "Deny" }).focus();
+    pressEscape();
+    expect(actions()).toBe("deny ask-1");
+    within(card("Second ask")).getByRole("button", { name: "Deny" }).focus();
+    pressEscape();
+    expect(actions()).toBe("deny ask-1,deny ask-2");
+  });
+
+  it("neither iterates nor denies from a card that isn't the active ask's, plan cards included", () => {
+    const cases: Array<{
+      asks: ApprovalRequest[];
+      button: string;
+      other: string;
+      planAvailable?: boolean;
+      outside: string;
+    }> = [
+      // The active ask is a plan; focus is in an ordinary ask's card.
+      { asks: [firstPlan, second], button: "Deny", other: "Second ask", outside: "iterate plan-1" },
+      // The active ask is ordinary; focus is in a plan's card.
+      { asks: [first, secondPlan], button: "Iterate", other: "Second plan", outside: "deny ask-1" },
+      // Two plans; focus is in the second one's card.
+      {
+        asks: [firstPlan, secondPlan],
+        button: "Iterate",
+        other: "Second plan",
+        outside: "iterate plan-1",
+      },
+      // The active plan can't be iterated: from another card, Escape doesn't say why.
+      {
+        asks: [firstPlan, second],
+        button: "Deny",
+        other: "Second ask",
+        outside: "unavailable plan-1",
+        planAvailable: false,
+      },
+    ];
+    for (const { asks, button, other, outside, planAvailable } of cases) {
+      render(<Surface asks={asks} planAvailable={planAvailable} />);
+      within(card(other)).getByRole("button", { name: button }).focus();
+      pressEscape();
+      expect(actions()).toBe("");
+      // From outside every card, the same press acts on the active ask as before.
+      composer().focus();
+      pressEscape();
+      expect(actions()).toBe(outside);
+      cleanup();
+    }
+  });
+
+  it("still clears a text selection from another ask's card", () => {
+    render(<Surface />);
+    within(card("Second ask")).getByRole("button", { name: "Deny" }).focus();
+    const range = document.createRange();
+    range.selectNodeContents(within(card("Second ask")).getByText("Second ask"));
+    window.getSelection()?.addRange(range);
+    pressEscape();
+    expect(window.getSelection()?.isCollapsed).toBe(true);
+    pressEscape();
+    expect(actions()).toBe("");
   });
 });

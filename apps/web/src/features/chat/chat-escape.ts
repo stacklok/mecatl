@@ -31,6 +31,19 @@ function hasOverlay(): boolean {
   return Boolean(document.querySelector(overlaySelector));
 }
 
+/**
+ * Whether a press comes from inside another ask's card. Each pending ask's
+ * card is marked `data-approval-scope`, and the active ask's card, the one
+ * Escape answers, is also marked `data-active-ask`. From any other card,
+ * Escape answers no ask: not the active one, which the reader isn't looking
+ * at, and not the card's own, which no key answers (a detail panel showing
+ * it closes instead).
+ */
+function inOtherAskCard(target: EventTarget | null): boolean {
+  const card = target instanceof Element ? target.closest("[data-approval-scope]") : null;
+  return card !== null && !card.hasAttribute("data-active-ask");
+}
+
 export function useChatEscape(options: ChatEscapeOptions): void {
   const latest = useRef(options);
   latest.current = options;
@@ -97,6 +110,7 @@ export function useChatEscape(options: ChatEscapeOptions): void {
       }
       if (state.pendingAsk !== "none") {
         disarm();
+        if (inOtherAskCard(event.target)) return;
         if (state.pendingAsk === "plan" && !state.planAvailable) state.onUnavailablePlan();
         else if (state.askAvailable !== false) {
           if (state.pendingAsk === "plan") state.onIteratePlan();

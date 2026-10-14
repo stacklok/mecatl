@@ -1372,4 +1372,97 @@ describe("approval focus scope", () => {
       cleanup();
     }
   });
+
+  it("answers no ask on Escape from another ask's card", async () => {
+    for (const side of [false, true]) {
+      const fixture = new Fixture();
+      await mount(fixture, side);
+      const sessionId = side ? "thread-a" : "chat-a";
+      const [first, second] = (await sendAsks(fixture, "run-a", pair, sessionId)) as [
+        HTMLElement,
+        HTMLElement,
+      ];
+      const user = userEvent.setup();
+      // The first ask is the active one; focus sits in the second ask's card.
+      expect(within(first).getByText("Esc to Deny")).toBeTruthy();
+      expect(within(second).queryByText("Esc to Deny")).toBeNull();
+      for (const name of ["Raw arguments", "Allow once", "Deny"]) {
+        within(second).getByRole("button", { name }).focus();
+        await user.keyboard("{Escape}");
+      }
+      // No verdict for either ask, and no stop: nothing is posted at all.
+      expect(fixture.requests.filter((request) => request.method === "POST")).toEqual([]);
+      for (const card of [first, second])
+        expect(
+          ["Allow once", "Always allow", "Deny"].map(
+            (name) => (within(card).getByRole("button", { name }) as HTMLButtonElement).disabled,
+          ),
+        ).toEqual([false, false, false]);
+
+      // Escape from the active ask's own card still denies it, and only it.
+      within(first).getByRole("button", { name: "Raw arguments" }).focus();
+      fixture.verdicts.push(Promise.resolve(new Response(null, { status: 204 })));
+      await user.keyboard("{Escape}");
+      await waitFor(() => expect(screen.queryByText("First ask")).toBeNull());
+      expect(fixture.posts()).toEqual([
+        {
+          body: { verdict: "deny" },
+          method: "POST",
+          pathname: `/api/v1/sessions/${sessionId}/runs/run-a/permissions/ask-1`,
+        },
+      ]);
+      expect(screen.getByText("Second ask")).toBeTruthy();
+      cleanup();
+    }
+  });
+
+  it("answers no ask on Escape from a plan card that isn't the active ask's", async () => {
+    const fixture = new Fixture();
+    fixture.runtimeFeatures = ["exact_plan_ask_control"];
+    await mount(fixture);
+    await act(async () => {
+      fixture.stream.send({ runId: "run-a", sessionId: "chat-a", type: "run.started" });
+      fixture.stream.send(
+        event("permission.ask", "1", "run-a", {
+          args: editArgs,
+          askId: "ask-1",
+          reason: "First ask",
+          tool: "Edit",
+        }),
+      );
+      fixture.stream.send(
+        event("permission.ask", "2", "run-a", {
+          args: '{"plan":"Ship it"}',
+          askId: "ask-plan",
+          reason: "Plan ask",
+          tool: "PresentPlan",
+        }),
+      );
+    });
+    const first = (await screen.findByText("First ask")).closest("section") as HTMLElement;
+    const plan = await screen.findByRole("region", { name: "Plan review" });
+    const user = userEvent.setup();
+    expect(within(first).getByText("Esc to Deny")).toBeTruthy();
+    expect(within(plan).queryByText("Esc to Iterate")).toBeNull();
+    for (const name of ["Raw arguments", "Iterate"]) {
+      within(plan).getByRole("button", { name }).focus();
+      await user.keyboard("{Escape}");
+    }
+    expect(fixture.requests.filter((request) => request.method === "POST")).toEqual([]);
+
+    // From the active ask's own card, Escape denies that ask, never the plan.
+    within(first).getByRole("button", { name: "Raw arguments" }).focus();
+    fixture.verdicts.push(Promise.resolve(new Response(null, { status: 204 })));
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByText("First ask")).toBeNull());
+    expect(fixture.requests.filter((request) => request.method === "POST")).toEqual([
+      {
+        body: { verdict: "deny" },
+        method: "POST",
+        pathname: "/api/v1/sessions/chat-a/runs/run-a/permissions/ask-1",
+      },
+    ]);
+    // The plan is now the active ask, and its card says Escape iterates it.
+    expect(within(plan).getByText("Esc to Iterate")).toBeTruthy();
+  });
 });
