@@ -217,6 +217,7 @@ import {
   type RunTarget,
   runStreamEnd,
 } from "./run-stream";
+import { selectedTranscriptText } from "./selected-transcript-text";
 import { CopyDebugTargetMenuItem, CopySessionIdMenuItem } from "./session-copy-menu-items";
 import {
   type InspectionView,
@@ -2719,7 +2720,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
 
   function captureTranscriptSelection(event: ReactPointerEvent<HTMLDivElement>) {
     const selection = window.getSelection();
-    const text = selection?.toString().trim() ?? "";
+    const text = selection ? selectedTranscriptText(selection, event.currentTarget) : "";
     if (!selection || !text || selection.rangeCount === 0) {
       setSelectionAction(undefined);
       return;
@@ -3303,6 +3304,18 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                   )
                 ) {
                   minimapNavigation.current = false;
+                }
+              }}
+              onClickCapture={(event) => {
+                // Expanding a disclosure grows the content in place: let it, rather than
+                // letting the observer drag the reader (and the toggle) down. The ref is
+                // cleared synchronously because the observer fires before the next render.
+                if (
+                  event.target instanceof Element &&
+                  event.target.closest('[aria-expanded="false"]')
+                ) {
+                  followTranscriptBottom.current = false;
+                  setAtTranscriptBottom(false);
                 }
               }}
               onPointerDown={() => {

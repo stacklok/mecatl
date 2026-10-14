@@ -236,6 +236,56 @@ describe("transcript bottom follow", () => {
   });
 });
 
+describe("transcript bottom follow and disclosures", () => {
+  async function mountAtBottom() {
+    ResizeObserverStub.instances = [];
+    vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+    const bff = new ActivityFixture();
+    const activity = heldStream();
+    bff.responses.set("", [activity.response]);
+    await mountWorkspace(bff);
+    await act(async () => {
+      activity.send(runEvent("user_prompt", 1, "A question"));
+      activity.send(runEvent("message.delta", 2, "First answer"));
+    });
+    await screen.findByText("First answer");
+    const scroll = screen.getByRole("region", { name: "Conversation transcript" });
+    const state = { scrollHeight: 2000 };
+    Object.defineProperties(scroll, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, get: () => state.scrollHeight },
+      scrollTop: { configurable: true, value: 1600, writable: true },
+    });
+    const observer = ResizeObserverStub.instances.find((instance) =>
+      instance.targets.some((target) => scroll.contains(target)),
+    );
+    if (!observer) throw new Error("Nothing observes the transcript's content");
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    scroll.append(toggle);
+    return { observer, scroll, state, toggle };
+  }
+
+  it("does not pull the reader down when a disclosure expands", async () => {
+    const { observer, scroll, state, toggle } = await mountAtBottom();
+    toggle.setAttribute("aria-expanded", "false");
+    act(() => toggle.click());
+    // The disclosure grows before React re-renders: the observer must already hold still.
+    state.scrollHeight = 2600;
+    act(() => observer.resize());
+    expect(scroll.scrollTop).toBe(1600);
+  });
+
+  it("keeps following when a disclosure collapses or the content simply grows", async () => {
+    const { observer, scroll, state, toggle } = await mountAtBottom();
+    toggle.setAttribute("aria-expanded", "true");
+    act(() => toggle.click());
+    state.scrollHeight = 2600;
+    act(() => observer.resize());
+    expect(scroll.scrollTop).toBe(2600);
+  });
+});
+
 describe("transcript selection: Add to chat", () => {
   it("adds the selection to the composer's draft after a blank line", async () => {
     const bff = new ActivityFixture();

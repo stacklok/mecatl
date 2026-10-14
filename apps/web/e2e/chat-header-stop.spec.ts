@@ -29,6 +29,7 @@ const authorizationFrames = [
   },
 ] as RunStreamEvent[];
 let frames: RunStreamEvent[] = runningFrames;
+let closeStream = false;
 
 let activityServer: Server | undefined;
 let activityPort = 0;
@@ -40,6 +41,7 @@ test.beforeAll(async () => {
     response.write(
       frames.map((frame, index) => `id: ${index + 1}\ndata: ${JSON.stringify(frame)}\n\n`).join(""),
     );
+    if (closeStream) response.end();
   });
   await new Promise<void>((done) => activityServer?.listen(0, "127.0.0.1", done));
   const address = activityServer.address();
@@ -49,6 +51,7 @@ test.beforeAll(async () => {
 
 test.afterEach(() => {
   frames = runningFrames;
+  closeStream = false;
 });
 
 test.afterAll(() => {
@@ -236,6 +239,27 @@ test("a phone keeps a distinct cue while the run waits for authorization", async
   await page.setViewportSize({ height: 800, width: 1280 });
   await expect(parkedHeader.getByText("Waiting for authorization")).toBeVisible();
   await expect(parkedCue).toBeHidden();
+});
+
+test("the header cue is transient: the pending authorization stays in the transcript", async ({
+  offlineBff,
+  page,
+}) => {
+  runningSession(offlineBff);
+  // The daemon ends the response after the authorization frames: the run is no longer streaming.
+  frames = authorizationFrames;
+  closeStream = true;
+  await page.setViewportSize({ height: 800, width: 1280 });
+  await page.goto(`/workspace/chat?sessionId=${sessionId}`);
+  await expect(page.getByRole("button", { name: "Review authorization" })).toBeVisible();
+  const header = page
+    .locator("header")
+    .filter({ has: page.getByRole("button", { name: "Chat options" }) });
+  await expect(header.getByText("Waiting for authorization")).toHaveCount(0);
+  await expect(header.locator('[data-slot="run-status-cue"]')).toHaveCount(0);
+  await expect(
+    page.getByRole("status").filter({ hasText: "Waiting for authorization" }),
+  ).toBeVisible();
 });
 
 test("the running chat header fits from 500px, beside the chat list too", async ({
