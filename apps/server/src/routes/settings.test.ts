@@ -308,6 +308,68 @@ describe("settings routes", () => {
     expect(failedBody).toMatchObject({ code: "runtime_unavailable" });
     expect(JSON.stringify(failedBody)).not.toContain("secret");
   });
+  it("keeps both settings responses' provider and model fields over HTTP", async () => {
+    // Pins the JSON the browser received before provider display names
+    // (#2260), for an operator-defined provider with no display name.
+    const list = vi.fn().mockResolvedValue({
+      models: [
+        {
+          contextLimit: 64_000n,
+          displayName: "Gateway Model",
+          id: "gateway-model",
+          image: true,
+          providerId: "team-gateway",
+          reasoning: false,
+        },
+      ],
+      providerStatus: [
+        {
+          availableNotDefault: false,
+          defaultModelAutoSelected: true,
+          hint: "",
+          modelCount: 1,
+          providerId: "team-gateway",
+          state: "ok",
+        },
+      ],
+    });
+    const info = vi.fn().mockResolvedValue({ llmProviderDisplayEndpoint: "" });
+    const app = createApp({
+      runtime: fakeRuntime(),
+      settings: createMecatlSettingsService(
+        { models: { list }, server: { info } } as unknown as Client,
+        { modelSelection: true, serverInfo: true },
+      ),
+    });
+    const provider = {
+      availableNotDefault: false,
+      defaultModelAutoSelected: true,
+      hint: "",
+      id: "team-gateway",
+      modelCount: 1,
+      state: "ok",
+    };
+    const model = {
+      contextLimit: "64000",
+      displayName: "Gateway Model",
+      id: "gateway-model",
+      image: true,
+      providerId: "team-gateway",
+      reasoning: false,
+    };
+
+    const runtime = await app.request("/api/v1/settings/runtime");
+    expect(runtime.status).toBe(200);
+    expect(await runtime.json()).toMatchObject({ models: [model], providers: [provider] });
+
+    const detail = await app.request("/api/v1/settings/provider?providerId=team-gateway");
+    expect(detail.status).toBe(200);
+    expect(await detail.json()).toMatchObject({
+      displayEndpoint: null,
+      models: [model],
+      provider,
+    });
+  });
   it("returns only safe runtime and model inventory", async () => {
     const response = await createApp({ settings }).request("/api/v1/settings/runtime");
     expect(response.status).toBe(200);

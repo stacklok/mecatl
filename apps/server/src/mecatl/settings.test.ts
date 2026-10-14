@@ -171,6 +171,58 @@ describe("Mecatl runtime settings", () => {
     });
   });
 
+  it("keeps every inventory field and value for a provider with no display name", async () => {
+    // Pins the inventory served before provider display names (#2260): an
+    // operator-defined provider keeps each field it had, in both responses.
+    const list = vi.fn().mockResolvedValue({
+      models: [{ ...sdkModel("gateway-model", "team-gateway"), displayName: "Gateway Model" }],
+      providerStatus: [
+        {
+          availableNotDefault: false,
+          defaultModelAutoSelected: true,
+          hint: "ready",
+          modelCount: 1,
+          providerId: "team-gateway",
+          state: "ok",
+        },
+      ],
+    });
+    const info = vi.fn().mockResolvedValue({
+      llmProviderDisplayEndpoint: "https://gateway.example.com/v1",
+    });
+    const service = createMecatlSettingsService(
+      { models: { list }, server: { info } } as unknown as Client,
+      { modelSelection: true, serverInfo: true },
+    );
+    const provider = {
+      availableNotDefault: false,
+      defaultModelAutoSelected: true,
+      hint: "ready",
+      id: "team-gateway",
+      modelCount: 1,
+      state: "ok",
+    };
+    const model = {
+      contextLimit: "200000",
+      displayName: "Gateway Model",
+      id: "gateway-model",
+      image: false,
+      providerId: "team-gateway",
+      reasoning: true,
+    };
+
+    const settings = await service.get();
+    expect(settings.providers).toHaveLength(1);
+    expect(settings.providers[0]).toMatchObject(provider);
+    expect(settings.models).toHaveLength(1);
+    expect(settings.models[0]).toMatchObject(model);
+
+    const detail = await service.getProvider("team-gateway");
+    expect(detail).toMatchObject({ displayEndpoint: "https://gateway.example.com/v1", provider });
+    expect(detail?.models).toHaveLength(1);
+    expect(detail?.models[0]).toMatchObject(model);
+  });
+
   it("skips the models call and server info when the capabilities are off", async () => {
     const list = vi.fn();
     const info = vi.fn();
