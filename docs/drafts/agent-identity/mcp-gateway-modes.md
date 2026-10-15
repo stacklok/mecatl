@@ -1,6 +1,6 @@
 # MCP gateway modes
 
-*This chapter describes the intended architecture, not current implementation status. Its decisions are recorded in the [credential flow rework](credential-flow-rework.md).*
+*This chapter describes the intended architecture, not current implementation status.*
 
 Mecatl can reach protected MCP tools through a vMCP gateway in two ways. In **embedded mode**, the vMCP and its authorization server run inside the Mecatl deployment. In **external mode**, Mecatl points at an external gateway. Both modes use the same protocol, roles, and token formats; they differ in how AS-2 resolves and authorizes the user. Co-location does not create an isolation boundary.
 
@@ -17,6 +17,8 @@ This chapter covers the protocol between AS-1 and AS-2 and how the two modes dif
 | Provider credentials | Mecatl's gateway store, keyed by (gateway, native user, provider) | Gateway operator, keyed the same way |
 | Trust in AS-1 | Local configuration; AS-1 is the SSO IdP AS-2 trusts | Gateway administrator registers AS-1 as an assertion issuer only |
 | User consent | Implicit | One-time consent link at AS-2's own login |
+
+The design works in two deployments: standalone Mecatl, with no Stacklok Enterprise Platform, Directory, or connector gateway, and enterprise deployments that integrate with them. Three roles are therefore pluggable: the **identity resolver**, which maps an AS-1 subject to a native user; the **consent store**; and the **credential store**. Standalone Mecatl provides local implementations, and enterprise deployments back them with Directory and the connector gateway. Nothing in the flow presumes Directory.
 
 ## Two authorization servers
 
@@ -127,7 +129,7 @@ Here `access_token` carries the grant for AS-2; it is not an access token the vM
 
 This fictional decoded ID-JAG is not a usable credential. `iss` is AS-1 and `sub` is Alice's AS-1 subject, from the `RT-A42` record. `aud` is AS-2's issuer identifier. `client_id` names `mecatl`, the client that must redeem it.
 
-`act` follows [RFC 8693 §4.1](https://www.rfc-editor.org/rfc/rfc8693.html#section-4.1) and names only the acting instance, the reviewer. It carries an opaque, stable, per-instance `agent:` identifier: no SPIFFE path and no definition name, so Mecatl's internal structure does not cross into the gateway's domain. `act.iss` is AS-1's issuer: it names who minted the `agent:` identifier, so the identifier stays attributable to AS-1 after AS-2 copies `act` into `V`. AS-1 derives the identifier from the validated reviewer SVID; the full SVID stops at AS-1. `act` has one level: it does not name main, which delegated the task. That delegation is recorded in Mecatl's harness and broker records. A nested `act` comes later, from a [chained exchange](credential-flow-rework.md#d4-delegation-visibility-at-the-gateway) at delegation time.
+`act` follows [RFC 8693 §4.1](https://www.rfc-editor.org/rfc/rfc8693.html#section-4.1) and names only the acting instance, the reviewer. It carries an opaque, stable, per-instance `agent:` identifier: no SPIFFE path and no definition name, so Mecatl's internal structure does not cross into the gateway's domain. `act.iss` is AS-1's issuer: it names who minted the `agent:` identifier, so the identifier stays attributable to AS-1 after AS-2 copies `act` into `V`. AS-1 derives the identifier from the validated reviewer SVID; the full SVID stops at AS-1. `act` has one level: it does not name main, which delegated the task. That delegation is recorded in Mecatl's harness and broker records. A nested `act` comes later, from a [chained exchange](mcp-authorization.md#chained-exchange) at delegation time.
 
 `aud_sub` and `email`, both RECOMMENDED by ID-JAG §3.1, are deliberately omitted. AS-1 does not know AS-2's subject, and an email address is not an identity link. The ID-JAG carries no `sub_id` for AS-2 to resolve: a `sub_id` would be AS-1's claim about the company identity, not the IdP's (§9.5).
 
@@ -155,7 +157,7 @@ AS-2 then resolves the native user. This is where the two modes differ:
 | Embedded | ID-JAG as specified. Users log in to AS-2 through AS-1, so AS-1 is the SSO IdP AS-2 trusts (§4.1) and the subject is the shared AS-1 `sub` (§5). `u-alice-91` maps directly to native user `usr-alice-7c1d`. Consent is implicit: AS-1, AS-2, and the credential store share one trust domain. |
 | External | Identity chaining across trust domains ([chaining §§2.1, 2.5](https://www.ietf.org/archive/id/draft-ietf-oauth-identity-chaining-17.html#section-2.1)) using the ID-JAG token profile. AS-2's users log in through the gateway's own IdP, so the §4.1 precondition, that the resource AS already trusts the IdP for SSO, does not hold, and its consent waiver does not apply. AS-2 trusts AS-1 only as an assertion issuer. It redeems only when the ID-JAG's `(iss, sub)` and `client_id` match a consent link, which supplies the native user (chaining §2.2, deployment-specific resolution). No just-in-time provisioning. |
 
-The external consent link records (native user, AS-1 issuer, AS-1 `sub`, client `mecatl`, grant time, and scope or providers). Alice creates it once per gateway, through AS-2's own login, by approving "Allow Mecatl" on a consent screen AS-2 generates. It is keyed on the AS-1 `sub` in the ID-JAG, never on a `sub_id` (§9.5). It stops a compromised AS-1 from using the gateway credentials of a user who never chose Mecatl. Admin pre-consent without an independent witness of the user is rejected for the same reason. The link's creation flow, the link-swap attack it must resist, and the shared-IdP shortcut are in the [rework record](credential-flow-rework.md#d2-grant-redeemed-at-as-2). The gateway UI can revoke the link.
+The external consent link records (native user, AS-1 issuer, AS-1 `sub`, client `mecatl`, grant time, and scope or providers). Alice creates it once per gateway, through AS-2's own login, by approving "Allow Mecatl" on a consent screen AS-2 generates. It is keyed on the AS-1 `sub` in the ID-JAG, never on a `sub_id` (§9.5). It stops a compromised AS-1 from using the gateway credentials of a user who never chose Mecatl. Admin pre-consent without an independent witness of the user is rejected for the same reason. The link's creation flow, the link-swap attack it must resist, and the shared-IdP shortcut are in the [implementation companion](implementation.md#external-consent-link). The gateway UI can revoke the link.
 
 An unresolved or unlinked subject fails closed. AS-2 must not create an unlinked user as a side effect of lookup. Resolving the user does not establish that a provider connection exists; the vMCP's credential lookup remains a separate check.
 

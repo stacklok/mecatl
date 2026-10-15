@@ -32,6 +32,19 @@ The intersection narrows a child's definition but trusts the registered parent l
 
 The gateway sees delegation only as identity, not as authority. AS-1 writes only the acting instance into the ID-JAG's `act`, as an opaque `agent:` identifier, and AS-2 copies it into `V`. vMCP binds its session to `act.sub`. The instance that delegated the task does not appear in the token; Mecatl's harness and broker records keep the delegation, and a later chained exchange may add it as a nested `act`. `act` does not carry the agent's ceiling, so the broker alone enforces the effective ceiling, and the gateway enforces only user and connection. The long-term plan is for AS-1 to write the instance's effective ceiling into the ID-JAG as scope or RFC 9396 `authorization_details`, for AS-2 to carry it into `V`, and for the gateway to enforce it as a second check. The ID-JAG and `V` formats reserve that slot; until it is filled, a gateway allow says nothing about the agent ceiling. See the [ID-JAG step](credentials-and-lifecycle.md#7-id-jag-from-as-1) and [actor history](credentials-and-lifecycle.md#as-2-access-token-use-and-actor-history).
 
+### Chained exchange
+
+Nesting the delegating instance in `act` is later work. RFC 8693 §4.1 says prior actors in a nested `act` are informational only and must not drive access decisions, and the gateway uses only the current actor, so leaving them out loses no enforcement. Building the inner level from the registered parent would record creation, not delegation. Building it from a delegation that mecak8s reports would make AS-1 sign a claim it never checked.
+
+The protocol-clean way to nest is a second exchange at delegation time:
+
+1. When main delegates `D42`, the broker exchanges at AS-1 with `subject_token=RT-A42` and `actor_token=mainSVID`.
+2. AS-1 returns a delegation token `T-D42` naming Alice as `sub` and main as `act`, narrowed to the task.
+3. The reviewer's calls under `D42` use `subject_token=T-D42` and `actor_token=reviewerSVID`.
+4. AS-1 wraps the existing actor: `act {reviewer, act {main}}` ([RFC 8693 §4.1](https://www.rfc-editor.org/rfc/rfc8693.html#section-4.1)). This matches the pattern in draft-mcguinness-oauth-actor-profile, an individual Internet-Draft, which also requires `act.iss`.
+
+It costs a broker operation at each delegation. The broker holds `T-D42` for the delegation and renews it from AS-1's records, the `V` cache key becomes `(A42, D42, reviewer)`, and `T-D42` is revoked when the task ends. `T-D42` is also where per-task narrowing, as scope or RFC 9396 `authorization_details`, would live. Against a compromised mecak8s, which holds `mainSVID`, this proves nothing more about delegation; it records it in the token.
+
 ## Operations and resources
 
 The ceiling check distinguishes registered MCP servers and tools, but does not evaluate resource or argument policies. Permission to call a tool is not evidence of authorization for a particular repository or PR. User, resource, argument, and dynamic delegation policies are deferred, and the design does not yet provide comprehensive enterprise user-policy enforcement.
