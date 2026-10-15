@@ -47,8 +47,9 @@ The gateway in this example is external, at `https://gateway.example.com`. Embed
 sequenceDiagram
     actor U as Alice (TUI / Studio)
     participant H as mecak8s
-    participant I as Agent-instance issuer
     box Broker
+        participant L as Definition loader
+        participant I as Agent-instance issuer
         participant B as Broker core
         participant A1 as AS-1
     end
@@ -58,6 +59,10 @@ sequenceDiagram
         participant V as vMCP
     end
     participant G as GitHub
+
+    Note over L,B: (0) Broker startup
+    L->>L: Load global definitions from configured sources
+    L->>B: Definition records, sources, revisions, ceilings
 
     Note over U,IdP: (1) Sign-in, once per login session
     U->>A1: Authorization code + PKCE<br/>(issuer from mecak8s protected-resource metadata)
@@ -75,7 +80,7 @@ sequenceDiagram
 
     rect rgb(245, 245, 245)
         Note over H,I: (4) Main bootstrap, before R41
-        H->>I: registerDefinitions, registerInstance(main), workload JWT
+        H->>I: registerInstance(main, definition reference), workload JWT
         I-->>H: mainRef + canonical main subject
         H->>I: requestSVID(mainRef), workload JWT
         I-->>H: mainSVID
