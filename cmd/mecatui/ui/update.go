@@ -1122,7 +1122,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			if msg.Err == nil {
 				checker = guardrailPostureSummary(msg.Coverage)
 			}
-			m.statusMsg = m.deps.Theme.Style("muted").Render(postureSummary(m.caps.Posture) + "; " + checker)
+			m.statusMsg = m.deps.Theme.Style("muted").Render(postureSummary(m.caps.Posture, m.caps.ProjectTrust) + "; " + checker)
 		} else if msg.Err != nil {
 			m.conv.addNotice("Guardrails status unavailable; checker state is unknown, not off or healthy.")
 		} else {
@@ -2701,16 +2701,32 @@ func (m Model) onModeChanged(msg client.ModeChangedMsg) tea.Model {
 		return m
 	}
 	if msg.Err != nil {
+		if m.phase == phaseIdle {
+			// No turn is in flight, so this is the server's final refusal (ceiling,
+			// missing checker), not the mid-turn deferral: retrying cannot succeed.
+			m.pendingMode = ""
+			m.modeCursor = modeCursor{}
+			m.modeRefused = requested
+			m.statusMsg = m.deps.Theme.Style("warning").Render("mode " + requested + " refused: " + client.ModeErrorText(msg.Err))
+			return m
+		}
 		m.pendingMode = requested
 		m.statusMsg = m.deps.Theme.Style("warning").Render("mode " + m.pendingMode + " will apply on the next prompt")
 		return m
 	}
 	mode := client.ModeString(client.ModeFromString(msg.Mode))
 	if mode != requested {
+		// The server applied a different mode than requested (e.g. an older server
+		// that does not know it). Adopt what it reports instead of staying pending.
+		m.activeMode = mode
+		m.pendingMode = ""
+		m.modeCursor = modeCursor{}
+		m.statusMsg = m.deps.Theme.Style("warning").Render("mode " + requested + " not applied: the server kept " + mode)
 		return m
 	}
 	m.activeMode = mode
 	m.pendingMode = ""
+	m.modeRefused = ""
 	label := mode
 	if m.modeCursor.session == mode {
 		label = m.modeLabel(permissionModeEntry(m.modeCursor.token))

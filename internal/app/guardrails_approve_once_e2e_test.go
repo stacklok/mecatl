@@ -290,6 +290,42 @@ func TestGuardrailApproveOnceE2EHeadlessTerminalBlock(t *testing.T) {
 	}
 }
 
+// Posture YOLO, session switched to AUTO: the yolo demotion is per session mode,
+// so the auto session is admitted (an enforcing checker exists for it) and its
+// guardrail blocks — headless, a terminal block, and the tool does not run.
+func TestGuardrailE2EYoloServerAutoSessionEnforces(t *testing.T) {
+	ctx := context.Background()
+	cfg := guardrailE2ECfg(t, false, PostureYolo, "touch "+guardrailMarker)
+	built, err := buildIsolated(t, ctx, cfg)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+	sess, err := built.Service.CreateSession(ctx, session.ModeYolo, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if _, err := built.Service.SetMode(ctx, sess.ID, session.ModeAuto); err != nil {
+		t.Fatalf("SetMode(auto) on a yolo server with a checker: %v", err)
+	}
+	srv := httptest.NewServer(server.NewHTTPHandler(built.Service))
+	defer srv.Close()
+
+	evs := driveGuardrailPrompt(t, srv.URL, string(sess.ID), "merge it", nil)
+	var blocked bool
+	for _, ev := range evs {
+		if ev.Type == "tool.result" && ev.ToolResult.IsError && strings.Contains(ev.ToolResult.Content, "guardrail") {
+			blocked = true
+		}
+	}
+	if !blocked {
+		t.Fatal("an auto session on a yolo server must keep an enforcing checker — no guardrail block surfaced")
+	}
+	if markerExists(t, cfg.Workspace) {
+		t.Fatal("the enforcing auto-session block must NOT execute the Shell command — but the marker file exists")
+	}
+}
+
 // Posture YOLO: guardrails demote to advisory — the tool RUNS, no ask, no block.
 func TestGuardrailApproveOnceE2EYoloAdvisory(t *testing.T) {
 	ctx := context.Background()

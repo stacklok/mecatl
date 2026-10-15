@@ -652,6 +652,10 @@ type Config struct {
 	// Empty (the zero value / an unconfigured child service) yields no badge. String
 	// passthrough — no enum on the wire (the EvNoProgress/StopBudget discipline).
 	Posture string
+	// ProjectTrusted is the effective project-trust decision for the launch
+	// workspace, projected into the ServerCapabilities echo as CHROME ONLY. nil
+	// (an unconfigured child service) leaves the echo unset.
+	ProjectTrusted *bool
 	// DeploymentID is an optional, opaque, operator-set label for this deployment,
 	// surfaced on GetServerInfo. It is empty by default and is NEVER derived from
 	// hostname, pod name, or environment: infrastructure topology is not something
@@ -2757,6 +2761,9 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 	if mode == "" {
 		mode = s.cfg.DefaultMode
 	}
+	if err := s.admitMode(mode); err != nil {
+		return nil, err
+	}
 	// Fill any UNSET (zero) limit field from the injected defaults, per-field. An
 	// all-zero Limits inherits every default (so a default session cannot run
 	// unbounded); a Limits that pins only some caps keeps those and inherits the
@@ -3275,6 +3282,7 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		Image:             pcaps.Image,
 		Audio:             pcaps.Audio,
 		Posture:           s.cfg.Posture,
+		ProjectTrusted:    s.cfg.ProjectTrusted,
 		Worktrees:         s.placementDiscoveryAvailable(),
 		Reflection:        s.cfg.ReflectSession != nil,
 		LearningProposals: s.cfg.Proposals != nil,
@@ -4754,13 +4762,8 @@ func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode sessio
 	if mode == "" {
 		return nil, fmt.Errorf("%w: mode is required", ErrInvalidArgument)
 	}
-	// Ceiling check: refuse modes that exceed the server's configured ceiling.
-	if s.cfg.MaxAllowedMode != "" && !modeWithinCeiling(mode, s.cfg.MaxAllowedMode) {
-		return nil, fmt.Errorf("%w: mode %q exceeds the server ceiling %q; the server must be relaunched with a higher --permission-mode to allow it", ErrInvalidArgument, mode, s.cfg.MaxAllowedMode)
-	}
-	// Checker check: auto mode requires an enforcing checker.
-	if mode == session.ModeAuto && !s.hasEnforcingChecker() {
-		return nil, fmt.Errorf("%w: mode %q requires an enforcing guardrails checker; configure one with --guardrails-model <model> or bind the guardrail model slot, or use yolo for gate-free autonomous operation", ErrInvalidArgument, mode)
+	if err := s.admitMode(mode); err != nil {
+		return nil, err
 	}
 	// Ownership is established before caller-selected coordination, then
 	// revalidated under runEntryMu before and after lease acquisition.
@@ -4816,6 +4819,25 @@ func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode sessio
 		return nil, fmt.Errorf("server: persist session: %w", err)
 	}
 	return sess, nil
+}
+
+// admitMode is the single admission check for a caller-requested session mode,
+// shared by CreateSession, SetMode, and schedule fires (which create through
+// CreateSession). A mode above the server ceiling is refused, and auto requires
+// an enforcing guardrails checker. The operator-configured DefaultMode is
+// always admissible: the operator chose it at startup (where a missing checker
+// is narrated as a WARN), so a session may start in it and return to it.
+func (s *Service) admitMode(mode session.PermissionMode) error {
+	if modeRank(mode) == 0 {
+		return fmt.Errorf("%w: unknown permission mode %q", ErrInvalidArgument, mode)
+	}
+	if s.cfg.MaxAllowedMode != "" && !modeWithinCeiling(mode, s.cfg.MaxAllowedMode) {
+		return fmt.Errorf("%w: mode %q exceeds the server ceiling %q; the server must be relaunched with a higher --permission-mode to allow it", ErrInvalidArgument, mode, s.cfg.MaxAllowedMode)
+	}
+	if mode == session.ModeAuto && mode != s.cfg.DefaultMode && !s.hasEnforcingChecker() {
+		return fmt.Errorf("%w: mode %q requires an enforcing guardrails checker; configure one with --guardrails-model <model> or bind the guardrail model slot, or use yolo for gate-free autonomous operation", ErrInvalidArgument, mode)
+	}
+	return nil
 }
 
 // modeWithinCeiling reports whether mode is at or below ceiling in the
@@ -7695,7 +7717,11 @@ func (s *Service) approvePlan(ctx context.Context, id session.SessionID, targetM
 	if !ok || ask.Origin != session.ApprovalOriginPlan {
 		return nil, fmt.Errorf("%w: session %q is not awaiting a plan-approval ask", ErrNotAwaitingPlan, id)
 	}
-	// (3) targetMode → verdict.
+	// (3) targetMode → verdict. Plan approval can flip only to default or
+	// accept-edits; refuse auto/yolo rather than silently treating them as deny.
+	if targetMode == session.ModeAuto || targetMode == session.ModeYolo {
+		return nil, fmt.Errorf("%w: plan approval cannot switch to mode %q; approve into default or accept-edits, then change the mode with SetMode", ErrInvalidArgument, targetMode)
+	}
 	verdict, allowContinuation := planVerdictForMode(targetMode)
 
 	// The merged event channel. Buffered to match a Run's own buffer (64) so a

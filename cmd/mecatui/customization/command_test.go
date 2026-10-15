@@ -251,7 +251,7 @@ func TestStatusLineCommandDoesNotTrimNonASCIIOutputBoundary(t *testing.T) {
 	}
 }
 
-func TestStatusInputProtocolV5WorkspacePathNameAndContext(t *testing.T) {
+func TestStatusInputProtocolV6WorkspacePathNameAndContext(t *testing.T) {
 	input := Input{
 		Version: ProtocolVersion,
 		Context: Context{
@@ -263,14 +263,14 @@ func TestStatusInputProtocolV5WorkspacePathNameAndContext(t *testing.T) {
 		},
 		Model:     Model{ProviderID: "openai", ID: "gpt-5", ProviderLabel: "openai/gpt-5", FriendlyName: "GPT-5"},
 		Workspace: Workspace{Location: "local", Name: "provider label", Path: "/eligible/root"},
-		Terminal:  Terminal{FooterAvailCols: 80},
+		Terminal:  Terminal{FooterAvailCols: 80, Emoji: true},
 	}
 	wire, err := json.Marshal(input)
 	if err != nil {
 		t.Fatalf("marshal status input: %v", err)
 	}
-	if ProtocolVersion != 5 || !strings.Contains(string(wire), `"Model":{"ProviderID":"openai","ID":"gpt-5","ProviderLabel":"openai/gpt-5","FriendlyName":"GPT-5","Route":""`) || strings.Contains(string(wire), "DisplayName") || !strings.Contains(string(wire), `"Name":"provider label"`) || !strings.Contains(string(wire), `"Path":"/eligible/root"`) || !strings.Contains(string(wire), `"Context":{"Used":{"Raw":75,"Human":"75"},"Window":{"Raw":100,"Human":"100"},"Percent":75,"Known":true,"Estimated":true}`) || strings.Contains(string(wire), "Basename") {
-		t.Fatalf("status input v5 workspace/context projection = %s", wire)
+	if ProtocolVersion != 6 || !strings.Contains(string(wire), `"FooterAvailCols":80,"Emoji":true`) || !strings.Contains(string(wire), `"Model":{"ProviderID":"openai","ID":"gpt-5","ProviderLabel":"openai/gpt-5","FriendlyName":"GPT-5","Route":""`) || strings.Contains(string(wire), "DisplayName") || !strings.Contains(string(wire), `"Name":"provider label"`) || !strings.Contains(string(wire), `"Path":"/eligible/root"`) || !strings.Contains(string(wire), `"Context":{"Used":{"Raw":75,"Human":"75"},"Window":{"Raw":100,"Human":"100"},"Percent":75,"Known":true,"Estimated":true}`) || strings.Contains(string(wire), "Basename") {
+		t.Fatalf("status input v6 workspace/context/terminal projection = %s", wire)
 	}
 	templates := NewTemplateSource(TemplateSet{Footer: SurfaceTemplates{Full: `<footer><text>[{{.Workspace.Path}}]</text></footer>`}}, 0)
 	t.Cleanup(func() { _ = templates.Close(context.Background()) })

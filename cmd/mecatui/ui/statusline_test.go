@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
@@ -42,6 +43,61 @@ func TestStatusLine_Scenario2_DefaultTemplatesPreserveChrome(t *testing.T) {
 		}
 	}
 }
+
+// TestStatusLine_YoloModeRendersAlarmPill pins that the shipped header marks
+// the yolo mode with the filled alarm pill (the theme-independent dangerPill
+// colours around "YOLO"), and every other mode — including a pending yolo — as
+// plain "mode <name>" text with no pill. On an emoji-capable terminal a ⚡️
+// bolt (VS16 intact) precedes the pill, outside its fill; otherwise no bolt.
+func TestStatusLine_YoloModeRendersAlarmPill(t *testing.T) {
+	th := theme.New("aztec", theme.AztecPalette())
+	renderWith := func(mode string, emoji bool) string {
+		t.Helper()
+		s := customization.NewDefaultSource(0)
+		t.Cleanup(func() { _ = s.Close(context.Background()) })
+		m, _, _ := newTestModel(t, th, func(deps *Deps) {
+			deps.emojiCapable = func() bool { return emoji }
+		})
+		m.deps.StatusSource = s
+		m.sessionID = "session-yolo-pill"
+		m.phase = phaseIdle
+		m.activeMode = mode
+		m.caps.Posture = postureYolo
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+		m = updated.(Model)
+		updated, _ = m.update(waitStatusMessage(t, m.statusLineWaitCmd()))
+		return updated.(Model).renderHeader()
+	}
+	render := func(mode string) string { return renderWith(mode, false) }
+	pill := th.Style("dangerPill").UnsetPadding().Render("  YOLO  ")
+	if want := th.Style("dangerPill").Render(" YOLO "); stripANSIstr(pill) != stripANSIstr(want) || lipgloss.Width(pill) != lipgloss.Width(want) {
+		t.Fatalf("mode pill %q must match the posture pill %q cell for cell", pill, want)
+	}
+	for _, sgr := range []string{"224;49;49", "245;245;245"} { // #E03131 / #F5F5F5
+		if !strings.Contains(pill, sgr) {
+			t.Fatalf("mode pill missing the fixed alarm colour %q: %q", sgr, pill)
+		}
+	}
+	raw := render("yolo")
+	if !strings.Contains(raw, pill) || !strings.Contains(stripANSIstr(raw), "mode   YOLO") || strings.Contains(raw, "⚡") {
+		t.Fatalf("no-emoji yolo header must carry the bare alarm pill %q: %q", pill, raw)
+	}
+	emoji := renderWith("yolo", true)
+	bolt := strings.Index(emoji, "⚡️ ")
+	if bolt < 0 || !strings.Contains(emoji, pill) || bolt > strings.Index(emoji, pill) || strings.Contains(pill, "⚡") {
+		t.Fatalf("emoji yolo header must put the ⚡️ bolt (with VS16) before the pill, outside its fill: %q", emoji)
+	}
+	if !strings.Contains(stripANSIstr(emoji), "mode ⚡️   YOLO") {
+		t.Fatalf("emoji yolo header text = %q", stripANSIstr(emoji))
+	}
+	for _, mode := range []string{"auto", "default"} {
+		raw := render(mode)
+		if strings.Contains(raw, "224;49;49") || !strings.Contains(stripANSIstr(raw), "mode "+mode) {
+			t.Fatalf("%s header must be plain mode text without the pill: %q", mode, raw)
+		}
+	}
+}
+
 func TestStatusLine_StaleGeneratedSurfaceNeverWraps(t *testing.T) {
 	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
 	m.deps.StatusSource = &statusSourceFake{changed: make(chan struct{})}
@@ -95,10 +151,10 @@ func TestStatusLine_Scenario2_HeaderSystemIndicatorsSurviveOverride(t *testing.T
 	m.width = 100
 	m.generatedStatusLine.Header = customization.Render(`<header><accent>CUSTOM</accent></header>`, nil).Header
 	m.deps.StatusSource = &statusSourceFake{changed: make(chan struct{})}
-	m.caps.Posture = postureAuto
+	m.caps.ProjectTrust = client.ProjectUntrusted
 	m.conv.recordFileChange("changed.go")
 	header := stripANSIstr(m.renderHeader())
-	for _, want := range []string{"CUSTOM", autoBadgeText, "✎ 1 file"} {
+	for _, want := range []string{"CUSTOM", client.ProjectUntrusted, "✎ 1 file"} {
 		if !strings.Contains(header, want) {
 			t.Errorf("missing %q in %q", want, header)
 		}

@@ -2769,6 +2769,10 @@ func modeFromString(s string) session.PermissionMode {
 		return session.ModeAccept
 	case "default":
 		return session.ModeDefault
+	case "auto":
+		return session.ModeAuto
+	case "yolo":
+		return session.ModeYolo
 	default:
 		return ""
 	}

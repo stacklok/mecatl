@@ -92,7 +92,11 @@ func nextModeToken(cur string) string {
 // posture cannot, because the posture is fixed when the server starts, so the
 // cycle stops on it and says what to configure and restart.
 func (m Model) cycleMode() (tea.Model, tea.Cmd) {
-	next := permissionModeEntry(nextModeToken(m.currentModeToken()))
+	cur := m.currentModeToken()
+	if m.modeRefused != "" {
+		cur, m.modeRefused = m.modeRefused, ""
+	}
+	next := permissionModeEntry(nextModeToken(cur))
 	if postureRank(next.Posture) > postureRank(m.caps.Posture) {
 		m.modeCursor = modeCursor{token: next.Name, session: m.desiredMode()}
 		m.statusMsg = m.deps.Theme.Style("warning").Render(m.modeBlockedStatus())

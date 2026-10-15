@@ -77,6 +77,14 @@ func TestTokenTableResolvesExactPairs(t *testing.T) {
 		if got := builtDefaultSessionMode(t, built); got != pair.mode {
 			t.Errorf("%s: unspecified-mode session started in %q, want %q", name, got, pair.mode)
 		}
+		// The ceiling: every strict token admits all three strict modes, and no
+		// token admits a mode above its own allow-all tier.
+		for _, mode := range []session.PermissionMode{session.ModePlan, session.ModeDefault, session.ModeAccept, session.ModeYolo} {
+			_, err := built.Service.CreateSession(context.Background(), mode, defaultLimits())
+			if wantOK := mode != session.ModeYolo || pair.posture == PostureYolo; (err == nil) != wantOK {
+				t.Errorf("%s: CreateSession(%s) err = %v, want admitted=%v", name, mode, err, wantOK)
+			}
+		}
 		built.Close()
 	}
 

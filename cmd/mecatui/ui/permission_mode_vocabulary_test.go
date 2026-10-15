@@ -297,36 +297,25 @@ func TestHelpOverlayShowsVocabularyAndScopeSplit(t *testing.T) {
 	}
 }
 
-// TestHeaderShowsPostureWhenAboveStrict pins that the header shows the
-// session mode, and a posture badge for every tier above strict (trusted now
-// included), sourced from the server-reported caps.Posture.
-func TestHeaderShowsPostureWhenAboveStrict(t *testing.T) {
-	cases := []struct {
-		posture string
-		badge   string // "" = no badge
-	}{
-		{postureStrict, ""},
-		{postureTrusted, trustedBadgeText},
-		{postureAuto, "⚠ auto"},
-		{postureYolo, "YOLO"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.posture, func(t *testing.T) {
+// TestHeaderShowsModeNotPosture pins that the header shows the session mode and
+// no posture badge at any tier: the posture is not a header axis, only the
+// mode the cycle lands on and (separately) project trust.
+func TestHeaderShowsModeNotPosture(t *testing.T) {
+	for _, posture := range []string{postureStrict, postureTrusted, postureAuto, postureYolo} {
+		t.Run(posture, func(t *testing.T) {
 			conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, mode: "default"}
-			m := permissionModeTestModel(t, conv, tc.posture, true)
+			m := permissionModeTestModel(t, conv, posture, true)
 			header := stripANSIstr(m.renderHeader())
 			if got := statusMode(m); got != "default" {
 				t.Errorf("status mode = %q, want default", got)
 			}
-			badge, _ := m.postureBadgeRender()
-			if tc.badge == "" {
-				if badge != "" || strings.Contains(header, "posture") || strings.Contains(header, "strict") {
-					t.Errorf("strict must render no posture badge, got %q", header)
-				}
-				return
+			if badge, _ := m.postureBadgeRender(); badge != "" {
+				t.Errorf("posture %s rendered a badge without reported trust: %q", posture, badge)
 			}
-			if badge == "" || !strings.Contains(header, tc.badge) {
-				t.Errorf("posture %s: header missing badge %q: %q", tc.posture, tc.badge, header)
+			for _, gone := range []string{"YOLO", "⚠ auto", "trusted"} {
+				if strings.Contains(header, gone) {
+					t.Errorf("posture %s: header carries posture badge %q: %q", posture, gone, header)
+				}
 			}
 		})
 	}
@@ -334,7 +323,7 @@ func TestHeaderShowsPostureWhenAboveStrict(t *testing.T) {
 
 // TestHeaderKeepsPostureAcrossModeCycle pins that under auto, cycling through
 // yolo (blocked: above the auto ceiling), then through lower modes keeps the
-// auto badge on every frame, including the pending frames before the server
+// trust badge on every frame, including the pending frames before the server
 // confirms each switch.
 //
 // A session on an auto-posture server starts in "auto" mode. The cycle order
@@ -354,14 +343,14 @@ func TestHeaderKeepsPostureAcrossModeCycle(t *testing.T) {
 	})
 	m = applyAll(m,
 		tea.WindowSizeMsg{Width: 140, Height: 30},
-		client.SessionReadyMsg{SessionID: "sess-auto-cycle", Mode: "auto", Capabilities: client.Capabilities{Posture: postureAuto}},
+		client.SessionReadyMsg{SessionID: "sess-auto-cycle", Mode: "auto", Capabilities: client.Capabilities{Posture: postureAuto, ProjectTrust: client.ProjectTrusted}},
 	)
 
 	assertAuto := func(step, wantMode string) {
 		t.Helper()
 		header := stripANSIstr(m.renderHeader())
-		if !strings.Contains(header, autoBadgeText) {
-			t.Fatalf("%s: header lost the auto posture badge: %q", step, header)
+		if !strings.Contains(header, client.ProjectTrusted) {
+			t.Fatalf("%s: header lost the trust badge: %q", step, header)
 		}
 		if got := statusMode(m); got != wantMode {
 			t.Fatalf("%s: status mode = %q, want %q", step, got, wantMode)

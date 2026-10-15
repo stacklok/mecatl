@@ -587,7 +587,7 @@ func (m Model) runLearningSensitivity() (tea.Model, tea.Cmd) {
 // non-empty. The summary names the four defenses the posture controls so an operator
 // can confirm, e.g., that the child prompt-injection defense is OFF under yolo.
 func (m Model) runPosture() (tea.Model, tea.Cmd) {
-	base := postureSummary(m.caps.Posture)
+	base := postureSummary(m.caps.Posture, m.caps.ProjectTrust)
 	if m.deps.Guardrails == nil || m.sessionID == "" {
 		m.statusMsg = m.deps.Theme.Style("muted").Render(base + "; checker unknown (server does not expose guardrail coverage)")
 		return m, nil
@@ -644,13 +644,17 @@ func (m Model) runDebugAsk() (tea.Model, tea.Cmd) {
 // project-trust floor. Allow-all and substitution loosening are now session-mode
 // behaviors: auto/yolo sessions inject the allow-all rule per-evaluate, so the
 // description names the ceiling rather than claiming allow-all is always on.
-// Project-trust is raised for trusted+ on interactive roots. An empty/unknown
-// token degrades to a bare label.
-func postureSummary(p string) string {
+// Project-trust is the server-reported trust when known (trust), else inferred
+// from the posture, which raises it for trusted+ on interactive roots. An
+// empty/unknown token degrades to a bare label.
+func postureSummary(p, projectTrust string) string {
 	ceilingAuto := p == postureAuto
 	ceilingYolo := p == postureYolo
 	childDefenseOff := p == postureYolo // yolo session mode loosens child substitution
 	trust := p == postureTrusted || p == postureAuto || p == postureYolo
+	if projectTrust != "" {
+		trust = projectTrust == client.ProjectTrusted
+	}
 	onoff := func(b bool) string {
 		if b {
 			return "on"

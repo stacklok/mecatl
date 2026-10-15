@@ -40,6 +40,13 @@ func renderStatusSpans(th theme.Theme, spans []customization.Span) string {
 			continue
 		}
 		style := lipgloss.NewStyle()
+		if span.Token == customization.TokenDanger {
+			// The yolo alarm pill: the dangerPill fill without its padding, so the
+			// span's own text (which carries the pill's spaces) is its exact width
+			// and the plain-text fit math stays correct.
+			b.WriteString(th.Style("dangerPill").UnsetPadding().Render(text))
+			continue
+		}
 		if span.Href != "" {
 			b.WriteString(style.Foreground(lipgloss.Color(th.Palette.MdLink)).Underline(true).Hyperlink(span.Href).Render(text))
 			continue

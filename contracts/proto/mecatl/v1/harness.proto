@@ -810,12 +810,10 @@ message ServerCapabilities {
   // (multi-provider Phase 0, S3.)
   bool model_selection = 12;
   // posture is the SERVER-WIDE operator posture-ladder tier ("strict"/"trusted"/
-  // "auto"/"yolo"). It is CHROME ONLY — a client renders an honest "⚠ auto"/"⚠ yolo"
-  // badge so an operator can see the daemon's automation posture at a glance — and is
+  // "auto"/"yolo"). It bounds which session modes a client may cycle to and is
   // NEVER session state (it does not change per session; permission MODE is the
   // per-session knob). String passthrough, no enum on the wire (the EvNoProgress /
-  // StopBudget discipline). Additive: an older server leaves it empty and the client
-  // shows no badge (strict/trusted also show no badge).
+  // StopBudget discipline). Additive: an older server leaves it empty.
   string posture = 13;
   // worktrees is true when a WorktreeLister is wired (ListWorktrees may return a
   // non-empty list for a real git repo). Gates the client's /worktrees overlay —
@@ -878,6 +876,11 @@ message ServerCapabilities {
   // execution_templates is true only when an authenticated template catalog is
   // wired; an eligible inventory may still be empty.
   bool execution_templates = 31;
+  // project_trusted reports whether the server trusts its launch workspace's
+  // project content (rules, instructions, soul). It is an axis separate from
+  // the permission mode. CHROME ONLY. Additive: an older server leaves it
+  // unset and the client shows no trust indicator.
+  optional bool project_trusted = 32;
 }
 
 // ListSessionMcpConnectorsRequest names an owned, broker-bound session.

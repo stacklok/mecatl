@@ -359,6 +359,7 @@ func guardrailCoverageFor(cfg Config, sess *session.Session) server.GuardrailCov
 	if !coverage.Enabled || sess == nil {
 		return coverage
 	}
+	cfg.guardrailSessionMode = sess.Mode
 	specs, _ := effectiveGuardrailSpecs(cfg)
 	rules, ok := compileGuardrailRules(cfg, specs)
 	if !ok {
@@ -477,16 +478,29 @@ func effectiveGuardrailSpecs(cfg Config) (specs []modelhook.RuleSpec, usedDefaul
 	return out, true
 }
 
-// demoteForPosture demotes the enforcing guardrail block mode to advisory
-// under posture YOLO ONLY (CC bypassPermissions parity).
+// demoteForPosture demotes the enforcing guardrail block mode to advisory for
+// the gate-free yolo tier ONLY (CC bypassPermissions parity). A per-session
+// engine (cfg.guardrailSessionMode set) is demoted only when its session is in
+// yolo mode, so an auto session on a yolo server keeps an enforcing checker;
+// the shared engine follows the process posture, and sessions whose mode
+// disagrees with it are promoted to a per-session engine (modeNeedsEngine).
 // strict/trusted/auto keep the configured mode — under auto the approve-once ask IS
 // the enforcement behaviour. It is the SINGLE posture→mode coupling point so the
 // default-set and operator-rule branches cannot drift.
 func demoteForPosture(cfg Config, mode string) string {
-	if cfg.Posture < PostureYolo {
+	if !guardrailsDemoted(cfg) {
 		return mode
 	}
 	return string(modelhook.ModeAdvisory)
+}
+
+// guardrailsDemoted reports whether the engine cfg describes runs its
+// guardrail rules advisory-only.
+func guardrailsDemoted(cfg Config) bool {
+	if cfg.guardrailSessionMode != "" {
+		return cfg.guardrailSessionMode == session.ModeYolo
+	}
+	return cfg.Posture >= PostureYolo
 }
 
 // guardrailsConfigured reports whether guardrails are switched on: a checker model

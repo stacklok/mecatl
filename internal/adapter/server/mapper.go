@@ -1126,6 +1126,10 @@ func modeToProto(m session.PermissionMode) mecatlv1.PermissionMode {
 		return mecatlv1.PermissionMode_PERMISSION_MODE_PLAN
 	case session.ModeAccept:
 		return mecatlv1.PermissionMode_PERMISSION_MODE_ACCEPT_EDITS
+	case session.ModeAuto:
+		return mecatlv1.PermissionMode_PERMISSION_MODE_AUTO
+	case session.ModeYolo:
+		return mecatlv1.PermissionMode_PERMISSION_MODE_YOLO
 	case session.ModeDefault:
 		return mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT
 	default:
@@ -1398,6 +1402,10 @@ func modeFromProto(m mecatlv1.PermissionMode) session.PermissionMode {
 		return session.ModePlan
 	case mecatlv1.PermissionMode_PERMISSION_MODE_ACCEPT_EDITS:
 		return session.ModeAccept
+	case mecatlv1.PermissionMode_PERMISSION_MODE_AUTO:
+		return session.ModeAuto
+	case mecatlv1.PermissionMode_PERMISSION_MODE_YOLO:
+		return session.ModeYolo
 	case mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT, mecatlv1.PermissionMode_PERMISSION_MODE_UNSPECIFIED:
 		return session.ModeDefault
 	default:
