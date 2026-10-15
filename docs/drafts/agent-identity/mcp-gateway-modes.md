@@ -39,7 +39,7 @@ AS-1 and AS-2 have separate issuer identities, keys, and storage, also in embedd
 
 ## Following one call
 
-Alice, AS-1 subject `u-alice-91`, owns harness session `hostS42`. Her session is already open: the broker holds `RT-A42` for broker session `A42`. Her reviewer agent instance asks to read PR 42 in `acme/payments`. The broker checks the session, workload, actor, effective ceiling, and route. With no cached `V` for `(A42, reviewer, gateway)`, it exchanges `RT-A42` and the reviewer SVID at AS-1 for an ID-JAG, redeems the ID-JAG at AS-2 for `V`, and calls the vMCP. The gateway in this example is external, at `https://gateway.example.com`.
+Alice, AS-1 subject `u-alice-91`, owns harness session `hostS42`. Her session is already open: the broker holds `RT-A42` for broker session `A42`. Her reviewer agent instance asks to read PR 42 in `acme/payments`. The broker checks the session, workload, actor, effective ceiling, and route. With no cached `V` for `(A42, reviewer, gateway, Alice)`, it exchanges `RT-A42` and the reviewer SVID at AS-1 for an ID-JAG, redeems the ID-JAG at AS-2 for `V`, and calls the vMCP. The gateway in this example is external, at `https://gateway.example.com`.
 
 ```mermaid
 sequenceDiagram
@@ -52,7 +52,7 @@ sequenceDiagram
     Note over B: Holds RT-A42 from session open
     B->>B: Broker checks<br/>Session, workload, actor, effective ceiling and route
     Note over B,P: Any denial before provider dispatch stops the request
-    opt No cached V for (A42, reviewer, gateway)
+    opt No cached V for (A42, reviewer, gateway, Alice)
         B->>A1: (1) RFC 8693 + private_key_jwt<br/>subject_token = RT-A42, actor_token = reviewer SVID<br/>requested_token_type = id-jag, audience = AS-2
         A1->>A1: Resolve RT-A42 record: session open, not expired<br/>Validate SVID, reviewer registered to A42<br/>Build act
         A1-->>B: (2) ID-JAG (sub u-alice-91, act, client_id mecatl)
@@ -177,7 +177,7 @@ An unresolved or unlinked subject fails closed. AS-2 must not create an unlinked
 }
 ```
 
-This fictional [RFC 9068](https://www.rfc-editor.org/rfc/rfc9068.html) JWT access token omits its signature. AS-2 issues its own `iss`, puts its native user ID in `sub`, and copies `act` unchanged. Its lifetime does not exceed the ID-JAG's. AS-2 issues no refresh token (ID-JAG §4.4.3); when `V` expires, the broker obtains a new ID-JAG from `RT-A42`. The broker caches `V` per session, instance, and gateway, and runs its checks before every use of a cached token.
+This fictional [RFC 9068](https://www.rfc-editor.org/rfc/rfc9068.html) JWT access token omits its signature. AS-2 issues its own `iss`, puts its native user ID in `sub`, and copies `act` unchanged. Its lifetime does not exceed the ID-JAG's. AS-2 issues no refresh token (ID-JAG §4.4.3); when `V` expires, the broker obtains a new ID-JAG from `RT-A42`. The broker caches `V` per session, instance, gateway, and user, and runs its checks before every use of a cached token.
 
 ### (5) Dispatch
 
@@ -199,12 +199,12 @@ Mecatl's operator configures AS-1 with the `mecatl` client, the accepted agent t
 
 ## Sessions at the vMCP
 
-Each agent instance has its own vMCP session (`Mcp-Session-Id`). The broker creates it on the instance's first MCP call and closes it when the instance ends, so backend state such as an open page or a selected repository carries across that instance's runs.
+Each agent instance has its own vMCP session (`Mcp-Session-Id`) for each user it acts for. The broker creates it on the instance's first MCP call and closes it when the instance ends, so backend state such as an open page or a selected repository carries across that instance's runs.
 
 - Sessions are never shared between instances.
 - The vMCP binds each session to the user and the acting instance: `V`'s `iss`, `sub`, and `act.sub`. A token naming another instance in its `act` cannot use the session.
 - The run is not part of the session or token. The run ID travels in trace headers.
-- The broker stores each instance's session ID. After a restart it reattaches. When the vMCP reports the session gone (idle timeout or eviction), the broker creates a new one. A wedged session can be reset explicitly.
+- The broker stores each session ID under the instance, gateway, and user, so a [shared session](run-owner.md) never hands one user's backend state to another. After a restart it reattaches. When the vMCP reports the session gone (idle timeout or eviction), the broker creates a new one. A wedged session can be reset explicitly.
 - An instance has at most one active run at a time; Mecatl rejects a second concurrent run on the same session or child. Runs of one instance therefore never share a vMCP session concurrently. If that rule ever changes, session assignment must be revisited.
 
 ## Embedded mode

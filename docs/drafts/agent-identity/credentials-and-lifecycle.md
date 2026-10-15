@@ -24,7 +24,7 @@ The human enters the flow once, when Alice signs in through AS-1. AS-1 runs that
 | **Broker refresh token** | Alice's delegated authority for one broker session, usable without her present. | AS-1 → broker → AS-1. Bound to client `mecatl` and to the session. |
 | **Broker client credential** | That the caller at AS-1 and AS-2 is the broker, OAuth client `mecatl`. | Broker's private key; each request carries a short-lived `private_key_jwt` assertion verified by AS-1 and AS-2. |
 | **ID-JAG** | Alice and the acting agent, for one redemption at AS-2. | AS-1 → broker → AS-2. Short-lived, single-use. |
-| **AS-2 access token (`V`)** | AS-2's native Alice, the acting agent, and client `mecatl`, for the vMCP resource. | AS-2 → broker → vMCP. Cached per session, instance, and gateway. |
+| **AS-2 access token (`V`)** | AS-2's native Alice, the acting agent, and client `mecatl`, for the vMCP resource. | AS-2 → broker → vMCP. Cached per session, instance, gateway, and user. |
 | **Upstream provider credential** | Access to Alice's GitHub account. | GitHub → gateway credential store → GitHub. Never leaves the gateway. |
 | **Signing keys** | Authority to issue credentials. | AS-1, AS-2, and the agent-instance issuer each keep their own key. Separate keys are not process isolation when components share a process. |
 
@@ -96,7 +96,7 @@ sequenceDiagram
     Note over H,G: (6) Main call: pull_request_list
     H->>B: InvokeTool: workload JWT, A42, op-list-prs-001, agentJwtSvid = mainSVID
     B->>B: Check session, workload, actor, effective ceiling, route
-    opt No cached V for (A42, main, gateway)
+    opt No cached V for (A42, main, gateway, Alice)
         B->>A1: (7) RFC 8693: subject_token = RT-A42<br/>actor_token = mainSVID<br/>requested_token_type = id-jag, audience = AS-2
         A1->>A1: Session open, hard expiry not passed<br/>main registered to A42, build act
         A1-->>B: J-main
@@ -255,7 +255,7 @@ One client ID, `mecatl`, is used at both servers, because the ID-JAG's `client_i
 
 ### (6) Per-operation authorization
 
-Local permissions and hooks run before each call. For the reviewer's call, trusted harness client code sends `InvokeTool` with workload authorization metadata, `A42`, `call.id=op-pr42-001`, and `agentJwtSvid=reviewerSVID`. The model supplies only the tool content:
+Local permissions and hooks run before each call. For the reviewer's call, trusted harness client code sends `InvokeTool` with workload authorization metadata, `A42`, `call.id=op-pr42-001`, run `R42` with its [run owner](run-owner.md) Alice, and `agentJwtSvid=reviewerSVID`. The model supplies only the tool content:
 
 ```json
 {
@@ -332,7 +332,7 @@ AS-2 issues a short-lived access token and no refresh token (§4.4.3):
 }
 ```
 
-The broker caches `V-reviewer` for `(A42, reviewer, gateway)` until it expires, then obtains a new ID-JAG. vMCP binds its session (`Mcp-Session-Id`) to the user and `act.sub`, so each agent instance has its own vMCP session.
+The broker caches `V-reviewer` for `(A42, reviewer, gateway, Alice)` until it expires, then obtains a new ID-JAG. vMCP binds its session (`Mcp-Session-Id`) to the user and `act.sub`, so each agent instance has its own vMCP session.
 
 **Evidence:** AS-2 records the redemption or denial: ID-JAG `jti`, client `mecatl`, native user, actor, resource, and decision.
 
@@ -354,7 +354,7 @@ No mecak8s code path can name a user who did not sign in at AS-1. An attacker wi
 
 AS-2 resolves `u-alice-91` to native Alice `usr-alice-7c1d` through shared login (embedded) or the consent link (external). The native identifier need not equal either upstream subject. Never infer the mapping from matching names or email addresses.
 
-The agent remains the actor: AS-1 validates its SVID and the registered presenter combination and sets `act`. AS-2 receives neither the AS-1 access token nor the SVID. Run, delegation, and parent facts remain lifecycle and context evidence. This selects neither multiplayer support nor run-owner attribution in place of session ownership.
+The agent remains the actor: AS-1 validates its SVID and the registered presenter combination and sets `act`. AS-2 receives neither the AS-1 access token nor the SVID. Run, delegation, and parent facts remain lifecycle and context evidence. Each call also carries the [run owner](run-owner.md), which the broker checks against the grant it uses; today it equals the session owner.
 
 ## Credential custody
 
@@ -370,7 +370,7 @@ The following custody boundaries do not imply a selected persistence implementat
 | Broker refresh token `RT-A42` | Broker; presented only to AS-1. | Bound to `mecatl` and `A42`; rotates; hard expiry; revoked when the session closes. |
 | Broker private key | Broker; signs client assertions for AS-1 and AS-2. | KMS or HSM where available; public key published through `jwks_uri`. |
 | ID-JAG | Broker, from issuance to redemption. | Single-use, short-lived. |
-| AS-2 access token `V` | Broker presents it to vMCP. | Cached per session, instance, and gateway; per-call checks still apply. No refresh token. |
+| AS-2 access token `V` | Broker presents it to vMCP. | Cached per session, instance, gateway, and user; per-call checks still apply. No refresh token. |
 | Consent link (state) | AS-2, external mode. | Until revoked in the gateway UI or by Mecatl. |
 | Upstream provider credential | Gateway credential store. | Keyed by (gateway, user, provider); provider-specific renewal stays at the gateway. |
 
@@ -409,7 +409,7 @@ Signing out of one client and stopping Mecatl's agents are different actions.
 | **The company IdP disables Alice's account or revokes her grants** | The same as sign out everywhere, within one re-check interval. | Transcripts. |
 | **Closing a session** | That session's refresh token. | Other sessions and schedules. |
 
-**Sign out everywhere.** The client calls Mecatl before it clears its own tokens. For each of Alice's sessions, mecak8s cancels the live run and any tool call parked for authorization. The broker deletes the broker session, which cancels in-flight tool calls, drops the session's cached ID-JAGs and `V`, and revokes its refresh token at AS-1. The broker also revokes the authority of each of Alice's schedules. Runs and broker state can live on different replicas, so the revocation must reach every replica that serves one of Alice's sessions. Whether a client-driven revoke per session, a durable revocation marker checked when a session lease is renewed, or shared broker state does this is an implementation choice.
+**Sign out everywhere.** The client calls Mecatl before it clears its own tokens. For each of Alice's sessions, mecak8s cancels the live run and any tool call parked for authorization. The broker revokes Alice's grants in those sessions at AS-1, cancels their in-flight tool calls, and drops her cached ID-JAGs and `V`; with one owner per session, that ends each broker session. Revocation is by user, so a [shared session](run-owner.md) would keep running for its other members. The broker also revokes the authority of each of Alice's schedules. Runs and broker state can live on different replicas, so the revocation must reach every replica that serves one of Alice's sessions. Whether a client-driven revoke per session, a durable revocation marker checked when a session lease is renewed, or shared broker state does this is an implementation choice.
 
 **Upstream re-check.** AS-1 keeps the company-IdP refresh token behind each broker refresh token and each schedule's authority; a client signing out does not remove it. When the broker exchanges a refresh token for an ID-JAG, AS-1 refreshes that upstream token if it has not done so within the re-check interval. If the IdP refuses, because the account is disabled or its grants were revoked, AS-1 revokes every grant it holds for Alice, including schedule authority, and the exchange fails. This works with any IdP that issues refresh tokens and needs no IdP-specific events. It catches account disable and administrator revocation within about one re-check interval; it does not catch a plain sign-out at the company IdP. The interval is not selected; it bounds how long a disabled account can keep acting.
 
