@@ -63,7 +63,7 @@ Accepting a token whose `aud` is the Mecatl API from a different client is an ex
 
 The broker supplies the session reference. Rotation inherits the record and does not extend the hard expiry. Session close revokes the token and deletes the record. The refresh token is not tied to the user's AS-1 login session; [sign-out and revocation](credentials-and-lifecycle.md#sign-out-and-revocation) describes what ends it.
 
-**Per-call ID-JAG.** When no cached `V` exists for (session, instance, gateway), the broker asks AS-1 for an ID-JAG ([draft-ietf-oauth-identity-assertion-authz-grant-04](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/)) with RFC 8693: the broker refresh token as `subject_token` (`subject_token_type=urn:ietf:params:oauth:token-type:refresh_token`), the agent-instance JWT-SVID as `actor_token` (`actor_token_type=urn:ietf:params:oauth:token-type:jwt`), `requested_token_type=urn:ietf:params:oauth:token-type:id-jag`, and AS-2's issuer as `audience`. AS-1:
+**Per-call ID-JAG.** When no cached `V` exists for (session, instance, gateway, user), the broker asks AS-1 for an ID-JAG ([draft-ietf-oauth-identity-assertion-authz-grant-04](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/)) with RFC 8693: the broker refresh token as `subject_token` (`subject_token_type=urn:ietf:params:oauth:token-type:refresh_token`), the agent-instance JWT-SVID as `actor_token` (`actor_token_type=urn:ietf:params:oauth:token-type:jwt`), `requested_token_type=urn:ietf:params:oauth:token-type:id-jag`, and AS-2's issuer as `audience`. AS-1:
 
 1. resolves the refresh token to its record and checks that it is bound to `mecatl`, that the session is open, and that the hard expiry has not passed;
 2. validates the SVID against its agent trust bundle, registered subject, and a configured audience accepted by both AS-1 and the broker invocation validator, and checks that the instance is registered to this session;
@@ -274,6 +274,13 @@ Verify the [AuditEvent profile](audit.md#auditevent-profile) through the real to
 - A session ID is never reused for a new session.
 
 **Later work for session-bound tokens.** Before adopting [session-bound tokens](credentials-and-lifecycle.md#3-session-open-and-the-broker-refresh-token), check how each client would hold them. The TUI keeps tokens in the OS keyring and Studio in sealed server-side cookies; both would need one session-bound token per open session, refreshed silently. Studio's server holds those tokens for the browser, so check how it stores and selects them per session and whether that changes its cookie and CSRF handling.
+
+## Run owner checks
+
+- The broker refuses a call whose reported run owner differs from the subject of the grant in use, and records the denial.
+- A child run's owner equals its parent run's owner; the broker refuses a delegation that changes it.
+- Two users' calls through the same instance never share a cached `V`, ID-JAG, or vMCP session ID.
+- Signing out everywhere revokes only that user's grants and cache entries.
 
 ## Sign-out and revocation checks
 

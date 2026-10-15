@@ -138,6 +138,7 @@ The **identity work** establishes who acts and records it:
 - agent-instance credentials;
 - the credential flow: sign-in at AS-1, the session-bound refresh token, ID-JAG issuance, AS-2 redemption, and per-user provider credentials at the gateway;
 - the broker's identity checks: session, workload, and that the acting instance is registered to the broker session;
+- the run owner on every call, checked against the grant in use;
 - sign-out and revocation: signing out everywhere stops every agent and schedule acting for the user, and AS-1's upstream re-check does the same when the company IdP disables the account;
 - audit of who acted, for whom, through which delegation, and what was decided, dispatched, and observed.
 
@@ -162,6 +163,7 @@ The proposed chapters develop each part of the architecture.
 | [MCP authorization](mcp-authorization.md) | Explain how user and agent permissions govern MCP calls and how the broker uses ToolHive. |
 | [MCP gateway modes](mcp-gateway-modes.md) | Chain the broker's grant issuer to the vMCP gateway's authorization server, so one protocol works with an embedded or an external gateway. |
 | [Credentials and lifecycle](credentials-and-lifecycle.md) | Follow one credential-to-outcome walkthrough with validation and audit evidence, then explain renewal and recovery. |
+| [Run owner](run-owner.md) | Record who started each run, check it against the grant in use, and keep shared sessions possible later. |
 | [All-tool mediation](all-tool-mediation.md) | Develop the broader authorization boundary for filesystem tools, Shell, and spawning. |
 
 The [implementation and verification companion](implementation.md) records integration requirements and checks. This broker-centered architecture supersedes the earlier identity model's harness-owned signing and audit responsibilities; the donor documents are retained in Git history.
