@@ -338,7 +338,9 @@ tasks:
     vars:
       RACE: '{{default "" .RACE}}'
     cmds:
-      - cd {{.MODULE}} && GOWORK=off go test -mod=readonly {{.RACE}} ./...
+      # Go's default 10m per-package budget is too tight for cmd/mecatui/ui under
+      # -race (about 400-600s on CI runners); the job-level timeout still bounds the run.
+      - cd {{.MODULE}} && GOWORK=off go test -mod=readonly -timeout=20m {{.RACE}} ./...
 
   test:_suite:
     internal: true
