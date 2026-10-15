@@ -43,6 +43,7 @@ const copy = {
   receipt: "Done: 2 to review.",
   reflect: "Find suggestions",
   reflectionOff: "Learning from a chat is not available right now.",
+  refresh: "Refresh suggestions",
   reject: "Reject",
   rejected: "Suggestion rejected",
   rejectedFilter: "Rejected",
@@ -351,6 +352,29 @@ describe("learning review (pinned behaviour)", () => {
     await waitFor(() => expect(listStatuses()).toEqual(["staged", "staged"]));
     expect(state.decide).toHaveLength(1);
     expect(screen.queryByText(copy.approved)).toBeNull();
+  });
+
+  it("names the icon-only refresh button and restarts the queue, clearing the notice", async () => {
+    const user = userEvent.setup();
+    state.decideAnswer = () => ({
+      code: "proposal_conflict",
+      detail: "proposal version changed",
+      status: 409,
+    });
+    renderPage();
+    const item = await row("Communication preference");
+    await user.click(item.getByRole("button", { name: copy.approve }));
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(within(dialog).getByRole("button", { name: copy.confirm }));
+    expect(await screen.findByText(copy.conflict)).toBeTruthy();
+    await waitFor(() => expect(listStatuses()).toEqual(["staged", "staged"]));
+
+    const refresh = screen.getByRole("button", { name: copy.refresh });
+    expect(refresh.textContent).toBe("");
+    await user.click(refresh);
+    await waitFor(() => expect(listStatuses()).toEqual(["staged", "staged", "staged"]));
+    expect(screen.queryByText(copy.conflict)).toBeNull();
+    await row("Communication preference");
   });
 
   it("shows a refused decision's detail", async () => {
