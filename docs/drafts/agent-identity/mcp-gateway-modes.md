@@ -213,7 +213,7 @@ This keeps one protocol path for both modes. It does not add isolation: anyone w
 
 ## Outside this chapter
 
-- **Revocation** beyond short ID-JAG and access-token lifetimes, consent-link revocation, and `RT-A42`'s hard expiry.
+- **Revocation.** Sign-out and account revocation are covered in [credentials and lifecycle](credentials-and-lifecycle.md#sign-out-and-revocation). Issued ID-JAGs and access tokens are not revoked; they expire.
 - **Structured gateway outcomes.** How an external gateway reports "needs authorization" or "consent required" to the broker as a structured outcome remains open. So does whether the "Allow Mecatl" step and the provider's consent screen can be one redirect chain.
 - **Gateway authorization on `act`**, such as Cedar policies that consider the acting agent. Until the agent ceiling is carried in the ID-JAG and `V` as scope or `authorization_details` (RFC 9396), the broker alone enforces it; the gateway enforces user and connection.
 

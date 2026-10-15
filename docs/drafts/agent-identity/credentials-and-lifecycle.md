@@ -183,7 +183,7 @@ The broker exchanges that token at AS-1 with an RFC 8693 token exchange, authent
 
 AS-1 then issues `RT-A42`. The refresh token is opaque to the broker; its meaning lives in an AS-1 record that binds it to client `mecatl`, to Alice as `u-alice-91`, and to session `A42`, with a hard expiry that rotation does not extend. Every ID-JAG issued from it names that subject.
 
-The broker supplies `A42` when the record is created, so the session binding is broker-asserted. It contains bugs such as cross-session confusion and stale sessions; it does not protect against a compromised broker. For now, the refresh token is not tied to Alice's AS-1 login session: disabling her company account takes effect at the hard expiry at the latest. Binding to the login session is later work.
+The broker supplies `A42` when the record is created, so the session binding is broker-asserted. It contains bugs such as cross-session confusion and stale sessions; it does not protect against a compromised broker. The refresh token is not tied to Alice's AS-1 login session, so signing out of one client does not end it. Signing out everywhere, closing the session, and the hard expiry end it, and AS-1's upstream re-check ends it if the company IdP disables her account; see [sign-out and revocation](#sign-out-and-revocation).
 
 The existing broker session record under `A42` keeps the workload and host-session binding. The human authority now lives in `RT-A42`, not in a broker-local human record.
 
@@ -361,16 +361,36 @@ An agent instance keeps its identity across runs. These lifetimes are independen
 | Client refresh token | AS-1 policy and upstream sign-in status. | Sign in again. |
 | Workload JWT | Expired credentials are rejected. | Platform rotation for the same workload. |
 | `mainSVID` / `reviewerSVID` | Expiry prevents use as current actor evidence. | The agent-instance issuer renews for the same registered instance; the ceiling does not widen. |
-| `RT-A42` | Hard expiry, session close, revocation, or reuse detection. Rotation does not extend the hard expiry. | A new session open with a fresh AS-1 access token. |
+| `RT-A42` | Hard expiry, session close, sign out everywhere, a failed upstream re-check, revocation, or reuse detection. Rotation does not extend the hard expiry. | A new session open with a fresh AS-1 access token. |
 | ID-JAG | Short-lived and single-use. | A new exchange with `RT-A42` and a current SVID. |
 | `V` | Short-lived; every cached use still passes broker checks. | A new ID-JAG. |
 | Broker private key | Operator rotation. | New key published through `jwks_uri`. |
+| Schedule authority | Its horizon, schedule deletion, sign out everywhere, or a failed upstream re-check. | The owner renews it. |
 | Consent link | Revocation at AS-2. | The user links again. |
 | Upstream provider credential | Provider expiry or revocation. | Refresh at the gateway, or the user connects again. |
 
 The example times are illustrative, not selected defaults: `J-reviewer` is valid `1800000001..1800000121`, `V-reviewer` `1800000005..1800000120`. The values of `RT-A42`'s hard expiry and of a schedule's authority horizon are not selected. They bound how long Mecatl acts without a fresh sign-in, and the company IdP administrator should know them.
 
 Closing or revoking the session revokes `RT-A42` and invalidates the broker's `V` cache for that session. A recipient validating only a self-contained token may still accept an already-issued `V` until it expires.
+
+## Sign-out and revocation
+
+Signing out of one client and stopping Mecatl's agents are different actions.
+
+| User action or event | What ends | What remains |
+| --- | --- | --- |
+| **Sign out** in the TUI or Studio | That client's own AS-1 tokens, revoked at AS-1. | Running agents and schedules. Their authority is held by the broker, not by the client. |
+| **Sign out everywhere** | Every agent acting for Alice: live runs stop, tool calls parked for authorization are cancelled, broker sessions and their refresh tokens are revoked, and the authority of each of her schedules is revoked. | Transcripts. Each schedule stays configured; its next run ends with "needs owner action" until Alice renews it. |
+| **The company IdP disables Alice's account or revokes her grants** | The same as sign out everywhere, within one re-check interval. | Transcripts. |
+| **Closing a session** | That session's refresh token. | Other sessions and schedules. |
+
+**Sign out everywhere.** The client calls Mecatl before it clears its own tokens. For each of Alice's sessions, mecak8s cancels the live run and any tool call parked for authorization. The broker deletes the broker session, which cancels in-flight tool calls, drops the session's cached ID-JAGs and `V`, and revokes its refresh token at AS-1. The broker also revokes the authority of each of Alice's schedules. Runs and broker state can live on different replicas, so the revocation must reach every replica that serves one of Alice's sessions. Whether a client-driven revoke per session, a durable revocation marker checked when a session lease is renewed, or shared broker state does this is an implementation choice.
+
+**Upstream re-check.** AS-1 keeps the company-IdP refresh token behind each broker refresh token and each schedule's authority; a client signing out does not remove it. When the broker exchanges a refresh token for an ID-JAG, AS-1 refreshes that upstream token if it has not done so within the re-check interval. If the IdP refuses, because the account is disabled or its grants were revoked, AS-1 revokes every grant it holds for Alice, including schedule authority, and the exchange fails. This works with any IdP that issues refresh tokens and needs no IdP-specific events. It catches account disable and administrator revocation within about one re-check interval; it does not catch a plain sign-out at the company IdP. The interval is not selected; it bounds how long a disabled account can keep acting.
+
+**What remains after revocation.** Issued ID-JAGs and AS-2 access tokens cannot be revoked. The broker stops using them at once, but a `V` already issued stays valid at the gateway until it expires, and the vMCP does not check for revocation. Keep both lifetimes short.
+
+**Later.** Two steps would make revocation faster or broader. AS-1 could receive logout and account events from the company IdP: OIDC Back-Channel Logout from Keycloak, or event hooks from Okta. Entra and Google Workspace send neither to third-party applications. And each broker refresh token could be bound to Alice's AS-1 login session, so that signing out at AS-1 itself ends her agents. Shared Signals (SSF, CAEP, RISC) carry the same events but have little IdP support today.
 
 ## Pauses and restart
 
@@ -390,7 +410,7 @@ An operation that may have been dispatched but has no recorded completion has an
 
 A scheduled invocation runs without Alice present. Its recorded owner identifies on whose behalf the work was configured; audit records must distinguish scheduled execution from a fresh human request.
 
-A schedule usually outlives the session that created it, and `RT-A42` is revoked when that session closes. A schedule therefore has its own delegated authority from Alice. Mecatl obtains it when she sets up the schedule, in the same one-time conversion as at session open, but bound to the schedule rather than a session. It has an explicit horizon, and deleting the schedule revokes it. Each run draws on that authority.
+A schedule usually outlives the session that created it, and `RT-A42` is revoked when that session closes. A schedule therefore has its own delegated authority from Alice. Mecatl obtains it when she sets up the schedule, in the same one-time conversion as at session open, but bound to the schedule rather than a session. It has an explicit horizon. Deleting the schedule, signing out everywhere, and a failed upstream re-check revoke it. Each run draws on that authority.
 
 When Alice sets up the schedule, every connector the schedule may use must be connected: in external mode, the gateway link; in every mode, the provider connection. Anything missing is fixed right then through the existing authorization-pending flow, while she is present.
 

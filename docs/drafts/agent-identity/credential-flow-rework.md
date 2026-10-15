@@ -150,7 +150,7 @@ When no credential or consent exists, vMCP or AS-2 refuses and the broker return
 
   A token format that carries these claims, a signed session assertion or a refresh token that AS-1 encodes internally as a signed JWT, adds readable copies of the same data. AS-1 must still look up the record for revocation and the one-conversion rule, and must still read the registry for instance membership. That format pays off only if AS-1 must validate without access to the store.
 - The broker refresh token is the subject of each ID-JAG exchange (ID-JAG §4.3 allows a refresh token as `subject_token`). It is the standard form of the human authority in `A42`. `A42` keeps only the workload and host-session binding.
-- **Simplification for now:** the broker refresh token is not tied to the user's AS-1 login session. It has a hard maximum lifetime and is revoked when the broker session closes. Disabling the company account therefore takes effect at that maximum lifetime at the latest. Binding to the login session (`sid`), so logout revokes it, is later work.
+- **Session binding:** the broker refresh token is not tied to the user's AS-1 login session, so signing out of one client does not end it. Sign out everywhere, session close, the hard maximum lifetime, and the upstream re-check end it (D8). Binding to the login session (`sid`), so that signing out at AS-1 revokes it, is later work.
 - **Owner identity.** The session owner stays the company identity `(company iss, company sub)`. mecak8s reads it from the validated AS-1 access token's `sub_id`, not from the token's own `iss`/`sub`. Existing owners keep matching, so no migration is needed. The owner remains the human's stable identity across AS-1 user-store rebuilds, and it is the identity the run owner will use later. AS-1 must always set `sub_id`. mecak8s rejects an AS-1 token without it and trusts it because AS-1 ran that sign-in.
 
 ### D4: delegation visibility at the gateway
@@ -203,17 +203,23 @@ Future broker Cedar policies stay request-shaped: user and identity-provider att
 
 ### D7: scheduled runs are pre-authorized
 
-- **Authority.** A schedule has its own delegated authority from the user: created at schedule setup, bound to the schedule rather than a session, with an explicit horizon, and revoked when the schedule is deleted. Session-bound authority cannot serve schedules, because it is revoked when the session closes.
+- **Authority.** A schedule has its own delegated authority from the user: created at schedule setup, bound to the schedule rather than a session, with an explicit horizon, and revoked when the schedule is deleted, on sign out everywhere, or by a failed upstream re-check (D8). Session-bound authority cannot serve schedules, because it is revoked when the session closes.
 - **Pre-authorization.** At setup, every connector the schedule may use is connected: the gateway link in external mode, and the provider connection in every mode. Gaps are fixed interactively then.
 - **At run time,** nothing is interactive. A lapsed link, credential, or authority fails the call. The run ends with "needs owner action", and the owner is notified through a link into Mecatl, never a raw connect URL.
 - **Renewal** extends the horizon and reconnects lapsed connectors without recreating the schedule. The owner is notified ahead of the horizon.
+
+### D8: sign-out and revocation
+
+- **Two user actions.** "Sign out" ends only that client's own tokens; agents and schedules keep running. "Sign out everywhere" stops every agent acting for the user: live runs, tool calls parked for authorization, broker sessions and their refresh tokens, and the authority of every schedule.
+- **Upstream re-check.** AS-1 keeps the company-IdP refresh token behind each broker refresh token and each schedule's authority, independent of any client's sign-out. When issuing an ID-JAG, it refreshes that upstream token at most once per re-check interval. A refusal revokes all the user's grants. This catches account disable and administrator revocation at any IdP that issues refresh tokens, without IdP events.
+- **Later:** logout and account events from the company IdP (OIDC Back-Channel Logout, Okta event hooks), binding broker refresh tokens to the AS-1 login session, and Shared Signals.
 
 ## User-visible flow
 
 - **Sign in** once per login session, through AS-1 to the company IdP; usually silent with single sign-on.
 - **Connect a provider** once, through the existing `mcp_authorization_pending` path. In external mode the same path first shows the gateway's "Allow Mecatl" step.
 - **Everyday use and scheduled runs** need nothing from the user until the broker refresh token's maximum lifetime or a revocation.
-- **Revoke** in Mecatl, or, for external gateways, in the gateway UI.
+- **Sign out** ends one client's tokens. **Sign out everywhere** stops every agent and schedule acting for the user. For external gateways, the consent link can also be revoked in the gateway UI.
 
 ## ToolHive gaps
 
@@ -232,6 +238,8 @@ What each decision asks of ToolHive, and whether it exists today. Current behavi
 | D2 | Consent link at AS-2's own login (external mode) | No |
 | D1 | Per-user credential lookup in open-source ToolHive | No |
 | D3 | `private_key_jwt` for the broker | Yes |
+| D8 | Revoke a broker refresh token and all of a user's grants | No |
+| D8 | Upstream re-check when issuing an ID-JAG | No |
 | Later | DPoP issuance and validation | No |
 | D4 (C) | Scope or `authorization_details` narrowing enforced per tool, including on `act` | Partly |
 

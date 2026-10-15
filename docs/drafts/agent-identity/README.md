@@ -136,6 +136,7 @@ The **identity work** establishes who acts and records it:
 - agent-instance credentials;
 - the credential flow: sign-in at AS-1, the session-bound refresh token, ID-JAG issuance, AS-2 redemption, and per-user provider credentials at the gateway;
 - the broker's identity checks: session, workload, and that the acting instance is registered to the broker session;
+- sign-out and revocation: signing out everywhere stops every agent and schedule acting for the user, and AS-1's upstream re-check does the same when the company IdP disables the account;
 - audit of who acted, for whom, through which delegation, and what was decided, dispatched, and observed.
 
 The **authority work** decides what each agent may do:
