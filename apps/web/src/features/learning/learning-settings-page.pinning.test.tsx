@@ -6,7 +6,7 @@ import type { ListLearningProposalsResponse } from "@mecatl-studio/contracts/gen
 import { getRuntimeQueryKey } from "@mecatl-studio/contracts/query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryHistory, createRouter, RouterContextProvider } from "@tanstack/react-router";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Toaster } from "@/components/ui/sonner";
@@ -217,6 +217,10 @@ async function sessionChoices() {
   return names;
 }
 
+/** The selectors styles.css uses to draw these glyphs at 20px on phones. */
+const phoneGlyph =
+  'svg.lucide.size-4, [data-slot="button"] svg.lucide:not([class*="size-"]):not([class*="h-"]):not([class*="w-"])';
+
 const listStatuses = () => state.listCalls.map((query) => query.get("status"));
 
 beforeEach(() => {
@@ -375,6 +379,33 @@ describe("learning review (pinned behaviour)", () => {
     await waitFor(() => expect(listStatuses()).toEqual(["staged", "staged", "staged"]));
     expect(screen.queryByText(copy.conflict)).toBeNull();
     await row("Communication preference");
+  });
+
+  it("explains the refresh button in a Tooltip on hover, not a native title", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await row("Communication preference");
+    const refresh = screen.getByRole("button", { name: copy.refresh });
+    expect(refresh.getAttribute("title")).toBeNull();
+    // The glyph still matches the phone rule in styles.css that draws button icons at 20px.
+    expect(refresh.querySelector("svg")?.matches(phoneGlyph)).toBe(true);
+    expect(screen.queryByRole("tooltip")).toBeNull();
+
+    await user.hover(refresh);
+    expect((await screen.findByRole("tooltip")).textContent).toBe(copy.refresh);
+    // happy-dom has no layout for Radix's pointer grace area, so close with Escape.
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+  });
+
+  it("explains the refresh button in a Tooltip on keyboard focus", async () => {
+    renderPage();
+    await row("Communication preference");
+    const refresh = screen.getByRole("button", { name: copy.refresh });
+    await act(async () => refresh.focus());
+    expect((await screen.findByRole("tooltip")).textContent).toBe(copy.refresh);
+    await act(async () => refresh.blur());
+    await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
   });
 
   it("shows a refused decision's detail", async () => {
