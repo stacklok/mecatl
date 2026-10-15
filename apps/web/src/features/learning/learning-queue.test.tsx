@@ -366,6 +366,26 @@ describe("learning queue rows", () => {
     expect(state.detailCalls).toEqual(["p1"]);
   });
 
+  it("opens and closes Details from the keyboard, hiding the sources when closed", async () => {
+    const user = userEvent.setup();
+    state.pages = { "staged|": { items: [proposal("p1")] } };
+    state.details.p1 = () => ({ ...proposal("p1"), evidence: [evidence({ preview: "excerpt" })] });
+    renderPage();
+    const item = await row("Title of p1");
+    const details = item.getByRole("button", { name: "Details" });
+    expect(item.queryByText("Where this came from")).toBeNull();
+    details.focus();
+    await user.keyboard("{Enter}");
+    expect(details.getAttribute("aria-expanded")).toBe("true");
+    expect(await item.findByText("excerpt")).toBeTruthy();
+    expect(item.getByText("Where this came from")).toBeTruthy();
+    await user.keyboard(" ");
+    expect(details.getAttribute("aria-expanded")).toBe("false");
+    expect(item.queryByText("Where this came from")).toBeNull();
+    expect(item.queryByText("excerpt")).toBeNull();
+    expect(document.activeElement).toBe(details);
+  });
+
   it("takes a newer version from Details before the next decision", async () => {
     const user = userEvent.setup();
     state.pages = { "staged|": { items: [proposal("p1")] } };
