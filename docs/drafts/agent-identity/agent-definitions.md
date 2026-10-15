@@ -84,7 +84,7 @@ Identity continuity is separate from broker attachment recovery. See [pauses and
 
 Each instance's registration carries a provenance record for the exact definition it uses. mecak8s's trusted resolver produces it from source resolution; the model never supplies it, and it is never reconstructed later from whatever is current at the source.
 
-The record has a versioned **profile** and profile-specific metadata. A Git profile might carry repository, path, and full commit; a Kubernetes profile the cluster, object UID, and observed revision; a service-backed profile a tenant namespace, object ID, and revision. `AgentDefSource` stays storage-independent: profiles are carried as metadata, not added to the core interface. Each profile defines required fields, schema, hashing rules, and revision semantics. Operator configuration names the profiles and evidence it accepts; a source cannot weaken that by selecting a more permissive profile.
+The record has a versioned **profile** and profile-specific metadata. A Git profile might carry repository, path, and full commit; a Kubernetes profile the cluster, object UID, and observed revision; a service-backed profile a tenant namespace, object ID, and revision. Each profile defines its required fields and revision semantics. Operator configuration names the profiles and evidence it accepts; a source cannot weaken that by selecting a more permissive profile.
 
 The record carries two digests:
 
