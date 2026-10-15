@@ -2381,7 +2381,29 @@ export type ListSkillFilesErrors = {
     /**
      * The request could not be completed.
      */
+    400: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
     404: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    429: {
         code: string;
         detail: string;
         instance: string;

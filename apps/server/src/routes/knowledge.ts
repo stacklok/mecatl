@@ -108,6 +108,7 @@ const listSkillFilesRoute = createRoute({
   path: "/api/v1/skills/{name}/files",
   request: { params: skillNameParameters },
   responses: {
+    ...transportErrors,
     200: {
       content: { "application/json": { schema: skillFilesResponseSchema } },
       description: "A configured skill's files with their text.",
