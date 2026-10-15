@@ -25,14 +25,13 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-// Recovery waits for composition to finish, then immediately reattaches the
-// persisted local placement. Missing event evidence is intentional: no model
-// execution is needed to exercise the formerly racy Build-owned callback.
-func TestIssue2268StartupConfigRace(t *testing.T) {
-	synctest.Test(t, testIssue2268StartupConfigRace)
+// Missing event evidence is intentional: placement reattachment precedes evidence
+// validation and does not require a model call.
+func TestBuildAttemptRecoveryWaitsForComposition(t *testing.T) {
+	synctest.Test(t, testBuildAttemptRecoveryWaitsForComposition)
 }
 
-func testIssue2268StartupConfigRace(t *testing.T) {
+func testBuildAttemptRecoveryWaitsForComposition(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	workspace := osfsWSForTest(t, t.TempDir()).Root()
@@ -59,7 +58,7 @@ func testIssue2268StartupConfigRace(t *testing.T) {
 	unblock := func() { releaseOnce.Do(func() { close(release) }) }
 	defer unblock()
 	claimed, listing, finalized := make(chan struct{}), make(chan struct{}), make(chan struct{})
-	repository := &issue2268GatedRepository{AttemptRepository: base, claimed: claimed, release: release, finalized: finalized}
+	repository := &startupGatedAttemptRepository{AttemptRepository: base, claimed: claimed, release: release, finalized: finalized}
 	ledger := automaticStoreForTest(t, t.TempDir(), defaultLearningAutomaticConfig())
 	remoteAddr, conns := startStartupLoopDriver(t, nil, func(s *grpc.Server) {
 		driverv1.RegisterLearningRepositoryCapabilitiesServiceServer(s, grpcdriver.NewLearningRepositoryCapabilitiesServer(grpcdriver.LearningRepositoryCapabilities{
@@ -141,14 +140,14 @@ func testIssue2268StartupConfigRace(t *testing.T) {
 	}
 }
 
-type issue2268GatedRepository struct {
+type startupGatedAttemptRepository struct {
 	learning.AttemptRepository
 	claimed   chan struct{}
 	release   <-chan struct{}
 	finalized chan struct{}
 }
 
-func (r *issue2268GatedRepository) AcquireClaim(ctx context.Context, p learning.AttemptPartition, id learning.AttemptID, v learning.AttemptVersion, ttl time.Duration) (learning.AttemptRecord, learning.AttemptClaim, error) {
+func (r *startupGatedAttemptRepository) AcquireClaim(ctx context.Context, p learning.AttemptPartition, id learning.AttemptID, v learning.AttemptVersion, ttl time.Duration) (learning.AttemptRecord, learning.AttemptClaim, error) {
 	record, claim, err := r.AttemptRepository.AcquireClaim(ctx, p, id, v, ttl)
 	if err != nil {
 		return record, claim, err
@@ -162,7 +161,7 @@ func (r *issue2268GatedRepository) AcquireClaim(ctx context.Context, p learning.
 	}
 }
 
-func (r *issue2268GatedRepository) Finalize(ctx context.Context, p learning.AttemptPartition, id learning.AttemptID, v learning.AttemptVersion, claim learning.AttemptClaim, f learning.AttemptFinalization) (learning.AttemptRecord, error) {
+func (r *startupGatedAttemptRepository) Finalize(ctx context.Context, p learning.AttemptPartition, id learning.AttemptID, v learning.AttemptVersion, claim learning.AttemptClaim, f learning.AttemptFinalization) (learning.AttemptRecord, error) {
 	record, err := r.AttemptRepository.Finalize(ctx, p, id, v, claim, f)
 	if err == nil {
 		close(r.finalized)

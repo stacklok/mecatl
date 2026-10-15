@@ -116,11 +116,6 @@ budgets are in [Learning](../../user-docs/features/agent-behavior/learning.md).
    an evaluator FAIL or error rejects, and activation needs a PASS (`evaluated`) or,
    under `validated`, an evidence-backed ABSTAIN. Review mode always stages.
 
-The composition root starts attempt recovery and automatic-reservation reconciliation
-only after a successful build, with an immediate discovery pass. Failed builds launch
-neither loop. Shutdown cancels and joins both before closing the service or their
-backends.
-
 **What it may change:** memory facts, through ordinary CAS writes tagged with the proposal
 ID, and body-only learned skills published per caller and project through
 `skillfs.AtomicCatalog`. **What it may not change:** permissions, tools, workspace files,
