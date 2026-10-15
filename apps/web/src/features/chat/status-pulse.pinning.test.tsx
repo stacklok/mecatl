@@ -3,12 +3,14 @@
 
 /**
  * Pins the `animate-pulse` call sites #2337 reviewed in the delegation card,
- * the fleet chip, and the session details view. Each one is a status
- * indicator (a child, a family, or a session is running), not a loading
+ * the fleet chip, the session details view, the activity panel's roster, and
+ * the reasoning disclosure. Each one is a status indicator (a child, a
+ * family, a session, or the model's reasoning is running), not a loading
  * placeholder, so none of them becomes a Skeleton: the pulse shows only
- * while running, stays decorative (`aria-hidden`), and the state itself is
- * still spoken as text. The details view's real loading state is a
- * spinner beside "Loading details…" in a status region.
+ * while running, and the state itself is still spoken as text. The dots are
+ * decorative (`aria-hidden`); the reasoning pulse is the "Reasoning…" label
+ * itself, beside the live preview it labels. The details view's real loading
+ * state is a spinner beside "Loading details…" in a status region.
  */
 
 import type { SessionDetailResponse, SessionSummaryResponse } from "@mecatl-studio/contracts";
@@ -17,7 +19,9 @@ import { describe, expect, it } from "vitest";
 import { DelegationCard } from "./delegation-card";
 import type { DelegationState, SubagentActivity } from "./delegation-fleet";
 import { createDelegationFleet } from "./delegation-fleet";
+import { SessionActivityContent } from "./delegation-panel";
 import { FleetStatusChip } from "./fleet-status-chip";
+import { ReasoningDisclosure } from "./reasoning-disclosure";
 import { SessionDetailsView } from "./session-details-dialog";
 
 function dom(element: React.ReactElement): HTMLElement {
@@ -184,5 +188,54 @@ describe("status pulses stay status indicators (#2337)", () => {
     expect(pulses(pending)).toHaveLength(0);
     expect(pending.querySelector('[data-slot="skeleton"]')).toBeNull();
     expect(pending.querySelector("dl")).toBeNull();
+  });
+
+  it("pulses an activity roster row's dot only while that activity runs", () => {
+    const fleet = {
+      ...createDelegationFleet("session-a"),
+      subagents: [subagent("running"), subagent("finished", "end_turn")],
+    };
+    const panel = dom(<SessionActivityContent fleet={fleet} onFocusChange={() => {}} />);
+    const rows = [...panel.querySelectorAll("button[aria-pressed]")];
+    expect(rows.map((row) => row.textContent)).toEqual([
+      "Subagent child-running · Running",
+      "Subagent child-finished · Finished",
+    ]);
+    const [running, finished] = rows as HTMLElement[];
+    if (!running || !finished) throw new Error("expected two roster rows");
+    expectStatusPulse(running);
+    expect(pulses(finished)).toHaveLength(0);
+    expect(pulses(panel)).toHaveLength(1);
+    expect(panel.querySelector('[data-slot="skeleton"]')).toBeNull();
+
+    const settled = dom(
+      <SessionActivityContent
+        fleet={{ ...fleet, subagents: [subagent("finished", "end_turn")] }}
+        onFocusChange={() => {}}
+      />,
+    );
+    expect(settled.querySelectorAll("button[aria-pressed]")).toHaveLength(1);
+    expect(pulses(settled)).toHaveLength(0);
+  });
+
+  it("pulses the reasoning label only while reasoning streams, beside its live preview", () => {
+    const text = "Check the config first.\nThen read the logs.";
+    const streaming = dom(<ReasoningDisclosure streaming text={text} />);
+    const found = pulses(streaming);
+    expect(found).toHaveLength(1);
+    const label = found[0];
+    // A text label, read with the preview, not a decorative placeholder shape.
+    expect(label?.textContent).toBe("Reasoning…");
+    expect(label?.hasAttribute("aria-hidden")).toBe(false);
+    expect(label?.classList.contains("font-medium")).toBe(true);
+    expect(label?.nextElementSibling?.textContent).toBe("Then read the logs.");
+    expect(streaming.querySelector('[data-slot="skeleton"]')).toBeNull();
+
+    const settled = dom(<ReasoningDisclosure streaming={false} text={text} />);
+    expect(pulses(settled)).toHaveLength(0);
+    expect(settled.textContent).toContain("Reasoning summary · 2 lines");
+
+    // No reasoning text yet: nothing renders, so there is no placeholder either.
+    expect(dom(<ReasoningDisclosure streaming text="" />).innerHTML).toBe("");
   });
 });
