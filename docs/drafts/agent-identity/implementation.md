@@ -262,6 +262,7 @@ Verify the [AuditEvent profile](audit.md#auditevent-profile) through the real to
 - Two instances of the same definition under different parents stay distinct in reconstruction.
 - A missing or malformed lineage record makes reconstruction report an incomplete chain, not a shorter one.
 - A delivery failure is reported through the logger, as toolhive-core [#343](https://github.com/stacklok/toolhive-core/issues/343) proposes.
+- With a lossless sink configured, an unavailable sink blocks dispatch, and no record is dropped under back-pressure or when the sink restarts.
 - The broker refuses to dispatch when its decision record cannot be delivered, and dispatches only after the sink accepts it.
 - Removing a record or ending a stream without its stop event shows as a sequence gap.
 - Each reconciliation check flags an injected mismatch: an AS-2 redemption without AS-1 issuance, a vMCP call without broker dispatch, a dispatch without a vMCP call, and a session-open conversion without AS-1 issuance.
