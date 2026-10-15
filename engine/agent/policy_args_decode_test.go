@@ -21,9 +21,9 @@ import (
 )
 
 // policyArgsRecorder is an allow-all PermissionPolicy that records, for every
-// evaluated call, the Shell command and the resource pattern the governance
-// package derives from the call's arguments: the values a configured rule would
-// be matched against.
+// evaluated call, its raw arguments plus the Shell command and the resource
+// pattern the governance package derives from them: the values a configured
+// rule would be matched against.
 type policyArgsRecorder struct {
 	inner port.PermissionPolicy
 
@@ -33,6 +33,7 @@ type policyArgsRecorder struct {
 
 type policyArgsObservation struct {
 	tool    string
+	args    string
 	command string
 	pattern string
 }
@@ -45,7 +46,7 @@ func (p *policyArgsRecorder) Evaluate(ctx context.Context, id session.SessionID,
 	command, _ := governance.ShellCommandFromArgs(c.Args)
 	rule, _ := governance.NewEvaluator(nil).LearnableRule(c.Name, c.Args)
 	p.mu.Lock()
-	p.evaluated = append(p.evaluated, policyArgsObservation{tool: c.Name, command: command, pattern: rule.Pattern})
+	p.evaluated = append(p.evaluated, policyArgsObservation{tool: c.Name, args: string(c.Args), command: command, pattern: rule.Pattern})
 	p.mu.Unlock()
 	return p.inner.Evaluate(ctx, id, mode, c, ws)
 }
