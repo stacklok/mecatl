@@ -2,7 +2,7 @@
 
 *This chapter describes a future direction, not current implementation status. It is outside the current MCP authorization and audit design scope.*
 
-The goal in broker-backed remote deployments is for the broker to authorize all tools and spawning or delegation operations, including filesystem tools such as `Read`, `Write`, `Grep`, and `Glob`, and `Shell`. Local direct deployments can retain direct tool access. This direction does not require an immediate migration.
+The goal in broker-backed remote deployments is for the broker to authorize all tools and spawning or delegation operations, including filesystem tools such as `Read`, `Write`, `Grep`, and `Glob`, and `Shell`. Local direct deployments can retain direct tool access. This direction does not require an immediate migration. Authorizing a spawn or delegation here means checking that request like any other protected operation. It does not make the broker the owner of agent lifecycle or run execution, and the identity work does not depend on it.
 
 The [MCP authorization](mcp-authorization.md) chapter covers checks on protected MCP calls. That boundary alone does not govern a file read or a Shell command performed through another execution path. For example, authorizing an MCP repository read says nothing about whether the same agent may read a checkout through `Read`; the broader goal requires a decision for that operation too.
 

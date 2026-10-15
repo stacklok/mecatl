@@ -45,6 +45,8 @@ The harness hosts the API and agent loop and validates the initiating user's AS-
 
 This design scopes broker authorization to MCP tools. Extending that boundary to filesystem operations, Shell, and agent spawning is a [future direction](all-tool-mediation.md); their authorization and routing remain to be designed.
 
+The broker does not decide whether agents start or whether runs execute; the harness owns agent lifecycle and run execution. Registering an instance with the broker records its identity and grants no permission to run.
+
 ```mermaid
 flowchart LR
     U["Client"] -->|"Sign-in"| A1
