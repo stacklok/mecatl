@@ -537,7 +537,7 @@ function CronFields({
         )}
 
         {repeat !== "custom" && repeat !== "interval" && (
-          <div className="w-[120px] space-y-2">
+          <div className="w-[148px] space-y-2">
             <Label htmlFor="schedule-time">At</Label>
             <Input
               id="schedule-time"
