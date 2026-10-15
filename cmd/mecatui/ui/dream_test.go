@@ -860,7 +860,7 @@ func TestDreamTargetPointerAndBoundedWindow(t *testing.T) {
 		t.Fatal("navigation did not skip disabled user model")
 	}
 	_ = first
-	m = applyAll(m, tea.WindowSizeMsg{Width: 48, Height: 26})
+	m = applyAll(m, tea.WindowSizeMsg{Width: 48, Height: 27})
 	_ = m.View()
 	if s.compact || s.list == nil {
 		beforeRows, afterRows := s.targetChrome(s.width)

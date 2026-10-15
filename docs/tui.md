@@ -47,11 +47,11 @@ local executable.
 
 ## Layout and navigation
 
-The frame is a stack of header, conversation, optional transient regions, prompt,
-and footer. `cmd/mecatui/ui/layout.go` derives that stack for rendering, viewport
-sizing, and mouse hit testing. Add regions there so a transient shrinks the
-conversation instead of displacing the footer, and measure the rendered frame
-rather than keeping a second set of row offsets.
+The frame is a stack of header, conversation, optional transient regions,
+activity line, prompt, and footer. `cmd/mecatui/ui/layout.go` derives that stack
+for rendering, viewport sizing, and mouse hit testing. Add regions there so a
+transient shrinks the conversation instead of displacing the footer, and measure
+the rendered frame rather than keeping a second set of row offsets.
 
 Overlays that take over the conversation region own their interaction state and
 size themselves from the geometry offered on each render; the parent owns placement
@@ -163,9 +163,10 @@ display-safe projection the client received. The prompt rail shows the confirmed
 session mode; the server posture badge is separate, and its high-risk variant uses
 a fixed, contrast-checked danger style rather than a theme color.
 
-Durable facts go in scrollback; advisories and transient activity go in the footer.
-A failed action needs visible feedback, never a silent reset or an optimistic
-success claim, and a notice never shows raw transport or credential material.
+Durable facts go in scrollback; advisories and transient activity go in the
+activity line. A failed action needs visible feedback, never a silent reset or an
+optimistic success claim, and a notice never shows raw transport or credential
+material.
 
 ## Styling and terminal behavior
 

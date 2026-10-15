@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -179,9 +180,9 @@ func TestTransientRegionShrinksViewportKeepsFooter(t *testing.T) {
 
 // TestNoTransientBodyHeightMatchesMeasuredChrome is the magic-number-gone guard: in
 // the NO-transient case the body height equals m.height minus the MEASURED header +
-// input-top-spacer + input + footer heights (lipgloss.Height of the rendered regions).
-// A reintroduced taH=4/footerH=2 constant — or a header-height assumption, or a forgotten
-// input spacer — would diverge here.
+// spacer + activity + spacer + input + footer heights (lipgloss.Height of the rendered
+// regions). A reintroduced taH=4/footerH=2 constant — or a header-height assumption, or
+// a forgotten spacer or activity row — would diverge here.
 func TestNoTransientBodyHeightMatchesMeasuredChrome(t *testing.T) {
 	m, _ := selModel(t)
 	// Precondition: no transient is present.
@@ -189,10 +190,77 @@ func TestNoTransientBodyHeightMatchesMeasuredChrome(t *testing.T) {
 		renderMention(m.deps.Theme, m.mention, m.width) != "" {
 		t.Fatal("precondition: no transient should be present in selModel")
 	}
-	want := m.height - lipgloss.Height(m.renderHeader()) - lipgloss.Height(inputSpacerRow) -
-		lipgloss.Height(m.renderInput()) - lipgloss.Height(m.renderFooter())
+	want := m.height - lipgloss.Height(m.renderHeader()) - 2*lipgloss.Height(inputSpacerRow) -
+		lipgloss.Height(m.renderActivity()) - lipgloss.Height(m.renderInput()) - lipgloss.Height(m.renderFooter())
 	if got := m.vp.Height(); got != want {
-		t.Errorf("no-transient bodyHeight = %d, want %d (height - measured header - input spacer - input - footer)", got, want)
+		t.Errorf("no-transient bodyHeight = %d, want %d (height - measured header - spacers - activity - input - footer)", got, want)
+	}
+}
+
+// TestActivityLineSitsDirectlyAboveInputBetweenSpacers pins the issue #1325 stack: with
+// room to spare, the activity line is framed by one blank spacer row on each side and
+// sits directly above the input; the footer no longer carries the activity text.
+func TestActivityLineSitsDirectlyAboveInputBetweenSpacers(t *testing.T) {
+	m, _ := selModel(t)
+	m.phase = phaseRunning
+	m.activeTool = "Bash"
+	_, below := m.chrome()
+	var roles []regionRole
+	for _, r := range below {
+		roles = append(roles, r.role)
+	}
+	want := []regionRole{regionInputSpacer, regionActivity, regionInputSpacer, regionInput, regionFooter}
+	if !slices.Equal(roles, want) {
+		t.Fatalf("below-body roles = %v, want %v", roles, want)
+	}
+	if got := ansi.Strip(below[1].content); !strings.Contains(got, "Running Bash") {
+		t.Errorf("activity region = %q, want it to carry the running tool", got)
+	}
+	if got := ansi.Strip(m.renderFooter()); strings.Contains(got, "Running Bash") {
+		t.Errorf("footer duplicates the activity text: %q", got)
+	}
+}
+
+// TestShortTerminalDropsActivitySpacersFirst proves both spacers are shed before the
+// conversation loses its last row, keeping the activity line directly above the input.
+func TestShortTerminalDropsActivitySpacersFirst(t *testing.T) {
+	m, _ := selModel(t)
+	m.height = 100
+	_, below := m.chrome()
+	m.height = sumHeight([]region{{content: m.renderHeader()}}) + sumHeight(below) // zero body rows with spacers
+	m.relayout()
+	_, below = m.chrome()
+	var roles []regionRole
+	for _, r := range below {
+		roles = append(roles, r.role)
+	}
+	if want := []regionRole{regionActivity, regionInput, regionFooter}; !slices.Equal(roles, want) {
+		t.Fatalf("short-terminal below-body roles = %v, want %v", roles, want)
+	}
+	if got := m.vp.Height(); got != 2 {
+		t.Errorf("short-terminal body height = %d, want the 2 rows freed by the spacers", got)
+	}
+	if frame := strings.Split(m.View().Content, "\n"); len(frame) > m.height {
+		t.Errorf("frame is %d rows, exceeds terminal height %d", len(frame), m.height)
+	}
+}
+
+// TestActivityLineIsOneBoundedRow keeps an arbitrarily long tool progress string on a
+// single row no wider than the terminal.
+func TestActivityLineIsOneBoundedRow(t *testing.T) {
+	m, _ := selModel(t)
+	m.phase = phaseRunning
+	m.activeTool = "Bash"
+	m.toolProgress = strings.Repeat("very long progress ", 40)
+	got := m.renderActivity()
+	if h := lipgloss.Height(got); h != 1 {
+		t.Fatalf("activity height = %d, want 1: %q", h, got)
+	}
+	if w := lipgloss.Width(got); w > m.width {
+		t.Fatalf("activity width = %d, want <= %d", w, m.width)
+	}
+	if !strings.Contains(ansi.Strip(got), "…") {
+		t.Errorf("truncated activity should end with an ellipsis: %q", ansi.Strip(got))
 	}
 }
 
@@ -307,7 +375,9 @@ func TestLayoutJoinIdenticalToManualForNoTransient(t *testing.T) {
 	manual := strings.Join([]string{
 		m.renderHeader(),
 		body,
-		inputSpacerRow, // one blank row of top padding above the input
+		inputSpacerRow, // blank row above the activity line
+		m.renderActivity(),
+		inputSpacerRow, // blank row between the activity line and the input
 		m.renderInput(),
 		m.renderFooter(),
 	}, "\n")

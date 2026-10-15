@@ -13,17 +13,17 @@ Shell requires approval
 
 
 
-
 ╭───────────╮  ╭────────────╮  ╭──────────╮
 │  [A]llow  │  │  Al[w]ays  │  │  [D]eny  │
 ╰───────────╯  ╰────────────╯  ╰──────────╯
 al[w]ays allows this exact command for the rest of this session
 scroll: ↑/↓ · pgup/pgdn · home/end · mouse wheel · r raw|pretty · esc back
 
+ ⚠ awaiting approval
+
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
 │
-│
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- ⚠ awaiting approval                                      ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
+ ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
 ? help · / commands · ctrl+c quit

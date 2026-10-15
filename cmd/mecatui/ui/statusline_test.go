@@ -36,10 +36,13 @@ func TestStatusLine_Scenario2_DefaultTemplatesPreserveChrome(t *testing.T) {
 		}
 	}
 	footer := stripANSIstr(m.renderFooter())
-	for _, want := range []string{"ready", "ctx", "4K/20K", "cache", "0%"} {
+	for _, want := range []string{"ctx", "4K/20K", "cache", "0%"} {
 		if !strings.Contains(footer, want) {
 			t.Fatalf("footer %q is missing shipped chrome %q", footer, want)
 		}
+	}
+	if activity := stripANSIstr(m.renderActivity()); !strings.Contains(activity, "ready") || strings.Contains(footer, "ready") {
+		t.Fatalf("activity %q must carry \"ready\" and footer %q must not duplicate it", activity, footer)
 	}
 }
 func TestStatusLine_StaleGeneratedSurfaceNeverWraps(t *testing.T) {
@@ -159,7 +162,7 @@ func TestStatusHyperlinks_Scenario1_ValidLinkEmitsPairedOSC8(t *testing.T) {
 		customization.Render(`<header><link href="https://example.test/docs">docs</link></header>`, nil).Header,
 		customization.Render(`<footer><link href="https://example.test/docs">docs</link></footer>`, nil).Footer,
 	} {
-		got := renderStatusSurface(th, surface, 20, false)
+		got := renderStatusSpans(th, surface.Spans)
 		if openAt, textAt, closeAt := strings.Index(got, open), strings.Index(got, "docs"), strings.LastIndex(got, hyperlinkClose); openAt < 0 || textAt < openAt || closeAt < textAt {
 			t.Fatalf("link output %q does not contain paired OSC 8 hyperlink", got)
 		}
@@ -206,8 +209,8 @@ func TestStatusHyperlinks_Scenario1_HyperlinksPreserveStatusLayout(t *testing.T)
 	if !statusSurfaceFits(surface, 8) || statusSurfaceFits(surface, 7) {
 		t.Fatalf("visible width changed: %q", statusSpansText(surface.Spans))
 	}
-	got := renderStatusSurface(th, surface, 12, true)
-	if gotWidth := lipgloss.Width(got); gotWidth != 12 {
-		t.Fatalf("rendered width = %d, want 12: %q", gotWidth, got)
+	got := renderStatusSpans(th, surface.Spans)
+	if gotWidth := lipgloss.Width(got); gotWidth != 8 {
+		t.Fatalf("rendered width = %d, want 8: %q", gotWidth, got)
 	}
 }

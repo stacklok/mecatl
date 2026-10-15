@@ -65,8 +65,8 @@ func TestKeyUpdatePreservesUpstreamSelectionBehavior(t *testing.T) {
 func TestDynamicHeightTracksSoftWrapAndCaps(t *testing.T) {
 	editor := New(Config{})
 	editor.SetWidth(10)
-	if got := editor.Height(); got != 3 {
-		t.Fatalf("empty height = %d, want minimum 3", got)
+	if got := editor.Height(); got != 1 {
+		t.Fatalf("empty height = %d, want minimum 1", got)
 	}
 
 	editor.Rewrite("12345678901234567890123456789012345678901234567890123456789012345678901234567890")
@@ -93,9 +93,14 @@ func TestDynamicHeightTracksSoftWrapAndCaps(t *testing.T) {
 		t.Fatalf("explicit-newline cursor visual row = %d, want within viewport height %d", editor.Line()+info.RowOffset-editor.ScrollYOffset(), editor.Height())
 	}
 
+	editor.Rewrite("123456789012345")
+	if got := editor.Height(); got != 2 {
+		t.Fatalf("two-row soft-wrapped height = %d, want 2", got)
+	}
+
 	editor.Rewrite("short")
-	if got := editor.Height(); got != 3 {
-		t.Fatalf("shrunk height = %d, want minimum 3", got)
+	if got := editor.Height(); got != 1 {
+		t.Fatalf("shrunk height = %d, want minimum 1", got)
 	}
 }
 

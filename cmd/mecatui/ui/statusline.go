@@ -22,16 +22,6 @@ func statusSurfaceFits(surface customization.Surface, width int) bool {
 	return lipgloss.Width(statusSpansText(surface.Spans)) <= width
 }
 
-func renderStatusSurface(th theme.Theme, surface customization.Surface, width int, rightAlign bool) string {
-	line := renderStatusSpans(th, surface.Spans)
-	if !rightAlign {
-		return line
-	}
-	if gap := width - lipgloss.Width(line); gap > 0 {
-		return strings.Repeat(" ", gap) + line
-	}
-	return line
-}
 func renderStatusSpans(th theme.Theme, spans []customization.Span) string {
 	var b strings.Builder
 	for _, span := range spans {

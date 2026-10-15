@@ -564,7 +564,7 @@ func TestSubagentRosterRowSeparatesTitleAndDetails(t *testing.T) {
 func TestSubagentRosterWindowed(t *testing.T) {
 	const n = 20
 	m := newMCPModel(t, aztec(), nil)
-	m = resize(m, 100, 24)
+	m = resize(m, 100, 25)
 	msgs := make([]client.SubagentMsg, 0, n)
 	for i := 0; i < n; i++ {
 		child := "child-" + string(rune('a'+i))

@@ -9,7 +9,7 @@ import (
 // layout.go is the SINGLE SOURCE OF TRUTH for the TUI's vertical region stack. The
 // frame is a column of stacked regions joined with "\n": a header on top, the
 // conversation body, zero or more transient inline regions (slash palette, @-mention
-// menu, queued-follow-ups card), then the input and footer chrome. THREE consumers
+// menu, queued-follow-ups card), then the activity line, input, and footer chrome. THREE consumers
 // derive from the SAME model: View() (which renders it), the relayout step in
 // update.go (which sizes the viewport so the footer is never pushed off-screen), and
 // screenToContent/convTopRow in selection.go (which map a mouse cell to the body).
@@ -44,17 +44,21 @@ const (
 	regionPalette
 	regionMention
 	regionQueue
-	// regionInputSpacer is a single blank row directly ABOVE the input box, so the input
-	// isn't jammed against the conversation/transient area. It sits in the `below` slice
-	// (consumed by relayout's body-height subtraction), so the body shrinks by its one
-	// row; convTopRow (which sums only the regions ABOVE the body) is unaffected.
+	// regionInputSpacer is a single blank row on each side of the activity line, so the
+	// line isn't jammed against the conversation/transient area or the input box. The
+	// spacers sit in the `below` slice (consumed by relayout's body-height subtraction);
+	// convTopRow (which sums only the regions ABOVE the body) is unaffected. chrome()
+	// drops both spacers when keeping them would leave no conversation row.
 	regionInputSpacer
+	// regionActivity is the renderer-owned activity line (ready / thinking / tool
+	// progress / approval / connecting) directly above the input box.
+	regionActivity
 	regionInput
 	regionFooter
 )
 
 // inputSpacerRow is the content of regionInputSpacer: a single blank row
-// (lipgloss.Height("") == 1) giving the input box one row of top padding.
+// (lipgloss.Height("") == 1).
 const inputSpacerRow = ""
 
 // region is one rendered vertical slice of the frame: its role and the exact styled
@@ -93,13 +97,13 @@ func sumHeight(rs []region) int {
 // one:
 //
 //	above = [header]
-//	below = [palette?, mention?, queue?, input, footer]
+//	below = [palette?, mention?, queue?, spacer?, activity, spacer?, input, footer]
 //
 // The palette/mention/queue regions are appended ONLY when their renderer returns a
-// non-empty string — the same gate View() used — so a no-transient frame produces
-// exactly [header] + body + [input, footer], identical to before. This is the one
-// place the transient conditions live; View(), relayout, and convTopRow all consume
-// the result rather than re-checking them.
+// non-empty string. Both spacers are dropped together when keeping them would leave
+// no conversation row. This is the one place the transient and spacer conditions
+// live; View(), relayout, and convTopRow all consume the result rather than
+// re-checking them.
 func (m Model) chrome() (above, below []region) {
 	above = []region{{role: regionHeader, content: m.renderHeader()}}
 
@@ -112,11 +116,11 @@ func (m Model) chrome() (above, below []region) {
 	if s := m.renderSteer(); s != "" {
 		transients = append(transients, region{role: regionQueue, content: s})
 	}
-	fixed := []region{
-		{role: regionInputSpacer, content: inputSpacerRow},
-		{role: regionInput, content: m.renderInput()},
-		{role: regionFooter, content: m.renderFooter()},
-	}
+	activity := region{role: regionActivity, content: m.renderActivity()}
+	input := region{role: regionInput, content: m.renderInput()}
+	footer := region{role: regionFooter, content: m.renderFooter()}
+	spacer := region{role: regionInputSpacer, content: inputSpacerRow}
+	fixed := []region{spacer, activity, spacer, input, footer}
 
 	card := m.deps.Theme.Style("askCard")
 	availableRows := m.height - sumHeight(above) - sumHeight(transients) - sumHeight(fixed) - 1 -
@@ -132,6 +136,9 @@ func (m Model) chrome() (above, below []region) {
 		below = append(below, region{role: regionMention, content: men})
 	}
 	below = append(below, transients...)
+	if m.height-sumHeight(above)-sumHeight(below)-sumHeight(fixed) < 1 {
+		fixed = []region{activity, input, footer}
+	}
 	below = append(below, fixed...)
 	return above, below
 }

@@ -309,13 +309,13 @@ func TestSpinnerRearmedOnEveryVisibleTransition(t *testing.T) {
 	})
 }
 
-// TestSpinnerVisibleMatchesFooterRender sweeps every phase and ties
-// spinnerVisible() to renderFooter's ACTUAL render set, so the gate predicate and
-// the footer's spinner arms cannot drift silently: a phase whose footer renders
-// the spinner glyph must be spinner-visible (or its animation would be gated off
-// while on screen), and a phase whose footer doesn't must not be (or a dead chain
-// would keep ticking off screen).
-func TestSpinnerVisibleMatchesFooterRender(t *testing.T) {
+// TestSpinnerVisibleMatchesActivityRender sweeps every phase and ties
+// spinnerVisible() to renderActivity's ACTUAL render set, so the gate predicate and
+// the activity line's spinner arms cannot drift silently: a phase whose activity
+// line renders the spinner glyph must be spinner-visible (or its animation would be
+// gated off while on screen), and a phase whose activity line doesn't must not be
+// (or a dead chain would keep ticking off screen).
+func TestSpinnerVisibleMatchesActivityRender(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		ph   phase
@@ -329,9 +329,9 @@ func TestSpinnerVisibleMatchesFooterRender(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m, _ := newQueueModel(t)
 			m.phase = tc.ph
-			rendered := strings.Contains(m.renderFooter(), m.sp.View())
+			rendered := strings.Contains(m.renderActivity(), m.sp.View())
 			if rendered != m.spinnerVisible() {
-				t.Errorf("phase %s: footer renders the spinner = %v but spinnerVisible() = %v — keep spinnerVisible in sync with renderFooter's spinner arms",
+				t.Errorf("phase %s: activity line renders the spinner = %v but spinnerVisible() = %v — keep spinnerVisible in sync with renderActivity's spinner arms",
 					tc.name, rendered, m.spinnerVisible())
 			}
 		})

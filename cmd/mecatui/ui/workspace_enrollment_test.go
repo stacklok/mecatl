@@ -28,7 +28,7 @@ func TestWorkspaceEnrollmentIsNonBlocking(t *testing.T) {
 	if !strings.Contains(m.workspaceEnrollmentNotice, "/tools-connect") {
 		t.Fatalf("workspaceEnrollmentNotice = %q, want /tools-connect", m.workspaceEnrollmentNotice)
 	}
-	if got := stripANSIstr(m.idleFooterLeft()); !strings.Contains(got, "/tools-connect") {
+	if got := stripANSIstr(m.idleActivity()); !strings.Contains(got, "/tools-connect") {
 		t.Fatalf("footer-left = %q, want enrollment notice", got)
 	}
 
@@ -46,10 +46,10 @@ func TestWorkspaceEnrollmentIsNonBlocking(t *testing.T) {
 	if control.connectCalls != 1 || m.enrollment.ID != "bundle-1" {
 		t.Fatalf("connect calls/state = %d/%+v", control.connectCalls, m.enrollment)
 	}
-	if got := stripANSIstr(m.idleFooterLeft()); !strings.Contains(got, "notified when connected") {
+	if got := stripANSIstr(m.idleActivity()); !strings.Contains(got, "notified when connected") {
 		t.Fatalf("footer-left after a pending connect = %q, want automatic completion notice", got)
 	}
-	if got := stripANSIstr(m.idleFooterLeft()); strings.Contains(got, "https://") || strings.Contains(got, "token-canary") {
+	if got := stripANSIstr(m.idleActivity()); strings.Contains(got, "https://") || strings.Contains(got, "token-canary") {
 		t.Fatalf("footer rendered private presentation data: %s", got)
 	}
 	if got := fmt.Sprintf("%+v", m.enrollment); strings.Contains(got, "https://") || strings.Contains(got, "token-canary") {

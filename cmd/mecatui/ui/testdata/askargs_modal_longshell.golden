@@ -1,7 +1,6 @@
  mecatui · Golden session · fixture/fixture-model/default · mode default
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 
-
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃                                                                                                  ┃
 ┃  Permission required                                                                             ┃
@@ -21,10 +20,11 @@
 
 
 
+ ⚠ awaiting approval
+
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
 │
-│
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- ⚠ awaiting approval                                      ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
+ ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
 ? help · / commands · ctrl+c quit

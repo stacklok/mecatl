@@ -1,7 +1,6 @@
  mecatui · Golden session · fixture/fixture-model/default · mode default
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 
-
   ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
   ┃                                                                                              ┃
   ┃  ▸ Subagents    Parallel    Teams                                                            ┃
@@ -21,10 +20,11 @@
 
 
 
+ background subagent #r-g7b7 done — result ready for the agent
+
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
 │
-│
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- background subagent #r-g7b7 done — result ready for the agent            ⛭ 4◐ 3✓  ctx ▒▒▒▒░░░░ 50%
+ ⛭ subagents 4◐ 3✓  ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
 ? help · / commands · ctrl+c quit

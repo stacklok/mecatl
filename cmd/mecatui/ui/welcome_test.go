@@ -249,11 +249,11 @@ func TestKittyTransmitLifecycle(t *testing.T) {
 
 	// (c) a tier-CROSSING resize (still mascot-bearing, smaller tier) re-fires and
 	// updates the tier. A height that drops to a smaller-but-nonzero tier.
-	mm, cmd = m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	mm, cmd = m.Update(tea.WindowSizeMsg{Width: 100, Height: 41})
 	m = mm.(Model)
 	crossCols, _ := welcome.Tier(m.width, m.vp.Height())
 	if crossCols == 0 {
-		t.Fatalf("test precondition: 100x40 should still fit a (smaller) mascot (vp=%d)", m.vp.Height())
+		t.Fatalf("test precondition: 100x41 should still fit a (smaller) mascot (vp=%d)", m.vp.Height())
 	}
 	if m.kittyTier != crossCols {
 		t.Errorf("tier-crossing resize: kittyTier = %d, want %d", m.kittyTier, crossCols)

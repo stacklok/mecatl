@@ -8,8 +8,7 @@
 ┃                                                                                                     ┃
 ┃  Switching models is expensive as it clears caches.                                                 ┃
 ┃                                                                                                     ┃
-┃  ↑ 26 items                                                                                         ┃
-┃      prov · model-026                                                                               ┃
+┃  ↑ 27 items                                                                                         ┃
 ┃      prov · model-027                                                                               ┃
 ┃      prov · model-028                                                                               ┃
 ┃  ▶   prov · wrapped model label wrapped model label wrapped model label wrapped model label wra     ┃
@@ -21,10 +20,11 @@
 ┃                                                                                                     ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
+ connected
+
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
 │
-│
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- connected                                                ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
+ ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
 ? help · / commands · ctrl+c quit
