@@ -189,7 +189,7 @@ AS-1 issuance, AS-2 redemption, and vMCP authorization are separate decisions. T
 
 In external mode, the gateway administrator configures AS-2 with:
 
-- AS-1's issuer and signing keys, trusted as an ID-JAG issuer only, not as an SSO IdP;
+- AS-1's issuer and signing keys, trusted as an ID-JAG issuer only, not as an SSO IdP, for any subject AS-1 names; the mapping or consent link, not a list of subjects, decides who is redeemed;
 - the `mecatl` OAuth client, with the broker's `jwks_uri` registered once for `private_key_jwt`;
 - the consent-link flow and its revocation in the gateway UI;
 - permitted actors and allowed vMCP resources;
