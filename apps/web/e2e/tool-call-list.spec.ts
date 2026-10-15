@@ -6,8 +6,9 @@ import { expect, type OfflineBff, test } from "./fixtures";
 /**
  * A turn's tool-call disclosure in the transcript, in a real browser: the
  * toggle opens and closes from the keyboard, the closed list stays out of
- * sight while the tool names stay findable with the page's text search, and
- * the disclosure adds no heading or region.
+ * sight while the tool names (and, hidden until found, each call's arguments
+ * and result) stay findable with the page's text search, and the disclosure
+ * adds no heading or region.
  */
 
 function arrangeChat(offlineBff: OfflineBff) {
@@ -168,4 +169,23 @@ test("the tool-call disclosure adds no heading or region", async ({ offlineBff, 
   await expect(group.getByText("path: src/quokka-notes.md")).toBeVisible();
   await expect(group.getByRole("heading", { includeHidden: true })).toHaveCount(0);
   await expect(group.getByRole("region", { includeHidden: true })).toHaveCount(0);
+});
+
+test("find-in-page reaches a closed list's arguments and opens the list", async ({
+  offlineBff,
+  page,
+}) => {
+  arrangeChat(offlineBff);
+  const { group, toggle } = await showChat(page);
+  const args = group.getByText("path: src/quokka-notes.md");
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(args).toBeHidden();
+  expect(await findInPage(page, "src/quokka-notes.md")).toBe(true);
+
+  // A text-fragment navigation runs the browser's find-in-page match.
+  await page.evaluate(() => window.getSelection()?.removeAllRanges());
+  await page.goto(`${page.url().split("#")[0]}#:~:text=quokka`);
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(args).toBeVisible();
+  await expect(group.getByRole("listitem")).toHaveCount(2);
 });
