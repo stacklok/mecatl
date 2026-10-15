@@ -16,6 +16,7 @@ import { Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Badge } from "../../components/ui/badge";
 import { Input } from "../../components/ui/input";
+import { Label } from "../../components/ui/label";
 import { Switch } from "../../components/ui/switch";
 import { modelPreferenceId, useDisabledModels } from "../../lib/model-preferences";
 import { cn } from "../../lib/utils";
@@ -527,8 +528,8 @@ function ModelCard({
     <article className="rounded-lg border bg-background p-4" title={model.id}>
       <div className="flex flex-wrap items-start justify-between gap-x-3">
         <h3 className="text-sm font-medium">{model.displayName}</h3>
-        <label
-          className="flex min-h-11 items-center gap-2 text-xs text-muted-foreground"
+        <Label
+          className="flex min-h-11 items-center gap-2 text-xs font-normal text-muted-foreground"
           htmlFor={`visible-model-${model.providerId}-${model.id}`}
         >
           Visible
@@ -538,7 +539,7 @@ function ModelCard({
             id={`visible-model-${model.providerId}-${model.id}`}
             onCheckedChange={(checked) => onEnabledChange(checked === true)}
           />
-        </label>
+        </Label>
       </div>
       <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
         <dt className="text-muted-foreground">ID</dt>

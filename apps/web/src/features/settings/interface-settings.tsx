@@ -19,6 +19,7 @@ import {
 import { useEffect, useState } from "react";
 import { paletteSwatch } from "../../components/palette-swatch";
 import { Button } from "../../components/ui/button";
+import { Label } from "../../components/ui/label";
 import { OptionField } from "../../components/ui/option-field";
 import { Switch } from "../../components/ui/switch";
 import {
@@ -180,7 +181,7 @@ function ChatCard() {
           />
         </SettingsRow>
         <SettingsRow description="Show suggested prompts on a new chat." label="Starter prompts">
-          <label
+          <Label
             className="flex min-h-11 min-w-11 items-center justify-end"
             htmlFor="starter-prompts"
           >
@@ -190,7 +191,7 @@ function ChatCard() {
               id="starter-prompts"
               onCheckedChange={(checked) => starterPrompts.setValue(checked === true)}
             />
-          </label>
+          </Label>
         </SettingsRow>
         <SettingsRow
           description={
@@ -216,8 +217,8 @@ function ChatCard() {
           description="Show calls and their returned output inside assistant messages."
           label="Tool activity"
         >
-          <label
-            className="flex min-h-11 w-44 items-center justify-between gap-2 text-sm"
+          <Label
+            className="flex min-h-11 w-44 items-center justify-between gap-2 text-sm font-normal"
             htmlFor="show-tool-activity"
           >
             <span className="flex items-center gap-2">
@@ -230,7 +231,7 @@ function ChatCard() {
               id="show-tool-activity"
               onCheckedChange={(checked) => showToolCalls.setValue(checked === true)}
             />
-          </label>
+          </Label>
         </SettingsRow>
       </div>
     </SettingsCard>
