@@ -60,7 +60,7 @@ import { pageTitleClass } from "../../lib/typography";
 import { useShortcutSuppression } from "../shortcuts/shortcut-provider";
 import { describeCron } from "./describe-cron";
 import { RunTime } from "./run-time";
-import { canEditSchedule, ScheduleForm } from "./schedule-form";
+import { canEditSchedule, ScheduleForm, toastScheduleSaved } from "./schedule-form";
 import { ScheduleStatusBadge } from "./schedule-status";
 
 type Schedule = ListSchedulesResponse["items"][number];
@@ -356,6 +356,7 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
           onSubmit={async (body) => {
             const { name: _name, ...updateBody } = body;
             await update.mutateAsync({ body: updateBody, path: { scheduleName } });
+            toastScheduleSaved(scheduleName, false);
             closeEditor();
             await refresh();
           }}

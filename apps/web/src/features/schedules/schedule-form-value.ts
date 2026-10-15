@@ -138,6 +138,39 @@ export function bodyFromValue(value: FormValue, schedule?: Schedule): ScheduleBo
   };
 }
 
+/**
+ * Why the form cannot be submitted yet, or null when it can. Only shape checks
+ * that no request could survive: the four the fields already mark `required`.
+ * Cadence floors, cron grammar and name rules stay the daemon's call, and its
+ * refusal is shown in the dialog. Mirrors the prototype's `scheduleFormProblem`.
+ */
+export function scheduleFormProblem(value: FormValue, schedule?: Schedule): string | null {
+  if (!value.name.trim()) return "Name is required.";
+  if (!value.prompt.trim()) return "Prompt is required.";
+  const trigger = triggerFromValue(value, schedule);
+  if (trigger.kind === "cron") {
+    if (!trigger.expression) return "Cron expression is required.";
+  } else {
+    if (!value.oneShotAt && !schedule) return "Run time is required.";
+    if (!trigger.at) return "Run time is not a valid date.";
+  }
+  return null;
+}
+
+/** "YYYY-MM-DDTHH:MM" → its date and time halves ("" when absent). */
+export function oneShotParts(local: string): { date: string; time: string } {
+  return { date: local.slice(0, 10), time: local.slice(11, 16) };
+}
+
+/**
+ * Joins the one-shot date and time inputs into the wall clock the form holds.
+ * No date means no run time yet; a date without a time runs at 9:00, as the
+ * prototype's form does.
+ */
+export function joinOneShot(date: string, time: string): string {
+  return date ? `${date}T${time || "09:00"}` : "";
+}
+
 /** What the phrase input last produced — drives the line under it. */
 export type PhraseOutcome =
   | SchedulePhraseResult

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useState } from "react";
+import { toast } from "sonner";
 import { Alert, AlertDescription } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
 import {
@@ -37,10 +38,13 @@ import {
   displayedValue,
   type FormValue,
   isTriggerEditable,
+  joinOneShot,
+  oneShotParts,
   type PhraseOutcome,
   phraseTriggerPatch,
   type Schedule,
   type ScheduleBody,
+  scheduleFormProblem,
   type TriggerPatch,
   triggerFromValue,
   valueFromSchedule,
@@ -66,6 +70,15 @@ const PHRASE_HINT = 'Not recognised — try "every weekday at 9am" or a cron exp
  * (#2146). Completed crons may still change prompt and permission posture, but
  * reopening or rescheduling belongs to #2149.
  */
+/**
+ * The toast after a create or an edit is saved, as in the prototype's create
+ * and edit dialogs. The dialog has closed by then, so the toast is the
+ * confirmation.
+ */
+export function toastScheduleSaved(name: string, created: boolean) {
+  toast.success(`Scheduled task “${name}” ${created ? "created" : "updated"}`);
+}
+
 export function canEditSchedule(schedule: Pick<Schedule, "status" | "trigger">, now = Date.now()) {
   if (schedule.trigger.kind !== "once") return true;
   return schedule.status !== "completed" && !(Date.parse(schedule.trigger.at) <= now);
@@ -146,9 +159,13 @@ export function ScheduleForm({
   const phraseNote = phrasePreview ?? (phrase.trim() ? PHRASE_HINT : null);
   // Formatted from the very trigger that will be sent, never from the inputs.
   const savedOneShot = formatOneShot(triggerFromValue(shown, schedule));
+  // The submit button stays disabled until the form could be sent.
+  const problem = scheduleFormProblem(shown, schedule);
+  const runAt = oneShotParts(shown.oneShotAt);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
+    if (problem || submitting) return;
     setSubmitting(true);
     setError(undefined);
     try {
@@ -162,7 +179,7 @@ export function ScheduleForm({
 
   return (
     <Dialog onOpenChange={(open) => !open && onCancel()} open>
-      <DialogContent className="max-h-[90dvh] overflow-y-auto">
+      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
         <form onSubmit={submit}>
           <DialogHeader>
             <DialogTitle>{schedule ? "Edit scheduled task" : "Schedule a task"}</DialogTitle>
@@ -250,19 +267,41 @@ export function ScheduleForm({
                 onChange={(cron) => changeTrigger({ cron })}
               />
             ) : (
-              <Field htmlFor="schedule-run-at" label="Run at">
-                <Input
-                  disabled={triggerLocked}
-                  id="schedule-run-at"
-                  onChange={(event) => changeTrigger({ oneShotAt: event.target.value })}
-                  required
-                  type="datetime-local"
-                  value={shown.oneShotAt}
-                />
+              <fieldset className="min-w-0 space-y-2">
+                {/* Separate date and time inputs, as in the prototype, instead of
+                    the native datetime-local widget. */}
+                <legend className="mb-2 text-sm font-medium">Run at</legend>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Input
+                    aria-label="Date"
+                    className="w-fit"
+                    disabled={triggerLocked}
+                    id="schedule-run-at-date"
+                    onChange={(event) =>
+                      changeTrigger({ oneShotAt: joinOneShot(event.target.value, runAt.time) })
+                    }
+                    required
+                    type="date"
+                    value={runAt.date}
+                  />
+                  <Input
+                    aria-label="Time"
+                    className="w-fit"
+                    disabled={triggerLocked}
+                    onChange={(event) => {
+                      // Segment editing fires transient empty values; keep the last time.
+                      if (!event.target.value) return;
+                      changeTrigger({ oneShotAt: joinOneShot(runAt.date, event.target.value) });
+                    }}
+                    required
+                    type="time"
+                    value={runAt.time}
+                  />
+                </div>
                 {savedOneShot ? (
                   <p className="mt-1 text-xs text-muted-foreground">Saves as {savedOneShot}</p>
                 ) : null}
-              </Field>
+              </fieldset>
             )}
 
             <div className="rounded-lg border p-3">
@@ -325,7 +364,7 @@ export function ScheduleForm({
             <Button onClick={onCancel} type="button" variant="outline">
               Cancel
             </Button>
-            <Button disabled={submitting} type="submit" variant="action">
+            <Button disabled={submitting || problem !== null} type="submit" variant="action">
               {submitting ? "Saving…" : schedule ? "Save changes" : "Create schedule"}
             </Button>
           </DialogFooter>

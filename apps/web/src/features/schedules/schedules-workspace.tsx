@@ -65,7 +65,7 @@ import {
   describeNextRun,
   nextRunAt,
 } from "./schedule-detail";
-import { canEditSchedule, ScheduleForm } from "./schedule-form";
+import { canEditSchedule, ScheduleForm, toastScheduleSaved } from "./schedule-form";
 import {
   deriveMobileScheduleInventory,
   deriveScheduleInventory,
@@ -313,6 +313,7 @@ export function SchedulesWorkspace() {
               const { name: _name, ...updateBody } = body;
               await update.mutateAsync({ body: updateBody, path: { scheduleName: editor.name } });
             }
+            toastScheduleSaved(editor === "new" ? body.name : editor.name, editor === "new");
             closeEditor();
             await refresh();
           }}
