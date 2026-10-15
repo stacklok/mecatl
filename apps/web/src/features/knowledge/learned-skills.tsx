@@ -158,7 +158,7 @@ export function LearnedSkills({
     <div className="space-y-5">
       {notice && (
         <Alert className="border-warning/40 bg-warning/10 p-3">
-          <AlertDescription className="flex items-start justify-between gap-3 text-foreground">
+          <AlertDescription className="flex items-start justify-between gap-3 text-foreground [&_p]:leading-[inherit]">
             <p>{notice}</p>
             <Button onClick={() => setPublicationNotice(undefined)} size="sm" variant="ghost">
               Dismiss
@@ -333,7 +333,7 @@ function LearnedSkillDialog({
         </DialogHeader>
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
           {error && (
-            <Alert className="border-destructive/30 bg-destructive/10 p-3">
+            <Alert className="border-0 bg-destructive/10 p-3">
               <AlertDescription className="text-foreground">
                 {error} The skill was refreshed; review its current state before trying again.
               </AlertDescription>

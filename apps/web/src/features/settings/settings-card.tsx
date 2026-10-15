@@ -107,7 +107,7 @@ export type SettingsState = { kind: "loading" | "notice" | "error"; text: string
 export function RuntimeStatusLine({ state }: { state: SettingsState }) {
   if (state.kind === "error") {
     return (
-      <Alert className="border-destructive/30 bg-destructive/5 text-destructive">
+      <Alert className="w-auto border-destructive/30 bg-destructive/5 text-destructive">
         <AlertDescription className="text-destructive">{state.text}</AlertDescription>
       </Alert>
     );

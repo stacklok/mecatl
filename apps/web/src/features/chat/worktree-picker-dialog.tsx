@@ -97,7 +97,7 @@ export function WorktreePickerView({
           >
             {list.map((worktree, index) => (
               <Label
-                className="flex cursor-pointer items-center gap-3 rounded-md border border-border px-3 py-2 font-normal transition-colors hover:bg-muted/50 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-muted/40 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-offset-2"
+                className="flex cursor-pointer items-center gap-3 rounded-md border border-border px-3 py-2 font-normal leading-[inherit] transition-colors hover:bg-muted/50 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-muted/40 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-offset-2"
                 htmlFor={`${ids}-radio-${index}`}
                 key={worktree.selector}
               >
