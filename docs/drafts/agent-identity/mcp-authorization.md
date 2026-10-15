@@ -1,8 +1,8 @@
 # MCP authorization
 
-*This chapter describes the intended architecture, not current implementation status.*
+*This chapter describes the intended architecture, not current implementation status. The ceiling check it describes belongs to the [authority work](README.md#order-of-work), which follows the identity work.*
 
-The proposal extends the existing broker's MCP invocation responsibility with agent-instance identity and authority checks; it does not introduce a separate authorization service. **Cedar is the selected policy engine. V1 evaluates only the acting instance's effective MCP server/tool ceiling: its definition ceiling narrowed by its parent's.** It supplements existing local permissions and the user and connection checks that AS-2 and vMCP enforce downstream; a Cedar permit is not proof of user entitlement. Obtaining an OAuth token is a separate credential step, not a substitute for authorization.
+The proposal extends the existing broker's MCP invocation responsibility with agent-instance identity and authority checks; it does not introduce a separate authorization service. **Cedar is the selected policy engine. It evaluates only the acting instance's effective MCP server/tool ceiling: its definition ceiling narrowed by its parent's. This check is part of the [authority work](README.md#order-of-work), which follows the identity work.** It supplements existing local permissions and the user and connection checks that AS-2 and vMCP enforce downstream; a Cedar permit is not proof of user entitlement. Obtaining an OAuth token is a separate credential step, not a substitute for authorization.
 
 ## Definition-derived ceiling
 
@@ -18,7 +18,7 @@ For every call, the broker evaluates the exact registered server/tool pair that 
 
 Workload authentication establishes which mecak8s service is calling. The instance JWT-SVID establishes which registered agent instance is acting. The broker validates both credentials against configured trust, audiences, expiry, and permitted presenters, and checks the instance's registered session association. Neither credential alone establishes the initiating user, current run, or delegated authority.
 
-The broker binds each call to its **execution context**: workload, acting instance, session, initiating user, run, and any delegation. Workload, instance, and session are verified from credentials and registration. The initiating user comes from Alice's sign-in at AS-1, not from a harness report. At session open the broker obtains a session-bound broker refresh token from AS-1, and every later ID-JAG names the user from that token's AS-1 record, not from caller input. See [session open](credentials-and-lifecycle.md#3-session-open-and-the-broker-refresh-token). In v1, user, run, and delegation are not Cedar inputs. Run and delegation context remain trusted harness reports. Enforcing task-specific delegated bounds requires a verified per-operation binding for those reported fields. Missing or inconsistent context fails closed. [Instance registration](agent-definitions.md#registering-instances) supplies identity records, not authorization for a run or tool call.
+The broker binds each call to its **execution context**: workload, acting instance, session, initiating user, run, and any delegation. Workload, instance, and session are verified from credentials and registration. The initiating user comes from Alice's sign-in at AS-1, not from a harness report. At session open the broker obtains a session-bound broker refresh token from AS-1, and every later ID-JAG names the user from that token's AS-1 record, not from caller input. See [session open](credentials-and-lifecycle.md#3-session-open-and-the-broker-refresh-token). User, run, and delegation are not inputs to the ceiling check. Run and delegation context remain trusted harness reports. Enforcing task-specific delegated bounds requires a verified per-operation binding for those reported fields. Missing or inconsistent context fails closed. [Instance registration](agent-definitions.md#registering-instances) supplies identity records, not authorization for a run or tool call.
 
 ## Delegated authority
 
@@ -34,9 +34,9 @@ The gateway sees delegation only as identity, not as authority. AS-1 writes only
 
 ## Operations and resources
 
-V1 distinguishes registered MCP servers and tools, but does not evaluate resource or argument policies. Permission to call a tool is not evidence of authorization for a particular repository or PR. User, resource, argument, and dynamic delegation policies are deferred; v1 does not provide comprehensive enterprise user-policy enforcement.
+The ceiling check distinguishes registered MCP servers and tools, but does not evaluate resource or argument policies. Permission to call a tool is not evidence of authorization for a particular repository or PR. User, resource, argument, and dynamic delegation policies are deferred, and the design does not yet provide comprehensive enterprise user-policy enforcement.
 
-For example, a reviewer whose resolved ceiling includes `pull_request_read` on the registered payments server can pass the ceiling check for a read, but cannot pass it for `pull_request_merge` if merge is excluded. Reading PR 42 and reading PR 43 with that same server/tool pair produce the same ceiling result. The broker's v1 Cedar check cannot establish that the reviewer stayed within Alice's PR-42-only request. Existing connection and downstream checks still apply to either call.
+For example, a reviewer whose resolved ceiling includes `pull_request_read` on the registered payments server can pass the ceiling check for a read, but cannot pass it for `pull_request_merge` if merge is excluded. Reading PR 42 and reading PR 43 with that same server/tool pair produce the same ceiling result. The broker's ceiling check cannot establish that the reviewer stayed within Alice's PR-42-only request. Existing connection and downstream checks still apply to either call.
 
 Future broker policies decide on what the broker knows first-hand:
 
@@ -54,7 +54,7 @@ Agent-instance identity does not prevent a prompt-injected agent from misusing o
 
 Mecatl validates Alice's AS-1 access token for its API and checks current session ownership. The broker turns it into a session-bound broker refresh token at AS-1; no company IdP token reaches AS-1 or the broker. AS-1 issues an ID-JAG naming Alice and the acting instance only while the session is open and the instance is registered to it, and the broker redeems that ID-JAG at AS-2 for `V`. Neither the AS-1 access token, the refresh token, nor the SVID reaches AS-2. Model-generated arguments cannot choose or override identity evidence. The exchange itself is described [below](#authorization-credentials-and-dispatch); see [per-operation authorization](credentials-and-lifecycle.md#6-per-operation-authorization) and the steps after it for token types, fields, and validation.
 
-The broker checks the actual MCP server/tool pair against the effective ceiling before any exchange or dispatch. User and connection authorization are enforced downstream: AS-2 redeems the ID-JAG only for a mapped user (embedded) or a consent-linked user (external), and vMCP dispatches only with the user's stored credential, keyed by (gateway, native user, provider). The broker does not check provider connections itself: it could only copy the gateway's data, and the provider enforces its own permissions on the request. The final request, including arguments, must remain bound to the checks and dispatch, but recording or binding arguments does not mean v1 Cedar authorizes their resource-specific meaning.
+The broker checks the actual MCP server/tool pair against the effective ceiling before any exchange or dispatch. User and connection authorization are enforced downstream: AS-2 redeems the ID-JAG only for a mapped user (embedded) or a consent-linked user (external), and vMCP dispatches only with the user's stored credential, keyed by (gateway, native user, provider). The broker does not check provider connections itself: it could only copy the gateway's data, and the provider enforces its own permissions on the request. The final request, including arguments, must remain bound to the checks and dispatch, but recording or binding arguments does not mean the ceiling check authorizes their resource-specific meaning.
 
 Request transformations must occur before the applicable checks, or the changed request must be checked again. Dispatch must use the checked request.
 
@@ -62,10 +62,10 @@ Request transformations must occur before the applicable checks, or the changed 
 
 In the [interactive walkthrough](credentials-and-lifecycle.md#interactive-execution), Alice owns session `hostS42`. The main instance lists pull requests, then delegates review of PR 42 to a reviewer. The tool names and arguments are illustrative, not a selected MCP server contract.
 
-| Request | V1 effective-ceiling check |
+| Request | Effective-ceiling check |
 | --- | --- |
 | Main run `R41`: `pull_request_list(repository=acme/payments)` | The main's effective ceiling, which is its definition ceiling, must permit the resolved server and list tool. Main has no implicit exemption. |
-| Reviewer run `R42` via `D42`: `pull_request_read(repository=acme/payments, number=42)` | The reviewer's effective ceiling, its definition ceiling intersected with the main's, must permit the resolved server and read tool. `D42` records the delegated task but is not a v1 Cedar policy input. |
+| Reviewer run `R42` via `D42`: `pull_request_read(repository=acme/payments, number=42)` | The reviewer's effective ceiling, its definition ceiling intersected with the main's, must permit the resolved server and read tool. `D42` records the delegated task but is not an input to the ceiling check. |
 
 Both requests also require valid credentials and execution-context checks, and must pass local checks and the downstream AS-2 and vMCP checks. The reviewer's SVID identifies the child; even with creation ancestry in its subject, it does not prove authority under `D42`. The child presents its own credential, not the parent's SVID. Future broker enforcement of task-specific delegated bounds will need trusted evidence of those bounds.
 

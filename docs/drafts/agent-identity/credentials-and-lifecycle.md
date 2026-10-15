@@ -2,7 +2,7 @@
 
 *This chapter describes the intended architecture, not current implementation status. Its decisions are recorded in the [credential flow rework](credential-flow-rework.md).*
 
-An agent instance can participate in multiple runs. Its instance credential identifies it to the broker; presenting that credential does not by itself authorize an MCP tool call. The harness manages run execution. In v1, the broker checks the acting instance's effective server/tool ceiling, its definition ceiling narrowed by its parent's, with Cedar, alongside session and execution-context checks. User, resource, argument, and dynamic delegation policies are deferred. Renewing the instance credential does not itself extend or widen permission to call tools.
+An agent instance can participate in multiple runs. Its instance credential identifies it to the broker; presenting that credential does not by itself authorize an MCP tool call. The harness manages run execution. The broker checks the session and execution context. Once the [authority work](README.md#order-of-work) is in place, it also checks the acting instance's effective server/tool ceiling, its definition ceiling narrowed by its parent's, with Cedar. User, resource, argument, and dynamic delegation policies are deferred. Renewing the instance credential does not itself extend or widen permission to call tools.
 
 The human enters the flow once, when Alice signs in through AS-1. AS-1 runs that sign-in itself, so every later statement about the human traces back to a login AS-1 witnessed, not to a report from the harness.
 
@@ -183,7 +183,7 @@ The broker exchanges that token at AS-1 with an RFC 8693 token exchange, authent
 
 AS-1 then issues `RT-A42`. The refresh token is opaque to the broker; its meaning lives in an AS-1 record that binds it to client `mecatl`, to Alice as `u-alice-91`, and to session `A42`, with a hard expiry that rotation does not extend. Every ID-JAG issued from it names that subject.
 
-The broker supplies `A42` when the record is created, so the session binding is broker-asserted. It contains bugs such as cross-session confusion and stale sessions; it does not protect against a compromised broker. In v1 the refresh token is not tied to Alice's AS-1 login session: disabling her company account takes effect at the hard expiry at the latest. Binding to the login session is later work.
+The broker supplies `A42` when the record is created, so the session binding is broker-asserted. It contains bugs such as cross-session confusion and stale sessions; it does not protect against a compromised broker. For now, the refresh token is not tied to Alice's AS-1 login session: disabling her company account takes effect at the hard expiry at the latest. Binding to the login session is later work.
 
 The existing broker session record under `A42` keeps the workload and host-session binding. The human authority now lives in `RT-A42`, not in a broker-local human record.
 
@@ -246,7 +246,7 @@ Before any exchange or dispatch, the broker checks:
 - the instance's stored effective ceiling allows this server and tool, with no Cedar evaluation errors;
 - the route to the gateway.
 
-A cache hit skips the token exchanges, never these checks. In v1, user, run, and delegation are not Cedar inputs; the reviewer ceiling gives the same result for PR 43. See [two requests, two authorization decisions](mcp-authorization.md#two-requests-two-authorization-decisions).
+A cache hit skips the token exchanges, never these checks. User, run, and delegation are not inputs to the ceiling check; the reviewer ceiling gives the same result for PR 43. See [two requests, two authorization decisions](mcp-authorization.md#two-requests-two-authorization-decisions).
 
 The broker does not check provider connections. It authorizes the session, workload, actor, ceiling, and route. AS-2 authorizes the user: the mapping, and in external mode the consent link. vMCP authorizes the connection and dispatches. The provider enforces its own permissions on the request.
 
@@ -382,7 +382,7 @@ An approval wait or provider-connection pause leaves the current run unfinished.
 
 After restart, recovering credentials is not enough to continue safely. Recovery must restore `A42` and its workload and host binding, find `RT-A42`'s AS-1 record still valid, and reestablish the registered actors and unfinished execution. If `RT-A42` has expired or been revoked, tool calls fail closed until a new session open supplies fresh authority. The harness decides whether execution resumes; the broker authorizes subsequent calls.
 
-Under the [identity and selection continuity rules](agent-definitions.md#identity-continuity-across-runs-and-restarts), continuation retains the unfinished run's original bounds. In v1, the broker rechecks the stored effective ceiling; the harness retains its run and delegation restrictions. Credential renewal does not widen recovered authority.
+Under the [identity and selection continuity rules](agent-definitions.md#identity-continuity-across-runs-and-restarts), continuation retains the unfinished run's original bounds. With the authority work in place, the broker rechecks the stored effective ceiling; the harness retains its run and delegation restrictions. Credential renewal does not widen recovered authority.
 
 An operation that may have been dispatched but has no recorded completion has an unknown outcome. Restoring credentials does not make replay safe. Reconciliation requires evidence about the original operation, such as provider status or an idempotency mechanism.
 

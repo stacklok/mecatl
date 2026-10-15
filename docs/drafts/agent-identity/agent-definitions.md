@@ -13,7 +13,7 @@ An agent definition describes how an agent should perform work. Mecatl represent
 | Broker session | The broker's session for one session tree, opened once for the root session, such as `A42`. Every instance in the tree registers to it. |
 | Agent instance | One use of a selected definition, backed by its own host session, with its own identity and any creation-parent association. A delegated child has its own instance. |
 | Run | One execution by an instance, such as `R41` or `R42`. An instance can perform multiple runs. |
-| Execution context | The workload, acting instance, broker session, initiating user, run, and any delegation a protected call is made under. The user comes from the broker refresh token AS-1 issued at session open, after Alice signed in through AS-1; AS-1 also checks that the acting instance is registered to the broker session. Run and delegation context remain mecak8s-reported in v1. See [authentication and execution context](mcp-authorization.md#authentication-and-execution-context). |
+| Execution context | The workload, acting instance, broker session, initiating user, run, and any delegation a protected call is made under. The user comes from the broker refresh token AS-1 issued at session open, after Alice signed in through AS-1; AS-1 also checks that the acting instance is registered to the broker session. Run and delegation context remain mecak8s-reported. See [authentication and execution context](mcp-authorization.md#authentication-and-execution-context). |
 | Agent-instance incarnation | The durable identity allocated by mecak8s for that instance's lifetime, preserved across restoration and credential renewal. A fresh incarnation identifies a distinct instance. |
 | Workload | The Mecatl service process hosting instances for many users and sessions, with its own infrastructure identity. |
 
@@ -86,7 +86,7 @@ The broker ceiling is the set of permitted registered MCP server/tool pairs reso
 
 ## Loading definitions
 
-The **definition loader** is a broker module. At broker startup it loads the global agent definitions from configured sources, such as administrator-managed files or APIs, resolves their ceilings, and records each definition's source, revision, and ceiling in the broker. It also supplies the harness with execution configuration. While the broker runs as modules inside mecak8s, the loader runs there too; when the broker becomes a separate service, the loader moves with it. How other definitions, such as repository definitions, are loaded and when is not yet decided.
+The **definition loader** is a broker module. At broker startup it loads the global agent definitions from configured sources, such as administrator-managed files or APIs, and records each definition's source and revision in the broker. Once the [authority work](README.md#order-of-work) is in place, it also resolves and records each definition's ceiling. It also supplies the harness with execution configuration. While the broker runs as modules inside mecak8s, the loader runs there too; when the broker becomes a separate service, the loader moves with it. How other definitions, such as repository definitions, are loaded and when is not yet decided.
 
 Each session uses a fixed selection of loaded definitions. mecak8s's trusted session lifecycle code persists that selection and names definitions to the broker by reference; it does not supply their content or ceilings.
 
@@ -135,10 +135,10 @@ The record carries two digests:
 
 Parsing and normalization mean these differ. A commit plus a digest does not prove the bytes came from that commit; a locally modified file is the obvious counterexample.
 
-The broker records provenance as a mecak8s assertion unless it independently verified a fact, and audit marks which. "mecak8s reports loading these bytes from commit X" is distinct from "the broker verified these bytes against commit X"; v1 requires only the former. Provenance lives in the broker's per-instance registration record, not in instance credentials. It grants no permission by itself; later policy may require approved revisions or particular source authorities.
+The broker records provenance as a mecak8s assertion unless it independently verified a fact, and audit marks which. "mecak8s reports loading these bytes from commit X" is distinct from "the broker verified these bytes against commit X"; the design requires only the former for now. Provenance lives in the broker's per-instance registration record, not in instance credentials. It grants no permission by itself; later policy may require approved revisions or particular source authorities.
 
 ## Source records and policy representation
 
 The proposal adopts workload-authenticated mecak8s lifecycle assertions, host-allocated durable incarnations, and broker validation and subject construction as its semantic mechanism. The exact registration wire API, durable record schema, and verified per-operation binding for reported context remain unresolved, as does protection from same-process substitution. These are proposed semantics, not implemented contracts.
 
-Cedar is selected for the effective server/tool ceiling. The representation of definition-source and revision records, registration API, and Cedar policies remains an implementation choice. V1 generates policy only from resolved definition facts; separately managed user, resource, argument, and dynamic delegation policies are deferred. Existing user/connection authorization checks remain required.
+Cedar is selected for the effective server/tool ceiling. The representation of definition-source and revision records, registration API, and Cedar policies remains an implementation choice. The authority work generates policy only from resolved definition facts; separately managed user, resource, argument, and dynamic delegation policies are deferred. Existing user/connection authorization checks remain required.

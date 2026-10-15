@@ -86,11 +86,34 @@ AS-1 witnessed Alice's sign-in itself, checks that the acting instance is regist
 
 Alice asks her main agent to list pull requests and review PR 42. Once the session's definitions are loaded, the main calls `pull_request_list`, then delegates to `code-reviewer`. The reviewer calls `pull_request_read` for PR 42. Each call requires its own authorization decision.
 
-The broker checks the reviewer's effective server/tool ceiling, its definition ceiling narrowed by the main's, with Cedar. User and connection are enforced downstream: AS-2 redeems only for a mapped, and in external mode linked, user, and vMCP dispatches only with Alice's stored credential. V1 does not evaluate PR-specific delegated bounds or comprehensive enterprise user policy. If all required checks pass, ToolHive dispatches the call through the authorized connection using its native provider credential. That credential stays outside the harness and model; in embedded mode it can reside inside the Mecatl deployment. If denied, no request reaches GitHub.
+The broker checks the reviewer's effective server/tool ceiling, its definition ceiling narrowed by the main's, with Cedar. User and connection are enforced downstream: AS-2 redeems only for a mapped, and in external mode linked, user, and vMCP dispatches only with Alice's stored credential. This ceiling check is part of the [authority work](#order-of-work), which follows the identity work. Even then, the design does not evaluate PR-specific delegated bounds or comprehensive enterprise user policy. If all required checks pass, ToolHive dispatches the call through the authorized connection using its native provider credential. That credential stays outside the harness and model; in embedded mode it can reside inside the Mecatl deployment. If denied, no request reaches GitHub.
 
 GitHub sees access under Alice's account. The broker's audit record supplies the rest of the story: which reviewer acted, which agent delegated the work, why the call was permitted, and what result was observed. A missing result is recorded as unknown, not as proof that the operation never happened.
 
 See [Interactive execution](credentials-and-lifecycle.md#interactive-execution) for the detailed credentials sequence.
+
+## Order of work
+
+Mecatl builds this design in two steps. The identity work comes first, and the authority work follows once the identity work is in place.
+
+The **identity work** establishes who acts and records it:
+
+- the broker modules: definition loader, agent-instance issuer, AS-1, and broker core;
+- definitions loaded with their provenance;
+- instance registration, with the incarnation, definition reference, and creation parent;
+- agent-instance credentials;
+- the credential flow: sign-in at AS-1, the session-bound refresh token, ID-JAG issuance, AS-2 redemption, and per-user provider credentials at the gateway;
+- the broker's identity checks: session, workload, and that the acting instance is registered to the broker session;
+- audit of who acted, for whom, through which delegation, and what was decided, dispatched, and observed.
+
+The **authority work** decides what each agent may do:
+
+- resolving each definition's ceiling into permitted MCP server/tool pairs;
+- each instance's effective ceiling, its definition ceiling narrowed by its parent's;
+- Cedar policy generation and a ceiling check on every call;
+- task-specific delegation bounds, and user, resource, and argument policy.
+
+Until the authority work is in place, the harness's existing delegation restrictions are the only ceiling checks; the broker adds none. Registration already records the definition reference and creation parent, so the authority work adds computation, not a migration. The chapters describe the whole design and say which parts belong to the authority work.
 
 ## Detailed chapters
 

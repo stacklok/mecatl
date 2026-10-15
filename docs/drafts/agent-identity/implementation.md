@@ -59,7 +59,7 @@ Accepting a token whose `aud` is the Mecatl API from a different client is an ex
 | Issue time and hard expiry | | Authority horizon. |
 | Rotation chain | | Reuse detection. |
 
-The broker supplies the session reference. Rotation inherits the record and does not extend the hard expiry. Session close revokes the token and deletes the record. In v1 the refresh token is not tied to the user's AS-1 login session.
+The broker supplies the session reference. Rotation inherits the record and does not extend the hard expiry. Session close revokes the token and deletes the record. For now, the refresh token is not tied to the user's AS-1 login session.
 
 **Per-call ID-JAG.** When no cached `V` exists for (session, instance, gateway), the broker asks AS-1 for an ID-JAG ([draft-ietf-oauth-identity-assertion-authz-grant-04](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/)) with RFC 8693: the broker refresh token as `subject_token` (`subject_token_type=urn:ietf:params:oauth:token-type:refresh_token`), the agent-instance JWT-SVID as `actor_token` (`actor_token_type=urn:ietf:params:oauth:token-type:jwt`), `requested_token_type=urn:ietf:params:oauth:token-type:id-jag`, and AS-2's issuer as `audience`. AS-1:
 
@@ -150,18 +150,18 @@ AS-1 and AS-2 are ToolHive authorization server instances, and vMCP is ToolHive'
 
 | Capability | Today | Size | When |
 | --- | --- | --- | --- |
-| Exchange of a self-issued access token presented by another confidential client (the Mecatl-API-audience exception) | Mostly; the requested `aud` must be a subset of the subject token's `aud` | Small to medium | v1 |
-| Refresh token in a token-exchange response, with the session-bound record | No; exchange issues access tokens only | Medium to large | v1 |
-| Issue ID-JAGs (`typ=oauth-id-jag+jwt`, audience = another AS) | No; redemption and an outbound XAA client only. The ID-JAG redemption handler binds the client, consumes `jti`, and copies `act`; the plain JWT-bearer handler drops `act` and replaces the client | Large | v1 |
-| Refresh token as `subject_token` | No | Large | v1 |
-| Single-level `act` from the registered actor input (nesting later, with the chained exchange) | Partly; `buildActClaim` builds `act` from a client or self-issued actor token and nests it | Medium | v1 |
-| ID-JAG redemption keeps `act` | Yes, copied unchanged | None; verify only | v1 |
-| AS-2 maps the AS-1 subject to a native user after ID-JAG redemption, and stops marking the token as having no upstream session | No; emits `iss#sub` and marks no upstream session | Large | v1 |
-| Per-user upstream credential lookup in open-source ToolHive, keyed (gateway, native user, provider) | No; keyed by `tsid`, a per-interactive-login session ID that a delegated `V` lacks, and vMCP loads nothing for a token without one (`pkg/auth/token.go:1253`); the enterprise per-user decorator is build-tagged | Medium | v1 |
-| Consent link at AS-2's own login (external mode only) | No | Not sized | v1 |
-| `private_key_jwt` for client `mecatl` at AS-1 and AS-2 | Yes | Configuration | v1 |
-| SPIFFE client authentication at the authorization server | Yes | None; verify only | v1 |
-| AS-1 and AS-2 [audit records](audit.md) | No; the authorization server records no audit events. The plan reuses ToolHive's audit event recorder library, which emits JSON records for collection with fluentd or fluent-bit | Not sized | v1 |
+| Exchange of a self-issued access token presented by another confidential client (the Mecatl-API-audience exception) | Mostly; the requested `aud` must be a subset of the subject token's `aud` | Small to medium | Identity work |
+| Refresh token in a token-exchange response, with the session-bound record | No; exchange issues access tokens only | Medium to large | Identity work |
+| Issue ID-JAGs (`typ=oauth-id-jag+jwt`, audience = another AS) | No; redemption and an outbound XAA client only. The ID-JAG redemption handler binds the client, consumes `jti`, and copies `act`; the plain JWT-bearer handler drops `act` and replaces the client | Large | Identity work |
+| Refresh token as `subject_token` | No | Large | Identity work |
+| Single-level `act` from the registered actor input (nesting later, with the chained exchange) | Partly; `buildActClaim` builds `act` from a client or self-issued actor token and nests it | Medium | Identity work |
+| ID-JAG redemption keeps `act` | Yes, copied unchanged | None; verify only | Identity work |
+| AS-2 maps the AS-1 subject to a native user after ID-JAG redemption, and stops marking the token as having no upstream session | No; emits `iss#sub` and marks no upstream session | Large | Identity work |
+| Per-user upstream credential lookup in open-source ToolHive, keyed (gateway, native user, provider) | No; keyed by `tsid`, a per-interactive-login session ID that a delegated `V` lacks, and vMCP loads nothing for a token without one (`pkg/auth/token.go:1253`); the enterprise per-user decorator is build-tagged | Medium | Identity work |
+| Consent link at AS-2's own login (external mode only) | No | Not sized | Identity work |
+| `private_key_jwt` for client `mecatl` at AS-1 and AS-2 | Yes | Configuration | Identity work |
+| SPIFFE client authentication at the authorization server | Yes | None; verify only | Identity work |
+| AS-1 and AS-2 [audit records](audit.md) | No; the authorization server records no audit events. The plan reuses ToolHive's audit event recorder library, which emits JSON records for collection with fluentd or fluent-bit | Not sized | Identity work |
 | Refresh token bound to the AS-1 login session (`sid`), so logout revokes it | No; only `tsid` exists | Large | Later |
 | DPoP issuance and validation for `V` | No | Large | Later |
 | Scope or `authorization_details` (RFC 9396) narrowing enforced per tool at the gateway | Scope intersection only | Large | Later |
@@ -224,7 +224,7 @@ Workload mTLS does not bind an OAuth access token to its certificate, prove user
 
 ## Cedar authorization and audit verification
 
-Cedar is the selected engine for the v1 effective MCP server/tool ceiling. Policy representation is an implementation choice; user, resource, argument, and dynamic delegation policies are deferred. Required focused checks are:
+The ceiling checks below belong to the [authority work](README.md#order-of-work), which follows the identity work; the audit checks belong to the identity work. Cedar is the selected engine for the effective MCP server/tool ceiling. Policy representation is an implementation choice; user, resource, argument, and dynamic delegation policies are deferred. Required focused checks are:
 
 - Resolve `Tools`, `DisallowedTools`, and `MCPServers` with existing defaults, selection, and exclusion semantics into registered server/tool pairs. Reject ambiguous or unresolved grants; the same tool name on another server must not inherit access.
 - Prove deterministic generation from fixed admitted definition inputs, with retained source, definition revision, and generated policy revision. Prose and model output must not affect grants; source edits and restoration must not silently replace the admitted ceiling.
@@ -232,7 +232,7 @@ Cedar is the selected engine for the v1 effective MCP server/tool ceiling. Polic
 - Compute each instance's effective ceiling at registration as its definition ceiling intersected with its parent's effective ceiling, and store it with the incarnation. Property-test `effective(child) ⊆ definition(child)` and `effective(child) ⊆ effective(parent)`, and cross-check against the harness's delegated-authority intersection. Prove a `deployer` child of a read-only reviewer is denied merge. Reject registration under an unregistered, revoked, or other-session parent; an empty intersection registers an instance whose MCP calls all deny. Revoking an instance revokes its descendants. Renewal and restoration reload the stored set and never recompute or widen it.
 - Evaluate each call, including calls using cached credentials and retries after enrollment. Default deny; generation/loading failures, evaluation failures, and any evaluation diagnostic errors deny, even if the nominal Cedar result is allow.
 - Check the exact dispatched server/tool pair and recheck changed requests. Prove the reviewer read passes its ceiling while excluded merge fails; PR 42 and PR 43 reads on the same pair have the same ceiling result. Do not claim this proves PR-specific delegation.
-- Preserve existing local checks, AS-1 and AS-2 decisions, and vMCP checks. A ceiling permit must not bypass their denials or substitute for user entitlement. The gateway does not evaluate the agent ceiling in v1; Cedar reading `act` there is later work.
+- Preserve existing local checks, AS-1 and AS-2 decisions, and vMCP checks. A ceiling permit must not bypass their denials or substitute for user entitlement. The gateway does not evaluate the agent ceiling; Cedar reading `act` there is later work.
 - Verify audit provenance, definition and policy revision correlation, safe reasons and policy IDs, and distinct decision/dispatch/outcome evidence per operation and attempt. Diagnostic errors must yield an effective deny in the record. Redaction must exclude secrets and unrestricted payloads. Test unknown outcomes without automatic replay and durability across restart once storage, ordering, and failure handling are specified; no transactional ledger is selected here.
 
 ## Parking and recovery: implementation status
