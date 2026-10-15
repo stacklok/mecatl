@@ -9,10 +9,11 @@ An agent definition describes how an agent should perform work. Mecatl represent
 | Term | Meaning |
 | --- | --- |
 | Definition | A kind of agent, identified with its source and admitted revision, not just its name. |
-| Session | The harness's persisted context for work, identified by a host session ID such as `S42`. |
-| Agent instance | One use of a selected definition in a session, with its own identity and any creation-parent association. A delegated child has its own instance. |
+| Host session | The harness's persisted context for one agent instance, identified by a host session ID such as `hostS42`. A child instance has its own child session, linked to its parent's by `ParentSessionID`; a root session and its children form a session tree. |
+| Broker session | The broker's session for one session tree, opened once for the root session, such as `A42`. Every instance in the tree registers to it. |
+| Agent instance | One use of a selected definition, backed by its own host session, with its own identity and any creation-parent association. A delegated child has its own instance. |
 | Run | One execution by an instance, such as `R41` or `R42`. An instance can perform multiple runs. |
-| Execution context | The workload, acting instance, session, initiating user, run, and any delegation a protected call is made under. The user comes from the broker refresh token AS-1 issued at session open, after Alice signed in through AS-1; AS-1 also checks that the acting instance is registered to the session. Run and delegation context remain mecak8s-reported in v1. See [authentication and execution context](mcp-authorization.md#authentication-and-execution-context). |
+| Execution context | The workload, acting instance, broker session, initiating user, run, and any delegation a protected call is made under. The user comes from the broker refresh token AS-1 issued at session open, after Alice signed in through AS-1; AS-1 also checks that the acting instance is registered to the broker session. Run and delegation context remain mecak8s-reported in v1. See [authentication and execution context](mcp-authorization.md#authentication-and-execution-context). |
 | Agent-instance incarnation | The durable identity allocated by mecak8s for that instance's lifetime, preserved across restoration and credential renewal. A fresh incarnation identifies a distinct instance. |
 | Workload | The Mecatl service process hosting instances for many users and sessions, with its own infrastructure identity. |
 
@@ -20,32 +21,28 @@ The existing implementation persists a [session incarnation](../../../engine/ses
 
 ## Relationships and lifetimes
 
-An agent definition can be reused by many agent instances. Each instance has its
-own identity and persisted context, and can perform several runs over its lifetime.
+An agent definition can be reused by many agent instances. Each instance has its own identity and persisted context, and can perform several runs over its lifetime.
 
 ```mermaid
 flowchart LR
     D["AgentDef<br/>Reusable definition"]
-    S["Session<br/>Persisted context"]
+    S["Host session<br/>Persisted context"]
     I["Agent instance<br/>One particular agent"]
     R["Run<br/>One unit of work"]
     C["Child agent instance<br/>Own identity, session, and runs"]
+    CR["Child run"]
 
     D -->|"one definition, many instances"| I
     S ---|"backs this instance"| I
     I -->|"one instance, many runs"| R
     I -->|"may create child instances"| C
+    C -->|"one instance, many runs"| CR
+    R -.->|"delegates work to"| CR
 ```
 
-Here, *Session* means the persisted context for one agent instance. A child has
-its own child Session. The root session and its children form the wider session
-tree. Each child follows the same relationships shown for the parent instance,
-and can use a different selected definition. A root instance has no creation
-parent; a child has one creation-parent link.
+Here, the host session is the persisted context for one agent instance. A child has its own child session. The root session and its children form the session tree, which shares one broker session. Each child follows the same relationships shown for the parent instance, and can use a different selected definition. A root instance has no creation parent; a child has one creation-parent link.
 
-Reviewing PR 42 and later reviewing PR 57 can use the same reviewer instance in
-separate runs. The selected definition stays fixed for the instance. Pausing for
-approval and resuming continues the same run, including after restoration.
+Reviewing PR 42 and later reviewing PR 57 can use the same reviewer instance in separate runs. The selected definition stays fixed for the instance. Pausing for approval and resuming continues the same run, including after restoration.
 
 | Event | Instance identity | Run |
 | --- | --- | --- |
@@ -53,16 +50,11 @@ approval and resuming continues the same run, including after restoration.
 | Assign more work to an existing instance | Keep the same instance and selected definition. | Start another run. |
 | Create a child agent | Create a distinct instance with its own Session and a creation-parent link. | The child's work has its own run. |
 | Pause and resume unfinished work | Keep the same instance. | Continue the existing run. |
-| Restore after a process restart | Recover the original instance, selected definition, and creation-parent link. | Continue a recoverable unfinished run; later work starts a new run. |
+| Restore after a process restart | Recover the original instance, selected definition, and creation-parent link. | Continue a recoverable unfinished run, or fail closed; later work starts a new run. |
 
-Creation ancestry and execution delegation describe different relationships. The
-creation-parent link records which instance created a child. A delegation links
-the run assigning work to the run performing it. The child's identity remains
-stable across its runs; each run supplies its own execution context. See
-[registering instances](#registering-instances).
+Creation ancestry and execution delegation describe different relationships. The creation-parent link records which instance created a child. A delegation links the run assigning work to the run performing it. The child's identity remains stable across its runs; each run supplies its own execution context. See [registering instances](#registering-instances).
 
-The [domain model](../../architecture/mecatl.modelith.md) provides the broader
-execution model; this view focuses on agent identity and continuity.
+The [domain model](../../architecture/mecatl.modelith.md) provides the broader execution model; this view focuses on agent identity and continuity.
 
 ## What AgentDef contains
 
@@ -94,7 +86,7 @@ The broker ceiling is the set of permitted registered MCP server/tool pairs reso
 
 In the proposed lifecycle, mecak8s's trusted session lifecycle code resolves the session's definitions from configured sources, such as administrator-managed files, repositories, or APIs. It persists the fixed selection, source associations, revisions, and authority ceilings, and supplies execution configuration to the harness. This is a responsibility within mecak8s, not a new registrar component.
 
-For Alice's session `S42` in the [walkthrough](credentials-and-lifecycle.md#interactive-execution), the selection includes the main definition and `project/code-reviewer`. Selecting the reviewer definition does not create a reviewer instance. The particular child is allocated later when the harness creates it.
+For Alice's session `hostS42` in the [walkthrough](credentials-and-lifecycle.md#interactive-execution), the selection includes the main definition and `project/code-reviewer`. Selecting the reviewer definition does not create a reviewer instance. The particular child is allocated later when the harness creates it.
 
 Today the root session has no `AgentDef`. In this design, a session started without a named definition uses the built-in `system/main` definition, and the default anonymous child uses `system/explorer`; neither requires a definition file. Built-in definitions are registered and ceiling-resolved like any other, with the Mecatl release that ships them as their source and revision. `system/main` grants no name-based privilege: Alice's and Bob's default mains share the definition but not instances, users, or authority. A session started with a named definition, such as `project/code-reviewer`, registers that definition as its main instead. Whether the harness constructs the main loop from a real `AgentDef` or a built-in equivalent is an implementation choice.
 
