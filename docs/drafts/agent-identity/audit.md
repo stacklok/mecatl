@@ -36,7 +36,7 @@ Every component records evidence as a [toolhive-core](https://github.com/stacklo
 | What kind of event | `Type` | A `mecatl_`-prefixed snake_case type, such as `mecatl_tool_decision`. The vMCP keeps ToolHive's own types, such as `mcp_tool_call`. Whether an event is a decision, a dispatch, or an observed outcome is part of its type. |
 | Result | `Outcome` | toolhive-core's `success`, `failure`, `error`, and `denied`, plus `unknown` once #341 defines it. Each type uses a fixed subset; see the next table. |
 | Who acted, and for whom | `Subjects` | `user_iss` and `user_id`: the user as the recording component's own issuer knows them. `owner_iss` and `owner_id`: the company identity from `sub_id`. `workload_iss` and `workload_sub`. `agent_spiffe_id` (inside Mecatl only), `agent_actor_id` (the opaque `agent:` identifier), and `agent_instance_ref`. A credential reference is qualified by its issuer, and `client_id` by its authorization server. An identity the recorder did not verify never appears as `user_id`. |
-| Verified or reported | `Metadata.Extra["mecatl.provenance"]` | A map keyed by the `Subjects` key: `verified`, `record:<AuditID>` when taken from a retained record, `reported:<component>`, or `unavailable`. A missing fact is marked `unavailable`, never left out silently. |
+| Verified or reported | `Metadata.Extra["mecatl.provenance"]` | A map keyed by the `Subjects` key: `verified`, `credential-verified` when the recorder verified a credential but mecak8s reported which instance it belongs to, `record:<AuditID>` when taken from a retained record, `reported:<component>`, or `unavailable`. A missing fact is marked `unavailable`, never left out silently. |
 | Where it originated | `Source` | The network origin, as in ToolHive: the peer address, plus `request_id` and `session_id` for joining. The calling workload's identity belongs in `Subjects`, not here. |
 | Where it was recorded | `Component`, `Metadata.Extra` | `mecatl-broker`, `mecatl-as1`, or the ToolHive component name, plus the recording replica and trust domain. |
 | Operation and target | `Target` | toolhive-core's keys: `type=tool`, `name`, `method=tools/call`, and the MCP server. For token-endpoint events, the requested audience and resource. Request metadata appears only if allowlisted for that type. |
@@ -57,6 +57,8 @@ Each event type uses a fixed set of outcomes:
 
 The identity work needs these event families:
 
+- sign-in and access-token issuance at AS-1;
+- API requests and session ownership checks at mecak8s;
 - definition load, instance registration, and agent-instance credential issuance;
 - each delegation from one run to another;
 - broker session open and close, and AS-1's conversion record at session open; per-call events point to the session-open record for the user;
@@ -66,7 +68,7 @@ The identity work needs these event families:
 - redemption and denial at AS-2, and consent-link creation and revocation in external mode;
 - the broker's decision, dispatch, and observed outcome for each tool call;
 - the vMCP's tool-call event;
-- audit delivery failure.
+- audit delivery failure, and the start and stop of each component's record stream.
 
 The authority work adds Cedar evaluation status, policy IDs, and policy and ceiling revisions. Until then, decision events record that no ceiling was evaluated.
 
@@ -96,9 +98,50 @@ The `agent:` identifiers in `act` are opaque on purpose: the SPIFFE path, with i
 
 The broker records its authorization decision, whether it attempted dispatch, and the outcome it observed as separate facts. If vMCP reports which provider connection it used, the broker records that identifier as observed, not as something the broker authorized. An allow is not a dispatch; a dispatch attempt is not proof of receipt or success. A denial dispatches no backend operation. If completion is missing after possible dispatch, the outcome is unknown, not evidence of nonexecution. Credential recovery cannot justify automatic replay of an unknown operation.
 
-Decision, dispatch, and observed-outcome evidence must be durable and survive broker restart. The storage mechanism, write ordering relative to dispatch, failure handling when evidence cannot be persisted, and cross-service delivery and authenticated correlation remain explicitly unresolved implementation requirements. This design does not select a transactional ledger or claim atomicity between an audit write and an external effect.
+Decision, dispatch, and observed-outcome evidence must survive broker restart; [delivery, protection, and reconciliation](#delivery-protection-and-reconciliation) sets the write order and what happens when evidence cannot be delivered. This design does not claim atomicity between an audit write and an external effect.
 
 Use operation and attempt references to connect the evidence; individual events also need their own references. The operation ID, the ID-JAG `jti`, and the AS-2 access token `(iss, jti)` are separate references. A cached access token serves several calls, so its `jti` cannot replace a per-operation reference. To reach one operation from a gateway record, the broker must propagate the operation ID with each MCP request, and vMCP records it as reported, unverified trace context. This propagation is required for correlation; the mechanism is still to be chosen, and it is not an authenticated propagation contract. Because `act` names only the current actor, this operation ID is what keeps delegation `D42` reachable from a gateway log.
+
+## Delivery, protection, and reconciliation
+
+Correctly shaped records are not enough if they can be lost, rewritten, or never compared.
+
+**Emission and destination.** Every component records through the toolhive-core audit logger: mecak8s, the broker, AS-1, AS-2, and the vMCP. The logger's sink already writes to standard output or an HTTP endpoint, so each deployment chooses where records go. ToolHive's authorization server records no audit events today; adding them, including sign-in and token issuance, is in the [ToolHive ledger](implementation.md#toolhive-work-list).
+
+**Protection.** The deployment points every component's sink at a store that mecak8s cannot write to or delete from, such as an append-only collector or object storage with retention locks. This protects records already delivered even while the broker runs inside mecak8s: a compromise can forge or suppress records from then on, but cannot rewrite earlier ones. Investigators get read-only access to the store.
+
+**Producers.** Each component records the event families it observes first-hand:
+
+| Component | Event families |
+| --- | --- |
+| mecak8s | API requests and session ownership checks |
+| Broker | Definition load, instance registration, delegation, session open and close, sign-out everywhere, and decision, dispatch, and observed outcome for each tool call |
+| AS-1 | Sign-in, including the company IdP session and authentication time; access-token issuance; the session-open conversion; ID-JAG issuance and denial; refresh-token revocation; upstream re-check failures |
+| AS-2 | Redemption and denial; consent-link creation and revocation |
+| vMCP | Tool calls |
+
+**Write order and failure.** The broker mints each attempt ID. Before it dispatches a tool call, its decision record must be accepted by the sink; if the broker cannot deliver it, the broker refuses to dispatch. This is the broker's choice, not a library default. A record being accepted by a sink is not the same as durable storage; the deployment's destination provides durability. Delivery failures are reported on a separate channel, as toolhive-core [#343](https://github.com/stacklok/toolhive-core/issues/343) proposes, so a failing destination does not hide its own failure.
+
+**Gap detection.** Each component numbers its records with a counter that is contiguous for each component, replica, and process start, and records a start and stop event for each stream. A missing number or stream end shows that records were lost or removed. All components use a synchronized time source, and each record names whose clock it used.
+
+**Reconciliation.** Records from different stores are checked against each other, and each mismatch is flagged:
+
+| Mismatch | What it can mean |
+| --- | --- |
+| An AS-2 redemption with no matching AS-1 ID-JAG issuance | An ID-JAG minted outside the recorded path |
+| A vMCP tool call with no matching broker dispatch for the same user and actor | An access token used outside the broker |
+| A broker dispatch with no matching vMCP tool call | A record suppressed on one side |
+| A session-open conversion whose source token has no AS-1 issuance and sign-in | A user token minted outside the recorded path |
+
+In external mode, the gateway's records belong to its operator, so these checks need the operator's records.
+
+**Lineage consistency.** When mecak8s reports a delegation, the broker checks that the delegating and receiving instances are registered to the same session tree, and that the parent delegation's receiving run is the delegating run. A delegation that passes is marked as reported and consistency-checked. These checks catch mistakes, not a compromised mecak8s.
+
+**Retention.** A lineage event is kept at least as long as any event that references it. Each deployment names who owns retention and for how long. When the gateway is external, the deployment agrees with its operator on how long gateway records are kept and how investigators reach them.
+
+**Coverage.** These records cover broker-mediated MCP calls and the identity lifecycle around them. Filesystem tools, Shell, and spawning are not broker-mediated, so the harness's own logs are their only record.
+
+**Later.** After the broker becomes a separate service, each component can hash-chain its records and anchor signed checkpoints outside its own store. While the broker runs inside mecak8s, the signing key would sit with the attacker, so the external store already gives most of the value. Signed records for non-repudiation are also later work.
 
 ## Following a call in an investigation
 
@@ -112,4 +155,4 @@ The investigator then follows dispatch and observed-outcome records for that att
 
 Record only allowlisted argument and result metadata needed for attribution, with redaction applied before persistence or logging. Safe status categories and nonsecret provider references usually suffice for outcomes. Exclude tokens, refresh tokens, ID-JAGs, client assertions, private keys, client secrets, raw headers, OAuth transaction secrets, and unrestricted argument or result payloads. Record credentials by issuer and `jti` or by record reference, never by value. Policy diagnostics and error text need the same treatment; dumping decoded credentials is not an audit strategy.
 
-Protecting persisted evidence against unauthorized disclosure or modification requires audit-store access and integrity controls. Recording authenticated identities does not itself protect the store. The [credential walkthrough](credentials-and-lifecycle.md#interactive-execution) owns credential validation and OAuth examples; this chapter specifies the evidence needed to investigate their use.
+Recording authenticated identities does not itself protect the store; [delivery, protection, and reconciliation](#delivery-protection-and-reconciliation) covers the destination and its access. The [credential walkthrough](credentials-and-lifecycle.md#interactive-execution) owns credential validation and OAuth examples; this chapter specifies the evidence needed to investigate their use.

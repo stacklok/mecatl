@@ -161,7 +161,7 @@ This table is the ledger of ToolHive changes the design needs. None is filed as 
 | Consent link at AS-2's own login (external mode only) | No | Not sized | Identity work |
 | `private_key_jwt` for client `mecatl` at AS-1 and AS-2 | Yes | Configuration | Identity work |
 | SPIFFE client authentication at the authorization server | Yes | None; verify only | Identity work |
-| AS-1 and AS-2 audit records following the [AuditEvent profile](audit.md#auditevent-profile) | No; the authorization server records no audit events. The plan reuses ToolHive's audit event recorder library, which emits JSON records for collection with fluentd or fluent-bit | Not sized | Identity work |
+| AS-1 and AS-2 audit records following the [AuditEvent profile](audit.md#auditevent-profile), including sign-in, access-token issuance, and refresh-token revocation at AS-1 | No; the authorization server records no audit events. The toolhive-core audit logger and its sink already exist | Not sized | Identity work |
 | Revoke a broker refresh token and its record, by an RFC 7009 endpoint or, while the broker runs inside mecak8s, in process | No; storage revokes by refresh-token family, but no endpoint is wired | Small | Identity work |
 | Revoke all of a user's grants, including schedule authority | No; no index from user to refresh-token families | Medium | Identity work |
 | Upstream re-check when issuing an ID-JAG, with the upstream token kept independent of client sign-out | No; the refresh grant never contacts the upstream IdP (checked at main `9adad0abb`) | Small to medium | Identity work |
@@ -258,6 +258,10 @@ Verify the [AuditEvent profile](audit.md#auditevent-profile) through the real to
 - Two instances of the same definition under different parents stay distinct in reconstruction.
 - A missing or malformed lineage record makes reconstruction report an incomplete chain, not a shorter one.
 - A delivery failure is reported through the logger, as toolhive-core [#343](https://github.com/stacklok/toolhive-core/issues/343) proposes.
+- The broker refuses to dispatch when its decision record cannot be delivered, and dispatches only after the sink accepts it.
+- Removing a record or ending a stream without its stop event shows as a sequence gap.
+- Each reconciliation check flags an injected mismatch: an AS-2 redemption without AS-1 issuance, a vMCP call without broker dispatch, a dispatch without a vMCP call, and a session-open conversion without AS-1 issuance.
+- The broker's lineage check rejects a delegation whose instances are in different session trees or whose parent delegation's receiving run differs.
 
 ## Sign-out and revocation checks
 
