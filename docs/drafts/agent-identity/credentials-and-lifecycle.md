@@ -250,7 +250,7 @@ A cache hit skips the token exchanges, never these checks. User, run, and delega
 
 The broker does not check provider connections. It authorizes the session, workload, actor, ceiling, and route. AS-2 authorizes the user: the mapping, and in external mode the consent link. vMCP authorizes the connection and dispatches. The provider enforces its own permissions on the request.
 
-**Evidence:** `op-pr42-001` passed the effective-ceiling policy and session, workload, and actor checks. This decision proves neither dispatch nor success. The [audit chapter](audit.md#illustrative-authorization-evidence) owns the full evidence shape.
+**Evidence:** `op-pr42-001` passed the session, workload, and actor checks, and, once the authority work is in place, the effective-ceiling check. This decision proves neither dispatch nor success. The [audit chapter](audit.md#auditevent-profile) owns the full evidence shape.
 
 ### (7) ID-JAG from AS-1
 
@@ -265,14 +265,14 @@ AS-1 resolves `RT-A42` to its record and checks that the session is open, the ha
   "sub": "u-alice-91",
   "aud": "https://gateway.example.com",
   "client_id": "mecatl",
-  "act": {"sub": "agent:reviewer-gh56"},
+  "act": {"iss": "https://broker.example.com/as", "sub": "agent:reviewer-gh56"},
   "jti": "jag-pr42-001",
   "iat": 1800000001,
   "exp": 1800000121
 }
 ```
 
-- `act` names only the acting instance, with an opaque, stable, per-instance `agent:` identifier: no SPIFFE path, no definition name, and no `act.iss`. AS-1 derives it from the validated reviewer SVID; the full SVID stops at AS-1, so internal structure does not cross into the gateway's domain. `act` has one level. That main delegated `D42` to the reviewer is recorded in Mecatl's harness and broker records, not in the token. A nested `act` naming main comes later, from a [chained exchange](credential-flow-rework.md#d4-delegation-visibility-at-the-gateway) at delegation time.
+- `act` names only the acting instance, with an opaque, stable, per-instance `agent:` identifier: no SPIFFE path and no definition name; `act.iss` names AS-1, which minted it. AS-1 derives it from the validated reviewer SVID; the full SVID stops at AS-1, so internal structure does not cross into the gateway's domain. `act` has one level. That main delegated `D42` to the reviewer is recorded in Mecatl's harness and broker records, not in the token. A nested `act` naming main comes later, from a [chained exchange](credential-flow-rework.md#d4-delegation-visibility-at-the-gateway) at delegation time.
 - `aud_sub` and `email`, recommended by the draft, are deliberately omitted: AS-1 does not know AS-2's subject, and an email address is not an identity link.
 - AS-1 and AS-2 are separate issuers with separate keys, also in embedded mode; the draft forbids an issuer redeeming its own ID-JAG (§9.3).
 
@@ -298,7 +298,7 @@ AS-2 issues a short-lived access token and no refresh token (§4.4.3):
 {
   "iss": "https://gateway.example.com",
   "sub": "usr-alice-7c1d",
-  "act": {"sub": "agent:reviewer-gh56"},
+  "act": {"iss": "https://broker.example.com/as", "sub": "agent:reviewer-gh56"},
   "client_id": "mecatl",
   "aud": "https://gateway.example.com/mcp",
   "iat": 1800000005,

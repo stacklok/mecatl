@@ -118,7 +118,7 @@ Here `access_token` carries the grant for AS-2; it is not an access token the vM
   "sub": "u-alice-91",
   "aud": "https://gateway.example.com",
   "client_id": "mecatl",
-  "act": {"sub": "agent:reviewer-gh56"},
+  "act": {"iss": "https://broker.example.com/as", "sub": "agent:reviewer-gh56"},
   "jti": "jag-pr42-001",
   "iat": 1800000001,
   "exp": 1800000121
@@ -127,7 +127,7 @@ Here `access_token` carries the grant for AS-2; it is not an access token the vM
 
 This fictional decoded ID-JAG is not a usable credential. `iss` is AS-1 and `sub` is Alice's AS-1 subject, from the `RT-A42` record. `aud` is AS-2's issuer identifier. `client_id` names `mecatl`, the client that must redeem it.
 
-`act` follows [RFC 8693 §4.1](https://www.rfc-editor.org/rfc/rfc8693.html#section-4.1) and names only the acting instance, the reviewer. It carries an opaque, stable, per-instance `agent:` identifier: no SPIFFE path and no definition name, so Mecatl's internal structure does not cross into the gateway's domain. `act.iss` is omitted; the ID-JAG's own `iss` is AS-1. AS-1 derives the identifier from the validated reviewer SVID; the full SVID stops at AS-1. `act` has one level: it does not name main, which delegated the task. That delegation is recorded in Mecatl's harness and broker records. A nested `act` comes later, from a [chained exchange](credential-flow-rework.md#d4-delegation-visibility-at-the-gateway) at delegation time.
+`act` follows [RFC 8693 §4.1](https://www.rfc-editor.org/rfc/rfc8693.html#section-4.1) and names only the acting instance, the reviewer. It carries an opaque, stable, per-instance `agent:` identifier: no SPIFFE path and no definition name, so Mecatl's internal structure does not cross into the gateway's domain. `act.iss` is AS-1's issuer: it names who minted the `agent:` identifier, so the identifier stays attributable to AS-1 after AS-2 copies `act` into `V`. AS-1 derives the identifier from the validated reviewer SVID; the full SVID stops at AS-1. `act` has one level: it does not name main, which delegated the task. That delegation is recorded in Mecatl's harness and broker records. A nested `act` comes later, from a [chained exchange](credential-flow-rework.md#d4-delegation-visibility-at-the-gateway) at delegation time.
 
 `aud_sub` and `email`, both RECOMMENDED by ID-JAG §3.1, are deliberately omitted. AS-1 does not know AS-2's subject, and an email address is not an identity link. The ID-JAG carries no `sub_id` for AS-2 to resolve: a `sub_id` would be AS-1's claim about the company identity, not the IdP's (§9.5).
 
@@ -168,7 +168,7 @@ An unresolved or unlinked subject fails closed. AS-2 must not create an unlinked
   "sub": "usr-alice-7c1d",
   "aud": "https://gateway.example.com/mcp",
   "client_id": "mecatl",
-  "act": {"sub": "agent:reviewer-gh56"},
+  "act": {"iss": "https://broker.example.com/as", "sub": "agent:reviewer-gh56"},
   "iat": 1800000005,
   "exp": 1800000120,
   "jti": "access-pr42-001"
