@@ -82,15 +82,17 @@ The harness uses `Tools`, `DisallowedTools`, and `MCPServers` to configure the a
 
 The broker ceiling is the set of permitted registered MCP server/tool pairs resolved under the existing `Tools`, `DisallowedTools`, and `MCPServers` semantics. That fixed admitted ceiling drives [deterministic Cedar policy generation](mcp-authorization.md#definition-derived-ceiling), tied to the definition source and revision. At registration, the broker narrows it to each instance's [effective ceiling](mcp-authorization.md#delegated-authority). The existing definition-source snapshot contract is not, by itself, broker initialization.
 
-## Loading definitions for a session
+## Loading definitions
 
-In the proposed lifecycle, mecak8s's trusted session lifecycle code resolves the session's definitions from configured sources, such as administrator-managed files, repositories, or APIs. It persists the fixed selection, source associations, revisions, and authority ceilings, and supplies execution configuration to the harness. This is a responsibility within mecak8s, not a new registrar component.
+The **definition loader** is a broker module. At broker startup it loads the global agent definitions from configured sources, such as administrator-managed files or APIs, resolves their ceilings, and records each definition's source, revision, and ceiling in the broker. It also supplies the harness with execution configuration. While the broker runs as modules inside mecak8s, the loader runs there too; when the broker becomes a separate service, the loader moves with it. How other definitions, such as repository definitions, are loaded and when is not yet decided.
+
+Each session uses a fixed selection of loaded definitions. mecak8s's trusted session lifecycle code persists that selection and names definitions to the broker by reference; it does not supply their content or ceilings.
 
 For Alice's session `hostS42` in the [walkthrough](credentials-and-lifecycle.md#interactive-execution), the selection includes the main definition and `project/code-reviewer`. Selecting the reviewer definition does not create a reviewer instance. The particular child is allocated later when the harness creates it.
 
 Today the root session has no `AgentDef`. In this design, a session started without a named definition uses the built-in `system/main` definition, and the default anonymous child uses `system/explorer`; neither requires a definition file. Built-in definitions are registered and ceiling-resolved like any other, with the Mecatl release that ships them as their source and revision. `system/main` grants no name-based privilege: Alice's and Bob's default mains share the definition but not instances, users, or authority. A session started with a named definition, such as `project/code-reviewer`, registers that definition as its main instead. Whether the harness constructs the main loop from a real `AgentDef` or a built-in equivalent is an implementation choice.
 
-Before the main loop starts, mecak8s allocates and persists the main's durable agent-instance incarnation, then authenticates to the broker with its workload ServiceAccount to register the selected definitions and main instance with no parent. Broker initialization and registration must complete before execution; a suitable instance SVID can be obtained when needed, before protected calls. The selected definitions remain fixed for the session so that the harness and broker use the same selection.
+Before the main loop starts, mecak8s allocates and persists the main's durable agent-instance incarnation, then authenticates to the broker with its workload ServiceAccount to register the main instance with no parent, naming its definition by reference. Broker initialization and registration must complete before execution; a suitable instance SVID can be obtained when needed, before protected calls. The selected definitions remain fixed for the session so that the harness and broker use the same selection.
 
 ## Registering instances
 
