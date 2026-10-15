@@ -25,8 +25,8 @@ func TestMecatuiFunctionalConversationCards_Scenario2_PerFamilyPreparedBlocksPre
 		payload   scrollback.PayloadSnapshot
 		want, bad []string
 	}{
-		{"user media", scrollback.UserCardSnapshot{Text: "hello\nworld", Media: []string{"image/png (inline)", "audio/wav (inline)"}}, []string{"▌ you", "hello", "world", "📎 image/png", "📎 audio/wav"}, nil},
-		{"ordinary notice", scrollback.NoticeCardSnapshot{Text: "compacted"}, []string{"• compacted"}, nil},
+		{"user media", scrollback.UserCardSnapshot{Text: "hello\nworld", Media: []string{"image/png (inline)", "audio/wav (inline)"}}, []string{"▶ you", "hello", "world", "📎 image/png", "📎 audio/wav"}, nil},
+		{"ordinary notice", scrollback.NoticeCardSnapshot{Text: "compacted"}, []string{"◆ system", "compacted"}, nil},
 		{"recovery notice", scrollback.NoticeCardSnapshot{Text: "recover this turn", Recover: true}, []string{"⚠ recover this turn"}, nil},
 		{"hook", scrollback.HookCardSnapshot{Text: "PreToolUse hook rewrote tool arguments", Phase: "PreToolUse", Tool: "Shell", Decision: string(client.HookModified)}, []string{"✎ hook PreToolUse · Shell: modified", "rewrote tool arguments"}, []string{"PreToolUse hook rewrote"}},
 		{"transient error", scrollback.ErrorCardSnapshot{Text: "upstream unavailable"}, []string{"✗ upstream unavailable"}, []string{"retrying won't help"}},

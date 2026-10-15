@@ -236,9 +236,9 @@ type inputRenderKey struct {
 const defaultBlockIndent = 1
 
 // assistantBodyHang is the extra left indent (cells) for assistant text and
-// reasoning. In the F9 detail view it aligns the body under the "● mecatl"
+// reasoning. In the F9 detail view it aligns the body under the "◀ mecatl"
 // label; in the normal view it keeps prose inset from tool lines. It equals the
-// label marker width lipgloss.Width("● ") = 2. Applied on top of the base block
+// label marker width lipgloss.Width("◀ ") = 2. Applied on top of the base block
 // indent; the markdown wrap budget subtracts it so wrapped text fits r.width.
 const assistantBodyHang = 2
 
@@ -631,6 +631,8 @@ func (r *renderer) renderPasses(c *scrollback.Conversation, expand bool) ([]rend
 		switch meta.Kind {
 		case scrollback.KindTool, scrollback.KindSubagent, scrollback.KindTeam:
 			effectiveExpand = false
+			metadata, _ := c.ToolCallMetadataAt(i)
+			pass.toolState = toolCallState(metadata)
 		}
 		key := blockRenderKey{revision: pass.revision, context: r.renderContext(effectiveExpand)}
 		if entry, ok := r.blocks.renderedBlock(i, key); ok {
@@ -705,31 +707,17 @@ func (r *renderer) renderAssistantSnapshotFresh(idx int, p scrollback.AssistantC
 		}
 		body = padLines(reasoning, assistantBodyHang) + body
 	}
-	if !expand {
-		return body
-	}
-	return r.th.Style("assistantLabel").Render("● mecatl") + "\n\n" + body
+	label := r.th.Style("transcriptLLMMarker").Render(theme.TranscriptLLMGlyph) + r.th.Style("transcriptLLMHeading").Render(" mecatl")
+	return label + "\n\n" + body
 }
 
 func (r *renderer) renderConversationLines(c *scrollback.Conversation, expand bool) []string {
 	return r.renderConversationFrame(c, expand).lines
 }
 
-// The inter-block separator is written BEFORE every block after the first by the
-// string-path join (renderConversation); each block already ends with a trailing "\n",
-// so the on-screen gap between two blocks is (trailing "\n") + separator. The lines-path
-// (appendSegmentLines) MUST mirror this exactly (the matching blank-"" count before each
-// block i>0) or the cache-equivalence oracle (render_cache_test.go) trips.
-//
-// The production frame path uses blockBlankLinesAfterPasses; the string-path
-// oracle mirrors it, including the settled-tool → assistant exception below.
-//
-// Spacing policy (compact throughout):
-//   - settled tool → assistant         : 1 blank line  — separate prose from the call run
-//   - other tool → any                 : 0 blank lines — tool boxes cluster tight
-//   - blockAssistant → blockTurnStat   : 0 blank lines — empty turns need no gap before stats
-//   - blockTurnStat → any              : 1 blank line  — compact stat annotation
-//   - everything else                  : 1 blank line  — user↔assistant, assistant→tool, etc.
+// Frame assembly and the string oracle share the spacing policy: one blank row
+// between visible response blocks/groups, none inside a tool group or between
+// an assistant and its attached turn statistics. Internal card spacing is retained.
 const (
 	interBlockSepCompact        = "\n"
 	interBlockBlankLinesCompact = 1 // == strings.Count(trailing-"\n" + interBlockSepCompact, "\n") - 1
@@ -739,28 +727,17 @@ const (
 )
 
 func blockBlankLinesBetween(previous, current scrollback.Kind) int {
-	switch previous {
-	case scrollback.KindTool, scrollback.KindSubagent, scrollback.KindTeam:
+	if toolFamily(previous) && toolFamily(current) {
 		return interBlockBlankLinesNone
-	case scrollback.KindAssistant:
-		if current == scrollback.KindTurnStat {
-			return interBlockBlankLinesNone
-		}
+	}
+	if previous == scrollback.KindAssistant && current == scrollback.KindTurnStat {
+		return interBlockBlankLinesNone
 	}
 	return interBlockBlankLinesCompact
 }
 
-// blockSepAfter returns the inter-block separator to write AFTER block i (i.e.
-// before block i+1).
-func blockSepAfter(kinds []scrollback.Kind, i int) string {
-	if blockBlankLinesBetween(kinds[i], kinds[i+1]) == 0 {
-		return interBlockSepNone
-	}
-	return interBlockSepCompact
-}
-
-// blockBlankLinesAfter is the lines-path mirror of blockSepAfter: it returns the
-// number of blank "" lines to insert before block i (i.e. after block i-1).
+// blockBlankLinesAfter returns the number of blank "" lines to insert before
+// block i (i.e. after block i-1).
 func blockBlankLinesAfter(kinds []scrollback.Kind, i int) int {
 	return blockBlankLinesBetween(kinds[i-1], kinds[i])
 }
@@ -784,7 +761,7 @@ func (r *renderer) renderReasoningSnapshot(p scrollback.AssistantCardSnapshot, e
 	if strings.TrimSpace(p.Reasoning) == "" {
 		return ""
 	}
-	style := r.th.Style("reasoning")
+	style := r.th.Style("transcriptReasoningText")
 	text := terminaltext.Sanitize(strings.TrimRight(p.Reasoning, "\n"))
 	n := lineCount(text)
 	expandMark := r.marks.expandConversation

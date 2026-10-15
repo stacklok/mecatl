@@ -35,6 +35,11 @@ default **aztec** theme.
 Passing `--theme` or `MECATUI_THEME`, including `--theme aztec`, skips this
 detection. Pin a theme to disable automatic selection.
 
+Aztec uses rose for model-response markers, gold for user markers, and lavender
+for ordinary harness notices. Solar uses saturated accents tuned for light
+backgrounds. Message text and success, warning, and error indicators have
+separate colors; reasoning is subdued and italic.
+
 ## Add a partial palette
 
 Theme files are JSON. A palette extends the Aztec base, so it only needs the
@@ -61,6 +66,11 @@ than once, the later location wins:
 
 Then choose it with `--theme midnight` or `MECATUI_THEME=midnight`. Themes are
 discovered at startup, so restart `mecatui` after adding or changing a file.
+
+Custom palettes derive user and model-marker colors from `user` and `assistant`,
+and ordinary harness-marker colors from `info`. They use `text` for plain message
+text and `textMuted` for harness notices, reasoning, and statistics. Markdown
+continues to use the `md*` and syntax-color slots.
 
 ## Next steps
 

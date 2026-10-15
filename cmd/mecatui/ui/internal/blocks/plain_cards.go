@@ -1,6 +1,10 @@
 package blocks
 
-import "strings"
+import (
+	"strings"
+
+	"charm.land/lipgloss/v2"
+)
 
 // UserInput is caller-owned user-prompt content.
 type UserInput struct {
@@ -21,7 +25,13 @@ func SnapshotUser(in UserInput) UserSnapshot {
 
 // PrepareUser prepares a user-prompt block.
 func PrepareUser(in UserSnapshot, layout PlainLayout, theme Theme) Prepared {
-	lines := []string{theme.UserLabel.Render("▌ you"), wrapStyled(SanitizePlain(in.text), theme.UserBody, layout.width)}
+	label := theme.UserMarker.Render(theme.UserGlyph) + theme.UserLabel.Render(" you")
+	body := theme.UserBody.
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderLeft(true).
+		BorderForeground(theme.UserRail.GetForeground()).
+		PaddingLeft(1)
+	lines := []string{label, wrapStyled(SanitizePlain(in.text), body, layout.width)}
 	for _, media := range in.media {
 		lines = append(lines, wrapPrefixed("📎 ", SanitizePlain(media), theme.Muted, layout.width))
 	}
@@ -50,7 +60,8 @@ func PrepareNotice(in NoticeSnapshot, layout PlainLayout, theme Theme) Prepared 
 	if in.recovery {
 		return preparePlain([]string{wrapPrefixed("⚠ ", SanitizePlain(in.text), theme.Warning, layout.width)}, 0)
 	}
-	return preparePlain([]string{wrapPrefixed("• ", SanitizePlain(in.text), theme.Muted, layout.width)}, 0)
+	label := theme.HarnessMarker.Render(theme.HarnessGlyph) + theme.HarnessLabel.Render(" system")
+	return preparePlain([]string{label, wrapStyled(SanitizePlain(in.text), theme.HarnessText, layout.width)}, 1)
 }
 
 // HookInput is caller-owned structured hook content.
@@ -165,5 +176,5 @@ func SnapshotTurnStat(in TurnStatInput) TurnStatSnapshot {
 
 // PrepareTurnStat prepares a turn-stat line.
 func PrepareTurnStat(in TurnStatSnapshot, layout PlainLayout, theme Theme) Prepared {
-	return preparePlain([]string{wrapStyled(SanitizePlain(in.text), theme.Muted, layout.width)}, 0)
+	return preparePlain([]string{wrapStyled(SanitizePlain(in.text), theme.Statistics, layout.width)}, 0)
 }

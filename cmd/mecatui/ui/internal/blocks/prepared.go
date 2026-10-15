@@ -15,15 +15,23 @@ import (
 // Theme contains the resolved semantic styles required to prepare conversation blocks.
 // The UI maps its stylesheet roles to this value at the package boundary.
 type Theme struct {
-	UserLabel    lipgloss.Style
-	UserBody     lipgloss.Style
-	Muted        lipgloss.Style
-	Warning      lipgloss.Style
-	Error        lipgloss.Style
-	HookModified lipgloss.Style
-	HookAdvisory lipgloss.Style
-	DeliveryHead lipgloss.Style
-	ToolCard     lipgloss.Style
+	UserGlyph     string
+	UserMarker    lipgloss.Style
+	UserLabel     lipgloss.Style
+	UserRail      lipgloss.Style
+	UserBody      lipgloss.Style
+	HarnessGlyph  string
+	HarnessMarker lipgloss.Style
+	HarnessLabel  lipgloss.Style
+	HarnessText   lipgloss.Style
+	Statistics    lipgloss.Style
+	Muted         lipgloss.Style
+	Warning       lipgloss.Style
+	Error         lipgloss.Style
+	HookModified  lipgloss.Style
+	HookAdvisory  lipgloss.Style
+	DeliveryHead  lipgloss.Style
+	ToolCard      lipgloss.Style
 }
 
 // Region identifies a block-local semantic area. It has no document identity.

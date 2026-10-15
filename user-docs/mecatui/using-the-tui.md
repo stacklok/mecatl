@@ -34,8 +34,14 @@ longer than 256 bytes are omitted; child execution and the parent session
 are unaffected.
 
 Press `f9` to reveal conversation details, including reasoning summaries,
-per-turn usage, permanent error details, and changed files. Tool results stay in
-`/toolcalls`. Both shortcuts can be [remapped](./keybindings.md#remap-actions).
+per-turn usage, permanent error details, changed files, and individual settled
+tool-call summaries in source order. Use `ctrl+t` to inspect a call's arguments
+and results. Both shortcuts can be [remapped](./keybindings.md#remap-actions).
+
+In the default conversation view, adjacent completed tool, Subagent, and Team
+calls share one summary, including failures. Calls still in progress remain as
+individual cards after that summary. The grouping follows their order in the
+transcript, rather than the order in which work started or finished.
 
 `f9` also temporarily reveals retained benign guardrail notices in live and
 replayed conversations. These are completed, acceptable checks that allowed an

@@ -22,12 +22,12 @@ bindings and dims features that the connected server does not provide.
 |physical `esc` twice within 500ms|Clear an idle draft in terminals with enhanced key events. See [Clear a draft with Escape](#clear-a-draft-with-escape).|
 |`esc`|Clear an active selection first. While work is running, cancel directly and preserve the draft, queued follow-ups, and steer. While idle with a paused queue, clear that queue but preserve the draft.|
 |`ctrl+t`|Open `/toolcalls` for the current session; approval requests use it for details.|
-|`f9`|Reveal conversation details: reasoning, turn stats, changed files, permanent error details, and benign guardrail notices. Tool results stay in `/toolcalls`.|
+|`f9`|Reveal conversation details: reasoning, turn stats, changed files, permanent error details, benign guardrail notices, and individual settled tool-call summaries. Use `ctrl+t` for tool arguments and results.|
 |`shift+tab`|Cycle the current session permission mode: **default → plan → accept-edits → default**. In an MCP prompt argument form, it instead moves to the previous required field.|
 |`ctrl+g`|Select all prompt text.|
 |`ctrl+a` / `ctrl+e`|Move to the start / end of the current prompt line.|
 |`ctrl+p`|Move to the previous prompt line.|
-|`ctrl+y`|Copy the active prompt or conversation selection; no selection is a no-op.|
+|`ctrl+y`|Copy the active prompt or visible conversation selection; no selection is a no-op.|
 |`f6` / `f7` / `f8`|Open Agents / Effort / MCP Prompts.|
 |Agents overlay controls|Select and inspect delegated work. See [Navigate the Agents overlay](#navigate-the-agents-overlay).|
 |Models picker controls|The mouse wheel scrolls the visible model list without moving its cursor. A primary click on a visible model row moves the cursor without switching models; press `enter` to activate the cursor row.|
@@ -200,10 +200,11 @@ Use `shift+arrow` for keyboard selection. On the alternate screen, drag over
 prompt text for mouse selection. Starting a prompt selection clears a
 conversation selection and vice versa. Releasing the mouse does not copy the
 prompt; use `ctrl+y` or right-click to copy the active selection. Copying writes
-the text to the system clipboard and, on X11 and Wayland, the primary selection.
-Install `wl-clipboard` or `xclip` when your terminal does not support the
-primary-selection mirror through OSC 52. With `--no-mouse`, the terminal retains
-native mouse selection and keyboard selection remains available.
+only visible conversation text to the system clipboard and, on X11 and Wayland,
+the primary selection. If a selected tool summary changes, `mecatui` can clear
+the selection. Install `wl-clipboard` or `xclip` when your terminal does not
+support the primary-selection mirror through OSC 52. With `--no-mouse`, the
+terminal retains native mouse selection and keyboard selection remains available.
 
 Client-owned actions take precedence over textarea chords. For example, `ctrl+t`
 opens tool-call inspection and `ctrl+v` handles paste. `ctrl+g` selects all only

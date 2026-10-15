@@ -1051,7 +1051,8 @@ export const ActivityReplayStatusSchema: GenMessage<ActivityReplayStatus> = /*@_
 
 /**
  * GetSessionTranscriptResponse is one coherent SessionStore snapshot projection.
- * messages are the loaded aggregate's current Conversation.Messages in order.
+ * messages are the ordered human-display projection; internal harness control
+ * continuations are omitted, while a successful empty projection is complete.
  *
  * @generated from message mecatl.v1.GetSessionTranscriptResponse
  */

@@ -55,7 +55,7 @@ func TestGrepIntentRenderingParityAndBounds(t *testing.T) {
 	m.conv.resolveTool("hostile-grep", "matched", false)
 
 	m.rend.setWidth(52)
-	frame := m.rend.renderConversationFrame(&m.conv.scrollback, false)
+	frame := m.rend.renderConversationFrame(&m.conv.scrollback, true)
 	rows := blockRows(frame, toolBlockID(t, m.conv.scrollback, "grep"))
 	const want = `✓ Grep · "TODO" in cmd/**/*.go`
 	if len(rows) != 1 || strings.TrimSpace(stripANSIstr(rows[0])) != want {
@@ -68,7 +68,7 @@ func TestGrepIntentRenderingParityAndBounds(t *testing.T) {
 	}
 
 	m.rend.setWidth(18)
-	frame = m.rend.renderConversationFrame(&m.conv.scrollback, false)
+	frame = m.rend.renderConversationFrame(&m.conv.scrollback, true)
 	for _, id := range []string{"grep", "hostile-grep"} {
 		rows = blockRows(frame, toolBlockID(t, m.conv.scrollback, id))
 		if len(rows) != 1 || strings.ContainsAny(stripANSIstr(rows[0]), "\x1b\a\n\r\t") || ansi.StringWidth(rows[0]) > 18 {

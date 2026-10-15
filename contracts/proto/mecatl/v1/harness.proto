@@ -944,7 +944,8 @@ message ActivityReplayStatus {
 }
 
 // GetSessionTranscriptResponse is one coherent SessionStore snapshot projection.
-// messages are the loaded aggregate's current Conversation.Messages in order.
+// messages are the ordered human-display projection; internal harness control
+// continuations are omitted, while a successful empty projection is complete.
 message GetSessionTranscriptResponse {
   // session_id is copied from the same loaded aggregate as messages.
   string session_id = 1;

@@ -80,12 +80,12 @@ func TestMecatuiQuieterToolCalls_Scenario3_ConfiguredFooterAndShortcuts(t *testi
 		m = updated.(ui.Model)
 	}
 	view := ansi.Strip(m.View().Content)
-	if !strings.Contains(view, "ctrl+f11 tool calls · ctrl+f12 session details · ctrl+c quit") || strings.Contains(view, "ctrl+f10 tool calls") || strings.Contains(view, "ctrl+g select all") || strings.Contains(view, "ctrl+y copy") || strings.Contains(view, "ctrl+u clear") || strings.Contains(view, "● mecatl") {
+	if !strings.Contains(view, "ctrl+f11 tool calls · ctrl+f12 session details · ctrl+c quit") || strings.Contains(view, "ctrl+f10 tool calls") || strings.Contains(view, "ctrl+g select all") || strings.Contains(view, "ctrl+y copy") || strings.Contains(view, "ctrl+u clear") || strings.Contains(view, "◀ mecatl") {
 		t.Fatalf("effective settings/CLI shortcuts missing from footer: %s", view)
 	}
 	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF12, Mod: tea.ModCtrl})
 	m = updated.(ui.Model)
-	if view := ansi.Strip(m.View().Content); !strings.Contains(view, "● mecatl") {
+	if view := ansi.Strip(m.View().Content); !strings.Contains(view, "◀ mecatl") {
 		t.Fatalf("configured ExpandConversation chord did not reveal speaker: %s", view)
 	}
 	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyF11, Mod: tea.ModCtrl})
