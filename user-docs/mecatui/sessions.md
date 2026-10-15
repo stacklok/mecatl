@@ -39,10 +39,6 @@ until a completed turn establishes one. See
 [Session continuity](/features/sessions/session-continuity.md) for the storage
 and recovery behavior behind resume.
 
-The reloaded transcript omits background-work notifications and automatic
-continuation prompts that the server identifies as harness-authored. These
-messages remain in the stored model history.
-
 ### Recover a pending approval
 
 Use an exact session ID to reopen an owned main chat that stopped while waiting
