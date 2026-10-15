@@ -235,6 +235,17 @@ The ceiling checks below belong to the [authority work](README.md#order-of-work)
 - Preserve existing local checks, AS-1 and AS-2 decisions, and vMCP checks. A ceiling permit must not bypass their denials or substitute for user entitlement. The gateway does not evaluate the agent ceiling; Cedar reading `act` there is later work.
 - Verify audit provenance, definition and policy revision correlation, safe reasons and policy IDs, and distinct decision/dispatch/outcome evidence per operation and attempt. Diagnostic errors must yield an effective deny in the record. Redaction must exclude secrets and unrestricted payloads. Test unknown outcomes without automatic replay and durability across restart once storage, ordering, and failure handling are specified; no transactional ledger is selected here.
 
+## Modulith constraints
+
+While the broker runs as modules inside mecak8s, these constraints keep the later move to a separate service a deployment change rather than a redesign:
+
+- **Fixed issuer URLs.** AS-1 uses its final issuer URL, such as `https://broker.example.com/as`, from the start, and the broker audience is fixed the same way. External consent links are keyed on the AS-1 issuer, so changing it later would break every link.
+- **The same contract in-process.** mecak8s calls the broker over the same RPC contract it will use across processes, with real workload authentication, and the broker identifies the caller from authenticated metadata. No in-process shortcut may skip a check.
+- **Separate storage.** The broker's records, including refresh tokens, the instance registry, and audit, use their own schema and database credentials, with no joins or shared transactions with mecak8s's session store.
+- **One key per role.** AS-1, the broker client `mecatl`, and the agent-instance issuer each use their own key behind a signer interface, so moving a key means moving its permission, not changing code.
+- **Real workload identity.** Sessions bind to the real mecak8s workload identity from the start, so the move needs no rebinding of open sessions.
+- **No executor access.** Executor Pods have no route to the broker's listener, database, or KMS.
+
 ## Parking and recovery: implementation status
 
 Protected MCP calls can park while awaiting provider reauthorization and resume with account, connection, catalogue, and permission checks. Offline fixtures cover credential and enrolled-connection recovery after host and broker replacement.
