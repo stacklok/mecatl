@@ -42,12 +42,16 @@ export interface ButtonProps
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ asChild = false, className, size, variant, ...props }, ref) => {
     const Component = asChild ? Slot : "button";
+    // A Radix trigger with asChild (TooltipTrigger, DropdownMenuTrigger) passes its own
+    // data-slot through props, so data-slot names the outermost part. data-button comes
+    // after the spread and always marks a Button, for styles that apply to every Button.
     return (
       <Component
         data-slot="button"
         className={cn(buttonVariants({ className, size, variant }))}
         ref={ref}
         {...props}
+        data-button=""
       />
     );
   },

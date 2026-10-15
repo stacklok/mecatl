@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // @vitest-environment happy-dom
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { client as apiClient } from "@mecatl-studio/contracts/client";
 import type { ListLearningProposalsResponse } from "@mecatl-studio/contracts/generated";
 import { getRuntimeQueryKey } from "@mecatl-studio/contracts/query";
@@ -217,9 +219,17 @@ async function sessionChoices() {
   return names;
 }
 
-/** The selectors styles.css uses to draw these glyphs at 20px on phones. */
-const phoneGlyph =
-  'svg.lucide.size-4, [data-slot="button"] svg.lucide:not([class*="size-"]):not([class*="h-"]):not([class*="w-"])';
+/**
+ * The selector list of the phone rule in styles.css that draws button glyphs at
+ * 20px, read from the stylesheet so a change to the rule is a change here too.
+ * e2e/trigger-button-icons.spec.ts measures the drawn size in a browser.
+ */
+const phoneGlyph = (() => {
+  const css = readFileSync(join(import.meta.dirname, "../../styles.css"), "utf8");
+  const rule = css.match(/(svg\.lucide\.size-4,[^{}]+)\{[^{}]*width:\s*20px;/);
+  if (!rule?.[1]) throw new Error("styles.css has no 20px phone glyph rule");
+  return rule[1].replace(/\/\*[\s\S]*?\*\//g, "").trim();
+})();
 
 const listStatuses = () => state.listCalls.map((query) => query.get("status"));
 

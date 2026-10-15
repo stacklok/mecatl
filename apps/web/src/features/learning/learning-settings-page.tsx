@@ -58,7 +58,6 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Note, SettingsCard } from "@/features/settings/settings-card";
 import { errorMessage } from "@/lib/error-message";
-import { cn } from "@/lib/utils";
 import { LearningModeSection } from "./learning-mode-section";
 import { isProposalConflict, type Proposal, ProposalRow, proposalTitle } from "./proposal-row";
 
@@ -268,8 +267,6 @@ function ProposalQueueCard() {
               </ToggleGroupItem>
             ))}
           </ToggleGroup>
-          {/* TooltipTrigger replaces the Button's data-slot, which the phone rule in styles.css
-              uses to draw bare button glyphs at 20px, so the icon names its size-4 itself. */}
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -283,7 +280,7 @@ function ProposalQueueCard() {
               >
                 <RotateCw
                   aria-hidden="true"
-                  className={cn("size-4", proposals.isFetching && "animate-spin")}
+                  className={proposals.isFetching ? "animate-spin" : undefined}
                 />
               </Button>
             </TooltipTrigger>

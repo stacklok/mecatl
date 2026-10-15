@@ -4,14 +4,13 @@ import type { Locator, TestInfo } from "@playwright/test";
 import { expect, type OfflineBff, test } from "./fixtures";
 
 // A Radix trigger with asChild merges its own props, data-slot included, onto
-// the Button it wraps. These journeys measure the drawn glyph of a Button
-// inside each kind of trigger Studio uses, at the phone and desktop widths.
+// the Button it wraps. These journeys measure the drawn glyph of a bare-icon
+// Button inside each kind of trigger Studio uses: 20px on phones, as the phone
+// rule in styles.css draws every Button glyph, and 16px on desktop. Without
+// that rule a bare glyph is size-4, 1rem, which is 18px at the phone root size.
 
 const PHONE = 20;
 const DESKTOP = 16;
-// What a bare glyph draws on phones when the phone rule misses it: Tailwind's
-// size-4 is 1rem, and the phone root font size is 18px.
-const PHONE_MISSED = 18;
 
 async function glyphSize(button: Locator) {
   await expect(button).toBeVisible();
@@ -21,8 +20,8 @@ async function glyphSize(button: Locator) {
   });
 }
 
-function expected(testInfo: TestInfo, phone = PHONE) {
-  const size = testInfo.project.name === "chromium-mobile" ? phone : DESKTOP;
+function expected(testInfo: TestInfo) {
+  const size = testInfo.project.name === "chromium-mobile" ? PHONE : DESKTOP;
   return { height: size, width: size };
 }
 
@@ -92,7 +91,7 @@ test("a Button inside a DropdownMenuTrigger glyph size at phone and desktop widt
   await page.goto("/workspace/schedules/daily-report");
 
   const actions = page.getByRole("button", { name: "Actions for daily-report" });
-  expect(await glyphSize(actions)).toEqual(expected(testInfo, PHONE_MISSED));
+  expect(await glyphSize(actions)).toEqual(expected(testInfo));
 });
 
 test("the chat header's options Button glyph size at phone and desktop widths", async ({
@@ -150,5 +149,5 @@ test("the chat header's options Button glyph size at phone and desktop widths", 
   await page.goto("/workspace/chat?sessionId=s1");
 
   const options = page.getByRole("button", { name: "Chat options" });
-  expect(await glyphSize(options)).toEqual(expected(testInfo, PHONE_MISSED));
+  expect(await glyphSize(options)).toEqual(expected(testInfo));
 });

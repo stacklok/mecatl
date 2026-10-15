@@ -32,7 +32,7 @@ describe("Studio typography", () => {
     expect(css).toMatch(/@media\s*\(max-width:\s*499px\)/);
     expect(css).toMatch(/:root\s*\{[^}]*font-size:\s*calc\(18px \* var\(--ui-scale, 1\)\)/s);
     const mobileGlyphs = css.match(/svg\.lucide\.size-4,([^{}]+)\{([^{}]+)\}/);
-    expect(mobileGlyphs?.[1]).toContain('[data-slot="button"] svg.lucide:not([class*="size-"])');
+    expect(mobileGlyphs?.[1]).toContain('[data-button] svg.lucide:not([class*="size-"])');
     expect(mobileGlyphs?.[1]).toContain('[data-slot="dropdown-menu-item"]');
     expect(mobileGlyphs?.[1]).toContain('[data-slot="dialog-close"]');
     expect(mobileGlyphs?.[2]).toMatch(/width:\s*20px;[^}]*height:\s*20px/s);
