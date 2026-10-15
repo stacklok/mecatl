@@ -85,7 +85,9 @@ reachable schedule store.
 ## Manage schedules in Studio
 
 [Studio](/operating/studio.md) lists every schedule you can see, with a detail
-page whose **Run log** lists past runs. Each run links to its session in Chats.
+page whose **Run log** lists past runs. **View transcript** on a run opens that
+run's saved transcript, read-only, without leaving the page. When you can't
+view that session's transcript, the dialog shows the reason instead.
 
 - **Filter and search.** Press `/` to search by name, prompt, or cadence.
   **Scheduled** lists schedules that are running, claimed, or waiting for their
