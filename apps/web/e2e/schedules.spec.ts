@@ -284,7 +284,7 @@ test("schedule mutations preserve backend-owned fields and surface failures", as
 
   await page.goto("/workspace/schedules");
   const mobile = testInfo.project.name === "chromium-mobile";
-  await page.getByRole("button", { name: "Schedule task" }).click();
+  await page.getByRole("button", { name: "New scheduled task" }).click();
   const createDialog = page.getByRole("dialog", { name: "Schedule a task" });
   await createDialog.getByRole("textbox", { name: "Name" }).fill("new-report");
   await createDialog.getByRole("textbox", { name: "Prompt" }).fill("Create from the browser");
@@ -318,8 +318,9 @@ test("schedule mutations preserve backend-owned fields and surface failures", as
     await page.getByRole("button", { name: `Actions for ${name}` }).click();
   };
   const expectExistingStatus = async (status: string) => {
+    // The Title-case label also names the "Scheduled" navigation link, so look in the page.
     const statusLabel = mobile
-      ? page.getByText(status, { exact: true })
+      ? page.getByRole("main").getByText(status, { exact: true })
       : page
           .getByRole("row")
           .filter({ hasText: "mutable-report" })
@@ -360,16 +361,16 @@ test("schedule mutations preserve backend-owned fields and surface failures", as
 
   await openActions("mutable-report");
   await page.getByRole("menuitem", { name: "Pause" }).click();
-  await expectExistingStatus("paused");
+  await expectExistingStatus("Paused");
   await openActions("mutable-report");
   await page.getByRole("menuitem", { name: "Resume" }).click();
-  await expectExistingStatus("scheduled");
+  await expectExistingStatus("Scheduled");
 
   failNextAction = true;
   await openActions("mutable-report");
   await page.getByRole("menuitem", { name: "Pause" }).click();
   await expect(page.getByText("Scheduler conflict.", { exact: true })).toBeVisible();
-  await expectExistingStatus("scheduled");
+  await expectExistingStatus("Scheduled");
 
   if (mobile) {
     await page.getByRole("link", { name: "Back to scheduled" }).click();
