@@ -3,6 +3,7 @@ package governance
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -128,6 +129,62 @@ func TestDecodeToolArgsRequiresExactFieldSpelling(t *testing.T) {
 		if err != nil && !errors.Is(err, ErrAmbiguousToolArgs) {
 			t.Errorf("DecodeToolArgs(%s) error %v does not wrap ErrAmbiguousToolArgs", tc.args, err)
 		}
+	}
+}
+
+// TestDecodeToolArgsAcceptsExactUntaggedFields pins that a key exactly naming an
+// untagged field is not mistaken for a case variant of a tagged one, following
+// encoding/json's field dominance: an untagged field hidden by a tie at the
+// same embedding depth is not a match, so its name stays a case variant of the
+// tagged field encoding/json would decode it into.
+func TestDecodeToolArgsAcceptsExactUntaggedFields(t *testing.T) {
+	t.Parallel()
+	type collision struct {
+		Lower int `json:"limit"`
+		Limit int
+	}
+	type promoted struct{ Limit int }
+	type promotedCollision struct {
+		promoted
+		Lower int `json:"limit"`
+	}
+	type left struct{ Name string }
+	type right struct{ Name string }
+	type hidden struct {
+		left
+		right
+		Tagged string `json:"name"`
+	}
+	for _, tc := range []struct {
+		name string
+		args string
+		dst  func() any
+		ok   bool
+		want any
+	}{
+		{name: "untagged exact", args: `{"Limit":7}`, dst: func() any { return new(collision) }, ok: true, want: &collision{Limit: 7}},
+		{name: "tagged exact", args: `{"limit":7}`, dst: func() any { return new(collision) }, ok: true, want: &collision{Lower: 7}},
+		{name: "fold variant of both", args: `{"LIMIT":7}`, dst: func() any { return new(collision) }},
+		{name: "promoted untagged exact", args: `{"Limit":7}`, dst: func() any { return new(promotedCollision) }, ok: true, want: &promotedCollision{promoted: promoted{Limit: 7}}},
+		{name: "hidden untagged", args: `{"Name":"x"}`, dst: func() any { return new(hidden) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := tc.dst()
+			err := DecodeToolArgs(json.RawMessage(tc.args), got)
+			if !tc.ok {
+				if !errors.Is(err, ErrAmbiguousToolArgs) {
+					t.Fatalf("DecodeToolArgs(%s) = %v, want an ambiguous-arguments error", tc.args, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("DecodeToolArgs(%s) = %v", tc.args, err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("DecodeToolArgs(%s) decoded %+v, want %+v", tc.args, got, tc.want)
+			}
+		})
 	}
 }
 

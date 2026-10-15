@@ -307,20 +307,25 @@ func quoteArgName(name string) string {
 	return fmt.Sprintf("%q", name)
 }
 
-// taggedFields holds a struct's explicitly tagged JSON field names.
+// taggedFields holds the JSON field names encoding/json decodes into a struct:
+// the explicitly tagged names, which a key must spell exactly, and the names of
+// untagged fields, which a key may also spell in another case.
 type taggedFields struct {
-	names [][]byte
+	names    [][]byte
+	untagged [][]byte
 }
 
 // checkSpelling rejects a key that names one of the tagged fields only under
-// case folding. Untagged fields keep encoding/json's case-insensitive matching,
+// case folding. A key that exactly names any field, tagged or untagged, is
+// accepted, since encoding/json decodes an exact match before trying case
+// folding. Untagged fields keep encoding/json's case-insensitive matching,
 // since their Go name is not a wire spelling. A nil f checks nothing.
 func (f *taggedFields) checkSpelling(keys [][]byte) error {
 	if f == nil {
 		return nil
 	}
 	for _, key := range keys {
-		if f.has(key) {
+		if hasArgName(f.names, key) || hasArgName(f.untagged, key) {
 			continue
 		}
 		for _, name := range f.names {
@@ -332,9 +337,9 @@ func (f *taggedFields) checkSpelling(keys [][]byte) error {
 	return nil
 }
 
-// has reports whether key is exactly one of the tagged names.
-func (f *taggedFields) has(key []byte) bool {
-	for _, name := range f.names {
+// hasArgName reports whether key is exactly one of names.
+func hasArgName(names [][]byte, key []byte) bool {
+	for _, name := range names {
 		if bytes.Equal(key, name) {
 			return true
 		}
@@ -344,9 +349,9 @@ func (f *taggedFields) has(key []byte) bool {
 
 var taggedFieldCache sync.Map // reflect.Type -> *taggedFields
 
-// taggedFieldNames returns the explicitly tagged JSON field names of the struct
-// t points to, including those promoted from untagged embedded structs, or nil
-// when t is not a pointer to a struct.
+// taggedFieldNames returns the JSON field names encoding/json decodes into the
+// struct t points to, including those promoted from untagged embedded structs,
+// or nil when t is not a pointer to a struct.
 func taggedFieldNames(t reflect.Type) *taggedFields {
 	if t == nil || t.Kind() != reflect.Pointer || t.Elem().Kind() != reflect.Struct {
 		return nil
@@ -354,16 +359,32 @@ func taggedFieldNames(t reflect.Type) *taggedFields {
 	if cached, ok := taggedFieldCache.Load(t); ok {
 		return cached.(*taggedFields)
 	}
+	var candidates []jsonField
+	collectJSONFields(t.Elem(), &candidates, 0)
 	fields := &taggedFields{}
-	collectTaggedFields(t.Elem(), fields, 0)
+	for _, field := range dominantJSONFields(candidates) {
+		if field.tagged {
+			fields.names = append(fields.names, []byte(field.name))
+		} else {
+			fields.untagged = append(fields.untagged, []byte(field.name))
+		}
+	}
 	taggedFieldCache.Store(t, fields)
 	return fields
+}
+
+// jsonField is a struct field encoding/json may decode into: its JSON name,
+// whether a tag gave that name, and how deep in embedded structs it sits.
+type jsonField struct {
+	name   string
+	tagged bool
+	depth  int
 }
 
 // maxEmbeddingDepth bounds the walk through embedded structs.
 const maxEmbeddingDepth = 8
 
-func collectTaggedFields(t reflect.Type, fields *taggedFields, depth int) {
+func collectJSONFields(t reflect.Type, fields *[]jsonField, depth int) {
 	if depth > maxEmbeddingDepth {
 		return
 	}
@@ -380,13 +401,44 @@ func collectTaggedFields(t reflect.Type, fields *taggedFields, depth int) {
 				embedded = embedded.Elem()
 			}
 			if embedded.Kind() == reflect.Struct {
-				collectTaggedFields(embedded, fields, depth+1)
+				collectJSONFields(embedded, fields, depth+1)
+				continue
 			}
+		}
+		if !field.IsExported() {
 			continue
 		}
-		if !field.IsExported() || name == "" {
+		if name == "" {
+			*fields = append(*fields, jsonField{name: field.Name, depth: depth})
 			continue
 		}
-		fields.names = append(fields.names, []byte(name))
+		*fields = append(*fields, jsonField{name: name, tagged: true, depth: depth})
 	}
+}
+
+// dominantJSONFields applies encoding/json's rule for fields that share a name:
+// the shallowest wins, a tagged field wins a tie at that depth, and a tie that
+// remains hides the name.
+func dominantJSONFields(fields []jsonField) []jsonField {
+	var out []jsonField
+	for i, field := range fields {
+		dominant, hidden := true, false
+		for j, other := range fields {
+			if i == j || other.name != field.name {
+				continue
+			}
+			switch {
+			case other.depth < field.depth:
+				dominant = false
+			case other.depth == field.depth && other.tagged && !field.tagged:
+				dominant = false
+			case other.depth == field.depth && other.tagged == field.tagged:
+				hidden = true
+			}
+		}
+		if dominant && !hidden {
+			out = append(out, field)
+		}
+	}
+	return out
 }

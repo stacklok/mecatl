@@ -165,7 +165,12 @@ func referenceCheckFieldSpelling(keys []string, dst any) error {
 				}
 				continue
 			}
-			if !field.IsExported() || name == "" {
+			if !field.IsExported() {
+				continue
+			}
+			if name == "" {
+				// An exact key for an untagged field is not a case variant.
+				exact[field.Name] = struct{}{}
 				continue
 			}
 			exact[name] = struct{}{}
