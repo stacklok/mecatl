@@ -82,7 +82,7 @@ audience=https://gateway.example.com
 client_id=mecatl + client assertion
 ```
 
-The ID-JAG has header `typ=oauth-id-jag+jwt`, AS-1 `iss`, the AS-1 `sub` from the refresh token record (never from caller input), AS-2 `aud`, `client_id=mecatl`, `jti`, `iat`, a short `exp`, and a single-level `act`. `act.sub` is an opaque, stable, per-instance `agent:` identifier for the acting instance, never a SPIFFE path or definition name, and `act.iss` is omitted. AS-1 derives it from the validated `actor_token`; the full SVID stops at AS-1. There is no nested `act`: the delegation that led to the call stays in Mecatl's harness and broker records. Nesting comes later with the [chained exchange](credential-flow-rework.md#d4-delegation-visibility-at-the-gateway). `aud_sub` and `email` are deliberately omitted. AS-1 and AS-2 are separate issuers with separate keys, also in embedded mode (§9.3).
+The ID-JAG has header `typ=oauth-id-jag+jwt`, AS-1 `iss`, the AS-1 `sub` from the refresh token record (never from caller input), AS-2 `aud`, `client_id=mecatl`, `jti`, `iat`, a short `exp`, and a single-level `act`. `act.sub` is an opaque, stable, per-instance `agent:` identifier for the acting instance, never a SPIFFE path or definition name, and `act.iss` is AS-1's issuer, so the identifier stays attributable to AS-1 when AS-2 copies `act` into `V`. AS-1 derives it from the validated `actor_token`; the full SVID stops at AS-1. There is no nested `act`: the delegation that led to the call stays in Mecatl's harness and broker records. Nesting comes later with the [chained exchange](credential-flow-rework.md#d4-delegation-visibility-at-the-gateway). `aud_sub` and `email` are deliberately omitted. AS-1 and AS-2 are separate issuers with separate keys, also in embedded mode (§9.3).
 
 **AS-2 redemption.** The broker redeems the ID-JAG at AS-2 with the RFC 7523 JWT-bearer grant, authenticating again as `mecatl`. AS-2 checks the trusted AS-1 issuer and signature, `typ`, that `aud` is its own issuer, lifetime, that `client_id` matches the authenticated client, and that `jti` is unused (§4.4.1). It then maps the AS-1 subject to a native user:
 
@@ -120,7 +120,7 @@ Test ID-JAG issuance:
 
 - AS-1 rejects an expired, revoked, or foreign-client refresh token, and a refresh token whose session is closed or past its hard expiry.
 - AS-1 rejects an untrusted or expired SVID, an SVID with an audience not accepted by both AS-1 and the broker, and an instance not registered to the refresh token's session.
-- The issued ID-JAG has `typ=oauth-id-jag+jwt`, the `sub` from the refresh token record, `client_id=mecatl`, AS-2 `aud`, a fresh `jti`, and an `act` with exactly one level, whose `sub` is the opaque `agent:` identifier of the validated actor and which has no nested `act` and no `act.iss`. A caller cannot change `sub` or `act` through request parameters.
+- The issued ID-JAG has `typ=oauth-id-jag+jwt`, the `sub` from the refresh token record, `client_id=mecatl`, AS-2 `aud`, a fresh `jti`, and an `act` with exactly one level, whose `sub` is the opaque `agent:` identifier of the validated actor and which has no nested `act` and has `act.iss` set to AS-1's issuer. A caller cannot change `sub` or `act` through request parameters.
 
 Test AS-2 redemption:
 
@@ -146,7 +146,7 @@ Test user resolution and connection entitlement separately: neither an OAuth suc
 
 ## ToolHive work list
 
-AS-1 and AS-2 are ToolHive authorization server instances, and vMCP is ToolHive's. The rework checked these capabilities against ToolHive main `ce74cfa37` by reading, not running, the code. Sizes are the rework's estimates.
+This table is the ledger of ToolHive changes the design needs. None is filed as a ToolHive issue yet; when one is, link it here. AS-1 and AS-2 are ToolHive authorization server instances, and vMCP is ToolHive's. The capabilities were checked against ToolHive main `ce74cfa37`, and the revocation rows against `9adad0abb`, by reading, not running, the code. Sizes are estimates.
 
 | Capability | Today | Size | When |
 | --- | --- | --- | --- |
@@ -154,19 +154,22 @@ AS-1 and AS-2 are ToolHive authorization server instances, and vMCP is ToolHive'
 | Refresh token in a token-exchange response, with the session-bound record | No; exchange issues access tokens only | Medium to large | Identity work |
 | Issue ID-JAGs (`typ=oauth-id-jag+jwt`, audience = another AS) | No; redemption and an outbound XAA client only. The ID-JAG redemption handler binds the client, consumes `jti`, and copies `act`; the plain JWT-bearer handler drops `act` and replaces the client | Large | Identity work |
 | Refresh token as `subject_token` | No | Large | Identity work |
-| Single-level `act` from the registered actor input (nesting later, with the chained exchange) | Partly; `buildActClaim` builds `act` from a client or self-issued actor token and nests it | Medium | Identity work |
-| ID-JAG redemption keeps `act` | Yes, copied unchanged | None; verify only | Identity work |
+| Single-level `act` from the registered actor input, with `act.iss` set to AS-1's issuer (nesting later, with the chained exchange) | Partly; `buildActClaim` builds `act` from a client or self-issued actor token and nests it | Medium | Identity work |
+| ID-JAG redemption keeps `act`, including `act.iss` | Yes, copied unchanged | None; verify only | Identity work |
 | AS-2 maps the AS-1 subject to a native user after ID-JAG redemption, and stops marking the token as having no upstream session | No; emits `iss#sub` and marks no upstream session | Large | Identity work |
 | Per-user upstream credential lookup in open-source ToolHive, keyed (gateway, native user, provider) | No; keyed by `tsid`, a per-interactive-login session ID that a delegated `V` lacks, and vMCP loads nothing for a token without one (`pkg/auth/token.go:1253`); the enterprise per-user decorator is build-tagged | Medium | Identity work |
 | Consent link at AS-2's own login (external mode only) | No | Not sized | Identity work |
 | `private_key_jwt` for client `mecatl` at AS-1 and AS-2 | Yes | Configuration | Identity work |
 | SPIFFE client authentication at the authorization server | Yes | None; verify only | Identity work |
-| AS-1 and AS-2 [audit records](audit.md) | No; the authorization server records no audit events. The plan reuses ToolHive's audit event recorder library, which emits JSON records for collection with fluentd or fluent-bit | Not sized | Identity work |
+| AS-1 and AS-2 audit records following the [AuditEvent profile](audit.md#auditevent-profile) | No; the authorization server records no audit events. The plan reuses ToolHive's audit event recorder library, which emits JSON records for collection with fluentd or fluent-bit | Not sized | Identity work |
 | Revoke a broker refresh token and its record, by an RFC 7009 endpoint or, while the broker runs inside mecak8s, in process | No; storage revokes by refresh-token family, but no endpoint is wired | Small | Identity work |
 | Revoke all of a user's grants, including schedule authority | No; no index from user to refresh-token families | Medium | Identity work |
 | Upstream re-check when issuing an ID-JAG, with the upstream token kept independent of client sign-out | No; the refresh grant never contacts the upstream IdP (checked at main `9adad0abb`) | Small to medium | Identity work |
+| AS-1 and the vMCP record the operation and attempt IDs the broker passes with each exchange and MCP request, marked as reported | No | Small | Identity work |
+| Reject a token whose upstream session records were deleted | No; the lookup returns an empty credential map instead of failing | Small | Identity work |
 | Refresh token bound to the AS-1 login session (`sid`), so that signing out at AS-1 revokes it | No; `tsid` is per authorization request, not per login | Large | Later |
 | Receive logout and account events from the company IdP (OIDC Back-Channel Logout, Okta event hooks, Shared Signals) | No | Large | Later |
+| End vMCP sessions when the user's grants are revoked | No; sessions bind issuer and subject with no revocation check | Not sized | Later |
 | DPoP issuance and validation for `V` | No | Large | Later |
 | Scope or `authorization_details` (RFC 9396) narrowing enforced per tool at the gateway | Scope intersection only | Large | Later |
 | Cedar at the gateway reading `act` | No | Part of the narrowing work | Later |
@@ -238,6 +241,20 @@ The ceiling checks below belong to the [authority work](README.md#order-of-work)
 - Check the exact dispatched server/tool pair and recheck changed requests. Prove the reviewer read passes its ceiling while excluded merge fails; PR 42 and PR 43 reads on the same pair have the same ceiling result. Do not claim this proves PR-specific delegation.
 - Preserve existing local checks, AS-1 and AS-2 decisions, and vMCP checks. A ceiling permit must not bypass their denials or substitute for user entitlement. The gateway does not evaluate the agent ceiling; Cedar reading `act` there is later work.
 - Verify audit provenance, definition and policy revision correlation, safe reasons and policy IDs, and distinct decision/dispatch/outcome evidence per operation and attempt. Diagnostic errors must yield an effective deny in the record. Redaction must exclude secrets and unrestricted payloads. Test unknown outcomes without automatic replay and durability across restart once storage, ordering, and failure handling are specified; no transactional ledger is selected here.
+
+## Audit profile checks
+
+Verify the [AuditEvent profile](audit.md#auditevent-profile) through the real toolhive-core logger, reading the configured destination:
+
+- Each field means the same in the JSON record and in the slog output, including `Metadata.Extra`, `Data`, and the occurrence time; the two outputs name some fields differently.
+- A caller-supplied `AuditID` and `LoggedAt` are unchanged when the event is sent again.
+- Records with a missing identity, a reported-only identity, and an unauthenticated denial carry the right provenance marks, and an unverified identity never appears as `user_id`.
+- An unknown outcome, a retry, and a late result produce distinct attempts and events, and the late result references the earlier event.
+- Each event type rejects outcomes outside its fixed set.
+- `Data` is valid JSON matching its structure version, and `Subjects`, `Target`, and `Data` contain only keys allowlisted for the type.
+- No token, assertion, refresh token, authorization header, or token-endpoint request body appears in any record, including errors.
+- `DelegationChain` output matches what toolhive-core produces for the same `act` chain.
+- A delivery failure is reported through the logger, as toolhive-core [#343](https://github.com/stacklok/toolhive-core/issues/343) proposes.
 
 ## Sign-out and revocation checks
 

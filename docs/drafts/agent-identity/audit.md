@@ -24,24 +24,59 @@ Records must distinguish verified facts from trusted reports. Qualify subjects b
 | vMCP decision | vMCP records its decision with the access-token reference `(iss, jti)`, native user, actor, tool, outcome, and the propagated operation ID | The gateway sees only the current actor in `act.sub`, not who delegated the task. The operation ID is reported, unverified trace context, as is other forwarded context unless independently verified. |
 | Observed result and provider correlation | The response received by the recording component and safe provider references, when available | A broker-observed MCP response is not independent proof of provider-side effects. |
 
-AS-1 and AS-2 must produce the records above; ToolHive's authorization server records no audit events today, so this is new work.
+AS-1 and AS-2 must produce the records above, following the [AuditEvent profile](#auditevent-profile); ToolHive's authorization server records no audit events today, so this is new work.
 
-## Illustrative authorization evidence
+## AuditEvent profile
 
-The following readable fields illustrate proposed evidence for the reviewer's call in the [interactive walkthrough](credentials-and-lifecycle.md#interactive-execution), including its broker authorization event and references to AS-1, AS-2, and vMCP records. They guide implementation; they are not an immutable event API or Cedar policy representation.
+Every component records evidence as a [toolhive-core](https://github.com/stacklok/toolhive-core/tree/main/audit) `audit.AuditEvent`, so that Mecatl and ToolHive records can be joined in one investigation. This profile says what Mecatl puts in each field. Where toolhive-core does not yet define a convention, Mecatl uses namespaced `mecatl.` keys in `Metadata.Extra` until the shared conventions in toolhive-core [#341](https://github.com/stacklok/toolhive-core/issues/341) and [#342](https://github.com/stacklok/toolhive-core/issues/342) land.
 
-| Field group | Illustrative values or required evidence |
+| Question | Field | Content |
+| --- | --- | --- |
+| Which event | `Metadata.AuditID` | Minted once and stored before the first send. A re-send reuses it, and ingestion removes duplicates by it. |
+| What kind of event | `Type` | A `mecatl_`-prefixed snake_case type, such as `mecatl_tool_decision`. The vMCP keeps ToolHive's own types, such as `mcp_tool_call`. Whether an event is a decision, a dispatch, or an observed outcome is part of its type. |
+| Result | `Outcome` | toolhive-core's `success`, `failure`, `error`, and `denied`, plus `unknown` once #341 defines it. Each type uses a fixed subset; see the next table. |
+| Who acted, and for whom | `Subjects` | `user_iss` and `user_id`: the user as the recording component's own issuer knows them. `owner_iss` and `owner_id`: the company identity from `sub_id`. `workload_iss` and `workload_sub`. `agent_spiffe_id` (inside Mecatl only), `agent_actor_id` (the opaque `agent:` identifier), and `agent_instance_ref`. A credential reference is qualified by its issuer, and `client_id` by its authorization server. An identity the recorder did not verify never appears as `user_id`. |
+| Verified or reported | `Metadata.Extra["mecatl.provenance"]` | A map keyed by the `Subjects` key: `verified`, `record:<AuditID>` when taken from a retained record, `reported:<component>`, or `unavailable`. A missing fact is marked `unavailable`, never left out silently. |
+| Where it originated | `Source` | The network origin, as in ToolHive: the peer address, plus `request_id` and `session_id` for joining. The calling workload's identity belongs in `Subjects`, not here. |
+| Where it was recorded | `Component`, `Metadata.Extra` | `mecatl-broker`, `mecatl-as1`, or the ToolHive component name, plus the recording replica and trust domain. |
+| Operation and target | `Target` | toolhive-core's keys: `type=tool`, `name`, `method=tools/call`, and the MCP server. For token-endpoint events, the requested audience and resource. Request metadata appears only if allowlisted for that type. |
+| When | `LoggedAt`, `Metadata.Extra` | `LoggedAt` is the recorder's clock when it created the record, in UTC; a re-send keeps it. `mecatl.occurred_at` (RFC 3339 with offset) and `mecatl.clock` record when the event happened and whose clock said so. Events from different components are ordered by attempt and a per-component sequence number, never by timestamp alone. |
+| Correlation | `Metadata.Extra` | `mecatl.operation_id` and `mecatl.attempt_id`. A retry is a new attempt. A result that arrives after an `unknown` outcome is a new event that references the earlier one; records are never edited. The broker passes the operation and attempt IDs to AS-1 and the vMCP, which record them as reported. |
+| Evidence references | `Data` | Built from a typed structure per event type. Credential references are `(iss, jti)` or `(authorization server, record ID)`, never values. Definition revision and provenance. The broker does not inspect `V`, so its events reference AS-1's issuance event and AS-2's redemption event instead of `V`'s `jti`. |
+| OAuth actor history | `DelegationChain` | Only an `act` chain the recorder validated in a token: AS-2 and the vMCP fill it, and broker events leave it empty. |
+| Creation and delegation | `Data.lineage` | The run, the delegation (`D42` from run `R41` and its instance), and the creation parent, each marked as reported by mecak8s. They are never derived from the SPIFFE path or from `act`. |
+| Profile version | `Metadata.Extra` | `mecatl.profile` names this profile and its version; each `Data` structure carries its own version. |
+
+Each event type uses a fixed set of outcomes:
+
+| Event | Outcomes |
 | --- | --- |
-| Event and call references | Event `authz-42`, operation `op-pr42-001`, attempt `attempt-1`, recording component, and observation time. Distinguish another attempt from another event for the same attempt. |
-| Actor and context | Verified reviewer subject from its registered instance; verified workload with trust qualifier; host session `hostS42`; broker session `A42`; reviewer's agent-instance incarnation; run `R42`; creation-parent reference; reported delegation `D42` from `R41`; request reference `req-pr42-001`. Alice's AS-1 subject `(https://broker.example.com/as, u-alice-91)` comes from the session's AS-1 record; her company identity `(https://login.example.com, alice-204)` comes from `sub_id`. Preserve each fact's provenance. |
-| Chained credential references | Broker client `mecatl` at AS-1 and AS-2. Source AS-1 access-token `jti` `at-alice-7731`, recorded by AS-1 at conversion, never the token itself. The broker refresh token, referenced by its AS-1 record for `A42`, never by value. ID-JAG issuer `https://broker.example.com/as` and `jti` `jag-pr42-001`. Actor `agent:reviewer-gh56` in the single-level `act`; delegation `D42` from main is in the harness and broker records, not the token. AS-2 access token `(https://gateway.example.com, access-pr42-001)`. These references identify different credentials and do not replace the operation ID. |
-| Definition and policy | Registered `project/code-reviewer`, source reference, provenance profile with source content and accepted definition digests, admitted revision `review-def-r17`, resolved definition ceiling reference, stored effective ceiling reference, generated policy revision `review-ceiling-r17-g1`. These come from registration, not request-selected policy. |
-| Target | Registered payments MCP server reference and exact `pull_request_read` tool. AS-2 resolves native user `usr-alice-7c1d`, and vMCP loads the credential for `(gateway.example.com, usr-alice-7c1d, github)`; those records live with AS-2 and vMCP, not in the broker event. |
-| Evaluation | Cedar nominal decision `allow`, evaluation status `completed-without-errors`, relevant policy IDs, and generated policy revision. |
-| Effective decision | `allow` only after the session, workload, actor, ceiling, and route checks pass. Safe reason `effective-ceiling-permits-pair-and-required-checks-passed`. An evaluation diagnostic error instead requires effective `deny`, even with a nominal Cedar allow. Record a safe error category, not unrestricted diagnostics. |
-| Safe request metadata | Repository `acme/payments` and PR number `42` only if explicitly allowlisted for audit. Their presence does not mean Cedar evaluated a PR-specific policy. |
+| Decision | `success` for allow; `denied`; `error` when evaluation failed, which makes the effective decision deny. |
+| Dispatch | `success` when the request was sent; `failure` when it was not, which proves the operation did not run. |
+| Observed outcome | `success`, `failure`, `error`, or `unknown` when dispatch may have happened but no completion was observed. |
 
-The policy revision and policy IDs must lead to retained generation inputs and policy evidence sufficient to explain the ceiling result. A definition name alone cannot explain which policy was used. Error and denial records need the same correlation and attribution where established; unavailable or unverified facts must remain marked as such.
+The identity work needs these event families:
+
+- definition load, instance registration, and agent-instance credential issuance;
+- broker session open and close, and AS-1's conversion record at session open; per-call events point to the session-open record for the user;
+- sign-out everywhere, with each run stopped, broker session deleted, refresh token revoked, and schedule authority revoked;
+- an upstream re-check failure and the revocation that follows;
+- ID-JAG issuance and denial at AS-1;
+- redemption and denial at AS-2, and consent-link creation and revocation in external mode;
+- the broker's decision, dispatch, and observed outcome for each tool call;
+- the vMCP's tool-call event;
+- audit delivery failure.
+
+The authority work adds Cedar evaluation status, policy IDs, and policy and ceiling revisions. Until then, decision events record that no ceiling was evaluated.
+
+For the reviewer's call in the [walkthrough](credentials-and-lifecycle.md#interactive-execution), the broker's decision event carries `Type` `mecatl_tool_decision`, `Outcome` `success`, `Subjects` with Alice's `user_id` `u-alice-91` (`record:` the session-open event), her `owner_id` `alice-204`, the verified workload, and the reviewer's `agent_spiffe_id` and `agent_actor_id` `agent:reviewer-gh56`, `Target` `pull_request_read` on the payments server, operation `op-pr42-001` and its attempt, and `Data.lineage` with run `R42` and delegation `D42` from `R41`, marked as reported. Its dispatch and outcome events share the operation and attempt. AS-1's issuance event links the reviewer's SPIFFE ID to `agent:reviewer-gh56` and records ID-JAG `(https://broker.example.com/as, jag-pr42-001)`; AS-2's redemption event links that ID-JAG to its access token; the vMCP's tool-call event records that access token and the reported operation ID.
+
+These records have limits:
+
+- They are unsigned, so they do not provide non-repudiation.
+- In external mode, AS-2 and vMCP records belong to the gateway operator; the Mecatl-side trail ends at the broker's dispatch event.
+- AS-2 may accept the same ID-JAG more than once (ID-JAG §4.4.3 allows re-submission), so one ID-JAG can lead to several redemption events.
+- Reaching one operation from a gateway record depends on the propagated operation ID; the mechanism that carries it is not yet chosen.
 
 The `agent:` identifiers in `act` are opaque on purpose: the SPIFFE path, with its creation ancestry, stays inside Mecatl. AS-1's issuance record must link each `agent:` identifier it writes to the registered instance it validated, so an investigator can map a gateway record back to that instance.
 

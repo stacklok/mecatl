@@ -155,8 +155,8 @@ When no credential or consent exists, vMCP or AS-2 refuses and the broker return
 
 ### D4: delegation visibility at the gateway
 
-- **Short term (B): single-level `act`.** The ID-JAG and `V` name only the current actor, for example `"act": {"sub": "agent:reviewer-gh56"}`. There is no nested `act`.
-  - The identifier is opaque, stable, and per instance: no SPIFFE path, no definition name, and no `act.iss`. The ID-JAG's own `iss` is AS-1.
+- **Short term (B): single-level `act`.** The ID-JAG and `V` name only the current actor, for example `"act": {"iss": "https://broker.example.com/as", "sub": "agent:reviewer-gh56"}`. There is no nested `act`.
+  - The identifier is opaque, stable, and per instance: no SPIFFE path and no definition name. `act.iss` is AS-1's issuer, so the identifier stays attributable to AS-1 after AS-2 copies `act` into `V`, whose own `iss` is AS-2.
   - AS-1 derives it from the validated `actor_token`, the calling instance's JWT-SVID. The full SVID stops at AS-1.
   - The delegation, for example that main delegated `D42` to the reviewer, stays in Mecatl's harness and broker records, not in the token.
   - Why not nest now: RFC 8693 §4.1 says prior actors in a nested `act` are informational only and must not drive access decisions, and the gateway only ever used the outer `act.sub`, so dropping the inner level loses no enforcement. The protocol-clean way to get a nested `act` is the chained exchange below. Building the inner level from the registered parent would record creation, not delegation, which is wrong. Building it from a harness-reported delegation would make AS-1 sign a claim it never checked.
@@ -166,7 +166,7 @@ When no credential or consent exists, vMCP or AS-2 refuses and the broker return
   3. The reviewer's calls under `D42` use `subject_token=T-D42` and `actor_token=reviewerSVID`.
   4. AS-1 wraps the existing actor: `act {reviewer, act {main}}` ([RFC 8693 §4.1](https://www.rfc-editor.org/rfc/rfc8693.html#section-4.1)). This matches the pattern in draft-mcguinness-oauth-actor-profile, an individual draft.
 
-  It costs a broker operation at delegation time. The broker holds `T-D42` per delegation and renews it from AS-1 server state. The `V` cache key becomes `(A42, D42, reviewer)`. `T-D42` is revoked when the task ends. `T-D42` is also where per-task narrowing, as scope or RFC 9396 `authorization_details`, would live. The McGuinness profile requires `act.iss`; D4 omits it, which conforms to RFC 8693.
+  It costs a broker operation at delegation time. The broker holds `T-D42` per delegation and renews it from AS-1 server state. The `V` cache key becomes `(A42, D42, reviewer)`. `T-D42` is revoked when the task ends. `T-D42` is also where per-task narrowing, as scope or RFC 9396 `authorization_details`, would live. The McGuinness profile requires `act.iss`, which D4 sets.
 - **Long term (C): rescope each token.** AS-1 writes the instance's effective ceiling into the ID-JAG as scope or `authorization_details` (RFC 9396), AS-2 carries it into `V`, and the gateway enforces it as a second enforcement point. The ID-JAG and `V` formats reserve that slot now.
 - Until C, the agent ceiling is enforced by the broker alone; the gateway enforces user and connection. The threat model states this.
 
