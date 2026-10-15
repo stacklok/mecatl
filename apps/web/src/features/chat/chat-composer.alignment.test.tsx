@@ -98,7 +98,8 @@ describe("persisted composer draft", () => {
 
     fireEvent.keyDown(composerInput(), { key: "Enter" });
     await waitFor(() => expect(composerInput().value).toBe(""));
-    expect(readDraft("chat-a")).toBe("");
+    // The draft is stored by a passive effect after the input commits, so wait for it too.
+    await waitFor(() => expect(readDraft("chat-a")).toBe(""));
     expect(sessionDraftKeys()).toEqual([]);
   });
 
