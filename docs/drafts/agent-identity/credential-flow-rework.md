@@ -1,6 +1,6 @@
 # Credential flow rework
 
-*Work record, not current behavior. It collects decisions taken while reworking the credential flow in [credentials and lifecycle](credentials-and-lifecycle.md). The existing chapters stay unchanged until the rework is complete; then their diagrams and prose are replaced in one pass.*
+*Decision record, not current behavior. It records the decisions behind the credential flow in [credentials and lifecycle](credentials-and-lifecycle.md) and their rationale. The other chapters describe the resulting design.*
 
 The flow was reviewed right to left, from the vMCP call to a SaaS provider back to the user's login. For each credential the review asked what it must contain, what it proves, and who issues and verifies it. The guiding question is provenance: who first established each fact, and how many signers relayed it before it reached the party that relies on it.
 
