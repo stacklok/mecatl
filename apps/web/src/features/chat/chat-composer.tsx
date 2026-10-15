@@ -14,7 +14,7 @@ import {
   useState,
 } from "react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Button } from "../../components/ui/button";
+import { Button, buttonVariants } from "../../components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -24,6 +24,7 @@ import {
   DialogTitle,
 } from "../../components/ui/dialog";
 import { Textarea } from "../../components/ui/textarea";
+import { Toggle } from "../../components/ui/toggle";
 import {
   classifyAttachment,
   inlineTextAttachments,
@@ -788,24 +789,24 @@ export function ChatComposer({
             >
               <Plus aria-hidden="true" />
             </Button>
-            <Button
+            <Toggle
               aria-label={voice.isListening ? "Stop dictation" : "Start dictation"}
-              aria-pressed={voice.isListening}
+              // The ghost icon button's look: brand tint while listening, the
+              // ghost's hover ink in both states.
               className={cn(
-                "size-8 shrink-0 rounded-full border-0 shadow-none",
-                voice.isListening
-                  ? "bg-brand/10 text-brand hover:bg-brand/20"
-                  : "bg-transparent text-muted-foreground hover:bg-muted/60",
+                buttonVariants({ size: "icon", variant: "ghost" }),
+                "size-8 min-w-0 shrink-0 rounded-full border-0 bg-transparent px-0 text-muted-foreground shadow-none hover:bg-muted/60 data-[state=on]:bg-brand/10 data-[state=on]:text-brand data-[state=on]:hover:bg-brand/20 data-[state=on]:hover:text-accent-foreground",
               )}
               disabled={busy}
-              onClick={voice.toggle}
-              size="icon"
+              onPressedChange={voice.toggle}
+              pressed={voice.isListening}
+              size="sm"
               title={voice.isSupported ? "Dictate a message" : "Check dictation availability"}
-              type="button"
-              variant="ghost"
             >
-              <Mic aria-hidden="true" />
-            </Button>
+              {/* Sized here: the phone's 20px glyph rule covers size-4 icons and
+                  Button's bare ones, not a Toggle's. */}
+              <Mic aria-hidden="true" className="size-4" />
+            </Toggle>
             <div className="ml-auto flex items-center gap-1">
               <ClearDraftButton
                 disabled={busy}

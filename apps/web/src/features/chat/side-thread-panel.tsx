@@ -31,7 +31,7 @@ import {
   Square,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { Button } from "../../components/ui/button";
+import { Button, buttonVariants } from "../../components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -41,6 +41,7 @@ import {
   DropdownMenuTrigger,
 } from "../../components/ui/dropdown-menu";
 import { Textarea } from "../../components/ui/textarea";
+import { Toggle } from "../../components/ui/toggle";
 import { captureSseFailure, protectedRequestsPaused } from "../../lib/api-client";
 import { copyToClipboard } from "../../lib/clipboard";
 import { errorMessage } from "../../lib/error-message";
@@ -52,6 +53,7 @@ import {
   useUserAvatar,
   useUserDisplayName,
 } from "../../lib/profile-preferences";
+import { cn } from "../../lib/utils";
 import { useAuthRecovery } from "../auth/auth-recovery-context";
 import type { ApprovalRequest, ApprovalVerdict } from "./approval-panel";
 import type { ComposerModelOption } from "./chat-composer";
@@ -363,22 +365,27 @@ export function SideThreadPanel({
               </div>
               <div className="flex items-center gap-1 px-2 pb-2">
                 {voice.isSupported && (
-                  <Button
+                  <Toggle
                     aria-label={voice.isListening ? "Stop dictation" : "Start dictation"}
-                    aria-pressed={voice.isListening}
-                    className={
-                      voice.isListening
-                        ? "size-8 shrink-0 rounded-full bg-brand/10 text-brand hover:bg-brand/20"
-                        : "size-8 shrink-0 rounded-full text-muted-foreground hover:bg-muted/60"
-                    }
+                    // The ghost icon button's look: brand tint while listening,
+                    // the ghost's hover ink in both states.
+                    className={cn(
+                      buttonVariants({ size: "icon", variant: "ghost" }),
+                      "size-8 min-w-0 shrink-0 rounded-full px-0 text-muted-foreground hover:bg-muted/60 data-[state=on]:bg-brand/10 data-[state=on]:text-brand data-[state=on]:hover:bg-brand/20 data-[state=on]:hover:text-accent-foreground",
+                    )}
                     disabled={busy}
-                    onClick={voice.toggle}
-                    size="icon"
-                    type="button"
-                    variant="ghost"
+                    onPressedChange={voice.toggle}
+                    pressed={voice.isListening}
+                    size="sm"
                   >
-                    {voice.isListening ? <MicOff aria-hidden="true" /> : <Mic aria-hidden="true" />}
-                  </Button>
+                    {/* Sized here: the phone's 20px glyph rule covers size-4 icons
+                        and Button's bare ones, not a Toggle's. */}
+                    {voice.isListening ? (
+                      <MicOff aria-hidden="true" className="size-4" />
+                    ) : (
+                      <Mic aria-hidden="true" className="size-4" />
+                    )}
+                  </Toggle>
                 )}
                 <Button
                   aria-label={busy ? "Mecatl is working" : "Send reply"}
