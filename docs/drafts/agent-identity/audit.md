@@ -44,7 +44,7 @@ Every component records evidence as a [toolhive-core](https://github.com/stacklo
 | Correlation | `Metadata.Extra` | `mecatl.operation_id` and `mecatl.attempt_id`. A retry is a new attempt. A result that arrives after an `unknown` outcome is a new event that references the earlier one; records are never edited. The broker passes the operation and attempt IDs to AS-1 and the vMCP, which record them as reported. |
 | Evidence references | `Data` | Built from a typed structure per event type. Credential references are `(iss, jti)` or `(authorization server, record ID)`, never values. Definition revision and provenance. The broker does not inspect `V`, so its events reference AS-1's issuance event and AS-2's redemption event instead of `V`'s `jti`. |
 | OAuth actor history | `DelegationChain` | Only an `act` chain the recorder validated in a token: AS-2 and the vMCP fill it, and broker events leave it empty. |
-| Creation and delegation | `Data.lineage` | The run, the delegation (`D42` from run `R41` and its instance), and the creation parent, each marked as reported by mecak8s. They are never derived from the SPIFFE path or from `act`. |
+| Creation and delegation | `Data.lineage` | The run, plus references: the `AuditID` of the delegation event the call runs under and of the acting instance's registration event. The [lineage](#lineage) events hold the relationships, marked as reported by mecak8s. They are never derived from the SPIFFE path or from `act`. |
 | Profile version | `Metadata.Extra` | `mecatl.profile` names this profile and its version; each `Data` structure carries its own version. |
 
 Each event type uses a fixed set of outcomes:
@@ -58,6 +58,7 @@ Each event type uses a fixed set of outcomes:
 The identity work needs these event families:
 
 - definition load, instance registration, and agent-instance credential issuance;
+- each delegation from one run to another;
 - broker session open and close, and AS-1's conversion record at session open; per-call events point to the session-open record for the user;
 - sign-out everywhere, with each run stopped, broker session deleted, refresh token revoked, and schedule authority revoked;
 - an upstream re-check failure and the revocation that follows;
@@ -69,7 +70,7 @@ The identity work needs these event families:
 
 The authority work adds Cedar evaluation status, policy IDs, and policy and ceiling revisions. Until then, decision events record that no ceiling was evaluated.
 
-For the reviewer's call in the [walkthrough](credentials-and-lifecycle.md#interactive-execution), the broker's decision event carries `Type` `mecatl_tool_decision`, `Outcome` `success`, `Subjects` with Alice's `user_id` `u-alice-91` (`record:` the session-open event), her `owner_id` `alice-204`, the verified workload, and the reviewer's `agent_spiffe_id` and `agent_actor_id` `agent:reviewer-gh56`, `Target` `pull_request_read` on the payments server, operation `op-pr42-001` and its attempt, and `Data.lineage` with run `R42` and delegation `D42` from `R41`, marked as reported. Its dispatch and outcome events share the operation and attempt. AS-1's issuance event links the reviewer's SPIFFE ID to `agent:reviewer-gh56` and records ID-JAG `(https://broker.example.com/as, jag-pr42-001)`; AS-2's redemption event links that ID-JAG to its access token; the vMCP's tool-call event records that access token and the reported operation ID.
+For the reviewer's call in the [walkthrough](credentials-and-lifecycle.md#interactive-execution), the broker's decision event carries `Type` `mecatl_tool_decision`, `Outcome` `success`, `Subjects` with Alice's `user_id` `u-alice-91` (`record:` the session-open event), her `owner_id` `alice-204`, the verified workload, and the reviewer's `agent_spiffe_id` and `agent_actor_id` `agent:reviewer-gh56`, `Target` `pull_request_read` on the payments server, operation `op-pr42-001` and its attempt, and `Data.lineage` with run `R42` and a reference to the delegation event for `D42`. Its dispatch and outcome events share the operation and attempt. AS-1's issuance event links the reviewer's SPIFFE ID to `agent:reviewer-gh56` and records ID-JAG `(https://broker.example.com/as, jag-pr42-001)`; AS-2's redemption event links that ID-JAG to its access token; the vMCP's tool-call event records that access token and the reported operation ID.
 
 These records have limits:
 
@@ -77,6 +78,17 @@ These records have limits:
 - In external mode, AS-2 and vMCP records belong to the gateway operator; the Mecatl-side trail ends at the broker's dispatch event.
 - AS-2 may accept the same ID-JAG more than once (ID-JAG §4.4.3 allows re-submission), so one ID-JAG can lead to several redemption events.
 - Reaching one operation from a gateway record depends on the propagated operation ID; the mechanism that carries it is not yet chosen.
+
+### Lineage
+
+Two event types record how instances relate. Both are marked as reported by mecak8s, because only mecak8s observes these relationships.
+
+- **Registration** (`mecatl_instance_registered`) records the instance, its definition, its session tree, and the `AuditID` of its creation parent's registration.
+- **Delegation** (`mecatl_delegation`) records the delegation, such as `D42`; the delegating run and instance; the receiving run and instance; and, when the delegating run was itself delegated, the `AuditID` of that parent delegation.
+
+Lineage events are audit records. They are kept for the audit retention period, and session cleanup does not delete them. References between them are `AuditID`s in the append-only audit store, not live session state.
+
+From any tool call, an investigator follows the delegation reference up to the root to reconstruct execution delegation, and registration references to reconstruct creation ancestry. If a reference does not resolve, the reconstruction reports the chain as incomplete, names where it stopped, and gives the reason: unresolved, truncated, or malformed. It stops on a cycle. It never presents a partial chain as complete.
 
 The `agent:` identifiers in `act` are opaque on purpose: the SPIFFE path, with its creation ancestry, stays inside Mecatl. AS-1's issuance record must link each `agent:` identifier it writes to the registered instance it validated, so an investigator can map a gateway record back to that instance.
 
@@ -91,6 +103,8 @@ Use operation and attempt references to connect the evidence; individual events 
 ## Following a call in an investigation
 
 Starting from `op-pr42-001`, an investigator follows each attempt to the broker decision, the registered actor and fixed definition revision, and the generated policy evidence. Session `A42` leads to AS-1's conversion record, which names user `u-alice-91`, the source access-token `jti`, and the hard expiry, and from there to mecak8s's record of the request and session ownership. On a cache miss, AS-1's issuance record links `A42` and the validated reviewer to ID-JAG `jag-pr42-001`; AS-2's redemption record links that `jti` to native user `usr-alice-7c1d` and access token `access-pr42-001`. In external mode, AS-2's consent-link record shows when Alice linked Mecatl. The vMCP record contains the access-token reference it validates and the reported operation ID `op-pr42-001`. A call served from the cache has no new AS-1 or AS-2 record; it links to the earlier issuance through the cached token, and to its own operation through the reported operation ID. Run `R42` and delegation `D42` lead back to main run `R41` and the API request, with AS-1-witnessed user identity distinguished from workload-reported run, delegation, and lifecycle facts.
+
+Delegation can run deeper. Suppose the reviewer delegates a dependency check to a `security-reviewer` specialist, whose run calls a tool. The specialist's decision event references its delegation event, which names the reviewer's run `R42` and references the delegation event for `D42`. That event names main's run `R41`, which belongs to Alice's session. The registration events show separately that main created the reviewer and the reviewer created the specialist. Every link in that walk is reported by mecak8s; Alice's identity comes from AS-1's record. Two specialists from the same definition stay distinct because each has its own instance and registration.
 
 The investigator then follows dispatch and observed-outcome records for that attempt, rather than inferring execution from an allow or token issuance. ToolHive records can explain downstream validation or denial. The native provider-credential path is not itself a backend-to-SaaS audit trail. Where the provider supports safe tracing or audit correlation, retain the references needed to reach its operation or audit record and trace it back to the actor. Mark where correlation ends if provider evidence or authenticated cross-service correlation is unavailable. A successful response describes what the observer received, not a guarantee of provider-side effects.
 
