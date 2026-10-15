@@ -2,6 +2,7 @@
 
 import { Loader2 } from "lucide-react";
 import type { ReactNode } from "react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 
@@ -106,12 +107,9 @@ export type SettingsState = { kind: "loading" | "notice" | "error"; text: string
 export function RuntimeStatusLine({ state }: { state: SettingsState }) {
   if (state.kind === "error") {
     return (
-      <p
-        className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive"
-        role="alert"
-      >
-        {state.text}
-      </p>
+      <Alert className="border-destructive/30 bg-destructive/5 text-destructive">
+        <AlertDescription className="text-destructive">{state.text}</AlertDescription>
+      </Alert>
     );
   }
   return (
