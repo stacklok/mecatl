@@ -28,9 +28,10 @@ import { getLearningProposalOptions } from "@mecatl-studio/contracts/query";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ChevronRight } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { errorMessage } from "@/lib/error-message";
 import { formatRelativeTime } from "@/lib/formatters";
@@ -119,7 +120,6 @@ export function ProposalRow({
   onUndo: () => void;
   proposal: Proposal;
 }) {
-  const detailsId = useId();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<ProposalDetail>();
@@ -202,92 +202,90 @@ export function ProposalRow({
   }
 
   return (
-    <li className="space-y-2 rounded-lg border p-3" data-proposal-id={proposal.id}>
-      <div className="flex flex-wrap items-center gap-2">
-        {/* Phones give the title its own wrapping line; wider screens truncate it beside the
+    <Collapsible asChild onOpenChange={toggle} open={open}>
+      <li className="flex flex-col gap-2 rounded-lg border p-3" data-proposal-id={proposal.id}>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Phones give the title its own wrapping line; wider screens truncate it beside the
             badges and disclose the rest in a tooltip. */}
-        <Tooltip onlyWhenTruncated>
-          <TooltipTrigger asChild>
-            <span className="min-w-0 flex-1 truncate text-sm font-medium max-[499px]:basis-full max-[499px]:whitespace-normal">
+          <Tooltip onlyWhenTruncated>
+            <TooltipTrigger asChild>
+              <span className="min-w-0 flex-1 truncate text-sm font-medium max-[499px]:basis-full max-[499px]:whitespace-normal">
+                {title}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-[min(32rem,calc(100vw-2rem))] break-words">
               {title}
-            </span>
-          </TooltipTrigger>
-          <TooltipContent className="max-w-[min(32rem,calc(100vw-2rem))] break-words">
-            {title}
-          </TooltipContent>
-        </Tooltip>
-        {proposal.kind && <Badge variant="muted">{proposal.kind}</Badge>}
-        {proposal.projectScoped && <Badge variant="outline">project</Badge>}
-        {updated && <span className="text-xs text-muted-foreground">{updated} ago</span>}
-      </div>
-      {proposal.description && (
-        <p className="text-xs text-muted-foreground">{proposal.description}</p>
-      )}
-      {digest && (
-        <p className="max-h-48 overflow-y-auto rounded-md bg-muted px-3 py-2 text-sm whitespace-pre-wrap text-muted-foreground">
-          {digest}
-        </p>
-      )}
-      <div className="flex flex-wrap items-center gap-2 pt-1">
-        {decidable && (
-          <Button
-            className="min-h-11"
-            disabled={busy || blockedReason !== undefined}
-            onClick={onApprove}
-            size="sm"
-            title={blockedReason}
-          >
-            Approve
-          </Button>
+            </TooltipContent>
+          </Tooltip>
+          {proposal.kind && <Badge variant="muted">{proposal.kind}</Badge>}
+          {proposal.projectScoped && <Badge variant="outline">project</Badge>}
+          {updated && <span className="text-xs text-muted-foreground">{updated} ago</span>}
+        </div>
+        {proposal.description && (
+          <p className="text-xs text-muted-foreground">{proposal.description}</p>
         )}
-        {proposal.status === "staged" && (
-          <Button
-            className="min-h-11"
-            disabled={busy}
-            onClick={onReject}
-            size="sm"
-            variant="outline"
-          >
-            Reject
-          </Button>
+        {digest && (
+          <p className="max-h-48 overflow-y-auto rounded-md bg-muted px-3 py-2 text-sm whitespace-pre-wrap text-muted-foreground">
+            {digest}
+          </p>
         )}
-        {proposal.status === "promoted" && (
-          <Button
-            className="min-h-11"
-            disabled={busy || !proposal.promotionAvailable}
-            onClick={onUndo}
-            size="sm"
-            title={undoReason}
-            variant="outline"
-          >
-            Undo approval
-          </Button>
-        )}
-        {proposal.status !== "staged" && proposal.status !== "promoted" && (
-          <Badge variant="muted">{statusLabel(proposal.status)}</Badge>
-        )}
-        {decidable && blockedReason && (
-          <span className="text-xs text-muted-foreground">{blockedReason}</span>
-        )}
-        <button
-          aria-controls={detailsId}
-          aria-expanded={open}
-          className="ml-auto inline-flex min-h-11 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          onClick={toggle}
-          type="button"
-        >
-          <ChevronRight
-            aria-hidden="true"
-            className={cn("size-3.5 transition-transform", open && "rotate-90")}
-          />
-          Details
-        </button>
-      </div>
-      {open && (
-        <div
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          {decidable && (
+            <Button
+              className="min-h-11"
+              disabled={busy || blockedReason !== undefined}
+              onClick={onApprove}
+              size="sm"
+              title={blockedReason}
+            >
+              Approve
+            </Button>
+          )}
+          {proposal.status === "staged" && (
+            <Button
+              className="min-h-11"
+              disabled={busy}
+              onClick={onReject}
+              size="sm"
+              variant="outline"
+            >
+              Reject
+            </Button>
+          )}
+          {proposal.status === "promoted" && (
+            <Button
+              className="min-h-11"
+              disabled={busy || !proposal.promotionAvailable}
+              onClick={onUndo}
+              size="sm"
+              title={undoReason}
+              variant="outline"
+            >
+              Undo approval
+            </Button>
+          )}
+          {proposal.status !== "staged" && proposal.status !== "promoted" && (
+            <Badge variant="muted">{statusLabel(proposal.status)}</Badge>
+          )}
+          {decidable && blockedReason && (
+            <span className="text-xs text-muted-foreground">{blockedReason}</span>
+          )}
+          <CollapsibleTrigger asChild>
+            <button
+              className="ml-auto inline-flex min-h-11 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              type="button"
+            >
+              <ChevronRight
+                aria-hidden="true"
+                className={cn("size-3.5 transition-transform", open && "rotate-90")}
+              />
+              Details
+            </button>
+          </CollapsibleTrigger>
+        </div>
+        <CollapsibleContent
           className="space-y-3 border-t pt-3 text-xs"
           data-testid="proposal-details"
-          id={detailsId}
         >
           {detailNotice && (
             <p
@@ -345,9 +343,9 @@ export function ProposalRow({
               </p>
             </section>
           )}
-        </div>
-      )}
-    </li>
+        </CollapsibleContent>
+      </li>
+    </Collapsible>
   );
 }
 
