@@ -2,7 +2,7 @@
 
 import { Bot, Copy, MessageSquareText, User } from "lucide-react";
 import type { ReactNode } from "react";
-import { cn } from "@/lib/utils";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 /**
  * The prototype's message row pieces (`message-bubble.tsx` on `stack-08`),
@@ -23,6 +23,13 @@ export const messageAuthorClass = "text-sm font-bold text-foreground lg:text-[15
 export const messageBodyClass =
   "mt-0.5 min-w-0 text-sm leading-[1.75] text-foreground/80 lg:text-[15px]";
 
+/**
+ * A turn's avatar on the Avatar primitive: the configured picture, else a
+ * brand circle with the bot icon for the agent or a muted one with the person
+ * icon for the user. The fallback also covers a picture that is still loading
+ * or failed to load; with a picture configured it carries the speaker's name,
+ * so the avatar keeps one accessible name whichever of the two shows.
+ */
 export function MessageAvatar({
   avatarUrl,
   fallback,
@@ -32,25 +39,18 @@ export function MessageAvatar({
   fallback: "agent" | "user";
   name: string;
 }) {
-  const frame = "size-7 shrink-0 lg:size-9";
-  if (avatarUrl) {
-    return <img alt={name} className={cn(frame, "rounded-full object-cover")} src={avatarUrl} />;
-  }
+  const Icon = fallback === "agent" ? Bot : User;
   return (
-    <span
-      aria-hidden="true"
-      className={cn(
-        frame,
-        "flex items-center justify-center rounded-full",
-        fallback === "agent" ? "bg-brand text-white" : "bg-muted text-muted-foreground",
-      )}
-    >
-      {fallback === "agent" ? (
-        <Bot aria-hidden="true" className="size-4 lg:size-5" />
-      ) : (
-        <User aria-hidden="true" className="size-4 lg:size-5" />
-      )}
-    </span>
+    <Avatar aria-hidden={avatarUrl ? undefined : true} className="size-7 lg:size-9">
+      {avatarUrl && <AvatarImage alt={name} className="object-cover" src={avatarUrl} />}
+      <AvatarFallback
+        aria-label={avatarUrl ? name : undefined}
+        className={fallback === "agent" ? "bg-brand text-white" : "bg-muted text-muted-foreground"}
+        role={avatarUrl ? "img" : undefined}
+      >
+        <Icon aria-hidden="true" className="size-4 lg:size-5" />
+      </AvatarFallback>
+    </Avatar>
   );
 }
 
