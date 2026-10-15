@@ -124,6 +124,8 @@ export interface ServerCapabilities {
   readonly userModel: boolean;
   readonly modelSelection: boolean;
   readonly posture: string;
+  /** Whether the server trusts its launch workspace; absent from older servers. */
+  readonly projectTrusted?: boolean;
   readonly worktrees: boolean;
   readonly scheduling: boolean;
   readonly reflection: boolean;
@@ -263,6 +265,7 @@ export function projectServerCapabilities(value: ProtoServerCapabilities): Serve
     memory: value.memory,
     modelSelection: value.modelSelection,
     posture: value.posture,
+    ...(value.projectTrusted === undefined ? {} : { projectTrusted: value.projectTrusted }),
     reflection: value.reflection,
     scheduling: value.scheduling,
     sessionDebug: value.sessionDebug,

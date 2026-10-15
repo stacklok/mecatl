@@ -312,6 +312,7 @@ describe("session projections", () => {
         "memory",
         "modelSelection",
         "posture",
+        "projectTrusted",
         "reflection",
         "scheduling",
         "sessionDebug",
