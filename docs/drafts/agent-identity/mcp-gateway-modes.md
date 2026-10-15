@@ -90,7 +90,7 @@ client_assertion=<JWT signed with the broker's private key>
 AS-1 checks:
 
 - **The client.** The assertion verifies against `mecatl`'s registered key.
-- **The subject token.** `RT-A42` resolves to its AS-1 record, is bound to `mecatl`, its session `A42` is open, and its hard expiry has not passed. The record supplies the subject `u-alice-91`; the broker cannot name a different user.
+- **The subject token.** `RT-A42` resolves to its AS-1 record, is bound to `mecatl`, its session `A42` is open, and its hard expiry has not passed. The record supplies the subject `u-alice-91`; the broker cannot name a different user through this request. AS-1 runs in the same process as the broker core, so this guards against broker bugs, not against a compromised broker.
 - **The actor.** AS-1 validates the SVID against the configured agent trust bundle, registered subject, `sub`, `aud`, and `exp`, and checks in the registry that the reviewer is registered to `A42`.
 - **The target.** `gateway.example.com` is an allowed AS-2 for this client.
 

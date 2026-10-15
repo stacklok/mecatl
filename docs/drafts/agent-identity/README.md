@@ -41,7 +41,7 @@ The existing `AgentDef` structure currently combines instructions, execution set
 
 The agent loop uses those definitions to perform work, but it cannot decide which identities or permissions the rest of the system should trust. Definition loading, authorization, and audit therefore need trusted responsibilities outside the loop.
 
-The harness hosts the API and agent loop and validates the initiating user's AS-1 access token. An **agent-definition loader**, a broker module, loads definitions from configured sources into the broker and supplies the harness with execution configuration. An **identity broker** is a separate trusted service that governs access to protected tools. It issues agent credentials, checks requested operations against policy, and arranges downstream access using credentials it controls. It also records the decisions and actions it observes.
+The harness hosts the API and agent loop and validates the initiating user's AS-1 access token. An **agent-definition loader**, a broker module, loads definitions from configured sources into the broker and supplies the harness with execution configuration. An **identity broker** is a trusted component that governs access to protected tools. It starts as modules inside the mecak8s process and later becomes a separate service; see [deployment and threats](#deployment-and-threats). It issues agent credentials, checks requested operations against policy, and arranges downstream access using credentials it controls. It also records the decisions and actions it observes.
 
 This design scopes broker authorization to MCP tools. Extending that boundary to filesystem operations, Shell, and agent spawning is a [future direction](all-tool-mediation.md); their authorization and routing remain to be designed.
 
@@ -83,6 +83,36 @@ The broker contains the definition loader, the agent trust issuer, authorization
 Alice signs in through AS-1, which redirects her to the company IdP. Her client then calls mecak8s with an AS-1 access token. mecak8s validates that token and current session ownership. At session open it passes the token to the broker once, and the broker exchanges it at AS-1 for a refresh token bound to that broker session. On each tool call the broker presents that refresh token and the acting agent's JWT-SVID to AS-1, which returns an ID-JAG naming Alice and the agent. The broker redeems the ID-JAG at AS-2 for the vMCP access token `V`. The broker is a single OAuth client, `mecatl`, at both AS-1 and AS-2, and authenticates with `private_key_jwt`. AS-2 maps the AS-1 subject to its native user; an external gateway also requires a one-time consent link created at AS-2's own login. AS-2 receives neither Alice's AS-1 token nor the agent SVID. See [credentials and lifecycle](credentials-and-lifecycle.md#interactive-execution) for the walkthrough and [MCP gateway modes](mcp-gateway-modes.md) for the gateway side. The tools themselves execute the operations.
 
 AS-1 witnessed Alice's sign-in itself, checks that the acting instance is registered to the broker session, and authorizes the client, subject, actor, and target. It does not prove that the agent registration, ancestry, run, or delegation reported by trusted lifecycle code is genuine. The agent loop must not choose those facts, and distinct agent credentials do not isolate agents sharing one `mecak8s` process.
+
+## Deployment and threats
+
+The broker starts as modules inside the mecak8s process: broker core, AS-1, the agent-instance issuer, and the definition loader. Later these modules move together into one separate broker service. The protocol and token formats are the same in both deployments; what changes is which process holds the broker's keys, refresh tokens, and records.
+
+Some protections do not depend on where the broker runs:
+
+- **Hostile workspace code** runs in executor Pods, behind the execution provider. In both deployments, executors get no broker credentials, no database credentials, and no network path to mecak8s internals or the KMS.
+- **A prompt-injected agent** never sees or chooses credentials. Harness code attaches them, and the model supplies only tool names and arguments.
+- **The user comes from a sign-in at AS-1**, not from a harness report. mecak8s passes on the AS-1-signed access token once, AS-1 converts each token at most once, and every ID-JAG names the user from AS-1's record. No mecak8s code path can name a user who did not sign in.
+
+Where the broker runs matters against one attacker: someone with code execution in the mecak8s process.
+
+| Threat from a compromised mecak8s | Broker inside mecak8s | Separate broker service |
+| --- | --- | --- |
+| Act as any user, by signing an ID-JAG for a user who is not present | Open. The process holds AS-1's signing key and the broker's client key. In embedded mode this reaches every user connected to the gateway; in external mode, only users with a consent link. | Narrowed. mecak8s holds no keys. It can act only in open broker sessions bound to its workload, until each closes or its refresh token's hard expiry passes, and it can open sessions with fresh tokens from users currently using it. |
+| Steal refresh tokens or signing keys | Open. A KMS prevents copying a key out, not signing with it while the attacker is inside. | Closed, if the broker has its own database credentials and only the broker's service account may sign with its KMS keys. |
+| Read users' provider tokens in embedded mode | Open, if the gateway store shares storage credentials with mecak8s. | Closed, if the embedded gateway is its own deployment with its own credentials. |
+| Tamper with broker and AS-1 audit records | Open. One process writes them all. | Closed, if audit goes to an append-only sink that mecak8s cannot write. |
+
+In both deployments, the broker takes these facts on mecak8s's word: which agent instance made a call, which loaded definition a session uses as its root, which instance created which child, the run and delegation context, and which open session a call belongs to. The broker loads global definitions itself, so mecak8s cannot supply their content or ceilings. Audit records mark the facts mecak8s reported.
+
+A separate broker service delivers its protections only if the split is real:
+
+- the broker has its own database, KMS permissions, and namespace;
+- mecak8s cannot create pods, read secrets, or change configuration in the broker's namespace;
+- mecak8s cannot write the broker's workload allowlist, trust bundle, or policy inputs;
+- the embedded gateway is its own deployment.
+
+While the broker runs inside mecak8s, the [modulith constraints](implementation.md#modulith-constraints) keep the later move a deployment change.
 
 ## Following an action through the architecture
 
