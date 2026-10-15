@@ -122,7 +122,10 @@ test("Add to chat leaves the screen-reader-only tool text out of a selection", a
   });
   await transcript.dispatchEvent("pointerup");
   await page.getByRole("button", { name: "Add to chat" }).click();
-  const draft = await page.getByRole("textbox", { name: "Message Mecatl" }).inputValue();
+  const composer = page.getByRole("textbox", { name: "Message Mecatl" });
+  // The draft lands after a state update; wait for it instead of reading it once.
+  await expect(composer).toHaveValue(/Bash/);
+  const draft = await composer.inputValue();
   expect(draft).toContain("Bash");
   expect(draft).not.toContain("Tool:");
   expect(draft).not.toContain("completed");
