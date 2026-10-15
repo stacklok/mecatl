@@ -193,6 +193,21 @@ Out of scope for this version: attesting per-agent identity, for example per-age
 
 Reviewed and not selected: an `InvokeTool` actor field accepting either an instance reference or an SVID.
 
+### D6: the broker does not check provider connections
+
+The broker authorizes the session, workload, actor, ceiling, and route. AS-2 authorizes the user through the mapping and, in external mode, the consent link. vMCP authorizes the connection and dispatches. The provider enforces its own permissions.
+
+The original design required the broker to hold its own authorized-connection evidence before dispatch. Nothing supplies that evidence. In external mode the mapping and connection records belong to the gateway operator, so every call would fail closed. The broker could only copy the gateway's data, which is not an independent check. Each party therefore decides what it knows first-hand.
+
+Future broker Cedar policies stay request-shaped: user and identity-provider attributes from AS-1, agent instance and definition provenance, server and tool, resources named in the arguments, and session and delegation context. If vMCP reports the connection it used, the broker records it as observed. A pre-run connection status query, if added later, is advisory and used for UX only, never as an allow or deny input.
+
+### D7: scheduled runs are pre-authorized
+
+- **Authority.** A schedule has its own delegated authority from the user: created at schedule setup, bound to the schedule rather than a session, with an explicit horizon, and revoked when the schedule is deleted. Session-bound authority cannot serve schedules, because it is revoked when the session closes.
+- **Pre-authorization.** At setup, every connector the schedule may use is connected: the gateway link in external mode, and the provider connection in every mode. Gaps are fixed interactively then.
+- **At run time,** nothing is interactive. A lapsed link, credential, or authority fails the call. The run ends with "needs owner action", and the owner is notified through a link into Mecatl, never a raw connect URL.
+- **Renewal** extends the horizon and reconnects lapsed connectors without recreating the schedule. The owner is notified ahead of the horizon.
+
 ## User-visible flow
 
 - **Sign in** once per login session, through AS-1 to the company IdP; usually silent with single sign-on.
@@ -219,21 +234,6 @@ What each decision asks of ToolHive, and whether it exists today. Current behavi
 | D3 | `private_key_jwt` for the broker | Yes |
 | Later | DPoP issuance and validation | No |
 | D4 (C) | Scope or `authorization_details` narrowing enforced per tool, including on `act` | Partly |
-
-### D6: the broker does not check provider connections
-
-The broker authorizes the session, workload, actor, ceiling, and route. AS-2 authorizes the user through the mapping and, in external mode, the consent link. vMCP authorizes the connection and dispatches. The provider enforces its own permissions.
-
-The original design required the broker to hold its own authorized-connection evidence before dispatch. Nothing supplies that evidence. In external mode the mapping and connection records belong to the gateway operator, so every call would fail closed. The broker could only copy the gateway's data, which is not an independent check. Each party therefore decides what it knows first-hand.
-
-Future broker Cedar policies stay request-shaped: user and identity-provider attributes from AS-1, agent instance and definition provenance, server and tool, resources named in the arguments, and session and delegation context. If vMCP reports the connection it used, the broker records it as observed. A pre-run connection status query, if added later, is advisory and used for UX only, never as an allow or deny input.
-
-### D7: scheduled runs are pre-authorized
-
-- **Authority.** A schedule has its own delegated authority from the user: created at schedule setup, bound to the schedule rather than a session, with an explicit horizon, and revoked when the schedule is deleted. Session-bound authority cannot serve schedules, because it is revoked when the session closes.
-- **Pre-authorization.** At setup, every connector the schedule may use is connected: the gateway link in external mode, and the provider connection in every mode. Gaps are fixed interactively then.
-- **At run time,** nothing is interactive. A lapsed link, credential, or authority fails the call. The run ends with "needs owner action", and the owner is notified through a link into Mecatl, never a raw connect URL.
-- **Renewal** extends the horizon and reconnects lapsed connectors without recreating the schedule. The owner is notified ahead of the horizon.
 
 ## Open
 
