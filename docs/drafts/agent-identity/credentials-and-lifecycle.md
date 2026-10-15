@@ -1,10 +1,17 @@
 # Credentials and lifecycle
 
-*This chapter describes the intended architecture, not current implementation status. Its decisions are recorded in the [credential flow rework](credential-flow-rework.md).*
+*This chapter describes the intended architecture, not current implementation status.*
 
 An agent instance can participate in multiple runs. Its instance credential identifies it to the broker; presenting that credential does not by itself authorize an MCP tool call. The harness manages run execution. The broker checks the session and execution context. Once the [authority work](README.md#order-of-work) is in place, it also checks the acting instance's effective server/tool ceiling, its definition ceiling narrowed by its parent's, with Cedar. User, resource, argument, and dynamic delegation policies are deferred. Renewing the instance credential does not itself extend or widen permission to call tools.
 
 The human enters the flow once, when Alice signs in through AS-1. AS-1 runs that sign-in itself, so every later statement about the human traces back to a login AS-1 witnessed, not to a report from the harness.
+
+## What the user sees
+
+- **Sign in** once per login session, through AS-1 to the company IdP; usually silent with single sign-on.
+- **Connect a provider** once, through the existing `mcp_authorization_pending` path. In external mode, the same path first shows the gateway's "Allow Mecatl" step.
+- **Everyday use** needs nothing more until the broker refresh token's hard expiry or a revocation. Scheduled runs draw on their own [authority](#scheduled-runs).
+- **Sign out** ends one client's tokens; **sign out everywhere** stops every agent and schedule acting for the user. See [sign-out and revocation](#sign-out-and-revocation).
 
 ## Credential roles
 
@@ -187,7 +194,7 @@ The broker supplies `A42` when the record is created, so the session binding is 
 
 The existing broker session record under `A42` keeps the workload and host-session binding. The human authority now lives in `RT-A42`, not in a broker-local human record.
 
-**Alternative:** AS-1 could return a signed session assertion JWT instead of a refresh token. It needs less authorization-server work but still requires the AS-1 record for revocation and one-conversion checks, does not rotate, and is an extension to the ID-JAG profile. See the [rework record](credential-flow-rework.md#d3-login-and-session-admission).
+**Alternative:** AS-1 could return a signed session assertion JWT instead of a refresh token. It needs less authorization-server work but still requires the AS-1 record for revocation and one-conversion checks, does not rotate, and is an extension to the ID-JAG profile.
 
 **Evidence:** AS-1 records the conversion: client `mecatl`, user `u-alice-91`, source token `jti`, session `A42`, and the hard expiry.
 
@@ -208,6 +215,13 @@ The broker's agent issuer signs each registered instance's JWT-SVID. This payloa
 Before issuance, the issuer checks the workload and reviewer instance against the registration; a definition's existence alone is insufficient. Mecatl checks that the returned subject is the registered reviewer instance. The broker and AS-1 each validate the SVID against the configured agent trust bundle. JWT-SVID requires `sub`, `aud`, and `exp`, but not `iss` or `jti`. The agent-instance issuer and trust domain are distinct from OAuth AS-1 and AS-2; AS-1 uses the validated registered identity to form the ID-JAG's `act` claim.
 
 See [credential lifetimes and renewal](#credential-lifetimes-and-renewal) for renewal across runs.
+
+The agent-instance JWT-SVID stays the actor input because it gives agent identity its own issuer and trust domain, separate from the OAuth issuers, and leaves a path to attestation and to policy shaped by RFC 9396 `authorization_details`. While agents share one harness process, it asserts the agent rather than authenticating it: the issuer is in the broker, the broker presents the SVID, and AS-1 still checks its registry that the instance belongs to the session. Two strengthenings are possible but not selected:
+
+- **Session claim.** The SVID names the session it was issued for, so AS-1 can check that the SVID and the subject token belong to the same session without relying on the broker's pairing. It is still issued on mecak8s's word.
+- **Key binding.** The SVID carries a `cnf` key, and the presenter proves possession, so a stolen SVID is useless without the private key. Inside one process, the key proves the process, not the agent.
+
+Attesting each agent's identity needs agents in their own pod, sandbox, or Kubernetes object, for example attested through the experimental [SPIFFE Broker API](https://github.com/spiffe/spiffe/pull/340). That is out of scope for this design.
 
 ### (5) Broker client authentication
 
@@ -272,7 +286,7 @@ AS-1 resolves `RT-A42` to its record and checks that the session is open, the ha
 }
 ```
 
-- `act` names only the acting instance, with an opaque, stable, per-instance `agent:` identifier: no SPIFFE path and no definition name; `act.iss` names AS-1, which minted it. AS-1 derives it from the validated reviewer SVID; the full SVID stops at AS-1, so internal structure does not cross into the gateway's domain. `act` has one level. That main delegated `D42` to the reviewer is recorded in Mecatl's harness and broker records, not in the token. A nested `act` naming main comes later, from a [chained exchange](credential-flow-rework.md#d4-delegation-visibility-at-the-gateway) at delegation time.
+- `act` names only the acting instance, with an opaque, stable, per-instance `agent:` identifier: no SPIFFE path and no definition name; `act.iss` names AS-1, which minted it. AS-1 derives it from the validated reviewer SVID; the full SVID stops at AS-1, so internal structure does not cross into the gateway's domain. `act` has one level. That main delegated `D42` to the reviewer is recorded in Mecatl's harness and broker records, not in the token. A nested `act` naming main comes later, from a [chained exchange](mcp-authorization.md#chained-exchange) at delegation time.
 - `aud_sub` and `email`, recommended by the draft, are deliberately omitted: AS-1 does not know AS-2's subject, and an email address is not an identity link.
 - AS-1 and AS-2 are separate issuers with separate keys, also in embedded mode; the draft forbids an issuer redeeming its own ID-JAG (§9.3).
 
@@ -289,7 +303,7 @@ The broker redeems the ID-JAG at AS-2 with the [RFC 7523 JWT-bearer grant](https
 | Embedded | Users log in to AS-2 through AS-1, so the AS-1 subject maps directly. AS-1 is the SSO IdP AS-2 trusts (§4.1). Consent is implicit; AS-1, AS-2, and the credential store share one trust domain. |
 | External | Identity chaining across trust domains. AS-2's users log in through their own IdP, so the §4.1 SSO precondition does not hold. AS-2 redeems only for an AS-1 `(iss, sub)` with a consent link to a native user, created once through AS-2's own login. No just-in-time provisioning. |
 
-The consent link stops a compromised AS-1 from using the gateway credentials of a user who never chose Mecatl. Its creation flow, the link-swap attack it must resist, and the shared-IdP shortcut are in the [rework record](credential-flow-rework.md#d2-grant-redeemed-at-as-2). AS-2 never resolves users through `sub_id` (§9.5).
+The consent link stops a compromised AS-1 from using the gateway credentials of a user who never chose Mecatl. Its creation flow, the link-swap attack it must resist, and the shared-IdP shortcut are in the [implementation companion](implementation.md#external-consent-link). AS-2 never resolves users through `sub_id` (§9.5).
 
 AS-2 issues a short-lived access token and no refresh token (§4.4.3):
 
@@ -450,7 +464,7 @@ The broker redeems the ID-JAG as described in [step (8)](#8-as-2-access-token). 
 
 The ID-JAG `jti`, AS-2 token `(iss, jti)`, and operation ID are separate references. A token can be reused for multiple authorized calls, so its `jti` cannot replace a per-operation reference. Each recipient records only what it verifies or observes.
 
-`act` identifies the current actor only ([RFC 8693 §4.1](https://www.rfc-editor.org/rfc/rfc8693.html#section-4.1)) and has one level. Actor history stays inside Mecatl: delegation in the harness and broker records, creation ancestry in the SPIFFE path. RFC 8693 treats prior actors in a nested `act` as informational only, so leaving them out removes nothing the gateway enforces. A later [chained exchange](credential-flow-rework.md#d4-delegation-visibility-at-the-gateway) would let AS-1 nest the delegating instance as a prior actor. To reach the delegation from a gateway record, follow the propagated operation ID (see [step (9)](#9-vmcp-decision-and-upstream-credential)). Until the agent ceiling is also carried as scope or `authorization_details`, the gateway enforces user and connection, and the broker alone enforces the agent ceiling.
+`act` identifies the current actor only ([RFC 8693 §4.1](https://www.rfc-editor.org/rfc/rfc8693.html#section-4.1)) and has one level. Actor history stays inside Mecatl: delegation in the harness and broker records, creation ancestry in the SPIFFE path. RFC 8693 treats prior actors in a nested `act` as informational only, so leaving them out removes nothing the gateway enforces. A later [chained exchange](mcp-authorization.md#chained-exchange) would let AS-1 nest the delegating instance as a prior actor. To reach the delegation from a gateway record, follow the propagated operation ID (see [step (9)](#9-vmcp-decision-and-upstream-credential)). Until the agent ceiling is also carried as scope or `authorization_details`, the gateway enforces user and connection, and the broker alone enforces the agent ceiling.
 
 ## Provider-connection selection
 
