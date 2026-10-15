@@ -199,25 +199,33 @@ func TestSystemTempApprovalShowsFullCommand(t *testing.T) {
 
 // TestSystemTempAmbiguousArgsAreRejectedBeforeApproval pins that a system-scope
 // Shell call whose argument object repeats a key or spells a field in another
-// case is refused before policy evaluation: no approval is surfaced and nothing
-// reaches the runner.
+// case never surfaces an approval or reaches the runner. An ambiguity in an
+// argument the policy reads is refused before policy evaluation. A case variant
+// of an option no rule reads, such as Timeout_MS, passes that generic check and
+// is evaluated as an ordinary Shell call; the Shell's own decode then refuses
+// it, so the system-scope approval is never surfaced.
 func TestSystemTempAmbiguousArgsAreRejectedBeforeApproval(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ name, args string }{
+	for _, tc := range []struct {
+		name          string
+		args          string
+		reachesPolicy bool
+	}{
 		{name: "duplicate key", args: `{"command":"git status","temp_scope":"system","command":"git status && echo done"}`},
 		{name: "case-variant keys", args: `{"command":"git status","COMMAND":"git status && echo done","Temp_Scope":"system","Timeout_MS":7}`},
 		{name: "case-variant scope", args: `{"command":"git status","TEMP_SCOPE":"system"}`},
-		{name: "case-variant option", args: `{"command":"git status","temp_scope":"system","Timeout_MS":7}`},
+		{name: "case-variant option", args: `{"command":"git status","temp_scope":"system","Timeout_MS":7}`, reachesPolicy: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			runner := &fakeShellRunner{res: tool.CommandResult{Stdout: "ok"}}
-			call := session.NewToolCall("c", tool.ShellToolName, []byte(tc.args))
-			events, result := runScopedShell(t, []governance.Rule{{Tool: tool.ShellToolName, Effect: governance.Allow}}, call, runner)
-			for _, event := range events {
-				if event.Type == session.EvPermissionAsk {
-					t.Fatalf("ambiguous arguments surfaced an approval: %s", event.Ask.Args)
-				}
+			catalog := tool.NewCatalog()
+			catalog.MustRegister(NewShellTool())
+			policy := newPolicyArgsRecorder()
+			// runPolicyArgsCall fails the test on any approval request.
+			result := runPolicyArgsCall(t, catalog, policy, shellEnvRunner(runner), session.NewToolCall("c", tool.ShellToolName, []byte(tc.args)))
+			if evaluated := len(policy.observations()) > 0; evaluated != tc.reachesPolicy {
+				t.Errorf("policy evaluated the call = %v, want %v", evaluated, tc.reachesPolicy)
 			}
 			if runner.command != "" {
 				t.Fatalf("ambiguous arguments executed %q", runner.command)
