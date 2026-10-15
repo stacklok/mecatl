@@ -41,9 +41,13 @@ type PermissionModeToken struct {
 // auto or yolo) are deliberately absent: allow-all already permits edits.
 // trusted and trusted-accept-edits are dropped as modes; project trust is
 // raised via --trust-project combined with any mode.
+//
+// The strict tiers share one ceiling, accept-edits: plan, default, and
+// accept-edits are all reachable on a strict server (the TUI cycles through
+// them live), so the ceiling only bounds the allow-all modes.
 var permissionModeTable = []PermissionModeToken{
-	{Name: "plan", Posture: PostureStrict, SessionMode: session.ModePlan, MaxMode: session.ModePlan},
-	{Name: "default", Posture: PostureStrict, SessionMode: session.ModeDefault, MaxMode: session.ModeDefault},
+	{Name: "plan", Posture: PostureStrict, SessionMode: session.ModePlan, MaxMode: session.ModeAccept},
+	{Name: "default", Posture: PostureStrict, SessionMode: session.ModeDefault, MaxMode: session.ModeAccept},
 	{Name: "accept-edits", Posture: PostureStrict, SessionMode: session.ModeAccept, MaxMode: session.ModeAccept},
 	// auto and yolo: sessions start in the named mode. The allow-all and
 	// loose-substitution behaviors are injected at evaluation time by
@@ -140,8 +144,8 @@ func postureToSessionModes(p Posture) (session.PermissionMode, session.Permissio
 		return session.ModeAuto, session.ModeAuto
 	case PostureYolo:
 		return session.ModeYolo, session.ModeYolo
-	default: // PostureStrict, PostureTrusted → default mode
-		return session.ModeDefault, session.ModeDefault
+	default: // PostureStrict, PostureTrusted → default mode, strict ceiling
+		return session.ModeDefault, session.ModeAccept
 	}
 }
 
@@ -164,7 +168,7 @@ func checkerRefusal(cfg Config, checkerConfigured bool) {
 // yoloCheckerAdvisoryNote states what a configured checker does NOT do at the
 // gate-free tier, where demoteForPosture makes it advisory. Shared by the
 // refusal and the startup line so they cannot disagree.
-const yoloCheckerAdvisoryNote = "At yolo a configured checker is observability-only: it has no pre-tool veto, no approve-once human ask, and no fail-closed on checker failure, so a checker outage looks the same as a clean result"
+const yoloCheckerAdvisoryNote = "In yolo-mode sessions a configured checker is observability-only: it has no pre-tool veto, no approve-once human ask, and no fail-closed on checker failure, so a checker outage looks the same as a clean result. Sessions switched to another mode, including auto, keep it enforcing"
 
 // headlessTrustRefusal is the headless admission gate.
 // It runs AFTER resolveTrust, so any legitimate trust source satisfies it, and
@@ -222,13 +226,26 @@ func checkerState(cfg Config, configured bool) (state, reason string) {
 	case !configured:
 		return checkerDisabled, "no checker configured"
 	case cfg.MaxAllowedMode == session.ModeYolo:
-		return checkerAdvisory, "demoted: yolo mode has no enforcing checker"
+		return checkerAdvisory, "demoted in yolo-mode sessions; other modes keep it enforcing"
 	}
 	specs, _ := effectiveGuardrailSpecs(cfg)
 	if highestSeverityGuardrailMode(specs) == string(modelhook.ModeAdvisory) {
 		return checkerAdvisory, "configured advisory"
 	}
 	return checkerEnforcing, ""
+}
+
+// autoCheckerEnforcing reports whether an auto session runs with an enforcing
+// checker. Unlike checkerState it ignores the yolo demotion, which applies per
+// session mode (guardrailsDemoted): an auto session on a yolo server still
+// compiles its rules enforcing.
+func autoCheckerEnforcing(cfg Config, configured bool) bool {
+	if cfg.GuardrailsDisabled || !configured {
+		return false
+	}
+	cfg.guardrailSessionMode = session.ModeAuto
+	specs, _ := effectiveGuardrailSpecs(cfg)
+	return highestSeverityGuardrailMode(specs) != string(modelhook.ModeAdvisory)
 }
 
 // reviewerState reports the subagent ask reviewer for the startup line.

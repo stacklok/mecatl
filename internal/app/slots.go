@@ -841,19 +841,31 @@ func boundedRouterFact(value string) string {
 // keep the session model). The predicate intentionally compares against cfg.Model (the
 // shared-engine model), because promotion only matters for a session that would
 // otherwise ride the shared engine.
+//
+// It is also true for a mode whose guardrail enforcement differs from the shared
+// engine's: the shared engine demotes the checker to advisory only at yolo
+// posture, so on a yolo server a non-yolo session (notably auto, which requires
+// an enforcing checker) is promoted to a per-session engine compiled for its own
+// mode (guardrailsDemoted).
 func modeNeedsEngine(cfg Config) func(mode session.PermissionMode) bool {
 	providerID := strings.TrimSpace(cfg.DefaultProvider)
 	if cfg.modelProviderRegistry != nil {
 		providerID = cfg.modelProviderRegistry.Default()
 	}
 	planModel, crossProviderFallback := resolvePlanSessionModel(cfg, providerID, cfg.Model, session.ModePlan)
-	if !crossProviderFallback && planModel == cfg.Model {
-		// No active plan slot (or it resolves to the shared-engine model): a mode flip
-		// never changes the model, so never promote — nil keeps the default-FS path
-		// byte-identical.
+	planPromotes := crossProviderFallback || planModel != cfg.Model
+	guardrailsPromote := guardrailsConfigured(cfg)
+	if !planPromotes && !guardrailsPromote {
+		// No active plan slot (or it resolves to the shared-engine model) and no
+		// checker: a mode flip never changes the engine, so never promote — nil
+		// keeps the default-FS path byte-identical.
 		return nil
 	}
+	sharedDemoted := guardrailsDemoted(cfg)
 	return func(mode session.PermissionMode) bool {
-		return mode == session.ModePlan
+		if planPromotes && mode == session.ModePlan {
+			return true
+		}
+		return guardrailsPromote && (mode == session.ModeYolo) != sharedDemoted
 	}
 }

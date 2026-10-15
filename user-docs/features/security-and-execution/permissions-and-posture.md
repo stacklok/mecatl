@@ -138,8 +138,11 @@ The restart a posture change needs depends on how you connect:
 - Under `mecatui connect`, the server operator changes `mecated`'s
   configuration and restarts it. Relaunching the client changes nothing.
 
-The `mecatui` header shows the session mode and, whenever the posture is above
-`strict`, the posture as well (`trusted`, `auto`, or `yolo`).
+The `mecatui` header shows the session mode, which changes as you cycle; `yolo`
+appears as a red `YOLO` pill. The top-right corner shows whether the server
+trusts the project: `trusted` or
+`untrusted`. Project trust is independent of the mode. An older server that
+does not report trust shows no trust label.
 
 Press `?` in `mecatui` to see every mode, the two things each one sets, and the
 restart that applies to your connection.
@@ -183,10 +186,12 @@ choice for you: they pass the checker model you configure, or `--guardrails off`
 when you leave it empty. See [Guardrails for mecak8s](/operating/mecak8s.md#choose-a-guardrails-checker)
 and the [`mecatequi` action inputs](/building/ci/mecatequi.md#headless-posture-and-permission-asks).
 
-At `yolo`, a configured checker is advisory only. It has no pre-tool veto, no
-approve-once human ask, and no fail-closed behavior when the checker fails, so a
-checker outage looks the same as a clean result. The startup line reports it as
-`advisory`. Choose `auto` when you want the checker to block findings.
+In a session running in `yolo` mode, a configured checker is advisory only. It
+has no pre-tool veto, no approve-once human ask, and no fail-closed behavior when
+the checker fails, so a checker outage looks the same as a clean result. The
+startup line reports it as `advisory`. Choose `auto` when you want the checker to
+block findings. On a server started with `yolo`, a session you switch to `auto`
+or a lower mode keeps the checker enforcing.
 
 ## Headless roots and project trust
 

@@ -43,10 +43,12 @@ type Capabilities struct {
 	Image bool
 	Audio bool
 	// Posture is the SERVER-WIDE operator posture tier ("strict"/"trusted"/"auto"/
-	// "yolo"), CHROME ONLY: the ui renders a "⚠ auto"/"⚠ yolo" badge so an operator
-	// sees the daemon's automation posture. NOT session state. Empty (an older server,
-	// or strict/trusted) → no badge.
+	// "yolo"). It bounds which modes the ui's mode cycle may switch to. NOT
+	// session state. Empty on an older server.
 	Posture string
+	// ProjectTrust is "trusted" or "untrusted" for the server's launch
+	// workspace, CHROME ONLY: the ui's header badge. Empty on an older server.
+	ProjectTrust string
 	// Worktrees is true when a WorktreeLister is wired (ListWorktrees may return a
 	// non-empty list for a real git repo). It gates the /worktrees overlay — the
 	// first-class operator workflow for binding a session to an EXISTING sibling
@@ -130,6 +132,7 @@ func capabilitiesFrom(c *mecatlv1.ServerCapabilities) Capabilities {
 		Image:               c.GetImage(),
 		Audio:               c.GetAudio(),
 		Posture:             c.GetPosture(),
+		ProjectTrust:        projectTrustFrom(c),
 		Worktrees:           c.GetWorktrees(),
 		Scheduling:          c.GetScheduling(),
 		Reflection:          c.GetReflection(),
@@ -143,6 +146,25 @@ func capabilitiesFrom(c *mecatlv1.ServerCapabilities) Capabilities {
 		SessionDebug:        c.GetSessionDebug(),
 		DebugMCP:            c.GetDebugMcp(),
 		WorkspaceEnrollment: c.GetWorkspaceEnrollment(),
+	}
+}
+
+// Project-trust spellings for Capabilities.ProjectTrust.
+const (
+	ProjectTrusted   = "trusted"
+	ProjectUntrusted = "untrusted"
+)
+
+// projectTrustFrom maps the optional project_trusted echo; unset (an older
+// server) stays "" so the client shows no trust indicator.
+func projectTrustFrom(c *mecatlv1.ServerCapabilities) string {
+	switch {
+	case c.ProjectTrusted == nil:
+		return ""
+	case c.GetProjectTrusted():
+		return ProjectTrusted
+	default:
+		return ProjectUntrusted
 	}
 }
 

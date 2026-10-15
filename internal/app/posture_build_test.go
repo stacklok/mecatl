@@ -290,3 +290,43 @@ func (r *slogdiagRecorder) lineContaining(substr string) string {
 	}
 	return ""
 }
+
+// TestBuildEchoesProjectTrust pins that the capabilities echo carries the
+// effective project-trust decision as its own axis: an explicit trust grant
+// reports trusted at strict posture, a headless allow-all root without a trust
+// source reports untrusted, and the echo is always set by a composed server.
+func TestBuildEchoesProjectTrust(t *testing.T) {
+	cases := []struct {
+		name  string
+		token string
+		trust bool
+		want  bool
+	}{
+		{"default untrusted", "default", false, false},
+		{"default with --trust-project", "default", true, true},
+		{"headless yolo without a trust source", "yolo", false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.token == "yolo" {
+				t.Setenv("MECATL_SANDBOX", "1")
+			}
+			cfg := permissionModeCfg(t, tc.token, port.NopDiagnostics{})
+			cfg.TrustProject = tc.trust
+			cfg.Headless = true
+			cfg.GuardrailsDisabled = tc.token == "yolo"
+			built, err := buildIsolated(t, context.Background(), cfg)
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			defer built.Close()
+			caps := built.Service.CompatibilityInfo(context.Background()).GetCapabilities()
+			if caps.ProjectTrusted == nil {
+				t.Fatal("project_trusted must be set by a composed server")
+			}
+			if got := caps.GetProjectTrusted(); got != tc.want {
+				t.Fatalf("project_trusted = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

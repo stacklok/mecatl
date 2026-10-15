@@ -880,7 +880,11 @@ type Config struct {
 	guardrailConfigured bool
 	guardrailDetails    *server.ReviewDetailRegistry
 	guardrailHealth     *guardrailRouteHealth
-	planApprovals       *planApprovalReceipts
+	// guardrailSessionMode is the session mode an engine's guardrail rules are
+	// compiled for (set per session by the session-engine factory). Empty means
+	// the shared engine, whose rules follow the process posture.
+	guardrailSessionMode session.PermissionMode
+	planApprovals        *planApprovalReceipts
 
 	// Slash commands: directory of <name>.md templates; EnableCommands turns on the
 	// default directories when CommandsDir is empty.
@@ -2111,7 +2115,6 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	checkerRefusal(cfg, checkerConfigured)
 	cfg = resolveAskReviewerDefault(cfg)
 	narratePermissionMode(cfg, checkerConfigured)
-	checker, _ := checkerState(cfg, checkerConfigured)
 	// Emit the build-once composition facts (token counter / compaction strategy /
 	// slash commands) EXACTLY ONCE here, through the injected Diagnostics — keyed to
 	// the resolved MAIN model. The per-derivation builders do not log these (they
@@ -2462,7 +2465,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		// server's own ModeDefault.
 		DefaultMode:                cfg.DefaultSessionMode,
 		MaxAllowedMode:             cfg.MaxAllowedMode,
-		EnforcingCheckerConfigured: checker == checkerEnforcing,
+		EnforcingCheckerConfigured: autoCheckerEnforcing(cfg, checkerConfigured),
 		BuildID:                    buildinfo.BuildID,
 		ServerImplementation:       cfg.ServerImplementation,
 		// GetServerInfo looks up only a caller-selected, already-known provider
@@ -2592,6 +2595,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		// ServerCapabilities echo as CHROME (a client renders a "⚠ auto"/"⚠ yolo" badge).
 		// NOT session state — see server.Config.Posture.
 		Posture: cfg.Posture.String(),
+		// ProjectTrusted: the effective trust fold for the launch workspace (flag,
+		// declared, remembered, or the interactive posture floor), CHROME ONLY.
+		ProjectTrusted: &cfg.TrustProject,
 		// DeploymentID: the operator-set, opaque deployment label surfaced on
 		// GetCompatibilityInfo. It is passed through VERBATIM and is never
 		// derived here from hostname, pod name, or environment — an inferred label
@@ -3427,6 +3433,7 @@ func sessionEngineFactoryWithTools(
 ) server.SessionEngineWithToolsFactory {
 	build := func(ctx context.Context, sel server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode, sessionTools []tool.Tool, sessionToolKeys []string) (server.SessionEngineResult, error) {
 		cfg := cfg // Permission resolver overrides belong to this invocation, not the shared closure.
+		cfg.guardrailSessionMode = mode
 		runtimeAssets := mcpCatalogAssets(ctx, assets)
 		runtimeRevision := mcpRuntimeRevision(ctx)
 		// Pin the CHILD permission resolver to THIS session's base root (issue

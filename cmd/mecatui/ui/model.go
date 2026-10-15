@@ -816,6 +816,9 @@ type Model struct {
 	// modeCursor is where the ModeSwitch cycle over every permission mode last
 	// landed, including a mode that needs a restart and so changed nothing.
 	modeCursor modeCursor
+	// modeRefused is the mode the server just refused. The next ModeSwitch
+	// continues the cycle after it, so a refused mode does not trap the cycle.
+	modeRefused string
 
 	// fullColor is true on a truecolor terminal, derived from the tea.ColorProfileMsg
 	// (msg.Profile == colorprofile.TrueColor) in the reducer. It gates the welcome

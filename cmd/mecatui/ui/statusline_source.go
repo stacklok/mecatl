@@ -214,7 +214,7 @@ func (m Model) statusLineInput(now time.Time) customization.Input {
 		MainAgent:  customization.MainAgent{State: state, Activity: activity, Approval: approval},
 		Delegation: m.statusDelegation(),
 		Clock:      customization.Clock{Now: now},
-		Terminal:   customization.Terminal{Rows: m.height, Cols: m.widthOr(), HeaderAvailCols: geometry.headerAvailable, FooterAvailCols: geometry.footerAvailable},
+		Terminal:   customization.Terminal{Rows: m.height, Cols: m.widthOr(), HeaderAvailCols: geometry.headerAvailable, FooterAvailCols: geometry.footerAvailable, Emoji: m.emojiOK},
 	}
 }
 
