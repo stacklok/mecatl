@@ -32,7 +32,9 @@ The flow has four integration points: AS-1 sign-in, the session-open exchange, t
 
 - AS-1 issued it, its `aud` is the Mecatl API, it is still active, and its `jti` has not been converted before;
 - the presenter is the authenticated client `mecatl`;
-- the request asks for no wider scope than the original grant.
+- the request asks for no wider scope than the original grant;
+- the company identity in the token's `sub_id` equals the session owner that mecak8s sends with it;
+- the broker session has no recorded owner yet, or its recorded owner is that same identity. AS-1 records the owner at the first open, and session IDs are never reused.
 
 Client `mecatl` may convert tokens issued to the TUI and Studio only. A session-open request, using the [main flow](credentials-and-lifecycle.md) values:
 
@@ -166,9 +168,11 @@ This table is the ledger of ToolHive changes the design needs. None is filed as 
 | Revoke all of a user's grants, including schedule authority | No; no index from user to refresh-token families | Medium | Identity work |
 | Upstream re-check when issuing an ID-JAG, with the upstream token kept independent of client sign-out | No; the refresh grant never contacts the upstream IdP (checked at main `9adad0abb`) | Small to medium | Identity work |
 | AS-1 and the vMCP record the operation and attempt IDs the broker passes with each exchange and MCP request, marked as reported | No | Small | Identity work |
+| Session-open owner check: compare the session owner the broker passes with the token's `sub_id`, and keep the owner on the refresh-token record | No | Small | Identity work |
 | Reject a token whose upstream session records were deleted | No; the lookup returns an empty credential map instead of failing | Small | Identity work |
 | Refresh token bound to the AS-1 login session (`sid`), so that signing out at AS-1 revokes it | No; `tsid` is per authorization request, not per login | Large | Later |
 | Receive logout and account events from the company IdP (OIDC Back-Channel Logout, Okta event hooks, Shared Signals) | No | Large | Later |
+| RFC 9396 `authorization_details` on the refresh grant, embedded in the access token, and a session-bound check at conversion | Unknown | Not sized | Later |
 | End vMCP sessions when the user's grants are revoked | No; sessions bind issuer and subject with no revocation check | Not sized | Later |
 | DPoP issuance and validation for `V` | No | Large | Later |
 | Scope or `authorization_details` (RFC 9396) narrowing enforced per tool at the gateway | Scope intersection only | Large | Later |
@@ -262,6 +266,14 @@ Verify the [AuditEvent profile](audit.md#auditevent-profile) through the real to
 - Removing a record or ending a stream without its stop event shows as a sequence gap.
 - Each reconciliation check flags an injected mismatch: an AS-2 redemption without AS-1 issuance, a vMCP call without broker dispatch, a dispatch without a vMCP call, and a session-open conversion without AS-1 issuance.
 - The broker's lineage check rejects a delegation whose instances are in different session trees or whose parent delegation's receiving run differs.
+
+## Session binding checks
+
+- AS-1 refuses a session-open conversion when the token's `sub_id` differs from the owner mecak8s sends, and records the refusal.
+- After `A42` is opened for Alice, AS-1 refuses to open `A42` again with Bob's token, including after a broker restart.
+- A session ID is never reused for a new session.
+
+**Later work for session-bound tokens.** Before adopting [session-bound tokens](credentials-and-lifecycle.md#3-session-open-and-the-broker-refresh-token), check how each client would hold them. The TUI keeps tokens in the OS keyring and Studio in sealed server-side cookies; both would need one session-bound token per open session, refreshed silently. Studio's server holds those tokens for the browser, so check how it stores and selects them per session and whether that changes its cookie and CSRF handling.
 
 ## Sign-out and revocation checks
 

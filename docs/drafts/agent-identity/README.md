@@ -103,7 +103,7 @@ Where the broker runs matters against one attacker: someone with code execution 
 | Read users' provider tokens in embedded mode | Open, if the gateway store shares storage credentials with mecak8s. | Closed, if the embedded gateway is its own deployment with its own credentials. |
 | Tamper with broker and AS-1 audit records | Partly closed. Records already delivered to an external append-only store survive; records from the compromised process can be forged or suppressed from then on. | Closed for broker and AS-1 records, which mecak8s no longer writes, if they go to an append-only store that mecak8s cannot write. |
 
-In both deployments, the broker takes these facts on mecak8s's word: which agent instance made a call, which loaded definition a session uses as its root, which instance created which child, the run and delegation context, and which open session a call belongs to. The broker loads global definitions itself, so mecak8s cannot supply their content or ceilings. Audit records mark the facts mecak8s reported.
+In both deployments, the broker takes these facts on mecak8s's word: which agent instance made a call, which loaded definition a session uses as its root, which instance created which child, the run and delegation context, and which open session a call belongs to, which the broker checks against the user's token and the session's recorded owner to catch mistakes. The broker loads global definitions itself, so mecak8s cannot supply their content or ceilings. Audit records mark the facts mecak8s reported.
 
 A separate broker service delivers its protections only if the split is real:
 
