@@ -288,7 +288,7 @@ AS-1 resolves `RT-A42` to its record and checks that the session is open, the ha
 
 - `act` names only the acting instance, with an opaque, stable, per-instance `agent:` identifier: no SPIFFE path and no definition name; `act.iss` names AS-1, which minted it. AS-1 derives it from the validated reviewer SVID; the full SVID stops at AS-1, so internal structure does not cross into the gateway's domain. `act` has one level. That main delegated `D42` to the reviewer is recorded in Mecatl's harness and broker records, not in the token. A nested `act` naming main comes later, from a [chained exchange](mcp-authorization.md#chained-exchange) at delegation time.
 - `aud_sub` and `email`, recommended by the draft, are deliberately omitted: AS-1 does not know AS-2's subject, and an email address is not an identity link.
-- AS-1 and AS-2 are separate issuers with separate keys, also in embedded mode; the draft forbids an issuer redeeming its own ID-JAG (§9.3).
+- AS-1 and AS-2 are separate issuers with separate keys, also in embedded mode. The draft's §9.3 scopes the profile to parties in different trust domains; external mode fits it, and embedded mode reuses the format for one protocol path. See [embedded mode](mcp-gateway-modes.md#embedded-mode).
 
 ID-JAG is a profile of [identity chaining across trust domains](https://www.ietf.org/archive/id/draft-ietf-oauth-identity-chaining-17.html). It adds the `typ`, required `client_id` and `jti`, client-binding redemption checks, and security rules that a private chaining profile would otherwise have to define. Both drafts are Internet-Drafts, not RFCs.
 
