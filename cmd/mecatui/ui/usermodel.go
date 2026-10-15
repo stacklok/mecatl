@@ -108,10 +108,8 @@ func (s *userModelState) HandleWheel(msg tea.MouseWheelMsg) (tea.Cmd, bool) {
 	if s.compact {
 		return nil, true
 	}
-	move := bounded.LineDown
-	if msg.Button == tea.MouseWheelUp {
-		move = bounded.LineUp
-	} else if msg.Button != tea.MouseWheelDown {
+	move, ok := boundedWheelMove(msg)
+	if !ok {
 		return nil, true
 	}
 	if s.view == userModelPanel && s.list != nil {

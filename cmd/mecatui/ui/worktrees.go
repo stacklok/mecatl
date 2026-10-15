@@ -142,6 +142,7 @@ func (s *worktreesState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 		}
 		return nil, true, false
 	}
+	move, navigation := boundedFilterNavigationMove(msg, s.deps.keys, bounded.LineUp, bounded.LineDown, bounded.Top, bounded.End)
 	switch {
 	case key.Matches(msg, s.deps.keys.Close):
 		if s.filter.Value() == "" {
@@ -149,14 +150,8 @@ func (s *worktreesState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 		}
 		s.filter.SetValue("")
 		s.syncFilter()
-	case msg.String() == "up":
-		s.list.Move(bounded.LineUp)
-	case msg.String() == "down":
-		s.list.Move(bounded.LineDown)
-	case key.Matches(msg, s.deps.keys.ScrollTop):
-		s.list.Move(bounded.Top)
-	case key.Matches(msg, s.deps.keys.ScrollBottom):
-		s.list.Move(bounded.End)
+	case navigation:
+		s.list.Move(move)
 	case key.Matches(msg, s.deps.keys.Choose):
 		if !s.loading && s.err == nil && len(s.filtered) > 0 {
 			wt := s.filtered[s.list.Cursor()]
@@ -173,11 +168,8 @@ func (s *worktreesState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 
 func (s *worktreesState) HandleWheel(msg tea.MouseWheelMsg) (tea.Cmd, bool) {
 	if !s.compact && s.confirm == nil && !s.loading && s.err == nil {
-		switch msg.Button {
-		case tea.MouseWheelUp:
-			s.list.Scroll(bounded.LineUp)
-		case tea.MouseWheelDown:
-			s.list.Scroll(bounded.LineDown)
+		if move, ok := boundedWheelMove(msg); ok {
+			s.list.Scroll(move)
 		}
 	}
 	return nil, true

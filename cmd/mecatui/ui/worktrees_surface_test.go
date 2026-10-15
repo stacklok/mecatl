@@ -57,6 +57,131 @@ func worktreesBodyFits(t *testing.T, s *worktreesState, width, height int) strin
 	return stripANSIstr(body)
 }
 
+func TestWorktreesNavigationThroughUpdate(t *testing.T) {
+	for _, disabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("disabled=%t", disabled), func(t *testing.T) {
+			m, s := openedWorktrees(t, worktreeInventory(4))
+			m.keys = applyKeyOverrides(m.keys, map[string][]string{
+				"Up": {"u"}, "Down": {"d"}, "ScrollTop": {"x"}, "Choose": {"x", "q"}, "Close": {"q"},
+			})
+			m.keys.Up.SetEnabled(!disabled)
+			m.keys.Down.SetEnabled(!disabled)
+			s.deps = (&m).surfaceDeps()
+			m.prompt.Rewrite("draft")
+			for _, step := range []struct {
+				msg    tea.KeyPressMsg
+				cursor int
+				filter string
+				closed bool
+			}{
+				{tea.KeyPressMsg{Code: tea.KeyDown}, 1, "", false},
+				{tea.KeyPressMsg{Code: tea.KeyUp}, 0, "", false},
+				{tea.KeyPressMsg{Code: tea.KeyDown}, 1, "", false},
+				{navigationTestKey("x"), 0, "", false}, // navigation precedes Choose
+				{navigationTestKey("j"), 0, "j", false},
+				{navigationTestKey("k"), 0, "jk", false},
+				{navigationTestKey("q"), 0, "", false}, // Close clears before Choose
+				{navigationTestKey("q"), 0, "", true},
+			} {
+				updated, _ := m.Update(step.msg)
+				m = updated.(Model)
+				if s.list.Cursor() != step.cursor || s.filter.Value() != step.filter || (m.modal == nil) != step.closed {
+					t.Fatalf("%q: cursor=%d filter=%q modal=%T", step.msg.String(), s.list.Cursor(), s.filter.Value(), m.modal)
+				}
+				if m.prompt.Value() != "draft" || m.phase != phaseIdle || s.confirm != nil || s.intent != nil {
+					t.Fatalf("%q leaked input or activated a worktree", step.msg.String())
+				}
+			}
+		})
+	}
+}
+
+func TestWorktreesFilterNavigationDoesNotPage(t *testing.T) {
+	_, s := openedWorktrees(t, worktreeInventory(40))
+	s.deps.keys = navigationTestKeys()
+	s.deps.keys.Up.SetEnabled(false)
+	s.deps.keys.Down.SetEnabled(false)
+	s.Render(80, 12)
+	s.list.SetCursor(20)
+	for _, msg := range []tea.KeyPressMsg{{Code: tea.KeyPgDown}, {Code: tea.KeyPgUp}} {
+		s.HandleKey(msg)
+		if s.list.Cursor() != 20 || s.filter.Value() != "" {
+			t.Fatal("Worktrees unexpectedly accepted page navigation")
+		}
+	}
+	for _, text := range []string{"n", "p"} {
+		s.HandleKey(navigationTestKey(text))
+	}
+	if s.filter.Value() != "np" {
+		t.Fatalf("remapped page keys must remain text, got %q", s.filter.Value())
+	}
+	s.HandleKey(tea.KeyPressMsg{Code: tea.KeyEsc})
+	s.Render(80, 12)
+	s.HandleKey(tea.KeyPressMsg{Code: tea.KeyDown})
+	if s.list.Cursor() != 1 {
+		t.Fatal("fixed Down lost to disabled/remapped binding")
+	}
+	s.HandleKey(tea.KeyPressMsg{Code: tea.KeyUp})
+	if s.list.Cursor() != 0 {
+		t.Fatal("fixed Up lost to disabled/remapped binding")
+	}
+	s.HandleKey(navigationTestKey("b"))
+	if s.list.Cursor() != 39 {
+		t.Fatal("configurable End no longer navigates")
+	}
+	s.HandleKey(navigationTestKey("t"))
+	if s.list.Cursor() != 0 {
+		t.Fatal("configurable Top no longer navigates")
+	}
+	s.deps.keys.ScrollBottom.SetEnabled(false)
+	s.HandleKey(navigationTestKey("b"))
+	if s.filter.Value() != "b" {
+		t.Fatal("disabled End must remain text")
+	}
+	s.HandleKey(tea.KeyPressMsg{Code: tea.KeyEsc})
+	s.deps.keys = applyKeyOverrides(s.deps.keys, map[string][]string{"ScrollTop": {"z"}, "ScrollBottom": {"z"}, "Choose": {"z"}})
+	s.list.SetCursor(20)
+	s.HandleKey(navigationTestKey("z"))
+	if s.list.Cursor() != 0 || s.confirm != nil {
+		t.Fatal("Worktrees Top must precede End and Choose")
+	}
+}
+
+func TestWorktreesWheelClassificationAndGuards(t *testing.T) {
+	for _, guard := range []string{"none", "compact", "confirmation", "loading", "error"} {
+		t.Run(guard, func(t *testing.T) {
+			_, s := openedWorktrees(t, worktreeInventory(40))
+			s.Render(80, 12)
+			selected, offset := s.list.CursorID(), s.list.Offset()
+			switch guard {
+			case "compact":
+				s.compact = true
+			case "confirmation":
+				wt := selectedWorktree(t, s)
+				s.confirm = &wt
+			case "loading":
+				s.loading = true
+			case "error":
+				s.err = errors.New("test error")
+			}
+			for _, button := range []tea.MouseButton{tea.MouseWheelLeft, tea.MouseWheelRight, tea.MouseNone} {
+				s.HandleWheel(tea.MouseWheelMsg{Button: button})
+				if s.list.CursorID() != selected || s.list.Offset() != offset {
+					t.Fatal("nonvertical wheel changed selection/window")
+				}
+			}
+			s.HandleWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+			if s.list.CursorID() != selected || (s.list.Offset() > offset) != (guard == "none") {
+				t.Fatal("wheel must scroll only the unguarded window, never selection")
+			}
+			s.HandleWheel(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+			if s.list.Offset() != offset || s.list.CursorID() != selected {
+				t.Fatal("WheelUp did not restore window/retain selection")
+			}
+		})
+	}
+}
+
 func TestWorktreesSurface_Scenario1_ManyRowsAndShortOffers(t *testing.T) {
 	rows := worktreeInventory(80)
 	for _, width := range []int{1, 2, 3, 12, 32, 80, 124} {
