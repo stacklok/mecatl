@@ -4445,6 +4445,14 @@ readonly modelSelection: boolean;
 readonly posture: string;
 ```
 
+<Heading as="h4" id="api-servercapabilities-projecttrusted-propertysignature"><code>ServerCapabilities.projectTrusted</code></Heading>
+
+Whether the server trusts its launch workspace; absent from older servers.
+
+```ts
+readonly projectTrusted?: boolean;
+```
+
 <Heading as="h4" id="api-servercapabilities-reflection-propertysignature"><code>ServerCapabilities.reflection</code></Heading>
 
 ```ts

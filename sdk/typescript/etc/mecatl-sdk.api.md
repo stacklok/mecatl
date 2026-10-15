@@ -1269,6 +1269,7 @@ export interface ServerCapabilities {
     readonly modelSelection: boolean;
     // (undocumented)
     readonly posture: string;
+    readonly projectTrusted?: boolean;
     // (undocumented)
     readonly reflection: boolean;
     // (undocumented)
