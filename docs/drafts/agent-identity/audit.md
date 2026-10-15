@@ -61,7 +61,7 @@ The identity work needs these event families:
 - API requests and session ownership checks at mecak8s;
 - definition load, instance registration, and agent-instance credential issuance;
 - each delegation from one run to another;
-- broker session open and close, and AS-1's conversion record at session open; per-call events point to the session-open record for the user;
+- broker session open and close, AS-1's conversion record at session open, and any open refused because the token's user does not own the session; per-call events point to the session-open record for the user;
 - sign-out everywhere, with each run stopped, broker session deleted, refresh token revoked, and schedule authority revoked;
 - an upstream re-check failure and the revocation that follows;
 - ID-JAG issuance and denial at AS-1;

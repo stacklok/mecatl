@@ -190,7 +190,16 @@ The broker exchanges that token at AS-1 with an RFC 8693 token exchange, authent
 
 AS-1 then issues `RT-A42`. The refresh token is opaque to the broker; its meaning lives in an AS-1 record that binds it to client `mecatl`, to Alice as `u-alice-91`, and to session `A42`, with a hard expiry that rotation does not extend. Every ID-JAG issued from it names that subject.
 
-The broker supplies `A42` when the record is created, so the session binding is broker-asserted. It contains bugs such as cross-session confusion and stale sessions; it does not protect against a compromised broker. The refresh token is not tied to Alice's AS-1 login session, so signing out of one client does not end it. Signing out everywhere, closing the session, and the hard expiry end it, and AS-1's upstream re-check ends it if the company IdP disables her account; see [sign-out and revocation](#sign-out-and-revocation).
+The broker supplies `A42` when the record is created, so the session binding is broker-asserted. Only mecak8s checks that Alice owns `hostS42`, so a mecak8s bug could pair her token with another user's session. Two checks catch that kind of bug:
+
+- **Owner match.** With the token, mecak8s sends the owner it holds for `hostS42`. AS-1 converts the token only if the company identity in its `sub_id` equals that owner.
+- **Owner fixed at first open.** AS-1 records the owner when `A42` is first opened and refuses any later open of `A42` for a different user. Session IDs are never reused, so a stale pairing cannot reach a new session.
+
+A mismatch refuses the open and is recorded. Both checks compare facts inside Mecatl, so they catch mistakes, not a compromised mecak8s, which could report a consistent lie.
+
+**Later: a token bound to the session.** When a session is created, the user's client could silently refresh its AS-1 token with RFC 9396 `authorization_details` naming that session, and use that token for it. AS-1 would then convert only a token bound to the session being opened. The client, not only mecak8s, would witness the pairing, and a stolen access token would work for one session instead of the whole API. It needs RFC 9396 support at AS-1, a session-bound token per session in the TUI and Studio, and a two-step session open. Neither check changes the ID-JAG or anything downstream of `RT-A42`.
+
+The refresh token is not tied to Alice's AS-1 login session, so signing out of one client does not end it. Signing out everywhere, closing the session, and the hard expiry end it, and AS-1's upstream re-check ends it if the company IdP disables her account; see [sign-out and revocation](#sign-out-and-revocation).
 
 The existing broker session record under `A42` keeps the workload and host-session binding. The human authority now lives in `RT-A42`, not in a broker-local human record.
 
