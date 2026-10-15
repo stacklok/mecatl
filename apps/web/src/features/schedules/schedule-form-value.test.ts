@@ -5,8 +5,11 @@ import {
   bodyFromValue,
   displayedValue,
   isTriggerEditable,
+  joinOneShot,
+  oneShotParts,
   phraseTriggerPatch,
   type Schedule,
+  scheduleFormProblem,
   TRIGGER_FIELDS,
   type TriggerPatch,
   triggerFromValue,
@@ -222,5 +225,42 @@ describe("schedule trigger lock", () => {
       triggerKind: "once",
     });
     expect(bodyFromValue(typed).trigger).toEqual({ at: new Date(at).toISOString(), kind: "once" });
+  });
+});
+
+describe("scheduleFormProblem", () => {
+  const ready = { ...valueFromSchedule(), name: "nightly", prompt: "Summarize" };
+
+  it("names the first missing field and clears once the form could be sent", () => {
+    expect(scheduleFormProblem(valueFromSchedule())).toBe("Name is required.");
+    expect(scheduleFormProblem({ ...ready, prompt: "  " })).toBe("Prompt is required.");
+    expect(scheduleFormProblem({ ...ready, cron: " " })).toBe("Cron expression is required.");
+    expect(scheduleFormProblem(ready)).toBeNull();
+  });
+
+  it("requires a valid one-shot run time", () => {
+    const once = { ...ready, triggerKind: "once" as const };
+    expect(scheduleFormProblem({ ...once, oneShotAt: "" })).toBe("Run time is required.");
+    expect(scheduleFormProblem({ ...once, oneShotAt: "2030-13-45T25:00" })).toBe(
+      "Run time is not a valid date.",
+    );
+    expect(scheduleFormProblem({ ...once, oneShotAt: "2030-01-02T15:30" })).toBeNull();
+  });
+
+  it("checks an existing schedule against its stored, locked trigger", () => {
+    const stored = schedule({ trigger: { at: "2030-01-02T08:00:00.000Z", kind: "once" } });
+    const value = { ...valueFromSchedule(stored), cron: "", oneShotAt: "" };
+    expect(scheduleFormProblem(displayedValue(value, stored), stored)).toBeNull();
+    expect(scheduleFormProblem({ ...value, name: "" }, stored)).toBe("Name is required.");
+  });
+});
+
+describe("one-shot date and time inputs", () => {
+  it("splits and joins the wall clock, running a bare date at 9:00", () => {
+    expect(oneShotParts("2030-01-02T15:30")).toEqual({ date: "2030-01-02", time: "15:30" });
+    expect(oneShotParts("")).toEqual({ date: "", time: "" });
+    expect(joinOneShot("2030-01-02", "15:30")).toBe("2030-01-02T15:30");
+    expect(joinOneShot("2030-01-02", "")).toBe("2030-01-02T09:00");
+    expect(joinOneShot("", "15:30")).toBe("");
   });
 });
