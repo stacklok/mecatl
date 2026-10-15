@@ -59,7 +59,7 @@ Accepting a token whose `aud` is the Mecatl API from a different client is an ex
 | Issue time and hard expiry | | Authority horizon. |
 | Rotation chain | | Reuse detection. |
 
-The broker supplies the session reference. Rotation inherits the record and does not extend the hard expiry. Session close revokes the token and deletes the record. For now, the refresh token is not tied to the user's AS-1 login session.
+The broker supplies the session reference. Rotation inherits the record and does not extend the hard expiry. Session close revokes the token and deletes the record. The refresh token is not tied to the user's AS-1 login session; [sign-out and revocation](credentials-and-lifecycle.md#sign-out-and-revocation) describes what ends it.
 
 **Per-call ID-JAG.** When no cached `V` exists for (session, instance, gateway), the broker asks AS-1 for an ID-JAG ([draft-ietf-oauth-identity-assertion-authz-grant-04](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/)) with RFC 8693: the broker refresh token as `subject_token` (`subject_token_type=urn:ietf:params:oauth:token-type:refresh_token`), the agent-instance JWT-SVID as `actor_token` (`actor_token_type=urn:ietf:params:oauth:token-type:jwt`), `requested_token_type=urn:ietf:params:oauth:token-type:id-jag`, and AS-2's issuer as `audience`. AS-1:
 
@@ -162,7 +162,11 @@ AS-1 and AS-2 are ToolHive authorization server instances, and vMCP is ToolHive'
 | `private_key_jwt` for client `mecatl` at AS-1 and AS-2 | Yes | Configuration | Identity work |
 | SPIFFE client authentication at the authorization server | Yes | None; verify only | Identity work |
 | AS-1 and AS-2 [audit records](audit.md) | No; the authorization server records no audit events. The plan reuses ToolHive's audit event recorder library, which emits JSON records for collection with fluentd or fluent-bit | Not sized | Identity work |
-| Refresh token bound to the AS-1 login session (`sid`), so logout revokes it | No; only `tsid` exists | Large | Later |
+| Revoke a broker refresh token and its record, by an RFC 7009 endpoint or, while the broker runs inside mecak8s, in process | No; storage revokes by refresh-token family, but no endpoint is wired | Small | Identity work |
+| Revoke all of a user's grants, including schedule authority | No; no index from user to refresh-token families | Medium | Identity work |
+| Upstream re-check when issuing an ID-JAG, with the upstream token kept independent of client sign-out | No; the refresh grant never contacts the upstream IdP (checked at main `9adad0abb`) | Small to medium | Identity work |
+| Refresh token bound to the AS-1 login session (`sid`), so that signing out at AS-1 revokes it | No; `tsid` is per authorization request, not per login | Large | Later |
+| Receive logout and account events from the company IdP (OIDC Back-Channel Logout, Okta event hooks, Shared Signals) | No | Large | Later |
 | DPoP issuance and validation for `V` | No | Large | Later |
 | Scope or `authorization_details` (RFC 9396) narrowing enforced per tool at the gateway | Scope intersection only | Large | Later |
 | Cedar at the gateway reading `act` | No | Part of the narrowing work | Later |
@@ -234,6 +238,16 @@ The ceiling checks below belong to the [authority work](README.md#order-of-work)
 - Check the exact dispatched server/tool pair and recheck changed requests. Prove the reviewer read passes its ceiling while excluded merge fails; PR 42 and PR 43 reads on the same pair have the same ceiling result. Do not claim this proves PR-specific delegation.
 - Preserve existing local checks, AS-1 and AS-2 decisions, and vMCP checks. A ceiling permit must not bypass their denials or substitute for user entitlement. The gateway does not evaluate the agent ceiling; Cedar reading `act` there is later work.
 - Verify audit provenance, definition and policy revision correlation, safe reasons and policy IDs, and distinct decision/dispatch/outcome evidence per operation and attempt. Diagnostic errors must yield an effective deny in the record. Redaction must exclude secrets and unrestricted payloads. Test unknown outcomes without automatic replay and durability across restart once storage, ordering, and failure handling are specified; no transactional ledger is selected here.
+
+## Sign-out and revocation checks
+
+Verify the behavior in [sign-out and revocation](credentials-and-lifecycle.md#sign-out-and-revocation):
+
+- Signing out of one client revokes only that client's tokens; running agents and schedules continue.
+- Signing out everywhere cancels live runs, parked tool calls, and in-flight tool calls; deletes the broker sessions; revokes their refresh tokens at AS-1; drops cached ID-JAGs and `V`; and revokes every schedule's authority. Transcripts remain.
+- It reaches sessions served by another replica.
+- After it, an ID-JAG exchange with any revoked refresh token fails, and each schedule's next run ends with "needs owner action".
+- When the upstream IdP refuses a refresh, AS-1 revokes all the user's grants, including schedule authority, and the exchange fails. A client's own sign-out does not remove the upstream token AS-1 re-checks. Re-checks happen at most once per interval.
 
 ## Modulith constraints
 
