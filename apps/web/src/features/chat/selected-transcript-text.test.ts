@@ -47,4 +47,14 @@ describe("selectedTranscriptText", () => {
     expect(() => selectedTranscriptText(selection, root)).toThrow("boom");
     expect(hiddenOf(root, "a")).toBe(false);
   });
+
+  it("leaves a span that was hidden for its own reason hidden afterwards", () => {
+    const { root, selection } = setup();
+    (root.querySelector("#a") as HTMLElement).hidden = true;
+    selection.containsNode = () => true;
+    selection.toString = () => "Ran ls";
+    selectedTranscriptText(selection, root);
+    expect(hiddenOf(root, "a")).toBe(true);
+    expect(hiddenOf(root, "b")).toBe(false);
+  });
 });

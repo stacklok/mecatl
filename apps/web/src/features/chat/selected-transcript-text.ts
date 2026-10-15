@@ -7,13 +7,13 @@
  * without a paint in between.
  */
 export function selectedTranscriptText(selection: Selection, root: Element): string {
-  const hidden = [...root.querySelectorAll<HTMLElement>(".sr-only")].filter((element) =>
-    selection.containsNode(element, true),
-  );
-  for (const element of hidden) element.hidden = true;
+  const hidden = [...root.querySelectorAll<HTMLElement>(".sr-only")]
+    .filter((element) => selection.containsNode(element, true))
+    .map((element) => ({ element, was: element.hidden }));
+  for (const { element } of hidden) element.hidden = true;
   try {
     return selection.toString().trim();
   } finally {
-    for (const element of hidden) element.hidden = false;
+    for (const { element, was } of hidden) element.hidden = was;
   }
 }
