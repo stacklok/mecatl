@@ -60,7 +60,7 @@ Request transformations must occur before the applicable checks, or the changed 
 
 ## Two requests, two authorization decisions
 
-In the [interactive walkthrough](credentials-and-lifecycle.md#interactive-execution), Alice owns session `S42`. The main instance lists pull requests, then delegates review of PR 42 to a reviewer. The tool names and arguments are illustrative, not a selected MCP server contract.
+In the [interactive walkthrough](credentials-and-lifecycle.md#interactive-execution), Alice owns session `hostS42`. The main instance lists pull requests, then delegates review of PR 42 to a reviewer. The tool names and arguments are illustrative, not a selected MCP server contract.
 
 | Request | V1 effective-ceiling check |
 | --- | --- |

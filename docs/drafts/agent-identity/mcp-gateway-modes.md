@@ -219,7 +219,7 @@ This keeps one protocol path for both modes. It does not add isolation: anyone w
 
 ## Integration requirements and evidence limits
 
-AS-1 must accept `RT-A42` as `subject_token` and the registered agent JWT-SVID as `actor_token` from client `mecatl` authenticated with `private_key_jwt`. It resolves the subject only from the refresh token's record, checks session state, hard expiry, and the actor's registration to the session, authorizes client, subject, actor, and AS-2 target together, and returns an ID-JAG whose single-level `act` holds the actor's opaque `agent:` identifier.
+AS-1 must accept `RT-A42` as `subject_token` and the registered agent JWT-SVID as `actor_token` from client `mecatl` authenticated with `private_key_jwt`. It resolves the subject only from the refresh token's record, checks session state, hard expiry, and the actor's registration to the broker session, authorizes client, subject, actor, and AS-2 target together, and returns an ID-JAG whose single-level `act` holds the actor's opaque `agent:` identifier.
 
 AS-2 must authenticate `mecatl`, validate the ID-JAG under ID-JAG §4.4.1, and resolve the native user: directly in embedded mode, and only through a consent link in external mode. It must issue an access token for the native user that preserves `act` and `client_id`, and no refresh token. Unresolved or unlinked subjects fail closed.
 
