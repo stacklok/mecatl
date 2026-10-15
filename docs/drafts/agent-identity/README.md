@@ -105,6 +105,8 @@ Where the broker runs matters against one attacker: someone with code execution 
 
 In both deployments, the broker takes these facts on mecak8s's word: which agent instance made a call, which loaded definition a session uses as its root, which instance created which child, the run and delegation context, and which open session a call belongs to, which the broker checks against the user's token and the session's recorded owner to catch mistakes. The broker loads global definitions itself, so mecak8s cannot supply their content or ceilings. Audit records mark the facts mecak8s reported.
 
+The authority work limits what those reports can achieve. With ceilings set by the loader and the operator's list of root-eligible definitions, a compromised mecak8s cannot exceed the widest definition a session may use as its root, whichever agent it claims is acting. With run grants, it can act only during runs a user started.
+
 A separate broker service delivers its protections only if the split is real:
 
 - the broker has its own database, KMS permissions, and namespace;
@@ -141,9 +143,10 @@ The **identity work** establishes who acts and records it:
 
 The **authority work** decides what each agent may do:
 
-- resolving each definition's ceiling into permitted MCP server/tool pairs;
+- the definition loader resolving each definition's ceiling into permitted MCP server/tool pairs, and the operator's loader configuration naming which definitions may be a session's root and capping the ceiling of definitions from other sources;
 - each instance's effective ceiling, its definition ceiling narrowed by its parent's;
 - Cedar policy generation and a ceiling check on every call;
+- grants scoped to a run the user started, replacing the session's standing refresh token, so that sessions of absent users carry no authority;
 - task-specific delegation bounds, and user, resource, and argument policy.
 
 Until the authority work is in place, the harness's existing delegation restrictions are the only ceiling checks; the broker adds none. Registration already records the definition reference and creation parent, so the authority work adds computation, not a migration. The chapters describe the whole design and say which parts belong to the authority work.

@@ -199,6 +199,8 @@ A mismatch refuses the open and is recorded. Both checks compare facts inside Me
 
 **Later: a token bound to the session.** When a session is created, the user's client could silently refresh its AS-1 token with RFC 9396 `authorization_details` naming that session, and use that token for it. AS-1 would then convert only a token bound to the session being opened. The client, not only mecak8s, would witness the pairing, and a stolen access token would work for one session instead of the whole API. It needs RFC 9396 support at AS-1, a session-bound token per session in the TUI and Studio, and a two-step session open. Neither check changes the ID-JAG or anything downstream of `RT-A42`.
 
+**Later: run grants.** The [authority work](README.md#order-of-work) replaces the session's standing refresh token with a grant for each run, minted when the run starts from a fresh access token that arrives with the user's request. Sessions of users who are not present then carry no authority. Schedules keep their own authority. A compromised mecak8s could still act during a run the user started; only a key held by the client and signing each run's start would prevent that.
+
 The refresh token is not tied to Alice's AS-1 login session, so signing out of one client does not end it. Signing out everywhere, closing the session, and the hard expiry end it, and AS-1's upstream re-check ends it if the company IdP disables her account; see [sign-out and revocation](#sign-out-and-revocation).
 
 The existing broker session record under `A42` keeps the workload and host-session binding. The human authority now lives in `RT-A42`, not in a broker-local human record.
