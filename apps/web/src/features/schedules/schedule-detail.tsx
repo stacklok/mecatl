@@ -154,8 +154,10 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
       closeDelete();
       return;
     }
-    // Drop the item from the cache before leaving so the refetch cannot render
-    // "not found" while navigation is in flight.
+    // Leave first: while this page is mounted, dropping the item from the list
+    // would re-render it into "not found", and clearing the fires key would let
+    // its observer rebuild the query and fetch fires for the deleted schedule.
+    await navigate({ to: "/workspace/schedules" });
     queryClient.setQueryData<ListSchedulesResponse>(
       listSchedulesQueryKey(),
       (current) =>
@@ -167,7 +169,6 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
     queryClient.removeQueries({
       queryKey: listScheduleFiresQueryKey({ path: { scheduleName } }),
     });
-    await navigate({ to: "/workspace/schedules" });
     void queryClient.invalidateQueries({ queryKey: listSchedulesQueryKey() });
   }
 

@@ -302,6 +302,29 @@ describe("schedule actions refresh run history", () => {
   });
 });
 
+describe("schedule detail actions", () => {
+  it("still refetches the fires when Run now is rejected", async () => {
+    const user = userEvent.setup();
+    let firesFetches = 0;
+    fakeApi((method, path) => {
+      if (method === "POST") return problem("daemon refused");
+      if (path.endsWith("/fires")) {
+        firesFetches += 1;
+        return jsonResponse({ items: [] });
+      }
+      return listResponse([schedule({ name: "Alpha" })]);
+    });
+    mountDetail([schedule({ name: "Alpha" })]);
+    await waitFor(() => expect(firesFetches).toBe(1));
+
+    await user.click(await screen.findByRole("button", { name: "Actions for Alpha" }));
+    await user.click(screen.getByRole("menuitem", { name: "Run now" }));
+
+    expect(await screen.findByText("daemon refused")).toBeTruthy();
+    await waitFor(() => expect(firesFetches).toBe(2));
+  });
+});
+
 describe("schedule detail delete", () => {
   async function confirmDelete(user: ReturnType<typeof userEvent.setup>) {
     await user.click(await screen.findByRole("button", { name: "Actions for Alpha" }));
@@ -310,18 +333,54 @@ describe("schedule detail delete", () => {
     await user.click(within(dialog).getByRole("button", { name: "Delete" }));
   }
 
-  it("leaves for the list without flashing not-found while the list refetch is pending", async () => {
+  it("clears the caches only after leaving, so the page never flashes not-found or refires", async () => {
     const user = userEvent.setup();
+    const calls: string[] = [];
     fakeApi((method, path) => {
+      calls.push(`${method} ${path}`);
       if (method === "GET" && path.endsWith("/fires")) return jsonResponse({ items: [] });
       if (method === "GET") return new Promise<Response>(() => {});
       return undefined;
     });
-    const { router } = mountDetail([schedule({ name: "Alpha" })]);
+    const { queryClient, router } = mountDetail([schedule({ name: "Alpha" })]);
+
+    // Hold the navigation so the cache state while the page is still mounted is observable.
+    const navigate = router.navigate.bind(router);
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    router.navigate = (async (options: Parameters<typeof navigate>[0]) => {
+      await held;
+      return navigate(options);
+    }) as typeof router.navigate;
+    let flashed = false;
+    const watcher = new MutationObserver(() => {
+      if (screen.queryByRole("alert")) flashed = true;
+    });
+    watcher.observe(document.body, { childList: true, subtree: true });
 
     await confirmDelete(user);
+    await waitFor(() => expect(calls).toContain("DELETE /api/v1/schedules/Alpha"));
+    const afterDelete = calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(
+      queryClient.getQueryData<ListSchedulesResponse>(listSchedulesQueryKey())?.items,
+    ).toHaveLength(1);
+
+    release();
     await waitFor(() => expect(router.history.location.pathname).toBe("/workspace/schedules"));
+    await waitFor(() =>
+      expect(
+        queryClient.getQueryData<ListSchedulesResponse>(listSchedulesQueryKey())?.items,
+      ).toEqual([]),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    watcher.disconnect();
+
+    expect(flashed).toBe(false);
     expect(screen.queryByRole("alert")).toBeNull();
+    expect(calls.slice(afterDelete).filter((call) => call.endsWith("/fires"))).toEqual([]);
   });
 
   it("reports a rejected delete and stays on the page", async () => {
