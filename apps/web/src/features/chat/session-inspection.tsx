@@ -72,6 +72,25 @@ function unavailable(reason: string, fallback: string): string {
   return reason || fallback;
 }
 
+/**
+ * Whether the caller may read a session's saved transcript, and the reason to
+ * show when not. The capability rides the session inventory row; the session
+ * detail does not carry it. Inspection and the schedule run log share this one
+ * gate.
+ */
+export function transcriptAccess(
+  session: SessionSummaryResponse,
+  runtime: RuntimeResponse | undefined,
+): { readable: boolean; reason: string } {
+  const online = runtime?.connection === "online";
+  return {
+    readable: online && session.capabilities.inspect && session.capabilities.viewTranscript,
+    reason: !online
+      ? "Transcript unavailable while offline."
+      : unavailable(session.capabilities.viewTranscriptReason, "Transcript unavailable."),
+  };
+}
+
 /** Only a selector-specific rejection warrants relisting; other failures are not the choice's fault. */
 function isSelectorRejection(caught: unknown): boolean {
   return (
@@ -102,7 +121,10 @@ export function SessionInspection({
   );
   const online = runtime?.connection === "online";
   const canInspect = session.capabilities.inspect && online;
-  const canReadTranscript = canInspect && session.capabilities.viewTranscript;
+  const { readable: canReadTranscript, reason: transcriptUnavailable } = transcriptAccess(
+    session,
+    runtime,
+  );
   const canReadSoul = online && runtime?.capabilities.soul === true;
   const canReadWorktrees = canInspect && runtime?.capabilities.worktrees === true;
   const detail = useQuery({
@@ -183,9 +205,6 @@ export function SessionInspection({
     }
   }
 
-  const transcriptUnavailable = !online
-    ? "Transcript unavailable while offline."
-    : unavailable(session.capabilities.viewTranscriptReason, "Transcript unavailable.");
   const soulUnavailable = `Soul inspection unavailable${!online ? " while offline" : " on this connection"}.`;
   const worktreesUnavailable = `Worktrees unavailable${!online ? " while offline" : " for this session"}.`;
   const debugSupported = online && runtime?.capabilities.sessionDebug === true;
