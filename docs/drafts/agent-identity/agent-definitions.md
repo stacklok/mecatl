@@ -18,6 +18,52 @@ An agent definition describes how an agent should perform work. Mecatl represent
 
 The existing implementation persists a [session incarnation](../../../engine/session/incarnation.go) on each session aggregate, including child sessions. The proposal uses that durable incarnation for agent-instance identity; it is not the host session ID or a run ID. The broker's own session incarnation and attachment binding are separate [recovery concepts](credentials-and-lifecycle.md#pauses-and-restart).
 
+## Relationships and lifetimes
+
+An agent definition can be reused by many agent instances. Each instance has its
+own identity and persisted context, and can perform several runs over its lifetime.
+
+```mermaid
+flowchart LR
+    D["AgentDef<br/>Reusable definition"]
+    S["Session<br/>Persisted context"]
+    I["Agent instance<br/>One particular agent"]
+    R["Run<br/>One unit of work"]
+    C["Child agent instance<br/>Own identity, session, and runs"]
+
+    D -->|"one definition, many instances"| I
+    S ---|"backs this instance"| I
+    I -->|"one instance, many runs"| R
+    I -->|"may create child instances"| C
+```
+
+Here, *Session* means the persisted context for one agent instance. A child has
+its own child Session. The root session and its children form the wider session
+tree. Each child follows the same relationships shown for the parent instance,
+and can use a different selected definition. A root instance has no creation
+parent; a child has one creation-parent link.
+
+Reviewing PR 42 and later reviewing PR 57 can use the same reviewer instance in
+separate runs. The selected definition stays fixed for the instance. Pausing for
+approval and resuming continues the same run, including after restoration.
+
+| Event | Instance identity | Run |
+| --- | --- | --- |
+| Start a new root session | Create a new main instance. | New work starts a run. |
+| Assign more work to an existing instance | Keep the same instance and selected definition. | Start another run. |
+| Create a child agent | Create a distinct instance with its own Session and a creation-parent link. | The child's work has its own run. |
+| Pause and resume unfinished work | Keep the same instance. | Continue the existing run. |
+| Restore after a process restart | Recover the original instance, selected definition, and creation-parent link. | Continue a recoverable unfinished run; later work starts a new run. |
+
+Creation ancestry and execution delegation describe different relationships. The
+creation-parent link records which instance created a child. A delegation links
+the run assigning work to the run performing it. The child's identity remains
+stable across its runs; each run supplies its own execution context. See
+[registering instances](#registering-instances).
+
+The [domain model](../../architecture/mecatl.modelith.md) provides the broader
+execution model; this view focuses on agent identity and continuity.
+
 ## What AgentDef contains
 
 The existing [`AgentDef`](../../../engine/tool/agentsource.go) combines several concerns:
