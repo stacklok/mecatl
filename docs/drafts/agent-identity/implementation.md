@@ -254,6 +254,9 @@ Verify the [AuditEvent profile](audit.md#auditevent-profile) through the real to
 - `Data` is valid JSON matching its structure version, and `Subjects`, `Target`, and `Data` contain only keys allowlisted for the type.
 - No token, assertion, refresh token, authorization header, or token-endpoint request body appears in any record, including errors.
 - `DelegationChain` output matches what toolhive-core produces for the same `act` chain.
+- A three-level delegation chain, main to reviewer to specialist, can be reconstructed from lineage events after a broker restart and after session cleanup.
+- Two instances of the same definition under different parents stay distinct in reconstruction.
+- A missing or malformed lineage record makes reconstruction report an incomplete chain, not a shorter one.
 - A delivery failure is reported through the logger, as toolhive-core [#343](https://github.com/stacklok/toolhive-core/issues/343) proposes.
 
 ## Sign-out and revocation checks
