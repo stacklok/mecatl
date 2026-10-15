@@ -21,10 +21,11 @@ The existing implementation persists a [session incarnation](../../../engine/ses
 
 ## Relationships and lifetimes
 
-An agent definition can be reused by many agent instances. Each instance has its own identity and persisted context, and can perform several runs over its lifetime.
+The broker's [definition loader](#loading-definitions) loads definitions up front. An agent definition can be reused by many agent instances. Each instance has its own identity and persisted context, and can perform several runs over its lifetime.
 
 ```mermaid
 flowchart LR
+    L["Definition loader<br/>Broker module"]
     D["AgentDef<br/>Reusable definition"]
     S["Host session<br/>Persisted context"]
     I["Agent instance<br/>One particular agent"]
@@ -32,6 +33,7 @@ flowchart LR
     C["Child agent instance<br/>Own identity, session, and runs"]
     CR["Child run"]
 
+    L -->|"loads at startup"| D
     D -->|"one definition, many instances"| I
     S ---|"backs this instance"| I
     I -->|"one instance, many runs"| R
