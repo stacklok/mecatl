@@ -12,6 +12,8 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
+	"github.com/stacklok/mecatl/engine/adapter/search"
+	"github.com/stacklok/mecatl/engine/adapter/webfetch"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -290,4 +292,160 @@ func (s *argsRecordingTool) calls() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.n
+}
+
+// runDenyingAsks runs one call, refusing every approval request, and reports the
+// call's result and whether approval was requested.
+func runDenyingAsks(t *testing.T, catalog *tool.Catalog, policy port.PermissionPolicy, env tool.Environment, call session.ToolCall) (result session.ToolResult, asked bool) {
+	t.Helper()
+	eng := NewEngine(Deps{LLM: mockllm.New(mockllm.ToolCallTurn(call), mockllm.TextTurn("done")), Catalog: catalog, Policy: policy})
+	sess := session.New("policy-args", session.ModeDefault, env.Ref(), session.Limits{MaxTurns: 3}, time.Now())
+	run := eng.Run(context.Background(), sess, env, RunRequest{Text: "run"})
+	seen := false
+	for event := range run.Events() {
+		if event.Type == session.EvPermissionAsk && event.Ask != nil {
+			asked = true
+			run.Approve(event.Ask.AskID, session.VerdictDeny)
+		}
+		if event.Type == session.EvToolResult && event.ToolResult != nil && event.ToolResult.CallID == call.ID {
+			result, seen = *event.ToolResult, true
+		}
+	}
+	if !seen {
+		t.Fatalf("no tool result for %s", call.ID)
+	}
+	return result, asked
+}
+
+// recordingSearchProvider records the queries WebSearch sends it.
+type recordingSearchProvider struct {
+	mu      sync.Mutex
+	queries []string
+}
+
+func (p *recordingSearchProvider) Search(_ context.Context, q tool.SearchQuery) ([]tool.SearchResult, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.queries = append(p.queries, q.Query)
+	return []tool.SearchResult{{Title: "result", URL: "https://example.test/", Snippet: "snippet"}}, nil
+}
+
+func (p *recordingSearchProvider) seen() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.queries...)
+}
+
+// TestBuiltinToolDenyMatchesTheExecutedOperand runs real built-in tools whose
+// calls carry an allowed decoy in an argument the tool ignores and another value
+// in the argument it acts on. A Deny written for the executed operand must stop
+// the call before the tool runs, and with no rule for the executed operand the
+// Allow written for the decoy must not admit it. The canonical call is the
+// positive control that the rules admit the allowed operand.
+func TestBuiltinToolDenyMatchesTheExecutedOperand(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		tool      func(*recordingSearchProvider) tool.Tool
+		allow     string
+		deny      string
+		decoyArgs string
+		canonical string
+		// executed reports what the tool acted on, from the workspace result or
+		// the provider.
+		executed func(session.ToolResult, *recordingSearchProvider) string
+	}{
+		{
+			name:      "Glob",
+			tool:      func(*recordingSearchProvider) tool.Tool { return fstools.GlobTool{} },
+			allow:     "public/**",
+			deny:      "secret/**",
+			decoyArgs: `{"path":"public/**","pattern":"secret/**"}`,
+			canonical: `{"pattern":"public/**"}`,
+			executed: func(res session.ToolResult, _ *recordingSearchProvider) string {
+				if strings.Contains(res.Content, "secret/key.txt") {
+					return "secret/**"
+				}
+				if strings.Contains(res.Content, "public/readme.txt") {
+					return "public/**"
+				}
+				return ""
+			},
+		},
+		{
+			name:      "WebSearch",
+			tool:      func(p *recordingSearchProvider) tool.Tool { return search.NewWebSearchTool(p) },
+			allow:     "public *",
+			deny:      "secret *",
+			decoyArgs: `{"pattern":"public docs","query":"secret docs"}`,
+			canonical: `{"query":"public docs"}`,
+			executed: func(_ session.ToolResult, p *recordingSearchProvider) string {
+				return strings.Join(p.seen(), ",")
+			},
+		},
+		{
+			// The denied call never reaches the network; the canonical call is not
+			// run because it would.
+			name:      "WebFetch",
+			tool:      func(*recordingSearchProvider) tool.Tool { return webfetch.New() },
+			allow:     "https://public.example/*",
+			deny:      "https://secret.example/*",
+			decoyArgs: `{"path":"https://public.example/","url":"https://secret.example/"}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			run := func(args string, rules ...governance.Rule) (session.ToolResult, bool, *recordingSearchProvider) {
+				ws := memfs.NewWorkspace("/ws")
+				for path, body := range map[string]string{"public/readme.txt": "hello", "secret/key.txt": "token"} {
+					if err := ws.Write(t.Context(), path, []byte(body)); err != nil {
+						t.Fatal(err)
+					}
+				}
+				provider := &recordingSearchProvider{}
+				catalog := tool.NewCatalog()
+				catalog.MustRegister(tc.tool(provider))
+				result, asked := runDenyingAsks(t, catalog, permpolicy.NewPolicy(rules, nil), testEnvironment(ws, nil), session.NewToolCall("c", tc.name, []byte(args)))
+				return result, asked, provider
+			}
+
+			allow := governance.Rule{Scope: governance.ScopeCLI, Tool: tc.name, Pattern: tc.allow, Effect: governance.Allow}
+			deny := governance.Rule{Scope: governance.ScopeCLI, Tool: tc.name, Pattern: tc.deny, Effect: governance.Deny}
+			for _, rc := range []struct {
+				rules   []governance.Rule
+				wantAsk bool
+			}{
+				{rules: []governance.Rule{allow, deny}},
+				// No rule covers the executed operand, so the call needs approval;
+				// the decoy's Allow must not admit it. The approval is refused.
+				{rules: []governance.Rule{allow}, wantAsk: true},
+			} {
+				result, asked, provider := run(tc.decoyArgs, rc.rules...)
+				if asked != rc.wantAsk {
+					t.Errorf("decoy call under %d rule(s): asked = %v, want %v", len(rc.rules), asked, rc.wantAsk)
+				}
+				if !result.IsError || !strings.Contains(result.Content, "permission denied") {
+					t.Fatalf("decoy call under %d rule(s): result = %+v, want a permission denial", len(rc.rules), result)
+				}
+				if tc.executed != nil {
+					if got := tc.executed(result, provider); got != "" {
+						t.Fatalf("decoy call under %d rule(s) acted on %q", len(rc.rules), got)
+					}
+				}
+			}
+			if tc.canonical == "" {
+				return
+			}
+			result, asked, provider := run(tc.canonical, allow, deny)
+			if asked {
+				t.Fatal("the canonical call asked for approval")
+			}
+			if result.IsError {
+				t.Fatalf("canonical call failed: %+v", result)
+			}
+			if got := tc.executed(result, provider); got == "" {
+				t.Fatalf("canonical call did not act on the allowed operand: %+v", result)
+			}
+		})
+	}
 }

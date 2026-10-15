@@ -2,6 +2,7 @@ package governance
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 )
 
@@ -194,7 +195,7 @@ func (*Evaluator) LearnableRule(tool string, args json.RawMessage) (Rule, bool) 
 // learnablePattern derives the exact canonical pattern a learned rule would carry
 // for (tool, args), or ok=false when the call must not be learned. For Shell it
 // requires EXACTLY one canonicalized segment with no substitution/grouping; for
-// every other tool it reuses nonShellPattern (the path/target field). An empty
+// every other tool it reuses nonShellPattern (the operand rules match). An empty
 // derived pattern is returned as-is so the caller refuses a tool-wide grant.
 func learnablePattern(tool string, args json.RawMessage) (string, bool) {
 	if CheckToolArgs(args) != nil {
@@ -258,8 +259,25 @@ func (e *Evaluator) resolve(rules []Rule, tool string, args json.RawMessage) Per
 			return e.resolvePatterns(rules, tool, patterns)
 		}
 	}
-	pattern := nonShellPattern(tool, args)
-	return e.resolveSimple(rules, tool, pattern)
+	primary, others := resourcePatterns(tool, args)
+	return e.resolveResource(rules, tool, primary, others)
+}
+
+// resolveResource evaluates a single-resource call on its primary operand, then
+// lets a rule written for one of its other candidate operands make the decision
+// stricter. Governance cannot tell which of those arguments a tool without a
+// declared operand acts on, so a pattern Deny or Ask on any of them holds. Only
+// a rule with a pattern escalates: a tool-wide rule and the no-match default
+// already applied to the primary operand.
+func (e *Evaluator) resolveResource(rules []Rule, tool, primary string, others []string) PermissionDecision {
+	d := e.resolveSimple(rules, tool, primary)
+	for _, pattern := range others {
+		other, rule := e.resolveSimpleRule(rules, tool, pattern)
+		if rule != nil && rule.Pattern != "" && effectRank(other.Effect) > effectRank(d.Effect) {
+			d = other
+		}
+	}
+	return d
 }
 
 // resolvePatterns evaluates every resource named by one tool call independently.
@@ -608,28 +626,102 @@ type resourceArgs struct {
 	Query    json.RawMessage `json:"query"`
 }
 
+// The resource argument names, as resourceArgs tags them.
+const (
+	argPath     = "path"
+	argFilePath = "file_path"
+	argPattern  = "pattern"
+	argURL      = "url"
+	argQuery    = "query"
+)
+
+// field returns the raw value of the argument name, one of resourceArgNames.
+func (a *resourceArgs) field(name string) json.RawMessage {
+	switch name {
+	case argPath:
+		return a.Path
+	case argFilePath:
+		return a.FilePath
+	case argPattern:
+		return a.Pattern
+	case argURL:
+		return a.URL
+	case argQuery:
+		return a.Query
+	}
+	return nil
+}
+
+// resourceArgNames are the resource arguments a tool without a declared operand
+// is matched on, in precedence order.
+var resourceArgNames = []string{argPath, argFilePath, argPattern, argURL, argQuery}
+
+// builtinResourceArgs names, for each built-in single-resource tool, the
+// argument the tool acts on. Its rules are matched against that argument only,
+// so an extra argument the tool ignores cannot choose the value a rule sees.
+var builtinResourceArgs = map[string]string{
+	"Read":      argPath,
+	"Write":     argPath,
+	"Edit":      argPath,
+	"Remove":    argPath,
+	"ListDir":   argPath,
+	"Grep":      argPath,
+	"Glob":      argPattern,
+	"WebFetch":  argURL,
+	"WebSearch": argQuery,
+}
+
 // nonShellPattern derives the pattern string to match a single-resource non-Shell tool call
-// against. It uses the most common path/target field of the built-in tools so
-// rules can target specific files; unknown or ambiguous shapes fall back to the
-// empty string (which only matches tool-wide rules).
-func nonShellPattern(_ string, args json.RawMessage) string {
+// against: the primary operand resourcePatterns returns.
+func nonShellPattern(tool string, args json.RawMessage) string {
+	primary, _ := resourcePatterns(tool, args)
+	return primary
+}
+
+// resourcePatterns derives the values a single-resource non-Shell tool call is
+// matched against. A built-in tool is matched on the argument it acts on (see
+// builtinResourceArgs) and has no other operand; a missing or non-string
+// argument derives the empty pattern, which only tool-wide rules match. Any
+// other tool's argument contract is unknown to governance, so primary is the
+// first string-valued resource argument in resourceArgNames order and others
+// holds the remaining ones; resolveResource lets a rule written for any of them
+// restrict the call. Ambiguous or invalid arguments derive no pattern.
+func resourcePatterns(tool string, args json.RawMessage) (primary string, others []string) {
 	if len(args) == 0 {
-		return ""
+		return "", nil
 	}
 	var fields resourceArgs
 	if err := DecodeToolArgs(args, &fields); err != nil {
-		return ""
+		return "", nil
 	}
-	for _, raw := range []json.RawMessage{fields.Path, fields.FilePath, fields.Pattern, fields.URL, fields.Query} {
-		if raw == nil {
-			continue
-		}
-		var s string
-		if json.Unmarshal(raw, &s) == nil {
-			return s
+	if name, ok := builtinResourceArgs[tool]; ok {
+		s, _ := stringArg(fields.field(name))
+		return s, nil
+	}
+	found := false
+	for _, name := range resourceArgNames {
+		s, ok := stringArg(fields.field(name))
+		switch {
+		case !ok:
+		case !found:
+			primary, found = s, true
+		case s != primary && !slices.Contains(others, s):
+			others = append(others, s)
 		}
 	}
-	return ""
+	return primary, others
+}
+
+// stringArg reports raw's value when it is a JSON string.
+func stringArg(raw json.RawMessage) (string, bool) {
+	if raw == nil {
+		return "", false
+	}
+	var s string
+	if json.Unmarshal(raw, &s) != nil {
+		return "", false
+	}
+	return s, true
 }
 
 // shellCommandArgs is the policy view of a Shell call's arguments, decoded

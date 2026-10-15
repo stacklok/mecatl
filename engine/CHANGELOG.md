@@ -444,8 +444,19 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   returns `("", false)` for them. This replaces the earlier case-insensitive,
   last-key-wins reading of `tool.LocalFileOperands` (issue #2094) for those
   shapes. Callers that sent case-variant or repeated keys must send each
-  argument once, spelled as in the tool schema. Changed (pre-v1 minor); no
-  exported signatures changed.
+  argument once, spelled as in the tool schema. A key that exactly names an
+  untagged destination field is still accepted. Plan-mode `PresentPlan` calls
+  apply the same check before the plan approval is surfaced.
+
+  A built-in tool's rules now match the argument the tool acts on: `path` for
+  `Read`, `Write`, `Edit`, `Remove`, `ListDir` and `Grep`, `pattern` for `Glob`,
+  `url` for `WebFetch`, and `query` for `WebSearch`. An extra policy-looking
+  argument the tool ignores no longer selects the matched value, and a `Grep`
+  call without `path` matches only tool-wide rules instead of its regular
+  expression. Other tools are still matched on the first of `path`,
+  `file_path`, `pattern`, `url`, and `query`, and a pattern `Deny` or `Ask` on
+  any of the others now also applies. Changed (pre-v1 minor); no exported
+  signatures changed.
 
 - **Target-scoped project guidance and ephemeral snapshot** — `prompt.InstructionAssembler`
   now requires `Assemble(context.Context, []string, *session.InstructionSnapshot, int)`
