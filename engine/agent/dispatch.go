@@ -1609,6 +1609,14 @@ func (e *Engine) askHookApproval(ctx context.Context, r *Run, sess *session.Sess
 // askHookApproval relies on its caller's openCard. It emits NO diagnostics line
 // (the loop's "exactly THREE lines" invariant holds).
 func (e *Engine) surfacePlanAsk(ctx context.Context, r *Run, sess *session.Session, turnIdx int, c session.ToolCall, resultEvent session.EventType) (session.ToolResult, bool) {
+	// PresentPlan is intercepted before permissionDecision, so it applies the
+	// same argument check here: an approver must never see a plan whose fields
+	// different readers would decode differently.
+	if err := governance.CheckToolArgs(c.Args); err != nil {
+		res := denyResult(c, governance.AmbiguousArgsReason(err))
+		e.publishToolResult(r, session.Event{Type: resultEvent, Turn: turnIdx, ToolResult: ptr(res)})
+		return res, false
+	}
 	// Headless degrade (mirrors preHook's askable-block degrade): a
 	// non-interactive engine has NO human to approve a plan, so it must NOT surface
 	// an ask (a headless run never emits EvPermissionAsk). Fail safe: synthesize a
