@@ -140,7 +140,7 @@ The diagram follows the successful path. Other outcomes:
 - **Denial or failure.** Any denial before dispatch prevents the provider call. Retrying requires authorization again.
 - **Unknown outcome.** If dispatch may have happened but no completion was observed, the outcome is unknown and is not replayed automatically.
 
-Every later tool call repeats the broker checks, including calls served from the `V` cache. The [failure matrix](#failure-matrix) lists every failure, and [renewal triggers](#renewal-triggers) when each credential is replaced.
+Every later tool call repeats the broker checks, including calls served from the `V` cache. The [failure matrix](#failure-matrix) lists the failures each step returns, and [renewal triggers](#renewal-triggers) when each credential is replaced.
 
 Each step below follows the same shape: what arrives, the checks in the order they run, what is issued, how each failure is reported and whether a retry can succeed, why the step exists, what it does not prove, and what is recorded. Checks run in the listed order and stop at the first failure. Error responses never echo a token, an assertion, or a claim value from one. Token-endpoint errors follow RFC 6749 §5.2, RFC 8693 §2.2.2, RFC 7523 §3.1, and RFC 9396 §8; broker calls are gRPC and use gRPC status codes. Where one error code covers several causes, a reason code tells them apart; see [error reasons](#error-reasons).
 
@@ -258,7 +258,7 @@ client_assertion=<private_key_jwt for mecatl>
 6. Session `A42` has never been closed, and has no recorded owner yet or its recorded owner is that same identity. Session IDs are never reused.
 7. The token's `jti` has not opened a session before, or this is a retry: the same `jti`, client, and session, within the source token's `exp`, while `A42` is open.
 
-**Output.** In one transaction, AS-1 records the converted `jti`, records the owner of `A42` if this is the first open, writes the refresh-token record, and revokes `A42`'s previous refresh token if it has one. A retry, or a later open by the same owner, therefore replaces the session's refresh token and never adds a second one. RFC 8693 returns the issued token in `access_token` even when it is not an access token (§2.2.1), and AS-1 echoes the `mecatl_session` entry (RFC 9396 §7):
+**Output.** In one transaction, AS-1 records the converted `jti`, records the owner of `A42` if this is the first open, writes the refresh-token record, and revokes `A42`'s previous refresh token if it has one. A retry, or a later open by the same owner, therefore replaces the session's refresh token and never adds a second one. An exchange still holding the replaced token gets reason `superseded`. RFC 8693 returns the issued token in `access_token` even when it is not an access token (§2.2.1), and AS-1 echoes the `mecatl_session` entry (RFC 9396 §7):
 
 ```json
 {
@@ -302,7 +302,7 @@ Checks 5 and 6 exist because the broker supplies `A42`, and only mecak8s checks 
 
 **Evidence.** AS-1 records the conversion: client `mecatl`, user `u-alice-91`, owner, source token `jti`, session `A42`, and the hard expiry. It records a refused open with its reason, and each refresh token a later open replaced.
 
-**Session end.** `RT-A42` is not tied to Alice's AS-1 login session, so signing out of one client does not end it. Closing the session, signing out everywhere, the hard expiry, and AS-1's upstream re-check revoke it. Losing `RT-A42` for any of these reasons closes `A42`. On Alice's next request, mecak8s opens a new broker session for `hostS42` with a fresh access token, registers its live instances into it again, parents first, with their existing incarnations ([step (4)](#4-agent-instance-jwt-svid)), and reports the open delegations again ([delegation report](#delegation-report)). A closed session leaves a record, its ID, owner, and closing time, so check 6 can refuse to reopen it. The converted `jti` is kept until the source token's `exp` plus the clock skew.
+**Session end.** `RT-A42` is not tied to Alice's AS-1 login session, so signing out of one client does not end it. Closing the session, signing out everywhere, the hard expiry, and AS-1's upstream re-check revoke it. Losing `RT-A42` for any of these reasons closes `A42`. On Alice's next request, mecak8s opens a new broker session for `hostS42` with a fresh access token, registers its live instances into it again, parents first, with their existing incarnations ([step (4)](#4-agent-instance-jwt-svid)), and reports the open delegations again, parents first ([delegation report](#delegation-report)). A closed session leaves a record, its ID, owner, and closing time, so check 6 can refuse to reopen it. The converted `jti` is kept until the source token's `exp` plus the clock skew.
 
 **Later: a token bound to the session.** When a session is created, the user's client could silently refresh its AS-1 token with a `mecatl_session` entry naming that session, and use that token for it. AS-1 would then convert only a token bound to the session being opened. The client, not only mecak8s, would witness the pairing, and a stolen access token would work for one session instead of the whole API. It needs `authorization_details` at AS-1's refresh grant, a session-bound token per session in the TUI and Studio, and a two-step session open. It changes nothing downstream of `RT-A42`.
 
@@ -322,7 +322,7 @@ Checks 5 and 6 exist because the broker supplies `A42`, and only mecak8s checks 
 4. With no parent, including after a fork or clear, the definition is root-eligible. With a parent, the parent is registered to `A42`.
 5. The definition category and name match `[A-Za-z0-9._-]+` and are neither `.` nor `..` (SPIFFE-ID §2.2). A name that would need encoding is rejected, not rewritten.
 6. The name and the nesting depth stay within the caps. Proposed: the definition category and name each up to 63 bytes, a `legacy_` incarnation no longer than an `inc_` one, and up to 8 child levels below the root, which keeps the longest subject near 1,600 bytes. The agent-instance issuer also checks the whole URI against the 2,048 bytes SPIFFE-ID §2.3 says implementations should not generate beyond.
-7. If the instance was registered before, to an earlier broker session of `hostS42`, that session's recorded owner equals `A42`'s.
+7. If the SPIFFE ID was registered before, in any session, that registration had the same host session, owner, definition reference and revision, and parent; only the broker session may differ.
 
 Registration records identity, not permission to spawn, run, or call tools. The agent-instance issuer constructs the canonical subject; see the [registration checks](agent-definitions.md#registering-instances). In the same transaction the agent-instance issuer gives the instance its **`ag_` identifier**: a random, opaque value such as `ag_7hq2x9`, created only if the SPIFFE ID has none yet and reused otherwise. Both directions are unique, one `ag_` identifier per SPIFFE ID and one SPIFFE ID per `ag_` identifier, and an identifier is never reassigned. Registering the same instance into a new session therefore keeps its `ag_` identifier. AS-1 later writes it into `act`.
 
@@ -347,7 +347,7 @@ mecak8s checks that the returned subject is the registered instance. The harness
 4. The signature verifies.
 5. `aud` is exactly the broker's audience, as its only value. JWT-SVID §3.2 only requires the verifier's own value to be present; the single value is Mecatl policy.
 6. `exp` has not passed, allowing the clock skew, and is no further in the future than the configured maximum SVID lifetime.
-7. `sub` matches the full canonical subject of a registered instance byte for byte, and that instance is not deregistered.
+7. `sub` matches the full canonical subject of a registered instance byte for byte.
 8. The instance is registered to the session in use: `A42` from the request at the broker, the session of `RT-A42`'s record at AS-1.
 
 **Failures.**
@@ -355,10 +355,10 @@ mecak8s checks that the returned subject is the registered instance. The harness
 | Check | Response | Retry |
 | --- | --- | --- |
 | Registration 1 | Step (2)'s codes | Only an expired workload credential. |
-| Registration 2 | `FAILED_PRECONDITION` with the session's closing reason, or `PERMISSION_DENIED` for a session bound to another workload | After a new session opens. |
+| Registration 2 | The session's closing reason with its status from [error reasons](#error-reasons), or `PERMISSION_DENIED` for a session bound to another workload | After a new session opens. |
 | Registration 3, 4, 7 | `PERMISSION_DENIED` | No. |
 | Registration 5, 6 | `INVALID_ARGUMENT` | No. |
-| Registration repeated | The same instance reference for the same session, workload, definition, parent, and incarnation; `ALREADY_EXISTS` for the same instance with different content | A lost response is retried safely. |
+| Registration repeated | The same instance reference for the same session and content; `ALREADY_EXISTS` for the same SPIFFE ID with different content | A lost response is retried safely. |
 | SVID 6, expired | `UNAUTHENTICATED` with `svid_expired` at the broker; 400 `invalid_request` with `svid_expired` at AS-1 | mecak8s renews the SVID, one renewal per instance at a time, and retries once. |
 | Any other SVID check | `PERMISSION_DENIED` at the broker; 400 `invalid_request` with `denied` at AS-1 (RFC 8693 §2.2.2) | No. |
 
@@ -449,7 +449,7 @@ The broker then looks up `V` under `(A42, reviewer, gateway, Alice)`. A cache hi
 | Check | Response | Retry |
 | --- | --- | --- |
 | 1 | Step (2)'s codes | Only an expired workload credential. |
-| 2, session closed | `FAILED_PRECONDITION` with the reason AS-1 recorded, the same status and reason AS-1 would return | mecak8s acts on the reason; see [error reasons](#error-reasons). |
+| 2, session closed | The reason AS-1 recorded, with that reason's status from [error reasons](#error-reasons) | mecak8s acts on the reason; see [error reasons](#error-reasons). |
 | 2, other workload | `PERMISSION_DENIED` | No. |
 | 3, expired | `UNAUTHENTICATED` with `svid_expired` | mecak8s renews and retries once. |
 | 3 otherwise, 4–7 | `PERMISSION_DENIED`, recorded; nothing is dispatched | No; retrying requires authorization again. |
@@ -468,10 +468,10 @@ The broker then looks up `V` under `(A42, reviewer, gateway, Alice)`. A cache hi
 
 1. The workload is authenticated ([step (2)](#2-workload-credential)).
 2. `A42` is open and bound to that workload.
-3. `R41` belongs to `A42` and is bound to `mainRef`. If `R41` has no run record yet and names no delegation, the broker records it as a root run of `mainRef` with the reported owner, as [step (6)](#6-per-operation-authorization) check 4 would. If `R41` was itself delegated, its delegation was reported with `R41` as the receiving run.
+3. `R41` belongs to `A42` and is bound to `mainRef`. If `R41` has no run record yet, the broker records it as a root run of `mainRef` with the reported owner, which needs `mainRef` to be a root instance, as [step (6)](#6-per-operation-authorization) check 4 would. If `R41` was itself delegated, its delegation was reported in `A42` with `R41` as the receiving run.
 4. `reviewerRef` is registered to `A42`.
 5. The reported owner of `R42` equals the owner of `R41`.
-6. `D42` has not been reported before, or was reported with exactly the same content.
+6. `D42` has not been reported in `A42`, or was reported in it with exactly the same content. Delegation records are kept per session.
 
 **Output.** A recorded delegation and a run record for `R42`, bound to `reviewerRef` and its owner, which lets `R42` pass [check 4](#6-per-operation-authorization) of every later call.
 
@@ -480,7 +480,7 @@ The broker then looks up `V` under `(A42, reviewer, gateway, Alice)`. A cache hi
 | Check | Response | Retry |
 | --- | --- | --- |
 | 1 | Step (2)'s codes | Only an expired workload credential. |
-| 2 | `FAILED_PRECONDITION` with the session's closing reason, or `PERMISSION_DENIED` | After a new session opens, mecak8s reports the delegation again. |
+| 2 | The session's closing reason with its status from [error reasons](#error-reasons), or `PERMISSION_DENIED` | After a new session opens, mecak8s reports the delegation again. |
 | 3–5 | `PERMISSION_DENIED` | No. Until a consistent report arrives, `R42` cannot call tools. |
 | 6, different content | `ALREADY_EXISTS` | No. |
 | 6, same content | Success | A lost response is retried safely. |
@@ -565,7 +565,8 @@ ID-JAG makes a refresh token as subject token optional (§4.3: an IdP "MAY addit
 | 1 | 401 `invalid_client` | Call fails; not retryable. |
 | 2 | 400 `invalid_request` | Call fails; a broker bug. |
 | 3 | 400 `invalid_target` | Call fails; a configuration fault. |
-| 4 | 400 `invalid_request` with the grant's revocation reason: `session_closed`, `signed_out`, `upstream_revoked`, or `owner_action_required` | mecak8s acts on the reason; see [error reasons](#error-reasons). |
+| 4, revoked | 400 `invalid_request` with the grant's revocation reason | mecak8s acts on the reason; see [error reasons](#error-reasons). |
+| 4, a schedule grant | 400 `invalid_request` with `denied` | Call fails; a broker bug. |
 | 5, IdP refuses the refresh | 400 `invalid_request` with `upstream_revoked` or `owner_action_required` | AS-1 has revoked all of Alice's grants; see [upstream re-check](#upstream-re-check). |
 | 5, recorded expiry reached, or no upstream refresh token | 400 `invalid_request` with `owner_action_required` | AS-1 has revoked all of Alice's grants; she must sign in again. |
 | 5, IdP unreachable, 5xx, or refresh lease timed out | 503 with `Retry-After`, nothing revoked | Call fails closed as a retryable infrastructure error. A 503 is plain HTTP, not an OAuth error, and never means revocation. |
@@ -699,7 +700,7 @@ The failures each step can return: where each is detected, what the user sees, a
 | Access token already opened a session | AS-1 | `invalid_request` with `token_used` | Client refreshes and retries once | Nothing |
 | Access token issued before a user-wide revocation | AS-1 | `invalid_request` with that revocation's reason | Alice signs in again | Nothing more |
 | Echoed entry differs | Broker | Open fails | Session open fails | The new `RT-A42`, closing `A42` |
-| Registration into a closed or foreign session | Agent-instance issuer | `FAILED_PRECONDITION`, `PERMISSION_DENIED` | Agent cannot start until a new session opens | Nothing |
+| Registration into a closed or foreign session | Agent-instance issuer | The closing reason's status, or `PERMISSION_DENIED` | Agent cannot start until a new session opens | Nothing |
 | Re-registration under a different owner | Agent-instance issuer | `PERMISSION_DENIED` | Agent cannot start | Nothing |
 | Root registration of a non-root-eligible definition | Agent-instance issuer | `PERMISSION_DENIED` | Session cannot start with that definition | Nothing |
 | Definition name or depth beyond the caps | Agent-instance issuer | `INVALID_ARGUMENT` | Child agent cannot start | Nothing |
@@ -709,8 +710,8 @@ The failures each step can return: where each is detected, what the user sees, a
 | Run owner differs from the grant's recorded owner | Broker | `PERMISSION_DENIED`, recorded | Call denied | Nothing |
 | No route, or ceiling denies the tool | Broker | `PERMISSION_DENIED` | Call denied | Nothing |
 | Inconsistent delegation report | Broker | `PERMISSION_DENIED`, `ALREADY_EXISTS` | Delegated task cannot call tools | Nothing |
-| Session closed or past its hard expiry | Broker, AS-1 | `FAILED_PRECONDITION`, `invalid_request` with `session_closed` | A new session opens on Alice's next request | Already revoked |
-| Grant revoked by sign out everywhere | Broker, AS-1 | `FAILED_PRECONDITION`, `invalid_request` with `signed_out` | Run stops; Alice is signed out | Already revoked |
+| Session closed or past its hard expiry | Broker, AS-1 | `invalid_request` with `session_closed`; the broker returns its status from error reasons | A new session opens on Alice's next request | Already revoked |
+| Grant revoked by sign out everywhere | Broker, AS-1 | `invalid_request` with `signed_out`; the broker returns its status from error reasons | Run stops; Alice is signed out | Already revoked |
 | Schedule grant presented to an ID-JAG exchange, or a session refresh token used to open a scheduled run | AS-1 | `invalid_request` with `denied` | Call or run fails; a broker bug | Nothing |
 | Company IdP refuses the refresh | AS-1 | `invalid_request` with `upstream_revoked` | Every agent and schedule for Alice stops; she is signed out | All of Alice's grants and client refresh tokens |
 | Upstream refresh token past its recorded expiry, missing, or refused after an ambiguous refresh | AS-1 | `invalid_request` with `owner_action_required` | "Needs owner action": Alice signs in again | All of Alice's grants and client refresh tokens |
@@ -726,7 +727,9 @@ The failures each step can return: where each is detected, what the user sees, a
 
 ### Error reasons
 
-RFC 8693 §2.2.2 requires `invalid_request` for any subject or actor token that is invalid or unacceptable by policy, so the error code alone cannot tell the broker what to do. AS-1 and AS-2 therefore start `error_description` with a reason code, either alone or followed by a colon and text: `error_description=session_closed`, or `error_description=session_closed: session ended`. RFC 6749 §5.2 limits `error_description` to printable ASCII, and reason codes stay within it. The broker carries the reason in a gRPC `google.rpc.ErrorInfo` detail, and mecak8s maps it to an outcome.
+A scheduled run has no client to show anything to: for every revocation reason except `schedule_ended`, it ends with "needs owner action" and Alice is notified.
+
+RFC 8693 §2.2.2 requires `invalid_request` for any subject or actor token that is invalid or unacceptable by policy, so the error code alone cannot tell the broker what to do. AS-1 and AS-2 therefore start `error_description` with a reason code, either alone or followed by a colon and text: `error_description=session_closed`, or `error_description=session_closed: session ended`. RFC 6749 §5.2 limits `error_description` to the characters `%x20-21 / %x23-5B / %x5D-7E`, so the text never contains `"` or `\`; reason codes are lowercase letters and underscores. The broker carries the reason in a gRPC `google.rpc.ErrorInfo` detail, and mecak8s maps it to an outcome.
 
 | Reason | Returned by | Broker gRPC status | mecak8s outcome |
 | --- | --- | --- | --- |
@@ -734,10 +737,12 @@ RFC 8693 §2.2.2 requires `invalid_request` for any subject or actor token that 
 | `token_used` | AS-1, session open | `UNAUTHENTICATED` | The same. |
 | `owner_mismatch` | AS-1, session open | `PERMISSION_DENIED` | Fail the open; a mecak8s pairing bug. |
 | `session_owned` | AS-1, session open | `PERMISSION_DENIED` | Fail the open; a mecak8s pairing bug or a closed session ID reused. |
-| `session_closed` | AS-1, broker | `FAILED_PRECONDITION` | Open a new broker session on the user's next request. A scheduled run ends. |
-| `signed_out` | AS-1, broker | `FAILED_PRECONDITION` | Stop the run; the client shows the user as signed out. |
-| `upstream_revoked` | AS-1, broker | `PERMISSION_DENIED` | Stop the run; the client shows the user as signed out. |
-| `owner_action_required` | AS-1, broker | `FAILED_PRECONDITION` | New outcome `mcp_owner_action_required`, next to `mcp_authorization_pending`: the user must sign in again. A scheduled run ends with "needs owner action" and the owner is notified. |
+| `session_closed` | AS-1, broker | `FAILED_PRECONDITION` | Open a new broker session on the user's next request. |
+| `signed_out` | AS-1, broker | `FAILED_PRECONDITION` | Stop the run; the client shows the user as signed out. At session open: 401, and the client signs in again. |
+| `upstream_revoked` | AS-1, broker | `PERMISSION_DENIED` | Stop the run; the client shows the user as signed out. At session open: 401, and the client signs in again. |
+| `schedule_ended` | AS-1, broker | `FAILED_PRECONDITION` | The schedule was deleted; its run does not start. |
+| `owner_action_required` | AS-1, broker | `FAILED_PRECONDITION` | New outcome `mcp_owner_action_required`, next to `mcp_authorization_pending`: the user must sign in again. |
+| `superseded` | AS-1 | `ABORTED` | A later open replaced the session's refresh token; the broker rereads the stored one and retries once. |
 | `svid_expired` | AS-1, broker | `UNAUTHENTICATED` | Renew the SVID and retry once; not shown to the user. |
 | `denied` | AS-1, broker | `PERMISSION_DENIED` | Deny the call. |
 | `consent_required` | AS-2 | `FAILED_PRECONDITION` | The existing `mcp_authorization_pending` outcome. |
@@ -754,11 +759,11 @@ RFC 8693 §2.2.2 requires `invalid_request` for any subject or actor token that 
 | Agent-instance SVID | When less than half its lifetime remains, on the next use; the old SVID stays valid until its `exp` | Agent-instance issuer, for the same registered instance; one renewal per instance at a time; the `ag_` identifier is unchanged | Calls from that instance fail |
 | Client assertion | Every token-endpoint request | Broker | Exchange fails with `invalid_client` |
 | `RT-A42` | Never | — | A new session open with a fresh access token |
-| Company-IdP refresh token | At most once per re-check interval, when an ID-JAG is requested | AS-1, one refresh per user at a time | See [upstream re-check](#upstream-re-check) |
+| Upstream refresh token | At most once per re-check interval, at an ID-JAG exchange or a scheduled-run session open | AS-1, one refresh per user at a time | See [upstream re-check](#upstream-re-check) |
 | ID-JAG | Never; one per `V` | — | — |
 | `V` | A skew margin before `exp`, at the next call; or within the same call after a 401 from the vMCP | Broker, through steps (7) and (8), one exchange per cache key at a time | The call fails with step (7) or (8)'s outcome |
 | Key sets: AS-1's, AS-2's, the agent trust bundle, the cluster JWKS, and the broker's `jwks_uri` at AS-1 and AS-2 | On an unknown `kid`, rate-limited, and periodically | Each verifier | Tokens signed with a new key are rejected until the refresh succeeds |
-| Schedule authority | Before its horizon, after a notification | Alice | Runs end with "needs owner action" |
+| Schedule grant | Before its horizon, after a notification; renewal moves the horizon of the live grant | Alice | Runs end with "needs owner action" |
 
 ### Configuration
 
@@ -832,14 +837,14 @@ Signing out of one client and stopping Mecatl's agents are different actions.
 | User action or event | What ends | What remains |
 | --- | --- | --- |
 | **Sign out** in the TUI or Studio | That client's own AS-1 tokens, revoked at AS-1. | Running agents and schedules. Their authority is held by the broker, not by the client. |
-| **Sign out everywhere** | Every agent acting for Alice: live runs stop, tool calls parked for authorization are cancelled, broker sessions and their refresh tokens are revoked, each of her schedule grants is revoked, and every client's AS-1 tokens are revoked. | Transcripts. Each schedule stays configured; its next run ends with "needs owner action" until Alice renews it. |
+| **Sign out everywhere** | Every agent acting for Alice: live runs stop, tool calls parked for authorization are cancelled, broker sessions and their refresh tokens are revoked, each of her schedule grants is revoked, and every client's AS-1 refresh tokens and her AS-1 login sessions are revoked. | Transcripts. Each schedule stays configured; its next run ends with "needs owner action" until Alice renews it. |
 | **The company IdP disables Alice's account or revokes her grants** | The same as sign out everywhere, within one re-check interval: AS-1 triggers the broker's sign-out-everywhere path. | Transcripts. |
 | **Alice's upstream refresh token expires or needs her action** | The same, with "needs owner action" as the reason. | Transcripts. |
 | **Closing a session** | That session's refresh token. | Other sessions and schedules. |
 
 **Sign out everywhere.** The steps, whether the client starts them or AS-1 does:
 
-1. AS-1 records Alice's revocation time and reason, revokes every grant it holds for her with that reason, and revokes every client's AS-1 refresh tokens, all in one transaction. From then on, session open and schedule setup refuse any access token issued before that time; a new sign-in issues tokens after it.
+1. AS-1 records Alice's revocation time and reason, revokes every grant it holds for her with that reason, revokes every client's AS-1 refresh tokens, and ends her AS-1 login sessions, all in one transaction. From then on, session open and schedule setup refuse any access token whose `iat` is not later than that time. Issued access tokens still authenticate API requests until they expire, but can no longer open sessions or set up schedules. For `upstream_revoked` and `owner_action_required`, the next sign-in must go through the company IdP and bring a new upstream refresh token.
 2. The broker cancels the in-flight tool calls of Alice's sessions and drops her cached ID-JAGs, `V`, and vMCP session IDs.
 3. mecak8s cancels each session's live run and any tool call parked for authorization. When the client starts sign-out, it calls Mecatl before clearing its own tokens. When AS-1 starts it, the broker tells mecak8s: in process while the broker is a modulith, through a revocation event once it is a separate service.
 
@@ -847,11 +852,11 @@ Today every session has one owner, so this ends each of her broker sessions. Rev
 
 ### Upstream re-check
 
-AS-1 keeps one upstream refresh token per user, from her most recent sign-in at the company IdP, and re-checks it on behalf of every grant it holds for her; a client signing out does not remove it. AS-1 obtains it at sign-in ([step (1)](#1-as-1-access-token)) and records when it expires: the IdP's `refresh_expires_in` where the IdP sends one, otherwise the configured maximum for that IdP. Every ID-JAG exchange compares the current time with that recorded expiry, which needs no call to the IdP. Reaching it ends Alice's authority with reason `owner_action_required`, through the sign-out-everywhere path above. If the IdP issued no refresh token at sign-in, every exchange ends the same way, unless the operator has turned off the re-check for that IdP ([configuration](#configuration)).
+AS-1 keeps one upstream refresh token per user, from her most recent sign-in at the company IdP, and re-checks it on behalf of every grant it holds for her; a client signing out does not remove it. AS-1 obtains it at sign-in ([step (1)](#1-as-1-access-token)) and records when it expires: the IdP's `refresh_expires_in` where the IdP sends one, otherwise the configured maximum for that IdP. Every ID-JAG exchange and scheduled-run session open compares the current time with that recorded expiry, which needs no call to the IdP. Reaching it ends Alice's authority with reason `owner_action_required`, through the sign-out-everywhere path above. If the IdP issued no refresh token at sign-in, every exchange ends the same way, unless the operator has turned off the re-check for that IdP ([configuration](#configuration)).
 
-When the broker exchanges a refresh token for an ID-JAG and the re-check interval has passed, AS-1 refreshes the upstream token first:
+At an ID-JAG exchange or a scheduled-run session open, when the re-check interval has passed, AS-1 refreshes the upstream token first:
 
-1. AS-1 takes a lease on Alice's upstream token and records that a refresh is in flight before calling the IdP. Other exchanges for Alice wait for the lease; if it times out, they fail closed with a 503 and retry later.
+1. AS-1 takes a lease on Alice's upstream token and records that a refresh is in flight before calling the IdP. Other exchanges for Alice wait for the lease; if it times out, they fail closed with a 503 and retry later. A waiter that resumes re-reads its grant first, so it returns the grant's revocation reason if the lease holder revoked it.
 2. AS-1 calls the IdP, then stores the new token, rotated or not, and clears the in-flight record.
 3. If AS-1 crashed or lost the response while a refresh was in flight, it cannot know whether the IdP rotated the token. The next refresh's `invalid_grant` is then treated as "needs owner action", never as revocation.
 
@@ -861,8 +866,7 @@ The IdP's answer decides what happens:
 | --- | --- | --- |
 | Success | Stores the new token, records the time | The exchange continues. |
 | `invalid_grant` before the recorded expiry, after a clean previous refresh | Runs the sign-out-everywhere path with reason `upstream_revoked`, and discards the upstream refresh token | The account was disabled or its grants revoked: the same as sign out everywhere. |
-| `invalid_grant` with no recorded expiry | The same | Treated as revocation, because AS-1 cannot tell the two apart. |
-| `invalid_grant` at or after the recorded expiry, or after an ambiguous previous refresh | Runs the sign-out-everywhere path with reason `owner_action_required`, and discards the upstream refresh token | "Needs owner action": Alice signs in again. Not reported as a disabled account. |
+| `invalid_grant` at or after the recorded expiry, or after an ambiguous previous refresh (this row wins when both apply) | Runs the sign-out-everywhere path with reason `owner_action_required`, and discards the upstream refresh token | "Needs owner action": Alice signs in again. Not reported as a disabled account. |
 | Network error or 5xx | Nothing | That exchange fails closed with a 503; the next one retries. |
 
 A revoked grant stays revoked whatever its reason: signing in again starts a new session or sets up the schedule's grant again, and never revives the old grant. The reason only decides what Alice is told. Until she signs in again, AS-1 holds no upstream refresh token for her, so any exchange fails closed.
@@ -902,7 +906,7 @@ authorization_details=[{"type": "mecatl_schedule", "schedule": "sch-nightly-7",
   "owner": {"iss": "https://login.example.com", "sub": "alice-204"}}]
 ```
 
-**Checks, at AS-1:** session-open checks 1 to 5 and 7, with the `mecatl_schedule` entry in place of the `mecatl_session` one. Instead of check 6, the schedule has no live grant yet, or its grant belongs to the same owner and is replaced.
+**Checks, at AS-1:** session-open checks 1 to 5 and 7, with the `mecatl_schedule` entry in place of the `mecatl_session` one. Instead of check 6, AS-1 records the schedule's owner at first setup and keeps it after any revocation; a later setup must name the same owner, or is refused with `invalid_authorization_details` and `session_owned`. A setup for a schedule whose grant is live moves that grant's horizon; after a revocation, it creates a new grant.
 
 **Output.** A schedule grant bound to `mecatl`, the schedule, and Alice, with the horizon. The broker stores it under the schedule. Presented at the refresh-token grant, it returns `invalid_grant`, as `RT-A42` does.
 
@@ -929,11 +933,23 @@ client_assertion=<private_key_jwt for mecatl>
 3. The subject token resolves to a schedule grant bound to `mecatl`, not revoked, and before its horizon. A session refresh token is refused here.
 4. Alice's upstream refresh token passes the [upstream re-check](#upstream-re-check), as in step (7) check 5.
 5. The entry's owner equals the schedule grant's recorded owner.
-6. Session `A57` has never been opened, or this is a retry: the same schedule grant, client, and session.
+6. Session `A57` has never been opened, or this is a retry: the same schedule grant, client, and session, while `A57` is open. A retry revokes the previous refresh token in the same transaction.
 
 **Output.** A session refresh token for `A57`, with the same response shape as session open, whose expiry is no later than the schedule's horizon. AS-1 records which schedule grant it came from, so revoking the schedule grant revokes it. From here the run is an ordinary session: instances register to `A57`, and steps (6) to (9) apply unchanged, including the `V` cache key. When the run ends, mecak8s closes `A57`, which revokes its refresh token.
 
-**Failures.** As for session open; a revoked schedule grant returns its revocation reason, and the run ends with "needs owner action" and a notification to Alice. A lost response is retried with the same parameters and a new client assertion.
+**Failures.**
+
+| Check | Response | Retry |
+| --- | --- | --- |
+| 1 | 401 `invalid_client` | No. |
+| 2 | 400 `invalid_request` or `invalid_authorization_details` | No; a broker bug. |
+| 3, revoked | 400 `invalid_request` with the grant's revocation reason; `schedule_ended` if the schedule was deleted | No; the run does not start. |
+| 3, past the horizon | 400 `invalid_request` with `owner_action_required` | No; Alice is notified to renew. |
+| 3, a session refresh token | 400 `invalid_request` with `denied` | No; a broker bug. |
+| 4 | As step (7) check 5 | As step (7) check 5. |
+| 5 | 400 `invalid_request` with `owner_mismatch` | No. |
+| 6 | 400 `invalid_authorization_details` with `session_owned` | No. |
+| Lost response | None received | Yes: the same parameters with a new client assertion. |
 
 When Alice sets up the schedule, every connector the schedule may use must be connected: in external mode, the gateway link; in every mode, the provider connection. Anything missing is fixed right then through the existing authorization-pending flow, while she is present.
 

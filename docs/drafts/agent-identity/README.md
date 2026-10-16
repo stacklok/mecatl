@@ -27,7 +27,7 @@ The architecture must connect these facts. An auditor should be able to follow A
 
 A **definition** describes a kind of agent, such as `code-reviewer`. Its source is part of that identity: a repository's definition and an administrator's definition with the same name are not interchangeable. A definition's **ceiling** is the set of MCP server/tool pairs that an agent built from it may call. Changing an execution setting such as a turn limit does not change a definition's identity, and loading a definition grants no access to a user's accounts.
 
-An **instance** is one use of a definition in a session. Alice and Bob can use the same definition but have distinct instances. Restoring a session preserves its instances; a new session creates new ones. A session's **root** is the definition its main agent uses.
+An **instance** is one use of a definition in a session. Alice and Bob can use the same definition but have distinct instances. Restoring a session preserves its instances; a replacement broker session re-registers the same instances; a new host session creates new ones. A session's **root** is the definition its main agent uses.
 
 A **run** is one execution by an instance. Reviewing PR 42 and later PR 57 uses the same reviewer instance in two runs. A delegated child has its own instance and run, linked to the instance that created it and to the run that delegated to it.
 
@@ -42,7 +42,7 @@ mecak8s hosts the API and the harness. It validates the AS-1 access token of the
 The **identity broker** establishes who is acting. It is the existing MCP broker, extended, and one trusted component. Once the authority work is in place, it also bounds what each agent can reach. Its modules are:
 
 - The **definition loader** loads agent definitions from configured sources, records each one's source and revision, and gives the harness the execution configuration. A session's selected definitions stay fixed, so a later change at the source cannot silently replace them. The operator says which definitions may be a session's root, and the broker refuses to register a root instance outside that set. See [agent definitions](agent-definitions.md#loading-definitions).
-- The **agent-instance issuer** signs a SPIFFE JWT-SVID for each instance that mecak8s registers, in its own SPIFFE trust domain, separate from the platform's, with a signing key separate from AS-1's and AS-2's; while the broker runs inside mecak8s, all three keys share one process. It signs on mecak8s's workload-authenticated registration, which is an assertion, not attestation: no evidence about the agent itself is produced or checked.
+- The **agent-instance issuer** signs a SPIFFE JWT-SVID for each instance that mecak8s registers, in its own SPIFFE trust domain, separate from the platform's, with a signing key separate from AS-1's and AS-2's; while the broker runs inside mecak8s, its key and AS-1's share one process, and in embedded mode AS-2's does too. It signs on mecak8s's workload-authenticated registration, which is an assertion, not attestation: no evidence about the agent itself is produced or checked.
 - **AS-1**, Mecatl's login authorization server, signs users in through the company identity provider (IdP) and issues ID-JAGs (Identity Assertion JWT Authorization Grants). An ID-JAG is a short-lived, single-use signed grant that names the user and the acting agent. It is addressed only to AS-2, the gateway's authorization server, which redeems it for an access token, and only when the broker's client presents it.
 - The **authorization and audit** logic checks each protected MCP call and records what it decided and observed.
 
@@ -122,7 +122,7 @@ The **identity work** establishes who acts and records it:
 - instance registration and agent-instance credentials;
 - the credential flow, from sign-in at AS-1 to per-user provider credentials at the gateway;
 - the [run owner](run-owner.md) on every call, so that shared sessions can come later without a call using the wrong user's credentials;
-- sign-out everywhere, which stops every agent and schedule acting for the user, and AS-1's re-check of the company-IdP grant, which does the same when the account is disabled;
+- sign-out everywhere, which stops every agent and schedule acting for the user, and AS-1's re-check of the user's upstream refresh token, which does the same when the account is disabled;
 - audit of who acted, for whom, through which delegation, and what was decided, dispatched, and observed.
 
 The **authority work** decides what each agent may do:

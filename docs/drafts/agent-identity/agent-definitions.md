@@ -118,7 +118,10 @@ The broker's agent-instance issuer validates the registration records that the w
 - If there is a parent, the parent is registered to the same broker session.
 - A registration with no parent names a definition that can be a session's root.
 - For a definition that the broker loaded, the reference matches the broker's record.
-- The subject follows the SPIFFE rules. Each definition category and name uses only `[A-Za-z0-9._-]`, is neither `.` nor `..`, and is at most 63 bytes. The nesting is at most 8 child levels below the root. The whole ID stays within the 2,048 bytes SPIFFE-ID §2.3 says not to exceed. A registration that breaks a rule fails closed; see the [SVID step](credentials-and-lifecycle.md#4-agent-instance-jwt-svid) of the credential flow.
+- The subject follows the SPIFFE rules. Each definition category and name uses only `[A-Za-z0-9._-]`, is neither `.` nor `..`, and is at most 63 bytes. The nesting is at most 8 child levels below the root. A `legacy_` incarnation is no longer than an `inc_` one. The whole ID stays within the 2,048 bytes SPIFFE-ID §2.3 says not to exceed.
+- If the SPIFFE ID was registered before, the earlier registration had the same host session, owner, definition reference and revision, and parent. Only the broker session may differ, when a replacement session re-registers the instance.
+
+A registration that breaks a rule fails closed. The issuer also gives each new SPIFFE ID its `ag_` identifier, reused on re-registration. The [SVID step](credentials-and-lifecycle.md#4-agent-instance-jwt-svid) of the credential flow is the full, ordered list of checks and their errors.
 
 If the checks pass, the issuer associates the supplied incarnation with the registered definition, source, revision, ceiling, and creating instance, if any. It stores the effective ceiling that it computes from them. The session aggregate mints the incarnation. mecak8s persists it and reports it. The broker does not allocate incarnations. A known definition, or a name that the loop supplies, is not enough for issuance.
 
