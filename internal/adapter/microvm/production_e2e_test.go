@@ -203,8 +203,9 @@ func TestMicroVMDefaultPlacementDailyHarnessJourney(t *testing.T) {
 	t.Cleanup(built.Close)
 
 	// This is deliberately the ordinary no-selector API. The deployment, not the
-	// client, chooses microvm-local as the default placement.
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	// client, chooses microvm-local as the default placement, and the unspecified
+	// mode resolves to the deployment's allow-all default.
+	sess, err := built.Service.CreateSession(ctx, "", session.Limits{})
 	if err != nil {
 		t.Fatalf("normal CreateSession: %v", err)
 	}
