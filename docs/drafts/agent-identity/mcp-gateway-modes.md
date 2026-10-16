@@ -37,11 +37,11 @@ The broker authenticates at both servers as one OAuth client, `mecatl`, with `pr
 
 AS-2 receives neither Alice's AS-1 access token, `RT-A42`, nor the SVID. It receives only the ID-JAG.
 
-AS-1 and AS-2 have separate issuer identities, keys, and storage, also in embedded mode. ID-JAG §9.3 says the profile is intended for parties in different trust domains, and that an IdP must not issue access tokens in response to an ID-JAG it issued itself in the same domain, because that could broaden authorization. External mode fits that scope. Embedded mode does not: AS-1, AS-2, and the credential store share one trust domain, and separate keys do not create a boundary. See [embedded mode](#embedded-mode). The agent-instance issuer is a third identity role. RFC 8693 standardizes token-exchange input and output in [§§2.1 and 2.2.1](https://www.rfc-editor.org/rfc/rfc8693.html#section-2), token-type identifiers in [§3](https://www.rfc-editor.org/rfc/rfc8693.html#section-3), and `act` in [§4.1](https://www.rfc-editor.org/rfc/rfc8693.html#section-4.1). ID-JAG is a profile of [identity chaining across trust domains, revision 17](https://www.ietf.org/archive/id/draft-ietf-oauth-identity-chaining-17.html): it reuses that draft's exchange, RFC 7523 redemption, and no-refresh-token rule, and adds an explicit `typ`, required `client_id`, `jti`, `iat`, and `aud`, client-binding redemption checks, and security rules. Both are Internet-Drafts, not RFCs.
+AS-1 and AS-2 have separate issuer identities, keys, and storage, also in embedded mode. ID-JAG §9.3 says the profile is intended for parties in different administrative domains, and that an IdP must not issue access tokens in response to an ID-JAG it issued itself in the same domain, because that could broaden authorization. External mode fits that scope. Embedded mode does not: AS-1, AS-2, and the credential store share one administrative domain, and separate keys do not create a boundary. See [embedded mode](#embedded-mode). The agent-instance issuer is a third identity role. RFC 8693 standardizes token-exchange input and output in [§§2.1 and 2.2.1](https://www.rfc-editor.org/rfc/rfc8693.html#section-2), token-type identifiers in [§3](https://www.rfc-editor.org/rfc/rfc8693.html#section-3), and `act` in [§4.1](https://www.rfc-editor.org/rfc/rfc8693.html#section-4.1). ID-JAG is a profile of [identity chaining across trust domains, revision 17](https://www.ietf.org/archive/id/draft-ietf-oauth-identity-chaining-17.html): it reuses that draft's exchange, RFC 7523 redemption, and no-refresh-token rule, and adds an explicit `typ`, required `client_id`, `jti`, `iat`, and `aud`, client-binding redemption checks, and security rules. Both are Internet-Drafts, not RFCs.
 
 ## Following one call
 
-Alice, AS-1 subject `u-alice-91`, owns harness session `hostS42`. Her session is already open: the broker holds `RT-A42` for broker session `A42`. Her reviewer agent instance asks to read PR 42 in `acme/payments`. The broker checks the session, workload, actor, effective ceiling, and route. With no cached `V` for `(A42, reviewer, gateway, Alice)`, it exchanges `RT-A42` and the reviewer SVID at AS-1 for an ID-JAG, redeems the ID-JAG at AS-2 for `V`, and calls the vMCP. The gateway in this example is external, at `https://gateway.example.com`.
+Alice, AS-1 subject `u-alice-91`, owns harness session `hostS42`. Her session is already open: the broker holds `RT-A42` for broker session `A42`. Her reviewer agent instance asks to read PR 42 in `acme/payments`. The broker checks the session, workload, actor, run owner, route, and, with the authority work, the effective ceiling. With no cached `V` for `(A42, reviewer, gateway, Alice)`, it exchanges `RT-A42` and the reviewer SVID at AS-1 for an ID-JAG, redeems the ID-JAG at AS-2 for `V`, and calls the vMCP. The gateway in this example is external, at `https://gateway.example.com`.
 
 ```mermaid
 sequenceDiagram
@@ -52,11 +52,11 @@ sequenceDiagram
     participant P as GitHub
 
     Note over B: Holds RT-A42 from session open
-    B->>B: Broker checks<br/>Session, workload, actor, effective ceiling and route
+    B->>B: Broker checks<br/>Session, workload, actor, run owner, route<br/>(ceiling with the authority work)
     Note over B,P: Any denial before provider dispatch stops the request
     opt No cached V for (A42, reviewer, gateway, Alice)
         B->>A1: (1) RFC 8693 + private_key_jwt<br/>subject_token = RT-A42, actor_token = reviewer SVID<br/>requested_token_type = id-jag, audience = AS-2
-        A1->>A1: Resolve RT-A42 record: session open, not expired<br/>Validate SVID, reviewer registered to A42<br/>Build act
+        A1->>A1: Resolve RT-A42 record: session open, not expired<br/>Re-check company-IdP grant if due<br/>Validate SVID, reviewer registered to A42<br/>Build act
         A1-->>B: (2) ID-JAG (sub u-alice-91, act, client_id mecatl)
         B->>A2: (3) RFC 7523 assertion = ID-JAG + private_key_jwt
         A2->>A2: Check typ, aud, client_id, jti<br/>Resolve native user<br/>External mode: require consent link
@@ -95,6 +95,7 @@ AS-1 checks:
 
 - **The client.** The assertion verifies against `mecatl`'s registered key.
 - **The subject token.** `RT-A42` resolves to its AS-1 record, is bound to `mecatl`, its session `A42` is open, and its hard expiry has not passed. The record supplies the subject `u-alice-91`; the broker cannot name a different user through this request. AS-1 runs in the same process as the broker core, so this guards against broker bugs, not against a compromised broker.
+- **The upstream grant.** If the re-check interval has passed, AS-1 refreshes Alice's company-IdP grant first; see [upstream re-check](credentials-and-lifecycle.md#sign-out-and-revocation).
 - **The actor.** AS-1 validates the SVID against the configured agent trust bundle, registered subject, `sub`, `aud`, and `exp`, and checks in the registry that the reviewer is registered to `A42`.
 - **The target.** `gateway.example.com` is an allowed AS-2 for this client.
 
@@ -122,7 +123,7 @@ Here `access_token` carries the grant for AS-2; it is not an access token the vM
   "sub": "u-alice-91",
   "aud": "https://gateway.example.com",
   "client_id": "mecatl",
-  "act": {"iss": "https://broker.example.com/as", "sub": "agent:7hq2x9"},
+  "act": {"iss": "https://broker.example.com/as", "sub": "ag_7hq2x9"},
   "jti": "jag-pr42-001",
   "iat": 1800000001,
   "exp": 1800000121
@@ -131,7 +132,7 @@ Here `access_token` carries the grant for AS-2; it is not an access token the vM
 
 This fictional decoded ID-JAG is not a usable credential. `iss` is AS-1 and `sub` is Alice's AS-1 subject, from the `RT-A42` record. `aud` is AS-2's issuer identifier. `client_id` names `mecatl`, the client that must redeem it.
 
-`act` follows [RFC 8693 §4.1](https://www.rfc-editor.org/rfc/rfc8693.html#section-4.1) and names only the acting instance, the reviewer. It carries an opaque, stable, per-instance `agent:` identifier: no SPIFFE path and no definition name, so Mecatl's internal structure does not cross into the gateway's domain. `act.iss` is AS-1's issuer: it names who minted the `agent:` identifier, so the identifier stays attributable to AS-1 after AS-2 copies `act` into `V`. AS-1 derives the identifier from the validated reviewer SVID; the full SVID stops at AS-1. `act` has one level: it does not name main, which delegated the task. That delegation is recorded in Mecatl's harness and broker records. A nested `act` comes later, from a [chained exchange](mcp-authorization.md#chained-exchange) at delegation time.
+`act` follows [RFC 8693 §4.1](https://www.rfc-editor.org/rfc/rfc8693.html#section-4.1) and names only the acting instance, the reviewer. It carries an opaque, stable, per-instance `ag_` identifier: no SPIFFE path and no definition name, so Mecatl's internal structure does not cross into the gateway's domain. `act.iss` is AS-1's issuer: it names who minted the `agent:` identifier, so the identifier stays attributable to AS-1 after AS-2 copies `act` into `V`. AS-1 derives the identifier from the validated reviewer SVID; the full SVID stops at AS-1. `act` has one level: it does not name main, which delegated the task. That delegation is recorded in Mecatl's harness and broker records. A nested `act` comes later, from a [chained exchange](mcp-authorization.md#chained-exchange) at delegation time.
 
 `aud_sub` and `email`, both RECOMMENDED by ID-JAG §3.1, are deliberately omitted. AS-1 does not know AS-2's subject, and an email address is not an identity link. The ID-JAG carries no `sub_id` for AS-2 to resolve: a `sub_id` would be AS-1's claim about the company identity, not the IdP's (§9.5).
 
@@ -150,14 +151,14 @@ client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer
 client_assertion=<JWT signed with the broker's private key, aud = AS-2>
 ```
 
-The `resource` value identifies the vMCP using [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707.html). AS-2 checks, following ID-JAG §4.4.1: `typ` is `oauth-id-jag+jwt`; the signature verifies against the trusted AS-1 issuer's keys; `aud` is AS-2's own issuer; `client_id` matches the authenticated client `mecatl`; `jti` is unused; and the lifetime is current. It also applies its actor and resource policy. [RFC 7523 §3](https://www.rfc-editor.org/rfc/rfc7523.html#section-3) defines the base JWT-bearer validation.
+The `resource` value identifies the vMCP using [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707.html). AS-2 checks, following ID-JAG §4.4.1: `typ` is `oauth-id-jag+jwt`; the signature verifies against the trusted AS-1 issuer's keys; `aud` is AS-2's own issuer; `client_id` matches the authenticated client `mecatl`; and the lifetime is current. It rejects a reused `jti` ([RFC 7523 §3](https://www.rfc-editor.org/rfc/rfc7523.html#section-3)), as Mecatl policy. It also applies its actor and resource policy. [RFC 7523 §3](https://www.rfc-editor.org/rfc/rfc7523.html#section-3) defines the base JWT-bearer validation.
 
 AS-2 then resolves the native user. This is where the two modes differ:
 
 | Mode | How AS-2 resolves and authorizes the user |
 | --- | --- |
-| Embedded | ID-JAG as specified. Users log in to AS-2 through AS-1, so AS-1 is the SSO IdP AS-2 trusts (§4.1) and the subject is the shared AS-1 `sub` (§5). `u-alice-91` maps directly to native user `usr-alice-7c1d`. Consent is implicit: AS-1, AS-2, and the credential store share one trust domain. |
-| External | Identity chaining across trust domains ([chaining §§2.1, 2.5](https://www.ietf.org/archive/id/draft-ietf-oauth-identity-chaining-17.html#section-2.1)) using the ID-JAG token profile. AS-2's users log in through the gateway's own IdP, so the §4.1 precondition, that the resource AS already trusts the IdP for SSO, does not hold, and its consent waiver does not apply. AS-2 trusts AS-1 only as an assertion issuer. It redeems only when the ID-JAG's `(iss, sub)` and `client_id` match a consent link, which supplies the native user (chaining §2.2, deployment-specific resolution). No just-in-time provisioning. |
+| Embedded | ID-JAG as specified. Users log in to AS-2 through AS-1, so AS-1 is the SSO IdP AS-2 trusts (§4.1) and the subject is the shared AS-1 `sub` (§5). `u-alice-91` maps directly to native user `usr-alice-7c1d`. Consent is implicit: AS-1, AS-2, and the credential store share one administrative domain. |
+| External | Identity chaining across administrative domains ([chaining §§2.1, 2.5](https://www.ietf.org/archive/id/draft-ietf-oauth-identity-chaining-17.html#section-2.1)) using the ID-JAG token profile. AS-2's users log in through the gateway's own IdP, so the §4.1 precondition, that the resource AS already trusts the IdP for SSO, does not hold, and its consent waiver does not apply. AS-2 trusts AS-1 only as an assertion issuer. It redeems only when the ID-JAG's `(iss, sub)` and `client_id` match a consent link, which supplies the native user (chaining §2.2, deployment-specific resolution). No just-in-time provisioning. |
 
 The external consent link records (native user, AS-1 issuer, AS-1 `sub`, client `mecatl`, grant time, and scope or providers). Alice creates it once per gateway, through AS-2's own login, by approving "Allow Mecatl" on a consent screen AS-2 generates. It is keyed on the AS-1 `sub` in the ID-JAG, never on a `sub_id` (§9.5). It stops a compromised AS-1 from using the gateway credentials of a user who never chose Mecatl. Admin pre-consent without an independent witness of the user is rejected for the same reason. The link's creation flow, the link-swap attack it must resist, and the shared-IdP shortcut are in the [implementation companion](implementation.md#external-consent-link). The gateway UI can revoke the link.
 
@@ -172,7 +173,7 @@ An unresolved or unlinked subject fails closed. AS-2 must not create an unlinked
   "sub": "usr-alice-7c1d",
   "aud": "https://gateway.example.com/mcp",
   "client_id": "mecatl",
-  "act": {"iss": "https://broker.example.com/as", "sub": "agent:7hq2x9"},
+  "act": {"iss": "https://broker.example.com/as", "sub": "ag_7hq2x9"},
   "iat": 1800000005,
   "exp": 1800000120,
   "jti": "access-pr42-001"
@@ -185,7 +186,7 @@ This fictional [RFC 9068](https://www.rfc-editor.org/rfc/rfc9068.html) JWT acces
 
 The broker sends the checked `pull_request_read` request with `V` to the vMCP. The vMCP validates `V` against AS-2's keys, `typ`, audience, and expiry, applies its own operation policy, and loads the upstream credential keyed by **(gateway, native user, provider)**: here `(gateway.example.com, usr-alice-7c1d, github)`. GitHub sees Alice's GitHub token, not the ID-JAG, the SVID, or `V`. If no credential is stored, the vMCP answers "needs authorization" and the broker returns the existing `mcp_authorization_pending` outcome. The design does not claim that downstream credentials establish a backend-to-SaaS audit trail.
 
-AS-1 issuance, AS-2 redemption, and vMCP authorization are separate decisions. Their audit references distinguish ID-JAG `jti` `jag-pr42-001` from access-token `jti` `access-pr42-001`, and neither replaces operation `op-pr42-001`. The broker propagates `op-pr42-001` with the MCP request, and the vMCP logs it as reported trace context; this is required for correlation, and the mechanism is still open. Audit requirements and evidence limits are described in [Audit](audit.md).
+AS-1 issuance, AS-2 redemption, and vMCP authorization are separate decisions. Their audit references distinguish ID-JAG `jti` `jag-pr42-001` from access-token `jti` `access-pr42-001`, and neither replaces operation `op-pr42-001`. The broker propagates `op-pr42-001` with the MCP request, in its `_meta`, and the vMCP logs it as reported trace context; this is required for correlation. Audit requirements and evidence limits are described in [Audit](audit.md).
 
 ## Gateway administrator configuration
 
@@ -215,7 +216,7 @@ Embedded mode runs AS-1, AS-2, and the vMCP in one deployment. It uses the same 
 
 This keeps one protocol path for both modes. It does not add isolation: anyone who compromises the process holds both keys.
 
-Embedded mode is outside the cross-domain scope that ID-JAG §9.3 states, because all three parties share one trust domain. It reuses the ID-JAG format so both modes share one protocol, not to claim a trust boundary. The section's requirement still holds: AS-1 never issues an access token from its own ID-JAG, because AS-2 issues `V`. The scope broadening §9.3 guards against is bounded because AS-2 issues `V` only for the vMCP resource and issues no refresh token. Distinct issuers, audiences, and `typ` values keep the ID-JAG from being used as an AS-2 access token.
+Embedded mode is outside the cross-domain scope that ID-JAG §9.3 states, because all three parties share one administrative domain. It reuses the ID-JAG format so both modes share one protocol, not to claim a trust boundary. The section's requirement still holds: AS-1 never issues an access token from its own ID-JAG, because AS-2 issues `V`. The scope broadening §9.3 guards against is bounded because AS-2 issues `V` only for the vMCP resource and issues no refresh token. Distinct issuers, audiences, and `typ` values keep the ID-JAG from being used as an AS-2 access token.
 
 ## Outside this chapter
 
@@ -225,9 +226,9 @@ Embedded mode is outside the cross-domain scope that ID-JAG §9.3 states, becaus
 
 ## Integration requirements and evidence limits
 
-AS-1 must accept `RT-A42` as `subject_token` and the registered agent JWT-SVID as `actor_token` from client `mecatl` authenticated with `private_key_jwt`. It resolves the subject only from the refresh token's record, checks session state, hard expiry, and the actor's registration to the broker session, authorizes client, subject, actor, and AS-2 target together, and returns an ID-JAG whose single-level `act` holds the actor's opaque `agent:` identifier.
+AS-1 must accept `RT-A42` as `subject_token` and the registered agent JWT-SVID as `actor_token` from client `mecatl` authenticated with `private_key_jwt`. It resolves the subject only from the refresh token's record, checks session state and hard expiry, re-checks the company-IdP grant when due, checks the actor's registration to the broker session, authorizes client, subject, actor, and AS-2 target together, and returns an ID-JAG whose single-level `act` holds the actor's opaque `ag_` identifier.
 
-AS-2 must authenticate `mecatl`, validate the ID-JAG under ID-JAG §4.4.1, and resolve the native user: directly in embedded mode, and only through a consent link in external mode. It must issue an access token for the native user that preserves `act` and `client_id`, and no refresh token. Unresolved or unlinked subjects fail closed.
+AS-2 must authenticate `mecatl`, validate the ID-JAG under ID-JAG §4.4.1, reject a reused `jti` (RFC 7523 §3), and resolve the native user: directly in embedded mode, and only through a consent link in external mode. It must issue an access token for the native user that preserves `act` and `client_id`, and no refresh token. Unresolved or unlinked subjects fail closed.
 
 The vMCP must validate `V`, bind its session to the user and `act.sub`, and load provider credentials keyed by (gateway, native user, provider). Do not add a callback or response fields that expose AS-2's private native mappings to the broker. The design does not claim a backend-to-SaaS audit trail.
 
