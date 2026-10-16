@@ -439,3 +439,53 @@ test("a schedule row opens on a plain click, not on a modified click or a text s
   await prompt.click();
   await expect(page).toHaveURL(/\/workspace\/schedules\/daily-report$/);
 });
+
+test("the one-shot date and time stay independent while the date is edited", async ({
+  offlineBff,
+  page,
+}) => {
+  stubWorkspace(offlineBff);
+  offlineBff.json("GET", "/api/v1/schedules", { items: [], reason: "", supported: true });
+  offlineBff.on("POST", "/api/v1/schedules", (request) => ({
+    body: JSON.stringify(schedule(request.postDataJSON() as Partial<ScheduleFixture>)),
+    contentType: "application/json",
+    status: 201,
+  }));
+
+  await page.goto("/workspace/schedules");
+  await page.getByRole("button", { name: "New scheduled task" }).first().click();
+  const dialog = page.getByRole("dialog", { name: "Schedule a task" });
+  await dialog.getByRole("textbox", { name: "Name" }).fill("launch");
+  await dialog.getByRole("textbox", { name: "Prompt" }).fill("Remind me");
+  await dialog.getByRole("tab", { name: "Run once" }).click();
+  const date = dialog.getByLabel("Date", { exact: true });
+  const time = dialog.getByLabel("Time", { exact: true });
+  const create = dialog.getByRole("button", { name: "Create schedule" });
+
+  // A time chosen before the date is kept, and the reason Create is disabled shows.
+  await time.fill("15:30");
+  await expect(time).toHaveValue("15:30");
+  await expect(create).toBeDisabled();
+  await expect(create).toHaveAccessibleDescription("Run time is required.");
+  await date.fill("2030-01-02");
+  await expect(time).toHaveValue("15:30");
+  await expect(create).toBeEnabled();
+
+  // Clearing one date segment from the keyboard leaves no date, but the time stays.
+  await date.focus();
+  await page.keyboard.press("Backspace");
+  await expect(date).toHaveValue("");
+  await expect(time).toHaveValue("15:30");
+  await expect(create).toBeDisabled();
+  await expect(create).toHaveAccessibleDescription("Run time is required.");
+
+  await date.fill("2030-02-03");
+  await expect(time).toHaveValue("15:30");
+  await create.click();
+  await expect(dialog).toBeHidden();
+  const body = offlineBff.requestsFor("POST", "/api/v1/schedules").at(-1)?.postDataJSON() as {
+    trigger: { at: string; kind: string };
+  };
+  const expected = await page.evaluate(() => new Date("2030-02-03T15:30").toISOString());
+  expect(body.trigger).toEqual({ at: expected, kind: "once" });
+});

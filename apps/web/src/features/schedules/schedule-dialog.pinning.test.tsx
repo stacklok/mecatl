@@ -187,3 +187,73 @@ describe("the edit dialog keeps its contract", () => {
     });
   });
 });
+
+// Pins for the #2370 review (independent Date and Time, the visible submit
+// problem): what the one-shot inputs already do and must keep doing.
+describe("the one-shot inputs keep their contract", () => {
+  async function openOnce(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(await screen.findByRole("button", { name: "New scheduled task" }));
+    const dialog = screen.getByRole("dialog", { name: "Schedule a task" });
+    await user.type(within(dialog).getByRole("textbox", { name: "Name" }), "launch");
+    await user.type(within(dialog).getByRole("textbox", { name: "Prompt" }), "Remind me");
+    await user.click(within(dialog).getByRole("tab", { name: "Run once" }));
+    return dialog;
+  }
+
+  it("keeps the time when the date is changed to another day", async () => {
+    const user = userEvent.setup();
+    const { requests } = mountSchedules([schedule({ name: "Alpha" })], "/workspace/schedules");
+    const dialog = await openOnce(user);
+    setRunAt(dialog, "2030-01-02", "15:30");
+    const date = within(dialog).getByLabelText<HTMLInputElement>("Date");
+    fireEvent.change(date, { target: { value: "2030-02-03" } });
+    expect(within(dialog).getByLabelText<HTMLInputElement>("Time").value).toBe("15:30");
+    await user.click(within(dialog).getByRole("button", { name: "Create schedule" }));
+    await waitFor(() => expect(posts(requests, "POST", "/api/v1/schedules")).toHaveLength(1));
+    expect(posts(requests, "POST", "/api/v1/schedules")[0]?.body).toMatchObject({
+      trigger: { at: new Date("2030-02-03T15:30").toISOString(), kind: "once" },
+    });
+  });
+
+  it("fills the date and time from a one-shot phrase", async () => {
+    const user = userEvent.setup();
+    mountSchedules([schedule({ name: "Alpha" })], "/workspace/schedules");
+    const dialog = await openOnce(user);
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Describe the schedule" }), {
+      target: { value: "in 2 hours" },
+    });
+    const date = within(dialog).getByLabelText<HTMLInputElement>("Date");
+    const time = within(dialog).getByLabelText<HTMLInputElement>("Time");
+    expect(date.value).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(time.value).toMatch(/^\d{2}:\d{2}$/);
+  });
+
+  it("shows a stored one-shot's date and time, locked, in the edit dialog", async () => {
+    const user = userEvent.setup();
+    const at = "2030-01-02T14:30:00.000Z";
+    mountSchedules(
+      [schedule({ name: "Alpha", trigger: { at, kind: "once" } })],
+      "/workspace/schedules/Alpha",
+    );
+    await user.click(await screen.findByRole("button", { name: "Actions for Alpha" }));
+    await user.click(screen.getByRole("menuitem", { name: "Edit" }));
+    const dialog = await screen.findByRole("dialog", { name: "Edit scheduled task" });
+    const date = within(dialog).getByLabelText<HTMLInputElement>("Date");
+    const time = within(dialog).getByLabelText<HTMLInputElement>("Time");
+    const local = new Date(new Date(at).getTime() - new Date(at).getTimezoneOffset() * 60_000)
+      .toISOString()
+      .slice(0, 16);
+    expect([date.value, time.value]).toEqual([local.slice(0, 10), local.slice(11, 16)]);
+    expect([date.disabled, time.disabled]).toEqual([true, true]);
+  });
+
+  it("names no problem and describes nothing once the form could be sent", async () => {
+    const user = userEvent.setup();
+    mountSchedules([schedule({ name: "Alpha" })], "/workspace/schedules");
+    const dialog = await openOnce(user);
+    setRunAt(dialog, "2030-01-02", "15:30");
+    const create = within(dialog).getByRole("button", { name: "Create schedule" });
+    expect(create.hasAttribute("aria-describedby")).toBe(false);
+    expect(within(dialog).queryByText(/is required\.|not a valid date\./)).toBeNull();
+  });
+});

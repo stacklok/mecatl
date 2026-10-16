@@ -4,9 +4,11 @@ import { describe, expect, it } from "vitest";
 import {
   bodyFromValue,
   displayedValue,
+  type FormValue,
   isTriggerEditable,
-  joinOneShot,
-  oneShotParts,
+  oneShotDatePatch,
+  oneShotInputs,
+  oneShotTimePatch,
   phraseTriggerPatch,
   type Schedule,
   scheduleFormProblem,
@@ -151,6 +153,7 @@ describe("schedule trigger lock", () => {
         cron: "0 10 * * *",
         oneShotAt: "2030-06-01T12:00",
         oneShotOriginal: "",
+        oneShotTime: "23:59",
         prompt: "Edited prompt",
         timezone: "UTC",
         triggerKind: trigger.kind === "cron" ? "once" : "cron",
@@ -256,11 +259,53 @@ describe("scheduleFormProblem", () => {
 });
 
 describe("one-shot date and time inputs", () => {
-  it("splits and joins the wall clock, running a bare date at 9:00", () => {
-    expect(oneShotParts("2030-01-02T15:30")).toEqual({ date: "2030-01-02", time: "15:30" });
-    expect(oneShotParts("")).toEqual({ date: "", time: "" });
-    expect(joinOneShot("2030-01-02", "15:30")).toBe("2030-01-02T15:30");
-    expect(joinOneShot("2030-01-02", "")).toBe("2030-01-02T09:00");
-    expect(joinOneShot("", "15:30")).toBe("");
+  const blank = { ...valueFromSchedule(), triggerKind: "once" as const };
+  const apply = (value: FormValue, patch: TriggerPatch) => withTriggerPatch(value, patch);
+
+  it("runs a date at 9:00 only when no time was ever chosen", () => {
+    const dated = apply(blank, oneShotDatePatch(blank, "2030-01-02"));
+    expect(dated.oneShotAt).toBe("2030-01-02T09:00");
+    expect(oneShotInputs(dated)).toEqual({ date: "2030-01-02", time: "09:00" });
+  });
+
+  it("keeps a time chosen before the date and joins it to the date", () => {
+    const timed = apply(blank, oneShotTimePatch(blank, "15:30"));
+    expect(timed.oneShotAt).toBe("");
+    expect(oneShotInputs(timed)).toEqual({ date: "", time: "15:30" });
+    const dated = apply(timed, oneShotDatePatch(timed, "2030-01-02"));
+    expect(dated.oneShotAt).toBe("2030-01-02T15:30");
+  });
+
+  it("keeps the time when the date is cleared or changed", () => {
+    const dated = apply(blank, oneShotDatePatch(blank, "2030-01-02"));
+    const set = apply(dated, oneShotTimePatch(dated, "15:30"));
+    expect(set.oneShotAt).toBe("2030-01-02T15:30");
+    const cleared = apply(set, oneShotDatePatch(set, ""));
+    expect(cleared.oneShotAt).toBe("");
+    expect(oneShotInputs(cleared)).toEqual({ date: "", time: "15:30" });
+    expect(scheduleFormProblem({ ...cleared, name: "n", prompt: "p" })).toBe(
+      "Run time is required.",
+    );
+    const changed = apply(set, oneShotDatePatch(set, "2030-02-03"));
+    expect(changed.oneShotAt).toBe("2030-02-03T15:30");
+  });
+
+  it("ignores a transient empty time", () => {
+    expect(oneShotTimePatch({ ...blank, oneShotTime: "15:30" }, "")).toEqual({});
+  });
+
+  it("reads a stored one-shot's date and time", () => {
+    const stored = schedule({ trigger: { at: "2030-01-02T08:00:00.000Z", kind: "once" } });
+    const value = valueFromSchedule(stored);
+    expect(oneShotInputs(value)).toEqual({
+      date: value.oneShotAt.slice(0, 10),
+      time: value.oneShotAt.slice(11, 16),
+    });
+    expect(value.oneShotTime).not.toBe("");
+  });
+
+  it("sets the time from a one-shot phrase", () => {
+    const patch = phraseTriggerPatch("tomorrow at 8am", phraseNow).patch;
+    expect(patch).toMatchObject({ oneShotAt: "2026-09-17T08:00", oneShotTime: "08:00" });
   });
 });
