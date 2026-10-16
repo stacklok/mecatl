@@ -13,9 +13,11 @@ on:
     # Inputs are the per-session passthrough surface of the mecatequi action. The
     # escape-hatch-only knobs are deliberately NOT exposed here — `default-model` (catalog-
     # validated, rejects an uncatalogued id — use `model` instead), `openai` (provider is
-    # auto-detected from the present key), and `subagent-ask-reviewer` (an autonomous-approval
-    # capability that is a deployment decision better made by editing the action) — so a
-    # consumer needing them vendors the escape-hatch template rather than the reusable workflow.
+    # auto-detected from the present key), and `subagent-ask-reviewer` (the action default
+    # applies: under its default auto permission mode the reviewer is ON, using the ask-reviewer
+    # model slot or else the session model; choosing another reviewer or "off" is a deployment
+    # decision better made by editing the action) — so a consumer needing them vendors the
+    # escape-hatch template rather than the reusable workflow.
     inputs:
       label:
         description: >-
