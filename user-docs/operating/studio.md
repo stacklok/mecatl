@@ -67,8 +67,8 @@ connected deployment does not enable:
 - **Chats**: sessions with streamed runs, image and text-file attachments,
   permission approvals, steering, and model and reasoning-effort selection.
 - **Scheduled**: [scheduled tasks](/features/sessions/scheduled-tasks.md) with a
-  cron builder and run history, when the deployment enables scheduling. See
-  [Manage schedules in Studio](/features/sessions/scheduled-tasks.md#manage-schedules-in-studio)
+  cron builder and a **Run log** of past runs, when the deployment enables
+  scheduling. See [Manage schedules in Studio](/features/sessions/scheduled-tasks.md#manage-schedules-in-studio)
   for what the dialog can and can't change.
 - **Skills**: configured and learned skills, learning proposals, and session
   reflection, when the deployment enables them.
