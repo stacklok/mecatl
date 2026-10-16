@@ -20,10 +20,13 @@ function Collapsible({
   const open = openProp ?? uncontrolledOpen;
   const setOpen = React.useCallback(
     (next: boolean) => {
+      // Like Radix's own state, report only real changes, so a toggle-style
+      // `onOpenChange` never flips on a request that changes nothing.
+      if (next === open) return;
       if (openProp === undefined) setUncontrolledOpen(next);
       onOpenChange?.(next);
     },
-    [onOpenChange, openProp],
+    [onOpenChange, open, openProp],
   );
   const state = React.useMemo(() => ({ open, setOpen }), [open, setOpen]);
   return (
@@ -53,7 +56,10 @@ function CollapsibleTrigger({
  * content as present, and React writes `hidden` only as a boolean, so the
  * attribute and the listener are set on the node directly. Closed content
  * still lays out its own box (`content-visibility: hidden`), so keep its
- * margin and padding on the children.
+ * margin and padding on the children. A controlled owner must accept the
+ * `onOpenChange(true)` a match sends: the browser has already removed
+ * `hidden` by then, so an owner that keeps `open` false leaves the content
+ * visible while the trigger reports `aria-expanded="false"`.
  */
 function CollapsibleContent({
   forceMount,
@@ -86,7 +92,12 @@ function CollapsibleContent({
   React.useEffect(() => {
     const node = nodeRef.current;
     if (!hiddenUntilFound || !node || !setOpen) return;
-    const reveal = () => setOpen(true);
+    // `beforematch` bubbles: a match inside a nested collapsible is that
+    // collapsible's to open, not this one's.
+    const reveal = (event: Event) => {
+      if (event.target !== node) return;
+      setOpen(true);
+    };
     node.addEventListener("beforematch", reveal);
     return () => node.removeEventListener("beforematch", reveal);
   }, [hiddenUntilFound, setOpen]);
