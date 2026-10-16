@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +13,8 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/embed"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/app"
 )
 
@@ -222,5 +227,66 @@ func TestDefaultsReproduceCurrentBehaviour(t *testing.T) {
 				t.Errorf("session mode = %q, want %q", snap.Mode, tc.wantMode)
 			}
 		})
+	}
+}
+
+// TestEmbeddedSettingsPermissionModeRefusesDeprecatedFlags drives the embedded
+// server's real path (flags, embeddedConfig, app.Build) with a conventional
+// user-global settings.yaml carrying permissionMode: plan. The deprecated
+// --yolo and --posture flags cannot be combined with it; the token alone and
+// the deprecated flag alone still build.
+func TestEmbeddedSettingsPermissionModeRefusesDeprecatedFlags(t *testing.T) {
+	storage := isolatedEmbeddedTestStorage(t)
+	settings := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "mecatl", "settings.yaml")
+	build := func(t *testing.T, withSettings bool, args ...string) (*app.Built, error) {
+		t.Helper()
+		if withSettings {
+			if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(settings, []byte("permissionMode: plan\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		} else if err := os.Remove(settings); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		_, cfg, err := parseTransportFlags(modeLocal, io.Discard, append([]string{"--mock", "--workspace", t.TempDir()}, args...))
+		if err != nil {
+			t.Fatalf("parse %v: %v", args, err)
+		}
+		ac := embeddedConfig(storage.apply(cfg), port.NopDiagnostics{})
+		ac.NoSoul, ac.Privileged = true, false
+		return app.Build(t.Context(), ac)
+	}
+	for _, args := range [][]string{{"--yolo"}, {"--posture", "auto"}} {
+		built, err := build(t, true, args...)
+		if err == nil {
+			built.Close()
+			t.Fatalf("%q: settings permissionMode plus a deprecated flag must refuse to build", args)
+		}
+		if !strings.Contains(err.Error(), "permissionMode: plan cannot be combined") || !strings.Contains(err.Error(), "--permission-mode") {
+			t.Fatalf("%q: refusal must name the conflict and the migration; got %v", args, err)
+		}
+	}
+	for _, tc := range []struct {
+		withSettings bool
+		args         []string
+		want         session.PermissionMode
+	}{
+		{true, nil, session.ModePlan},
+		{false, []string{"--yolo"}, session.ModeYolo},
+	} {
+		built, err := build(t, tc.withSettings, tc.args...)
+		if err != nil {
+			t.Fatalf("settings=%v %q: app.Build: %v", tc.withSettings, tc.args, err)
+		}
+		sess, err := built.Service.CreateSession(context.Background(), "", session.Limits{})
+		built.Close()
+		if err != nil {
+			t.Fatalf("CreateSession: %v", err)
+		}
+		if sess.Mode != tc.want {
+			t.Fatalf("settings=%v %q: unspecified-mode session started in %q, want %q", tc.withSettings, tc.args, sess.Mode, tc.want)
+		}
 	}
 }

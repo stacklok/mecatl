@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -166,6 +168,76 @@ func TestCombinedLegacyAliasesBuildRaisedPair(t *testing.T) {
 			}
 			if _, err := built.Service.CreateSession(context.Background(), session.ModeYolo, session.Limits{}); err != nil {
 				t.Fatalf("%q: the yolo ceiling must admit a yolo session: %v", argv, err)
+			}
+		})
+	}
+}
+
+// TestSettingsPermissionModeRefusesDeprecatedFlags drives parseFlags,
+// appConfig, and app.Build with an operator settings.yaml carrying
+// permissionMode: plan. The deprecated --yolo and --posture flags cannot be
+// combined with it, exactly as they cannot be combined with --permission-mode;
+// the token alone, the deprecated flag alone, --permission-mode over the key,
+// and the non-deprecated --trust-project still build.
+func TestSettingsPermissionModeRefusesDeprecatedFlags(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	settings := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := os.WriteFile(settings, []byte("permissionMode: plan\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	build := func(t *testing.T, argv ...string) (*app.Built, error) {
+		t.Helper()
+		cfg, err := parseFlags(append([]string{"--workspace", t.TempDir(), "--guardrails", "off"}, argv...))
+		if err != nil {
+			t.Fatalf("parseFlags: %v", err)
+		}
+		ac := appConfig(cfg, nil, nil, nil, nil, port.NopDiagnostics{})
+		ac.UseMock, ac.NoSoul, ac.Privileged = true, true, false
+		return buildIsolated(t, context.Background(), ac)
+	}
+	for name, tc := range map[string]struct {
+		argv []string
+		want string
+	}{
+		"yolo":           {[]string{"--permission-config", settings, "--yolo"}, "--permission-mode yolo"},
+		"posture":        {[]string{"--permission-config", settings, "--posture", "auto"}, "--permission-mode auto"},
+		"posture strict": {[]string{"--permission-config", settings, "--posture", "strict"}, "--permission-mode default"},
+	} {
+		t.Run("refuses "+name, func(t *testing.T) {
+			built, err := build(t, tc.argv...)
+			if err == nil {
+				built.Close()
+				t.Fatalf("%q: settings permissionMode plus a deprecated flag must refuse to build", tc.argv)
+			}
+			for _, want := range []string{"permissionMode: plan", "cannot be combined", "keep permissionMode: plan", tc.want} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("%q: refusal must name %q; got %v", tc.argv, want, err)
+				}
+			}
+		})
+	}
+	for name, tc := range map[string]struct {
+		argv []string
+		want session.PermissionMode
+	}{
+		"settings token alone":         {[]string{"--permission-config", settings}, session.ModePlan},
+		"settings token with trust":    {[]string{"--permission-config", settings, "--trust-project"}, session.ModePlan},
+		"permission-mode over the key": {[]string{"--permission-config", settings, "--permission-mode", "yolo"}, session.ModeYolo},
+		"yolo alone":                   {[]string{"--yolo"}, session.ModeYolo},
+		"posture alone":                {[]string{"--posture", "strict"}, session.ModeDefault},
+	} {
+		t.Run("builds "+name, func(t *testing.T) {
+			built, err := build(t, tc.argv...)
+			if err != nil {
+				t.Fatalf("%q: app.Build: %v", tc.argv, err)
+			}
+			defer built.Close()
+			sess, err := built.Service.CreateSession(context.Background(), "", session.Limits{})
+			if err != nil {
+				t.Fatalf("CreateSession: %v", err)
+			}
+			if sess.Mode != tc.want {
+				t.Fatalf("%q: unspecified-mode session started in %q, want %q", tc.argv, sess.Mode, tc.want)
 			}
 		})
 	}

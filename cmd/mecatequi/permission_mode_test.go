@@ -387,3 +387,55 @@ func TestShippedAllowAllDefaultsDeclareCheckerChoice(t *testing.T) {
 		}
 	})
 }
+
+// TestSettingsPermissionModeRefusesDeprecatedPosture drives parseFlags,
+// appConfig, and app.Build with an operator settings.yaml carrying
+// permissionMode: plan. The deprecated --posture cannot be combined with it;
+// the token alone and --posture alone still build.
+func TestSettingsPermissionModeRefusesDeprecatedPosture(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	settings := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := os.WriteFile(settings, []byte("permissionMode: plan\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	build := func(t *testing.T, args ...string) (*app.Built, error) {
+		t.Helper()
+		repo := t.TempDir()
+		initTestRepo(t, repo)
+		f, err := parseFlags(append([]string{"--prompt", "x", "--workspace", repo}, args...))
+		if err != nil {
+			t.Fatalf("parseFlags: %v", err)
+		}
+		cfg := appConfig(f, port.NopDiagnostics{}, observability{})
+		cfg.UseMock, cfg.NoSoul = true, true
+		return buildIsolated(t, context.Background(), cfg)
+	}
+	built, err := build(t, "--permission-config", settings, "--posture", "strict")
+	if err == nil {
+		built.Close()
+		t.Fatal("settings permissionMode plus --posture must refuse to build")
+	}
+	if !strings.Contains(err.Error(), "permissionMode: plan cannot be combined") || !strings.Contains(err.Error(), "--permission-mode default") {
+		t.Fatalf("refusal must name the conflict and the migration; got %v", err)
+	}
+	for _, tc := range []struct {
+		args []string
+		want session.PermissionMode
+	}{
+		{[]string{"--permission-config", settings}, session.ModePlan},
+		{[]string{"--posture", "strict"}, session.ModeDefault},
+	} {
+		built, err := build(t, tc.args...)
+		if err != nil {
+			t.Fatalf("%q: app.Build: %v", tc.args, err)
+		}
+		sess, err := built.Service.CreateSession(context.Background(), "", session.Limits{})
+		built.Close()
+		if err != nil {
+			t.Fatalf("CreateSession: %v", err)
+		}
+		if sess.Mode != tc.want {
+			t.Fatalf("%q: unspecified-mode session started in %q, want %q", tc.args, sess.Mode, tc.want)
+		}
+	}
+}

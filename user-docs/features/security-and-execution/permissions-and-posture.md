@@ -175,7 +175,10 @@ terminal.
 key still work and resolve to the equivalent mode. Each logs a deprecation
 warning naming the `--permission-mode` replacement, and they will be removed in
 a future release. Passing `--permission-mode` together with `--posture`,
-`--yolo`, or `--mode` is a startup error. `--trust-project` is not deprecated.
+`--yolo`, or `--mode` is a startup error. So is passing `--posture` or `--yolo`
+while your operator `settings.yaml` sets `permissionMode:`. Drop the deprecated
+flag to keep the settings key, or replace it with `--permission-mode`, which
+overrides the key. `--trust-project` is not deprecated.
 
 ## Auto needs an enforcing checker
 

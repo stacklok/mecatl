@@ -97,28 +97,27 @@ func PermissionModeForPair(p Posture, mode session.PermissionMode) (PermissionMo
 // operator-tier posture: key, handled by foldOperatorPosture). A token writes
 // cfg.Posture, cfg.DefaultSessionMode, and cfg.MaxAllowedMode and marks the
 // posture explicit, so the deprecated posture: key cannot override it.
-// --trust-project and --yolo still fold MAX-tier on top in resolvePosture,
-// exactly as they do over --posture.
+// The permissionMode: key combined with a deprecated --posture or --yolo flag
+// is refused (settingsTokenAliasConflict), mirroring the cmd roots' refusal of
+// --permission-mode with those flags. --trust-project is not deprecated and
+// still folds MAX-tier on top in resolvePosture.
 func foldPermissionMode(cfg Config) (Config, error) {
 	raw := ""
 	source := ""
-	switch {
-	case cfg.PermissionModeFlagSet:
+	if cfg.PermissionModeFlagSet {
 		raw, source = cfg.PermissionMode, "--permission-mode"
-	case cfg.PostureFlagSet:
-		// Deprecated --posture: the posture is already on cfg.Posture (set by the
-		// cmd layer); foldOperatorPosture would no-op since PostureFlagSet. The
-		// session mode and ceiling are NOT derived here: --yolo and --trust-project
-		// may still raise the posture, so Build derives them after the full alias
-		// fold.
-		return foldOperatorPosture(cfg), nil
-	default:
-		if res, ok := cfg.permResolver.(*permconfig.Resolver); ok && res != nil {
-			if v := strings.TrimSpace(res.OperatorPermissionMode()); v != "" {
-				raw, source = v, "settings permissionMode"
+	} else if res, ok := cfg.permResolver.(*permconfig.Resolver); ok && res != nil {
+		if v := strings.TrimSpace(res.OperatorPermissionMode()); v != "" {
+			if err := settingsTokenAliasConflict(cfg, v); err != nil {
+				return cfg, err
 			}
+			raw, source = v, "settings permissionMode"
 		}
 	}
+	// Without a token, the deprecated --posture is already on cfg.Posture (set
+	// by the cmd layer) and foldOperatorPosture no-ops for it. The session mode
+	// and ceiling are NOT derived here: --yolo and --trust-project may still
+	// raise the posture, so Build derives them after the full alias fold.
 	if source == "" {
 		return foldOperatorPosture(cfg), nil
 	}
@@ -132,6 +131,33 @@ func foldPermissionMode(cfg Config) (Config, error) {
 	cfg.MaxAllowedMode = tok.MaxMode
 	cfg.permissionModeName = tok.Name
 	return cfg, nil
+}
+
+// settingsTokenAliasConflict refuses the operator-tier permissionMode: key
+// combined with a deprecated --posture or --yolo flag. Either side alone names
+// the posture; together the operator would have to guess which one won, and the
+// --yolo MAX fold would raise the posture without the token's session mode and
+// ceiling following it. The message names both ways to migrate.
+func settingsTokenAliasConflict(cfg Config, token string) error {
+	var flags, replacements []string
+	if cfg.PostureFlagSet {
+		flags = append(flags, "--posture "+cfg.Posture.String())
+		replacements = append(replacements, PostureReplacementToken(cfg.Posture))
+	}
+	if cfg.AllowAllTools {
+		flags = append(flags, "--yolo")
+		replacements = append(replacements, PostureReplacementToken(PostureYolo))
+	}
+	if len(flags) == 0 {
+		return nil
+	}
+	noun := "flag"
+	if len(flags) > 1 {
+		noun = "flags"
+	}
+	named := strings.Join(flags, " and ")
+	return fmt.Errorf("settings.yaml permissionMode: %s cannot be combined with the deprecated %s %s; pass one: drop %s and keep permissionMode: %s, or replace the deprecated %s with --permission-mode %s, which overrides the settings key",
+		token, named, noun, named, token, noun, replacements[len(replacements)-1])
 }
 
 // PostureReplacementToken names the --permission-mode token that replaces a
