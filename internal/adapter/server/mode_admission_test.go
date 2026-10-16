@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,9 +15,11 @@ import (
 	"google.golang.org/grpc/status"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/engine/adapter/memlease"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
+	"github.com/stacklok/mecatl/engine/adapter/wallclock"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -174,6 +177,42 @@ func TestAutoDefaultWithoutCheckerRefusedAtConstruction(t *testing.T) {
 	}
 }
 
+// TestInadmissibleDefaultModeRefusedAtConstruction pins that construction
+// runs the complete session admission on the default mode and validates the
+// ceiling, so a service that could never create its default session fails to
+// start instead of failing every default CreateSession.
+func TestInadmissibleDefaultModeRefusedAtConstruction(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		def, ceiling     session.PermissionMode
+		checker          bool
+		wantErrSubstring string
+	}{
+		{"unknown default", "bogus", session.ModeYolo, true, "unknown permission mode"},
+		{"default above ceiling", session.ModeYolo, session.ModeAccept, true, "exceeds the server ceiling"},
+		{"auto default above ceiling", session.ModeAuto, session.ModeDefault, true, "exceeds the server ceiling"},
+		{"unknown ceiling", session.ModeDefault, "bogus", true, "unknown permission-mode ceiling"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := newPlacementTestService(server.Config{
+				Engine:                     agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model"}),
+				Store:                      memstore.New(),
+				PlacementProvider:          testPlacementProvider{},
+				PlacementScope:             "test",
+				DefaultMode:                tc.def,
+				MaxAllowedMode:             tc.ceiling,
+				EnforcingCheckerConfigured: tc.checker,
+			})
+			if !errors.Is(err, server.ErrConfig) || !strings.Contains(err.Error(), tc.wantErrSubstring) {
+				t.Fatalf("err = %v, want ErrConfig containing %q", err, tc.wantErrSubstring)
+			}
+		})
+	}
+	// Positive control: a default at the ceiling, and any default with no ceiling.
+	modeAdmissionService(t, session.ModeAccept, session.ModeAccept, false)
+	modeAdmissionService(t, "", session.ModeYolo, false)
+}
+
 // TestAutoRequiresCheckerEvenWhenNotDefault pins that, without an enforcing
 // checker, explicit auto creation and switching (back) to auto are refused on
 // every ceiling that would otherwise admit auto, while yolo stays admissible.
@@ -257,6 +296,116 @@ func TestStoredModeReadmittedAfterTighterRestart(t *testing.T) {
 				t.Fatalf("provider calls after re-admission = %d, want 1", llm.Calls())
 			}
 		})
+	}
+}
+
+// gatedLease parks the named owner's first Acquire until release closes, so
+// a test can let a peer mutate the session while that owner waits for the
+// lease after its pre-lease admission.
+type gatedLease struct {
+	port.SessionLease
+	owner   string
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (l *gatedLease) Acquire(ctx context.Context, id session.SessionID, owner string) (port.Lease, error) {
+	if owner == l.owner {
+		first := false
+		l.once.Do(func() { first = true })
+		if first {
+			close(l.entered)
+			<-l.release
+		}
+	}
+	return l.SessionLease.Acquire(ctx, id, owner)
+}
+
+// leasedModeService is modeAdmissionServiceOn sharing a lease backend, so two
+// services model replicas on different configurations during a rollout.
+func leasedModeService(t *testing.T, store port.SessionStore, lease port.SessionLease, owner string, llm *mockllm.Provider, ceiling session.PermissionMode) *server.Service {
+	t.Helper()
+	svc, err := newPlacementTestService(server.Config{
+		Engine: agent.NewEngine(agent.Deps{
+			LLM:     llm,
+			Catalog: tool.NewCatalog(),
+			Policy:  permpolicy.NewPolicy(allowRules(), nil),
+			Model:   "test-model",
+		}),
+		Store:                      store,
+		SessionLease:               lease,
+		LeaseOwner:                 owner,
+		LeaseTTL:                   time.Minute,
+		LeaseRenewInterval:         time.Hour,
+		DefaultCapabilities:        llm.Capabilities(),
+		MaxAllowedMode:             ceiling,
+		EnforcingCheckerConfigured: true,
+	})
+	if err != nil {
+		t.Fatalf("new service %s: %v", owner, err)
+	}
+	t.Cleanup(svc.Close)
+	return svc
+}
+
+// TestStoredModeReadmittedUnderAcquiredLease races two replicas sharing one
+// store and lease backend: the stricter replica admits the pre-lease Default
+// snapshot, a looser peer takes the lease and saves Yolo while it waits, and
+// the stricter replica must refuse the authoritative Yolo snapshot once it
+// holds the lease, before any provider work and without mutating it.
+func TestStoredModeReadmittedUnderAcquiredLease(t *testing.T) {
+	ctx := context.Background()
+	store := memstore.New()
+	lease := &gatedLease{
+		SessionLease: memlease.New(wallclock.Clock{}, time.Minute),
+		owner:        "strict", entered: make(chan struct{}), release: make(chan struct{}),
+	}
+	looseLLM := mockllm.New()
+	loose := leasedModeService(t, store, lease, "loose", looseLLM, session.ModeYolo)
+	strictLLM := mockllm.New(mockllm.TextTurn("ran"))
+	strict := leasedModeService(t, store, lease, "strict", strictLLM, session.ModeAccept)
+
+	sess, err := loose.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	result := make(chan error, 1)
+	go func() {
+		run, err := strict.StartRun(ctx, sess.ID, "go")
+		if run != nil {
+			for range run.Events() {
+			}
+			strict.FinishRun(sess.ID, run)
+		}
+		result <- err
+	}()
+	select {
+	case <-lease.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("strict replica never reached lease acquisition")
+	}
+	if _, err := loose.SetMode(ctx, sess.ID, session.ModeYolo); err != nil {
+		t.Fatalf("peer SetMode(yolo): %v", err)
+	}
+	close(lease.release)
+	select {
+	case err := <-result:
+		if !errors.Is(err, server.ErrFailedPrecondition) {
+			t.Fatalf("StartRun err = %v, want ErrFailedPrecondition", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("strict StartRun did not return")
+	}
+	if strictLLM.Calls() != 0 || looseLLM.Calls() != 0 {
+		t.Fatalf("provider calls strict=%d loose=%d before refusal, want 0", strictLLM.Calls(), looseLLM.Calls())
+	}
+	kept, err := store.Load(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if kept.Mode != session.ModeYolo || kept.State != session.StateIdle {
+		t.Fatalf("refusal mutated the session: mode %q state %q", kept.Mode, kept.State)
 	}
 }
 

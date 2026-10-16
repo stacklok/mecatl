@@ -4526,27 +4526,35 @@ func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode sessio
 // admitStoredMode applies the same check to a persisted session at every run
 // entry, so a mode admitted under an earlier, looser deployment cannot execute.
 func (s *Service) admitMode(mode session.PermissionMode) error {
+	return admitModeFor(&s.cfg, mode)
+}
+
+func admitModeFor(cfg *Config, mode session.PermissionMode) error {
 	if modeRank(mode) == 0 {
 		return fmt.Errorf("%w: unknown permission mode %q", ErrInvalidArgument, mode)
 	}
-	if s.cfg.MaxAllowedMode != "" && !modeWithinCeiling(mode, s.cfg.MaxAllowedMode) {
-		return fmt.Errorf("%w: mode %q exceeds the server ceiling %q; the server must be relaunched with a higher --permission-mode to allow it", ErrInvalidArgument, mode, s.cfg.MaxAllowedMode)
+	if cfg.MaxAllowedMode != "" && !modeWithinCeiling(mode, cfg.MaxAllowedMode) {
+		return fmt.Errorf("%w: mode %q exceeds the server ceiling %q; the server must be relaunched with a higher --permission-mode to allow it", ErrInvalidArgument, mode, cfg.MaxAllowedMode)
 	}
-	if mode == session.ModeAuto && !s.hasEnforcingChecker() {
+	if mode == session.ModeAuto && !cfg.EnforcingCheckerConfigured {
 		return fmt.Errorf("%w: mode %q requires an enforcing guardrails checker; configure one with --guardrails-model <model> or bind the guardrail model slot, or use yolo for gate-free autonomous operation", ErrInvalidArgument, mode)
 	}
 	return nil
 }
 
-// normalizeDefaultMode defaults an empty DefaultMode to default and refuses
-// an auto default without an enforcing checker: auto has no default-mode
-// exemption.
+// normalizeDefaultMode defaults an empty DefaultMode to default and runs the
+// complete session admission against it, so a service whose default sessions
+// could never be created (unknown mode, above the ceiling, or auto without an
+// enforcing checker) fails construction instead of every default CreateSession.
 func normalizeDefaultMode(cfg *Config) error {
+	if cfg.MaxAllowedMode != "" && modeRank(cfg.MaxAllowedMode) == 0 {
+		return fmt.Errorf("%w: unknown permission-mode ceiling %q", ErrConfig, cfg.MaxAllowedMode)
+	}
 	if cfg.DefaultMode == "" {
 		cfg.DefaultMode = session.ModeDefault
 	}
-	if cfg.DefaultMode == session.ModeAuto && !cfg.EnforcingCheckerConfigured {
-		return fmt.Errorf("%w: default mode %q requires an enforcing guardrails checker; configure one or use yolo for unchecked autonomous operation", ErrConfig, cfg.DefaultMode)
+	if err := admitModeFor(cfg, cfg.DefaultMode); err != nil {
+		return fmt.Errorf("%w: default mode: %v", ErrConfig, err)
 	}
 	return nil
 }
@@ -4575,6 +4583,27 @@ func (s *Service) admitStoredMode(sess *session.Session) error {
 	return nil
 }
 
+// admitLeasedMode re-admits the AUTHORITATIVE stored mode once this process
+// holds id's session lease. beginRunAdmission checked the pre-lease snapshot
+// only: while this request waited for the lease, a peer on a looser
+// configuration (a rolling upgrade) may have taken the lease and saved a mode
+// this server does not admit. The caller holds runEntryMu and the lease, so
+// the snapshot read here is the one any later reload observes; every later
+// replacement of the run's aggregate re-admits it, and the launch fences
+// check the executed aggregate once more.
+func (s *Service) admitLeasedMode(ctx context.Context, id session.SessionID) error {
+	if s.cfg.SessionLease == nil {
+		// Without a shared lease there is no peer writer to race; the
+		// pre-lease snapshot was read under runEntryMu.
+		return nil
+	}
+	sess, err := s.cfg.Store.Load(ctx, id)
+	if err != nil {
+		return fmt.Errorf("%w: %q", ErrNotFound, id)
+	}
+	return s.admitStoredMode(sess)
+}
+
 // modeWithinCeiling reports whether mode is at or below ceiling in the
 // permission-mode ordering: plan < default < accept-edits < auto < yolo.
 func modeWithinCeiling(mode, ceiling session.PermissionMode) bool {
@@ -4598,12 +4627,6 @@ func modeRank(mode session.PermissionMode) int {
 	default:
 		return 0
 	}
-}
-
-// hasEnforcingChecker reports whether the service has a guardrails checker
-// configured in enforcing mode. It is used to gate ModeAuto entry at SetMode time.
-func (s *Service) hasEnforcingChecker() bool {
-	return s.cfg.EnforcingCheckerConfigured
 }
 
 // LoadSession resumes a previously-persisted session so a subsequent StartRun
@@ -5213,6 +5236,9 @@ func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*ag
 		}
 	}()
 	ctx = admissionCtx
+	if err := s.admitLeasedMode(ctx, id); err != nil {
+		return nil, err
+	}
 	engine, env, governanceRoot, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
 		return nil, err
@@ -5438,6 +5464,9 @@ func (s *Service) startRunContentLocked(ctx context.Context, id session.SessionI
 		}
 	}()
 	ctx = admissionCtx
+	if err := s.admitLeasedMode(ctx, id); err != nil {
+		return nil, err
+	}
 	// Apply the unchanged reopen/interrupt/recover funnel only after the trusted
 	// purpose and ownership gates and lease acquisition. Rejected kinds are never
 	// mutated as a side effect of probing.
@@ -5467,6 +5496,13 @@ func (s *Service) startRunContentLocked(ctx context.Context, id session.SessionI
 	sess, interruptedAuthorization, err := s.interruptRestoredAuthorizationLocked(ctx, sess)
 	if err != nil {
 		return nil, err
+	}
+	// The reload replaced the admitted aggregate, so admit it again. An
+	// interrupted authorization is refused just below regardless of mode.
+	if !interruptedAuthorization {
+		if err := s.admitStoredMode(sess); err != nil {
+			return nil, err
+		}
 	}
 	// interruptRestoredAuthorizationLocked may reload/replace the aggregate
 	// (e.g. to interrupt a restored authorizing session); st.sess was captured
@@ -5784,6 +5820,9 @@ func (s *Service) resolvePersistedRunAsk(ctx context.Context, id session.Session
 	if err := s.validatePersistedRunAsk(sess, expectedRunID, resolution, scoped); err != nil {
 		return RunAskAcknowledgement{}, err
 	}
+	if err := s.admitStoredMode(sess); err != nil {
+		return RunAskAcknowledgement{}, err
+	}
 	st.persistMu.Lock()
 	s.mu.Lock()
 	if s.runs[id] != st || st.cancelling || st.cancelSignaled {
@@ -5918,6 +5957,11 @@ func (s *Service) promoteDetachedRunAdmission(request context.Context, id sessio
 		return nil, checkExpectedRun(st.sess.RunID(), "")
 	}
 	if err := s.validateHeldLeaseLocked(id); err != nil {
+		return nil, err
+	}
+	// The launch fence also covers the admitted mode: the aggregate about to
+	// execute is st.sess, whatever reload last replaced it.
+	if err := s.admitStoredMode(st.sess); err != nil {
 		return nil, err
 	}
 	run := launch()
@@ -7264,6 +7308,9 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 		}
 	}()
 	ctx = admissionCtx
+	if err := s.admitLeasedMode(ctx, id); err != nil {
+		return nil, err
+	}
 	if err := s.attachLiveInstructions(sess, true); err != nil {
 		return nil, err
 	}
@@ -9074,6 +9121,11 @@ func (s *Service) promoteRunAdmission(id session.SessionID, st *runState, stop c
 		return nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
 	}
 	if err := s.validateHeldLeaseLocked(id); err != nil {
+		return nil, err
+	}
+	// The launch fence also covers the admitted mode: the aggregate about to
+	// execute is st.sess, whatever reload last replaced it.
+	if err := s.admitStoredMode(st.sess); err != nil {
 		return nil, err
 	}
 	run := launch()
