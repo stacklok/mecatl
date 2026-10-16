@@ -11,6 +11,35 @@ import {
 
 export type Schedule = ListSchedulesResponse["items"][number];
 export type ScheduleBody = CreateScheduleData["body"];
+/** A mode Studio can send: `scheduleModeSchema` in `contracts/src/schemas/schedules.ts`. */
+export type RequestableScheduleMode = NonNullable<ScheduleBody["mode"]>;
+
+/**
+ * Whether Studio can send this mode. `auto` and `yolo` (recorded by an in-chat
+ * schedule) and `serverDefault` (no mode set) come from outside Studio; an
+ * edit keeps them by omitting the mode rather than replacing them.
+ */
+export function isRequestableScheduleMode(mode: Schedule["mode"]): mode is RequestableScheduleMode {
+  return mode === "default" || mode === "plan" || mode === "acceptEdits";
+}
+
+/** The label for a schedule's mode, naming the ones set outside Studio as such. */
+export function scheduleModeLabel(mode: Schedule["mode"]): string {
+  switch (mode) {
+    case "acceptEdits":
+      return "Accept edits";
+    case "plan":
+      return "Plan";
+    case "auto":
+      return "Auto (set outside Studio)";
+    case "yolo":
+      return "YOLO (set outside Studio)";
+    case "serverDefault":
+      return "Server default";
+    default:
+      return "Default";
+  }
+}
 
 export interface FormValue {
   allowWrites: boolean;
@@ -27,8 +56,9 @@ export interface FormValue {
   timezone: string;
   triggerKind: "cron" | "once";
   /**
-   * The permission mode a writing schedule runs in. `plan` is only ever
-   * loaded from a stored writing schedule, so saving it unchanged keeps it.
+   * The permission mode a writing schedule runs in. `plan` and the modes set
+   * outside Studio are only ever loaded from a stored writing schedule, so
+   * saving it unchanged keeps them.
    */
   writeMode: Schedule["mode"];
 }
@@ -127,7 +157,13 @@ export function bodyFromValue(value: FormValue, schedule?: Schedule): ScheduleBo
   const trigger = triggerFromValue(value, schedule);
   return {
     maxFires: Math.max(0, Number(value.maxFires) || 0),
-    mode: value.allowWrites ? value.writeMode : "plan",
+    // A mode Studio cannot send is kept by omitting it (the BFF keeps the
+    // stored mode), never replaced with one Studio can.
+    mode: !value.allowWrites
+      ? "plan"
+      : isRequestableScheduleMode(value.writeMode)
+        ? value.writeMode
+        : undefined,
     mutating: value.allowWrites,
     name: value.name.trim(),
     oneShotMaxRetries: value.oneShotRetry ? Math.max(0, Number(value.oneShotMaxRetries) || 0) : 0,

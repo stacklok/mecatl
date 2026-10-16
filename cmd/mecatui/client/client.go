@@ -473,7 +473,7 @@ func (c *Client) compatibilityCapabilities(ctx context.Context) (Capabilities, e
 	if err != nil {
 		return Capabilities{}, fmt.Errorf("get compatibility info: %w", err)
 	}
-	return capabilitiesFrom(resp.GetCapabilities()), nil
+	return compatibilityCapabilitiesFrom(resp), nil
 }
 
 // createSession is the shared CreateSession proto call and response unwrap body.
@@ -714,9 +714,24 @@ func ModeFromString(s string) mecatlv1.PermissionMode {
 		return mecatlv1.PermissionMode_PERMISSION_MODE_ACCEPT_EDITS
 	case ModeDefaultString, "":
 		return mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT
+	case "auto":
+		return mecatlv1.PermissionMode_PERMISSION_MODE_AUTO
+	case "yolo":
+		return mecatlv1.PermissionMode_PERMISSION_MODE_YOLO
 	default:
 		return mecatlv1.PermissionMode_PERMISSION_MODE_UNSPECIFIED
 	}
+}
+
+// RequestModeFromString maps the mode a client REQUESTS for a new session. It is
+// ModeFromString except that an empty mode means "no preference" and goes out
+// UNSPECIFIED, so the server applies its own configured default mode
+// instead of receiving an explicit DEFAULT.
+func RequestModeFromString(s string) mecatlv1.PermissionMode {
+	if s == "" {
+		return mecatlv1.PermissionMode_PERMISSION_MODE_UNSPECIFIED
+	}
+	return ModeFromString(s)
 }
 
 // ModeString maps the proto enum to the CLI/UI spelling. Unknown/unspecified values
@@ -727,20 +742,12 @@ func ModeString(m mecatlv1.PermissionMode) string {
 		return modePlanString
 	case mecatlv1.PermissionMode_PERMISSION_MODE_ACCEPT_EDITS:
 		return "accept-edits"
+	case mecatlv1.PermissionMode_PERMISSION_MODE_AUTO:
+		return "auto"
+	case mecatlv1.PermissionMode_PERMISSION_MODE_YOLO:
+		return "yolo"
 	case mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT, mecatlv1.PermissionMode_PERMISSION_MODE_UNSPECIFIED:
 		return ModeDefaultString
-	default:
-		return ModeDefaultString
-	}
-}
-
-// NextMode returns the next mode in the TUI's cycle order.
-func NextMode(mode string) string {
-	switch ModeString(ModeFromString(mode)) {
-	case ModeDefaultString:
-		return modePlanString
-	case modePlanString:
-		return "accept-edits"
 	default:
 		return ModeDefaultString
 	}

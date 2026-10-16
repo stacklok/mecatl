@@ -26,6 +26,10 @@ export const SessionMode = {
   Default: 1,
   Plan: 2,
   AcceptEdits: 3,
+  /** Checker-approved autonomy; requires the `session_permission_modes` server feature. */
+  Auto: 4,
+  /** Gate-free autonomy; requires the `session_permission_modes` server feature. */
+  Yolo: 5,
 } as const;
 
 /** One SDK permission-mode value. @public */
@@ -124,6 +128,13 @@ export interface ServerCapabilities {
   readonly userModel: boolean;
   readonly modelSelection: boolean;
   readonly posture: string;
+  /** Whether the server trusts its launch workspace; absent from older servers. */
+  readonly projectTrusted?: boolean;
+  /**
+   * Subagent ask reviewer state: `"on"`, `"off"`, or `"inert"`; treat other
+   * values as unknown. Absent from older servers.
+   */
+  readonly subagentAskReviewer?: string;
   readonly worktrees: boolean;
   readonly scheduling: boolean;
   readonly reflection: boolean;
@@ -263,6 +274,7 @@ export function projectServerCapabilities(value: ProtoServerCapabilities): Serve
     memory: value.memory,
     modelSelection: value.modelSelection,
     posture: value.posture,
+    ...(value.projectTrusted === undefined ? {} : { projectTrusted: value.projectTrusted }),
     reflection: value.reflection,
     scheduling: value.scheduling,
     sessionDebug: value.sessionDebug,
@@ -270,6 +282,9 @@ export function projectServerCapabilities(value: ProtoServerCapabilities): Serve
     slashCommands: value.slashCommands,
     soul: value.soul,
     steer: value.steer,
+    ...(value.subagentAskReviewer === undefined
+      ? {}
+      : { subagentAskReviewer: value.subagentAskReviewer }),
     storageCleanup: value.storageCleanup,
     storageHealth: value.storageHealth,
     teams: value.teams,
@@ -283,7 +298,9 @@ function sessionMode(value: number): SessionMode | undefined {
   return value === SessionMode.Unspecified ||
     value === SessionMode.Default ||
     value === SessionMode.Plan ||
-    value === SessionMode.AcceptEdits
+    value === SessionMode.AcceptEdits ||
+    value === SessionMode.Auto ||
+    value === SessionMode.Yolo
     ? value
     : undefined;
 }

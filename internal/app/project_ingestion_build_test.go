@@ -33,7 +33,7 @@ func TestHeadlessAutoWithoutTrustProjectSuppressesProjectAgentDefs(t *testing.T)
 		ws := seedProjectAgentDef(t, "scout")
 		diag := slogdiagBuffer(t)
 
-		built, err := buildIsolated(t, context.Background(), Config{
+		built, err := buildIsolated(t, context.Background(), withInertEnforcingChecker(Config{
 			Workspace:          ws,
 			Model:              "mock",
 			UseMock:            true,
@@ -43,7 +43,7 @@ func TestHeadlessAutoWithoutTrustProjectSuppressesProjectAgentDefs(t *testing.T)
 			Headless:           true, // a headless root does NOT grant ingestion via the ladder
 			// TrustProject stays FALSE — the operator did not pass --trust-project.
 			Diagnostics: diag.diag,
-		})
+		}))
 		if err != nil {
 			t.Fatalf("Build: %v", err)
 		}
@@ -62,7 +62,7 @@ func TestHeadlessAutoWithoutTrustProjectSuppressesProjectAgentDefs(t *testing.T)
 		// def — this proves the pinned assertion is non-vacuous.
 		ws := seedProjectAgentDef(t, "scout")
 
-		built, err := buildIsolated(t, context.Background(), Config{
+		built, err := buildIsolated(t, context.Background(), withInertEnforcingChecker(Config{
 			Workspace:          ws,
 			Model:              "mock",
 			UseMock:            true,
@@ -72,7 +72,7 @@ func TestHeadlessAutoWithoutTrustProjectSuppressesProjectAgentDefs(t *testing.T)
 			Headless:           true,
 			TrustProject:       true, // the explicit opt-in admits ingestion on the headless root
 			Diagnostics:        nil,  // port.NopDiagnostics via nil
-		})
+		}))
 		if err != nil {
 			t.Fatalf("Build: %v", err)
 		}

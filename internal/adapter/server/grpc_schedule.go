@@ -187,7 +187,11 @@ func (h *ScheduleServer) ListFires(ctx context.Context, req *mecatlv1.ListFiresR
 
 // protoToScheduleSpec maps the proto ScheduleSpec to the port.ScheduleSpec the
 // Service methods take. It reuses the existing contentFromProto / limitsFromProto
-// / modeFromProto mappers (the single content-validation path). TriggerSpec maps
+// / createModeFromProto mappers (the single content-validation path). An
+// UNSPECIFIED mode stays empty, as on CreateSession: a mutating schedule then
+// fires in the server's configured default session mode, admitted at each fire,
+// and a read-leaning one is still refused by the create seam unless it names
+// plan. TriggerSpec maps
 // the cron string + one_shot Timestamp → time.Time. An absent trigger is a value
 // error (the create-seam's Trigger.Validate rejects it). Timestamps without a
 // created_at are left zero (the create-seam stamps CreatedAt itself, so a caller
@@ -207,7 +211,7 @@ func protoToScheduleSpec(in *mecatlv1.ScheduleSpec) (port.ScheduleSpec, error) {
 		Name:              in.GetName(),
 		Prompt:            in.GetPrompt(),
 		Profile:           in.GetProfile(),
-		Mode:              modeFromProto(in.GetMode()),
+		Mode:              createModeFromProto(in.GetMode()),
 		Limits:            limitsFromProto(in.GetLimits()),
 		Mutating:          in.GetMutating(),
 		MaxFires:          int(in.GetMaxFires()),
@@ -269,7 +273,7 @@ func scheduleSpecToProto(in port.ScheduleSpec) *mecatlv1.ScheduleSpec {
 		Prompt:            in.Prompt,
 		Parts:             contentToProto(in.Parts),
 		Profile:           in.Profile,
-		Mode:              modeToProto(in.Mode),
+		Mode:              scheduleModeToProto(in.Mode),
 		Limits:            limitsToProto(in.Limits),
 		Mutating:          in.Mutating,
 		MaxFires:          ClampInt32(in.MaxFires),

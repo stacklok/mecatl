@@ -154,7 +154,10 @@ the source untouched, with one exception: clearing a running source cancels it f
 a later failure publishes no successor but the source stays cancelled.
 
 `SetMode` is rejected mid-turn, because changing posture would race permission checks
-already in flight; clients defer it to the next prompt. `CompactSession` likewise runs
+already in flight; clients defer it to the next prompt. The exception is a stored session
+awaiting an approval in a mode the server no longer admits: a switch to an admitted, lower
+mode cancels the pending turn without running it, then applies the mode
+(`refused_mode_recovery`). `CompactSession` likewise runs
 only at an idle or terminal boundary.
 
 ## Scheduled tasks
@@ -186,7 +189,10 @@ entry; `engine/agent` knows nothing about it.
   explanation and no session id: no execution was admitted. It does not leave
   an uncertain pending owner blocking the next fresh slot.
 - Each fire creates a fresh `sched--` session owned by the schedule's captured owner,
-  with bounded limits. A schedule not marked mutating runs in plan mode. The fire
+  with bounded limits. A schedule not marked mutating runs in plan mode. A mutating
+  schedule runs in its recorded mode, or the server's default session mode when the
+  mode is unset (UNSPECIFIED on the wire); the fire's session creation admits that
+  mode against the current ceiling. The fire
   reattaches the exact placement persisted at creation, and fails before creating a
   session if that placement has drifted (`internal/app/scheduler_fire.go`).
 

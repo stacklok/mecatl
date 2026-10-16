@@ -88,7 +88,7 @@ func TestPathEscapePosture_Scenario5_ChildReadEscapeDenied(t *testing.T) {
 				t.Fatalf("Build: %v", err)
 			}
 			defer built.Close()
-			sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+			sess, err := built.Service.CreateSession(context.Background(), postureSessionMode(posture), session.Limits{})
 			if err != nil {
 				t.Fatalf("CreateSession: %v", err)
 			}

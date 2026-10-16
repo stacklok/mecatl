@@ -57,6 +57,16 @@ It defaults to read-leaning behavior. A schedule that may use `Edit`, `Write`,
 or `Shell` must explicitly set `mutating: true`; this is not an implicit
 allow-all mode.
 
+A read-leaning schedule must set `mode` to plan. For a mutating schedule, the
+fire's permission mode depends on how you created it:
+
+- The in-chat `Schedule` tool records the mode its creating session had.
+- A gRPC or REST request uses its `mode` field. When `mode` is unspecified, as
+  in the `mecatui` overlay, each fire uses the server's default session mode.
+
+Every fire checks its mode against the server ceiling again. If the server has
+since restarted with a lower ceiling, the fire fails without running.
+
 For an independently created schedule, the server selects placement from its
 configured default. The create request has no workspace field. Use the HTTP
 listener for this REST workflow:

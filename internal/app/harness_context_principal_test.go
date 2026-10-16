@@ -60,7 +60,7 @@ func TestHarnessContext_PrincipalScopedBindingIsolation(t *testing.T) {
 		binds[index].Add(1)
 	}
 	var requests []port.LLMRequest
-	cfg := Config{Workspace: t.TempDir(), UserModelDir: t.TempDir(), SoulPath: filepath.Join(t.TempDir(), "soul.md"), PermissionConfigs: []string{file}, UseMock: true, OwnershipEnforced: true, AllowAllTools: true,
+	cfg := Config{Workspace: t.TempDir(), UserModelDir: t.TempDir(), SoulPath: filepath.Join(t.TempDir(), "soul.md"), PermissionConfigs: []string{file}, UseMock: true, OwnershipEnforced: true, AllowAllTools: true, GuardrailsDisabled: true,
 		MockProvider: mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(r port.LLMRequest) { requests = append(requests, r) })},
 			mockllm.ToolCallTurn(session.NewToolCall("agent-alice", "Subagent", []byte(`{"agent":"owner-agent-alice","prompt":"report owner"}`))),
 			mockllm.TextTurn("alice specialist done"),
@@ -107,7 +107,8 @@ func TestHarnessContext_PrincipalScopedBindingIsolation(t *testing.T) {
 		}
 	}
 	ctx := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser})
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	// Pass "" to use the server's DefaultMode (ModeYolo from AllowAllTools=true config).
+	sess, err := built.Service.CreateSession(ctx, "", session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}

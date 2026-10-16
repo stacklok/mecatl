@@ -1814,7 +1814,9 @@
                       "enum": [
                         "default",
                         "plan",
-                        "acceptEdits"
+                        "acceptEdits",
+                        "auto",
+                        "yolo"
                       ]
                     },
                     "model": {
@@ -2991,7 +2993,9 @@
                       "enum": [
                         "default",
                         "plan",
-                        "acceptEdits"
+                        "acceptEdits",
+                        "auto",
+                        "yolo"
                       ]
                     }
                   },
@@ -5527,7 +5531,10 @@
                             "enum": [
                               "default",
                               "plan",
-                              "acceptEdits"
+                              "acceptEdits",
+                              "auto",
+                              "yolo",
+                              "serverDefault"
                             ]
                           },
                           "modelId": {
@@ -5882,7 +5889,10 @@
                       "enum": [
                         "default",
                         "plan",
-                        "acceptEdits"
+                        "acceptEdits",
+                        "auto",
+                        "yolo",
+                        "serverDefault"
                       ]
                     },
                     "modelId": {
@@ -6190,8 +6200,7 @@
                       "default",
                       "plan",
                       "acceptEdits"
-                    ],
-                    "default": "plan"
+                    ]
                   },
                   "mutating": {
                     "type": "boolean",
@@ -6306,7 +6315,10 @@
                       "enum": [
                         "default",
                         "plan",
-                        "acceptEdits"
+                        "acceptEdits",
+                        "auto",
+                        "yolo",
+                        "serverDefault"
                       ]
                     },
                     "modelId": {

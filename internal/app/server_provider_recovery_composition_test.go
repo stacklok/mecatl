@@ -25,7 +25,7 @@ func recoveryAppConfig(t *testing.T, endpoint string) Config {
 	t.Helper()
 	return isolateConfig(t, Config{
 		Workspace: t.TempDir(), StoreDir: t.TempDir(), NoSoul: true, NoUserModel: true,
-		Model: "gpt-5", UseOpenAI: true, OpenAIKey: "test", AllowAllTools: true,
+		Model: "gpt-5", UseOpenAI: true, OpenAIKey: "test", AllowAllTools: true, GuardrailsDisabled: true,
 		ContextWindowOverride: defaultContextWindowTokens,
 		ProviderOverrides:     permconfig.ProviderOverrides{providerOpenAI: {BaseURL: endpoint + "/v1"}},
 		envDetector:           fakeEnv(nil), liveModelHTTPClient: offlineHTTPClient(),
@@ -160,7 +160,7 @@ func TestServerProviderRecovery_Scenario2_EffectiveDelayNeverRetriesEarly_Compos
 			if err != nil {
 				t.Fatal(err)
 			}
-			sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
+			sess, err := built.Service.CreateSession(ctx, "", defaultLimits())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -349,7 +349,7 @@ func TestServerProviderRecovery_Scenario1_RootAndDirectWriteChildRecoverBeforeTe
 		t.Fatal(err)
 	}
 	defer built.Close()
-	parent, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
+	parent, err := built.Service.CreateSession(ctx, "", defaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

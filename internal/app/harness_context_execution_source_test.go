@@ -169,7 +169,7 @@ func TestRepositoryForkCarriesSnapshotsAcrossNewWorkspaceBindings(t *testing.T) 
 	var requests []port.LLMRequest
 	cfg := harnessExecutionConfig(t, provider, &requests)
 	cfg.Workspace = root
-	cfg.AllowAllTools = true
+	cfg.AllowAllTools, cfg.GuardrailsDisabled = true, true
 	cfg.HarnessInstructionSources = nil
 	cfg.HarnessCommandSources = nil
 	registerRepositorySources(&cfg)
@@ -228,7 +228,7 @@ func TestHarnessPublishedCloseRequiresExplicitLoad(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID("closed-published"), server.WithPlacementBinding(binding))
+	sess, err := built.Service.CreateSessionWithProfile(ctx, "", session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID("closed-published"), server.WithPlacementBinding(binding))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +275,7 @@ func TestHarnessContext_SameOwnerSessionsStayDistinct(t *testing.T) {
 	ctx := session.WithPrincipal(t.Context(), owner)
 	for i, binding := range []server.PlacementBinding{first, second} {
 		id := session.SessionID(fmt.Sprintf("exact-%d", i))
-		sess, err := built.Service.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID(id), server.WithPlacementBinding(binding))
+		sess, err := built.Service.CreateSessionWithProfile(ctx, "", session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID(id), server.WithPlacementBinding(binding))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -337,6 +337,7 @@ func testExecutionSourceScheduledRestart(t *testing.T) {
 	var requests []port.LLMRequest
 	cfg := harnessExecutionConfig(t, provider, &requests)
 	cfg.StoreDir, cfg.AllowAllTools, cfg.OwnershipEnforced = storeDir, true, true
+	cfg.GuardrailsDisabled = true
 	original := cfg.HarnessInstructionSources[0].Bind
 	var unpublished []session.SessionID
 	var resumed atomic.Int32
@@ -361,7 +362,7 @@ func testExecutionSourceScheduledRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer first.Close()
-	if _, err := first.Service.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID(rootID), server.WithPlacementBinding(placement)); err != nil {
+	if _, err := first.Service.CreateSessionWithProfile(ctx, "", session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID(rootID), server.WithPlacementBinding(placement)); err != nil {
 		t.Fatal(err)
 	}
 	for _, ev := range harnessRun(t, first, ctx, rootID, "schedule") {
@@ -524,7 +525,7 @@ func testExecutionSourceFailureBoundaries(t *testing.T) {
 			owner := &session.Principal{Issuer: "issuer", Subject: "attempt-owner", GrantType: session.GrantTypeUser}
 			otherCtx := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "issuer", Subject: "other-owner", GrantType: session.GrantTypeUser})
 			create := func(ctx context.Context, id session.SessionID, binding server.PlacementBinding) error {
-				_, err := svc.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID(id), server.WithPlacementBinding(binding))
+				_, err := svc.CreateSessionWithProfile(ctx, "", session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID(id), server.WithPlacementBinding(binding))
 				return err
 			}
 			if err := create(otherCtx, "other", otherPlacement); err != nil {

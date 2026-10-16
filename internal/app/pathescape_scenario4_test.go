@@ -303,35 +303,31 @@ func TestPathEscapePosture_Scenario4_PlanModeWriteEscapeDenied(t *testing.T) {
 	writeCall := scenario3Call("w1", "Write", map[string]string{"path": f.target, "content": "x"})
 	readCall := scenario3Call("r1", "Read", map[string]string{"path": f.target})
 
-	for _, posture := range []Posture{PostureStrict, PostureTrusted} {
-		posture := posture
-		t.Run(posture.String(), func(t *testing.T) {
-			t.Parallel()
-			p := newEscapePolicy(permpolicy.NewPolicy(defaultRules(), nil), posture)
+	p := newEscapePolicy(permpolicy.NewPolicy(defaultRules(), nil))
 
-			d := p.Evaluate(context.Background(), session.SessionID("s1"), session.ModePlan, writeCall, ws)
-			if d.Decision.Effect != governance.Deny {
-				t.Fatalf("plan-mode write escape at %s = %v, want Deny — the plan-mode hard-deny must precede any escape Ask", posture, d.Decision.Effect)
-			}
+	d := p.Evaluate(context.Background(), session.SessionID("s1"), session.ModePlan, writeCall, ws)
+	if d.Decision.Effect != governance.Deny {
+		t.Fatalf("plan-mode write escape = %v, want Deny — the plan-mode hard-deny must precede any escape Ask", d.Decision.Effect)
+	}
 
-			// Positive control 1: the SAME wrapper, default mode → the escape
-			// Ask (the deny above is plan-mode precedence, not a blanket
-			// strict/trusted deny).
-			d = p.Evaluate(context.Background(), session.SessionID("s1"), session.ModeDefault, writeCall, ws)
-			if d.Decision.Effect != governance.Ask {
-				t.Fatalf("default-mode write escape at %s = %v, want the escape Ask", posture, d.Decision.Effect)
-			}
-			if d.Decision.AskProvenance != governance.AskProvenanceUnknown {
-				t.Fatalf("escape Ask at %s carries auto-approval provenance %v — it must surface to a human", posture, d.Decision.AskProvenance)
-			}
+	// Positive control 1: the SAME wrapper in default and acceptEdits sessions
+	// → the escape Ask (the deny above is plan-mode precedence, not a blanket
+	// deny).
+	for _, mode := range []session.PermissionMode{session.ModeDefault, session.ModeAccept} {
+		d = p.Evaluate(context.Background(), session.SessionID("s1"), mode, writeCall, ws)
+		if d.Decision.Effect != governance.Ask {
+			t.Fatalf("%s-mode write escape = %v, want the escape Ask", mode, d.Decision.Effect)
+		}
+		if d.Decision.AskProvenance != governance.AskProvenanceUnknown {
+			t.Fatalf("%s-mode escape Ask carries auto-approval provenance %v — it must surface to a human", mode, d.Decision.AskProvenance)
+		}
+	}
 
-			// Positive control 2: a plan-mode READ escape follows the read row
-			// (allow — plan mode hard-denies mutations only).
-			d = p.Evaluate(context.Background(), session.SessionID("s1"), session.ModePlan, readCall, ws)
-			if d.Decision.Effect == governance.Deny {
-				t.Fatalf("plan-mode read escape at %s = Deny (%q) — plan mode denies mutations only; a read escape must not be hard-denied", posture, d.Decision.Reason)
-			}
-		})
+	// Positive control 2: a plan-mode READ escape follows the read row
+	// (allow — plan mode hard-denies mutations only).
+	d = p.Evaluate(context.Background(), session.SessionID("s1"), session.ModePlan, readCall, ws)
+	if d.Decision.Effect == governance.Deny {
+		t.Fatalf("plan-mode read escape = Deny (%q) — plan mode denies mutations only; a read escape must not be hard-denied", d.Decision.Reason)
 	}
 }
 
@@ -354,7 +350,7 @@ func TestPathEscapePosture_Scenario4_ConfiguredRulesStillWin(t *testing.T) {
 		inner := permpolicy.NewPolicy([]governance.Rule{
 			{Scope: governance.ScopeUser, Tool: "Read", Effect: governance.Deny},
 		}, nil)
-		p := newEscapePolicy(inner, PostureStrict)
+		p := newEscapePolicy(inner)
 		d := p.Evaluate(context.Background(), session.SessionID("s1"), session.ModeDefault, call, ws)
 		if d.Decision.Effect != governance.Deny {
 			t.Fatalf("effect = %v, want Deny — a configured Deny must win over the escape Ask", d.Decision.Effect)
@@ -366,7 +362,7 @@ func TestPathEscapePosture_Scenario4_ConfiguredRulesStillWin(t *testing.T) {
 		inner := permpolicy.NewPolicy([]governance.Rule{
 			{Scope: governance.ScopeUser, Tool: "Read", Effect: governance.Ask},
 		}, nil)
-		p := newEscapePolicy(inner, PostureTrusted)
+		p := newEscapePolicy(inner)
 		d := p.Evaluate(context.Background(), session.SessionID("s1"), session.ModeDefault, call, ws)
 		if d.Decision.Effect != governance.Ask || d.Decision.AskProvenance != governance.AskProvenanceConfigured {
 			t.Fatalf("effect = %+v, want the CONFIGURED Ask — the escape Ask must never replace a configured Ask", d)

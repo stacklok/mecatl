@@ -97,12 +97,13 @@ func TestSteer_EnabledByDefaultEndToEnd(t *testing.T) {
 	// dispatch auto-approves (Interactive is false; an ask would park the run
 	// headless instead of holding it mid-dispatch the way this test needs).
 	built, err := buildIsolated(t, ctx, Config{
-		Workspace:      t.TempDir(),
-		Model:          "mock",
-		NoSoul:         true,
-		MockProvider:   llm,
-		AllowAllTools:  true,
-		extraCoreTools: []tool.Tool{block},
+		Workspace:          t.TempDir(),
+		Model:              "mock",
+		NoSoul:             true,
+		MockProvider:       llm,
+		AllowAllTools:      true,
+		GuardrailsDisabled: true,
+		extraCoreTools:     []tool.Tool{block},
 		extraCoreToolClassifications: map[string]server.ClassificationEntry{
 			"SteerBlock": {Kind: server.KindDerived, Rationale: "test tool is contained within the current authorized run"},
 		},
@@ -119,7 +120,7 @@ func TestSteer_EnabledByDefaultEndToEnd(t *testing.T) {
 		t.Fatal("steer capability = false, want true (DEFAULT ON)")
 	}
 
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(ctx, "", session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -209,7 +210,7 @@ func TestSteer_DisabledCompositionInert(t *testing.T) {
 		t.Fatal("steer capability = true, want false (DisableSteer)")
 	}
 
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(ctx, "", session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

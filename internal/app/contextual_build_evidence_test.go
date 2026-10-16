@@ -443,7 +443,10 @@ func TestBuildWiresFiniteScriptEvidenceToContextualReviewer(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{MaxTurns: 2})
+	// ModeYolo: Shell is auto-allowed (allow-all rules injected by Policy.Evaluate),
+	// so the guardrails block rule fires and routes the call to the contextual reviewer.
+	// ModeDefault would floor Shell at Ask, hanging the test without a human approver.
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeYolo, session.Limits{MaxTurns: 2})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

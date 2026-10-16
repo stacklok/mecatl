@@ -92,6 +92,22 @@
     },
     "maxRunTokens": {"type": ["integer", "null"], "minimum": 1},
     "maxTeamTokens": {"type": ["integer", "null"], "minimum": 1},
+    "guardrails": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model"],
+      "properties": {
+        "model": {
+          "type": "string",
+          "anyOf": [
+            {"const": ""},
+            {"pattern": "^\\S(?:.*\\S)?$"}
+          ]
+        },
+        "disabled": {"type": "boolean"}
+      }
+    },
+    "permissionMode": {"type": "string", "enum": ["plan", "default", "accept-edits", "auto", "yolo"]},
     "telemetry": {
       "type": "object",
       "additionalProperties": false,

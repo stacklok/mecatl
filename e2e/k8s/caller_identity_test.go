@@ -40,9 +40,10 @@ import (
 // the unauthenticated base. Caller identity is inherently MULTI-caller, so these
 // take the bearer per call rather than reading one shared credential.
 
+// defaultSessionCreateBody omits the mode so the session starts in the
+// deployment's default permission mode (the Kind values select yolo).
 func defaultSessionCreateBody() []byte {
-	body, _ := json.Marshal(map[string]any{"mode": "default"})
-	return body
+	return []byte(`{}`)
 }
 
 func createSessionAs(ctx context.Context, addr, bearer string) (int, string) {

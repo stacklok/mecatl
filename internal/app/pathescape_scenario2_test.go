@@ -58,13 +58,15 @@ func setupEscapeFS(t *testing.T) escapeFixture {
 }
 
 // escapeCfg returns the offline Build config for a relaxed-read e2e: mockllm
-// provider, real osfs workspace, no network. Posture is set by the caller.
+// provider, real osfs workspace, no network. Posture is set by the caller; an
+// auto deployment gets an inert enforcing checker (auto requires one).
 func escapeCfg(t *testing.T, f escapeFixture, posture Posture, turns ...mockllm.Turn) Config {
 	t.Helper()
-	return Config{
+	cfg := Config{
 		Workspace:           f.workspace,
 		NoSoul:              true,
 		Posture:             posture,
+		GuardrailsDisabled:  true,
 		PostureFlagSet:      true,
 		envDetector:         fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-openai"}),
 		liveModelHTTPClient: offlineHTTPClient(),
@@ -72,6 +74,10 @@ func escapeCfg(t *testing.T, f escapeFixture, posture Posture, turns ...mockllm.
 			return mockllm.New(turns...)
 		},
 	}
+	if posture == PostureAuto {
+		cfg = withInertEnforcingChecker(cfg)
+	}
+	return cfg
 }
 
 // auditRecorder is a test ToolCallRecorder capturing each call verbatim.
@@ -132,7 +138,7 @@ func TestPathEscapePosture_Scenario2_YoloReadEscapeAllowed(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeYolo, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -162,7 +168,7 @@ func TestPathEscapePosture_Scenario2_AutoReadEscapeAllowed(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeAuto, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -193,7 +199,7 @@ func TestPathEscapePosture_Scenario2_ReadEscapeAuditParity(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeYolo, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -300,7 +306,7 @@ func TestPathEscapePosture_Scenario2_ProcEnvironNotExposed(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeYolo, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -354,7 +360,7 @@ func TestPathEscapePosture_Scenario2_NestedSymlinkEscapeRejected(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeYolo, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -389,7 +395,7 @@ func TestPathEscapePosture_Scenario2_RestartRehydratesRelaxedWorkspace(t *testin
 	if err != nil {
 		t.Fatalf("Build #1: %v", err)
 	}
-	sess, err := built1.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	sess, err := built1.Service.CreateSession(context.Background(), session.ModeYolo, session.Limits{})
 	if err != nil {
 		built1.Close()
 		t.Fatalf("CreateSession: %v", err)

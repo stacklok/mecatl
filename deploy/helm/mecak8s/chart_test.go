@@ -923,7 +923,7 @@ func TestMecak8sHelmChart_DeployCheckProductionFixtureRuntimeAndSpread(t *testin
 		"--redis-max-followers=32",
 		"--session-lease-k8s-namespace=default",
 		"--headless=true",
-		"--posture=auto",
+		"--permission-mode=auto",
 		"--default-provider=openrouter",
 		"--model=anthropic/claude-sonnet-4-6",
 		"--max-run-tokens=200000",
@@ -3070,5 +3070,92 @@ mcp:
 	secondSum := deploymentFromRender(t, second).Spec.Template.Annotations["checksum/mcp-profile"]
 	if firstSum == "" || secondSum == "" || firstSum == secondSum {
 		t.Fatalf("OAuth profile checksums = %q and %q; profile change must roll pods", firstSum, secondSum)
+	}
+}
+
+// TestShippedAllowAllDefaultsDeclareCheckerChoice pins the chart's tri-state
+// checker choice: with neither guardrails.model nor guardrails.disabled set the
+// chart passes no guardrails flag, so mecak8s inherits the checker from mounted
+// settings; a model renders --guardrails-model; disabled renders the
+// --guardrails=off kill-switch. permissionMode renders --permission-mode.
+func TestShippedAllowAllDefaultsDeclareCheckerChoice(t *testing.T) {
+	cases := []struct {
+		name     string
+		extra    []string
+		mode     string
+		guardArg string // the single expected --guardrails* arg; empty means none
+	}{
+		{name: "default inherits the settings checker", mode: "auto"},
+		{name: "model declares checker", extra: []string{"--set-string", "guardrails.model=openrouter/checker"}, mode: "auto", guardArg: "--guardrails-model=openrouter/checker"},
+		{name: "disabled declares the kill-switch", extra: []string{"--set", "permissionMode=yolo,guardrails.disabled=true"}, mode: "yolo", guardArg: "--guardrails=off"},
+		{name: "yolo inherits", extra: []string{"--set", "permissionMode=yolo"}, mode: "yolo"},
+		{name: "default mode", extra: []string{"--set", "permissionMode=default"}, mode: "default"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rendered, err := helm(t, append(secureProductionArgs(), tc.extra...)...)
+			if err != nil {
+				t.Fatalf("render: %v\n%s", err, rendered)
+			}
+			args := deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0].Args
+			if !slices.Contains(args, "--permission-mode="+tc.mode) {
+				t.Fatalf("args lack --permission-mode=%s: %q", tc.mode, args)
+			}
+			var guard []string
+			for _, a := range args {
+				if strings.HasPrefix(a, "--posture") || a == "--yolo" {
+					t.Fatalf("args still use deprecated alias %q: %q", a, args)
+				}
+				if strings.HasPrefix(a, "--guardrails") {
+					guard = append(guard, a)
+				}
+			}
+			var want []string
+			if tc.guardArg != "" {
+				want = []string{tc.guardArg}
+			}
+			if !slices.Equal(guard, want) {
+				t.Fatalf("guardrails args = %q, want %q", guard, want)
+			}
+		})
+	}
+}
+
+// TestPermissionModeValuesAreValidated pins the chart-owned permission mode:
+// an unknown permissionMode, a mode flag in extraArgs, or both checker choices
+// fail rendering with a message naming the fix.
+func TestPermissionModeValuesAreValidated(t *testing.T) {
+	cases := []struct {
+		name  string
+		extra []string
+		want  []string
+	}{
+		// The schema enum rejects it first; its message format varies by Helm version.
+		{name: "unknown mode", extra: []string{"--set", "permissionMode=trusted"}, want: []string{"permissionMode", "accept-edits"}},
+		{name: "posture in extraArgs", extra: []string{"--set", "extraArgs[0]=--posture=strict"}, want: []string{"--posture=strict", "permissionMode"}},
+		{name: "split posture in extraArgs", extra: []string{"--set", "extraArgs[0]=--posture,extraArgs[1]=auto"}, want: []string{"--posture", "permissionMode"}},
+		{name: "permission-mode in extraArgs", extra: []string{"--set", "extraArgs[0]=--permission-mode=yolo"}, want: []string{"--permission-mode=yolo", "permissionMode"}},
+		{name: "yolo in extraArgs", extra: []string{"--set", "extraArgs[0]=--yolo"}, want: []string{"--yolo", "permissionMode"}},
+		// Go's flag parser also accepts single-dash long flags.
+		{name: "single-dash posture in extraArgs", extra: []string{"--set", "extraArgs[0]=-posture=strict"}, want: []string{"-posture=strict", "permissionMode"}},
+		{name: "single-dash split posture in extraArgs", extra: []string{"--set", "extraArgs[0]=-posture,extraArgs[1]=strict"}, want: []string{"-posture", "permissionMode"}},
+		{name: "single-dash permission-mode in extraArgs", extra: []string{"--set", "extraArgs[0]=-permission-mode=yolo"}, want: []string{"-permission-mode=yolo", "permissionMode"}},
+		{name: "single-dash split permission-mode in extraArgs", extra: []string{"--set", "extraArgs[0]=-permission-mode,extraArgs[1]=yolo"}, want: []string{"-permission-mode", "permissionMode"}},
+		{name: "split permission-mode in extraArgs", extra: []string{"--set", "extraArgs[0]=--permission-mode,extraArgs[1]=yolo"}, want: []string{"--permission-mode", "permissionMode"}},
+		{name: "single-dash yolo in extraArgs", extra: []string{"--set", "extraArgs[0]=-yolo"}, want: []string{"-yolo", "permissionMode"}},
+		{name: "model and disabled", extra: []string{"--set", "guardrails.model=checker,guardrails.disabled=true"}, want: []string{"guardrails.model", "guardrails.disabled"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rendered, err := helm(t, append(secureProductionArgs(), tc.extra...)...)
+			if err == nil {
+				t.Fatalf("render succeeded, want failure:\n%s", rendered)
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(rendered, w) {
+					t.Fatalf("render error lacks %q:\n%s", w, rendered)
+				}
+			}
+		})
 	}
 }

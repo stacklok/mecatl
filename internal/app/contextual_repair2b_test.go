@@ -124,7 +124,8 @@ func TestBuildInboundImageCannotBeBlindlyReleasedByTextOnlyChecker(t *testing.T)
 		t.Fatal(err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{MaxTurns: 2})
+	// ModeAuto: MCP tools are auto-allowed (allow-all rules); the guardrails post-block fires.
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeAuto, session.Limits{MaxTurns: 2})
 	if err != nil {
 		t.Fatal(err)
 	}

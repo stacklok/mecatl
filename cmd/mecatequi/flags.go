@@ -143,6 +143,10 @@ type flags struct {
 	// explicit --posture so composition lets CLI out-rank the settings.yaml key.
 	posture        string
 	postureFlagSet bool
+	// permissionMode is the raw --permission-mode token, validated at
+	// parse time; permissionModeFlagSet records it was passed explicitly.
+	permissionMode        string
+	permissionModeFlagSet bool
 	// Reasoning-effort tier. reasoningEffortFlagSet records an explicit
 	// --reasoning-effort so composition lets CLI out-rank the settings.yaml key.
 	reasoningEffort        string
@@ -201,33 +205,10 @@ func parseFlags(argv []string) (flags, error) {
 		return flags{}, err
 	}
 
-	// Record whether --posture was set EXPLICITLY (vs the empty default) so
-	// composition lets CLI out-rank the operator-global settings.yaml posture: key.
-	fs.Visit(func(fl *flag.Flag) {
-		switch fl.Name {
-		case "posture":
-			f.postureFlagSet = true
-		case "shell":
-			f.shellFlagSet = true
-		case "subagent-model-router":
-			// Tri-state kill-switch: record that the flag was given so
-			// appConfig can distinguish unset / =false (kill-switch) / =true (inert).
-			f.subagentModelRouterSet = true
-		case "out-summary":
-			// Stdout-compact summary mode (issue #341): ONLY an EXPLICIT
-			// --out-summary=- selects it. The unset default also resolves to "-"
-			// but keeps the indented JSON — default behavior unchanged.
-			f.summaryCompact = f.outSummary == "-"
-		case "product-metrics":
-			f.productMetricsSet = true
-		}
-		if fl.Name == "reasoning-effort" {
-			f.reasoningEffortFlagSet = true
-		}
-		if fl.Name == "default-provider" {
-			f.defaultProviderFlagSet = true
-		}
-	})
+	recordExplicitFlags(fs, &f)
+	if err := validatePermissionModeFlags(f); err != nil {
+		return flags{}, err
+	}
 	resolvedShell, err := cliconfig.ResolveCommandRunnerConfig(f.shell, f.shellFlagSet, true, f.permissionConfigs)
 	if err != nil {
 		return flags{}, fmt.Errorf("command runner configuration: %w", err)
@@ -281,6 +262,39 @@ func parseFlags(argv []string) (flags, error) {
 	return f, nil
 }
 
+// recordExplicitFlags records which flags were set EXPLICITLY (vs their
+// defaults), e.g. so composition lets CLI out-rank the operator-global
+// settings.yaml posture: and permissionMode: keys.
+func recordExplicitFlags(fs *flag.FlagSet, f *flags) {
+	fs.Visit(func(fl *flag.Flag) {
+		switch fl.Name {
+		case "posture":
+			f.postureFlagSet = true
+		case "permission-mode":
+			f.permissionModeFlagSet = true
+		case "shell":
+			f.shellFlagSet = true
+		case "subagent-model-router":
+			// Tri-state kill-switch: record that the flag was given so
+			// appConfig can distinguish unset / =false (kill-switch) / =true (inert).
+			f.subagentModelRouterSet = true
+		case "out-summary":
+			// Stdout-compact summary mode (issue #341): ONLY an EXPLICIT
+			// --out-summary=- selects it. The unset default also resolves to "-"
+			// but keeps the indented JSON — default behavior unchanged.
+			f.summaryCompact = f.outSummary == "-"
+		case "product-metrics":
+			f.productMetricsSet = true
+		}
+		if fl.Name == "reasoning-effort" {
+			f.reasoningEffortFlagSet = true
+		}
+		if fl.Name == "default-provider" {
+			f.defaultProviderFlagSet = true
+		}
+	})
+}
+
 // configureFlags registers mecatequi's flags on fs. Keeping registration separate
 // lets help-output tests exercise the same flag descriptions that users see.
 func configureFlags(fs *flag.FlagSet, f *flags) {
@@ -331,12 +345,13 @@ func configureFlags(fs *flag.FlagSet, f *flags) {
 	fs.StringVar(&f.guardrailsModel, "guardrails-model", "", "Model identifier or alias for the tool-free guardrails checker. Setting this flag enables guardrails unless --guardrails=off. A guardrail model slot takes precedence. Default: empty.")
 	fs.StringVar(&f.guardrailsMode, "guardrails", "", "Set to off to disable guardrails, including configured checker models. Other values leave guardrails controlled by the configured checker model.")
 
-	fs.StringVar(&f.subagentAskReviewer, "subagent-ask-reviewer", "", "Model identifier or alias for the tool-free reviewer of child permission requests in headless runs. Default: empty, which disables the reviewer.")
+	fs.StringVar(&f.subagentAskReviewer, "subagent-ask-reviewer", "", "Model identifier or alias for the tool-free reviewer of child permission requests in headless runs. Default: empty, which leaves the reviewer off except in a headless auto or yolo permission mode, where it is on by default (ask-reviewer model slot, else the session model). Set off to disable it explicitly.")
 	fs.BoolVar(&f.subagentModelRouter, "subagent-model-router", false, "Set false to disable configured subagent model routing. A configured models.router taxonomy enables routing; this flag does not enable it.")
 	fs.IntVar(&f.subagentAskReviewerMaxDenies, "subagent-ask-reviewer-max-denies", agent.DefaultAskReviewMaxDenies, "Consecutive non-allow reviewer outcomes before the reviewer is disabled for the rest of the run. Values less than or equal to 0 use the default: 3.")
 	fs.StringVar(&f.subagentAskReviewerPolicyFile, "subagent-ask-reviewer-policy", "", "Trusted policy rubric file for --subagent-ask-reviewer. Its contents replace the built-in rubric. An unreadable file fails startup.")
 
-	fs.StringVar(&f.posture, "posture", "", "Permission posture: strict (default), trusted, auto, or yolo. Headless runs need an explicit trust source such as --trust-project to admit project content. Deny and configured ask rules still apply. Unknown values use strict.")
+	fs.StringVar(&f.permissionMode, "permission-mode", "", permissionModeHelp)
+	fs.StringVar(&f.posture, "posture", "", "DEPRECATED: use --permission-mode. Permission posture: strict (default), trusted, auto, or yolo. Headless runs need an explicit trust source such as --trust-project to admit project content. Deny and configured ask rules still apply. Unknown values use strict.")
 	fs.StringVar(&f.reasoningEffort, "reasoning-effort", "", "Reasoning effort: auto, low, medium, high, xhigh, or max. Empty uses the provider or operator setting. OpenAI maps xhigh and max to high. Unknown values use the provider or operator setting.")
 	fs.BoolVar(&f.trustProject, "trust-project", false, "Allow workspace content to provide project instructions, rules, agents, skills, souls, commands, Git snapshots, and the read-only child worktree shell. Default: false. Enable only for a repository and Git metadata you trust.")
 
@@ -478,6 +493,10 @@ func appConfig(f flags, diag port.Diagnostics, obs observability) app.Config {
 
 		Posture:        app.ParsePosture(f.posture),
 		PostureFlagSet: f.postureFlagSet,
+		// Permission mode: an explicit token out-ranks the deprecated
+		// --posture in app.Build's foldPermissionMode.
+		PermissionMode:        f.permissionMode,
+		PermissionModeFlagSet: f.permissionModeFlagSet,
 		// Explicit workspace trust: on this HEADLESS root the posture ladder never
 		// raises TrustProject, so --trust-project is the one-shot opt-in that admits
 		// both project steering and the read-only worktree shell.

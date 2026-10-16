@@ -126,7 +126,7 @@ refreshes it.
 
 |JSON path|Type|Meaning|
 |-|-|-|
-|`Version`|integer|Status input protocol version (currently `5`).|
+|`Version`|integer|Status input protocol version (currently `6`).|
 |`Server.DisplayTarget`|string|Credential-free target shown by the client.|
 |`Server.ConnectionMode`|string|`embedded`, `connect`, or empty while unknown.|
 |`Session.Title`|string|Optional display title.|
@@ -149,6 +149,7 @@ refreshes it.
 |`Workspace.Path`|string|Exact local root returned by the privileged local-context RPC. It is available to templates through their escaped projection and to a configured direct local status command. It is empty for remote, untrusted, no-FS, unavailable, and otherwise ineligible sessions.|
 |`Terminal.Rows`, `Terminal.Cols`|integers|Measured terminal dimensions.|
 |`Terminal.HeaderAvailCols`, `Terminal.FooterAvailCols`|integers|Columns remaining after the client reserves mandatory header and footer lanes.|
+|`Terminal.Emoji`|boolean|Whether the terminal is likely to draw emoji such as ⚡️ at their expected width. The shipped header uses it to add a bolt before the `yolo` pill.|
 |`MainAgent.State`|string|`connecting`, `idle`, `thinking`, `running_tool`, `awaiting_approval`, `completed`, `failed`, or `cancelled`.|
 |`MainAgent.Activity`|string|Bounded display activity label.|
 |`MainAgent.Approval`|string|`none` or `awaiting`.|
@@ -179,7 +180,12 @@ left-aligned by the renderer; footers are right-aligned. Text may be wrapped in
 these semantic tokens:
 
 `text`, `muted`, `primary`, `secondary`, `accent`, `success`, `warning`,
-`error`, and `info`.
+`error`, `info`, and `danger`.
+
+`danger` fills its text with a fixed red background that doesn't change with the
+theme. It is the pill the default header uses for `yolo` mode. The fill covers
+exactly the wrapped text, so include any padding spaces inside the element, for
+example `<danger>  YOLO  </danger>`.
 
 A link keeps its display text separate from its destination. Use the StatusML
 `<link>` element instead of the HTML `<a>` element. It must be a direct child of

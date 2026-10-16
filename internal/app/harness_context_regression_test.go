@@ -43,12 +43,13 @@ func TestDefaultHarnessInstructionsFlowToChildren(t *testing.T) {
 		{name: "untrusted", profile: server.ProfileDefault, untrusted: true, denyWrite: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := Config{Workspace: t.TempDir(), UseMock: true, Headless: true, TrustProject: true, AllowAllTools: true, Shell: "/bin/sh", UserModelDir: t.TempDir(), NoSoul: true}
+			cfg := Config{Workspace: t.TempDir(), UseMock: true, Headless: true, TrustProject: true, AllowAllTools: true, GuardrailsDisabled: true, Shell: "/bin/sh", UserModelDir: t.TempDir(), NoSoul: true}
 			if tc.explicit {
 				kinds := harnessEmptyKinds()
 				kinds.Instructions = permconfig.HarnessContextKind{Sources: []string{"local"}, Mode: "combine"}
 				cfg = harnessPolicyConfig(t, permconfig.HarnessContextSection{EnabledSources: []string{"local"}, Kinds: kinds})
 				cfg.AllowAllTools = true
+				cfg.GuardrailsDisabled = true
 				cfg.Shell = "/bin/sh"
 			}
 			cfg.TrustProject = !tc.untrusted
@@ -101,7 +102,8 @@ func TestDefaultHarnessInstructionsFlowToChildren(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer built.Close()
-			sess, err := built.Service.CreateSessionWithProfile(t.Context(), session.ModeDefault, session.Limits{}, server.ProviderSelector{}, tc.profile)
+			// Pass "" to use the server's DefaultMode (ModeYolo from AllowAllTools=true config).
+			sess, err := built.Service.CreateSessionWithProfile(t.Context(), "", session.Limits{}, server.ProviderSelector{}, tc.profile)
 			if err != nil {
 				t.Fatal(err)
 			}

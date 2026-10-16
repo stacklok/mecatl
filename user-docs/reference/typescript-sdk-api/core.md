@@ -4445,6 +4445,14 @@ readonly modelSelection: boolean;
 readonly posture: string;
 ```
 
+<Heading as="h4" id="api-servercapabilities-projecttrusted-propertysignature"><code>ServerCapabilities.projectTrusted</code></Heading>
+
+Whether the server trusts its launch workspace; absent from older servers.
+
+```ts
+readonly projectTrusted?: boolean;
+```
+
 <Heading as="h4" id="api-servercapabilities-reflection-propertysignature"><code>ServerCapabilities.reflection</code></Heading>
 
 ```ts
@@ -4503,6 +4511,14 @@ readonly storageCleanup: boolean;
 
 ```ts
 readonly storageHealth: boolean;
+```
+
+<Heading as="h4" id="api-servercapabilities-subagentaskreviewer-propertysignature"><code>ServerCapabilities.subagentAskReviewer</code></Heading>
+
+Subagent ask reviewer state: `"on"`, `"off"`, or `"inert"`; treat other values as unknown. Absent from older servers.
+
+```ts
+readonly subagentAskReviewer?: string;
 ```
 
 <Heading as="h4" id="api-servercapabilities-teams-propertysignature"><code>ServerCapabilities.teams</code></Heading>
@@ -7483,8 +7499,10 @@ ServerFeature: {
     readonly HttpSteer: "http_steer";
     readonly McpServersOnCreate: "mcp_servers_on_create";
     readonly PromptFreeControls: "prompt_free_controls";
+    readonly RefusedModeRecovery: "refused_mode_recovery";
     readonly ServerInfo: "server_info";
     readonly SessionActivityInventory: "session_activity_inventory";
+    readonly SessionPermissionModes: "session_permission_modes";
     readonly SkillFiles: "skill_files";
     readonly WatchSessionEvents: "watch_session_events";
 }
@@ -7521,6 +7539,8 @@ SessionMode: {
     readonly Default: 1;
     readonly Plan: 2;
     readonly AcceptEdits: 3;
+    readonly Auto: 4;
+    readonly Yolo: 5;
 }
 ```
 

@@ -28,9 +28,10 @@ func TestBuildWritableSubagentCrossProviderSelection(t *testing.T) {
 		childReq []port.LLMRequest
 	)
 	built, err := buildIsolated(t, ctx, Config{
-		Workspace:     workspace,
-		NoSoul:        true,
-		AllowAllTools: true,
+		Workspace:          workspace,
+		NoSoul:             true,
+		AllowAllTools:      true,
+		GuardrailsDisabled: true,
 		envDetector: fakeEnv(map[string]string{
 			"OPENAI_API_KEY":     "sk-test",
 			"OPENROUTER_API_KEY": "sk-test",
@@ -58,7 +59,7 @@ func TestBuildWritableSubagentCrossProviderSelection(t *testing.T) {
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
+	sess, err := built.Service.CreateSession(ctx, "", defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -130,7 +131,7 @@ func TestBuildNoFSSubagentCrossProviderSelection(t *testing.T) {
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSessionWithProfile(ctx, session.ModeDefault, defaultLimits(), server.ProviderSelector{}, server.ProfileNoFS)
+	sess, err := built.Service.CreateSessionWithProfile(ctx, "", defaultLimits(), server.ProviderSelector{}, server.ProfileNoFS)
 	if err != nil {
 		t.Fatalf("CreateSessionWithProfile(no-fs): %v", err)
 	}

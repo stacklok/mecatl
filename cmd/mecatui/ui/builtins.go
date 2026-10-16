@@ -452,7 +452,7 @@ func (m Model) runHelp() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	deps := (&m).surfaceDeps()
-	m.modal = &helpState{deps: deps, lines: strings.Split(helpBody(deps.theme, deps.caps, deps.marks), "\n")}
+	m.modal = &helpState{deps: deps, lines: strings.Split(m.helpBody(), "\n")}
 	m.prompt.Blur()
 	return m, nil
 }
@@ -571,7 +571,7 @@ func (m Model) runLearningSensitivity() (tea.Model, tea.Cmd) {
 // non-empty. The summary names the four defenses the posture controls so an operator
 // can confirm, e.g., that the child prompt-injection defense is OFF under yolo.
 func (m Model) runPosture() (tea.Model, tea.Cmd) {
-	base := postureSummary(m.caps.Posture)
+	base := postureSummary(m.caps.Posture, m.caps.ProjectTrust, m.caps.SubagentAskReviewer)
 	if m.deps.Guardrails == nil || m.sessionID == "" {
 		m.statusMsg = m.deps.Theme.Style("muted").Render(base + "; checker unknown (server does not expose guardrail coverage)")
 		return m, nil
@@ -622,13 +622,24 @@ func (m Model) runDebugAsk() (tea.Model, tea.Cmd) {
 }
 
 // postureSummary renders the one-line /posture summary for a posture token. It is
-// pure (no Model) so it is directly testable. allow-all + main-substitution are on at
-// auto+yolo; the CHILD substitution (prompt-injection defense OFF) is yolo-only;
-// project-trust is on at trusted+. An empty/unknown token degrades to a bare label.
-func postureSummary(p string) string {
-	allowAll := p == postureAuto || p == postureYolo
-	childDefenseOff := p == postureYolo
+// pure (no Model) so it is directly testable.
+//
+// Posture sets the server ceiling (which modes a session may enter) and the
+// project-trust floor. Allow-all and substitution loosening are now session-mode
+// behaviors: auto/yolo sessions inject the allow-all rule per-evaluate, so the
+// description names the ceiling rather than claiming allow-all is always on.
+// Project-trust is the server-reported trust when known (trust), else inferred
+// from the posture, which raises it for trusted+ on interactive roots. An
+// empty/unknown token degrades to a bare label. The subagent ask reviewer is
+// named only when the server reported it.
+func postureSummary(p, projectTrust, reviewer string) string {
+	ceilingAuto := p == postureAuto
+	ceilingYolo := p == postureYolo
+	childDefenseOff := p == postureYolo // yolo session mode loosens child substitution
 	trust := p == postureTrusted || p == postureAuto || p == postureYolo
+	if projectTrust != "" {
+		trust = projectTrust == client.ProjectTrusted
+	}
 	onoff := func(b bool) string {
 		if b {
 			return "on"
@@ -639,12 +650,37 @@ func postureSummary(p string) string {
 	if label == "" {
 		label = unknownLabel
 	}
+	ceiling := "default/plan/accept-edits"
+	if ceilingYolo {
+		ceiling = "all modes including yolo"
+	} else if ceilingAuto {
+		ceiling = "up to and including auto"
+	}
 	return "posture " + label +
-		" — allow-all " + onoff(allowAll) +
-		"; main $()/heredoc auto-run " + onoff(allowAll) +
-		"; child $()/heredoc auto-run (injection-defense off) " + onoff(childDefenseOff) +
+		" — ceiling " + ceiling +
+		"; child $()/heredoc auto-run when in yolo mode (injection-defense off) " + onoff(childDefenseOff) +
 		"; project-trust " + onoff(trust) +
-		" (Deny & configured Ask always apply)"
+		" (allow-all is mode-driven: auto/yolo sessions inject it; Deny & configured Ask always apply)" +
+		reviewerSummary(reviewer)
+}
+
+// reviewerSummary renders the /posture segment for the server-reported subagent
+// ask reviewer state. Empty (an older server) renders nothing; an unrecognized
+// value is never echoed raw.
+func reviewerSummary(state string) string {
+	const prefix = "; subagent ask reviewer "
+	switch state {
+	case "":
+		return ""
+	case "on":
+		return prefix + "on (a model may approve subagent permission requests no human can answer)"
+	case "off":
+		return prefix + "off"
+	case "inert":
+		return prefix + "inert (configured, but you answer subagent permission requests)"
+	default:
+		return prefix + unknownLabel
+	}
 }
 
 type builtinName struct {

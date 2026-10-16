@@ -2,9 +2,11 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	tea "charm.land/bubbletea/v2"
+	grpcstatus "google.golang.org/grpc/status"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
@@ -142,6 +144,16 @@ func (c *Client) SetMode(ctx context.Context, id, mode string) (string, error) {
 		return "", fmt.Errorf("set mode: %w", err)
 	}
 	return snapshotFrom(resp.GetSession()).Mode, nil
+}
+
+// ModeErrorText is the server's reason for a failed SetMode, without the
+// transport framing, falling back to the whole error.
+func ModeErrorText(err error) string {
+	var se interface{ GRPCStatus() *grpcstatus.Status }
+	if errors.As(err, &se) {
+		return se.GRPCStatus().Message()
+	}
+	return err.Error()
 }
 
 // ResolvedModelMsg carries the result of a GetSession refetch (the footer

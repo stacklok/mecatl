@@ -68,6 +68,7 @@ func TestRoutableDefRoutesToClassifiedModelE2E(t *testing.T) {
 		RouterCategories:      routerTaxonomyCategories(),
 		RouterDefaultCategory: "small",
 		AllowAllTools:         true,
+		GuardrailsDisabled:    true,
 		envDetector:           fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-x"}),
 		liveModelHTTPClient:   offlineHTTPClient(),
 		providerConstructor: func(_ Config, _, _, _ string) port.LLMProvider {
@@ -88,7 +89,7 @@ func TestRoutableDefRoutesToClassifiedModelE2E(t *testing.T) {
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
+	sess, err := built.Service.CreateSession(ctx, "", defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -137,6 +138,7 @@ func TestPinnedInheritDefDoesNotRouteE2E(t *testing.T) {
 		RouterCategories:      routerTaxonomyCategories(), // router ON, but the pinned def must not route
 		RouterDefaultCategory: "small",
 		AllowAllTools:         true,
+		GuardrailsDisabled:    true,
 		envDetector:           fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-x"}),
 		liveModelHTTPClient:   offlineHTTPClient(),
 		providerConstructor: func(_ Config, _, _, _ string) port.LLMProvider {
@@ -158,7 +160,7 @@ func TestPinnedInheritDefDoesNotRouteE2E(t *testing.T) {
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
+	sess, err := built.Service.CreateSession(ctx, "", defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -209,6 +211,7 @@ func TestRoutableDefHallucinatedCategoryFailSoftE2E(t *testing.T) {
 		RouterCategories:      routerTaxonomyCategories(),
 		RouterDefaultCategory: "small",
 		AllowAllTools:         true,
+		GuardrailsDisabled:    true,
 		Diagnostics:           diag,
 		envDetector:           fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-x"}),
 		liveModelHTTPClient:   offlineHTTPClient(),
@@ -230,7 +233,7 @@ func TestRoutableDefHallucinatedCategoryFailSoftE2E(t *testing.T) {
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
+	sess, err := built.Service.CreateSession(ctx, "", defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

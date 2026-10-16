@@ -30,6 +30,7 @@ func TestHarnessContext_ChildAttenuationPreserved(t *testing.T) {
 			kinds.AgentDefs = permconfig.HarnessContextKind{Sources: []string{"specialists"}, Mode: "combine"}
 			cfg := harnessPolicyConfig(t, permconfig.HarnessContextSection{EnabledSources: []string{"context", "specialists"}, Kinds: kinds})
 			cfg.AllowAllTools = true
+			cfg.GuardrailsDisabled = true
 			if profile == server.ProfileDefault {
 				cfg.Shell = "/bin/sh"
 			}
@@ -56,7 +57,8 @@ func TestHarnessContext_ChildAttenuationPreserved(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer b.Close()
-			sess, err := b.Service.CreateSessionWithProfile(t.Context(), session.ModeDefault, session.Limits{}, server.ProviderSelector{}, profile)
+			// Pass "" to use the server's DefaultMode (ModeYolo from AllowAllTools=true config).
+			sess, err := b.Service.CreateSessionWithProfile(t.Context(), "", session.Limits{}, server.ProviderSelector{}, profile)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -131,7 +133,8 @@ func testHarnessChildFactoryLifetime(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer built.Close()
-			parent, err := built.Service.CreateSessionWithProfile(t.Context(), session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithPlacementBinding(placement))
+			// Pass "" to use the server's DefaultMode (ModeYolo from AllowAllTools=true config).
+			parent, err := built.Service.CreateSessionWithProfile(t.Context(), "", session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithPlacementBinding(placement))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -233,6 +236,7 @@ func TestHarnessContext_ContextOverridesCannotGrantAuthority(t *testing.T) {
 			cfg := harnessPolicyConfig(t, permconfig.HarnessContextSection{EnabledSources: []string{"repository", "operator"}, Kinds: kinds})
 			cfg.TrustProject = trusted
 			cfg.AllowAllTools = true
+			cfg.GuardrailsDisabled = true
 			data, err := os.ReadFile(cfg.PermissionConfigs[0])
 			if err != nil {
 				t.Fatal(err)

@@ -431,6 +431,16 @@ type Config struct {
 	// DefaultMode is applied when a CreateSession request leaves mode
 	// unspecified. Defaults to session.ModeDefault when empty.
 	DefaultMode session.PermissionMode
+	// MaxAllowedMode is the server ceiling: the most-permissive mode sessions may
+	// enter. SetMode rejects a requested mode above this ceiling with ErrInvalidArgument.
+	// Empty means no ceiling (all modes reachable). Populated by the composition layer
+	// from Config.MaxAllowedMode via the permission-mode token.
+	MaxAllowedMode session.PermissionMode
+	// EnforcingCheckerConfigured reports whether a guardrails checker is configured
+	// in enforcing (not advisory) mode. Used by SetMode to gate entry into ModeAuto,
+	// which requires an enforcing checker. Set by the composition root from the
+	// resolved checker state at startup.
+	EnforcingCheckerConfigured bool
 	// DefaultLimits are the stop limits applied to a session created without
 	// explicit limits. Because a zero Limits value DISABLES every stop condition
 	// by design in package session, the composition root injects non-zero
@@ -514,6 +524,14 @@ type Config struct {
 	// Empty (the zero value / an unconfigured child service) yields no badge. String
 	// passthrough — no enum on the wire (the EvNoProgress/StopBudget discipline).
 	Posture string
+	// ProjectTrusted is the effective project-trust decision for the launch
+	// workspace, projected into the ServerCapabilities echo as CHROME ONLY. nil
+	// (an unconfigured child service) leaves the echo unset.
+	ProjectTrusted *bool
+	// SubagentAskReviewer is the headless subagent ask reviewer state ("on",
+	// "off", "inert"), projected into the ServerCapabilities echo. nil (an
+	// unconfigured child service) leaves the echo unset.
+	SubagentAskReviewer *string
 	// DeploymentID is an optional, opaque, operator-set label for this deployment,
 	// surfaced on GetServerInfo. It is empty by default and is NEVER derived from
 	// hostname, pod name, or environment: infrastructure topology is not something
@@ -1553,8 +1571,8 @@ func NewService(cfg Config) (*Service, error) {
 		return nil, err
 	}
 	cfg.ServerImplementation = normalizeServerImplementation(cfg.ServerImplementation)
-	if cfg.DefaultMode == "" {
-		cfg.DefaultMode = session.ModeDefault
+	if err := normalizeDefaultMode(&cfg); err != nil {
+		return nil, err
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
@@ -2507,6 +2525,9 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 	if mode == "" {
 		mode = s.cfg.DefaultMode
 	}
+	if err := s.admitMode(mode); err != nil {
+		return nil, err
+	}
 	// Fill any UNSET (zero) limit field from the injected defaults, per-field. An
 	// all-zero Limits inherits every default (so a default session cannot run
 	// unbounded); a Limits that pins only some caps keeps those and inherits the
@@ -2960,21 +2981,23 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		// matches the client's documented semantics ("true when ≥1 provider is
 		// available"); opening the picker fires ListModels, which runs the refresher
 		// and populates the list, and the empty-list state is handled gracefully.
-		ModelSelection:    len(s.currentModels()) > 0 || s.modelsRefresher.Load() != nil,
-		Memory:            has(memory.RememberToolName),
-		Skills:            has(skills.ToolName),
-		Shell:             has(tool.ShellToolName),
-		Image:             pcaps.Image,
-		Audio:             pcaps.Audio,
-		Posture:           s.cfg.Posture,
-		Worktrees:         s.placementDiscoveryAvailable(),
-		Reflection:        s.cfg.ReflectSession != nil,
-		LearningProposals: s.cfg.Proposals != nil,
-		LearnedSkills:     s.cfg.LearnedSkills != nil,
-		Scheduling:        s.scheduleStore() != nil,
-		StorageHealth:     s.cfg.StorageManagementAuthorized != nil && (implementsStorageHealth(s.cfg.Store) || s.scheduleStore() != nil),
-		StorageCleanup:    s.cfg.StorageManagementAuthorized != nil && s.maintenanceMutationAvailable() && supportsCleanupDelete(s.cfg.Store),
-		ManualDream:       toProtoDreamCapabilities(s.ManualDreamCapabilities()),
+		ModelSelection:      len(s.currentModels()) > 0 || s.modelsRefresher.Load() != nil,
+		Memory:              has(memory.RememberToolName),
+		Skills:              has(skills.ToolName),
+		Shell:               has(tool.ShellToolName),
+		Image:               pcaps.Image,
+		Audio:               pcaps.Audio,
+		Posture:             s.cfg.Posture,
+		ProjectTrusted:      s.cfg.ProjectTrusted,
+		SubagentAskReviewer: s.cfg.SubagentAskReviewer,
+		Worktrees:           s.placementDiscoveryAvailable(),
+		Reflection:          s.cfg.ReflectSession != nil,
+		LearningProposals:   s.cfg.Proposals != nil,
+		LearnedSkills:       s.cfg.LearnedSkills != nil,
+		Scheduling:          s.scheduleStore() != nil,
+		StorageHealth:       s.cfg.StorageManagementAuthorized != nil && (implementsStorageHealth(s.cfg.Store) || s.scheduleStore() != nil),
+		StorageCleanup:      s.cfg.StorageManagementAuthorized != nil && s.maintenanceMutationAvailable() && supportsCleanupDelete(s.cfg.Store),
+		ManualDream:         toProtoDreamCapabilities(s.ManualDreamCapabilities()),
 		// Steer reads the SAME wired engine knob the runs consult (Deps.EnableSteer
 		// via Engine.SteerEnabled) — the advertisement can never claim a steer
 		// path the engine did not arm, and it is computed HERE, once, never
@@ -4438,13 +4461,18 @@ func (s *Service) managementTargetAwaitingDrain(ctx context.Context, id session.
 // mode, and propagates session.ErrIllegalTransition (wrapped as ErrInvalidArgument)
 // when the session is mid-turn (running/awaiting) — the aggregate refuses a mode
 // change while a turn is in flight, so the caller must defer it to the next
-// prompt. A change to the mode the session already has is a no-op success.
+// prompt. The one exception is cancelRefusedAwaiting's recovery for a stored
+// awaiting session whose mode this server refuses. A change to the mode the
+// session already has is a no-op success.
 func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode session.PermissionMode) (*session.Session, error) {
 	if s.draining.Load() {
 		return nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
 	}
 	if mode == "" {
 		return nil, fmt.Errorf("%w: mode is required", ErrInvalidArgument)
+	}
+	if err := s.admitMode(mode); err != nil {
+		return nil, err
 	}
 	// Ownership is established before caller-selected coordination, then
 	// revalidated under runEntryMu before and after lease acquisition.
@@ -4481,6 +4509,9 @@ func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode sessio
 			return nil, loadErr
 		}
 		sess = loaded
+		if err := s.cancelRefusedAwaiting(sess, mode); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := sess.SetMode(mode); err != nil {
@@ -4491,6 +4522,157 @@ func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode sessio
 		return nil, fmt.Errorf("server: persist session: %w", err)
 	}
 	return sess, nil
+}
+
+// admitMode is the single admission check for a caller-requested session mode,
+// shared by CreateSession, SetMode, and schedule fires (which create through
+// CreateSession). A mode above the server ceiling is refused, and auto requires
+// an enforcing guardrails checker with no exemption: unchecked autonomy is yolo.
+// admitStoredMode applies the same check to a persisted session at every run
+// entry, so a mode admitted under an earlier, looser deployment cannot execute.
+func (s *Service) admitMode(mode session.PermissionMode) error {
+	return admitModeFor(&s.cfg, mode)
+}
+
+func admitModeFor(cfg *Config, mode session.PermissionMode) error {
+	if modeRank(mode) == 0 {
+		return fmt.Errorf("%w: unknown permission mode %q", ErrInvalidArgument, mode)
+	}
+	if cfg.MaxAllowedMode != "" && !modeWithinCeiling(mode, cfg.MaxAllowedMode) {
+		return fmt.Errorf("%w: mode %q exceeds the server ceiling %q; the server must be relaunched with a higher --permission-mode to allow it", ErrInvalidArgument, mode, cfg.MaxAllowedMode)
+	}
+	if mode == session.ModeAuto && !cfg.EnforcingCheckerConfigured {
+		return fmt.Errorf("%w: mode %q requires an enforcing guardrails checker; configure one with --guardrails-model <model> or bind the guardrail model slot, or use yolo for gate-free autonomous operation", ErrInvalidArgument, mode)
+	}
+	return nil
+}
+
+// normalizeDefaultMode defaults an empty DefaultMode to default and runs the
+// complete session admission against it, so a service whose default sessions
+// could never be created (unknown mode, above the ceiling, or auto without an
+// enforcing checker) fails construction instead of every default CreateSession.
+func normalizeDefaultMode(cfg *Config) error {
+	if cfg.MaxAllowedMode != "" && modeRank(cfg.MaxAllowedMode) == 0 {
+		return fmt.Errorf("%w: unknown permission-mode ceiling %q", ErrConfig, cfg.MaxAllowedMode)
+	}
+	if cfg.DefaultMode == "" {
+		cfg.DefaultMode = session.ModeDefault
+	}
+	if err := admitModeFor(cfg, cfg.DefaultMode); err != nil {
+		return fmt.Errorf("%w: default mode: %v", ErrConfig, err)
+	}
+	return nil
+}
+
+// AdmittedModes lists, in plan → yolo order, the permission modes this server
+// admits for a session right now (the ceiling and the auto checker
+// requirement), so a client can offer exactly the modes SetMode will accept.
+func (s *Service) AdmittedModes() []session.PermissionMode {
+	var out []session.PermissionMode
+	for _, mode := range []session.PermissionMode{session.ModePlan, session.ModeDefault, session.ModeAccept, session.ModeAuto, session.ModeYolo} {
+		if s.admitMode(mode) == nil {
+			out = append(out, mode)
+		}
+	}
+	return out
+}
+
+// admitStoredMode re-admits a persisted session's mode against the CURRENT
+// ceiling and checker before execution, approval resume, or successor
+// publication. A refusal leaves the session and its history untouched; the
+// owner can SetMode to an admitted mode and continue. For a session awaiting
+// an approval that SetMode must be a downgrade, which cancels the pending turn
+// (cancelRefusedAwaiting).
+func (s *Service) admitStoredMode(sess *session.Session) error {
+	if err := s.admitMode(sess.Mode); err != nil {
+		if sess.State == session.StateAwaiting {
+			return fmt.Errorf("%w: session %q is in permission mode %q, which this server does not admit (%v), and its pending approval cannot resume in that mode; SetMode to an admitted lower mode cancels the pending turn without running it and lets the session continue", ErrFailedPrecondition, sess.ID, sess.Mode, err)
+		}
+		return fmt.Errorf("%w: session %q is in permission mode %q, which this server does not admit (%v); switch it to an admitted mode with SetMode to continue", ErrFailedPrecondition, sess.ID, sess.Mode, err)
+	}
+	return nil
+}
+
+// cancelRefusedAwaiting is the recovery for a stored session parked awaiting
+// an approval in a mode this server refuses: admitStoredMode blocks every
+// resume, and the aggregate refuses SetMode mid-turn. When the requested mode
+// is admitted (the caller checked) and strictly lower than the stored mode, it
+// cancels the pending turn without executing anything, so the caller's mode
+// change and single save are legal; the next run repairs the history through
+// the ordinary interrupt path. Every other awaiting session is left for the
+// aggregate's mid-turn refusal. The caller holds runEntryMu and the mutation
+// lease, found no live run, and passes the snapshot loaded under that lease.
+func (s *Service) cancelRefusedAwaiting(sess *session.Session, mode session.PermissionMode) error {
+	if sess.State != session.StateAwaiting || s.admitMode(sess.Mode) == nil || modeRank(mode) >= modeRank(sess.Mode) {
+		return nil
+	}
+	if err := sess.Cancel(); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidArgument, err)
+	}
+	return nil
+}
+
+// adoptLeasedSession replaces a run entry's pre-lease snapshot with the
+// AUTHORITATIVE one once this process holds id's session lease, re-admits its
+// mode, and adopts it as the run's aggregate (st.sess). The pre-lease snapshot
+// was only a preflight: while this request waited for the lease, a peer may
+// have saved the session, e.g. downgraded its mode or cancelled its pending
+// turn, and continuing with the stale copy would execute or persist over that
+// change. The caller must repeat its entry-specific state, run, and ask checks
+// against the returned aggregate before any recovery effect, persistence, or
+// execution. Every later replacement of the aggregate re-admits it, and the
+// launch fences check the executed aggregate once more.
+//
+// Without a shared lease it returns sess unchanged: there is no peer writer,
+// and every in-process writer of a session (run entry, SetMode, management
+// operations) serializes on runEntryMu, which the caller held across the
+// pre-lease load.
+func (s *Service) adoptLeasedSession(ctx context.Context, id session.SessionID, st *runState, sess *session.Session) (*session.Session, error) {
+	if s.cfg.SessionLease == nil {
+		return sess, nil
+	}
+	loaded, err := s.GetSession(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.admitStoredMode(loaded); err != nil {
+		return nil, err
+	}
+	st.persistMu.Lock()
+	defer st.persistMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.runs[id] != st || st.cancelling || st.cancelSignaled {
+		return nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
+	}
+	st.sess = loaded
+	st.titleRevision = loaded.TitleRevision
+	return loaded, nil
+}
+
+// modeWithinCeiling reports whether mode is at or below ceiling in the
+// permission-mode ordering: plan < default < accept-edits < auto < yolo.
+func modeWithinCeiling(mode, ceiling session.PermissionMode) bool {
+	return modeRank(mode) <= modeRank(ceiling)
+}
+
+// modeRank assigns an integer rank to session.PermissionMode for ceiling
+// comparison. Unknown modes get rank 0 (treated as most restrictive).
+func modeRank(mode session.PermissionMode) int {
+	switch mode {
+	case session.ModePlan:
+		return 1
+	case session.ModeDefault:
+		return 2
+	case session.ModeAccept:
+		return 3
+	case session.ModeAuto:
+		return 4
+	case session.ModeYolo:
+		return 5
+	default:
+		return 0
+	}
 }
 
 // LoadSession resumes a previously-persisted session so a subsequent StartRun
@@ -5050,6 +5232,8 @@ func (s *Service) StartScheduledRunContent(ctx context.Context, id session.Sessi
 // FinishRun, exactly as for StartRunContent. Eligibility is derived exclusively from the
 // persisted typed terminal metadata and is consumed only after every fallible setup step
 // has succeeded and the recovered idle snapshot has been saved.
+//
+//nolint:gocyclo // Retry entry keeps preflight, lease, adopted-snapshot gates, and launch in one ordered transaction.
 func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*agent.Run, error) {
 	generation := s.captureRunEntryGeneration(id)
 	if s.draining.Load() {
@@ -5079,9 +5263,8 @@ func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*ag
 	if err := s.deregisterTerminalRunForEntry(id, sess, ErrFailedStepRetryIneligible); err != nil {
 		return nil, err
 	}
-	eligibleFailure, err := failedStepRetryEligibility(sess)
-	if err != nil {
-		return nil, fmt.Errorf("%w: session %q: %v", ErrFailedStepRetryIneligible, id, err)
+	if _, err := s.retryEntryEligibility(id, sess); err != nil {
+		return nil, err
 	}
 
 	st, admissionParent, err := s.beginRunAdmission(ctx, id, sess, false)
@@ -5100,6 +5283,15 @@ func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*ag
 		}
 	}()
 	ctx = admissionCtx
+	if sess, err = s.adoptLeasedSession(ctx, id, st, sess); err != nil {
+		return nil, err
+	}
+	// Repeat the retry gates against the adopted aggregate: a peer may have
+	// retried, recovered, or otherwise moved the session on.
+	eligibleFailure, err := s.retryEntryEligibility(id, sess)
+	if err != nil {
+		return nil, err
+	}
 	engine, env, governanceRoot, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
 		return nil, err
@@ -5131,6 +5323,23 @@ func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*ag
 	promoted = true
 	s.startExecutionRenewal(id, st, run)
 	return run, nil
+}
+
+// retryEntryEligibility is RetryFailedRun's entry gate, run on the preflight
+// snapshot and again on the aggregate adopted under the lease. It reports
+// whether the session is still in its failed terminal (versus a prepared retry).
+func (s *Service) retryEntryEligibility(id session.SessionID, sess *session.Session) (bool, error) {
+	if err := s.validatePersistedWorkspace(sess); err != nil {
+		return false, err
+	}
+	if err := admitRunPurpose(sess, runPurposeChat); err != nil {
+		return false, fmt.Errorf("%w: session %q is not eligible for chat retry", ErrFailedStepRetryIneligible, id)
+	}
+	eligibleFailure, err := failedStepRetryEligibility(sess)
+	if err != nil {
+		return false, fmt.Errorf("%w: session %q: %v", ErrFailedStepRetryIneligible, id, err)
+	}
+	return eligibleFailure, nil
 }
 
 func failedStepRetryEligibility(sess *session.Session) (bool, error) {
@@ -5325,6 +5534,20 @@ func (s *Service) startRunContentLocked(ctx context.Context, id session.SessionI
 		}
 	}()
 	ctx = admissionCtx
+	if sess, err = s.adoptLeasedSession(ctx, id, st, sess); err != nil {
+		return nil, err
+	}
+	// Repeat the entry gates against the adopted aggregate before recovery can
+	// mutate or persist it.
+	if err := s.validatePersistedWorkspace(sess); err != nil {
+		return nil, err
+	}
+	if err := admitRunPurpose(sess, purpose); err != nil {
+		return nil, err
+	}
+	if _, pending := sess.FailedStepRetryPending(); pending {
+		return nil, fmt.Errorf("%w: session %q has a pending failed-step retry", ErrFailedPrecondition, id)
+	}
 	// Apply the unchanged reopen/interrupt/recover funnel only after the trusted
 	// purpose and ownership gates and lease acquisition. Rejected kinds are never
 	// mutated as a side effect of probing.
@@ -5354,6 +5577,13 @@ func (s *Service) startRunContentLocked(ctx context.Context, id session.SessionI
 	sess, interruptedAuthorization, err := s.interruptRestoredAuthorizationLocked(ctx, sess)
 	if err != nil {
 		return nil, err
+	}
+	// The reload replaced the admitted aggregate, so admit it again. An
+	// interrupted authorization is refused just below regardless of mode.
+	if !interruptedAuthorization {
+		if err := s.admitStoredMode(sess); err != nil {
+			return nil, err
+		}
 	}
 	// interruptRestoredAuthorizationLocked may reload/replace the aggregate
 	// (e.g. to interrupt a restored authorizing session); st.sess was captured
@@ -5671,6 +5901,9 @@ func (s *Service) resolvePersistedRunAsk(ctx context.Context, id session.Session
 	if err := s.validatePersistedRunAsk(sess, expectedRunID, resolution, scoped); err != nil {
 		return RunAskAcknowledgement{}, err
 	}
+	if err := s.admitStoredMode(sess); err != nil {
+		return RunAskAcknowledgement{}, err
+	}
 	st.persistMu.Lock()
 	s.mu.Lock()
 	if s.runs[id] != st || st.cancelling || st.cancelSignaled {
@@ -5805,6 +6038,11 @@ func (s *Service) promoteDetachedRunAdmission(request context.Context, id sessio
 		return nil, checkExpectedRun(st.sess.RunID(), "")
 	}
 	if err := s.validateHeldLeaseLocked(id); err != nil {
+		return nil, err
+	}
+	// The launch fence also covers the admitted mode: the aggregate about to
+	// execute is st.sess, whatever reload last replaced it.
+	if err := s.admitStoredMode(st.sess); err != nil {
 		return nil, err
 	}
 	run := launch()
@@ -7043,6 +7281,30 @@ func (s *Service) ResolveApprovalRun(ctx context.Context, id session.SessionID, 
 	return s.resumeFromAwaiting(ctx, id, resolution, expectedRunID, generation)
 }
 
+// validateAwaitingResume is resumeFromAwaiting's exact-run/ask proof, run on
+// the preflight snapshot and again on the aggregate adopted under the lease.
+func (s *Service) validateAwaitingResume(sess *session.Session, resolution agent.ApprovalResolution, expectedRunID string) error {
+	if err := s.validatePersistedWorkspace(sess); err != nil {
+		return err
+	}
+	// On this path the persisted session IS the run — it parked awaiting the ask
+	// and no live *agent.Run exists — so the stored id is the authoritative answer
+	// to "which run would this verdict resolve?".
+	if err := checkExpectedRun(expectedRunID, sess.RunID()); err != nil {
+		return err
+	}
+	if sess.State != session.StateAwaiting {
+		// Awaiting is the only resumable non-terminal state. Everything else stays
+		// stranded-for-Approve (last-write-wins / nothing to resume).
+		return ErrNoActiveRun
+	}
+	pending, ok := sess.PendingAsk()
+	if !ok || pending.AskID != resolution.AskID {
+		return fmt.Errorf("%w: ask is unknown, stale, or already resolved", agent.ErrApprovalNotPending)
+	}
+	return agent.ValidateApprovalResolution(pending, resolution)
+}
+
 // resumeFromAwaiting is the service half of the fourth (awaiting-only) run-entry
 // seam: it handles an Approve/Deny against a session whose process died while parked
 // awaiting approval. It loads the persisted session and:
@@ -7111,25 +7373,7 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 	if err != nil {
 		return nil, err
 	}
-	if err := s.validatePersistedWorkspace(sess); err != nil {
-		return nil, err
-	}
-	// On this path the persisted session IS the run — it parked awaiting the ask
-	// and no live *agent.Run exists — so the stored id is the authoritative answer
-	// to "which run would this verdict resolve?".
-	if err := checkExpectedRun(expectedRunID, sess.RunID()); err != nil {
-		return nil, err
-	}
-	if sess.State != session.StateAwaiting {
-		// Awaiting is the only resumable non-terminal state. Everything else stays
-		// stranded-for-Approve (last-write-wins / nothing to resume).
-		return nil, ErrNoActiveRun
-	}
-	pending, ok := sess.PendingAsk()
-	if !ok || pending.AskID != resolution.AskID {
-		return nil, fmt.Errorf("%w: ask is unknown, stale, or already resolved", agent.ErrApprovalNotPending)
-	}
-	if err := agent.ValidateApprovalResolution(pending, resolution); err != nil {
+	if err := s.validateAwaitingResume(sess, resolution, expectedRunID); err != nil {
 		return nil, err
 	}
 	st, admissionParent, err := s.beginRunAdmission(ctx, id, sess, true)
@@ -7151,6 +7395,14 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 		}
 	}()
 	ctx = admissionCtx
+	// The pre-lease snapshot was a preflight: a peer may have resumed, cancelled,
+	// or recovered the pending turn while this request waited for the lease.
+	if sess, err = s.adoptLeasedSession(ctx, id, st, sess); err != nil {
+		return nil, err
+	}
+	if err := s.validateAwaitingResume(sess, resolution, expectedRunID); err != nil {
+		return nil, err
+	}
 	if err := s.attachLiveInstructions(sess, true); err != nil {
 		return nil, err
 	}
@@ -7255,7 +7507,11 @@ func (s *Service) approvePlan(ctx context.Context, id session.SessionID, targetM
 	if !ok || ask.Origin != session.ApprovalOriginPlan {
 		return nil, fmt.Errorf("%w: session %q is not awaiting a plan-approval ask", ErrNotAwaitingPlan, id)
 	}
-	// (3) targetMode → verdict.
+	// (3) targetMode → verdict. Plan approval can flip only to default or
+	// accept-edits; refuse auto/yolo rather than silently treating them as deny.
+	if targetMode == session.ModeAuto || targetMode == session.ModeYolo {
+		return nil, fmt.Errorf("%w: plan approval cannot switch to mode %q; approve into default or accept-edits, then change the mode with SetMode", ErrInvalidArgument, targetMode)
+	}
 	verdict, allowContinuation := planVerdictForMode(targetMode)
 
 	// The merged event channel. Buffered to match a Run's own buffer (64) so a
@@ -8851,6 +9107,11 @@ func (s *Service) cleanupRunAdmission(id session.SessionID, st *runState, promot
 // path so concurrent approvals wait for its resumeMu transaction to promote.
 // The caller holds runEntryMu for id.
 func (s *Service) beginRunAdmission(parent context.Context, id session.SessionID, sess *session.Session, resumeAdmission bool) (*runState, context.Context, error) {
+	// Every run entry (prompt, approval resume, plan continuation, retry) passes
+	// here before any lease, engine, provider, or tool work.
+	if err := s.admitStoredMode(sess); err != nil {
+		return nil, nil, err
+	}
 	operationRelease := func() {}
 	if s.cfg.OperationPin != nil {
 		var err error
@@ -8952,6 +9213,11 @@ func (s *Service) promoteRunAdmission(id session.SessionID, st *runState, stop c
 		return nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
 	}
 	if err := s.validateHeldLeaseLocked(id); err != nil {
+		return nil, err
+	}
+	// The launch fence also covers the admitted mode: the aggregate about to
+	// execute is st.sess, whatever reload last replaced it.
+	if err := s.admitStoredMode(st.sess); err != nil {
 		return nil, err
 	}
 	run := launch()

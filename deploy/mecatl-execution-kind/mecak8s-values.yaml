@@ -1,6 +1,9 @@
 fullnameOverride: mecak8s
 replicaCount: 1
 mockProvider: true
+# The mock provider has no guardrails checker, and auto refuses to start
+# without one; yolo keeps the fixture's unchecked autonomous behavior.
+permissionMode: yolo
 redis:
   endpoint: redis:6379
   credentialsSecret: ""

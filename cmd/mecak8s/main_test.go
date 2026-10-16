@@ -452,7 +452,8 @@ func TestBuildOverRedisDrivesRunToCompletion(t *testing.T) {
 		RedisURL:                mr.Addr(),
 		RedisAllowPlaintext:     true,
 		Interactive:             false, // mecak8s headless default (Interactive=!headless)
-		Posture:                 app.PostureAuto,
+		Posture:                 app.PostureYolo,
+		GuardrailsDisabled:      true, // unchecked allow-all is yolo
 		PermissionsConventional: false,
 		AgentsConventional:      false,
 		Diagnostics:             port.NopDiagnostics{},
@@ -626,6 +627,7 @@ func TestDrainHTTPRouting(t *testing.T) {
 func TestServeWiresSeparateDrainListener(t *testing.T) {
 	cfg, err := parseFlags([]string{
 		"--mock",
+		"--permission-mode=yolo", "--guardrails=off", // unchecked allow-all is yolo
 		"--grpc-addr", freeLoopbackPort(t),
 		"--http-addr", freeLoopbackPort(t),
 		"--drain-addr", freeLoopbackPort(t),

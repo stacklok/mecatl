@@ -13,6 +13,13 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **`ModeAuto` and `ModeYolo` permission modes** — adds `session.ModeAuto = "auto"`
+  and `session.ModeYolo = "yolo"` to `session.PermissionMode`. These complete the
+  five-mode vocabulary (`plan`, `default`, `acceptEdits`, `auto`, `yolo`) that the
+  unified permission-mode architecture requires; `Policy.Evaluate` now injects
+  allow-all and loose-substitution at evaluation time based on the session's current
+  mode, so mode switches are fully effective at runtime. Added (minor).
+
 - **Schedule-store claim and retry conformance** — adds
   `scheduleconformance.RunClaimAndRetryConformance` with the complete shared
   suite plus unresolved prior-claim rejection, late-result isolation, and
@@ -418,6 +425,34 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 - **`port.SessionLease.Renew` doc comment narrowed (issue #1333)** — clarifies that bare expiry of the caller's own owner/token, with nothing else having taken the lease over, is not by itself one of the definitive-loss conditions `ErrLeaseHeld` documents; loss is specifically a holder or token change. An implementation that can prove no one else could have raced it (e.g. a single-host backend re-checking its own durable record under its stable transition lock) may reclaim instead of declaring loss — `internal/adapter/flocklease.Lease.Renew` now does exactly this. This narrows, never widens, when `ErrLeaseHeld` may be returned, so it is a documentation clarification, not a contract change; no exported signature changed. No `task api:update` needed.
 
 ### Changed
+
+- **Delegated children inherit an auto or yolo parent's mode** — a Subagent
+  child, Parallel branch, or Team member with no configured mode now runs in its
+  parent session's mode when that mode is `ModeAuto` or `ModeYolo`, so the
+  parent's mode-driven authority reaches its delegates. Any explicitly
+  configured mode (`WithChildMode`, `WithParallelChildMode`, `WithTeamMode`, or
+  a member definition's `permissionMode`), `ModeDefault` included, is kept. A
+  resumed Subagent child's persisted mode is re-admitted against the current
+  parent: it runs in the narrower of its stored mode and the mode a fresh child
+  would get. No signature changes.
+
+- **Mutating in-chat schedules fire in their creator's mode** — a
+  `mutating: true` schedule created through the `Schedule` tool now records the
+  executing session's permission mode as `ScheduleSpec.Mode` instead of always
+  `ModeDefault`. A yolo session's schedule therefore fires in yolo rather than
+  in a default session whose writes ask with no approver. Read-leaning
+  schedules still record `ModePlan`, and an unbound context still records
+  `ModeDefault`. The host re-admits the recorded mode at every fire. No
+  signature changes.
+
+- **Contextual review enforcement follows the executing session's mode** —
+  the engine now demotes a `ReviewPolicyProvider`'s enforcement to advisory
+  for an executing `ModeYolo` session, and never consults
+  `PermissionReviewPolicyProvider` for a yolo child. A reviewer shared with
+  delegated children should report the operator's configured enforcement:
+  a yolo parent stays advisory while its narrower child keeps an enforcing
+  checker. A reviewer that already demoted for yolo is unaffected. Changed
+  (breaking, pre-v1 minor); no signature changes.
 
 - **Atomic one-shot retry eligibility (issue #2273)** —
   `port.ScheduleOneShotReArmer.ReArmOneShot` now requires store-side atomic

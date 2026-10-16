@@ -420,3 +420,42 @@ func TestScheduleCmdsErrorMsgs(t *testing.T) {
 		t.Fatalf("ListFiresCmd error msg = %+v", m)
 	}
 }
+
+// TestScheduleModeUnsetMapsToUnspecified pins the schedule-only mode mapping.
+// An unset mode goes out as UNSPECIFIED so the server's default session mode
+// applies at fire (ModeFromString("") still means DEFAULT for other callers),
+// and an UNSPECIFIED read-back stays unset instead of claiming "default".
+func TestScheduleModeUnsetMapsToUnspecified(t *testing.T) {
+	for _, tc := range []struct {
+		mode string
+		want mecatlv1.PermissionMode
+	}{
+		{mode: "", want: mecatlv1.PermissionMode_PERMISSION_MODE_UNSPECIFIED},
+		{mode: "plan", want: mecatlv1.PermissionMode_PERMISSION_MODE_PLAN},
+		{mode: "default", want: mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT},
+	} {
+		fake := &fakeScheduleClient{createResp: &mecatlv1.CreateScheduleResponse{Schedule: sampleProtoSchedule("m")}}
+		if _, err := newScheduleFakeClient(fake).CreateSchedule(context.Background(), ScheduleSpec{
+			Name: "m", Prompt: "p", Trigger: ScheduleTrigger{Cron: "@every 1h"}, Mode: tc.mode, Mutating: true,
+		}); err != nil {
+			t.Fatalf("CreateSchedule(mode %q): %v", tc.mode, err)
+		}
+		if got := fake.lastCreate.GetSpec().GetMode(); got != tc.want {
+			t.Errorf("mode %q sent as %v, want %v", tc.mode, got, tc.want)
+		}
+	}
+	if ModeFromString("") != mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT {
+		t.Fatal(`ModeFromString("") must keep meaning DEFAULT for non-schedule callers`)
+	}
+
+	unset := sampleProtoSchedule("u")
+	unset.Spec.Mode = mecatlv1.PermissionMode_PERMISSION_MODE_UNSPECIFIED
+	fake := &fakeScheduleClient{getResp: &mecatlv1.GetScheduleResponse{Schedule: unset}}
+	s, err := newScheduleFakeClient(fake).GetSchedule(context.Background(), "u")
+	if err != nil {
+		t.Fatalf("GetSchedule: %v", err)
+	}
+	if s.Spec.Mode != "" {
+		t.Fatalf("UNSPECIFIED read back as %q, want empty (server default)", s.Spec.Mode)
+	}
+}

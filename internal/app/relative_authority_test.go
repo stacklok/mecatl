@@ -36,7 +36,7 @@ forbid(principal, action, resource) when { resource.path like "` + filepath.ToSl
 		t.Fatal(err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(ctx, session.ModeYolo, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}

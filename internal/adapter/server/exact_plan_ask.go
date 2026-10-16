@@ -173,6 +173,9 @@ func (s *Service) resolvePersistedPlanAsk(ctx context.Context, id session.Sessio
 	if err := s.validatePersistedPlanAsk(sess, expectedRunID, askID); err != nil {
 		return RunAskAcknowledgement{}, err
 	}
+	if err := s.admitStoredMode(sess); err != nil {
+		return RunAskAcknowledgement{}, err
+	}
 	st.persistMu.Lock()
 	s.mu.Lock()
 	if s.runs[id] != st || st.cancelling || st.cancelSignaled {

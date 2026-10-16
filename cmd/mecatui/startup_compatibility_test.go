@@ -188,7 +188,7 @@ func TestStartupCompatibilityFreshAccepted(t *testing.T) {
 	if err != nil || !ran {
 		t.Fatalf("startup error = %v, normal UI ran = %v", err, ran)
 	}
-	if calls := service.observedCalls(); !reflect.DeepEqual(calls, []string{"GetCompatibilityInfo", "ListModels", "GetCompatibilityInfo", "CreateSession"}) {
+	if calls := service.observedCalls(); !reflect.DeepEqual(calls, []string{"GetCompatibilityInfo", "ListModels", "GetCompatibilityInfo", "CreateSession", "GetSession"}) {
 		t.Fatalf("fresh startup RPCs = %v", calls)
 	}
 }

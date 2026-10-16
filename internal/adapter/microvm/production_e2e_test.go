@@ -189,7 +189,7 @@ func TestMicroVMDefaultPlacementDailyHarnessJourney(t *testing.T) {
 	)
 	built, err := app.Build(ctx, app.Config{
 		Workspace: source, StoreDir: filepath.Join(root, "store"), MockProvider: provider,
-		Shell: "/bin/sh", AllowAllTools: true, NoSoul: true, LearningMode: learning.Off,
+		Shell: "/bin/sh", AllowAllTools: true, GuardrailsDisabled: true, NoSoul: true, LearningMode: learning.Off,
 		MemoryDir: filepath.Join(root, "memory"), UserModelDir: filepath.Join(root, "user-model"),
 		PlacementProvider: placement, PlacementScope: scope,
 		EnvironmentForkers: map[session.EnvironmentKind]tool.EnvironmentForker{"microvm": placement},
@@ -203,8 +203,9 @@ func TestMicroVMDefaultPlacementDailyHarnessJourney(t *testing.T) {
 	t.Cleanup(built.Close)
 
 	// This is deliberately the ordinary no-selector API. The deployment, not the
-	// client, chooses microvm-local as the default placement.
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	// client, chooses microvm-local as the default placement, and the unspecified
+	// mode resolves to the deployment's allow-all default.
+	sess, err := built.Service.CreateSession(ctx, "", session.Limits{})
 	if err != nil {
 		t.Fatalf("normal CreateSession: %v", err)
 	}

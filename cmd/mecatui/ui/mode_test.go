@@ -124,6 +124,97 @@ func TestModeSwitchFailureDefersToNextPrompt(t *testing.T) {
 	}
 }
 
+// TestModeRefusedAtIdleClearsPending pins that a SetMode error with no turn in
+// flight is the server's final refusal: the header must not stay "pending"
+// and the status names the server's reason.
+func TestModeRefusedAtIdleClearsPending(t *testing.T) {
+	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, mode: "default", setModeErr: errors.New("set mode: mode \"plan\" exceeds the server ceiling")}
+	m := modeTestModel(t, conv)
+
+	mm, cmd := m.Update(modeKey())
+	m = mm.(Model)
+	if cmd == nil {
+		t.Fatal("shift+tab should issue SetMode command")
+	}
+	m = applyAll(m, cmd())
+
+	if m.activeMode != "default" || m.pendingMode != "" {
+		t.Fatalf("active/pending mode = %q/%q, want default/empty", m.activeMode, m.pendingMode)
+	}
+	status := stripANSIstr(m.statusMsg)
+	if !strings.Contains(status, "mode plan refused") || !strings.Contains(status, "exceeds the server ceiling") {
+		t.Fatalf("status = %q, want refusal naming the server reason", status)
+	}
+	if mode := m.statusLineSnapshot().Session.Mode; mode != "default" {
+		t.Fatalf("status snapshot mode = %q, want default", mode)
+	}
+	if m.retryPendingModeCmd() != nil {
+		t.Fatal("a refused mode must not be retried at the next turn boundary")
+	}
+}
+
+// TestRefusedModeDoesNotTrapCycle pins that after the server refuses a mode
+// the next ModeSwitch continues past it instead of re-requesting it forever:
+// on a yolo server an auto refusal still lets the cycle reach yolo.
+func TestRefusedModeDoesNotTrapCycle(t *testing.T) {
+	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, mode: "accept-edits"}
+	m := newTestModelFromDeps(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Mode: "accept-edits", Ctx: context.Background(), Embedded: true})
+	m = applyAll(m, tea.WindowSizeMsg{Width: 120, Height: 30}, client.SessionReadyMsg{SessionID: "sess-test-0001", Mode: "accept-edits"})
+	m.caps.Posture = postureYolo
+	m.caps.SessionPermissionModes = true
+
+	press := func() {
+		t.Helper()
+		mm, cmd := m.Update(modeKey())
+		m = mm.(Model)
+		if cmd != nil {
+			m = applyAll(m, cmd())
+		}
+	}
+	conv.setModeErr = errors.New(`mode "auto" requires an enforcing guardrails checker`)
+	press()
+	status := stripANSIstr(m.statusMsg)
+	if m.activeMode != "accept-edits" || m.headerMode() != "accept-edits" ||
+		!strings.Contains(status, "mode auto refused, staying in accept-edits") ||
+		!strings.Contains(status, "auto needs an enforcing guardrails checker on the server") {
+		t.Fatalf("after auto refusal: active=%q header=%q status=%q", m.activeMode, m.headerMode(), status)
+	}
+	// The refusal freezes nothing: the draft stays editable.
+	m = applyAll(m, tea.KeyPressMsg{Code: 'x', Text: "x"})
+	if got := m.prompt.Value(); got != "x" {
+		t.Fatalf("prompt after refusal = %q, want editable", got)
+	}
+	m.prompt.Rewrite("")
+	conv.setModeErr = nil
+	press()
+	if got := conv.setModes(); len(got) != 2 || got[1] != "yolo" {
+		t.Fatalf("SetMode calls = %v, want [auto yolo]", got)
+	}
+	if m.activeMode != "yolo" || m.headerMode() != "yolo" {
+		t.Fatalf("active/header = %q/%q, want yolo", m.activeMode, m.headerMode())
+	}
+}
+
+// TestModeMismatchAdoptsServerMode pins that a SetMode reply naming a
+// different mode than requested is adopted, not swallowed into a permanent
+// "pending" header.
+func TestModeMismatchAdoptsServerMode(t *testing.T) {
+	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, mode: "default"}
+	m := modeTestModel(t, conv)
+	m.pendingMode = "auto"
+
+	m = applyAll(m, client.ModeChangedMsg{SessionID: "sess-test-0001", Requested: "auto", Mode: "default"})
+	if m.activeMode != "default" || m.pendingMode != "" {
+		t.Fatalf("active/pending mode = %q/%q, want default/empty", m.activeMode, m.pendingMode)
+	}
+	if status := stripANSIstr(m.statusMsg); !strings.Contains(status, "mode auto not applied") || !strings.Contains(status, "kept default") {
+		t.Fatalf("status = %q, want mismatch notice", status)
+	}
+	if strings.Contains(m.headerMode(), "pending") {
+		t.Fatalf("header mode = %q, must not stay pending", m.headerMode())
+	}
+}
+
 func TestStaleModeResponseDoesNotClobberNewerRequest(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, mode: "default"}
 	m := modeTestModel(t, conv)

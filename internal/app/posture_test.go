@@ -80,63 +80,57 @@ func TestPostureConflictWarnFires(t *testing.T) {
 
 // TestPostureResolutionTable is the structural anti-drift guard for the
 // root-aware ladder. TrustProject is both the ingestion decision (through the
-// named seam) and the read-only child-shell gate.
+// named seam) and the read-only child-shell gate. Allow-all and loose-child
+// substitution are now mode-driven (Policy.Evaluate, not applyPosture), so only
+// the TrustProject ladder is tested here.
 func TestPostureResolutionTable(t *testing.T) {
 	for _, root := range []struct {
 		name     string
 		headless bool
 		cases    []struct {
-			name       string
-			posture    Posture
-			trustFlag  bool
-			allowAll   bool
-			looseChild bool
-			trusted    bool
+			name      string
+			posture   Posture
+			trustFlag bool
+			trusted   bool
 		}
 	}{
 		{"headless", true, []struct {
-			name                                     string
-			posture                                  Posture
-			trustFlag, allowAll, looseChild, trusted bool
+			name               string
+			posture            Posture
+			trustFlag, trusted bool
 		}{
-			{"strict+no-trust", PostureStrict, false, false, false, false},
-			{"strict+trust", PostureStrict, true, false, false, true},
-			{"trusted+no-trust", PostureTrusted, false, false, false, false},
-			{"trusted+trust", PostureTrusted, true, false, false, true},
-			{"auto+no-trust", PostureAuto, false, true, false, false},
-			{"auto+trust", PostureAuto, true, true, false, true},
-			{"yolo+no-trust", PostureYolo, false, true, true, false},
-			{"yolo+trust", PostureYolo, true, true, true, true},
+			{"strict+no-trust", PostureStrict, false, false},
+			{"strict+trust", PostureStrict, true, true},
+			{"trusted+no-trust", PostureTrusted, false, false},
+			{"trusted+trust", PostureTrusted, true, true},
+			{"auto+no-trust", PostureAuto, false, false},
+			{"auto+trust", PostureAuto, true, true},
+			{"yolo+no-trust", PostureYolo, false, false},
+			{"yolo+trust", PostureYolo, true, true},
 		}},
 		{"interactive", false, []struct {
-			name                                     string
-			posture                                  Posture
-			trustFlag, allowAll, looseChild, trusted bool
+			name               string
+			posture            Posture
+			trustFlag, trusted bool
 		}{
-			{"strict+no-trust", PostureStrict, false, false, false, false},
-			{"strict+trust", PostureStrict, true, false, false, true},
-			{"trusted+no-trust", PostureTrusted, false, false, false, true},
-			{"trusted+trust", PostureTrusted, true, false, false, true},
-			{"auto+no-trust", PostureAuto, false, true, false, true},
-			{"auto+trust", PostureAuto, true, true, false, true},
-			{"yolo+no-trust", PostureYolo, false, true, true, true},
-			{"yolo+trust", PostureYolo, true, true, true, true},
+			{"strict+no-trust", PostureStrict, false, false},
+			{"strict+trust", PostureStrict, true, true},
+			{"trusted+no-trust", PostureTrusted, false, true},
+			{"trusted+trust", PostureTrusted, true, true},
+			{"auto+no-trust", PostureAuto, false, true},
+			{"auto+trust", PostureAuto, true, true},
+			{"yolo+no-trust", PostureYolo, false, true},
+			{"yolo+trust", PostureYolo, true, true},
 		}},
 	} {
 		t.Run(root.name, func(t *testing.T) {
 			for _, tc := range root.cases {
 				got := applyPosture(Config{Headless: root.headless, Posture: tc.posture, TrustProject: tc.trustFlag})
-				if got.AllowAllTools != tc.allowAll || got.LooseChildSubstitution != tc.looseChild || got.TrustProject != tc.trusted {
-					t.Errorf("%s: got allowAll=%v looseChild=%v trust=%v; want %v %v %v", tc.name,
-						got.AllowAllTools, got.LooseChildSubstitution, got.TrustProject,
-						tc.allowAll, tc.looseChild, tc.trusted)
+				if got.TrustProject != tc.trusted {
+					t.Errorf("%s: got trust=%v; want %v", tc.name, got.TrustProject, tc.trusted)
 				}
 				if projectIngestionAdmitted(got) != tc.trusted {
 					t.Errorf("%s: ingestion=%v, want %v", tc.name, projectIngestionAdmitted(got), tc.trusted)
-				}
-				mainLoose := len(mainEvaluatorOptions(got)) > 1
-				if mainLoose != tc.allowAll {
-					t.Errorf("%s: main loose-substitution = %v, want %v", tc.name, mainLoose, tc.allowAll)
 				}
 			}
 		})

@@ -125,7 +125,7 @@ func (m Model) restartOnModelCmd(oldID string, sel client.ModelSelection) tea.Cm
 		if err != nil {
 			return restartFailedMsg{err: err, model: modelSelLabel(sel)}
 		}
-		return client.SessionReadyMsg{SessionID: id, Capabilities: caps, ResolvedModel: resolved, Mode: m.desiredMode()}
+		return client.SessionReadyMsg{SessionID: id, Capabilities: caps, ResolvedModel: resolved, Mode: createdSessionMode(deps, id, m.desiredMode())}
 	}
 }
 

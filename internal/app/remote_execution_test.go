@@ -59,7 +59,7 @@ func TestRemoteScheduleCatalogAndPromptThroughFactory(t *testing.T) {
 	}
 	defer built.Close()
 	ctx := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser})
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(ctx, "", session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +236,7 @@ func TestRemoteExecutionPreservesOperatorPermissionsUnderAuto(t *testing.T) {
 					session.NewToolCall("allowed", "Shell", json.RawMessage(`{"command":"echo allowed"}`)),
 					session.NewToolCall("project-ask", "Shell", json.RawMessage(`{"command":"echo project-ask"}`)),
 				), mockllm.TextTurn("done"))
-			cfg := Config{MockProvider: llm, Workspace: project, Posture: PostureAuto, PermissionsConventional: true, NoSoul: true, RemoteExecution: true, PlacementScope: "remote", PlacementProvider: remoteFactoryPlacement{env: env}}
+			cfg := withInertEnforcingChecker(Config{MockProvider: llm, Workspace: project, Posture: PostureAuto, PermissionsConventional: true, NoSoul: true, RemoteExecution: true, PlacementScope: "remote", PlacementProvider: remoteFactoryPlacement{env: env}})
 			if source == "explicit" {
 				cfg.PermissionConfigs = []string{operatorPath}
 			}
@@ -246,7 +246,7 @@ func TestRemoteExecutionPreservesOperatorPermissionsUnderAuto(t *testing.T) {
 			}
 			defer built.Close()
 			ctx := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser})
-			sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+			sess, err := built.Service.CreateSession(ctx, "", session.Limits{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -357,14 +357,16 @@ func TestRemoteExecutionRealFactoryCarriesPostureAndAttenuatedCatalog(t *testing
 	if err := os.WriteFile(filepath.Join(commandDir, "project-only.md"), []byte("LOCAL_COMMAND_MARKER_DO_NOT_LOAD"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	built, err := buildIsolated(t, context.Background(), Config{MockProvider: provider, PlacementProvider: remoteFactoryPlacement{env: env}, PlacementScope: "remote", RemoteExecution: true, Workspace: localProject, TrustProject: true, AllowAllTools: true, EnableCommands: true, SkillsConventional: true, NoSoul: true, SchedulerEnabled: false})
+	built, err := buildIsolated(t, context.Background(), Config{MockProvider: provider, PlacementProvider: remoteFactoryPlacement{env: env}, PlacementScope: "remote", RemoteExecution: true, Workspace: localProject, TrustProject: true, AllowAllTools: true, GuardrailsDisabled: true, EnableCommands: true, SkillsConventional: true, NoSoul: true, SchedulerEnabled: false})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer built.Close()
 	principal := &session.Principal{Issuer: "https://issuer.example", Subject: "alice", GrantType: session.GrantTypeUser}
 	ctx := session.WithPrincipal(context.Background(), principal)
-	sess, err := built.Service.CreateSession(ctx, session.ModeAccept, session.Limits{})
+	// Pass "" to use the server's DefaultMode (ModeYolo from AllowAllTools=true config),
+	// so all tool calls are auto-allowed and unsupported remote tools return model-visible errors.
+	sess, err := built.Service.CreateSession(ctx, "", session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}

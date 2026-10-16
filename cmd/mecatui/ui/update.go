@@ -1122,7 +1122,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			if msg.Err == nil {
 				checker = guardrailPostureSummary(msg.Coverage)
 			}
-			m.statusMsg = m.deps.Theme.Style("muted").Render(postureSummary(m.caps.Posture) + "; " + checker)
+			m.statusMsg = m.deps.Theme.Style("muted").Render(postureSummary(m.caps.Posture, m.caps.ProjectTrust, m.caps.SubagentAskReviewer) + "; " + checker)
 		} else if msg.Err != nil {
 			m.conv.addNotice("Guardrails status unavailable; checker state is unknown, not off or healthy.")
 		} else {
@@ -2311,7 +2311,7 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// for idle + running so the key never feeds the textarea. It also avoids relying
 	// on macOS Option being configured as Meta.
 	if m.deps.DebugTarget == "" && key.Matches(msg, m.keys.ModeSwitch) && (m.phase == phaseIdle || m.phase == phaseRunning) {
-		return m.switchMode(client.NextMode(m.desiredMode()))
+		return m.cycleMode()
 	}
 
 	return m.dispatchPhaseKey(msg)
@@ -2631,21 +2631,52 @@ func (m Model) desiredMode() string {
 	if m.activeMode != "" {
 		return m.activeMode
 	}
+	if m.deps.ModeServerDefault {
+		// No session mode known yet and none requested: let the server's default apply.
+		return ""
+	}
 	return client.ModeString(client.ModeFromString(m.deps.Mode))
 }
 
-func (m Model) switchMode(mode string) (tea.Model, tea.Cmd) {
-	mode = client.ModeString(client.ModeFromString(mode))
+// initialActiveMode seeds the model's active mode. Under ModeServerDefault it is
+// unknown until the server reports the created session's mode.
+func initialActiveMode(deps Deps) string {
+	if deps.ModeServerDefault {
+		return ""
+	}
+	return client.ModeString(client.ModeFromString(deps.Mode))
+}
+
+// createdSessionMode is the mode a freshly created session is in. An explicit
+// request is what the server applied; an unspecified request (ModeServerDefault)
+// is read back from the server, because CreateSessionResponse carries no mode. A
+// failed read-back reports "" so the header keeps its fallback rather than guess.
+func createdSessionMode(deps Deps, id, requested string) string {
+	if requested != "" || deps.Session == nil {
+		return requested
+	}
+	snap, err := deps.Session.GetSession(deps.Ctx, id)
+	if err != nil {
+		return ""
+	}
+	return snap.Mode
+}
+
+// switchMode applies a permission mode's session half to this session.
+func (m Model) switchMode(e PermissionModeEntry) (tea.Model, tea.Cmd) {
+	mode := client.ModeString(client.ModeFromString(e.SessionMode))
 	if m.sessionID == "" {
 		m.statusMsg = m.deps.Theme.Style("warning").Render("no active session — mode switch unavailable")
 		return m, nil
 	}
 	if mode == m.activeMode && m.pendingMode == "" {
-		m.statusMsg = m.deps.Theme.Style("muted").Render("mode already " + mode)
+		// The session is already in this half (e.g. trusted after default under
+		// a trusted posture): the landing needs no server round trip.
+		m.statusMsg = m.deps.Theme.Style("success").Render("mode " + m.modeLabel(e))
 		return m, nil
 	}
 	m.pendingMode = mode
-	m.statusMsg = m.deps.Theme.Style("muted").Render("switching mode to " + mode + "…")
+	m.statusMsg = m.deps.Theme.Style("muted").Render("switching mode to " + m.modeLabel(e) + "…")
 	return m, client.SetModeCmd(m.deps.Ctx, m.deps.Session, m.sessionID, mode)
 }
 
@@ -2658,17 +2689,38 @@ func (m Model) onModeChanged(msg client.ModeChangedMsg) tea.Model {
 		return m
 	}
 	if msg.Err != nil {
+		if m.phase == phaseIdle {
+			// No turn is in flight, so this is the server's final refusal (ceiling,
+			// missing checker), not the mid-turn deferral: retrying cannot succeed.
+			m.pendingMode = ""
+			m.modeCursor = modeCursor{}
+			m.modeRefused = requested
+			m.statusMsg = m.deps.Theme.Style("warning").Render("mode " + requested + " refused, staying in " + m.acceptedModeToken() +
+				": " + client.ModeErrorText(msg.Err) + modeRefusedHint(requested))
+			return m
+		}
 		m.pendingMode = requested
 		m.statusMsg = m.deps.Theme.Style("warning").Render("mode " + m.pendingMode + " will apply on the next prompt")
 		return m
 	}
 	mode := client.ModeString(client.ModeFromString(msg.Mode))
 	if mode != requested {
+		// The server applied a different mode than requested (e.g. an older server
+		// that does not know it). Adopt what it reports instead of staying pending.
+		m.activeMode = mode
+		m.pendingMode = ""
+		m.modeCursor = modeCursor{}
+		m.statusMsg = m.deps.Theme.Style("warning").Render("mode " + requested + " not applied: the server kept " + mode)
 		return m
 	}
 	m.activeMode = mode
 	m.pendingMode = ""
-	m.statusMsg = m.deps.Theme.Style("success").Render("mode " + mode)
+	m.modeRefused = ""
+	label := mode
+	if m.modeCursor.session == mode {
+		label = m.modeLabel(permissionModeEntry(m.modeCursor.token))
+	}
+	m.statusMsg = m.deps.Theme.Style("success").Render("mode " + label)
 	return m
 }
 
@@ -5051,7 +5103,7 @@ func (m Model) createSessionCmd() tea.Cmd {
 	return func() tea.Msg {
 		id, caps, resolved, err := deps.Session.CreateSession(deps.Ctx, sel, m.desiredMode())
 		if err == nil {
-			return client.SessionReadyMsg{SessionID: id, Capabilities: caps, ResolvedModel: resolved, Mode: m.desiredMode()}
+			return client.SessionReadyMsg{SessionID: id, Capabilities: caps, ResolvedModel: resolved, Mode: createdSessionMode(deps, id, m.desiredMode())}
 		}
 		if sel.IsZero() || !client.IsInvalidArgument(err) {
 			reason, _ := client.AuthFailure(err, deps.BearerBacked)
@@ -5068,7 +5120,7 @@ func (m Model) createSessionCmd() tea.Cmd {
 			return client.ConnectErrMsg{Err: err}
 		}
 		return connectFallbackMsg{
-			ready:    client.SessionReadyMsg{SessionID: id, Capabilities: caps, ResolvedModel: resolved, Mode: m.desiredMode()},
+			ready:    client.SessionReadyMsg{SessionID: id, Capabilities: caps, ResolvedModel: resolved, Mode: createdSessionMode(deps, id, m.desiredMode())},
 			rejected: sel,
 			err:      err,
 		}

@@ -155,6 +155,24 @@ mounted
 {{- end -}}
 {{- end -}}
 
+{{/* Validate the permission mode and guardrails checker choice. */}}
+{{- define "mecak8s.validatePermissionMode" -}}
+{{- $modes := list "plan" "default" "accept-edits" "auto" "yolo" -}}
+{{- if not (has .Values.permissionMode $modes) -}}
+{{- fail (printf "permissionMode %q is invalid: valid values are %s" (toString .Values.permissionMode) (join ", " $modes)) -}}
+{{- end -}}
+{{- range $arg := .Values.extraArgs -}}
+{{- $a := toString $arg -}}
+{{- /* Go's flag parser accepts one or two leading dashes, with the value after "=" or in the next argument. */ -}}
+{{- if regexMatch "^--?(posture|permission-mode|yolo)(=|$)" $a -}}
+{{- fail (printf "extraArgs entry %q sets the permission mode, which the chart owns; remove it and set permissionMode instead (--posture=strict becomes permissionMode: default, --posture=auto becomes permissionMode: auto, --posture=yolo or --yolo becomes permissionMode: yolo)" $a) -}}
+{{- end -}}
+{{- end -}}
+{{- if and .Values.guardrails.model .Values.guardrails.disabled -}}
+{{- fail "set at most one of guardrails.model or guardrails.disabled" -}}
+{{- end -}}
+{{- end -}}
+
 {{/* Validate cross-entry MCP invariants that JSON Schema cannot express. */}}
 {{- define "mecak8s.validateMCP" -}}
 {{- $seen := dict -}}

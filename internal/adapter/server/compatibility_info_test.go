@@ -155,6 +155,65 @@ func TestSDKServerEnablers_Scenario1_CompatibilityInfoTransportParity(t *testing
 	}
 }
 
+// TestCompatibilityInfoSubagentAskReviewerTransportParity pins that the
+// optional subagent_ask_reviewer capability stays unset when the server does
+// not report it and carries the exact state when it does, over gRPC and HTTP.
+func TestCompatibilityInfoSubagentAskReviewerTransportParity(t *testing.T) {
+	for _, reviewer := range []*string{nil, new("on"), new("off"), new("inert")} {
+		engine := agent.NewEngine(agent.Deps{
+			LLM:     mockllm.New(mockllm.TextTurn("ok")),
+			Catalog: tool.NewCatalog(),
+			Policy:  permpolicy.NewPolicy(nil, nil),
+			Model:   "test-model",
+		})
+		svc, err := newPlacementTestService(server.Config{
+			Engine:              engine,
+			Store:               memstore.New(),
+			Now:                 func() time.Time { return time.Unix(0, 0) },
+			SubagentAskReviewer: reviewer,
+		})
+		if err != nil {
+			t.Fatalf("new service: %v", err)
+		}
+		client, cleanup := dialGRPC(t, svc)
+		srv := httptest.NewServer(server.NewHTTPHandler(svc))
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		viaGRPC, err := client.GetCompatibilityInfo(ctx, &mecatlv1.GetCompatibilityInfoRequest{})
+		if err != nil {
+			t.Fatalf("GetCompatibilityInfo (grpc): %v", err)
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/v1/compatibility", nil)
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("GET /v1/compatibility: %v", err)
+		}
+		raw, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		cancel()
+		srv.Close()
+		cleanup()
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		var viaHTTP mecatlv1.GetCompatibilityInfoResponse
+		if err := json.Unmarshal(raw, &viaHTTP); err != nil {
+			t.Fatalf("decode HTTP body: %v: %s", err, raw)
+		}
+		for transport, caps := range map[string]*mecatlv1.ServerCapabilities{"grpc": viaGRPC.GetCapabilities(), "http": viaHTTP.GetCapabilities()} {
+			switch {
+			case reviewer == nil && caps.SubagentAskReviewer != nil:
+				t.Errorf("%s: subagent_ask_reviewer = %q, want unset", transport, caps.GetSubagentAskReviewer())
+			case reviewer != nil && caps.GetSubagentAskReviewer() != *reviewer:
+				t.Errorf("%s: subagent_ask_reviewer = %v, want %q", transport, caps.SubagentAskReviewer, *reviewer)
+			}
+		}
+	}
+}
+
 // TestFeatureRegistryIsSingleSource is AC1.4.
 //
 // The feature set is non-empty, sorted, duplicate-free, and identical on both

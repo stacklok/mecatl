@@ -36,7 +36,10 @@ func harnessRun(t *testing.T, b *Built, ctx context.Context, id session.SessionI
 //nolint:revive // Test helpers consistently take testing.T first.
 func harnessCreate(t *testing.T, b *Built, ctx context.Context) session.SessionID {
 	t.Helper()
-	s, err := b.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	// Pass "" (empty) so the session starts in the server's configured DefaultMode:
+	// for allow-all configs (PostureYolo/PostureAuto) this is ModeYolo/ModeAuto, which
+	// injects the allow-all rules; for strict configs it is ModeDefault.
+	s, err := b.Service.CreateSession(ctx, "", session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,6 +135,7 @@ func TestHarnessContext_ExplicitExecutionFileSource(t *testing.T) {
 	cfg := hcConfiguredFiles(t, ws)
 	cfg.PlacementProvider = harnessVirtualPlacement(ws)
 	cfg.AllowAllTools = true
+	cfg.GuardrailsDisabled = true
 	var requests []port.LLMRequest
 	cfg.MockProvider = mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(r port.LLMRequest) { requests = append(requests, r) })}, mockllm.ToolCallTurn(session.ToolCall{ID: "read", Name: "Read", Args: json.RawMessage(`{"path":"data.txt"}`)}), mockllm.TextTurn("done"))
 	b, err := buildIsolated(t, t.Context(), cfg)
@@ -197,6 +201,7 @@ func TestHarnessContext_SourceReadsDoNotAuthorizeEdits(t *testing.T) {
 	cfg := hcConfiguredFiles(t, ws)
 	cfg.PlacementProvider = harnessVirtualPlacement(ws)
 	cfg.AllowAllTools = true
+	cfg.GuardrailsDisabled = true
 	cfg.MockProvider = mockllm.New(
 		mockllm.ToolCallTurn(session.ToolCall{ID: "source-only", Name: "Edit", Args: json.RawMessage(`{"path":"AGENTS.md","old_string":"original","new_string":"changed"}`)}),
 		mockllm.ToolCallTurn(session.ToolCall{ID: "read", Name: "Read", Args: json.RawMessage(`{"path":"AGENTS.md"}`)}),

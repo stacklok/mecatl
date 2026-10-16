@@ -326,7 +326,7 @@ func buildGuardrailsActionReviewer(cfg Config, provReg *providerRegistry, provid
 	if base == nil {
 		return nil
 	}
-	specs, _ := effectiveGuardrailSpecs(cfg)
+	specs, _ := configuredGuardrailSpecs(cfg)
 	rules, ok := compileGuardrailRules(cfg, specs)
 	if !ok {
 		return nil
@@ -359,6 +359,7 @@ func guardrailCoverageFor(cfg Config, sess *session.Session) server.GuardrailCov
 	if !coverage.Enabled || sess == nil {
 		return coverage
 	}
+	cfg.guardrailSessionMode = sess.Mode
 	specs, _ := effectiveGuardrailSpecs(cfg)
 	rules, ok := compileGuardrailRules(cfg, specs)
 	if !ok {
@@ -442,17 +443,31 @@ var defaultGuardrailSpecs = []modelhook.RuleSpec{
 // ENFORCING: under auto the approve-once ask IS the auto-mode behaviour (the checker
 // blocks, an interactive human allows once — CC auto-mode parity), so demoting auto
 // would remove that very behaviour. The interactive approve-once path is gated on
-// Deps.Interactive, NOT on posture. This is composition-only (no engine change) and
-// posture is operator-tier, consistent with guardrails being operator-tier (no
-// project-tier downgrade).
+// Deps.Interactive, NOT on posture. Posture is operator-tier, consistent with
+// guardrails being operator-tier (no project-tier downgrade). These demoted specs
+// feed coverage and narration; the engine reviewer compiles configuredGuardrailSpecs
+// and the engine applies the same yolo demotion per executing session.
 func effectiveGuardrailSpecs(cfg Config) (specs []modelhook.RuleSpec, usedDefaults bool) {
+	specs, usedDefaults = configuredGuardrailSpecs(cfg)
+	for i := range specs {
+		specs[i].Mode = demoteForPosture(cfg, specs[i].Mode)
+	}
+	return specs, usedDefaults
+}
+
+// configuredGuardrailSpecs returns the operator's rule specs (or the default set)
+// WITHOUT the yolo demotion. The engine reviewer compiles these: a reviewRoot is
+// shared with delegated children, so the engine selects enforcement from each
+// executing session's mode (a yolo session is advisory, a narrower child of it
+// still enforces) instead of freezing the parent's demotion into the rules.
+func configuredGuardrailSpecs(cfg Config) (specs []modelhook.RuleSpec, usedDefaults bool) {
 	if len(cfg.GuardrailsRules) > 0 {
 		out := make([]modelhook.RuleSpec, 0, len(cfg.GuardrailsRules))
 		for i, gr := range cfg.GuardrailsRules {
 			out = append(out, modelhook.RuleSpec{
 				Match:         gr.Match,
 				Phases:        gr.Phases,
-				Mode:          demoteForPosture(cfg, gr.Mode),
+				Mode:          gr.Mode,
 				Prompt:        gr.Prompt,
 				FailClosed:    gr.FailClosed,
 				FailClosedSet: gr.FailClosedSet,
@@ -471,22 +486,34 @@ func effectiveGuardrailSpecs(cfg Config) (specs []modelhook.RuleSpec, usedDefaul
 		if dm := strings.TrimSpace(cfg.GuardrailsDefaultMode); dm != "" {
 			s.Mode = dm
 		}
-		s.Mode = demoteForPosture(cfg, s.Mode)
 		out[i] = s
 	}
 	return out, true
 }
 
-// demoteForPosture demotes the enforcing guardrail block mode to advisory
-// under posture YOLO ONLY (CC bypassPermissions parity).
+// demoteForPosture demotes the enforcing guardrail block mode to advisory for
+// the gate-free yolo tier ONLY (CC bypassPermissions parity). A per-session
+// engine (cfg.guardrailSessionMode set) is demoted only when its session is in
+// yolo mode, so an auto session on a yolo server keeps an enforcing checker;
+// the shared engine follows the process posture, and sessions whose mode
+// disagrees with it are promoted to a per-session engine (modeNeedsEngine).
 // strict/trusted/auto keep the configured mode — under auto the approve-once ask IS
 // the enforcement behaviour. It is the SINGLE posture→mode coupling point so the
 // default-set and operator-rule branches cannot drift.
 func demoteForPosture(cfg Config, mode string) string {
-	if cfg.Posture < PostureYolo {
+	if !guardrailsDemoted(cfg) {
 		return mode
 	}
 	return string(modelhook.ModeAdvisory)
+}
+
+// guardrailsDemoted reports whether the engine cfg describes runs its
+// guardrail rules advisory-only.
+func guardrailsDemoted(cfg Config) bool {
+	if cfg.guardrailSessionMode != "" {
+		return cfg.guardrailSessionMode == session.ModeYolo
+	}
+	return cfg.Posture >= PostureYolo
 }
 
 // guardrailsConfigured reports whether guardrails are switched on: a checker model
@@ -685,7 +712,7 @@ func buildGuardrailsChecker(cfg Config, provReg *providerRegistry, provider port
 }
 
 // buildGuardrailsEscapeChecker builds the guardrail-routed permission escape check.
-// It is armed only on the main session at posture auto with the escape knob
+// It rides only the main session, applies only to auto-mode sessions, and needs the escape knob
 // and guardrails configured. Generic HookRunner requests carry no usage reporter.
 func buildGuardrailsEscapeChecker(cfg Config, provReg *providerRegistry, provider port.LLMProvider) modelhook.VerdictChecker {
 	if !cfg.GuardrailsEscape || !guardrailsConfigured(cfg) {

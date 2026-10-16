@@ -243,7 +243,7 @@ func TestSessionDebuggerCrossBoundaryAcceptance(t *testing.T) {
 		),
 		mockllm.TextTurn("diagnosis and issue draft ready"),
 	)
-	built2, err := buildIsolated(t, ctx, Config{Workspace: workspace, StoreDir: storeDir, NoSoul: true, MockProvider: debugProvider, MCPServers: []mcp.ServerConfig{{Name: "github", URL: mcpURL}}, Posture: PostureYolo, PostureFlagSet: true, Interactive: true})
+	built2, err := buildIsolated(t, ctx, Config{Workspace: workspace, StoreDir: storeDir, NoSoul: true, MockProvider: debugProvider, MCPServers: []mcp.ServerConfig{{Name: "github", URL: mcpURL}}, Posture: PostureYolo, PostureFlagSet: true, GuardrailsDisabled: true, Interactive: true})
 	if err != nil {
 		t.Fatalf("restart Build: %v", err)
 	}

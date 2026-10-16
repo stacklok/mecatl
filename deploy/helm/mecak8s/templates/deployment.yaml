@@ -4,6 +4,7 @@
 {{- include "mecak8s.validateTLS" . -}}
 {{- include "mecak8s.validateLearningStore" . -}}
 {{- include "mecak8s.validateProviderSecurity" . -}}
+{{- include "mecak8s.validatePermissionMode" . -}}
 {{- $learningStoreEnabled := ne .Values.learning.store.endpoint "" -}}
 {{- $learningStoreTokenConfigured := and .Values.learning.store.tokenSecret .Values.learning.store.tokenKey -}}
 {{- include "mecak8s.validateMCP" . -}}
@@ -111,7 +112,12 @@ spec:
             {{- end }}
             - {{ printf "--session-lease-k8s-namespace=%s" .Release.Namespace | quote }}
             - --headless=true
-            - --posture=auto
+            - {{ printf "--permission-mode=%s" .Values.permissionMode | quote }}
+            {{- if .Values.guardrails.model }}
+            - {{ printf "--guardrails-model=%s" .Values.guardrails.model | quote }}
+            {{- else if .Values.guardrails.disabled }}
+            - --guardrails=off
+            {{- end }}
             {{- if .Values.logging.level }}
             - {{ printf "--log-level=%s" .Values.logging.level | quote }}
             {{- end }}

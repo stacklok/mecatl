@@ -502,7 +502,7 @@ func TestChildHierarchyProviderFactoryScopesPreserveForkSnapshotsAndIsolation(t 
 				t.Fatal(err)
 			}
 			cfg := hcConfiguredFiles(t, source)
-			cfg.Workspace, cfg.Shell, cfg.AllowAllTools, cfg.NoSoul = website, "/bin/sh", true, true
+			cfg.Workspace, cfg.Shell, cfg.AllowAllTools, cfg.NoSoul, cfg.GuardrailsDisabled = website, "/bin/sh", true, true, true
 			var requests []port.LLMRequest
 			args := `{"prompt":"read nested file","model":"mock"}`
 			if fork {
@@ -573,7 +573,7 @@ func TestChildNoFSForkRetainsRootWithoutDiscoveringNested(t *testing.T) {
 		}
 	}
 	cfg := hcConfiguredFiles(t, source)
-	cfg.AllowAllTools, cfg.NoSoul = true, true
+	cfg.AllowAllTools, cfg.NoSoul, cfg.GuardrailsDisabled = true, true, true
 	var requests []port.LLMRequest
 	cfg.MockProvider = mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(r port.LLMRequest) {
 		requests = append(requests, r)
@@ -853,7 +853,7 @@ func TestHarnessGenerationServiceReloadOwnerAuthorization(t *testing.T) {
 	defer built.Close()
 	alice := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser})
 	bob := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "issuer", Subject: "bob", GrantType: session.GrantTypeUser})
-	s, err := built.Service.CreateSession(alice, session.ModeDefault, session.Limits{})
+	s, err := built.Service.CreateSession(alice, "", session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}

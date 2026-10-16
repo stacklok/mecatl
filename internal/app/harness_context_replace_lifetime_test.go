@@ -46,7 +46,7 @@ func TestBuildReplacePolicyGlobalStableAcrossReadDiscovery(t *testing.T) {
 	kinds := harnessEmptyKinds()
 	kinds.Instructions = permconfig.HarnessContextKind{Sources: []string{"project", "global"}, Mode: "replace"}
 	cfg := harnessPolicyConfig(t, permconfig.HarnessContextSection{EnabledSources: []string{"project", "global"}, Kinds: kinds})
-	cfg.Workspace, cfg.AllowAllTools = root, true
+	cfg.Workspace, cfg.AllowAllTools, cfg.GuardrailsDisabled = root, true, true
 	global := &changingPolicyGlobal{}
 	cfg.HarnessInstructionSources = []HarnessSourceRegistration[prompt.InstructionAssembler]{
 		{ID: "project", Provenance: HarnessProvenancePolicy{Fixed: harnessProjectTier}, Bind: func(context.Context, HarnessSourceScope) (prompt.InstructionAssembler, func() error, error) {

@@ -243,6 +243,47 @@ describe("Mecatl schedule spec mapping", () => {
     expect([a.mode, b.mode, c.mode]).toEqual(["default", "acceptEdits", "plan"]);
   });
 
+  it("reports modes set outside Studio instead of folding them into plan", async () => {
+    // An in-chat schedule records its creator's mode (auto or yolo), and one
+    // created without a mode fires in the server's default session mode.
+    for (const [mode, want] of [
+      [PermissionMode.AUTO, "auto"],
+      [PermissionMode.YOLO, "yolo"],
+      [PermissionMode.UNSPECIFIED, "serverDefault"],
+    ] as const) {
+      const list = vi.fn().mockResolvedValue({
+        schedules: [spec({ mode, mutating: true }).schedule],
+      });
+      const service = createMecatlScheduleService(
+        { schedules: { list } } as unknown as Client,
+        true,
+      );
+
+      const response = await service.list();
+      expect(response.items[0]?.mode, String(mode)).toBe(want);
+    }
+  });
+
+  it("keeps the stored mode when an update omits it, and plan when writes are off", async () => {
+    for (const stored of [PermissionMode.AUTO, PermissionMode.YOLO, PermissionMode.UNSPECIFIED]) {
+      const current = spec({ mode: stored, mutating: true, timezone: "Europe/Rome" });
+      const get = vi.fn().mockResolvedValue(current);
+      const update = vi.fn().mockResolvedValue(current);
+      const service = createMecatlScheduleService(
+        { schedules: { get, update } } as unknown as Client,
+        true,
+      );
+
+      await service.update("s", { ...baseWriteRequest(), mode: undefined, mutating: true });
+      await service.update("s", { ...baseWriteRequest(), mode: undefined, mutating: false });
+      await service.update("s", { ...baseWriteRequest(), mode: "acceptEdits", mutating: true });
+      expect(
+        update.mock.calls.map((call) => call[0].spec.mode),
+        String(stored),
+      ).toEqual([stored, PermissionMode.PLAN, PermissionMode.ACCEPT_EDITS]);
+    }
+  });
+
   it("derives schedule status from enabled, in-flight, and pending claims", async () => {
     const rows = [
       { name: "paused", state: { enabled: false } },

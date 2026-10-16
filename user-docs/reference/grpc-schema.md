@@ -39,7 +39,7 @@ the bidi Converse stream that drives one agent run.
 | **RPC:** `ListGuardrailCoverage`<br />**Request:** `ListGuardrailCoverageRequest`<br />**Response:** `ListGuardrailCoverageResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No |  |
 | **RPC:** `GetGuardrailReviewDetail`<br />**Request:** `GetGuardrailReviewDetailRequest`<br />**Response:** `GetGuardrailReviewDetailResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No |  |
 | **RPC:** `GetSessionTranscript`<br />**Request:** `GetSessionTranscriptRequest`<br />**Response:** `GetSessionTranscriptResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="GetSessionTranscript">GetSessionTranscript returns the authoritative, snapshot-derived human transcript for one owned session. It is read-only and does not use EventLog.</GrpcDescription> |
-| **RPC:** `SetMode`<br />**Request:** `SetModeRequest`<br />**Response:** `SetModeResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="SetMode">SetMode changes an existing session&#39;s permission posture. The session aggregate remains authoritative: a mid-turn change is rejected with InvalidArgument, so clients that want &#34;next prompt&#34; semantics must defer and retry once idle.</GrpcDescription> |
+| **RPC:** `SetMode`<br />**Request:** `SetModeRequest`<br />**Response:** `SetModeResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="SetMode">SetMode changes an existing session&#39;s permission posture. The session aggregate remains authoritative: a mid-turn change is rejected with InvalidArgument, so clients that want &#34;next prompt&#34; semantics must defer and retry once idle. One exception, advertised by the refused_mode_recovery feature: for a stored session awaiting an approval in a mode the server no longer admits, a change to an admitted, strictly lower mode cancels the pending turn without running it and applies the mode.</GrpcDescription> |
 | **RPC:** `CloseSession`<br />**Request:** `CloseSessionRequest`<br />**Response:** `CloseSessionResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="CloseSession">CloseSession ends a session and releases its server-side resources (learned permission rules, bound placement, and any per-session engine). Idempotent: closing an unknown or already-closed session via the wire returns NotFound only for a never-created id; an already-released session succeeds.</GrpcDescription> |
 | **RPC:** `RenameSession`<br />**Request:** `RenameSessionRequest`<br />**Response:** `RenameSessionResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="RenameSession">RenameSession explicitly replaces an idle main session&#39;s title.</GrpcDescription> |
 | **RPC:** `DeleteSession`<br />**Request:** `DeleteSessionRequest`<br />**Response:** `DeleteSessionResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="DeleteSession">DeleteSession physically removes an idle main session and its sidecars.</GrpcDescription> |
@@ -730,7 +730,7 @@ CreateSessionRequest opens a new session.
 
 | Field | Type | Label | Oneof | Description |
 |---|---|---|---|---|
-| `mode` | `PermissionMode` |  |  | mode is the permission posture; unspecified defaults to DEFAULT. |
+| `mode` | `PermissionMode` |  |  | mode is the permission posture; unspecified uses the server&#39;s configured default session mode, which is DEFAULT unless the operator chose a permission mode that starts sessions elsewhere. |
 | `limits` | `Limits` |  |  | limits are the optional stop conditions. |
 | `provider_id` | `string` |  |  | provider_id selects which configured provider backs this session, by its stable registry id (&#34;openai&#34; / &#34;openrouter&#34;). Empty =&gt; the server default provider (today&#39;s behaviour). An unknown/unavailable id is a loud InvalidArgument, never a silent fallback. The provider is FIXED for the session lifetime (reasoning-replay + byte-stable prefix are provider-private); &#34;switch provider&#34; = new session. Keys are NEVER on the wire — only this id. (multi-provider Phase 0, S3.) |
 | `model_id` | `string` |  |  | model_id is the opaque model selector within provider_id. Empty =&gt; the provider&#39;s default model. An id ListModels did not advertise is passed through to the provider VERBATIM (a power-user escape hatch for a model the embedded catalog doesn&#39;t yet know). NOT slash-joined with provider_id — two distinct fields by design. Setting model_id WITHOUT provider_id is a loud InvalidArgument (a bare model on an env-derived default provider is ambiguous). |
@@ -3044,7 +3044,7 @@ old clients ignore and new clients reading an old server see as false.
 | `soul` | `bool` |  |  | soul is true when a soul source is wired (a soul was selected at startup, so GetSoul returns its snapshot). Gates the /soul read-only inspection panel. |
 | `user_model` | `bool` |  |  | user_model is true when the user-model store is wired (GetUserModel reads its live index). Gates the /memory read-only inspection panel. |
 | `model_selection` | `bool` |  |  | model_selection is true when &gt;=1 provider is available (ListModels would return &gt;0). Gates the client&#39;s /models picker the same way `agents` gates /agents. Additive: an older server leaves it false and the client hides the picker. (multi-provider Phase 0, S3.) |
-| `posture` | `string` |  |  | posture is the SERVER-WIDE operator posture-ladder tier (&#34;strict&#34;/&#34;trusted&#34;/ &#34;auto&#34;/&#34;yolo&#34;). It is CHROME ONLY — a client renders an honest &#34;⚠ auto&#34;/&#34;⚠ yolo&#34; badge so an operator can see the daemon&#39;s automation posture at a glance — and is NEVER session state (it does not change per session; permission MODE is the per-session knob). String passthrough, no enum on the wire (the EvNoProgress / StopBudget discipline). Additive: an older server leaves it empty and the client shows no badge (strict/trusted also show no badge). |
+| `posture` | `string` |  |  | posture is the SERVER-WIDE operator posture-ladder tier (&#34;strict&#34;/&#34;trusted&#34;/ &#34;auto&#34;/&#34;yolo&#34;). It bounds which session modes a client may cycle to and is NEVER session state (it does not change per session; permission MODE is the per-session knob). String passthrough, no enum on the wire (the EvNoProgress / StopBudget discipline). Additive: an older server leaves it empty. |
 | `worktrees` | `bool` |  |  | worktrees is true when a WorktreeLister is wired (ListWorktrees may return a non-empty list for a real git repo). Gates the client&#39;s /worktrees overlay — the first-class operator workflow for binding a session to an EXISTING sibling git worktree (issue #102). Additive: an older server leaves it false and the client hides the overlay. A no-FS/cloud server (no lister wired) also yields false, so the feature is honestly absent there. |
 | `scheduling` | `bool` |  |  | scheduling is true when a ScheduleStore is reachable (the schedule RPCs are functional: Create/List/Get/Pause/Resume/Delete/FireNow/GetFire/ListFires). Gates the client&#39;s /schedule overlay. Independent of the scheduler tick loop (--scheduler): the store-backed RPCs work without the tick loop. Additive: an older server leaves it false and the client hides the overlay. |
 | `reflection` | `bool` |  |  | reflection is true when explicit completed-session reflection is available. |
@@ -3061,6 +3061,8 @@ old clients ignore and new clients reading an old server see as false.
 | `mcp_connector_status` | `bool` |  |  | mcp_connector_status requires a wired broker inspector, enforced ownership and a verified caller. It does not enable direct MCP resources or prompts. |
 | `mcp_refresh` | `bool` |  |  | mcp_refresh is true when direct/global MCP source reconciliation is wired. It is mutually exclusive with workspace_enrollment in a valid deployment. |
 | `execution_templates` | `bool` |  |  | execution_templates is true only when an authenticated template catalog is wired; an eligible inventory may still be empty. |
+| `project_trusted` | `bool` | optional |  | project_trusted reports whether the server trusts its launch workspace&#39;s project content (rules, instructions, soul). It is an axis separate from the permission mode. CHROME ONLY. Additive: an older server leaves it unset and the client shows no trust indicator. |
+| `subagent_ask_reviewer` | `string` | optional |  | subagent_ask_reviewer reports the subagent ask reviewer, a model that may approve a subagent&#39;s, team member&#39;s, or parallel branch&#39;s permission request that no human can answer: &#34;on&#34; (enabled), &#34;off&#34; (not enabled), or &#34;inert&#34; (configured, but an interactive approver answers instead). Clients treat other values as unknown. CHROME ONLY. Additive: an older server leaves it unset and the client shows nothing. |
 
 
 
@@ -3243,7 +3245,7 @@ SetModeRequest changes a session&#39;s permission posture.
 | Field | Type | Label | Oneof | Description |
 |---|---|---|---|---|
 | `session_id` | `string` |  |  | session_id is the session to update. |
-| `mode` | `PermissionMode` |  |  | mode is the desired permission posture; unspecified defaults to DEFAULT. |
+| `mode` | `PermissionMode` |  |  | mode is the desired permission posture; unspecified defaults to DEFAULT. AUTO requires an enforcing guardrails checker; the server rejects SetMode to AUTO without one. The server may also enforce a MaxAllowedMode ceiling; requesting a mode above it is rejected with INVALID_ARGUMENT. |
 
 
 
@@ -4102,7 +4104,8 @@ its prose.
 
 PermissionMode is the session-wide permission posture, mirroring
 session.PermissionMode. Plan mode exposes a read-only toolset; acceptEdits
-auto-accepts edits.
+auto-accepts edits; auto runs autonomously with an enforcing guardrails
+checker; yolo runs gate-free with no enforcing checker.
 
 | Name | Number | Description |
 |---|---|---|
@@ -4110,6 +4113,8 @@ auto-accepts edits.
 | `PERMISSION_MODE_DEFAULT` | `1` | PERMISSION_MODE_DEFAULT is the standard deny -&gt; ask -&gt; allow posture. |
 | `PERMISSION_MODE_PLAN` | `2` | PERMISSION_MODE_PLAN enforces a read-only toolset. |
 | `PERMISSION_MODE_ACCEPT_EDITS` | `3` | PERMISSION_MODE_ACCEPT_EDITS auto-accepts edits. |
+| `PERMISSION_MODE_AUTO` | `4` | PERMISSION_MODE_AUTO runs autonomously using an enforcing guardrails checker. Entering this mode requires a checker; the server rejects SetMode to AUTO without one. |
+| `PERMISSION_MODE_YOLO` | `5` | PERMISSION_MODE_YOLO runs gate-free with no enforcing checker. Advisory monitoring may remain. Configured deny rules still apply. |
 
 #### `mecatl.v1.RetryDisposition`
 
@@ -4437,7 +4442,7 @@ ScheduleState; the two halves together form a Schedule.
 | `trigger` | `TriggerSpec` |  |  | trigger is the firing trigger (cron XOR one_shot). |
 | `selector` | `ScheduleProviderSelector` |  |  | selector selects the provider+model the fires run on. A zero value means the deployment default. |
 | `profile` | `string` |  |  | profile is the session tool-surface profile (&#34;&#34; default, &#34;no-fs&#34; file-less). |
-| `mode` | `PermissionMode` |  |  | mode is the session permission posture. Reuses the PermissionMode enum from harness.proto (same package — proto allows cross-file refs within a package). |
+| `mode` | `PermissionMode` |  |  | mode is the session permission posture. Reuses the PermissionMode enum from harness.proto (same package — proto allows cross-file refs within a package). A non-mutating schedule must use PLAN. For a mutating schedule, unspecified means each fire uses the server&#39;s configured default session mode at fire time; it reads back as unspecified. Every fire checks the mode against the server&#39;s mode ceiling and fails if the ceiling no longer allows it. |
 | `limits` | `Limits` |  |  | limits are the bounded per-fire budgets. Reuses the Limits message from harness.proto. They are PER-FIRE: each fire gets a fresh session with these limits. |
 | `mutating` | `bool` |  |  | mutating is the explicit write opt-in. The DEFAULT is false (read-leaning), the same conservative default as a subagent. |
 | `max_fires` | `int32` |  |  | max_fires bounds the TOTAL number of fires for a cron schedule (0 = forever). Cron-only: a one-shot fires once by definition and max_fires is ignored. |

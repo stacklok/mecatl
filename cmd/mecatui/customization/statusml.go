@@ -12,7 +12,7 @@ import (
 
 const (
 	// ProtocolVersion is the current Input wire-independent contract version.
-	ProtocolVersion uint8 = 5
+	ProtocolVersion uint8 = 6
 
 	maxMarkupBytes = 16 << 10
 	maxSpanRunes   = 4 << 10
@@ -34,6 +34,9 @@ const (
 	TokenWarning   Token = "warning"
 	TokenError     Token = "error"
 	TokenInfo      Token = "info"
+	// TokenDanger renders as the filled, theme-independent alarm pill (the yolo
+	// mode marker) rather than a foreground colour.
+	TokenDanger Token = "danger"
 )
 
 // Palette resolves a StatusML semantic token through the active theme. It
@@ -267,7 +270,7 @@ func validName(name string) bool {
 
 func isToken(name string) bool {
 	switch Token(name) {
-	case TokenText, TokenMuted, TokenPrimary, TokenSecondary, TokenAccent, TokenSuccess, TokenWarning, TokenError, TokenInfo:
+	case TokenText, TokenMuted, TokenPrimary, TokenSecondary, TokenAccent, TokenSuccess, TokenWarning, TokenError, TokenInfo, TokenDanger:
 		return true
 	default:
 		return false

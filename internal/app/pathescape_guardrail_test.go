@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -11,8 +12,18 @@ import (
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/modelhook"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
+
+// countingVerdictChecker counts Check calls and answers unsafe, so a consulted
+// checker would also flip the escape decision to Deny.
+type countingVerdictChecker struct{ calls atomic.Int32 }
+
+func (c *countingVerdictChecker) Check(context.Context, modelhook.CheckRequest) (modelhook.CheckResult, error) {
+	c.calls.Add(1)
+	return modelhook.CheckResult{Verdict: modelhook.Verdict{Safe: new(false), Reason: "must not be consulted"}}, nil
+}
 
 // pathescape_guardrail_test.go pins guardrail-routed escape checking: at
 // posture auto WITH the operator-tier
@@ -35,18 +46,24 @@ func buildRoutedEscapePolicy(t *testing.T, cfg Config, checkerTurns ...mockllm.T
 	if checker == nil {
 		t.Fatal("buildGuardrailsChecker returned nil — the test scripts the checker via the same mockllm path the composition uses")
 	}
-	return newEscapePolicy(permpolicy.NewPolicy(defaultRules(), nil), PostureAuto, withEscapeGuardrailRoute(checker))
+	return newEscapePolicy(permpolicy.NewPolicy(defaultRules(), nil), withEscapeGuardrailRoute(checker))
 }
 
-// evalEscapeAtAuto evaluates one call through the routed policy against a
-// real osfs workspace rooted at the fixture workspace.
+// evalEscapeAtAuto evaluates one call in an auto-mode session through the
+// routed policy against a real osfs workspace rooted at the fixture workspace.
 func evalEscapeAtAuto(t *testing.T, p port.PermissionPolicy, workspace string, c session.ToolCall) governance.PermissionDecision {
+	t.Helper()
+	return evalEscapeInMode(t, p, workspace, session.ModeAuto, c)
+}
+
+// evalEscapeInMode evaluates one call in a session of the given mode.
+func evalEscapeInMode(t *testing.T, p port.PermissionPolicy, workspace string, mode session.PermissionMode, c session.ToolCall) governance.PermissionDecision {
 	t.Helper()
 	ws, err := osfs.NewWorkspace(workspace)
 	if err != nil {
 		t.Fatalf("NewWorkspace: %v", err)
 	}
-	return p.Evaluate(context.Background(), session.SessionID("s1"), session.ModeDefault, c, ws).Decision
+	return p.Evaluate(context.Background(), session.SessionID("s1"), mode, c, ws).Decision
 }
 
 // TestPathEscapePosture_GuardrailRoutedEscape pins AC-W2-G2: auto + the
@@ -106,31 +123,26 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 		}
 	})
 
-	t.Run("yolo and strict never route", func(t *testing.T) {
+	t.Run("non-auto session modes never consult the armed route", func(t *testing.T) {
 		t.Parallel()
-		// The route is the AUTO-only knob: yolo demotes guardrails to advisory
-		// and never spends a checker call on a decision the posture
-		// already made; strict/trusted keep their own Scenario-4 escape Ask.
-		for _, posture := range []Posture{PostureYolo, PostureStrict, PostureTrusted} {
-			posture := posture
-			t.Run(posture.String(), func(t *testing.T) {
+		// The route is armed but consulted only for auto-mode sessions: a yolo
+		// session demotes guardrails to advisory and never spends a checker
+		// call; the ordinary modes keep their own Scenario-4 escape Ask.
+		for _, mode := range []session.PermissionMode{session.ModePlan, session.ModeDefault, session.ModeAccept, session.ModeYolo} {
+			t.Run(string(mode), func(t *testing.T) {
 				t.Parallel()
-				// Script a verdict that would DENY if consulted; assert the
-				// posture row wins and the checker was never consulted (a
-				// consumed verdict would flip the outcome).
-				checker := buildGuardrailsChecker(Config{UseMock: true, GuardrailsModel: "checker-model"}, nil,
-					mockllm.New(mockllm.TextTurn(`{"assessment":"prohibited","concerns":[{"ref":"C1","category":"authority_crossing","rationale":"must not be consulted","source_ref":"call"}],"evidence":[],"missing_evidence":[]}`)), "mock", "m")
-				p := newEscapePolicy(permpolicy.NewPolicy(defaultRules(), nil), posture, withEscapeGuardrailRoute(checker))
-				d := evalEscapeAtAuto(t, p, f.workspace, call)
-				switch posture {
-				case PostureYolo:
-					if d.Effect != governance.Allow {
-						t.Fatalf("yolo escape = %v, want Allow (the checker must never be consulted at yolo)", d.Effect)
-					}
-				default:
-					if d.Effect != governance.Ask {
-						t.Fatalf("%s escape = %v, want the Scenario-4 Ask (the route is auto-only)", posture, d.Effect)
-					}
+				checker := &countingVerdictChecker{}
+				p := newEscapePolicy(permpolicy.NewPolicy(defaultRules(), nil), withEscapeGuardrailRoute(checker))
+				d := evalEscapeInMode(t, p, f.workspace, mode, call)
+				want := governance.Ask
+				if mode == session.ModeYolo {
+					want = governance.Allow
+				}
+				if d.Effect != want {
+					t.Fatalf("%s-mode escape = %v (%q), want %v", mode, d.Effect, d.Reason, want)
+				}
+				if n := checker.calls.Load(); n != 0 {
+					t.Fatalf("%s-mode escape consulted the checker %d times, want 0 (the route is auto-only)", mode, n)
 				}
 			})
 		}
@@ -140,7 +152,7 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 		t.Parallel()
 		// Without the escape knob the auto read row is a plain Allow (Shell
 		// parity) with NO checker call — the route is strictly opt-in.
-		p := newEscapePolicy(permpolicy.NewPolicy(defaultRules(), nil), PostureAuto)
+		p := newEscapePolicy(permpolicy.NewPolicy(defaultRules(), nil))
 		d := evalEscapeAtAuto(t, p, f.workspace, call)
 		if d.Effect != governance.Allow {
 			t.Fatalf("auto escape without the knob = %v, want Allow (no route, no checker spend)", d.Effect)
@@ -153,7 +165,7 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 			{Scope: governance.ScopeUser, Tool: "Read", Effect: governance.Deny},
 		}, nil)
 		checker := buildGuardrailsChecker(cfg, nil, mockllm.New(mockllm.TextTurn(`{"assessment":"acceptable","concerns":[],"evidence":[],"missing_evidence":[]}`)), "mock", "m")
-		p := newEscapePolicy(inner, PostureAuto, withEscapeGuardrailRoute(checker))
+		p := newEscapePolicy(inner, withEscapeGuardrailRoute(checker))
 		d := evalEscapeAtAuto(t, p, f.workspace, call)
 		if d.Effect != governance.Deny {
 			t.Fatalf("configured deny + routed escape = %v, want Deny — the route runs only after the inner fold", d.Effect)
@@ -177,13 +189,14 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 		}
 		bcfg := escapeCfg(t, f, PostureAuto, turns...)
 		bcfg.GuardrailsModel = "checker-model"
+		bcfg.GuardrailsDisabled = false // escapeCfg declares off; this test configures a checker instead
 		bcfg.GuardrailsEscape = true
 		built, err := buildIsolated(t, context.Background(), bcfg)
 		if err != nil {
 			t.Fatalf("Build: %v", err)
 		}
 		defer built.Close()
-		sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+		sess, err := built.Service.CreateSession(context.Background(), session.ModeAuto, session.Limits{})
 		if err != nil {
 			t.Fatalf("CreateSession: %v", err)
 		}
@@ -202,6 +215,7 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 		f := setupEscapeFS(t)
 		bcfg := escapeCfg(t, f, PostureAuto, readEscapeTurns(f.target)...)
 		bcfg.GuardrailsModel = "checker-model"
+		bcfg.GuardrailsDisabled = false // escapeCfg declares off; this test configures a checker instead
 		// Isolate the escape-route assertion from the contextual guardrails' default inbound Read
 		// coverage: an explicit unrelated rule keeps guardrails enabled without
 		// reviewing this Read result through the ordinary tool boundary.
@@ -211,7 +225,7 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 			t.Fatalf("Build: %v", err)
 		}
 		defer built.Close()
-		sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+		sess, err := built.Service.CreateSession(context.Background(), session.ModeAuto, session.Limits{})
 		if err != nil {
 			t.Fatalf("CreateSession: %v", err)
 		}

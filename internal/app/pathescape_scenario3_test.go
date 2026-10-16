@@ -62,13 +62,14 @@ func setupWriteFS(t *testing.T) writeFixture {
 }
 
 // writeEscapeCfg mirrors escapeCfg but scripts Write turns (posture set by
-// the caller).
+// the caller; an auto deployment gets an inert enforcing checker).
 func writeEscapeCfg(t *testing.T, f writeFixture, posture Posture, turns ...mockllm.Turn) Config {
 	t.Helper()
-	return Config{
+	cfg := Config{
 		Workspace:           f.workspace,
 		NoSoul:              true,
 		Posture:             posture,
+		GuardrailsDisabled:  true,
 		PostureFlagSet:      true,
 		envDetector:         fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-openai"}),
 		liveModelHTTPClient: offlineHTTPClient(),
@@ -76,6 +77,10 @@ func writeEscapeCfg(t *testing.T, f writeFixture, posture Posture, turns ...mock
 			return mockllm.New(turns...)
 		},
 	}
+	if posture == PostureAuto {
+		cfg = withInertEnforcingChecker(cfg)
+	}
+	return cfg
 }
 
 // scenario3Call marshals one tool call with the given arg map.
@@ -84,10 +89,12 @@ func scenario3Call(id, name string, argMap map[string]string) session.ToolCall {
 	return session.NewToolCall(session.ToolCallID(id), name, json.RawMessage(args))
 }
 
-// TestPathEscapePosture_Scenario3_YoloWriteEscapeAllowed pins AC3.1: at
-// posture yolo, Write to an out-of-root absolute path creates the file (and a
-// second Write replaces it) — the relax flows through the ordinary FS tool,
-// never a Shell workaround, and never surfaces an ask at yolo.
+// TestPathEscapePosture_Scenario3_YoloWriteEscapeAllowed pins AC3.1: in a
+// yolo-mode session, Write to an out-of-root absolute path creates the file
+// (and a second Write replaces it) — the relax flows through the ordinary FS
+// tool, never a Shell workaround, and never surfaces an ask in yolo. The relax
+// keys off the SESSION mode, not the server posture: a default-mode session on
+// the same yolo server asks (TestPathEscapePosture_Scenario3_YoloToDefaultTransitionAsks).
 func TestPathEscapePosture_Scenario3_YoloWriteEscapeAllowed(t *testing.T) {
 	t.Parallel()
 	f := setupWriteFS(t)
@@ -102,7 +109,7 @@ func TestPathEscapePosture_Scenario3_YoloWriteEscapeAllowed(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeYolo, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -141,6 +148,156 @@ func TestPathEscapePosture_Scenario3_YoloWriteEscapeAllowed(t *testing.T) {
 	}
 }
 
+// writeTurnOutcome is what one prompt's run surfaced for the write-escape
+// transition tests.
+type writeTurnOutcome struct {
+	asks    []session.PendingAsk
+	results []session.ToolResult
+}
+
+// runWriteTurn drives one prompt, answering every permission ask with verdict.
+func runWriteTurn(t *testing.T, built *Built, id session.SessionID, verdict session.ApprovalVerdict) writeTurnOutcome {
+	t.Helper()
+	run, err := built.Service.StartRun(context.Background(), id, "write outside the workspace")
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	var out writeTurnOutcome
+	for ev := range run.Events() {
+		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
+			out.asks = append(out.asks, *ev.Ask)
+			run.Approve(ev.Ask.AskID, verdict)
+		}
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil {
+			out.results = append(out.results, *ev.ToolResult)
+		}
+	}
+	built.Service.FinishRun(id, run)
+	return out
+}
+
+// TestPathEscapePosture_Scenario3_YoloToDefaultTransitionAsks pins that the
+// write-escape relax follows the SESSION mode, not the server posture: on a
+// yolo server, a yolo-mode session writes an external file without an ask;
+// after SetMode(default) on the SAME session, the next Write to that external
+// target raises the escape ask and, denied, leaves the file unchanged. A
+// session that starts in default on the yolo server asks the same way, and a
+// configured Deny still wins in yolo.
+func TestPathEscapePosture_Scenario3_YoloToDefaultTransitionAsks(t *testing.T) {
+	t.Parallel()
+
+	t.Run("yolo then default on the same session", func(t *testing.T) {
+		t.Parallel()
+		f := setupWriteFS(t)
+		target := filepath.Join(t.TempDir(), "external.txt")
+		const yoloContent = "written-in-yolo-4d1e"
+		create := scenario3Call("w1", "Write", map[string]string{"path": target, "content": yoloContent})
+		overwrite := scenario3Call("w2", "Write", map[string]string{"path": target, "content": "must-never-land-after-default"})
+		built, err := buildIsolated(t, context.Background(), writeEscapeCfg(t, f, PostureYolo,
+			mockllm.ToolCallTurn(create),
+			mockllm.TextTurn("done"),
+			mockllm.ToolCallTurn(overwrite),
+			mockllm.TextTurn("done"),
+		))
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		defer built.Close()
+		sess, err := built.Service.CreateSession(context.Background(), session.ModeYolo, session.Limits{})
+		if err != nil {
+			t.Fatalf("CreateSession: %v", err)
+		}
+
+		first := runWriteTurn(t, built, sess.ID, session.VerdictDeny)
+		if len(first.asks) != 0 {
+			t.Fatalf("yolo-mode Write escape asked: %+v — yolo must allow it", first.asks)
+		}
+		if len(first.results) != 1 || first.results[0].IsError {
+			t.Fatalf("yolo-mode Write escape results = %+v, want one success", first.results)
+		}
+		if data, err := os.ReadFile(target); err != nil || string(data) != yoloContent {
+			t.Fatalf("after yolo turn: content = %q, err = %v; want %q", data, err, yoloContent)
+		}
+
+		if _, err := built.Service.SetMode(context.Background(), sess.ID, session.ModeDefault); err != nil {
+			t.Fatalf("SetMode(default): %v", err)
+		}
+		second := runWriteTurn(t, built, sess.ID, session.VerdictDeny)
+		if len(second.asks) != 1 || second.asks[0].Tool != "Write" || !strings.Contains(second.asks[0].Reason, target) {
+			t.Fatalf("default-mode Write escape asks = %+v, want one Write escape ask naming %q", second.asks, target)
+		}
+		if len(second.results) != 1 || !second.results[0].IsError {
+			t.Fatalf("denied default-mode Write escape results = %+v, want one error result", second.results)
+		}
+		if data, err := os.ReadFile(target); err != nil || string(data) != yoloContent {
+			t.Fatalf("after denied default turn: content = %q, err = %v; want unchanged %q", data, err, yoloContent)
+		}
+	})
+
+	t.Run("default session on a yolo server asks", func(t *testing.T) {
+		t.Parallel()
+		f := setupWriteFS(t)
+		const original = "external-original-71c0"
+		if err := os.WriteFile(f.target, []byte(original), 0o644); err != nil {
+			t.Fatalf("WriteFile(target): %v", err)
+		}
+		overwrite := scenario3Call("w1", "Write", map[string]string{"path": f.target, "content": "must-never-land"})
+		built, err := buildIsolated(t, context.Background(), writeEscapeCfg(t, f, PostureYolo,
+			mockllm.ToolCallTurn(overwrite),
+			mockllm.TextTurn("done"),
+		))
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		defer built.Close()
+		sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+		if err != nil {
+			t.Fatalf("CreateSession: %v", err)
+		}
+		out := runWriteTurn(t, built, sess.ID, session.VerdictDeny)
+		if len(out.asks) != 1 || out.asks[0].Tool != "Write" {
+			t.Fatalf("asks = %+v, want one Write escape ask — the yolo server posture must not relax a default-mode session", out.asks)
+		}
+		if len(out.results) != 1 || !out.results[0].IsError {
+			t.Fatalf("results = %+v, want one denied error result", out.results)
+		}
+		if data, err := os.ReadFile(f.target); err != nil || string(data) != original {
+			t.Fatalf("content = %q, err = %v; want unchanged %q", data, err, original)
+		}
+	})
+
+	t.Run("configured deny still denies in yolo", func(t *testing.T) {
+		t.Parallel()
+		f := setupWriteFS(t)
+		settings := filepath.Join(t.TempDir(), "settings.yaml")
+		if err := os.WriteFile(settings, []byte("permissions:\n  deny:\n    - Write\n"), 0o600); err != nil {
+			t.Fatalf("write permission config: %v", err)
+		}
+		create := scenario3Call("w1", "Write", map[string]string{"path": f.target, "content": "must-never-land"})
+		cfg := writeEscapeCfg(t, f, PostureYolo, mockllm.ToolCallTurn(create), mockllm.TextTurn("done"))
+		cfg.PermissionConfigs = []string{settings}
+		built, err := buildIsolated(t, context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		defer built.Close()
+		sess, err := built.Service.CreateSession(context.Background(), session.ModeYolo, session.Limits{})
+		if err != nil {
+			t.Fatalf("CreateSession: %v", err)
+		}
+		out := runWriteTurn(t, built, sess.ID, session.VerdictAllowOnce)
+		if len(out.asks) != 0 {
+			t.Fatalf("configured deny surfaced asks %+v, want a plain deny", out.asks)
+		}
+		if len(out.results) != 1 || !out.results[0].IsError {
+			t.Fatalf("results = %+v, want one denied error result", out.results)
+		}
+		if _, err := os.Stat(f.target); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("Stat(%q) = %v, want nothing written under a configured deny", f.target, err)
+		}
+	})
+}
+
 // TestPathEscapePosture_Scenario3_AutoWriteEscapeAsks pins AC3.2: at posture
 // auto (no guardrail knob), a Write escape surfaces an EvPermissionAsk and
 // executes ONLY on an allow verdict — a deny verdict leaves nothing written
@@ -160,7 +317,7 @@ func TestPathEscapePosture_Scenario3_AutoWriteEscapeAsks(t *testing.T) {
 			t.Fatalf("Build: %v", err)
 		}
 		defer built.Close()
-		sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+		sess, err := built.Service.CreateSession(context.Background(), session.ModeAuto, session.Limits{})
 		if err != nil {
 			t.Fatalf("CreateSession: %v", err)
 		}
@@ -202,7 +359,7 @@ func TestPathEscapePosture_Scenario3_AutoWriteEscapeAsks(t *testing.T) {
 			t.Fatalf("Build: %v", err)
 		}
 		defer built.Close()
-		sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+		sess, err := built.Service.CreateSession(context.Background(), session.ModeAuto, session.Limits{})
 		if err != nil {
 			t.Fatalf("CreateSession: %v", err)
 		}
@@ -347,7 +504,7 @@ func TestPathEscapePosture_Scenario3_EditLedgerOutOfRoot(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeYolo, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -530,7 +687,7 @@ func TestPathEscapePosture_Scenario3_WriteEscapeMutateSerial(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeYolo, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -609,7 +766,7 @@ func TestPathEscapePosture_Scenario3_WriteEscapeServedThroughOsRoot(t *testing.T
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeYolo, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -648,8 +805,8 @@ func TestPathEscapePosture_Scenario3_ConfiguredDenyWinsOverEscapeAllow(t *testin
 		inner := permpolicy.NewPolicy([]governance.Rule{
 			{Scope: governance.ScopeUser, Tool: "Write", Effect: governance.Deny},
 		}, nil)
-		p := newEscapePolicy(inner, PostureYolo)
-		d := p.Evaluate(context.Background(), session.SessionID("s1"), session.ModeDefault, call, ws)
+		p := newEscapePolicy(inner)
+		d := p.Evaluate(context.Background(), session.SessionID("s1"), session.ModeYolo, call, ws)
 		if d.Decision.Effect != governance.Deny {
 			t.Fatalf("effect = %v, want Deny — a configured Deny must win over the posture-relaxed escape Allow", d.Decision.Effect)
 		}
@@ -660,8 +817,8 @@ func TestPathEscapePosture_Scenario3_ConfiguredDenyWinsOverEscapeAllow(t *testin
 		inner := permpolicy.NewPolicy([]governance.Rule{
 			{Scope: governance.ScopeUser, Tool: "Write", Effect: governance.Ask},
 		}, nil)
-		p := newEscapePolicy(inner, PostureYolo)
-		d := p.Evaluate(context.Background(), session.SessionID("s1"), session.ModeDefault, call, ws)
+		p := newEscapePolicy(inner)
+		d := p.Evaluate(context.Background(), session.SessionID("s1"), session.ModeYolo, call, ws)
 		if d.Decision.Effect != governance.Ask {
 			t.Fatalf("effect = %v, want Ask — the relax must NEVER suppress a configured Ask", d.Decision.Effect)
 		}
@@ -674,11 +831,11 @@ func TestPathEscapePosture_Scenario3_ConfiguredDenyWinsOverEscapeAllow(t *testin
 		t.Parallel()
 		store := permstore.New()
 		inner := permpolicy.NewPolicy(defaultRules(), store)
-		p := newEscapePolicy(inner, PostureAuto)
+		p := newEscapePolicy(inner)
 		// Warm the per-root classifier (the Learn guard classifies against the
 		// roots the policy has already seen — in the loop, Learn only ever
 		// follows an Evaluate of the same call).
-		d := p.Evaluate(context.Background(), session.SessionID("s1"), session.ModeDefault, call, ws)
+		d := p.Evaluate(context.Background(), session.SessionID("s1"), session.ModeAuto, call, ws)
 		if d.Decision.Effect != governance.Ask || d.Decision.AskProvenance == governance.AskProvenanceConfigured {
 			t.Fatalf("escape at auto = %+v, want an unconfigured escape Ask", d)
 		}

@@ -1,6 +1,8 @@
 package client
 
 import (
+	"slices"
+
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
 
@@ -43,10 +45,21 @@ type Capabilities struct {
 	Image bool
 	Audio bool
 	// Posture is the SERVER-WIDE operator posture tier ("strict"/"trusted"/"auto"/
-	// "yolo"), CHROME ONLY: the ui renders a "⚠ auto"/"⚠ yolo" badge so an operator
-	// sees the daemon's automation posture. NOT session state. Empty (an older server,
-	// or strict/trusted) → no badge.
+	// "yolo"). It bounds which modes the ui's mode cycle may switch to. NOT
+	// session state. Empty on an older server.
 	Posture string
+	// SessionPermissionModes reports the session_permission_modes feature: the
+	// five modes are session-scoped (auto and yolo are session modes, and a lower
+	// session mode drops the posture's allow-all). An older server without it
+	// applies its auto/yolo posture process-wide whatever the session mode, so the
+	// ui must not present a session mode as the effective permission mode there.
+	SessionPermissionModes bool
+	// ProjectTrust is "trusted" or "untrusted" for the server's launch
+	// workspace, CHROME ONLY: the ui's header badge. Empty on an older server.
+	ProjectTrust string
+	// SubagentAskReviewer is the server's subagent ask reviewer state ("on",
+	// "off", "inert"), CHROME ONLY: shown by /posture. Empty on an older server.
+	SubagentAskReviewer string
 	// Worktrees is true when a WorktreeLister is wired (ListWorktrees may return a
 	// non-empty list for a real git repo). It gates the /worktrees overlay — the
 	// first-class operator workflow for binding a session to an EXISTING sibling
@@ -107,6 +120,18 @@ func capabilitiesWithSessionMediaFrom(caps Capabilities, sessionCaps *mecatlv1.S
 	return caps
 }
 
+// SessionPermissionModesFeature is the compatibility feature identifier for
+// session-scoped permission modes.
+const SessionPermissionModesFeature = "session_permission_modes"
+
+// compatibilityCapabilitiesFrom maps a compatibility response: the capability
+// message plus the feature bits the ui consumes.
+func compatibilityCapabilitiesFrom(resp *mecatlv1.GetCompatibilityInfoResponse) Capabilities {
+	caps := capabilitiesFrom(resp.GetCapabilities())
+	caps.SessionPermissionModes = slices.Contains(resp.GetFeatures(), SessionPermissionModesFeature)
+	return caps
+}
+
 // capabilitiesFrom maps a proto ServerCapabilities (nil-safe) to the plain
 // struct. A nil message (older server) yields the all-false zero value.
 func capabilitiesFrom(c *mecatlv1.ServerCapabilities) Capabilities {
@@ -130,6 +155,8 @@ func capabilitiesFrom(c *mecatlv1.ServerCapabilities) Capabilities {
 		Image:               c.GetImage(),
 		Audio:               c.GetAudio(),
 		Posture:             c.GetPosture(),
+		ProjectTrust:        projectTrustFrom(c),
+		SubagentAskReviewer: c.GetSubagentAskReviewer(),
 		Worktrees:           c.GetWorktrees(),
 		Scheduling:          c.GetScheduling(),
 		Reflection:          c.GetReflection(),
@@ -143,6 +170,25 @@ func capabilitiesFrom(c *mecatlv1.ServerCapabilities) Capabilities {
 		SessionDebug:        c.GetSessionDebug(),
 		DebugMCP:            c.GetDebugMcp(),
 		WorkspaceEnrollment: c.GetWorkspaceEnrollment(),
+	}
+}
+
+// Project-trust spellings for Capabilities.ProjectTrust.
+const (
+	ProjectTrusted   = "trusted"
+	ProjectUntrusted = "untrusted"
+)
+
+// projectTrustFrom maps the optional project_trusted echo; unset (an older
+// server) stays "" so the client shows no trust indicator.
+func projectTrustFrom(c *mecatlv1.ServerCapabilities) string {
+	switch {
+	case c.ProjectTrusted == nil:
+		return ""
+	case c.GetProjectTrusted():
+		return ProjectTrusted
+	default:
+		return ProjectUntrusted
 	}
 }
 

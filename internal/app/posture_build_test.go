@@ -39,21 +39,21 @@ func postureEchoFromBuild(t *testing.T, built *Built) string {
 // silently disconnect, and the input to the #1 security fix.
 //
 //	(a) operator-tier `posture: auto` → echoed posture "auto" AND the narrated
-//	    composition fact reports allow_all=true (applyPosture derived the knob in Build).
+//	    composition fact reports trust_project= (the posture ladder set it in Build).
 //	(b) a PROJECT-tier `posture: yolo` fixture is IGNORED → echoed posture stays "strict".
 //	(c) user-global `posture: yolo` + a PRIVILEGED Config → Build REFUSES (the
 //	    operator-YAML tier cannot escape the root/no-sandbox refusal).
 func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 	t.Run("operator auto flows to composed posture", func(t *testing.T) {
 		diag := slogdiagBuffer(t)
-		built, err := buildIsolated(t, context.Background(), Config{
+		built, err := buildIsolated(t, context.Background(), withInertEnforcingChecker(Config{
 			Workspace:         t.TempDir(),
 			Model:             "mock",
 			UseMock:           true,
 			NoSoul:            true,
 			PermissionConfigs: []string{writeOperatorPostureFile(t, "auto")},
 			Diagnostics:       diag.diag,
-		})
+		}))
 		if err != nil {
 			t.Fatalf("Build: %v", err)
 		}
@@ -67,15 +67,15 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 		if fact == "" {
 			t.Fatalf("expected the narratePosture composition fact; log:\n%s", diag.String())
 		}
-		if !strings.Contains(fact, "allow_all=true") {
-			t.Fatalf("auto must derive allow_all=true in Build; fact: %q", fact)
+		if !strings.Contains(fact, "trust_project=") {
+			t.Fatalf("auto posture must narrate trust_project in Build; fact: %q", fact)
 		}
 	})
 
 	t.Run("injected user-global posture is discovered", func(t *testing.T) {
 		env := trustSettingsEnv(t.TempDir(), []byte("posture: auto\n"))
 		withTrustEnv(t, env)
-		built, err := buildIsolated(t, context.Background(), Config{
+		built, err := buildIsolated(t, context.Background(), withInertEnforcingChecker(Config{
 			Workspace:               t.TempDir(),
 			Model:                   "mock",
 			UseMock:                 true,
@@ -83,7 +83,7 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 			PermissionsConventional: true,
 			permConfigEnv:           &env,
 			Diagnostics:             port.NopDiagnostics{},
-		})
+		}))
 		if err != nil {
 			t.Fatalf("Build: %v", err)
 		}
@@ -97,7 +97,7 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 	// narration and the shell consumer must both report the fail-safe result.
 	t.Run("operator auto headless withholds ingestion (fail-safe)", func(t *testing.T) {
 		diag := slogdiagBuffer(t)
-		built, err := buildIsolated(t, context.Background(), Config{
+		built, err := buildIsolated(t, context.Background(), withInertEnforcingChecker(Config{
 			Workspace:         t.TempDir(),
 			Model:             "mock",
 			UseMock:           true,
@@ -106,7 +106,7 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 			Shell:             "/bin/sh", // a configured shell so the UNTRUSTED cause (not the empty-shell cause) is operative for the shell-DISABLED fact
 			PermissionConfigs: []string{writeOperatorPostureFile(t, "auto")},
 			Diagnostics:       diag.diag,
-		})
+		}))
 		if err != nil {
 			t.Fatalf("Build: %v", err)
 		}
@@ -140,7 +140,7 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 	// both project steering and the read-only child shell.
 	t.Run("operator auto interactive grants ingestion (dev default)", func(t *testing.T) {
 		diag := slogdiagBuffer(t)
-		built, err := buildIsolated(t, context.Background(), Config{
+		built, err := buildIsolated(t, context.Background(), withInertEnforcingChecker(Config{
 			Workspace:         t.TempDir(),
 			Model:             "mock",
 			UseMock:           true,
@@ -149,7 +149,7 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 			Shell:             "/bin/sh", // a configured shell so the untrusted-shell-DISABLED fact would fire if the gate tripped (it must NOT here)
 			PermissionConfigs: []string{writeOperatorPostureFile(t, "auto")},
 			Diagnostics:       diag.diag,
-		})
+		}))
 		if err != nil {
 			t.Fatalf("Build: %v", err)
 		}
@@ -206,13 +206,14 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 
 	t.Run("operator yolo on a privileged Config is refused", func(t *testing.T) {
 		built, err := buildIsolated(t, context.Background(), Config{
-			Workspace:         t.TempDir(),
-			Model:             "mock",
-			UseMock:           true,
-			NoSoul:            true,
-			PermissionConfigs: []string{writeOperatorPostureFile(t, "yolo")},
-			Privileged:        true, // root && !sandbox, as the cmd would compute
-			Diagnostics:       port.NopDiagnostics{},
+			Workspace:          t.TempDir(),
+			Model:              "mock",
+			UseMock:            true,
+			NoSoul:             true,
+			PermissionConfigs:  []string{writeOperatorPostureFile(t, "yolo")},
+			GuardrailsDisabled: true,
+			Privileged:         true, // root && !sandbox, as the cmd would compute
+			Diagnostics:        port.NopDiagnostics{},
 		})
 		if err == nil {
 			built.Close()
@@ -284,4 +285,84 @@ func (r *slogdiagRecorder) lineContaining(substr string) string {
 		}
 	}
 	return ""
+}
+
+// TestBuildEchoesProjectTrust pins that the capabilities echo carries the
+// effective project-trust decision as its own axis: an explicit trust grant
+// reports trusted at strict posture, a headless allow-all root without a trust
+// source reports untrusted, and the echo is always set by a composed server.
+func TestBuildEchoesProjectTrust(t *testing.T) {
+	cases := []struct {
+		name  string
+		token string
+		trust bool
+		want  bool
+	}{
+		{"default untrusted", "default", false, false},
+		{"default with --trust-project", "default", true, true},
+		{"headless yolo without a trust source", "yolo", false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.token == "yolo" {
+				t.Setenv("MECATL_SANDBOX", "1")
+			}
+			cfg := permissionModeCfg(t, tc.token, port.NopDiagnostics{})
+			cfg.TrustProject = tc.trust
+			cfg.Headless = true
+			cfg.GuardrailsDisabled = tc.token == "yolo"
+			built, err := buildIsolated(t, context.Background(), cfg)
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			defer built.Close()
+			caps := built.Service.CompatibilityInfo(context.Background()).GetCapabilities()
+			if caps.ProjectTrusted == nil {
+				t.Fatal("project_trusted must be set by a composed server")
+			}
+			if got := caps.GetProjectTrusted(); got != tc.want {
+				t.Fatalf("project_trusted = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestBuildEchoesSubagentAskReviewer pins that the capabilities echo carries
+// the reviewer state from the same reviewerStatus the startup line narrates.
+func TestBuildEchoesSubagentAskReviewer(t *testing.T) {
+	cases := []struct {
+		name        string
+		token       string
+		interactive bool
+		reviewer    string
+		want        string
+	}{
+		{"headless default is off", "default", false, "", reviewerOff},
+		{"headless yolo defaults on", "yolo", false, "", reviewerOn},
+		{"interactive configured is inert", "default", true, "mock", reviewerInert},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.token == "yolo" {
+				t.Setenv("MECATL_SANDBOX", "1")
+			}
+			cfg := permissionModeCfg(t, tc.token, port.NopDiagnostics{})
+			cfg.Headless = !tc.interactive
+			cfg.Interactive = tc.interactive
+			cfg.SubagentAskReviewerModel = tc.reviewer
+			cfg.GuardrailsDisabled = tc.token == "yolo"
+			built, err := buildIsolated(t, context.Background(), cfg)
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			defer built.Close()
+			caps := built.Service.CompatibilityInfo(context.Background()).GetCapabilities()
+			if caps.SubagentAskReviewer == nil {
+				t.Fatal("subagent_ask_reviewer must be set by a composed server")
+			}
+			if got := caps.GetSubagentAskReviewer(); got != tc.want {
+				t.Fatalf("subagent_ask_reviewer = %q, want %q", got, tc.want)
+			}
+		})
+	}
 }

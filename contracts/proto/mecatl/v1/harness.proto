@@ -76,6 +76,10 @@ service HarnessService {
   // SetMode changes an existing session's permission posture. The session aggregate
   // remains authoritative: a mid-turn change is rejected with InvalidArgument, so
   // clients that want "next prompt" semantics must defer and retry once idle.
+  // One exception, advertised by the refused_mode_recovery feature: for a stored
+  // session awaiting an approval in a mode the server no longer admits, a change
+  // to an admitted, strictly lower mode cancels the pending turn without running
+  // it and applies the mode.
   rpc SetMode(SetModeRequest) returns (SetModeResponse);
 
   // CloseSession ends a session and releases its server-side resources (learned
@@ -513,7 +517,8 @@ service HarnessService {
 
 // PermissionMode is the session-wide permission posture, mirroring
 // session.PermissionMode. Plan mode exposes a read-only toolset; acceptEdits
-// auto-accepts edits.
+// auto-accepts edits; auto runs autonomously with an enforcing guardrails
+// checker; yolo runs gate-free with no enforcing checker.
 enum PermissionMode {
   // PERMISSION_MODE_UNSPECIFIED defaults to DEFAULT at the server boundary.
   PERMISSION_MODE_UNSPECIFIED = 0;
@@ -523,6 +528,13 @@ enum PermissionMode {
   PERMISSION_MODE_PLAN = 2;
   // PERMISSION_MODE_ACCEPT_EDITS auto-accepts edits.
   PERMISSION_MODE_ACCEPT_EDITS = 3;
+  // PERMISSION_MODE_AUTO runs autonomously using an enforcing guardrails checker.
+  // Entering this mode requires a checker; the server rejects SetMode to AUTO
+  // without one.
+  PERMISSION_MODE_AUTO = 4;
+  // PERMISSION_MODE_YOLO runs gate-free with no enforcing checker. Advisory
+  // monitoring may remain. Configured deny rules still apply.
+  PERMISSION_MODE_YOLO = 5;
 }
 
 // Limits are the configured stop conditions for a session. A zero value in
@@ -540,7 +552,9 @@ message Limits {
 message CreateSessionRequest {
   reserved 1, 8;
   reserved "workspace", "source_session_id";
-  // mode is the permission posture; unspecified defaults to DEFAULT.
+  // mode is the permission posture; unspecified uses the server's configured
+  // default session mode, which is DEFAULT unless the operator chose a
+  // permission mode that starts sessions elsewhere.
   PermissionMode mode = 2;
   // limits are the optional stop conditions.
   Limits limits = 3;
@@ -788,12 +802,10 @@ message ServerCapabilities {
   // (multi-provider Phase 0, S3.)
   bool model_selection = 12;
   // posture is the SERVER-WIDE operator posture-ladder tier ("strict"/"trusted"/
-  // "auto"/"yolo"). It is CHROME ONLY — a client renders an honest "⚠ auto"/"⚠ yolo"
-  // badge so an operator can see the daemon's automation posture at a glance — and is
+  // "auto"/"yolo"). It bounds which session modes a client may cycle to and is
   // NEVER session state (it does not change per session; permission MODE is the
   // per-session knob). String passthrough, no enum on the wire (the EvNoProgress /
-  // StopBudget discipline). Additive: an older server leaves it empty and the client
-  // shows no badge (strict/trusted also show no badge).
+  // StopBudget discipline). Additive: an older server leaves it empty.
   string posture = 13;
   // worktrees is true when a WorktreeLister is wired (ListWorktrees may return a
   // non-empty list for a real git repo). Gates the client's /worktrees overlay —
@@ -856,6 +868,18 @@ message ServerCapabilities {
   // execution_templates is true only when an authenticated template catalog is
   // wired; an eligible inventory may still be empty.
   bool execution_templates = 31;
+  // project_trusted reports whether the server trusts its launch workspace's
+  // project content (rules, instructions, soul). It is an axis separate from
+  // the permission mode. CHROME ONLY. Additive: an older server leaves it
+  // unset and the client shows no trust indicator.
+  optional bool project_trusted = 32;
+  // subagent_ask_reviewer reports the subagent ask reviewer, a model that may
+  // approve a subagent's, team member's, or parallel branch's permission
+  // request that no human can answer: "on" (enabled), "off" (not enabled), or
+  // "inert" (configured, but an interactive approver answers instead). Clients
+  // treat other values as unknown. CHROME ONLY. Additive: an older server
+  // leaves it unset and the client shows nothing.
+  optional string subagent_ask_reviewer = 33;
 }
 
 // ListSessionMcpConnectorsRequest names an owned, broker-bound session.
@@ -1319,6 +1343,9 @@ message SetModeRequest {
   // session_id is the session to update.
   string session_id = 1 [(buf.validate.field).string.min_len = 1];
   // mode is the desired permission posture; unspecified defaults to DEFAULT.
+  // AUTO requires an enforcing guardrails checker; the server rejects SetMode
+  // to AUTO without one. The server may also enforce a MaxAllowedMode ceiling;
+  // requesting a mode above it is rejected with INVALID_ARGUMENT.
   PermissionMode mode = 2;
 }
 

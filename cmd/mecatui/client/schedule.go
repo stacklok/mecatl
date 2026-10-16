@@ -492,16 +492,24 @@ func misfireToProtoFromString(s string) mecatlv1.MisfirePolicy {
 	}
 }
 
-// modeStringFromProto maps the proto PermissionMode enum to the canonical UI
-// string, reusing ModeString (the harness-mode discipline). Unspecified defaults
-// to "default".
+// modeStringFromProto maps a schedule's proto PermissionMode to the canonical UI
+// string, reusing ModeString (the harness-mode discipline). UNSPECIFIED maps to
+// "": the schedule fires in the server's default session mode, which the client
+// does not know, so it must not be shown as "default".
 func modeStringFromProto(m mecatlv1.PermissionMode) string {
+	if m == mecatlv1.PermissionMode_PERMISSION_MODE_UNSPECIFIED {
+		return ""
+	}
 	return ModeString(m)
 }
 
-// modeToProtoFromString maps a UI mode string to the proto enum, reusing
-// ModeFromString. Unknown/empty maps to UNSPECIFIED (the server defaults that to
-// DEFAULT).
+// modeToProtoFromString maps a schedule's UI mode string to the proto enum. An
+// empty mode goes out as UNSPECIFIED so the server's default session mode
+// applies; it is deliberately not ModeFromString(""), which other callers rely
+// on to mean DEFAULT. Any other value reuses ModeFromString.
 func modeToProtoFromString(s string) mecatlv1.PermissionMode {
+	if s == "" {
+		return mecatlv1.PermissionMode_PERMISSION_MODE_UNSPECIFIED
+	}
 	return ModeFromString(s)
 }

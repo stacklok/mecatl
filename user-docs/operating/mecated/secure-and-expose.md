@@ -48,28 +48,35 @@ and caller identifiers. See
 [Caller identity and OIDC](/features/security-and-execution/caller-identity.md)
 for the full behavior.
 
-## Posture
+## Permission mode
 
-|Flag|Notes|
-|-|-|
-|`--posture strict`|Default approval posture; configured permission rules apply|
-|`--posture trusted`|Honor a project's ALLOW rules (alias: `--trust-project`)|
-|`--posture auto`|Allow unattended calls within configured rules; retain child injection defense|
-|`--posture yolo`|Also disable child injection defense. Isolated single-tenant only. Refused as root without `MECATL_SANDBOX=1`|
+`--permission-mode` defaults to `default`. It accepts `plan`, `default`,
+`accept-edits`, `auto`, or `yolo`, and it sets the mode new sessions start in
+and the server ceiling, the most permissive mode a session can switch to. The
+operator-global `settings.yaml` `permissionMode:` key sets the same value; the
+flag overrides it. A mode never grants project trust; pass `--trust-project` or
+add the workspace to `trustedWorkspaces:`. See
+[Choose a permission mode](/features/security-and-execution/permissions-and-posture.md#choose-a-permission-mode)
+for what each mode allows.
 
-On a **headless** root (`--headless`), posture never raises `TrustProject`.
-Explicit `--trust-project`, `trustedWorkspaces:`, or undrifted remembered trust
-admits repository steering and the read-only child shell. Without a trust
-source, `--posture auto` does not grant either access merely because the
-directory contains `.git`. See
-[Permissions and posture](/features/security-and-execution/permissions-and-posture.md#project-trust)
-for the trust sources and headless behavior.
+`mecated` refuses to start with `auto` unless an enforcing guardrails checker is
+configured: pass `--guardrails-model` or bind the `guardrail` model slot.
+`--guardrails off` or an advisory-only checker does not satisfy `auto`; choose
+`yolo` to run without a checker. If you lower the ceiling or remove the checker,
+sessions stored in a mode the server no longer admits stay intact but refuse to
+run until their owner switches them to an admitted mode.
 
-See
+On a headless root, `auto` and `yolo` start without a trust source but load no
+project steering and give read-only subagents no Shell, because `.git` is not
+vouched. Headless `auto` and `yolo` also turn on the subagent ask reviewer; pass
+`--subagent-ask-reviewer off` to keep it off. See
+[Subagents under auto](/features/security-and-execution/permissions-and-posture.md#subagents-under-auto).
+`auto` and `yolo` are refused as root without `MECATL_SANDBOX=1`.
+
+`--posture`, `--yolo`, and the `posture:` key are deprecated aliases that log a
+warning. See
 [Permissions and posture](/features/security-and-execution/permissions-and-posture.md)
-for the full rule engine. Posture is read from the operator-global
-`settings.yaml` (`posture:` key) and overridden by the CLI flag when both are
-set.
+for the full rule engine.
 
 ## Guardrails
 

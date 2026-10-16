@@ -364,6 +364,17 @@ Flags:
   --permission-config value
         path to a repeatable YAML permission configuration. CLI rules have highest
         precedence; configured deny and ask rules always override allows.
+  --permission-mode string
+        permission mode, one of: plan, default, accept-edits, auto, yolo. Sets two
+        things: the mode new sessions start in, and the process-wide server ceiling,
+        fixed at startup, which is the most permissive mode a session may switch to
+        (accept-edits for plan, default, and accept-edits). Default: default. auto and
+        yolo allow tools without asking. auto needs an enforcing guardrails checker (--
+        guardrails-model or the guardrail model slot) and refuses to start without one;
+        yolo runs without one. Both are refused for root unless MECATL_SANDBOX=1 or
+        IS_SANDBOX=1. Deny rules and configured ask rules still apply. A mode never
+        grants project trust; use --trust-project. Replaces the deprecated --posture
+        and --yolo.
   --permissions-conventional
         load project and user permission settings for each session. Enabled by default.
         Project allow rules require --trust-project; project deny and ask rules always
@@ -372,11 +383,12 @@ Flags:
         approve plan-mode results automatically in headless mode. Interactive sessions
         and non-plan requests are unaffected. Disabled by default.
   --posture string
-        permission posture: strict prompts mutations; trusted applies project allow
-        rules; auto allows tools and relaxes main shell substitutions; yolo also runs
-        child command substitutions. Deny rules and configured ask rules still apply.
-        strict is the default. --trust-project and --yolo select trusted and yolo. auto
-        and yolo are refused for root outside MECATL_SANDBOX.
+        DEPRECATED: use --permission-mode. Permission posture: strict prompts
+        mutations; trusted applies project allow rules; auto allows tools and relaxes
+        main shell substitutions; yolo also runs child command substitutions. Deny
+        rules and configured ask rules still apply. strict is the default. --trust-
+        project and --yolo select trusted and yolo. auto and yolo are refused for root
+        outside MECATL_SANDBOX.
   --product-metrics
         send anonymous product-adoption metrics to Stacklok: version, OS and
         architecture, enabled features, and coarse session, run, and tool-call counts.
@@ -482,7 +494,9 @@ Flags:
   --subagent-ask-reviewer string
         model identifier or --model-alias for reviewing child permission requests in
         headless mode. An allow applies only to that request; denied or failed reviews
-        deny it. Empty disables reviews.
+        deny it. Empty leaves reviews off, except that a headless auto or yolo
+        permission mode turns them on by default (ask-reviewer model slot, else the
+        session model); off disables reviews explicitly.
   --subagent-ask-reviewer-max-denies int
         maximum consecutive denied, failed, or timed-out child-permission reviews
         before later requests are automatically denied. An allowed review resets the
@@ -554,10 +568,11 @@ Flags:
         default session workspace root (default
         "<WORKSPACE>")
   --yolo
-        alias for --posture=yolo. Allows tools server-wide and lets child command
-        substitutions run automatically. Deny rules and configured ask rules still
-        apply. Intended only for isolated, ephemeral, single-tenant environments.
-        Refused for root unless MECATL_SANDBOX=1 or IS_SANDBOX=1.
+        DEPRECATED: use --permission-mode yolo. Alias for --posture=yolo. Allows tools
+        server-wide and lets child command substitutions run automatically. Deny rules
+        and configured ask rules still apply. Intended only for isolated, ephemeral,
+        single-tenant environments. Refused for root unless MECATL_SANDBOX=1 or
+        IS_SANDBOX=1.
 ```
 
 ## mecak8s
@@ -804,14 +819,26 @@ Usage: mecak8s [flags]
         5s)
   --permission-config value
         Trusted permission YAML file. Repeatable
+  --permission-mode string
+        Permission mode, one of: plan, default, accept-edits, auto, yolo. Sets two
+        things: the mode new sessions start in, and the process-wide server ceiling,
+        fixed at startup, which is the most permissive mode a session may switch to
+        (accept-edits for plan, default, and accept-edits). Default: auto. auto and
+        yolo allow tools without asking and require MECATL_SANDBOX when running as
+        root. auto needs an enforcing guardrails checker (--guardrails-model or the
+        guardrail model slot) and refuses to start without one, including with --
+        guardrails off; yolo runs without one. Deny rules and configured ask rules
+        still apply. A mode never grants project trust; use --trust-project. Replaces
+        the deprecated --posture
   --permissions-conventional
         Discover project and user permission settings for each session (default true)
   --posture string
-        Permission posture: strict prompts for mutations; trusted honors project allow
-        rules; auto allows tools by default and relaxes main shell substitutions while
-        child injection defenses remain enabled; yolo also runs child command
-        substitutions automatically. Deny rules and configured ask rules still apply.
-        auto and yolo require MECATL_SANDBOX when running as root (default "auto")
+        DEPRECATED: use --permission-mode. Permission posture: strict prompts for
+        mutations; trusted honors project allow rules; auto allows tools by default and
+        relaxes main shell substitutions while child injection defenses remain enabled;
+        yolo also runs child command substitutions automatically. Deny rules and
+        configured ask rules still apply. auto and yolo require MECATL_SANDBOX when
+        running as root (default "auto")
   --product-metrics
         Report anonymous product-adoption metrics to Stacklok. Reports version,
         OS/architecture, enabled features, and aggregate counts, never prompts, file
@@ -888,7 +915,9 @@ Usage: mecak8s [flags]
         Path to a user persona file. Empty uses the conventional location
   --subagent-ask-reviewer string
         Model ID or alias for reviewing child permission requests in headless mode.
-        Empty disables the reviewer
+        Empty leaves the reviewer off, except that the auto and yolo permission modes
+        turn it on by default (ask-reviewer model slot, else the session model); off
+        disables it explicitly
   --subagent-ask-reviewer-max-denies int
         Consecutive non-allow outcomes that disable the reviewer for the run. Values
         less than or equal to zero use the default (default 3)
@@ -923,7 +952,8 @@ Usage: mecak8s [flags]
         override is always proxy mode (default "auto")
   --trust-project
         Honor a discovered project's allow rules. Deny and ask rules are always
-        honored; equivalent to --posture=trusted
+        honored; raises the posture to at least trusted and combines with --permission-
+        mode
   --user-model-dir string
         Directory for the user model. Empty uses the conventional location
   --workspace string

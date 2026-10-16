@@ -460,6 +460,7 @@ func TestRouterRoutesChildToClassifiedModelE2E(t *testing.T) {
 		},
 		RouterDefaultCategory: "small",
 		AllowAllTools:         true,
+		GuardrailsDisabled:    true,
 		envDetector:           fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-x"}),
 		liveModelHTTPClient:   offlineHTTPClient(),
 		providerConstructor: func(_ Config, _, _, _ string) port.LLMProvider {
@@ -471,7 +472,7 @@ func TestRouterRoutesChildToClassifiedModelE2E(t *testing.T) {
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
+	sess, err := built.Service.CreateSession(ctx, "", defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -522,6 +523,7 @@ func TestRouterOffIsByteIdenticalE2E(t *testing.T) {
 		Model:     "gpt-5",
 		// OFF: no taxonomy ⇒ byte-identical to no router (no classifier call).
 		AllowAllTools:       true,
+		GuardrailsDisabled:  true,
 		envDetector:         fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-x"}),
 		liveModelHTTPClient: offlineHTTPClient(),
 		providerConstructor: func(_ Config, _, _, _ string) port.LLMProvider {
@@ -543,7 +545,7 @@ func TestRouterOffIsByteIdenticalE2E(t *testing.T) {
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
+	sess, err := built.Service.CreateSession(ctx, "", defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -612,6 +614,7 @@ func TestRouterCategorySelectorEmptyReasonReducesOnWireE2E(t *testing.T) {
 		},
 		RouterDefaultCategory: "small",
 		AllowAllTools:         true,
+		GuardrailsDisabled:    true,
 		envDetector:           fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-x"}),
 		liveModelHTTPClient:   offlineHTTPClient(),
 		providerConstructor: func(_ Config, _, _, _ string) port.LLMProvider {
@@ -628,7 +631,7 @@ func TestRouterCategorySelectorEmptyReasonReducesOnWireE2E(t *testing.T) {
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
+	sess, err := built.Service.CreateSession(ctx, "", defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

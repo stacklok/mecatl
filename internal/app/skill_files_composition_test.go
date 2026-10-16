@@ -31,7 +31,7 @@ func TestBuildSkillFilesResolveThroughTheCallersOwnView(t *testing.T) {
 
 	built, err := Build(context.Background(), Config{
 		Workspace: t.TempDir(), Model: "mock", StoreDir: t.TempDir(), UserModelDir: userModelDir,
-		NoSoul: true, OwnershipEnforced: true, AllowAllTools: true, MockProvider: mockllm.New(),
+		NoSoul: true, OwnershipEnforced: true, AllowAllTools: true, GuardrailsDisabled: true, MockProvider: mockllm.New(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -85,7 +85,7 @@ func TestBuildSkillFilesWithoutALearnedSkillStore(t *testing.T) {
 			t.Setenv("XDG_DATA_HOME", "")
 			built, err := Build(context.Background(), Config{
 				Workspace: t.TempDir(), Model: "mock", StoreDir: t.TempDir(), UserModelDir: userModelDir,
-				NoSoul: true, AllowAllTools: true, MockProvider: mockllm.New(), SkillsDirs: []string{skills},
+				NoSoul: true, AllowAllTools: true, GuardrailsDisabled: true, MockProvider: mockllm.New(), SkillsDirs: []string{skills},
 			})
 			if err != nil {
 				t.Fatal(err)

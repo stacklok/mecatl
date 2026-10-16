@@ -260,6 +260,10 @@ type ScheduleSpec struct {
 	Profile string `protobuf:"bytes,6,opt,name=profile,proto3" json:"profile,omitempty"`
 	// mode is the session permission posture. Reuses the PermissionMode enum from
 	// harness.proto (same package — proto allows cross-file refs within a package).
+	// A non-mutating schedule must use PLAN. For a mutating schedule, unspecified
+	// means each fire uses the server's configured default session mode at fire
+	// time; it reads back as unspecified. Every fire checks the mode against the
+	// server's mode ceiling and fails if the ceiling no longer allows it.
 	Mode PermissionMode `protobuf:"varint,8,opt,name=mode,proto3,enum=mecatl.v1.PermissionMode" json:"mode,omitempty"`
 	// limits are the bounded per-fire budgets. Reuses the Limits message from
 	// harness.proto. They are PER-FIRE: each fire gets a fresh session with these

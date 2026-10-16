@@ -36,7 +36,8 @@ func TestBuildGuardrailsTaskWindowReachesReviewerEnvelope(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{MaxTurns: 2})
+	// ModeAuto: Shell is auto-allowed (allow-all rules); the guardrails block fires.
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeAuto, session.Limits{MaxTurns: 2})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -71,7 +72,8 @@ func TestContextualGuardrails_FactoryPrompts(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{MaxTurns: 2})
+	// ModeAuto: Shell is auto-allowed (allow-all rules); the guardrails block fires.
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeAuto, session.Limits{MaxTurns: 2})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -133,7 +135,8 @@ func TestContextualMainResultReleaseDetailUsesOwnerAuthorization(t *testing.T) {
 	defer built.Close()
 	owner := &session.Principal{Issuer: "test", Subject: "alice", GrantType: session.GrantTypeUser}
 	ownerCtx := session.WithPrincipal(context.Background(), owner)
-	sess, err := built.Service.CreateSession(ownerCtx, session.ModeDefault, session.Limits{MaxTurns: 2})
+	// ModeAuto: Shell is auto-allowed (allow-all rules); the guardrails post-block fires.
+	sess, err := built.Service.CreateSession(ownerCtx, session.ModeAuto, session.Limits{MaxTurns: 2})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -189,7 +192,8 @@ func TestContextualWorkerReviewDetailUsesLiveRootOwnership(t *testing.T) {
 	defer built.Close()
 	owner := &session.Principal{Issuer: "test", Subject: "alice", GrantType: session.GrantTypeUser}
 	ownerCtx := session.WithPrincipal(context.Background(), owner)
-	sess, err := built.Service.CreateSession(ownerCtx, session.ModeDefault, session.Limits{MaxTurns: 3})
+	// ModeAuto: Shell is auto-allowed (allow-all rules); the guardrails post-block fires.
+	sess, err := built.Service.CreateSession(ownerCtx, session.ModeAuto, session.Limits{MaxTurns: 3})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -224,7 +228,8 @@ func TestContextualGuardrails_CoverageTruth(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	// ModeAuto: matches the PostureAuto guardrail config's intended allow-all behavior.
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeAuto, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

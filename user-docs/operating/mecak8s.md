@@ -128,7 +128,7 @@ the values file if you need a fixed name.
 |Setting|Default|
 |-|-|
 |Replicas|Two|
-|Posture|Headless with `auto` permissions|
+|Permission mode|Headless `auto`, which needs an enforcing guardrails checker|
 |Session state|Redis|
 |Session ownership|Kubernetes Leases|
 |Filesystem|No filesystem access|
@@ -138,6 +138,43 @@ the values file if you need a fixed name.
 Project-provided instructions, skills, agents, and read-only child Shell access
 still require explicit project trust. `mecak8s` does not include ACP, local
 JSONL storage, or the `mecated` operator subcommands.
+
+### Choose a guardrails checker
+
+`auto` allows every tool without asking, so `mecak8s` refuses to start it
+without an enforcing guardrails checker. The chart renders
+`--permission-mode=<permissionMode>`, which defaults to `auto`. Configure the
+checker in one of two ways:
+
+- Set `guardrails.model`, which renders `--guardrails-model=<MODEL>`:
+
+  ```yaml
+  guardrails:
+    model: <MODEL>
+  ```
+
+- Leave `guardrails.model` empty and configure the checker in mounted
+  settings, with a `guardrails:` model or the `guardrail` model slot. The chart
+  then passes no guardrails flag, and `mecak8s` uses the settings checker.
+
+To run every tool with no checker, set `permissionMode: yolo`.
+`guardrails.disabled: true` renders the `--guardrails=off` kill-switch, which
+also disables a checker in mounted settings. Setting both `guardrails.model` and
+`guardrails.disabled` fails rendering.
+
+The chart owns the permission mode. Rendering fails if `extraArgs` contains
+`--posture`, `--permission-mode`, or `--yolo`; move that choice to
+`permissionMode`. `--posture=strict` becomes `permissionMode: default`.
+
+Earlier chart versions always ran `auto` with `--guardrails=off`. Before you
+upgrade such a release, configure a checker or set `permissionMode: yolo`, or
+the new pods refuse to start.
+
+Because `mecak8s` is headless, the subagent ask reviewer is on by default. It
+uses the `ask-reviewer` model slot or the session model to decide subagent
+permission requests, and each decision spends tokens. Add
+`--subagent-ask-reviewer=off` to `extraArgs` to keep it off. See
+[Subagents under auto](/features/security-and-execution/permissions-and-posture.md#subagents-under-auto).
 
 ## Production Helm chart
 

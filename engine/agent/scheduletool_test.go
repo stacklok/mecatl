@@ -3,14 +3,18 @@ package agent_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 )
 
 // scheduletool_test.go pins the ScheduleTool's in-engine behaviour: the verb
@@ -645,5 +649,87 @@ func TestScheduleTool_InspectRendersTerminalFire(t *testing.T) {
 	}
 	if strings.Contains(res.Content, "in-flight") {
 		t.Fatalf("terminal inspect rendered \"in-flight\" = %q (a terminal fire must NOT render the in-flight marker)", res.Content)
+	}
+}
+
+// TestScheduleTool_MutatingCreateRecordsCreatingSessionMode pins that a mutating
+// in-chat schedule fires in the mode of the session that created it, stamped by
+// dispatch from the executing session through a real Engine.Run, while a
+// read-leaning schedule records plan whatever the creating mode. Recording a
+// fixed default instead made a yolo session's schedule fire into a default
+// session whose writes ask with no approver, hanging the fire.
+func TestScheduleTool_MutatingCreateRecordsCreatingSessionMode(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		mode     session.PermissionMode
+		mutating bool
+		want     session.PermissionMode
+	}{
+		{name: "default mutating", mode: session.ModeDefault, mutating: true, want: session.ModeDefault},
+		{name: "accept-edits mutating", mode: session.ModeAccept, mutating: true, want: session.ModeAccept},
+		{name: "yolo mutating", mode: session.ModeYolo, mutating: true, want: session.ModeYolo},
+		{name: "yolo read-leaning", mode: session.ModeYolo, mutating: false, want: session.ModePlan},
+		{name: "default read-leaning", mode: session.ModeDefault, mutating: false, want: session.ModePlan},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			args := fmt.Sprintf(`{"verb":"create","name":"s","prompt":"p","cron":"@every 1h","mutating":%t}`, tc.mutating)
+			llm := mockllm.New(
+				mockllm.ToolCallTurn(toolCall("c1", agent.ScheduleToolName, args)),
+				mockllm.TextTurn("done"),
+			)
+			mgr := newStubScheduleManager()
+			cat := tool.NewCatalog()
+			cat.MustRegister(agent.NewScheduleTool(mgr))
+			eng := agent.NewEngine(agent.Deps{
+				LLM:     llm,
+				Catalog: cat,
+				Policy:  permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
+			})
+			sess := session.New("creator", tc.mode, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
+			drain(eng.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "schedule it"}))
+
+			if len(mgr.created) != 1 {
+				t.Fatalf("created %d schedules, want 1", len(mgr.created))
+			}
+			got := mgr.created[0]
+			if got.Mode != tc.want || got.Mutating != tc.mutating {
+				t.Fatalf("recorded (mode %q, mutating %t), want (mode %q, mutating %t)", got.Mode, got.Mutating, tc.want, tc.mutating)
+			}
+		})
+	}
+}
+
+// TestScheduleTool_MutatingCreateModeFallbacks pins the two contexts the
+// dispatch stamp does not cover: an unbound context (no executing session)
+// keeps the conservative default, and a plan-mode context holding the non-plan
+// tool refuses the mutating create rather than recording a mutating plan-mode
+// schedule that could never write.
+func TestScheduleTool_MutatingCreateModeFallbacks(t *testing.T) {
+	t.Parallel()
+	create := `{"verb":"create","name":"s","prompt":"p","cron":"@every 1h","mutating":true}`
+
+	mgr := newStubScheduleManager()
+	res, err := agent.NewScheduleTool(mgr).Execute(context.Background(), scheduleCall(t, create), agent.MemEnv("/ws"))
+	if err != nil || res.IsError {
+		t.Fatalf("unbound mutating create = (%v, %q), want allowed", err, res.Content)
+	}
+	if len(mgr.created) != 1 || mgr.created[0].Mode != session.ModeDefault {
+		t.Fatalf("unbound mutating create recorded %+v, want mode %q", mgr.created, session.ModeDefault)
+	}
+
+	mgr = newStubScheduleManager()
+	ctx := agent.WithSessionMode(context.Background(), session.ModePlan)
+	res, err = agent.NewScheduleTool(mgr).Execute(ctx, scheduleCall(t, create), agent.MemEnv("/ws"))
+	if err != nil {
+		t.Fatalf("plan-context Execute: %v", err)
+	}
+	if !res.IsError || !strings.Contains(res.Content, "plan mode") {
+		t.Fatalf("plan-context mutating create = %q, want the plan-mode refusal", res.Content)
+	}
+	if len(mgr.created) != 0 {
+		t.Fatalf("plan-context mutating create reached the manager: %+v", mgr.created)
 	}
 }

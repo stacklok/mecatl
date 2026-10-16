@@ -358,6 +358,7 @@ func testTeamBareModelSelectorUsesContextualProvider(t *testing.T, noFS bool, se
 		ModelAliasTargets:     ModelAliases{childDefault: {ProviderID: childProvider, Model: "child-default-model"}, "contextual": {Model: selectedModel}},
 		EnableTeams:           true,
 		AllowAllTools:         true,
+		GuardrailsDisabled:    true,
 		ContextWindowOverride: 128000,
 		envDetector: fakeEnv(map[string]string{
 			"OPENAI_API_KEY":     "test-key",
@@ -555,6 +556,7 @@ func routerE2ECfg(workspace string, parentCtor func() port.LLMProvider, enable f
 		},
 		RouterDefaultCategory: "small",
 		AllowAllTools:         true,
+		GuardrailsDisabled:    true,
 		envDetector:           fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-x"}),
 		liveModelHTTPClient:   offlineHTTPClient(),
 		providerConstructor:   func(_ Config, _, _, _ string) port.LLMProvider { return parentCtor() },
@@ -581,7 +583,7 @@ func TestTeamRoutesMembersToCategoryModelsE2E(t *testing.T) {
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
+	sess, err := built.Service.CreateSession(ctx, "", defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -630,7 +632,7 @@ func TestTeamRouterOffByteIdenticalE2E(t *testing.T) {
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
+	sess, err := built.Service.CreateSession(ctx, "", defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -665,7 +667,7 @@ func TestParallelRoutesBranchesToCategoryModelsE2E(t *testing.T) {
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
+	sess, err := built.Service.CreateSession(ctx, "", defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -709,7 +711,7 @@ func TestBuiltCloseReapsPreservedParallelWinner(t *testing.T) {
 	}
 	t.Cleanup(built.Close)
 
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
+	sess, err := built.Service.CreateSession(ctx, "", defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -775,7 +777,7 @@ func TestParallelRouterOffByteIdenticalE2E(t *testing.T) {
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
+	sess, err := built.Service.CreateSession(ctx, "", defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

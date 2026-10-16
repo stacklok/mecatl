@@ -130,12 +130,16 @@ type Workspace struct {
 // Terminal provides measured dimensions and independently reserved columns for
 // status surfaces. Cols is the full terminal width. HeaderAvailCols and
 // FooterAvailCols are the widths remaining after the renderer reserves mandatory
-// header safety/navigation and footer activity lanes, respectively.
+// header safety/navigation and footer activity lanes, respectively. Emoji
+// reports whether the terminal is likely to render emoji presentation (for
+// example ⚡️) at its expected width; it is a conservative, environment-based
+// guess fixed for the process.
 type Terminal struct {
 	Rows            int
 	Cols            int
 	HeaderAvailCols int
 	FooterAvailCols int
+	Emoji           bool
 }
 
 // MainAgent carries the main agent's display-safe activity. State is one of

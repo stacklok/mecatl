@@ -25,7 +25,7 @@ func TestBuildOwnerlessSessionHydratesLearnedSkillIntoTool(t *testing.T) {
 
 	built, err := Build(context.Background(), Config{
 		Workspace: workspace, Model: "mock", StoreDir: t.TempDir(), UserModelDir: userModelDir,
-		NoSoul: true, AllowAllTools: true, MockProvider: mockllm.New(
+		NoSoul: true, AllowAllTools: true, GuardrailsDisabled: true, MockProvider: mockllm.New(
 			mockllm.ToolCallTurn(session.NewToolCall("skill-ownerless", "Skill", []byte(`{"name":"ownerless-recovery"}`))),
 			mockllm.TextTurn("done"),
 		),
@@ -35,7 +35,8 @@ func TestBuildOwnerlessSessionHydratesLearnedSkillIntoTool(t *testing.T) {
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	// Pass "" to use the server's DefaultMode (ModeYolo from AllowAllTools=true config).
+	sess, err := built.Service.CreateSession(context.Background(), "", session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,14 +64,15 @@ func TestBuildRestartHydratesCallerBoundLearnedSkillIntoListAndTool(t *testing.T
 	config := func(provider *mockllm.Provider) Config {
 		return Config{
 			Workspace: workspace, Model: "mock", StoreDir: storeDir, UserModelDir: userModelDir,
-			NoSoul: true, OwnershipEnforced: true, AllowAllTools: true, MockProvider: provider,
+			NoSoul: true, OwnershipEnforced: true, AllowAllTools: true, GuardrailsDisabled: true, MockProvider: provider,
 		}
 	}
 	built1, err := Build(context.Background(), config(mockllm.New(mockllm.TextTurn("created"))))
 	if err != nil {
 		t.Fatal(err)
 	}
-	sess, err := built1.Service.CreateSession(aliceCtx, session.ModeDefault, session.Limits{})
+	// Pass "" to use the server's DefaultMode (ModeYolo from AllowAllTools=true config).
+	sess, err := built1.Service.CreateSession(aliceCtx, "", session.Limits{})
 	if err != nil {
 		built1.Close()
 		t.Fatal(err)
@@ -131,17 +133,18 @@ func TestReplicaHydrationConvergesAcrossReplacementAndRollback(t *testing.T) {
 	)
 	replicaB, err := Build(context.Background(), Config{
 		Workspace: workspace, Model: "mock", StoreDir: storeDir, UserModelDir: userModelDir,
-		NoSoul: true, Headless: true, OwnershipEnforced: true, AllowAllTools: true, MockProvider: provider,
+		NoSoul: true, Headless: true, OwnershipEnforced: true, AllowAllTools: true, GuardrailsDisabled: true, MockProvider: provider,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer replicaB.Close()
-	aliceSession, err := replicaB.Service.CreateSession(aliceCtx, session.ModeDefault, session.Limits{})
+	// Pass "" to use the server's DefaultMode (ModeYolo from AllowAllTools=true config).
+	aliceSession, err := replicaB.Service.CreateSession(aliceCtx, "", session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	bobSession, err := replicaB.Service.CreateSession(bobCtx, session.ModeDefault, session.Limits{})
+	bobSession, err := replicaB.Service.CreateSession(bobCtx, "", session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}

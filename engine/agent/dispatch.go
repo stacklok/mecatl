@@ -432,7 +432,7 @@ func (e *Engine) fanOutReadBatchActionAssessments(ctx context.Context, r *Run, s
 		if r.reviewRoot == nil || r.reviewRoot.reviewer == nil {
 			continue
 		}
-		if applies, _ := reviewPolicy(r.reviewRoot.reviewer, p.call.Name, ReviewJobAction, false); applies {
+		if applies, _ := reviewPolicy(r.reviewRoot.reviewer, sess.Mode, p.call.Name, ReviewJobAction, false); applies {
 			assessment := e.prepareActionAssessment(ctx, r, sess, env, p.call)
 			p.assessment = &assessment
 			reviewWG.Add(1)
@@ -2058,6 +2058,11 @@ func (e *Engine) timeExecute(ctx context.Context, r *Run, sess *session.Session,
 		ev.Turn = turnIdx
 		r.children.safeEmit(ev)
 	}
+	if sess != nil {
+		// Read at execution, like parentCaps' parentMode, so a schedule created
+		// after a mid-session mode change records the mode it was created under.
+		ctx = withSessionMode(ctx, sess.Mode)
+	}
 	switch ct := t.(type) {
 	case childCapableTool:
 		// Child-capable tools may execute in read-batch workers. Keep their returned
@@ -2140,6 +2145,7 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int, reporter
 		// parentCaps.parentSessionID.
 		caps.parentSessionID = sess.ID
 		caps.parentIncarnation = sess.Incarnation()
+		caps.parentMode = sess.Mode
 	}
 	// The OPT-IN headless ask reviewer: bind the engine's reviewer + THIS run's
 	// breaker + the timeout into a closure resolveChildAsk consults on the headless

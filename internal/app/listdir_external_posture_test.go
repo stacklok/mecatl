@@ -77,7 +77,7 @@ func TestListDirExternalAbsolutePathFollowsMainPosture(t *testing.T) {
 				t.Fatalf("Build: %v", err)
 			}
 			defer built.Close()
-			sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+			sess, err := built.Service.CreateSession(context.Background(), postureSessionMode(tc.posture), session.Limits{})
 			if err != nil {
 				t.Fatalf("CreateSession: %v", err)
 			}
@@ -119,7 +119,7 @@ func TestListDirExternalConfiguredRulesSurviveYolo(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			inner := permpolicy.NewPolicy([]governance.Rule{{Scope: governance.ScopeUser, Tool: "ListDir", Effect: tc.effect}}, nil)
-			decision := newEscapePolicy(inner, PostureYolo).Evaluate(context.Background(), "s1", session.ModeDefault, call, ws)
+			decision := newEscapePolicy(inner).Evaluate(context.Background(), "s1", session.ModeYolo, call, ws)
 			if decision.Decision.Effect != tc.effect {
 				t.Fatalf("configured %s became %s at yolo", tc.effect, decision.Decision.Effect)
 			}
@@ -187,7 +187,7 @@ func TestListDirPseudoFSAliasApprovedAskStillRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(t.Context(), session.ModeYolo, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +216,7 @@ func TestListDirExternalAuthorityDenialStillWins(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(ctx, session.ModeYolo, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

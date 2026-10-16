@@ -585,12 +585,13 @@ func TestSubagentModelRoutesChildToCheapModel(t *testing.T) {
 		models []string
 	)
 	built, err := buildIsolated(t, ctx, Config{
-		Workspace:     workspace,
-		NoSoul:        true,
-		Model:         "gpt-5",
-		SubagentModel: cheapModel,
-		AllowAllTools: true, // auto-approve so the delegation turn runs unattended
-		envDetector:   fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-x"}),
+		Workspace:          workspace,
+		NoSoul:             true,
+		Model:              "gpt-5",
+		SubagentModel:      cheapModel,
+		AllowAllTools:      true, // auto-approve so the delegation turn runs unattended
+		GuardrailsDisabled: true,
+		envDetector:        fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-x"}),
 		// Strictly offline: refuse any (keyed) live model fetch ⇒ embedded floor.
 		liveModelHTTPClient: offlineHTTPClient(),
 		providerConstructor: func(_ Config, _, _, _ string) port.LLMProvider {
@@ -614,7 +615,7 @@ func TestSubagentModelRoutesChildToCheapModel(t *testing.T) {
 	defer built.Close()
 	svc := built.Service
 
-	sess, err := svc.CreateSession(ctx, session.ModeDefault, defaultLimits())
+	sess, err := svc.CreateSession(ctx, "", defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

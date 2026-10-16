@@ -70,13 +70,18 @@ func makeFireFuncWithCancel(svc *server.Service, store port.ScheduleStore, defau
 		// Read-leaning default (decision #3): a schedule that does NOT opt into
 		// mutating (Mutating=false) runs in plan mode (read-only toolset) — the
 		// conservative posture for unattended runs. A schedule that opts into
-		// mutating (Mutating=true) honors its explicit Mode (or default if unset).
+		// mutating (Mutating=true) honors its explicit Mode (or the server's
+		// DefaultMode when unset, which reflects the operator's permission
+		// configuration — for allow-all deployments this is ModeAuto or ModeYolo).
+		// The in-chat Schedule tool always records its creating session's mode;
+		// "" comes from a gRPC/REST create that left mode UNSPECIFIED or from an
+		// embedder's spec. Passing "" to CreateSessionWithProfile falls back to
+		// s.cfg.DefaultMode. Either way
+		// CreateSessionWithProfile admits the mode against the current ceiling,
+		// so a mode recorded under a looser deployment fails the fire.
 		// This is the fire-time enforcement; the create seam (the schedule
 		// manager) additionally rejects Mutating=false with a non-plan Mode at save time.
-		mode := sched.Spec.Mode
-		if mode == "" {
-			mode = session.ModeDefault
-		}
+		mode := sched.Spec.Mode // "" means "use server's DefaultMode"
 		if !sched.Spec.Mutating {
 			mode = session.ModePlan
 		}

@@ -202,6 +202,7 @@ func TestSDKTypescriptRelease_Scenario1_PublicServiceProjectionParity(t *testing
 		// call ResolveScopedRunAsk for guardrail-scoped asks.
 		"ResolveApprovalRun",
 		"ResolveScopedRunAsk",
+		"AdmittedModes",
 		"BindPlacement",
 		"CanProcessSchedule",
 		"Cancel",
