@@ -214,8 +214,8 @@ func resolvePosture(cfg Config, ceiling Posture) Posture {
 // Allow-all and loose-substitution are no longer derived here: they are
 // mode-driven (Policy.Evaluate injects allowAllCLIRules for ModeAuto/ModeYolo
 // at call time). DefaultSessionMode and MaxAllowedMode are set by foldPermissionMode
-// (for explicit token/posture flags) or by the backward-compat fallback in Build()
-// (for the deprecated --yolo alias path).
+// (for a permission-mode token) or, after the full alias fold, by Build()
+// (for the deprecated --posture/--yolo/--trust-project surface).
 //
 // A posture written by a --permission-mode token or the permissionMode: key
 // derives NO trust: workspace trust is a separate decision taken only from

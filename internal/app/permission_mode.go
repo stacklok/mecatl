@@ -106,10 +106,11 @@ func foldPermissionMode(cfg Config) (Config, error) {
 	case cfg.PermissionModeFlagSet:
 		raw, source = cfg.PermissionMode, "--permission-mode"
 	case cfg.PostureFlagSet:
-		// Deprecated --posture: set DefaultSessionMode and MaxAllowedMode from the
-		// resolved posture for backward compat. The posture is already on cfg.Posture
-		// (set by the cmd layer); foldOperatorPosture would no-op since PostureFlagSet.
-		cfg.DefaultSessionMode, cfg.MaxAllowedMode = postureToSessionModes(cfg.Posture)
+		// Deprecated --posture: the posture is already on cfg.Posture (set by the
+		// cmd layer); foldOperatorPosture would no-op since PostureFlagSet. The
+		// session mode and ceiling are NOT derived here: --yolo and --trust-project
+		// may still raise the posture, so Build derives them after the full alias
+		// fold.
 		return foldOperatorPosture(cfg), nil
 	default:
 		if res, ok := cfg.permResolver.(*permconfig.Resolver); ok && res != nil {

@@ -1712,13 +1712,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	cfg = foldOperatorSteer(cfg)
 	cfg.Posture = resolvePosture(cfg, postureNoCeiling)
 	cfg = applyPosture(cfg)
-	// Backward-compat: the deprecated --yolo alias (AllowAllTools=true) only sets
-	// AllowAllTools, not DefaultSessionMode/MaxAllowedMode, which foldPermissionMode
-	// only sets when --permission-mode or --posture is explicitly given. Catch the
-	// remaining case here: if DefaultSessionMode is still unset after the full fold,
-	// derive it from the resolved posture so --yolo and Config{AllowAllTools:true}
-	// behave correctly (sessions start in ModeYolo, not ModeDefault).
-	if cfg.DefaultSessionMode == "" {
+	// Deprecated surface (--posture, --yolo, --trust-project, the posture: key):
+	// derive the session mode and ceiling from the posture AFTER the full alias
+	// fold, so a combination such as --posture strict --yolo lands on the same
+	// pair as the raised tier alone. A permission-mode token already set both.
+	if cfg.permissionModeName == "" {
 		cfg.DefaultSessionMode, cfg.MaxAllowedMode = postureToSessionModes(cfg.Posture)
 	}
 	// AUTHORITATIVE root/no-sandbox refusal: applied HERE, after the full posture fold,
