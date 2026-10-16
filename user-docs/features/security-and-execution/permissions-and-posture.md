@@ -263,7 +263,11 @@ and deployments can observe:
   Pass `--trust-project` or add the workspace to `trustedWorkspaces`.
 - **Stored sessions** keep their recorded mode. A session recorded in a mode the
   upgraded server does not admit refuses to run until its owner switches it to
-  an admitted mode.
+  an admitted mode. If you roll back to a release without session-scoped
+  modes, that release still loads `auto` and `yolo` sessions but treats them
+  as `default`: they get ordinary approvals unless that server's own
+  `--posture` allows all tools, and gRPC reports them as `DEFAULT`. It keeps
+  the stored mode, so upgrading again restores it and admits it again.
 
 Clients detect a server with session-scoped modes through the
 `session_permission_modes` feature identifier. The API major version is
