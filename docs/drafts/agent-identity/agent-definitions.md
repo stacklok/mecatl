@@ -60,7 +60,7 @@ The table shows how the design handles each event.
 
 Creation ancestry and execution delegation are different relationships. The creation-parent link records which instance created a child. A delegation links the run that assigns work to the run that performs it. The child's identity stays stable across its runs. Each run supplies its own execution context.
 
-The broker narrows authority along both links. At registration, it stores each instance's effective ceiling. The effective ceiling is the instance's definition ceiling intersected with the effective ceiling of its creation parent. It is the upper bound for the instance's whole life, and it never widens. At each delegation, the broker records a delegation ceiling. The delegation ceiling is the delegatee's effective ceiling intersected with the delegating run's ceiling. A root run's ceiling is its instance's effective ceiling. A child run's ceiling is its delegation ceiling. The broker checks a call made under that delegation against the delegation ceiling. See [registering instances](#registering-instances).
+Once the [authority work](README.md#order-of-work) is in place, the broker narrows authority along the creation link. At registration, it stores each instance's effective ceiling. The effective ceiling is the instance's definition ceiling intersected with the effective ceiling of its creation parent. It is the upper bound for the instance's whole life, and it never widens. Narrowing along the delegation link comes later, as a task-specific delegation bound: a delegation ceiling, the delegatee's effective ceiling intersected with the delegating run's ceiling, checked for calls made under that delegation. Until then, the harness's delegation restrictions are the only bound on a delegated task below the instance's effective ceiling. See [registering instances](#registering-instances).
 
 The [domain model](../../architecture/mecatl.modelith.md) gives the broader execution model. This chapter focuses on agent identity and continuity.
 
@@ -126,14 +126,7 @@ When the main creates the reviewer, the harness creates the child session, and m
 
 Registration establishes identity records. It does not authorize spawning, run execution, or a tool call. The harness manages execution. The broker [authorizes each MCP request](mcp-authorization.md#two-requests-two-authorization-decisions). Creation ancestry and delegation are different links. See [relationships and lifetimes](#relationships-and-lifetimes).
 
-The broker also keeps a run record for each run that it accepts. A root run starts when a user speaks to the main agent or a schedule fires. The owner of the run is the subject of the grant that the run uses. A child run starts when mecak8s reports a delegation and the broker accepts it. The broker copies the child run's owner from the delegating run's record, not from the report. It stores the delegation ceiling in the child run's record. A run record ends in any of these cases: the task ends, the parent run ends, an instance is revoked, the session closes, or the lease expires. A lost run record denies calls.
-
-Every protected call must name a run that the broker accepted. The broker denies the call unless all of these are true:
-
-- The run is open.
-- The run belongs to the session.
-- The run is bound to the instance in the presented credential.
-- The subject of the grant in use owns the run.
+The broker does not admit runs. mecak8s reports the run with every call and reports each delegation when it happens, through the [delegation report](credentials-and-lifecycle.md#6-per-operation-authorization); the broker records both as [lineage events](audit.md#lineage), marked as reported. A root run starts when a user speaks to the main agent or a schedule fires. Its owner is the owner recorded with the grant the run uses: the company identity, not AS-1's subject. For a child run, mecak8s reports the owner, and the broker refuses a delegation whose reported owner differs from the delegating run's. On every protected call, the broker checks that the reported run owner equals the owner recorded with the grant in use; see [run owner](run-owner.md). Run grants and task-specific delegation bounds would make runs something the broker admits; both are [authority work](README.md#order-of-work).
 
 The broker trusts the lifecycle assertions that mecak8s sends with its workload credential. mecak8s is the registrant. A ServiceAccount cannot tell trusted lifecycle code from compromised code in the same process. This design does not isolate them. The user does not come from a mecak8s report. AS-1 saw Alice sign in. See [deployment and threats](README.md#deployment-and-threats) for what a compromised mecak8s can do. A SPIRE agent inspects a workload before it issues an identity to it. The broker cannot observe mecak8s's instances in this way. It signs on mecak8s's registration. The registration is an assertion, not attestation. The [audit evidence table](audit.md#evidence-and-provenance) lists which registration facts the broker verifies and which it accepts as mecak8s assertions.
 
@@ -145,9 +138,9 @@ The table shows how the design handles each event. Today, a turn that was in pro
 
 | Event | What stays fixed or must be checked |
 | --- | --- |
-| New run on the same instance | The incarnation and the definition stay fixed. The new run has its own run record. The instance credential alone does not authorize it. |
+| New run on the same instance | The incarnation and the definition stay fixed. The new run has its own run ID, reported by mecak8s. The instance credential alone does not authorize it. |
 | Definition source edited | The instance keeps the revision that it registered with. Restoration never uses the revision that is current at the source. The broker keeps the stored ceiling and the revision record, not the source bytes. If the harness cannot rebuild the registered revision, the instance fails closed and does not resume. The user starts a new instance on the current revision. |
-| Process restart or session restoration | Restore the original incarnation, definition reference, creation parent, stored effective ceiling, and run records with their delegation ceilings. Recover the unfinished execution context and its user, actor, and connection association, or fail closed. A run record that cannot be restored denies calls. |
+| Process restart or session restoration | Restore the original incarnation, definition reference, creation parent, stored effective ceiling, and each unfinished run's owner. Recover the unfinished execution context and its user, actor, and connection association, or fail closed. An unfinished run whose owner cannot be restored denies calls. |
 | Instance credential expires | Renew the credential for the registered identity after the required checks. Renewal does not widen authority. |
 | Fork or clear | Register a distinct identity. A fork or a clear creates a new root instance. |
 | Fresh incarnation | Register a distinct identity. Reusing a session name or a definition name does not inherit the old instance's authority. |
