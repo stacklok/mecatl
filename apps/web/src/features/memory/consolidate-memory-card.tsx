@@ -406,7 +406,7 @@ export function ConsolidateMemoryCard() {
                       <p className="text-muted-foreground">{operation.replacement.description}</p>
                     )}
                     <Collapsible className="rounded-md border px-2 py-1">
-                      <CollapsibleTrigger className="group/current block w-full cursor-pointer select-none text-left text-muted-foreground">
+                      <CollapsibleTrigger className="group/current block w-full cursor-pointer select-none text-start text-muted-foreground">
                         {/* The native disclosure triangle `<summary>` drew: an empty
                             inside list item renders the same marker. */}
                         <span aria-hidden="true" className="inline-block">
