@@ -22,6 +22,8 @@ The design works in two deployments: standalone Mecatl, with no Stacklok Enterpr
 
 ## Two authorization servers
 
+Mecatl uses two authorization servers because the gateway may belong to someone else. One server that both holds users' provider credentials and issues grants naming the user and the agent works when Mecatl runs the gateway, but not when another operator runs it and owns the credentials. AS-1 therefore issues the grants, and AS-2, the gateway's own server, holds the credentials and redeems the grants, so one protocol serves both modes.
+
 **AS-1** is Mecatl's login authorization server, running inside the broker. Alice signs in through AS-1, which redirects her to the company IdP as an ordinary OIDC client. Her client receives an AS-1 access token for the Mecatl API. At `OpenSession`, mecak8s passes that token to the broker once. The broker exchanges it at AS-1 with RFC 8693 for a session-bound broker refresh token, `RT-A42`. The [session-open step](credentials-and-lifecycle.md#3-session-open-and-the-broker-refresh-token) describes that exchange and the AS-1 record behind `RT-A42`.
 
 **AS-2** is the gateway's authorization server. The vMCP accepts only access tokens AS-2 issued. On each MCP request, the vMCP validates the token and loads the user's provider credential.

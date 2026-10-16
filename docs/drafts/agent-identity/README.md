@@ -118,45 +118,13 @@ AS-1 cannot check that the agent registration, the ancestry, the run, and the de
 
 ## Deployment and threats
 
-The broker starts as modules inside the mecak8s process: broker core, AS-1, the agent-instance issuer, and the definition loader. Later these modules move together into one separate broker service. The protocol and token formats are the same in both deployments; what changes is which process holds the broker's keys, refresh tokens, and records. Starting inside mecak8s ships the protocol sooner. Moving out protects those keys, tokens, and records against a compromised mecak8s; it is not about hostile workspace code, which executor Pods already contain.
+The broker starts as modules inside the mecak8s process and later moves, as a whole, into a separate service; the protocol and token formats do not change. Starting inside mecak8s ships the protocol sooner. Moving out protects the broker's signing keys, refresh tokens, and audit records against a compromised mecak8s. Hostile workspace code is a different threat, already contained by executor Pods.
 
-Some protections do not depend on where the broker runs:
+Some protections hold in both deployments. Executor Pods get no broker or database credentials. A prompt-injected agent never sees or chooses credentials, because harness code attaches them and the model supplies only tool names and arguments. And correct mecak8s code cannot name a user who did not sign in at AS-1.
 
-- **Hostile workspace code** runs in executor Pods, behind the execution provider. In both deployments, executors get no broker credentials, no database credentials, and no network path to mecak8s internals or the key management service (KMS).
-- **A prompt-injected agent** never sees or chooses credentials. Harness code attaches them, and the model supplies only tool names and arguments.
-- **The user comes from a sign-in at AS-1**, not from a mecak8s report. mecak8s passes on the AS-1-signed access token once, AS-1 converts each token at most once, and every ID-JAG names the user from AS-1's record. Correct mecak8s code cannot name a user who did not sign in. An attacker running code in the process that holds AS-1's keys can, and while the broker runs inside mecak8s that process is mecak8s; see the first row of the table below.
+Against an attacker with code execution in mecak8s, the split is what matters. While the broker runs inside mecak8s, that attacker holds AS-1's keys and can act as any user connected to the gateway. Once the broker is separate, the attacker holds no keys, can act only in open sessions bound to its workload, and every false report it makes must pass the broker's checks and is recorded where it cannot erase it. In both deployments, which agent acted, which instance created which, and the run and delegation context remain mecak8s's word: checked for consistency, not verified.
 
-Where the broker runs matters against one attacker: someone with code execution in the mecak8s process. The table shows, for each threat, whether the attack works, is limited, or is blocked.
-
-| Threat from a compromised mecak8s | Broker inside mecak8s | Separate broker service |
-| --- | --- | --- |
-| Act as any user, by signing an ID-JAG for a user who is not present | Attack works. The process holds AS-1's signing key and the broker's client key. In embedded mode, the attacker can reach every user connected to the gateway. In external mode, the attacker can reach only users who have a consent link. | Attack limited. mecak8s holds no keys. It can act only in broker sessions that are open and bound to its workload. A session ends when it closes or when its refresh token's hard expiry passes. mecak8s can also open new sessions with fresh tokens from users who are using it now. |
-| Steal refresh tokens or signing keys | Attack works. A KMS stops the attacker from copying a key out. It does not stop the attacker from signing with the key while the attacker is inside the process. | Attack blocked, if the broker has its own database credentials and only the broker's service account can sign with its KMS keys. |
-| Read users' provider tokens in embedded mode | Attack works, if the gateway store shares storage credentials with mecak8s. | Attack blocked, if the embedded gateway is its own deployment with its own credentials. |
-| Tamper with broker and AS-1 audit records | Attack partly blocked. Records that are already in an external append-only store survive. From then on, the compromised process can forge or suppress its own records. | Attack blocked for broker and AS-1 records, because mecak8s does not write them. This holds if the records go to an append-only store that mecak8s cannot write. |
-
-In both deployments, the broker trusts mecak8s to report these facts:
-
-1. Which agent instance made a call.
-2. Which loaded definition a session uses as its root.
-3. Which instance created which child.
-4. The run and delegation context.
-5. Which open session a call belongs to.
-
-The broker cannot verify facts 1 to 4. For fact 5, the broker checks the session against the user's token and the session's recorded owner. This check catches mistakes.
-
-The broker loads global definitions itself, so mecak8s cannot supply their content or ceilings. Audit records mark each fact that mecak8s reported.
-
-The authority work limits what those reports can achieve. With ceilings set by the loader and the operator's list of definitions that can be a session's root, a compromised mecak8s cannot exceed the widest definition a session may use as its root, whichever agent it claims is acting. A run grant is a credential that AS-1 mints for one run, from a fresh access token the user sent. With run grants and a separate broker, a compromised mecak8s needs a fresh token from the user for each run, but it can still turn any request the user sends into a run of its choosing, one run per token, and scheduled runs keep their own authority. Only a key held by the client that signs each run's start would prevent that.
-
-A separate broker service delivers its protections only if the split is real:
-
-- the broker has its own database, KMS permissions, and namespace;
-- mecak8s cannot create pods, read secrets, or change configuration in the broker's namespace;
-- mecak8s cannot write the broker's workload allowlist, trust bundle, or policy inputs;
-- the embedded gateway is its own deployment.
-
-While the broker runs inside mecak8s, the [modulith constraints](implementation.md#modulith-constraints) keep the later move a deployment change.
+The [threat model](threat-model.md) has the full table, the facts mecak8s reports and how the broker checks them, and what the split requires to be real.
 
 ## What this design does not guarantee
 
@@ -164,7 +132,7 @@ Precise limits matter as much as guarantees. This design does not provide:
 
 - **Isolation between agents in one process.** Per-agent credentials attribute calls; they do not stop code inside mecak8s from acting as another agent.
 - **Verification of what mecak8s reports.** Which instance acted, which definition is a session's root, which instance created which child, and the run and delegation context stay mecak8s's word, marked as such in audit.
-- **Protection against a compromised mecak8s while the broker runs inside it.** See the table above.
+- **Protection against a compromised mecak8s while the broker runs inside it.** See the [threat model](threat-model.md#a-compromised-mecak8s).
 - **Coverage beyond the broker.** Calls that bypass the broker, and filesystem tools, Shell, and spawning, are outside this design.
 - **Non-repudiation.** Audit records are unsigned.
 - **Proof of provider-side effects.** A record shows what the recording component observed; an unknown outcome stays unknown.
@@ -240,6 +208,7 @@ These chapters describe each part of the design in detail.
 | [MCP gateway modes](mcp-gateway-modes.md) | Connects the broker's grant issuer to the vMCP gateway's authorization server. One protocol works with an embedded gateway or an external gateway. |
 | [Credentials and lifecycle](credentials-and-lifecycle.md) | Follows one request from credential to outcome, with validation and audit evidence. Then explains credential renewal and recovery. |
 | [Run owner](run-owner.md) | Records who started each run and checks it against the grant in use. Keeps shared sessions possible later. |
+| [Threat model](threat-model.md) | Lists the attackers the design considers, what each can do in each deployment, and what the split from mecak8s requires. |
 | [All-tool mediation](all-tool-mediation.md) | Describes how the authorization boundary could extend to filesystem tools, Shell, and spawning. This is a future direction. |
 
 The [implementation and verification companion](implementation.md) records integration requirements and checks. This design replaces an earlier model in which the harness signed agent credentials and wrote its own audit records.
