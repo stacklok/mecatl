@@ -1329,7 +1329,7 @@ func TestKindExecutionProductionPendingDeleteOutageRecovery(t *testing.T) {
 
 func createSessionAfterProviderReload(t *testing.T, ctx context.Context, addr, token string) string {
 	t.Helper()
-	body := []byte(`{"mode":"default","limits":{"max_turns":16,"max_tool_calls":24,"max_consecutive_failures":3}}`)
+	body := []byte(`{"limits":{"max_turns":16,"max_tool_calls":24,"max_consecutive_failures":3}}`)
 	deadline := time.Now().Add(90 * time.Second)
 	for {
 		status, response := request(t, ctx, http.MethodPost, "http://"+addr+"/v1/sessions", token, body)
