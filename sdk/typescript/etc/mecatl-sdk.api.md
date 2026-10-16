@@ -1328,6 +1328,7 @@ export const ServerFeature: {
     readonly HttpSteer: "http_steer";
     readonly McpServersOnCreate: "mcp_servers_on_create";
     readonly PromptFreeControls: "prompt_free_controls";
+    readonly RefusedModeRecovery: "refused_mode_recovery";
     readonly ServerInfo: "server_info";
     readonly SessionActivityInventory: "session_activity_inventory";
     readonly SessionAgentDefinitions: "session_agent_definitions";

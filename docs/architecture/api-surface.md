@@ -163,7 +163,10 @@ the source untouched, with one exception: clearing a running source cancels it f
 a later failure publishes no successor but the source stays cancelled.
 
 `SetMode` is rejected mid-turn, because changing posture would race permission checks
-already in flight; clients defer it to the next prompt. `CompactSession` likewise runs
+already in flight; clients defer it to the next prompt. The exception is a stored session
+awaiting an approval in a mode the server no longer admits: a switch to an admitted, lower
+mode cancels the pending turn without running it, then applies the mode
+(`refused_mode_recovery`). `CompactSession` likewise runs
 only at an idle or terminal boundary.
 
 ## Scheduled tasks

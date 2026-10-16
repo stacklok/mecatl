@@ -11145,6 +11145,10 @@ export const HarnessService: GenService<{
    * SetMode changes an existing session's permission posture. The session aggregate
    * remains authoritative: a mid-turn change is rejected with InvalidArgument, so
    * clients that want "next prompt" semantics must defer and retry once idle.
+   * One exception, advertised by the refused_mode_recovery feature: for a stored
+   * session awaiting an approval in a mode the server no longer admits, a change
+   * to an admitted, strictly lower mode cancels the pending turn without running
+   * it and applies the mode.
    *
    * @generated from rpc mecatl.v1.HarnessService.SetMode
    */

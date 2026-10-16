@@ -4759,7 +4759,9 @@ func (s *Service) managementTargetAwaitingDrain(ctx context.Context, id session.
 // mode, and propagates session.ErrIllegalTransition (wrapped as ErrInvalidArgument)
 // when the session is mid-turn (running/awaiting) — the aggregate refuses a mode
 // change while a turn is in flight, so the caller must defer it to the next
-// prompt. A change to the mode the session already has is a no-op success.
+// prompt. The one exception is cancelRefusedAwaiting's recovery for a stored
+// awaiting session whose mode this server refuses. A change to the mode the
+// session already has is a no-op success.
 func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode session.PermissionMode) (*session.Session, error) {
 	if s.draining.Load() {
 		return nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
@@ -4805,6 +4807,9 @@ func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode sessio
 			return nil, loadErr
 		}
 		sess = loaded
+		if err := s.cancelRefusedAwaiting(sess, mode); err != nil {
+			return nil, err
+		}
 	}
 
 	if sess.AgentDefinitionName != "" {
@@ -4882,10 +4887,34 @@ func (s *Service) AdmittedModes() []session.PermissionMode {
 // admitStoredMode re-admits a persisted session's mode against the CURRENT
 // ceiling and checker before execution, approval resume, or successor
 // publication. A refusal leaves the session and its history untouched; the
-// owner can SetMode to an admitted mode and continue.
+// owner can SetMode to an admitted mode and continue. For a session awaiting
+// an approval that SetMode must be a downgrade, which cancels the pending turn
+// (cancelRefusedAwaiting).
 func (s *Service) admitStoredMode(sess *session.Session) error {
 	if err := s.admitMode(sess.Mode); err != nil {
+		if sess.State == session.StateAwaiting {
+			return fmt.Errorf("%w: session %q is in permission mode %q, which this server does not admit (%v), and its pending approval cannot resume in that mode; SetMode to an admitted lower mode cancels the pending turn without running it and lets the session continue", ErrFailedPrecondition, sess.ID, sess.Mode, err)
+		}
 		return fmt.Errorf("%w: session %q is in permission mode %q, which this server does not admit (%v); switch it to an admitted mode with SetMode to continue", ErrFailedPrecondition, sess.ID, sess.Mode, err)
+	}
+	return nil
+}
+
+// cancelRefusedAwaiting is the recovery for a stored session parked awaiting
+// an approval in a mode this server refuses: admitStoredMode blocks every
+// resume, and the aggregate refuses SetMode mid-turn. When the requested mode
+// is admitted (the caller checked) and strictly lower than the stored mode, it
+// cancels the pending turn without executing anything, so the caller's mode
+// change and single save are legal; the next run repairs the history through
+// the ordinary interrupt path. Every other awaiting session is left for the
+// aggregate's mid-turn refusal. The caller holds runEntryMu and the mutation
+// lease, found no live run, and passes the snapshot loaded under that lease.
+func (s *Service) cancelRefusedAwaiting(sess *session.Session, mode session.PermissionMode) error {
+	if sess.State != session.StateAwaiting || s.admitMode(sess.Mode) == nil || modeRank(mode) >= modeRank(sess.Mode) {
+		return nil
+	}
+	if err := sess.Cancel(); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidArgument, err)
 	}
 	return nil
 }
