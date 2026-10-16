@@ -379,7 +379,7 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 }
 
 func successorProviderSelector(source *session.Session, req ForkSuccessorRequest) (ProviderSelector, error) {
-	selector := ProviderSelector{ProviderID: source.ProviderID, ModelID: source.ModelID, ReasoningEffort: source.ReasoningEffort}
+	selector := storedProviderSelector(source)
 	if req.ProviderID != "" {
 		selector.ProviderID = req.ProviderID
 	}

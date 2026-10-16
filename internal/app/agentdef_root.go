@@ -207,6 +207,15 @@ func agentDefSessionEngineFactory(
 			runner = nil
 		}
 		allowShell := runner != nil
+		// baseSubagentTools admits Shell only through the child's trust-gated
+		// sandboxed runner (a fork-time checkout guard a root never runs). A root
+		// uses the main runner, so its Shell availability follows that runner
+		// (no-shell, no-FS) and configured Ask/Deny, exactly like an ordinary root;
+		// the definition's own tools:/disallowedTools: still scope it afterwards.
+		if allowShell {
+			shell := agent.NewShellTool()
+			base[shell.Spec().Name] = shell
+		}
 
 		parentProviderID := provReg.Default()
 		childProvider, pid, model, windowFn, err := resolveAgentDefRootProviderModel(cfg, provReg, def, provider, parentProviderID, sel)

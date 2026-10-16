@@ -600,6 +600,18 @@ func shellScopeMissReason(cfg Config) string {
 	}
 }
 
+// defDisallowsTool reports whether def explicitly excludes the named tool. It is
+// the one exclusion test shared by name scoping's callers for tools registered
+// after scoping (MCP tools and the automatic ShellStatus companion).
+func defDisallowsTool(def agents.AgentDef, name string) bool {
+	for _, d := range def.DisallowedTools {
+		if d == name {
+			return true
+		}
+	}
+	return false
+}
+
 // scopedToolNamesMode computes a def's effective tool NAME set as a pure set
 // operation over the AVAILABLE base tools:
 //
@@ -1127,10 +1139,14 @@ func resolvedAgentDefCatalog(ctx context.Context, cfg Config, def agents.AgentDe
 		}
 		classified.mustRegister(registered, &entry)
 	}
+	// ShellStatus rides along with Shell, but a def's explicit exclusion still
+	// applies to it: the final catalog, grant and ceiling must all honor
+	// DisallowedTools, including tools added after name scoping.
 	if _, ok := cat.Lookup(tool.ShellToolName); ok {
-		status := agent.NewShellStatusTool()
-		entry, _ := coreToolClassification(status)
-		classified.mustRegister(status, &entry)
+		if status := agent.NewShellStatusTool(); !defDisallowsTool(def, status.Spec().Name) {
+			entry, _ := coreToolClassification(status)
+			classified.mustRegister(status, &entry)
+		}
 	}
 
 	// Per-agent MCP: a def's mcpServers add the referenced/inline servers' tools to
@@ -1143,6 +1159,9 @@ func resolvedAgentDefCatalog(ctx context.Context, cfg Config, def agents.AgentDe
 	mcpEntry := classification(server.KindDerived,
 		"agent-definition MCP tools are scoped to this already authorized specialist child")
 	for _, mt := range mcpTools {
+		if defDisallowsTool(def, mt.Spec().Name) {
+			continue // explicit exclusion, silently honoured like core tools.
+		}
 		if err := classified.register(mt, mcpEntry); err != nil {
 			cfg.diag().Log(ctx, port.LevelWarn, "agent def MCP tool registration failed; skipped",
 				"agent", def.Name, "tool", mt.Spec().Name, "err", err)

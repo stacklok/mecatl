@@ -169,11 +169,15 @@ configured; it grants neither access nor availability of a particular definition
 
 The bound root uses the definition's prompt, skills, hooks, memory, and tool
 catalog, with ordinary main-session permission asks and guardrails. Only the
-MCP servers selected by the definition participate. Its authority ceiling
-cannot be widened by later tool grants or workspace enrollment. Definition
-limits and permission mode are ceilings: create-time overrides can only tighten
-them. `execution.none` further removes filesystem and shell access; project
-memory is unavailable without a filesystem.
+MCP servers selected by the definition participate. Tools the definition
+excludes stay excluded from the catalog, granted authority, and ceiling,
+including MCP tools and the automatic `ShellStatus` companion. The ceiling
+cannot be widened by later tool grants or workspace enrollment. The
+definition's turn and tool-call limits and its permission mode are ceilings:
+create-time overrides can only tighten them, and other limit fields such as the
+consecutive-failure limit keep the inherited value. `execution.none` further
+removes filesystem and shell access; project memory is unavailable without a
+filesystem.
 
 Provider/model selection for a bound root follows these five cases:
 
@@ -207,6 +211,14 @@ remain within the inherited authority as well as the current catalog.
 resuming execution after restart or resuming with client-supplied MCP is refused
 rather than rebuilding an unrestricted root. Bound records without valid
 authority and a ceiling are rejected on restore.
+
+`agent_definition_name` selects a definition by name. It is not an authenticated
+identity, and it does not record the definition's source or revision. Fork and
+clear create new sessions, and an existing bound session is never silently
+rebuilt from a different definition after restart. The authority ceiling bounds
+what a session can be granted; it is not an access-control or revocation
+mechanism. This feature adds no definition-specific access controls, no
+credentialed agent-instance registration, and no broker-side enforcement.
 
 ### Dedicated debugger creation
 

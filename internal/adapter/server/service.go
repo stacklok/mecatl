@@ -2265,6 +2265,25 @@ func setSessionLabels(sess *session.Session, sel ProviderSelector, profile Sessi
 	return sess.RestoreLabels(owner, authority)
 }
 
+// reasoningEffortAuto is the explicit "provider default, ignore the operator
+// default" reasoning-effort selector token.
+const reasoningEffortAuto = "auto"
+
+// storedProviderSelector rebuilds the construction selector from a session's
+// persisted labels. Those labels hold the EFFECTIVE reasoning effort, where an
+// agent-bound session's explicit "auto" is stored as "" (see
+// SessionEngineResult.ReasoningEffort). Feeding that "" back as a selector would
+// instead mean "inherit the operator default", so an agent-bound session's empty
+// effort is reconstructed as explicit "auto". Unbound sessions keep their
+// existing semantics.
+func storedProviderSelector(sess *session.Session) ProviderSelector {
+	sel := ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}
+	if sess.AgentDefinitionName != "" && sel.ReasoningEffort == "" {
+		sel.ReasoningEffort = reasoningEffortAuto
+	}
+	return sel
+}
+
 func (s *Service) setTitleGenerationEligibility(sess *session.Session, sel ProviderSelector) {
 	if s.cfg.TitleGenerationEligible != nil && s.cfg.TitleGenerationEligible(sel) {
 		sess.SetTitleGeneration(session.TitleGenerationPending)
@@ -5132,7 +5151,7 @@ func (s *Service) LoadSessionWithMCP(ctx context.Context, id session.SessionID, 
 	// Re-mount client MCP on resume, re-deriving provider/model and profile from
 	// persisted server-owned labels. EnvironmentRef is the sole placement identity;
 	// privateWorkspace exactly reattaches it and never infers authority from a path.
-	sel := ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}
+	sel := storedProviderSelector(sess)
 	profile := profileForSession(sess)
 	// The exact persisted placement is the session's base namespace: the rebuilt
 	// engine's child permission resolver pins to that reattached root. The MODE is
@@ -6518,7 +6537,7 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 		if live {
 			return nil, tool.Environment{}, "", fmt.Errorf("%w: cannot rebuild engine for session %q mid-run (mode change must be deferred to a turn boundary)", ErrInvalidArgument, id)
 		}
-		sel := ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}
+		sel := storedProviderSelector(sess)
 		profile := profileForSession(sess)
 		rebuilt, err := s.buildAndRegisterSessionEngine(ctx, sess, sel, profile, sess.Mode, true)
 		if err != nil {
@@ -6541,7 +6560,7 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 		// per-session factory engine. A default-FS session has the empty selector + a real
 		// workspace, so no environment override is registered (the run-entry seam builds it
 		// from the shared factory below, unchanged).
-		sel := ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}
+		sel := storedProviderSelector(sess)
 		promoted, err := s.buildAndRegisterSessionEngine(ctx, sess, sel, ProfileDefault, sess.Mode, false)
 		if err != nil {
 			return nil, tool.Environment{}, "", err
@@ -6682,7 +6701,7 @@ func (s *Service) rehydrateSession(ctx context.Context, sess *session.Session) (
 	// Reconstruct the selector + profile from the persisted inert labels. The
 	// ProviderSelector type stays server-adapter-owned; the aggregate only carried
 	// the two opaque strings.
-	sel := ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}
+	sel := storedProviderSelector(sess)
 	// Second-defense inference inside profileForSession: an empty persisted workspace
 	// can only be a no-fs session (every FS path requires a non-empty workspace), so a
 	// snapshot that predates the profile label still rehydrates as no-fs.
