@@ -844,7 +844,7 @@ func fixtureToken(t *testing.T, ctx context.Context, addr, pki, sub string) stri
 }
 func createSessionTemplate(t *testing.T, ctx context.Context, addr, token, id, revision string) string {
 	t.Helper()
-	body, err := json.Marshal(map[string]any{"mode": "default", "execution": map[string]any{"template": map[string]string{"id": id, "revision": revision}}})
+	body, err := json.Marshal(map[string]any{"execution": map[string]any{"template": map[string]string{"id": id, "revision": revision}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -863,7 +863,8 @@ func createSessionTemplate(t *testing.T, ctx context.Context, addr, token, id, r
 
 func createSession(t *testing.T, ctx context.Context, addr, token string, templateRevision ...string) string {
 	t.Helper()
-	body := map[string]any{"mode": "default", "limits": map[string]int{"max_turns": 16, "max_tool_calls": 24, "max_consecutive_failures": 3}}
+	// No mode: sessions start in the deployment default (the fixture selects yolo).
+	body := map[string]any{"limits": map[string]int{"max_turns": 16, "max_tool_calls": 24, "max_consecutive_failures": 3}}
 	if len(templateRevision) > 0 {
 		body["execution"] = map[string]any{"template": map[string]string{"id": "go", "revision": templateRevision[0]}}
 	}
