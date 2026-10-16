@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"iter"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -323,6 +324,150 @@ func TestGuardrailE2EYoloServerAutoSessionEnforces(t *testing.T) {
 	}
 	if markerExists(t, cfg.Workspace) {
 		t.Fatal("the enforcing auto-session block must NOT execute the Shell command — but the marker file exists")
+	}
+}
+
+// modeRoutedProvider sends guardrail-reviewer requests (the GuardrailsModel) to
+// reviewer and every other request to agent, so one session's agent script
+// stays in order whether or not a mode consults the checker.
+type modeRoutedProvider struct {
+	agent, reviewer *mockllm.Provider
+	reviewerModel   string
+}
+
+func (p modeRoutedProvider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+	if req.Model == p.reviewerModel {
+		return p.reviewer.Stream(ctx, req)
+	}
+	return p.agent.Stream(ctx, req)
+}
+
+func (p modeRoutedProvider) Capabilities() port.ProviderCapabilities { return p.agent.Capabilities() }
+
+// modeTurnOutcome is what one executed turn surfaced.
+type modeTurnOutcome struct {
+	policyAsks, guardrailAsks []string
+	results                   []session.ToolResult
+}
+
+// runDenyingTurn runs one prompt to completion on the real service, denying
+// every ask, and returns the asks (split by origin) and tool results.
+func runDenyingTurn(t *testing.T, built *Built, id session.SessionID) modeTurnOutcome {
+	t.Helper()
+	run, err := built.Service.StartRun(context.Background(), id, "merge it")
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	var out modeTurnOutcome
+	for ev := range run.Events() {
+		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
+			if ev.Ask.Guardrail != nil {
+				out.guardrailAsks = append(out.guardrailAsks, ev.Ask.Tool)
+			} else {
+				out.policyAsks = append(out.policyAsks, ev.Ask.Tool)
+			}
+			run.Approve(ev.Ask.AskID, session.VerdictDeny)
+		}
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil {
+			out.results = append(out.results, *ev.ToolResult)
+		}
+	}
+	built.Service.FinishRun(id, run)
+	return out
+}
+
+// TestGuardrailE2EExecutedYoloAutoDefaultTransitions runs ONE session through
+// three completed turns on a yolo server with a rejecting checker, switching
+// mode between runs so the engine transitions live: yolo allows the mutation
+// with the checker advisory; auto lets the same checker block it while a
+// configured Deny still denies; default asks for it instead of auto-allowing.
+func TestGuardrailE2EExecutedYoloAutoDefaultTransitions(t *testing.T) {
+	ctx := context.Background()
+	cfg := guardrailE2ECfg(t, true, PostureYolo, "")
+	settings := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := os.WriteFile(settings, []byte("permissions:\n  deny:\n    - Write\n"), 0o600); err != nil {
+		t.Fatalf("write permission config: %v", err)
+	}
+	cfg.PermissionConfigs = []string{settings}
+	shell := func(id session.ToolCallID, marker string) mockllm.Turn {
+		return mockllm.ToolCallTurn(session.NewToolCall(id, "Shell", json.RawMessage(`{"command":"touch `+marker+`"}`)))
+	}
+	denied := filepath.Join(cfg.Workspace, "denied.txt")
+	agent := mockllm.New(
+		shell("y1", "yolo_marker"), mockllm.TextTurn("done"),
+		shell("a1", "auto_marker"),
+		mockllm.ToolCallTurn(session.NewToolCall("a2", "Write", json.RawMessage(`{"path":"`+denied+`","content":"x"}`))),
+		mockllm.TextTurn("done"),
+		shell("d1", "default_marker"), mockllm.TextTurn("done"),
+	)
+	verdicts := make([]mockllm.Turn, 8)
+	for i := range verdicts {
+		verdicts[i] = guardrailE2EScript("")[1]
+	}
+	reviewer := mockllm.New(verdicts...)
+	cfg.providerConstructor = func(Config, string, string, string) port.LLMProvider {
+		return modeRoutedProvider{agent: agent, reviewer: reviewer, reviewerModel: cfg.GuardrailsModel}
+	}
+	built, err := buildIsolated(t, ctx, cfg)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+	sess, err := built.Service.CreateSession(ctx, session.ModeYolo, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	exists := func(name string) bool {
+		_, err := os.Stat(filepath.Join(cfg.Workspace, name))
+		return err == nil
+	}
+
+	// yolo: the mutation is auto-allowed and the rejecting checker is advisory.
+	yolo := runDenyingTurn(t, built, sess.ID)
+	if len(yolo.policyAsks)+len(yolo.guardrailAsks) != 0 || len(yolo.results) != 1 || yolo.results[0].IsError || !exists("yolo_marker") {
+		t.Fatalf("yolo turn: asks %v/%v results %+v marker %t; want the Shell call to run unasked", yolo.policyAsks, yolo.guardrailAsks, yolo.results, exists("yolo_marker"))
+	}
+
+	if reviewer.Calls() == 0 {
+		t.Fatal("yolo turn: the checker was never consulted, so its advisory verdict proves nothing")
+	}
+	if _, err := built.Service.SetMode(ctx, sess.ID, session.ModeAuto); err != nil {
+		t.Fatalf("SetMode(auto) after a completed yolo run: %v", err)
+	}
+	// auto: no policy ask, but the same checker now blocks the mutation, and the
+	// configured Deny still denies Write without an ask.
+	auto := runDenyingTurn(t, built, sess.ID)
+	if len(auto.policyAsks) != 0 || len(auto.guardrailAsks) != 1 || auto.guardrailAsks[0] != "Shell" {
+		t.Fatalf("auto turn asks: policy %v guardrail %v; want exactly one guardrail ask for Shell", auto.policyAsks, auto.guardrailAsks)
+	}
+	if exists("auto_marker") {
+		t.Fatal("auto turn: the checker-blocked Shell command ran")
+	}
+	if len(auto.results) != 2 || !auto.results[0].IsError || !auto.results[1].IsError {
+		t.Fatalf("auto turn results = %+v; want the blocked Shell and denied Write as errors", auto.results)
+	}
+	if _, err := os.Stat(denied); !os.IsNotExist(err) {
+		t.Fatalf("auto turn: configured Deny let Write land (stat err %v)", err)
+	}
+
+	if _, err := built.Service.SetMode(ctx, sess.ID, session.ModeDefault); err != nil {
+		t.Fatalf("SetMode(default) after a completed auto run: %v", err)
+	}
+	// default: the mutation is not auto-allowed; it surfaces as an ordinary
+	// permission ask, and the denied command never runs.
+	def := runDenyingTurn(t, built, sess.ID)
+	if len(def.policyAsks) == 0 || def.policyAsks[0] != "Shell" {
+		t.Fatalf("default turn asks: policy %v guardrail %v; want an ordinary Shell permission ask", def.policyAsks, def.guardrailAsks)
+	}
+	if exists("default_marker") {
+		t.Fatal("default turn: the denied Shell command ran")
+	}
+	final, err := built.Service.GetSession(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if final.Mode != session.ModeDefault || final.State != session.StateCompleted {
+		t.Fatalf("final session mode %q state %q, want default/completed", final.Mode, final.State)
 	}
 }
 
