@@ -82,14 +82,14 @@ sequenceDiagram
     H->>H: Validate token, check ownership of hostS42
     H->>B: OpenSession: workload JWT + AS-1 access token<br/>+ owner of hostS42 (once)
     B->>A1: RFC 8693: subject_token = AS-1 access token<br/>requested_token_type = refresh_token<br/>authorization_details: session A42, owner<br/>(5) client mecatl, private_key_jwt
-    A1->>A1: Token issued by AS-1 for the Mecatl API, active, jti not yet converted<br/>sub_id = reported owner; A42 unowned or owned by the same user
-    A1-->>B: RT-A42 (bound to mecatl, A42, Alice; hard expiry; no rotation)
+    A1->>A1: Token issued by AS-1 for the Mecatl API, active, jti not yet converted<br/>sub_id = reported owner, A42 unowned or owned by the same user
+    A1-->>B: RT-A42 (bound to mecatl, A42, Alice, hard expiry, no rotation)
     B-->>H: SessionSnapshot (BrokerSessionRef A42)
 
     rect rgb(245, 245, 245)
         Note over H,I: (4) Main bootstrap, before R41
         H->>I: registerInstance(main, definition reference), workload JWT
-        I->>I: Definition loaded; no parent, so it must be root-eligible
+        I->>I: Definition loaded, no parent, so it must be root-eligible
         I-->>H: mainRef + canonical main subject
         H->>I: requestSVID(mainRef), workload JWT
         I-->>H: mainSVID
@@ -117,9 +117,9 @@ sequenceDiagram
         Note over H,I: Reviewer bootstrap, after the list succeeds
         H->>H: Delegate review: D42 / R42
         H->>I: registerInstance(reviewer, definition reference project/code-reviewer,<br/>parentRef = mainRef), workload JWT
-        H->>B: Report delegation D42: R41 to R42, run owner Alice
-        B->>B: Child run owner = parent run owner; parent in the same session tree
         I-->>H: reviewerRef
+        H->>B: Report delegation D42: R41 to R42, run owner Alice
+        B->>B: Child run owner = parent run owner, parent in the same session tree
         H->>I: requestSVID(reviewerRef), workload JWT
         I-->>H: reviewerSVID
     end
