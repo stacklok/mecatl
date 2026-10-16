@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { ChevronRight, Plug, Server } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 import type { ApprovalRequest } from "./approval-panel";
 import { type AuthorizationHandoff, AuthorizationReviewTrigger } from "./authorization-review";
@@ -153,8 +154,8 @@ function ToolCallRow({
  * row per call. It starts open or closed per the "Expand details"
  * preference, and the reader can toggle this one. It is held open while a
  * call carries an ask or an authorization, so a decision is never folded
- * away. A closed list keeps its rows in the document, hidden, so the calls
- * stay findable by name and in the page's text.
+ * away. A closed list keeps its rows in the document, hidden until found,
+ * so the calls stay findable by name and in the page's text.
  */
 export function ToolCallList({
   approvals = [],
@@ -182,13 +183,8 @@ export function ToolCallList({
   const names = tools.map((tool) => friendlyToolName(tool.name).display).join(" · ");
 
   return (
-    <div className="my-1 min-w-0">
-      <button
-        aria-expanded={open}
-        className="flex w-full min-w-0 items-center gap-2 rounded-md py-1 text-left focus-visible:outline-2 focus-visible:outline-brand"
-        onClick={toggleExpanded}
-        type="button"
-      >
+    <Collapsible className="my-1 min-w-0" onOpenChange={toggleExpanded} open={open}>
+      <CollapsibleTrigger className="flex w-full min-w-0 items-center gap-2 rounded-md py-1 text-left focus-visible:outline-2 focus-visible:outline-brand">
         <ChevronRight
           aria-hidden="true"
           className={cn(
@@ -203,18 +199,23 @@ export function ToolCallList({
           )}{" "}
           {names}
         </span>
-      </button>
-      <ol className="ml-5 mt-1 min-w-0 space-y-1" hidden={!open}>
-        {rows.map((row) => (
-          <ToolCallRow
-            approvals={row.approvals}
-            authorizations={row.authorizations}
-            controls={controls}
-            key={`${row.tool.runId ?? ""}:${row.tool.id}`}
-            tool={row.tool}
-          />
-        ))}
-      </ol>
-    </div>
+      </CollapsibleTrigger>
+      {/* The closed rows stay in the page, hidden until found: find-in-page
+          reaches a call's arguments and result and opens the list. Closed
+          content keeps its own box, so the gap above applies only when open. */}
+      <CollapsibleContent asChild hiddenUntilFound>
+        <ol className={cn("ml-5 min-w-0 space-y-1", open && "mt-1")}>
+          {rows.map((row) => (
+            <ToolCallRow
+              approvals={row.approvals}
+              authorizations={row.authorizations}
+              controls={controls}
+              key={`${row.tool.runId ?? ""}:${row.tool.id}`}
+              tool={row.tool}
+            />
+          ))}
+        </ol>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
