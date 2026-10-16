@@ -299,6 +299,32 @@ Verify the behavior in [sign-out and revocation](credentials-and-lifecycle.md#si
 - After it, an ID-JAG exchange with any revoked refresh token fails, and each schedule's next run ends with "needs owner action".
 - When the upstream IdP refuses a refresh, AS-1 revokes all the user's grants, including schedule authority, and the exchange fails. A client's own sign-out does not remove the upstream token AS-1 re-checks. Re-checks happen at most once per interval.
 
+## Work breakdown
+
+The [overview](README.md#order-of-work) gives the order of work and its reasons. The full breakdown:
+
+The **identity work** establishes who acts and records it:
+
+- the broker modules: definition loader, agent-instance issuer, AS-1, and broker core;
+- root eligibility: the broker refuses to register a root instance whose definition the operator has not made root-eligible;
+- definitions loaded with their provenance;
+- instance registration, with the incarnation, definition reference, and creation parent;
+- agent-instance credentials;
+- the credential flow: sign-in at AS-1, the session-bound refresh token, ID-JAG issuance, AS-2 redemption, and per-user provider credentials at the gateway;
+- the broker's identity checks: session, workload, and that the acting instance is registered to the broker session;
+- the run owner on every call, checked against the grant in use, so that shared sessions can come later without a call using the wrong user's credentials;
+- sign-out and revocation: signing out of one client leaves background agents running, so signing out everywhere stops every agent and schedule acting for the user, and AS-1's upstream re-check does the same when the company IdP disables the account;
+- audit of who acted, for whom, through which delegation, and what was decided, dispatched, and observed.
+
+The **authority work** decides what each agent may do:
+
+- the definition loader resolving each definition's ceiling into permitted MCP server/tool pairs, and the operator's loader configuration capping the ceiling of definitions from other sources;
+- each instance's effective ceiling, its definition ceiling narrowed by its parent's;
+- Cedar policy generation and a ceiling check on every call;
+- grants scoped to a run the user started, replacing the session's standing refresh token, so that sessions of absent users carry no authority;
+- task-specific delegation bounds, and user, resource, and argument policy.
+
+
 ## Modulith constraints
 
 While the broker runs as modules inside mecak8s, these constraints keep the later move to a separate service a deployment change rather than a redesign:
