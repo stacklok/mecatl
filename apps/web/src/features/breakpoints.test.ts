@@ -33,6 +33,11 @@ const allowed: Record<string, { classes: string[]; reason: string }> = {
     classes: ["sm:grid-cols-2"],
     reason: "The prototype's schedule detail uses sm: on the same grid.",
   },
+  "features/schedules/schedule-form.tsx": {
+    classes: ["sm:text-right"],
+    reason:
+      "The disabled-Create hint lines up with DialogFooter's buttons, which sit right-aligned from sm:.",
+  },
   "features/shortcuts/shortcut-reference.tsx": {
     classes: ["sm:grid-cols-2", "sm:grid-cols-2"],
     reason: "The prototype's shortcut and feature grids use sm: on the same elements.",
