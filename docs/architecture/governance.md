@@ -79,7 +79,9 @@ whose default mode is `auto` refuses to start without one. Unchecked autonomy is
 explicit `yolo` choice, where a configured checker is advisory. `admitStoredMode`
 re-checks a persisted session's mode at run, approval resume, fork, and clear, so a
 mode admitted under a looser deployment fails with `FailedPrecondition` until the owner
-switches it; history is untouched. A project file's `permissionMode:` is ignored with a
+switches it; history is untouched. A session parked awaiting an approval in such a mode
+recovers through `SetMode` to an admitted, lower mode, which cancels the pending turn
+without running it (`cancelRefusedAwaiting`). A project file's `permissionMode:` is ignored with a
 warning, and `auto` or `yolo` are refused as root without a declared sandbox.
 
 Delegated children receive the parent session's mode through `parentCaps.parentMode`:

@@ -91,6 +91,13 @@ const (
 	// capability cannot answer this: an older server advertises auto/yolo
 	// posture without supporting these session modes.
 	FeatureSessionPermissionModes = "session_permission_modes"
+
+	// FeatureRefusedModeRecovery reports that SetMode recovers a stored session
+	// parked awaiting an approval in a mode this server no longer admits: a
+	// SetMode to an admitted, strictly lower mode cancels the pending turn
+	// without running it and applies the mode, instead of refusing mid-turn.
+	// Every other SetMode on an awaiting session is still refused.
+	FeatureRefusedModeRecovery = "refused_mode_recovery"
 )
 
 // FeatureScope is what the DEPLOYMENT permits, as distinct from what the build
@@ -128,6 +135,7 @@ var allFeatures = []string{
 	FeatureHTTPSteer,
 	FeatureMCPServersOnCreate,
 	FeaturePromptFreeControls,
+	FeatureRefusedModeRecovery,
 	FeatureServerInfo,
 	FeatureSessionActivityInventory,
 	FeatureSessionPermissionModes,

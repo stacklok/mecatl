@@ -23,6 +23,7 @@ export const ServerFeature = {
   HttpSteer: "http_steer",
   McpServersOnCreate: "mcp_servers_on_create",
   PromptFreeControls: "prompt_free_controls",
+  RefusedModeRecovery: "refused_mode_recovery",
   ServerInfo: "server_info",
   SessionActivityInventory: "session_activity_inventory",
   SessionPermissionModes: "session_permission_modes",

@@ -169,6 +169,10 @@ type HarnessServiceClient interface {
 	// SetMode changes an existing session's permission posture. The session aggregate
 	// remains authoritative: a mid-turn change is rejected with InvalidArgument, so
 	// clients that want "next prompt" semantics must defer and retry once idle.
+	// One exception, advertised by the refused_mode_recovery feature: for a stored
+	// session awaiting an approval in a mode the server no longer admits, a change
+	// to an admitted, strictly lower mode cancels the pending turn without running
+	// it and applies the mode.
 	SetMode(ctx context.Context, in *SetModeRequest, opts ...grpc.CallOption) (*SetModeResponse, error)
 	// CloseSession ends a session and releases its server-side resources (learned
 	// permission rules, bound placement, and any per-session engine). Idempotent:
@@ -1447,6 +1451,10 @@ type HarnessServiceServer interface {
 	// SetMode changes an existing session's permission posture. The session aggregate
 	// remains authoritative: a mid-turn change is rejected with InvalidArgument, so
 	// clients that want "next prompt" semantics must defer and retry once idle.
+	// One exception, advertised by the refused_mode_recovery feature: for a stored
+	// session awaiting an approval in a mode the server no longer admits, a change
+	// to an admitted, strictly lower mode cancels the pending turn without running
+	// it and applies the mode.
 	SetMode(context.Context, *SetModeRequest) (*SetModeResponse, error)
 	// CloseSession ends a session and releases its server-side resources (learned
 	// permission rules, bound placement, and any per-session engine). Idempotent:

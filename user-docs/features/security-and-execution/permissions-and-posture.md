@@ -124,15 +124,19 @@ What happens when the cycle lands on a mode depends on the server ceiling:
 The server also refuses `auto` when it has no enforcing guardrails checker. The
 session keeps its current mode, and the footer gives the server's reason.
 
-A session waiting on an approval cannot change mode. Answer the pending request
-first: it resolves under the mode it was raised in, and the new mode applies
+A session waiting on an approval cannot change mode, except to recover from a
+refused mode as described below. Answer the pending request first: it resolves under the mode it was raised in, and the new mode applies
 from the next run. A mode change never stops a command that has already
 started.
 
 If the server restarts with a lower ceiling, or without the checker `auto`
 needs, a stored session in a mode it no longer admits refuses to run, resume an
 approval, fork, or clear until its owner switches it to an admitted mode. Its
-history is unchanged.
+history is unchanged. If that session is waiting on an approval, switch it to an
+admitted mode lower than its stored one: the server cancels the pending request
+without running it, then applies the mode, and your next prompt continues the
+conversation. Servers that support this advertise the `refused_mode_recovery`
+feature identifier.
 
 The restart a ceiling change needs depends on how you connect:
 
