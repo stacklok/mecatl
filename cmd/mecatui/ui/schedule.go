@@ -68,9 +68,10 @@ type scheduleState struct {
 // keeps it SIMPLE — name, prompt, trigger (cron OR NL), mutating. The trigger
 // field accepts EITHER a raw cron expression OR a natural-language phrase; on
 // submit, schedparse.Compile is tried first (compile to cron or one-shot), and
-// only on no-match is the value treated verbatim as raw cron. Mode defaults to
-// plan for non-mutating (the server enforces the mode↔mutating invariant);
-// singleton defaults true. focusIdx is the cursor over the fields.
+// only on no-match is the value treated verbatim as raw cron. The form has no
+// mode field: a non-mutating schedule is sent as plan (the server requires it),
+// and a mutating one leaves mode unset so its fires use the server's default
+// session mode. Singleton defaults true. focusIdx is the cursor over the fields.
 type scheduleForm struct {
 	name     textinput.Model
 	prompt   textinput.Model
@@ -383,6 +384,9 @@ func (m Model) submitScheduleCreate() (tea.Model, tea.Cmd, bool) {
 		Mutating:  f.mutating,
 		Singleton: true,
 		Timezone:  "UTC",
+	}
+	if !f.mutating {
+		spec.Mode = "plan"
 	}
 	// Return to the panel; the ScheduleMsg reducer appends the new row.
 	m.schedule.view = schedulePanel

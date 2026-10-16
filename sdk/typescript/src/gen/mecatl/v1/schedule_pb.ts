@@ -176,6 +176,10 @@ export type ScheduleSpec = Message<"mecatl.v1.ScheduleSpec"> & {
   /**
    * mode is the session permission posture. Reuses the PermissionMode enum from
    * harness.proto (same package — proto allows cross-file refs within a package).
+   * A non-mutating schedule must use PLAN. For a mutating schedule, unspecified
+   * means each fire uses the server's configured default session mode at fire
+   * time; it reads back as unspecified. Every fire checks the mode against the
+   * server's mode ceiling and fails if the ceiling no longer allows it.
    *
    * @generated from field: mecatl.v1.PermissionMode mode = 8;
    */

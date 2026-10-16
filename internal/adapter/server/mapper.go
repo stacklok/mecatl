@@ -1413,15 +1413,27 @@ func modeFromProto(m mecatlv1.PermissionMode) session.PermissionMode {
 	}
 }
 
-// createModeFromProto maps a CreateSession mode. Unlike modeFromProto, an
-// UNSPECIFIED mode stays empty so Service.createSession applies the server's
-// configured DefaultMode (the session half of the operator's permission mode),
-// matching the HTTP create path.
+// createModeFromProto maps a CreateSession or ScheduleSpec mode. Unlike
+// modeFromProto, an UNSPECIFIED mode stays empty so Service.createSession
+// applies the server's configured DefaultMode (the session half of the
+// operator's permission mode), matching the HTTP create path. A schedule keeps
+// the empty mode and resolves it the same way at each fire.
 func createModeFromProto(m mecatlv1.PermissionMode) session.PermissionMode {
 	if m == mecatlv1.PermissionMode_PERMISSION_MODE_UNSPECIFIED {
 		return ""
 	}
 	return modeFromProto(m)
+}
+
+// scheduleModeToProto reports a stored schedule mode. An empty mode means the
+// fire uses the server's default session mode, so it reads back as UNSPECIFIED
+// (round-tripping through createModeFromProto) rather than as an explicit
+// DEFAULT that the fire may not use.
+func scheduleModeToProto(m session.PermissionMode) mecatlv1.PermissionMode {
+	if m == "" {
+		return mecatlv1.PermissionMode_PERMISSION_MODE_UNSPECIFIED
+	}
+	return modeToProto(m)
 }
 
 func guardrailApprovalKindFromProto(kind mecatlv1.GuardrailApprovalKind) session.GuardrailApprovalKind {
