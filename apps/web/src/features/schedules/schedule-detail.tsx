@@ -62,6 +62,7 @@ import { describeCron } from "./describe-cron";
 import { RunTime } from "./run-time";
 import { canEditSchedule, ScheduleForm, toastScheduleSaved } from "./schedule-form";
 import { ScheduleStatusBadge } from "./schedule-status";
+import { ScheduleTranscriptDialog } from "./schedule-transcript-dialog";
 
 type Schedule = ListSchedulesResponse["items"][number];
 /**
@@ -96,9 +97,9 @@ export function scheduleFirePollInterval(
  * authenticated BFF. Direct browser access to the daemon or SDK was rejected
  * because the BFF owns capability negotiation and caller identity.
  *
- * DECISION: Match the prototype's navigation contract by linking a fire's
- * session into the chat workspace. Transcript presentation belongs to chat;
- * a schedule-specific dialog was rejected as a duplicate transcript surface.
+ * DECISION: A fire's session opens in a read-only transcript dialog over the
+ * run log, as in the prototype; see `ScheduleTranscriptDialog`. It reuses
+ * chat's transcript view rather than adding a second one.
  */
 export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
   const queryClient = useQueryClient();
@@ -120,6 +121,8 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
   const action = useMutation(actOnScheduleMutation());
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [transcript, setTranscript] = useState<ScheduleFire>();
+  const transcriptOpener = useRef<HTMLElement | null>(null);
   const [error, setError] = useState<string>();
   const actionMenuRef = useRef<HTMLButtonElement | null>(null);
 
@@ -346,9 +349,25 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
             error={fires.isError ? errorMessage(fires.error) : undefined}
             fires={fires.data?.items}
             loading={fires.isPending}
+            onViewTranscript={(fire, opener) => {
+              transcriptOpener.current = opener;
+              setTranscript(fire);
+            }}
           />
         </section>
       </div>
+
+      {transcript && (
+        <ScheduleTranscriptDialog
+          firedAt={transcript.firedAt}
+          onClose={() => {
+            setTranscript(undefined);
+            queueMicrotask(() => transcriptOpener.current?.focus());
+          }}
+          scheduleName={schedule.name}
+          sessionId={transcript.sessionId}
+        />
+      )}
 
       {editing && (
         <ScheduleForm
@@ -392,10 +411,12 @@ function ScheduleFireHistory({
   error,
   fires,
   loading,
+  onViewTranscript,
 }: {
   error?: string;
   fires?: ScheduleFire[];
   loading: boolean;
+  onViewTranscript: (fire: ScheduleFire, opener: HTMLElement) => void;
 }) {
   const [sortKey, setSortKey] = useState<FireSortKey>("fired");
   const [direction, setDirection] = useState<SortDir>("desc");
@@ -459,10 +480,12 @@ function ScheduleFireHistory({
                 </TableCell>
                 <TableCell className="text-right">
                   {fire.sessionId ? (
-                    <Button asChild size="sm" variant="ghost">
-                      <Link search={{ sessionId: fire.sessionId }} to="/workspace/chat">
-                        View transcript
-                      </Link>
+                    <Button
+                      onClick={(event) => onViewTranscript(fire, event.currentTarget)}
+                      size="sm"
+                      variant="ghost"
+                    >
+                      View transcript
                     </Button>
                   ) : (
                     <span className="text-muted-foreground">—</span>
@@ -489,10 +512,12 @@ function ScheduleFireHistory({
               <FireOutcome fire={fire} compact />
             </div>
             {fire.sessionId && (
-              <Button asChild size="sm" variant="outline">
-                <Link search={{ sessionId: fire.sessionId }} to="/workspace/chat">
-                  View transcript
-                </Link>
+              <Button
+                onClick={(event) => onViewTranscript(fire, event.currentTarget)}
+                size="sm"
+                variant="outline"
+              >
+                View transcript
               </Button>
             )}
           </article>

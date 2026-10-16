@@ -38,6 +38,11 @@ const allowed: Record<string, { classes: string[]; reason: string }> = {
     reason:
       "The disabled-Create hint lines up with DialogFooter's buttons, which sit right-aligned from sm:.",
   },
+  "features/schedules/schedule-transcript-dialog.tsx": {
+    classes: ["sm:max-w-2xl"],
+    reason:
+      "Dialog width, overriding DialogContent's sm:max-w-lg at its own breakpoint, like the learned-skill dialog.",
+  },
   "features/shortcuts/shortcut-reference.tsx": {
     classes: ["sm:grid-cols-2", "sm:grid-cols-2"],
     reason: "The prototype's shortcut and feature grids use sm: on the same elements.",

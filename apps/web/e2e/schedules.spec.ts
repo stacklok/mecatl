@@ -132,7 +132,7 @@ test("schedule inventory uses the desktop table and compact mobile list", async 
   await expect(filteredRow).toBeVisible();
 });
 
-test("schedule detail links each fire to its owning session", async ({
+test("schedule detail opens each fire's saved transcript in a read-only dialog", async ({
   offlineBff,
   page,
 }, testInfo) => {
@@ -201,11 +201,81 @@ test("schedule detail links each fire to its owning session", async ({
   }
   await expect(visibleHistory.getByText("Provider unavailable", { exact: true })).toBeVisible();
 
-  const viewTranscript = page.getByRole("link", { name: "View transcript" });
-  await expect(viewTranscript).toHaveAttribute(
-    "href",
-    "/workspace/chat?sessionId=scheduled-session",
-  );
+  offlineBff.json("GET", "/api/v1/sessions", {
+    complete: true,
+    items: [
+      {
+        capabilities: {
+          copyId: true,
+          copyIdReason: "",
+          delete: false,
+          deleteReason: "",
+          fork: false,
+          forkReason: "",
+          inspect: true,
+          inspectReason: "",
+          publicChat: false,
+          publicChatReason: "inspect_only_kind",
+          rename: false,
+          renameReason: "",
+          viewTranscript: true,
+          viewTranscriptReason: "",
+        },
+        createdAt: "2026-10-07T08:00:00Z",
+        debugTargetSessionId: "",
+        id: "scheduled-session",
+        kind: "scheduled",
+        modelId: "",
+        state: "idle",
+        title: "daily-report · Oct 7",
+        titleProvenance: "operator",
+        titleRevision: "1",
+        turns: 1,
+        updatedAt: "2026-10-07T08:00:02Z",
+      },
+    ],
+  });
+  offlineBff.json("GET", "/api/v1/sessions/scheduled-session", {
+    capabilities: {
+      audio: false,
+      builtInShell: false,
+      executionFiles: false,
+      image: false,
+      manualCompaction: false,
+      modelSelection: false,
+    },
+    id: "scheduled-session",
+    kind: "scheduled",
+    mode: "plan",
+    state: "idle",
+    usage: {
+      cacheReadTokens: "0",
+      cacheWriteTokens: "0",
+      inputTokens: "0",
+      outputTokens: "0",
+      reasoningTokens: "0",
+    },
+  });
+  offlineBff.json("GET", "/api/v1/sessions/scheduled-session/transcript", {
+    complete: true,
+    messages: [
+      { images: [], role: "user", text: "Summarize project activity", toolCalls: [] },
+      { images: [], role: "assistant", text: "Two PRs merged yesterday.", toolCalls: [] },
+    ],
+    sessionId: "scheduled-session",
+  });
+
+  // Only the fire with a session offers its transcript, and it stays on this page.
+  const viewTranscript = visibleHistory.getByRole("button", { name: "View transcript" });
+  await expect(viewTranscript).toHaveCount(1);
+  await viewTranscript.click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByText("Two PRs merged yesterday.", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("Saved transcript · scheduled-session")).toBeVisible();
+  expect(new URL(page.url()).pathname).toBe("/workspace/schedules/daily-report");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(viewTranscript).toBeFocused();
 });
 
 test("schedule mutations preserve backend-owned fields and surface failures", async ({
