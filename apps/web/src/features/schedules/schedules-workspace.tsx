@@ -57,7 +57,14 @@ import { errorMessage } from "../../lib/error-message";
 import { formatDate } from "../../lib/formatters";
 import { pageTitleClass } from "../../lib/typography";
 import { useShortcut, useShortcutSuppression } from "../shortcuts/shortcut-provider";
-import { canRunNow, canTogglePause, describeLastRun, describeNextRun } from "./schedule-detail";
+import { RunTime } from "./run-time";
+import {
+  canRunNow,
+  canTogglePause,
+  describeLastRun,
+  describeNextRun,
+  nextRunAt,
+} from "./schedule-detail";
 import { canEditSchedule, ScheduleForm } from "./schedule-form";
 import {
   deriveMobileScheduleInventory,
@@ -381,12 +388,13 @@ function ScheduleInventory({
                 // The whole row opens the detail page for the pointer, as in
                 // the prototype. The keyboard keeps the name link, so the row
                 // itself takes no focus and no role.
-                onClick={() =>
+                onClick={(event) => {
+                  if (!opensRow(event)) return;
                   void navigate({
                     params: { scheduleName: schedule.name },
                     to: "/workspace/schedules/$scheduleName",
-                  })
-                }
+                  });
+                }}
               >
                 <TableCell className="max-w-0 whitespace-normal">
                   <Link
@@ -413,15 +421,23 @@ function ScheduleInventory({
                 </TableCell>
                 <TableCell
                   className="text-muted-foreground tabular-nums"
-                  title={fullDate(schedule.enabled ? schedule.nextFireAt : "")}
+                  title={fullDate(nextRunAt(schedule))}
                 >
-                  {describeNextRun(schedule)}
+                  <RunTime
+                    at={nextRunAt(schedule)}
+                    exact="hidden"
+                    label={describeNextRun(schedule)}
+                  />
                 </TableCell>
                 <TableCell
                   className="text-muted-foreground tabular-nums"
                   title={fullDate(schedule.lastFireAt)}
                 >
-                  {describeLastRun(schedule)}
+                  <RunTime
+                    at={schedule.lastFireAt}
+                    exact="hidden"
+                    label={describeLastRun(schedule)}
+                  />
                 </TableCell>
                 <TableCell className="text-right tabular-nums">{runCount(schedule)}</TableCell>
                 <TableCell>
@@ -462,7 +478,18 @@ function ScheduleInventory({
               <span className="line-clamp-2 text-xs text-muted-foreground">{schedule.prompt}</span>
               <span className="block text-[11px] text-muted-foreground tabular-nums">
                 {runCount(schedule)} {schedule.fireCount === 1 ? "run" : "runs"}
-                {schedule.lastFireAt ? ` · last ${describeLastRun(schedule)}` : " · never run"}
+                {schedule.lastFireAt ? (
+                  <>
+                    {" · last "}
+                    <RunTime
+                      at={schedule.lastFireAt}
+                      exact="hidden"
+                      label={describeLastRun(schedule)}
+                    />
+                  </>
+                ) : (
+                  " · never run"
+                )}
               </span>
             </span>
           </Link>
@@ -602,9 +629,24 @@ function EmptyState({
   );
 }
 
-/** The full local date behind a relative time, for the pointer's hover. */
+/**
+ * The full local date behind a relative time, for the pointer's hover. The
+ * cell's `RunTime` also carries it as text, so the title is never the only way
+ * to it.
+ */
 function fullDate(value: string) {
   return value && !Number.isNaN(Date.parse(value)) ? formatDate(value) : undefined;
+}
+
+/**
+ * Whether a click on a row's body should open the detail page. A modified
+ * click is the browser's (new tab, new window, extend a selection), and a
+ * click that ends a text selection in the row selects rather than navigates.
+ */
+function opensRow(event: React.MouseEvent) {
+  if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return false;
+  const selection = window.getSelection();
+  return !selection || selection.isCollapsed;
 }
 
 function runCount(schedule: Schedule) {

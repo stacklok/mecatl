@@ -59,6 +59,7 @@ import { formatDate, formatRelativeTime, formatUntilTime } from "../../lib/forma
 import { pageTitleClass } from "../../lib/typography";
 import { useShortcutSuppression } from "../shortcuts/shortcut-provider";
 import { describeCron } from "./describe-cron";
+import { RunTime } from "./run-time";
 import { canEditSchedule, ScheduleForm } from "./schedule-form";
 import { ScheduleStatusBadge } from "./schedule-status";
 
@@ -305,13 +306,23 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
             )}
             <Fact
               label="Next run"
-              title={schedule.nextFireAt ? formatDate(schedule.nextFireAt) : undefined}
-              value={describeNextRun(schedule)}
+              value={
+                <RunTime
+                  at={nextRunAt(schedule)}
+                  exact="visible"
+                  label={describeNextRun(schedule)}
+                />
+              }
             />
             <Fact
               label="Last run"
-              title={schedule.lastFireAt ? formatDate(schedule.lastFireAt) : undefined}
-              value={describeLastRun(schedule)}
+              value={
+                <RunTime
+                  at={schedule.lastFireAt}
+                  exact="visible"
+                  label={describeLastRun(schedule)}
+                />
+              }
             />
             <Fact label="Runs" value={describeRuns(schedule)} />
             {schedule.trigger.kind === "once" && (
@@ -528,9 +539,21 @@ export function timezoneLabel(timezone: string) {
 }
 
 /** A paused or completed schedule will not fire, so it has no next run to promise. */
+export function nextRunAt(schedule: Pick<Schedule, "enabled" | "nextFireAt">) {
+  return schedule.enabled ? schedule.nextFireAt : "";
+}
+
+/**
+ * The next run as time remaining. A run whose time has come reads "Due now"
+ * for its first minute, while the daemon claims it, then "Overdue": a schedule
+ * stuck past its time must not read "in <1m" for ever.
+ */
 export function describeNextRun(schedule: Pick<Schedule, "enabled" | "nextFireAt">) {
-  const at = Date.parse(schedule.nextFireAt);
-  if (!schedule.enabled || Number.isNaN(at)) return "—";
+  const at = Date.parse(nextRunAt(schedule));
+  if (Number.isNaN(at)) return "—";
+  const late = Date.now() - at;
+  if (late >= 60_000) return "Overdue";
+  if (late >= 0) return "Due now";
   return `in ${formatUntilTime(at)}`;
 }
 
@@ -625,7 +648,7 @@ function FactGroup({ children, title }: { children: React.ReactNode; title: stri
   );
 }
 
-function Fact({ label, title, value }: { label: string; title?: string; value: string }) {
+function Fact({ label, title, value }: { label: string; title?: string; value: React.ReactNode }) {
   return (
     <div className="flex items-start justify-between gap-4 px-4 py-3">
       <dt className="text-sm">{label}</dt>

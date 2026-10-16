@@ -20,6 +20,13 @@ function iso(offset: number) {
   return new Date(Date.now() + offset).toISOString();
 }
 
+/** What a sighted user reads: the text without visually hidden spans. */
+function visibleText(element: Element | undefined) {
+  const clone = element?.cloneNode(true) as Element | undefined;
+  for (const hidden of clone?.querySelectorAll(".sr-only") ?? []) hidden.remove();
+  return clone?.textContent ?? "";
+}
+
 async function desktopRow(name: string) {
   const table = await screen.findByRole("table");
   const row = within(table).getByRole("link", { name }).closest("tr");
@@ -28,7 +35,7 @@ async function desktopRow(name: string) {
 }
 
 describe("schedule inventory", () => {
-  it("shows next and last run as relative times, with the full date on hover", async () => {
+  it("shows next and last run as relative times, with the full date in a time element", async () => {
     const next = iso(2 * HOUR + 5 * 60_000);
     const last = iso(-3 * HOUR - 5 * 60_000);
     mountSchedules(
@@ -39,27 +46,47 @@ describe("schedule inventory", () => {
       "/workspace/schedules",
     );
     const [, , nextCell, lastCell] = within(await desktopRow("Alpha")).getAllByRole("cell");
-    expect(nextCell?.textContent).toBe("in 2h");
+    expect(visibleText(nextCell)).toBe("in 2h");
+    expect(nextCell?.querySelector("time")?.getAttribute("datetime")).toBe(next);
+    // The exact date is text, for keyboard, touch and screen readers; the title is the
+    // pointer's extra, never the only way to it.
+    expect(nextCell?.querySelector("time .sr-only")?.textContent).toContain(formatDate(next));
     expect(nextCell?.getAttribute("title")).toBe(formatDate(next));
-    expect(lastCell?.textContent).toBe("3h ago");
+    expect(visibleText(lastCell)).toBe("3h ago");
+    expect(lastCell?.querySelector("time")?.getAttribute("datetime")).toBe(last);
+    expect(lastCell?.querySelector("time .sr-only")?.textContent).toContain(formatDate(last));
     expect(lastCell?.getAttribute("title")).toBe(formatDate(last));
 
     // A paused schedule promises no next run, and one that never ran has no date.
     const [, , pausedNext, neverLast] = within(await desktopRow("Beta")).getAllByRole("cell");
     expect(pausedNext?.textContent).toBe("—");
+    expect(pausedNext?.querySelector("time")).toBeNull();
     expect(pausedNext?.hasAttribute("title")).toBe(false);
     expect(neverLast?.textContent).toBe("Never");
+    expect(neverLast?.querySelector("time")).toBeNull();
     expect(neverLast?.hasAttribute("title")).toBe(false);
   });
 
-  it("shows the last run as relative time in the mobile list", async () => {
+  it("reads an enabled schedule whose next run has passed as overdue", async () => {
+    const past = iso(-2 * HOUR);
+    mountSchedules([schedule({ name: "Alpha", nextFireAt: past })], "/workspace/schedules");
+    const [, , nextCell] = within(await desktopRow("Alpha")).getAllByRole("cell");
+    expect(visibleText(nextCell)).toBe("Overdue");
+    expect(nextCell?.querySelector("time")?.textContent).toContain(formatDate(past));
+  });
+
+  it("shows the last run as relative time in the mobile list, with its date as text", async () => {
+    const last = iso(-3 * HOUR - 60_000);
     mountSchedules(
-      [schedule({ fireCount: 2, lastFireAt: iso(-3 * HOUR - 60_000), name: "Alpha" })],
+      [schedule({ fireCount: 2, lastFireAt: last, name: "Alpha" })],
       "/workspace/schedules",
     );
     await screen.findByRole("table");
     const mobile = document.querySelector("[data-schedule-mobile-list]") as HTMLElement;
-    expect(within(mobile).getByRole("link").textContent).toContain("2 runs · last 3h ago");
+    const link = within(mobile).getByRole("link");
+    expect(visibleText(link)).toContain("2 runs · last 3h ago");
+    expect(link.querySelector("time")?.getAttribute("datetime")).toBe(last);
+    expect(link.querySelector("time .sr-only")?.textContent).toContain(formatDate(last));
   });
 
   it("shows status as a dot and a Title-case label, and the mobile dot names it on hover", async () => {
@@ -72,7 +99,8 @@ describe("schedule inventory", () => {
     );
     const statusCell = within(await desktopRow("Alpha")).getAllByRole("cell")[5] as HTMLElement;
     expect(statusCell.textContent).toBe("Running");
-    expect(statusCell.querySelector("[data-schedule-status-dot].animate-pulse")).toBeTruthy();
+    const dot = statusCell.querySelector("[data-schedule-status-dot].animate-pulse");
+    expect(dot?.classList.contains("motion-reduce:animate-none")).toBe(true);
     expect(within(await desktopRow("Beta")).getAllByRole("cell")[5]?.textContent).toBe("Completed");
 
     const mobile = document.querySelector("[data-schedule-mobile-list]") as HTMLElement;
@@ -86,6 +114,47 @@ describe("schedule inventory", () => {
     const user = userEvent.setup();
     const { router } = mountSchedules([schedule({ name: "Alpha" })], "/workspace/schedules");
     await user.click(within(await desktopRow("Alpha")).getByText("prompt"));
+    await waitFor(() =>
+      expect(router.history.location.pathname).toBe("/workspace/schedules/Alpha"),
+    );
+  });
+
+  for (const modifier of ["Control", "Meta", "Shift", "Alt"]) {
+    it(`leaves a ${modifier}-click on the row body to the browser`, async () => {
+      const user = userEvent.setup();
+      const { router } = mountSchedules([schedule({ name: "Alpha" })], "/workspace/schedules");
+      const prompt = within(await desktopRow("Alpha")).getByText("prompt");
+      await user.keyboard(`{${modifier}>}`);
+      await user.click(prompt);
+      await user.keyboard(`{/${modifier}}`);
+      // A plain click right after proves the row still navigates, and that the
+      // modified one was seen and skipped rather than still pending.
+      expect(router.history.location.pathname).toBe("/workspace/schedules");
+      await user.click(prompt);
+      await waitFor(() =>
+        expect(router.history.location.pathname).toBe("/workspace/schedules/Alpha"),
+      );
+    });
+  }
+
+  it("keeps a click that ends a text selection in the row from opening the detail page", async () => {
+    const { router } = mountSchedules(
+      [schedule({ name: "Alpha", prompt: "Publish the report" })],
+      "/workspace/schedules",
+    );
+    const prompt = within(await desktopRow("Alpha")).getByText("Publish the report");
+    // A drag that selects the prompt ends in a click on the row.
+    const range = document.createRange();
+    range.selectNodeContents(prompt);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    onTestFinished(() => window.getSelection()?.removeAllRanges());
+    prompt.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(router.history.location.pathname).toBe("/workspace/schedules");
+
+    selection?.removeAllRanges();
+    prompt.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     await waitFor(() =>
       expect(router.history.location.pathname).toBe("/workspace/schedules/Alpha"),
     );
@@ -188,10 +257,43 @@ describe("schedule detail", () => {
     expect(content?.contains(title)).toBe(false);
   });
 
-  it("shows a live schedule's badge in Title case with a pulse", async () => {
+  it("shows a live schedule's badge in Title case with a pulse that respects reduced motion", async () => {
     mountSchedules([schedule({ name: "Alpha", status: "claimed" })], "/workspace/schedules/Alpha");
     await screen.findByRole("heading", { level: 1, name: "Alpha" });
     const badge = screen.getByText("Claimed");
-    expect(badge.querySelector(".animate-pulse")).toBeTruthy();
+    const pulse = badge.querySelector(".animate-pulse");
+    expect(pulse?.classList.contains("motion-reduce:animate-none")).toBe(true);
+  });
+
+  it("shows the exact next and last run dates beside the relative ones, without hover", async () => {
+    const next = iso(13 * HOUR + 5 * 60_000);
+    const last = iso(-10 * HOUR - 5 * 60_000);
+    mountSchedules(
+      [schedule({ lastFireAt: last, name: "Alpha", nextFireAt: next })],
+      "/workspace/schedules/Alpha",
+    );
+    await screen.findByRole("heading", { level: 1, name: "Alpha" });
+    const fact = (label: string) => screen.getByText(label, { selector: "dt" }).nextElementSibling;
+    for (const [label, at, relative] of [
+      ["Next run", next, "in 13h"],
+      ["Last run", last, "10h ago"],
+    ] as const) {
+      const value = fact(label);
+      expect(visibleText(value ?? undefined)).toBe(`${relative} · ${formatDate(at)}`);
+      expect(value?.querySelector("time")?.getAttribute("datetime")).toBe(at);
+      // Visible now, so a hover title would only repeat it.
+      expect(value?.hasAttribute("title")).toBe(false);
+    }
+  });
+
+  it("promises no next run, and no date, for a paused schedule", async () => {
+    mountSchedules(
+      [schedule({ enabled: false, name: "Alpha", nextFireAt: iso(HOUR), status: "paused" })],
+      "/workspace/schedules/Alpha",
+    );
+    await screen.findByRole("heading", { level: 1, name: "Alpha" });
+    const value = screen.getByText("Next run", { selector: "dt" }).nextElementSibling;
+    expect(value?.textContent).toBe("—");
+    expect(value?.hasAttribute("title")).toBe(false);
   });
 });

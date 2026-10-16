@@ -31,8 +31,9 @@ import { SchedulesWorkspace } from "./schedules-workspace";
 type Schedule = ListSchedulesResponse["items"][number];
 type Fire = ListScheduleFiresResponse["items"][number];
 
-const NEXT = "2026-10-08T09:00:00Z";
-const LAST = "2026-10-07T09:00:00Z";
+// Relative to the clock, so the next run stays in the future (a past one reads overdue).
+const NEXT = new Date(Date.now() + 26 * 3_600_000).toISOString();
+const LAST = new Date(Date.now() - 26 * 3_600_000).toISOString();
 
 function schedule(overrides: Partial<Schedule> & Pick<Schedule, "name">): Schedule {
   return {
@@ -146,12 +147,14 @@ function mount(items: Schedule[], path: string, fires: Fire[] | "pending" = []) 
   return { queryClient, router };
 }
 
-/** Visible text plus every `title`, so a value may move between the two without being lost. */
-function disclosed(element: Element) {
-  const titles = [element, ...element.querySelectorAll("[title]")]
-    .map((node) => node.getAttribute("title") ?? "")
-    .filter(Boolean);
-  return [element.textContent ?? "", ...titles].join(" | ");
+/**
+ * The exact date a `<time dateTime>` inside `element` gives for `instant`, as text a
+ * screen reader reads (visible or visually hidden). A native `title` does not count:
+ * keyboard and touch users can't reach it.
+ */
+function exactTime(element: Element, instant: string) {
+  const time = element.querySelector(`time[datetime="${instant}"]`);
+  return time?.textContent ?? "";
 }
 
 async function desktopRow(name: string) {
@@ -190,11 +193,18 @@ describe("schedule inventory keeps its data and actions", () => {
     expect(within(row).getAllByText(/^scheduled$/i).length).toBeGreaterThan(0);
   });
 
-  it("keeps the full next and last run dates available on the row", async () => {
+  it("keeps the full next and last run dates in the row's text, not only on hover", async () => {
     mount([alpha], "/workspace/schedules");
     const row = await desktopRow("Alpha");
-    expect(disclosed(row)).toContain(formatDate(NEXT));
-    expect(disclosed(row)).toContain(formatDate(LAST));
+    expect(exactTime(row, NEXT)).toContain(formatDate(NEXT));
+    expect(exactTime(row, LAST)).toContain(formatDate(LAST));
+  });
+
+  it("keeps the full last run date in the phone row's text", async () => {
+    mount([alpha], "/workspace/schedules");
+    await screen.findByRole("table");
+    const link = within(mobileList()).getByRole("link");
+    expect(exactTime(link, LAST)).toContain(formatDate(LAST));
   });
 
   it("shows a dash for a paused schedule's next run and Never for one that has not run", async () => {
@@ -314,7 +324,7 @@ describe("schedule detail keeps its data and actions", () => {
       ]),
     );
     expect(facts).toMatchObject({
-      "Last run": expect.stringMatching(/ago$/),
+      "Last run": expect.stringMatching(/ ago\b/),
       Mode: "Accept edits",
       Model: "provider-a / model-a",
       "Next run": expect.stringMatching(/^in /),
@@ -325,9 +335,11 @@ describe("schedule detail keeps its data and actions", () => {
       Tools: "All",
       "Write access": "Writes allowed",
     });
-    expect(disclosed(document.body)).toContain(formatDate(NEXT));
-    expect(disclosed(document.body)).toContain(formatDate(LAST));
-    expect(disclosed(document.body)).toContain("0 9 * * * (Europe/Rome)");
+    expect(exactTime(document.body, NEXT)).toContain(formatDate(NEXT));
+    expect(exactTime(document.body, LAST)).toContain(formatDate(LAST));
+    expect(screen.getByText(describeCron("0 9 * * *")).getAttribute("title")).toBe(
+      "0 9 * * * (Europe/Rome)",
+    );
   });
 
   it("names its status for every state", async () => {

@@ -48,7 +48,11 @@ function Dot({ status }: { status: ScheduleStatus }) {
   return (
     <span
       aria-hidden="true"
-      className={cn("size-1.5 shrink-0 rounded-full", style.dot, style.live && "animate-pulse")}
+      className={cn(
+        "size-1.5 shrink-0 rounded-full",
+        style.dot,
+        style.live && "animate-pulse motion-reduce:animate-none",
+      )}
       data-schedule-status-dot={status}
     />
   );
@@ -59,7 +63,10 @@ export function ScheduleStatusBadge({ status }: { status: ScheduleStatus }) {
   return (
     <Badge variant={style.badge}>
       {style.live && (
-        <span aria-hidden="true" className="size-1.5 animate-pulse rounded-full bg-current" />
+        <span
+          aria-hidden="true"
+          className="size-1.5 animate-pulse rounded-full bg-current motion-reduce:animate-none"
+        />
       )}
       {style.label}
     </Badge>
