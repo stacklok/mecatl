@@ -2,6 +2,7 @@ package session
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -162,6 +163,11 @@ func ceilingBoundSession(t *testing.T, ceilingTools, boundTools []string) *Sessi
 	}); err != nil {
 		t.Fatalf("BindAuthority: %v", err)
 	}
+	// Completion requires recorded broker-key provenance; this session mounted
+	// no broker bundle, so the ledger is present and empty.
+	if err := s.RestoreWorkspaceEnrollmentBrokerKeys(nil, true); err != nil {
+		t.Fatalf("RestoreWorkspaceEnrollmentBrokerKeys: %v", err)
+	}
 	return s
 }
 
@@ -246,6 +252,8 @@ func TestSessionScopedAgentIdentity_Scenario3_CompleteWorkspaceEnrollmentRespect
 		before, _ := s.BoundAuthority()
 		if err := s.CompleteWorkspaceEnrollment(pending, []string{"Read", "mcp__broker__outside"}); err == nil {
 			t.Fatal("CompleteWorkspaceEnrollment accepted a broker tool outside the ceiling")
+		} else if !strings.Contains(err.Error(), "exceeds bound ceiling") {
+			t.Fatalf("rejected for the wrong reason, want the ceiling guard: %v", err)
 		}
 		after, _ := s.BoundAuthority()
 		if !reflect.DeepEqual(after, before) {
