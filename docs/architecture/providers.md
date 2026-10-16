@@ -36,6 +36,17 @@ encrypted reasoning before any chunk is emitted, the adapter retries once withou
 and marks a second failure not retryable. `provider/ssefilter` drops data-less SSE
 frames (keepalives) before the OpenAI SDK decoder can choke on them. Upstream error
 text maps to a closed set of display categories and never reaches clients raw.
+The Responses adapter also classifies nested error envelopes intercepted by the
+SDK, preserving the SDK cause and the last typed response ID. Known transient
+codes retain in-band retry semantics (not an observed HTTP status). Context
+window overflow vetoes retry and stays breaker-neutral, including overflow in an
+error's `param`; in-band metadata retains its code/message mapping. Unknown direct
+error events, failed responses, and unknown or malformed SDK envelopes identify a
+provider stream error event without exposing their contents or enabling retries.
+Transient failures recover only before visible output; after output they terminate
+without replay, preserving the already-emitted text.
+Typed JSON syntax/schema, unexpected EOF, and network failures have distinct safe
+display categories; arbitrary causes remain unwrap-visible, never rendered raw.
 
 Reasoning visibility is settled per wire. The Responses adapter asks every request
 for reasoning summaries (`reasoning.summary: auto`), even with no effort set; an
