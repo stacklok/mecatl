@@ -3,7 +3,6 @@
 import type { RunStreamEvent } from "@mecatl-studio/contracts";
 import {
   cancelRun,
-  resolvePlanAsk,
   resolveRunPermission,
   startRun,
   watchSessionActivity,
@@ -32,7 +31,7 @@ import {
   Square,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { Button } from "../../components/ui/button";
+import { Button, buttonVariants } from "../../components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -42,6 +41,7 @@ import {
   DropdownMenuTrigger,
 } from "../../components/ui/dropdown-menu";
 import { Textarea } from "../../components/ui/textarea";
+import { Toggle } from "../../components/ui/toggle";
 import { captureSseFailure, protectedRequestsPaused } from "../../lib/api-client";
 import { copyToClipboard } from "../../lib/clipboard";
 import { errorMessage } from "../../lib/error-message";
@@ -53,8 +53,9 @@ import {
   useUserAvatar,
   useUserDisplayName,
 } from "../../lib/profile-preferences";
+import { cn } from "../../lib/utils";
 import { useAuthRecovery } from "../auth/auth-recovery-context";
-import { ApprovalPanel, type ApprovalRequest, type ApprovalVerdict } from "./approval-panel";
+import type { ApprovalRequest, ApprovalVerdict } from "./approval-panel";
 import type { ComposerModelOption } from "./chat-composer";
 import { useChatEscape } from "./chat-escape";
 import {
@@ -66,11 +67,10 @@ import {
   retractApproval,
   unmatchedApprovals,
 } from "./chat-state";
-import { Message } from "./chat-workspace";
 import { EscapeHintContext } from "./escape-hint-context";
+import { Message } from "./message";
 import { groupModels, ModelEffortMenu } from "./model-effort-menu";
-import { exactPlanControlAvailability, followPlanContinuationFromBff } from "./plan-continuation";
-import { PlanReviewCard, type PlanVerdict } from "./plan-review-card";
+import { PendingAskCard, pendingAskKey } from "./pending-ask-card";
 import {
   CATCHING_UP_NOTICE,
   decideTruncation,
@@ -80,6 +80,7 @@ import {
 } from "./run-stream";
 import { SidePanelShell } from "./side-panel-shell";
 import { registerThreadSession } from "./thread-map";
+import { usePlanVerdictControl } from "./use-plan-verdict-control";
 import { useVoiceInput } from "./use-voice-input";
 import { VerdictLedger } from "./verdict-ledger";
 
@@ -136,6 +137,7 @@ export function SideThreadPanel({
         image: candidate.image,
         label: candidate.displayName,
         providerId: candidate.providerId,
+        providerLabel: candidate.providerDisplayName,
       })) ?? [];
   const busy = run.isRunning || forkSession.isPending;
   const escapeAsk =
@@ -288,26 +290,20 @@ export function SideThreadPanel({
                 ))}
               </div>
             )}
-            {unmatchedApprovals(run.approvals, run.messages).map((approval) =>
-              approval.tool === "PresentPlan" ? (
-                <PlanReviewCard
-                  approval={approval}
-                  disabled={run.approvalDisabled(approval)}
-                  key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
-                  onRespond={(verdict) => void run.respondToPlan(approval, verdict)}
-                  uncertain={run.approvalUncertain(approval)}
-                  unavailableReason={run.planUnavailableReason(approval)}
-                />
-              ) : (
-                <ApprovalPanel
-                  approval={approval}
-                  disabled={run.approvalDisabled(approval)}
-                  key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
-                  onRespond={(verdict) => void run.respondToApproval(approval, verdict)}
-                  uncertain={run.approvalUncertain(approval)}
-                />
-              ),
-            )}
+            {unmatchedApprovals(run.approvals, run.messages).map((approval) => (
+              <PendingAskCard
+                approval={approval}
+                controls={{
+                  approvalDisabled: run.approvalDisabled,
+                  approvalUncertain: run.approvalUncertain,
+                  onRespondToApproval: (target, verdict) =>
+                    void run.respondToApproval(target, verdict),
+                  onRespondToPlan: (target, verdict) => void run.respondToPlan(target, verdict),
+                  planUnavailableReason: run.planUnavailableReason,
+                }}
+                key={pendingAskKey(approval)}
+              />
+            ))}
           </div>
         </div>
 
@@ -369,22 +365,27 @@ export function SideThreadPanel({
               </div>
               <div className="flex items-center gap-1 px-2 pb-2">
                 {voice.isSupported && (
-                  <Button
+                  <Toggle
                     aria-label={voice.isListening ? "Stop dictation" : "Start dictation"}
-                    aria-pressed={voice.isListening}
-                    className={
-                      voice.isListening
-                        ? "size-8 shrink-0 rounded-full bg-brand/10 text-brand hover:bg-brand/20"
-                        : "size-8 shrink-0 rounded-full text-muted-foreground hover:bg-muted/60"
-                    }
+                    // The ghost icon button's look: brand tint while listening,
+                    // the ghost's hover ink in both states.
+                    className={cn(
+                      buttonVariants({ size: "icon", variant: "ghost" }),
+                      "size-8 min-w-0 shrink-0 rounded-full px-0 text-muted-foreground hover:bg-muted/60 data-[state=on]:bg-brand/10 data-[state=on]:text-brand data-[state=on]:hover:bg-brand/20 data-[state=on]:hover:text-accent-foreground",
+                    )}
                     disabled={busy}
-                    onClick={voice.toggle}
-                    size="icon"
-                    type="button"
-                    variant="ghost"
+                    onPressedChange={voice.toggle}
+                    pressed={voice.isListening}
+                    size="sm"
                   >
-                    {voice.isListening ? <MicOff aria-hidden="true" /> : <Mic aria-hidden="true" />}
-                  </Button>
+                    {/* Sized here: the phone's 20px glyph rule covers size-4 icons
+                        and Button's bare ones, not a Toggle's. */}
+                    {voice.isListening ? (
+                      <MicOff aria-hidden="true" className="size-4" />
+                    ) : (
+                      <Mic aria-hidden="true" className="size-4" />
+                    )}
+                  </Toggle>
                 )}
                 <Button
                   aria-label={busy ? "Mecatl is working" : "Send reply"}
@@ -456,12 +457,7 @@ function useSideThreadRun(sessionId: string) {
   const [notice, setNotice] = useState<string>();
   const [controlPending, setControlPending] = useState(false);
   const runAbort = useRef<AbortController | undefined>(undefined);
-  const planFollowAbort = useRef<AbortController | undefined>(undefined);
-  const planReattach = useRef<{ cursor?: string; runId: string; sessionId: string } | undefined>(
-    undefined,
-  );
   const [reattachEpoch, setReattachEpoch] = useState(0);
-  const [planContinuationActive, setPlanContinuationActive] = useState(false);
   const runIdRef = useRef<string | undefined>(undefined);
   // A side thread can move to a successor session without remounting, so a
   // verdict that lands late must not write into the session now on screen.
@@ -469,8 +465,30 @@ function useSideThreadRun(sessionId: string) {
   viewedSessionId.current = sessionId;
   const verdicts = useRef(new VerdictLedger());
   const [verdictEpoch, setVerdictEpoch] = useState(0);
+  const plan = usePlanVerdictControl({
+    activeTarget: () => (runIdRef.current ? { runId: runIdRef.current, sessionId } : undefined),
+    controlPending,
+    features: runtime.data?.features,
+    isViewed: (id) => id === viewedSessionId.current,
+    ledger: verdicts.current,
+    onStarted: ({ runId: startedRunId }) => {
+      runAbort.current?.abort();
+      runAbort.current = undefined;
+      runIdRef.current = startedRunId;
+      setRunId(startedRunId);
+      setReattachEpoch((current) => current + 1);
+    },
+    onUncertain: () => setVerdictEpoch((value) => value + 1),
+    retract: (target) => {
+      if (viewedSessionId.current === target.sessionId)
+        setApprovals((current) => retractApproval(current, target.askId, target.runId));
+    },
+    setControlPending,
+    setError,
+    setNotice,
+  });
 
-  useEffect(() => () => planFollowAbort.current?.abort(), []);
+  useEffect(() => () => plan.abort(), [plan.abort]);
 
   useEffect(() => {
     if (!isRunning && transcript.data)
@@ -480,9 +498,7 @@ function useSideThreadRun(sessionId: string) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally resets on session identity alone, not on any value read inside
   useEffect(() => {
     runAbort.current?.abort();
-    planFollowAbort.current?.abort();
-    planReattach.current = undefined;
-    setPlanContinuationActive(false);
+    plan.reset();
     runAbort.current = undefined;
     setError(undefined);
     setNotice(undefined);
@@ -497,12 +513,12 @@ function useSideThreadRun(sessionId: string) {
 
   const selected = sessions.data?.items.find((session) => session.id === sessionId);
   const watchable = isActiveSessionState(selected?.state);
-  const shouldWatch = watchable || planContinuationActive;
+  const shouldWatch = watchable || plan.continuationActive;
 
   // A proven plan continuation can reattach before the inventory catches up.
   // biome-ignore lint/correctness/useExhaustiveDependencies: consume/refresh are stable for this lifetime
   useEffect(() => {
-    const planRefresh = planReattach.current;
+    const planRefresh = plan.reattachRef.current;
     if (
       !sessionId ||
       (!shouldWatch && planRefresh?.sessionId !== sessionId) ||
@@ -510,7 +526,7 @@ function useSideThreadRun(sessionId: string) {
       protectedRequestsPaused()
     )
       return;
-    planReattach.current = undefined;
+    plan.reattachRef.current = undefined;
     const controller = new AbortController();
     runAbort.current = controller;
     setIsRunning(true);
@@ -542,7 +558,7 @@ function useSideThreadRun(sessionId: string) {
       } finally {
         if (runAbort.current === controller) {
           runAbort.current = undefined;
-          if (planRefresh?.sessionId === sessionId) setPlanContinuationActive(false);
+          if (planRefresh?.sessionId === sessionId) plan.endContinuation();
           setRunId(undefined);
           runIdRef.current = undefined;
           setApprovals((current) => retainUncertainApprovals(current));
@@ -769,83 +785,6 @@ function useSideThreadRun(sessionId: string) {
     );
   }
 
-  function planUnavailableReason(approval: ApprovalRequest): string | undefined {
-    const featureReason = exactPlanControlAvailability(runtime.data?.features).reason;
-    if (featureReason) return featureReason;
-    const target = approval.controlTarget;
-    return !target ||
-      target.askId !== approval.askId ||
-      target.sessionId !== sessionId ||
-      target.runId !== runIdRef.current
-      ? "This plan ask is stale or its exact run is unavailable. Refresh activity."
-      : undefined;
-  }
-
-  async function respondToPlan(approval: ApprovalRequest, verdict: PlanVerdict) {
-    if (
-      approval.tool !== "PresentPlan" ||
-      planUnavailableReason(approval) ||
-      approvalDisabled(approval)
-    )
-      return;
-    const target = approval.controlTarget;
-    if (!target) return;
-    if (!verdicts.current.begin(target)) return;
-    setControlPending(true);
-    try {
-      await resolvePlanAsk({
-        body: { verdict },
-        path: { askId: target.askId, runId: target.runId, sessionId: target.sessionId },
-        throwOnError: true,
-      });
-      verdicts.current.acknowledge(target);
-      if (viewedSessionId.current !== target.sessionId) return;
-      setApprovals((current) => retractApproval(current, target.askId, target.runId));
-      if (verdict === "iterate") {
-        setNotice("Plan iteration requested.");
-      } else {
-        setNotice("Plan approval accepted; checking whether execution started.");
-        const controller = new AbortController();
-        planFollowAbort.current = controller;
-        const evidence = await followPlanContinuationFromBff(
-          { askId: target.askId, planRunId: target.runId, sessionId: target.sessionId },
-          controller.signal,
-        );
-        if (!controller.signal.aborted && viewedSessionId.current === target.sessionId) {
-          if (evidence.kind === "started") {
-            planReattach.current = {
-              cursor: evidence.resumeFrom,
-              runId: evidence.runId,
-              sessionId: target.sessionId,
-            };
-            setPlanContinuationActive(true);
-            runAbort.current?.abort();
-            runAbort.current = undefined;
-            runIdRef.current = evidence.runId;
-            setRunId(evidence.runId);
-            setReattachEpoch((current) => current + 1);
-          } else if (evidence.kind === "failed") {
-            setNotice(undefined);
-            setError("Plan approval was recorded, but execution could not start.");
-          } else {
-            setNotice(undefined);
-            setError(
-              "Plan approval was recorded, but could not confirm whether execution started. Refresh activity to check.",
-            );
-          }
-        }
-      }
-    } catch (caught) {
-      verdicts.current.markUncertain(target);
-      setVerdictEpoch((value) => value + 1);
-      if (viewedSessionId.current === target.sessionId)
-        setError(`Could not confirm this verdict: ${errorMessage(caught)}`);
-    } finally {
-      planFollowAbort.current = undefined;
-      if (viewedSessionId.current === target.sessionId) setControlPending(false);
-    }
-  }
-
   async function respondToApproval(approval: ApprovalRequest, verdict: ApprovalVerdict) {
     if (
       approval.tool === "PresentPlan" ||
@@ -887,8 +826,8 @@ function useSideThreadRun(sessionId: string) {
     messages,
     notice,
     respondToApproval,
-    respondToPlan,
-    planUnavailableReason,
+    respondToPlan: plan.respondToPlan,
+    planUnavailableReason: plan.planUnavailableReason,
     runId,
     sendPrompt,
     setError,

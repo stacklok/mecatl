@@ -167,6 +167,28 @@ patterns use shell-style glob matching. The `permissions:` section parses
 strictly, so a misspelled key causes the file to be skipped rather than silently
 changing the policy.
 
+A pattern matches the argument value that the tool runs with:
+
+| Tool | Argument the pattern matches |
+|-|-|
+| `Shell` | `command` |
+| `Read`, `Write`, `Edit`, `Remove`, `ListDir`, `Grep` | `path` |
+| `Glob` | `pattern` |
+| `WebFetch` | `url` |
+| `WebSearch` | `query` |
+| `Copy`, `Move` | `source` and `destination`, each evaluated separately; the stricter result applies |
+
+A call without that argument, such as a `Grep` call without a `path`, matches
+only rules without a pattern. For MCP and other tools, a pattern matches the
+first of `path`, `file_path`, `pattern`, `url`, and `query` that the call
+carries. A `deny` or `ask` pattern that matches any of the others also applies
+to the call.
+
+Mecatl rejects a tool call whose arguments repeat a key, or spell an argument in
+a different letter case, before any rule, hook, or approval request sees the
+call. The model receives an error and can resend the call with each argument
+spelled as in the tool schema.
+
 The configuration scopes, from highest to lowest precedence, are:
 
 1. managed policy;

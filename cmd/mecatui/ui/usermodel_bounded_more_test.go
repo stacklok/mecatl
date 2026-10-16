@@ -45,6 +45,50 @@ func checkSavedMemoryCard(t *testing.T, m Model, w, h int) {
 		t.Fatalf("body width=%d offered=%d: %q", got, w, rendered)
 	}
 }
+func TestSavedMemoryWheelThroughUpdate(t *testing.T) {
+	fum := sampleUserModel()
+	fum.model.Detail = &client.UserModelDetail{Current: client.UserModelRevision{Key: "name", Value: strings.Repeat("reader line\n", 100)}}
+	m := newUserModelModel(t, fum, client.Capabilities{UserModel: true})
+	m.conv.addUser("question")
+	m.conv.appendAssistant(strings.Repeat("conversation line\n", 100))
+	m.refreshView()
+	m, s := openedUserModel(t, m)
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = feedCmd(t, updated.(Model), cmd)
+	if s.view != userModelDetail {
+		t.Fatal("Choose did not open the reader")
+	}
+	selected, listOffset, conversationOffset := s.list.CursorID(), s.list.Offset(), m.vp.YOffset()
+	for _, step := range []struct {
+		button tea.MouseButton
+		offset int
+	}{
+		{tea.MouseWheelDown, 1}, {tea.MouseWheelLeft, 1}, {tea.MouseWheelRight, 1}, {tea.MouseNone, 1}, {tea.MouseWheelUp, 0},
+	} {
+		// No View between input events: root preparation must supply reader geometry.
+		updated, _ = m.Update(tea.MouseWheelMsg{Button: step.button})
+		m = updated.(Model)
+		if s.viewport.Offset() != step.offset || s.list.CursorID() != selected || s.list.Offset() != listOffset || m.vp.YOffset() != conversationOffset || m.modal != s {
+			t.Fatalf("button %v escaped reader ownership or moved the wrong window", step.button)
+		}
+	}
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	m = updated.(Model)
+	for _, size := range [][2]int{{0, 30}, {100, 0}, {2, 18}} {
+		updated, _ = m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		m = updated.(Model)
+		listOffset, conversationOffset = s.list.Offset(), m.vp.YOffset()
+		generation := s.generation
+		for _, msg := range []tea.Msg{tea.MouseWheelMsg{Button: tea.MouseWheelDown}, tea.KeyPressMsg{Code: tea.KeyEnter}} {
+			updated, _ = m.Update(msg)
+			m = updated.(Model)
+			if !s.compact || m.modal != s || s.view != userModelPanel || s.list.CursorID() != selected || s.list.Offset() != listOffset || m.vp.YOffset() != conversationOffset || s.generation != generation || s.requestKey != "" || s.loading {
+				t.Fatalf("size %v: %T scrolled or activated unusable geometry", size, msg)
+			}
+		}
+	}
+}
+
 func TestMecatuiSavedMemoryBoundedBrowser_Scenario1_AllStatesFit(t *testing.T) {
 	m, s := savedMemoryOpened(t, savedMemoryEntries(30))
 	for _, state := range []struct {

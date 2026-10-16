@@ -29,8 +29,22 @@ const configuration: DraftChatConfiguration = {
 };
 
 const models = [
-  { id: "deep", image: false, label: "Deep model", providerId: "provider", reasoning: true },
-  { id: "plain", image: false, label: "Plain model", providerId: "provider", reasoning: false },
+  {
+    id: "deep",
+    image: false,
+    label: "Deep model",
+    providerId: "provider",
+    providerLabel: "Provider",
+    reasoning: true,
+  },
+  {
+    id: "plain",
+    image: false,
+    label: "Plain model",
+    providerId: "provider",
+    providerLabel: "Provider",
+    reasoning: false,
+  },
 ];
 
 function composerInput() {
@@ -84,7 +98,8 @@ describe("persisted composer draft", () => {
 
     fireEvent.keyDown(composerInput(), { key: "Enter" });
     await waitFor(() => expect(composerInput().value).toBe(""));
-    expect(readDraft("chat-a")).toBe("");
+    // The draft is stored by a passive effect after the input commits, so wait for it too.
+    await waitFor(() => expect(readDraft("chat-a")).toBe(""));
     expect(sessionDraftKeys()).toEqual([]);
   });
 

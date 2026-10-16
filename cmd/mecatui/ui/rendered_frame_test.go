@@ -81,12 +81,16 @@ func TestEmptyAssistantTurnsDoNotSeparateSettledCalls(t *testing.T) {
 	for _, width := range []int{28, 100} {
 		r.setWidth(width)
 		frame := r.renderConversationFrame(&c.scrollback, false)
-		if got := strings.Count(stripANSIstr(strings.Join(frame.lines, "\n")), "● mecatl"); got != 0 {
+		if got := strings.Count(stripANSIstr(strings.Join(frame.lines, "\n")), "◀ mecatl"); got != 0 {
 			t.Fatalf("width %d rendered %d empty assistant labels: %q", width, got, frame.lines)
 		}
 		first := toolBlockID(t, c.scrollback, "one")
 		second := toolBlockID(t, c.scrollback, "two")
-		assertLongRunGap(t, frame, first, second, 0)
+		if !strings.Contains(stripANSIstr(strings.Join(frame.lines, "\n")), "● 2 tools run") || frame.toolSummaryRow(first) != frame.toolSummaryRow(second) || frame.toolSummaryRow(second) < 0 {
+			t.Fatal("empty turns must bridge a single comfort group")
+		}
+		detailed := r.renderConversationFrame(&c.scrollback, true)
+		assertLongRunGap(t, detailed, first, second, 0)
 		if len(frame.lines) != len(frame.provenance) {
 			t.Fatalf("width %d frame/provenance mismatch", width)
 		}
@@ -98,7 +102,7 @@ func TestEmptyAssistantTurnsDoNotSeparateSettledCalls(t *testing.T) {
 	}
 	// F9 must not resurrect whitespace-only messages as empty speaker turns.
 	expandedEmpty := r.renderConversationFrame(&c.scrollback, true)
-	if strings.Contains(stripANSIstr(strings.Join(expandedEmpty.lines, "\n")), "● mecatl") || expandedEmpty.hasRegion(secondEmpty, conversationRegionBody) {
+	if strings.Contains(stripANSIstr(strings.Join(expandedEmpty.lines, "\n")), "◀ mecatl") || expandedEmpty.hasRegion(secondEmpty, conversationRegionBody) {
 		t.Fatalf("whitespace-only assistant rendered in F9 detail: %q", expandedEmpty.lines)
 	}
 
@@ -107,14 +111,14 @@ func TestEmptyAssistantTurnsDoNotSeparateSettledCalls(t *testing.T) {
 	c.appendReasoning("a summary")
 	frame := r.renderConversationFrame(&c.scrollback, false)
 	plain := stripANSIstr(strings.Join(frame.lines, "\n"))
-	if got := strings.Count(plain, "● mecatl"); got != 0 {
+	if got := strings.Count(plain, "◀ mecatl"); got != 1 {
 		t.Fatalf("collapsed reasoning-only turn rendered %d speaker labels", got)
 	}
 	if !strings.Contains(plain, "reasoning…") || !frame.hasRegion(lastEmpty, conversationRegionReasoning) {
 		t.Fatalf("reasoning-only turn lost its collapsed summary or provenance: %q", plain)
 	}
 	expandedFrame := r.renderConversationFrame(&c.scrollback, true)
-	if expanded := stripANSIstr(strings.Join(expandedFrame.lines, "\n")); !strings.Contains(expanded, "a summary") || !strings.Contains(expanded, "● mecatl") || !expandedFrame.hasRegion(lastEmpty, conversationRegionReasoning) {
+	if expanded := stripANSIstr(strings.Join(expandedFrame.lines, "\n")); !strings.Contains(expanded, "a summary") || !strings.Contains(expanded, "◀ mecatl") || !expandedFrame.hasRegion(lastEmpty, conversationRegionReasoning) {
 		t.Fatalf("reasoning-only turn lost its expanded detail or provenance: %q", expanded)
 	}
 	c.appendAssistant("an answer")
@@ -136,6 +140,7 @@ func TestEmptyAssistantBecomesVisibleWithoutMovingReader(t *testing.T) {
 		m.conv.resolveTool(id, "result", false)
 	}
 	m.conv.startAssistant()
+	m.expandConversation = true // individual member anchors are visible in F9
 	m.refreshView()
 	m.vp.SetYOffset(5)
 	m.conversationView.mode = anchored

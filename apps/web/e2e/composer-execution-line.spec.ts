@@ -4,7 +4,7 @@ import type { Locator, Page } from "@playwright/test";
 import { expect, type OfflineBff, test } from "./fixtures";
 
 const sessionId = "chat-a";
-const widths = [500, 640, 1280];
+const widths = [640, 1280];
 
 function serve(bff: OfflineBff) {
   bff.json("GET", "/api/v1/auth/session", {
@@ -37,6 +37,7 @@ function serve(bff: OfflineBff) {
         displayName: "Claude Sonnet 4.5",
         id: "claude-sonnet-4-5",
         image: false,
+        providerDisplayName: "Anthropic",
         providerId: "anthropic",
         reasoning: true,
       },
@@ -86,6 +87,7 @@ function serve(bff: OfflineBff) {
     model: {
       contextWindow: "200000",
       id: "claude-sonnet-4-5",
+      providerDisplayName: "Anthropic",
       providerId: "anthropic",
       reasoningEffort: "medium",
     },

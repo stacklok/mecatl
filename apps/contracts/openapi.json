@@ -1833,6 +1833,9 @@
                         "contextWindow": {
                           "type": "string"
                         },
+                        "providerDisplayName": {
+                          "type": "string"
+                        },
                         "reasoningEffort": {
                           "type": "string",
                           "enum": [
@@ -1849,6 +1852,7 @@
                         "id",
                         "providerId",
                         "contextWindow",
+                        "providerDisplayName",
                         "reasoningEffort"
                       ]
                     },
@@ -6950,6 +6954,19 @@
                           "inFlight": {
                             "type": "boolean"
                           },
+                          "outcome": {
+                            "type": "string",
+                            "enum": [
+                              "claimed",
+                              "in_flight",
+                              "completed",
+                              "failed",
+                              "cancelled",
+                              "timed_out",
+                              "limit_reached",
+                              "stopped"
+                            ]
+                          },
                           "progressAt": {
                             "type": "string",
                             "nullable": true
@@ -6974,6 +6991,7 @@
                           "firedAt",
                           "id",
                           "inFlight",
+                          "outcome",
                           "progressAt",
                           "scheduleName",
                           "sessionId",
@@ -7385,7 +7403,83 @@
               }
             }
           },
+          "400": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
           "404": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
             "description": "The request could not be completed.",
             "content": {
               "application/problem+json": {
@@ -12707,6 +12801,9 @@
                           "image": {
                             "type": "boolean"
                           },
+                          "providerDisplayName": {
+                            "type": "string"
+                          },
                           "providerId": {
                             "type": "string"
                           },
@@ -12719,6 +12816,7 @@
                           "displayName",
                           "id",
                           "image",
+                          "providerDisplayName",
                           "providerId",
                           "reasoning"
                         ]
@@ -12744,6 +12842,9 @@
                           "defaultModelAutoSelected": {
                             "type": "boolean"
                           },
+                          "displayName": {
+                            "type": "string"
+                          },
                           "hint": {
                             "type": "string"
                           },
@@ -12761,6 +12862,7 @@
                         "required": [
                           "availableNotDefault",
                           "defaultModelAutoSelected",
+                          "displayName",
                           "hint",
                           "id",
                           "modelCount",
@@ -12910,6 +13012,9 @@
                           "image": {
                             "type": "boolean"
                           },
+                          "providerDisplayName": {
+                            "type": "string"
+                          },
                           "providerId": {
                             "type": "string"
                           },
@@ -12922,6 +13027,7 @@
                           "displayName",
                           "id",
                           "image",
+                          "providerDisplayName",
                           "providerId",
                           "reasoning"
                         ]
@@ -12935,6 +13041,9 @@
                         },
                         "defaultModelAutoSelected": {
                           "type": "boolean"
+                        },
+                        "displayName": {
+                          "type": "string"
                         },
                         "hint": {
                           "type": "string"
@@ -12953,6 +13062,7 @@
                       "required": [
                         "availableNotDefault",
                         "defaultModelAutoSelected",
+                        "displayName",
                         "hint",
                         "id",
                         "modelCount",

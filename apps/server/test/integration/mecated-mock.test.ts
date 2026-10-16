@@ -140,6 +140,15 @@ describe.skipIf(!available)("Studio BFF against a spawned mecated --mock", () =>
 
     const detail = await json(`/api/v1/sessions/${id}`);
     expect(detail.body).toMatchObject({ id, mode: "default", state: "completed" });
+    // The mock daemon resolves its own provider; these fields predate provider display names (#2260).
+    expect(detail.body.model).toMatchObject({
+      id: "mock",
+      providerId: "mock",
+      reasoningEffort: "default",
+    });
+    expect(typeof (detail.body.model as { contextWindow?: unknown }).contextWindow).toBe("string");
+    // The BFF names the resolved model's provider for the browser.
+    expect(detail.body.model).toMatchObject({ providerDisplayName: "Mock" });
 
     const renamed = await json(`/api/v1/sessions/${id}`, {
       body: JSON.stringify({ title: "Integration chat" }),

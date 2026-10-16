@@ -2932,7 +2932,8 @@ func (x *ActivityReplayStatus) GetAuthoritative() bool {
 }
 
 // GetSessionTranscriptResponse is one coherent SessionStore snapshot projection.
-// messages are the loaded aggregate's current Conversation.Messages in order.
+// messages are the ordered human-display projection; internal harness control
+// continuations are omitted, while a successful empty projection is complete.
 type GetSessionTranscriptResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// session_id is copied from the same loaded aggregate as messages.

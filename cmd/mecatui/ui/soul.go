@@ -140,34 +140,17 @@ func (s *soulState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 		return nil, true, true
 	}
 	if s.viewport != nil {
-		move := bounded.LineDown
-		switch {
-		case key.Matches(msg, s.deps.keys.Down):
-		case key.Matches(msg, s.deps.keys.Up):
-			move = bounded.LineUp
-		case key.Matches(msg, s.deps.keys.ScrollD):
-			move = bounded.PageDown
-		case key.Matches(msg, s.deps.keys.ScrollU):
-			move = bounded.PageUp
-		case key.Matches(msg, s.deps.keys.ScrollBottom):
-			move = bounded.End
-		case key.Matches(msg, s.deps.keys.ScrollTop):
-			move = bounded.Top
-		default:
-			return nil, true, false
+		if move, ok := boundedNavigationMove(msg, s.deps.keys, bounded.LineDown, bounded.LineUp, bounded.PageDown, bounded.PageUp, bounded.End, bounded.Top); ok {
+			s.viewport.Move(move, s.total)
 		}
-		s.viewport.Move(move, s.total)
 	}
 	return nil, true, false
 }
 
 func (s *soulState) HandleWheel(msg tea.MouseWheelMsg) (tea.Cmd, bool) {
 	if s.viewport != nil {
-		switch msg.Mouse().Button {
-		case tea.MouseWheelUp:
-			s.viewport.Move(bounded.LineUp, s.total)
-		case tea.MouseWheelDown:
-			s.viewport.Move(bounded.LineDown, s.total)
+		if move, ok := boundedWheelMove(msg); ok {
+			s.viewport.Move(move, s.total)
 		}
 	}
 	return nil, true

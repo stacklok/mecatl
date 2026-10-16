@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/blocks"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
@@ -16,15 +17,23 @@ func (r *renderer) plainBlockLayout(expand bool) blocks.PlainLayout {
 func (r *renderer) blockTheme() blocks.Theme {
 	toolCard, _, _ := r.toolCardLayout()
 	return blocks.Theme{
-		UserLabel:    r.th.Style("userLabel"),
-		UserBody:     r.th.Style("userBlock"),
-		Muted:        r.th.Style("muted"),
-		Warning:      r.th.Style("warning"),
-		Error:        r.th.Style("errorText"),
-		HookModified: r.th.Style("hookModified"),
-		HookAdvisory: r.th.Style("hookAdvisory"),
-		DeliveryHead: r.th.Style("hookModified"),
-		ToolCard:     toolCard,
+		UserGlyph:     theme.TranscriptUserGlyph,
+		UserMarker:    r.th.Style("transcriptUserMarker"),
+		UserLabel:     r.th.Style("transcriptUserHeading"),
+		UserRail:      r.th.Style("transcriptUserRail"),
+		UserBody:      r.th.Style("transcriptUserText"),
+		HarnessGlyph:  theme.TranscriptHarnessGlyph,
+		HarnessMarker: r.th.Style("transcriptHarnessMarker"),
+		HarnessLabel:  r.th.Style("transcriptHarnessHeading"),
+		HarnessText:   r.th.Style("transcriptHarnessText"),
+		Statistics:    r.th.Style("transcriptStatistics"),
+		Muted:         r.th.Style("muted"),
+		Warning:       r.th.Style("warning"),
+		Error:         r.th.Style("errorText"),
+		HookModified:  r.th.Style("hookModified"),
+		HookAdvisory:  r.th.Style("hookAdvisory"),
+		DeliveryHead:  r.th.Style("hookModified"),
+		ToolCard:      toolCard,
 	}
 }
 

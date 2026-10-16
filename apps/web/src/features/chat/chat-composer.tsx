@@ -14,7 +14,7 @@ import {
   useState,
 } from "react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Button } from "../../components/ui/button";
+import { Button, buttonVariants } from "../../components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -24,6 +24,7 @@ import {
   DialogTitle,
 } from "../../components/ui/dialog";
 import { Textarea } from "../../components/ui/textarea";
+import { Toggle } from "../../components/ui/toggle";
 import {
   classifyAttachment,
   inlineTextAttachments,
@@ -60,6 +61,8 @@ export interface ComposerModelOption {
   image: boolean;
   label: string;
   providerId: string;
+  /** The inventory's `providerDisplayName`: the BFF's name for the provider. */
+  providerLabel: string;
   /** The inventory's `reasoning` flag: whether the model reports a reasoning-effort tier. */
   reasoning?: boolean;
 }
@@ -90,6 +93,8 @@ interface ChatComposerProps {
   /** Text to add to the draft, after a blank line (a transcript selection's "Add to chat"). */
   appendText?: string;
   clearDraftSignal?: number;
+  /** Moves focus into the box when it changes while mounted (the approval panel just closed). */
+  focusComposerSignal?: number;
   /** A draft's settings. Absent on a live chat, whose settings come from the `live*` props. */
   configuration?: DraftChatConfiguration;
   /**
@@ -146,6 +151,8 @@ interface ChatComposerProps {
   sheetFooter?: ReactNode;
   working?: boolean;
   workingBehavior?: EnterSendBehavior;
+  /** False when the daemon cannot steer: Enter and Shift+Enter both queue while the agent works. */
+  steerAvailable?: boolean;
 }
 
 /** The send in flight, and where its text lives while it settles. */
@@ -183,6 +190,7 @@ export function ChatComposer({
   canForkModel = false,
   appendText,
   clearDraftSignal = 0,
+  focusComposerSignal = 0,
   configuration,
   createdChatKey,
   disabled = false,
@@ -213,6 +221,7 @@ export function ChatComposer({
   sheetFooter,
   working = false,
   workingBehavior = "queue",
+  steerAvailable = true,
 }: ChatComposerProps) {
   const [prompt, setPrompt] = useState(() => (draftKey === undefined ? "" : readDraft(draftKey)));
   const [draftOwner, setDraftOwner] = useState(draftKey);
@@ -299,6 +308,12 @@ export function ChatComposer({
     setAttachmentError("");
     setSeedConfirmation(undefined);
   }, [clearDraftSignal]);
+  const handledFocusSignal = useRef(focusComposerSignal);
+  useEffect(() => {
+    if (focusComposerSignal === handledFocusSignal.current) return;
+    handledFocusSignal.current = focusComposerSignal;
+    textarea.current?.focus();
+  }, [focusComposerSignal]);
 
   // A starter-prompt chip seeds the draft text without sending it — the
   // caller clears seedText (onSeedConsumed) once applied so re-clicking the
@@ -511,6 +526,7 @@ export function ChatComposer({
     const action = resolveComposerAction({
       behavior: workingBehavior,
       shift: event.shiftKey,
+      steerAvailable,
       working,
     });
     if (event.key === "Enter" && action !== "newline") {
@@ -616,14 +632,14 @@ export function ChatComposer({
 
   return (
     <form
-      className="mx-auto w-full max-w-3xl shrink-0 px-4 pb-4 max-[499px]:px-0 max-[499px]:pb-[env(safe-area-inset-bottom)] min-[500px]:px-6 min-[500px]:pb-6"
+      className="mx-auto w-full max-w-3xl shrink-0 px-4 pb-4 max-[640px]:px-0 max-[640px]:pb-[env(safe-area-inset-bottom)] min-[640px]:px-6 min-[640px]:pb-6"
       onSubmit={handleSubmit}
     >
-      <div className="relative rounded-2xl bg-zinc-50 dark:bg-zinc-900 max-[499px]:rounded-b-none">
+      <div className="relative rounded-2xl bg-zinc-50 dark:bg-zinc-900 max-[640px]:rounded-b-none">
         {/* biome-ignore lint/a11y/noStaticElementInteractions: a drop target, not a widget; the Attach button covers the same action for keyboard and screen-reader users. */}
         <div
           className={cn(
-            "relative rounded-2xl border bg-background transition-colors focus-within:border-zinc-400 dark:focus-within:border-zinc-600 max-[499px]:rounded-b-none",
+            "relative rounded-2xl border bg-background transition-colors focus-within:border-zinc-400 dark:focus-within:border-zinc-600 max-[640px]:rounded-b-none",
             composerFrameClass({
               hasText: Boolean(prompt.trim()),
               isDragOver,
@@ -682,7 +698,7 @@ export function ChatComposer({
           <div className="px-4 pt-4 pb-2">
             <Textarea
               aria-label="Message Mecatl"
-              className="field-sizing-content max-h-48 min-h-[4.5rem] resize-none rounded-none border-0 bg-transparent px-0 py-0 text-sm shadow-none placeholder:opacity-60 focus-visible:ring-0 dark:bg-transparent max-[499px]:min-h-[1.75rem]"
+              className="field-sizing-content max-h-48 min-h-[4.5rem] resize-none rounded-none border-0 bg-transparent px-0 py-0 text-sm shadow-none placeholder:opacity-60 focus-visible:ring-0 dark:bg-transparent max-[640px]:max-h-[96px] max-[640px]:min-h-[1.75rem]"
               disabled={busy}
               onChange={(event) => setPrompt(event.target.value)}
               onCompositionEnd={() => {
@@ -757,7 +773,7 @@ export function ChatComposer({
             />
             <Button
               aria-label="Attach files"
-              className="size-8 shrink-0 rounded-full text-muted-foreground hover:bg-muted/60"
+              className="size-8 shrink-0 rounded-full text-muted-foreground hover:bg-muted/60 max-[640px]:size-11"
               disabled={attachDisabled}
               onClick={() => fileInput.current?.click()}
               size="icon"
@@ -773,26 +789,27 @@ export function ChatComposer({
             >
               <Plus aria-hidden="true" />
             </Button>
-            <Button
+            <Toggle
               aria-label={voice.isListening ? "Stop dictation" : "Start dictation"}
-              aria-pressed={voice.isListening}
+              // The ghost icon button's look: brand tint while listening, the
+              // ghost's hover ink in both states.
               className={cn(
-                "size-8 shrink-0 rounded-full border-0 shadow-none",
-                voice.isListening
-                  ? "bg-brand/10 text-brand hover:bg-brand/20"
-                  : "bg-transparent text-muted-foreground hover:bg-muted/60",
+                buttonVariants({ size: "icon", variant: "ghost" }),
+                "size-8 min-w-0 shrink-0 rounded-full border-0 bg-transparent px-0 text-muted-foreground shadow-none hover:bg-muted/60 max-[640px]:size-11 data-[state=on]:bg-brand/10 data-[state=on]:text-brand data-[state=on]:hover:bg-brand/20 data-[state=on]:hover:text-accent-foreground",
               )}
               disabled={busy}
-              onClick={voice.toggle}
-              size="icon"
+              onPressedChange={voice.toggle}
+              pressed={voice.isListening}
+              size="sm"
               title={voice.isSupported ? "Dictate a message" : "Check dictation availability"}
-              type="button"
-              variant="ghost"
             >
-              <Mic aria-hidden="true" />
-            </Button>
+              {/* Sized here: the phone's 20px glyph rule covers size-4 icons and
+                  Button's bare ones, not a Toggle's. */}
+              <Mic aria-hidden="true" className="size-4" />
+            </Toggle>
             <div className="ml-auto flex items-center gap-1">
               <ClearDraftButton
+                className="max-[640px]:size-11"
                 disabled={busy}
                 hasDraft={hasDraftContent}
                 onClear={clearDraftNow}
@@ -805,7 +822,7 @@ export function ChatComposer({
                       ? "Mecatl is working"
                       : "Send message"
                 }
-                className="size-8 shrink-0 rounded-full bg-brand text-brand-foreground hover:bg-brand/90"
+                className="size-8 shrink-0 rounded-full bg-brand text-brand-foreground hover:bg-brand/90 max-[640px]:size-11"
                 disabled={busy || (!prompt.trim() && images.length === 0 && textFiles.length === 0)}
                 size="icon"
                 type="submit"
@@ -823,7 +840,7 @@ export function ChatComposer({
         {showPillRow && (
           <section
             aria-label="Chat configuration and usage"
-            className="-mt-4 rounded-b-2xl border border-t-0 border-zinc-300 bg-zinc-50 px-2 pt-5 pb-1.5 dark:border-zinc-700 dark:bg-zinc-900 max-[499px]:hidden"
+            className="-mt-4 rounded-b-2xl border border-t-0 border-zinc-300 bg-zinc-50 px-2 pt-5 pb-1.5 dark:border-zinc-700 dark:bg-zinc-900 max-[640px]:hidden"
           >
             <div className="hide-scrollbar @container flex items-center gap-1 overflow-x-auto">
               {mode && (
@@ -1073,13 +1090,16 @@ export function AttachmentPill({
 export function resolveComposerAction({
   behavior,
   shift,
+  steerAvailable = true,
   working,
 }: {
   behavior: EnterSendBehavior;
   shift: boolean;
+  steerAvailable?: boolean;
   working: boolean;
 }): ComposerEnterAction {
   if (!working) return shift ? "newline" : "send";
+  if (!steerAvailable) return "queue";
   if (!shift) return behavior;
   return behavior === "queue" ? "steer" : "queue";
 }

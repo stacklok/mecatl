@@ -707,6 +707,7 @@ export type GetSessionDetailResponses = {
             id: string;
             providerId: string;
             contextWindow: string;
+            providerDisplayName: string;
             reasoningEffort: 'default' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
         };
         placement?: {
@@ -2281,6 +2282,7 @@ export type ListScheduleFiresResponses = {
             firedAt: string;
             id: string;
             inFlight: boolean;
+            outcome: 'claimed' | 'in_flight' | 'completed' | 'failed' | 'cancelled' | 'timed_out' | 'limit_reached' | 'stopped';
             progressAt: string;
             scheduleName: string;
             sessionId: string;
@@ -2380,7 +2382,29 @@ export type ListSkillFilesErrors = {
     /**
      * The request could not be completed.
      */
+    400: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
     404: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    429: {
         code: string;
         detail: string;
         instance: string;
@@ -4111,6 +4135,7 @@ export type GetRuntimeSettingsResponses = {
             displayName: string;
             id: string;
             image: boolean;
+            providerDisplayName: string;
             providerId: string;
             reasoning: boolean;
         }>;
@@ -4120,6 +4145,7 @@ export type GetRuntimeSettingsResponses = {
         providers: Array<{
             availableNotDefault: boolean;
             defaultModelAutoSelected: boolean;
+            displayName: string;
             hint: string;
             id: string;
             modelCount: number;
@@ -4211,12 +4237,14 @@ export type GetProviderSettingsResponses = {
             displayName: string;
             id: string;
             image: boolean;
+            providerDisplayName: string;
             providerId: string;
             reasoning: boolean;
         }>;
         provider: {
             availableNotDefault: boolean;
             defaultModelAutoSelected: boolean;
+            displayName: string;
             hint: string;
             id: string;
             modelCount: number;

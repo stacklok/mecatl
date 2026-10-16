@@ -43,6 +43,20 @@ describe("composer Enter, queue, and steer matrix", () => {
     [true, "steer", true, "queue"],
   ];
 
+  for (const behavior of ["queue", "steer"] as const) {
+    it(`queues both Enter and Shift+Enter without steering, stored ${behavior}`, () => {
+      for (const shift of [false, true]) {
+        expect(
+          resolveComposerAction({ behavior, shift, steerAvailable: false, working: true }),
+        ).toBe("queue");
+        // An idle composer is unaffected: Enter sends, Shift+Enter breaks the line.
+        expect(
+          resolveComposerAction({ behavior, shift, steerAvailable: false, working: false }),
+        ).toBe(shift ? "newline" : "send");
+      }
+    });
+  }
+
   for (const [working, behavior, shift, action] of matrix) {
     it(`resolves ${working ? "a running" : "an idle"} ${behavior} Enter${shift ? " with Shift" : ""} to ${action}`, async () => {
       expect(resolveComposerAction({ behavior, shift, working })).toBe(action);

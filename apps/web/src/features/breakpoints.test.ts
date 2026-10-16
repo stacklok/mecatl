@@ -29,14 +29,15 @@ const allowed: Record<string, { classes: string[]; reason: string }> = {
     classes: ["sm:max-w-2xl"],
     reason: "Dialog width, the prototype's learned-skill dialog's own class.",
   },
+  "features/schedules/schedule-detail.tsx": {
+    classes: ["sm:grid-cols-2"],
+    reason: "The prototype's schedule detail uses sm: on the same grid.",
+  },
   "features/shortcuts/shortcut-reference.tsx": {
     classes: ["sm:grid-cols-2", "sm:grid-cols-2"],
     reason: "The prototype's shortcut and feature grids use sm: on the same elements.",
   },
 };
-
-/** Owned by open work that takes the sweep itself; see #2194. */
-const pending = ["features/schedules/"];
 
 function sources(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -50,10 +51,7 @@ function sources(directory: string): string[] {
 function scanned(): string[] {
   return sources(src)
     .map((file) => relative(src, file))
-    .filter(
-      (path) =>
-        !path.startsWith("components/ui/") && !pending.some((prefix) => path.startsWith(prefix)),
-    );
+    .filter((path) => !path.startsWith("components/ui/"));
 }
 
 /** The viewport breakpoint variants the guard looks for, alone or after other variants. */
@@ -114,7 +112,8 @@ describe("the breakpoint guard", () => {
       expect(files).toContain(path);
     }
     expect(files.some((path) => path.startsWith("components/ui/"))).toBe(false);
-    expect(files.some((path) => path.startsWith("features/schedules/"))).toBe(false);
+    // Schedules are scanned like everything else.
+    expect(files).toContain("features/schedules/schedule-detail.tsx");
     expect(files.some((path) => /\.test\.tsx?$/u.test(path))).toBe(false);
   });
 });

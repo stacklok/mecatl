@@ -11,6 +11,7 @@ import {
 } from "@mecatl-studio/contracts/query";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, useSyncExternalStore } from "react";
+import { Alert, AlertDescription } from "../../components/ui/alert";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -156,15 +157,14 @@ export function LearnedSkills({
   return (
     <div className="space-y-5">
       {notice && (
-        <div
-          className="flex items-start justify-between gap-3 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm"
-          role="alert"
-        >
-          <p>{notice}</p>
-          <Button onClick={() => setPublicationNotice(undefined)} size="sm" variant="ghost">
-            Dismiss
-          </Button>
-        </div>
+        <Alert className="border-warning/40 bg-warning/10 p-3">
+          <AlertDescription className="flex items-start justify-between gap-3 text-foreground [&_p]:leading-[inherit]">
+            <p>{notice}</p>
+            <Button onClick={() => setPublicationNotice(undefined)} size="sm" variant="ghost">
+              Dismiss
+            </Button>
+          </AlertDescription>
+        </Alert>
       )}
       {query.data.items.length === 0 ? (
         <StateCard
@@ -333,9 +333,11 @@ function LearnedSkillDialog({
         </DialogHeader>
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
           {error && (
-            <p className="rounded-lg bg-destructive/10 p-3 text-sm text-foreground" role="alert">
-              {error} The skill was refreshed; review its current state before trying again.
-            </p>
+            <Alert className="border-0 bg-destructive/10 p-3">
+              <AlertDescription className="text-foreground">
+                {error} The skill was refreshed; review its current state before trying again.
+              </AlertDescription>
+            </Alert>
           )}
           {skill.supersedes && (
             <div className="space-y-1">

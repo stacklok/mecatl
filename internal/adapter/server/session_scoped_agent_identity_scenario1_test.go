@@ -45,7 +45,7 @@ func newAgentDefBrokerService(t *testing.T) (*Service, *int32) {
 		},
 		// Keep the ordinary path working so regressions fail the attach assertion,
 		// not an unrelated missing-factory configuration check.
-		SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool) (SessionEngineResult, error) {
+		SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool, []string) (SessionEngineResult, error) {
 			return brokerEngineResult(), nil
 		},
 	})

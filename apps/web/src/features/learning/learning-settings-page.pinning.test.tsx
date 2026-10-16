@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // @vitest-environment happy-dom
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { client as apiClient } from "@mecatl-studio/contracts/client";
 import type { ListLearningProposalsResponse } from "@mecatl-studio/contracts/generated";
 import { getRuntimeQueryKey } from "@mecatl-studio/contracts/query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryHistory, createRouter, RouterContextProvider } from "@tanstack/react-router";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Toaster } from "@/components/ui/sonner";
@@ -43,6 +45,7 @@ const copy = {
   receipt: "Done: 2 to review.",
   reflect: "Find suggestions",
   reflectionOff: "Learning from a chat is not available right now.",
+  refresh: "Refresh suggestions",
   reject: "Reject",
   rejected: "Suggestion rejected",
   rejectedFilter: "Rejected",
@@ -216,6 +219,18 @@ async function sessionChoices() {
   return names;
 }
 
+/**
+ * The selector list of the phone rule in styles.css that draws button glyphs at
+ * 20px, read from the stylesheet so a change to the rule is a change here too.
+ * e2e/trigger-button-icons.spec.ts measures the drawn size in a browser.
+ */
+const phoneGlyph = (() => {
+  const css = readFileSync(join(import.meta.dirname, "../../styles.css"), "utf8");
+  const rule = css.match(/(svg\.lucide\.size-4,[^{}]+)\{[^{}]*width:\s*20px;/);
+  if (!rule?.[1]) throw new Error("styles.css has no 20px phone glyph rule");
+  return rule[1].replace(/\/\*[\s\S]*?\*\//g, "").trim();
+})();
+
 const listStatuses = () => state.listCalls.map((query) => query.get("status"));
 
 beforeEach(() => {
@@ -351,6 +366,56 @@ describe("learning review (pinned behaviour)", () => {
     await waitFor(() => expect(listStatuses()).toEqual(["staged", "staged"]));
     expect(state.decide).toHaveLength(1);
     expect(screen.queryByText(copy.approved)).toBeNull();
+  });
+
+  it("names the icon-only refresh button and restarts the queue, clearing the notice", async () => {
+    const user = userEvent.setup();
+    state.decideAnswer = () => ({
+      code: "proposal_conflict",
+      detail: "proposal version changed",
+      status: 409,
+    });
+    renderPage();
+    const item = await row("Communication preference");
+    await user.click(item.getByRole("button", { name: copy.approve }));
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(within(dialog).getByRole("button", { name: copy.confirm }));
+    expect(await screen.findByText(copy.conflict)).toBeTruthy();
+    await waitFor(() => expect(listStatuses()).toEqual(["staged", "staged"]));
+
+    const refresh = screen.getByRole("button", { name: copy.refresh });
+    expect(refresh.textContent).toBe("");
+    await user.click(refresh);
+    await waitFor(() => expect(listStatuses()).toEqual(["staged", "staged", "staged"]));
+    expect(screen.queryByText(copy.conflict)).toBeNull();
+    await row("Communication preference");
+  });
+
+  it("explains the refresh button in a Tooltip on hover, not a native title", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await row("Communication preference");
+    const refresh = screen.getByRole("button", { name: copy.refresh });
+    expect(refresh.getAttribute("title")).toBeNull();
+    // The glyph still matches the phone rule in styles.css that draws button icons at 20px.
+    expect(refresh.querySelector("svg")?.matches(phoneGlyph)).toBe(true);
+    expect(screen.queryByRole("tooltip")).toBeNull();
+
+    await user.hover(refresh);
+    expect((await screen.findByRole("tooltip")).textContent).toBe(copy.refresh);
+    // happy-dom has no layout for Radix's pointer grace area, so close with Escape.
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+  });
+
+  it("explains the refresh button in a Tooltip on keyboard focus", async () => {
+    renderPage();
+    await row("Communication preference");
+    const refresh = screen.getByRole("button", { name: copy.refresh });
+    await act(async () => refresh.focus());
+    expect((await screen.findByRole("tooltip")).textContent).toBe(copy.refresh);
+    await act(async () => refresh.blur());
+    await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
   });
 
   it("shows a refused decision's detail", async () => {

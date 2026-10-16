@@ -57,7 +57,7 @@ func TestAgentFactoryBindingAcknowledgment(t *testing.T) {
 				}
 				svc.cfg.AgentDefSessionEngine = factory
 				if operation != "direct-create" {
-					svc.cfg.SessionContextEngine = func(ctx context.Context, _ session.SessionID, _ *session.Principal, _ ExecutionWorkspaceAcquirer, sel ProviderSelector, _ []mcp.ServerConfig, profile SessionProfile, _ string, mode session.PermissionMode, _ []tool.Tool, _ session.SessionID) (SessionEngineResult, error) {
+					svc.cfg.SessionContextEngine = func(ctx context.Context, _ session.SessionID, _ *session.Principal, _ ExecutionWorkspaceAcquirer, sel ProviderSelector, _ []mcp.ServerConfig, profile SessionProfile, _ string, mode session.PermissionMode, _ []tool.Tool, _ []string, _ session.SessionID) (SessionEngineResult, error) {
 						if result == "unaware" {
 							return factory(ctx, sel, profile, mode, session.Limits{}, "")
 						}

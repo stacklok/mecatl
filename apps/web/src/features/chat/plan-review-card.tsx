@@ -30,7 +30,8 @@ export function PlanReviewCard({
   uncertain?: boolean;
   unavailableReason?: string;
 }) {
-  const escapeHint = useActiveEscapeAsk(approval) && !disabled && !unavailableReason;
+  const activeAsk = useActiveEscapeAsk(approval);
+  const escapeHint = activeAsk && !disabled && !unavailableReason;
   let plan = "";
   let note = "";
   try {
@@ -49,6 +50,8 @@ export function PlanReviewCard({
     <section
       className="my-3 min-w-0 max-w-full rounded-xl border border-brand/30 bg-brand/5 p-4"
       aria-label="Plan review"
+      data-active-ask={activeAsk ? "" : undefined}
+      data-approval-scope=""
     >
       <div className="flex items-center gap-2">
         <ClipboardList aria-hidden="true" className="size-4 shrink-0 text-brand-ink" />

@@ -63,6 +63,26 @@ function stubWorkspace(offlineBff: OfflineBff) {
   });
 }
 
+test("the schedule time field is wide enough to show its meridiem on a phone", async ({
+  offlineBff,
+  page,
+}) => {
+  stubWorkspace(offlineBff);
+  offlineBff.json("GET", "/api/v1/schedules", { items: [], reason: "", supported: true });
+  // The field uses larger text below the md breakpoint. At 120px Chrome cut
+  // "11:59 PM" to "11:59 P" there; 136px was the narrowest that showed it whole.
+  await page.setViewportSize({ height: 800, width: 390 });
+  await page.goto("/workspace/schedules");
+  await page
+    .getByRole("button", { name: /Schedule task/ })
+    .first()
+    .click();
+  const time = page.locator("#schedule-time");
+  await expect(time).toBeVisible();
+  const box = await time.boundingBox();
+  expect(box?.width ?? 0).toBeGreaterThanOrEqual(136);
+});
+
 test("schedule inventory uses the desktop table and compact mobile list", async ({
   offlineBff,
   page,
@@ -133,6 +153,7 @@ test("schedule detail links each fire to its owning session", async ({
         firedAt: "2026-10-08T08:00:00Z",
         id: "fire-live",
         inFlight: true,
+        outcome: "in_flight",
         progressAt: "",
         scheduleName: "daily-report",
         sessionId: "",
@@ -145,6 +166,7 @@ test("schedule detail links each fire to its owning session", async ({
         firedAt: "2026-10-07T08:00:00Z",
         id: "fire-1",
         inFlight: false,
+        outcome: "completed",
         progressAt: "2026-10-07T08:00:02Z",
         scheduleName: "daily-report",
         sessionId: "scheduled-session",
@@ -157,6 +179,7 @@ test("schedule detail links each fire to its owning session", async ({
         firedAt: "2026-10-06T08:00:00Z",
         id: "fire-failed",
         inFlight: false,
+        outcome: "failed",
         progressAt: "2026-10-06T08:00:02Z",
         scheduleName: "daily-report",
         sessionId: "",

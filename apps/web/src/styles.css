@@ -352,10 +352,11 @@
   }
 
   /* Shared controls size bare SVG descendants through parent utilities; their
-     mobile glyphs need the same fixed 20px size as explicit size-4 icons. */
+     mobile glyphs need the same fixed 20px size as explicit size-4 icons.
+     Buttons key on data-button, which survives an asChild trigger's data-slot. */
   svg.lucide.size-4,
   svg.lucide.h-4.w-4,
-  [data-slot="button"] svg.lucide:not([class*="size-"]):not([class*="h-"]):not([class*="w-"]),
+  [data-button] svg.lucide:not([class*="size-"]):not([class*="h-"]):not([class*="w-"]),
   [data-slot="dropdown-menu-item"] svg.lucide:not([class*="size-"]),
   [data-slot="dropdown-menu-checkbox-item"] svg.lucide:not([class*="size-"]),
   [data-slot="dropdown-menu-radio-item"] svg.lucide:not([class*="size-"]),

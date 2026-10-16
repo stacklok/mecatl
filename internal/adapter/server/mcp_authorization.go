@@ -429,7 +429,7 @@ func (s *Service) rebuildGrantedAuthorizationEngine(ctx context.Context, sess *s
 		return fmt.Errorf("%w: broker-OAuth grant continuation is not supported for an agent-bound session %q", ErrInvalidArgument, sess.ID)
 	}
 	sel := ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}
-	if _, err := s.buildAndRegisterSessionEngineWithBrokerTools(ctx, sess, sel, profileForSession(sess), sess.Mode, true, exactTools, true); err != nil {
+	if _, err := s.buildAndRegisterSessionEngineWithBrokerTools(ctx, sess, sel, profileForSession(sess), sess.Mode, true, exactTools, nil, true); err != nil {
 		if errors.Is(err, ErrInvalidArgument) {
 			// Some OTHER run raced onto this session's slot between the parked run's
 			// admission and this rebuild — the same race registerAndStartGrantedAuthorization

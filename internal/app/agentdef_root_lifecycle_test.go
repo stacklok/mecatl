@@ -67,8 +67,8 @@ func TestAgentRootPublicationBindingLifecycle(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer cleanup()
-				factory := func(ctx context.Context, id session.SessionID, owner *session.Principal, acquire server.ExecutionWorkspaceAcquirer, sel server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode, tools []tool.Tool, forkSource session.SessionID) (server.SessionEngineResult, error) {
-					res, err := assets.sessionContextFactory(ctx, id, owner, acquire, sel, specs, profile, workspace, mode, tools, forkSource)
+				factory := func(ctx context.Context, id session.SessionID, owner *session.Principal, acquire server.ExecutionWorkspaceAcquirer, sel server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode, tools []tool.Tool, toolKeys []string, forkSource session.SessionID) (server.SessionEngineResult, error) {
+					res, err := assets.sessionContextFactory(ctx, id, owner, acquire, sel, specs, profile, workspace, mode, tools, toolKeys, forkSource)
 					if err == nil && fail && failure == "configuration" {
 						res.BuiltForMode = session.ModeAccept
 					}

@@ -381,22 +381,7 @@ func (s *skillsState) HandleKey(msg tea.KeyPressMsg) (cmd tea.Cmd, handled bool,
 }
 
 func (s *skillsState) navigationMove(msg tea.KeyPressMsg) (bounded.Move, bool) {
-	switch {
-	case key.Matches(msg, s.deps.keys.Down):
-		return bounded.LineDown, true
-	case key.Matches(msg, s.deps.keys.Up):
-		return bounded.LineUp, true
-	case key.Matches(msg, s.deps.keys.ScrollD):
-		return bounded.PageDown, true
-	case key.Matches(msg, s.deps.keys.ScrollU):
-		return bounded.PageUp, true
-	case key.Matches(msg, s.deps.keys.ScrollBottom):
-		return bounded.End, true
-	case key.Matches(msg, s.deps.keys.ScrollTop):
-		return bounded.Top, true
-	default:
-		return 0, false
-	}
+	return boundedNavigationMove(msg, s.deps.keys, bounded.LineDown, bounded.LineUp, bounded.PageDown, bounded.PageUp, bounded.End, bounded.Top)
 }
 
 func (s *skillsState) moveLearned(msg tea.KeyPressMsg) {

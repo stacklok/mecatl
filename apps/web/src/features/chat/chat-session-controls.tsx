@@ -78,7 +78,7 @@ export function SessionUsageControls({
   const usage = model && (
     <ContextUsage
       contextWindow={model.contextWindow}
-      model={`${model.id} · ${humanize(model.providerId)}`}
+      model={`${model.id} · ${model.providerDisplayName}`}
       usage={detail.usage}
       variant={variant}
     />
@@ -161,12 +161,4 @@ function ContextUsage({
       )}
     </div>
   );
-}
-
-function humanize(value: string) {
-  return value
-    .split(/[-_]+/u)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
 }

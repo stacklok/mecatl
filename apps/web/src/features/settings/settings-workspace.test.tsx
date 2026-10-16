@@ -34,12 +34,14 @@ const model = {
   displayName: "Model One",
   id: "model-one",
   image: true,
+  providerDisplayName: "Team/openai",
   providerId,
   reasoning: true,
 };
 const provider = {
   availableNotDefault: true,
   defaultModelAutoSelected: false,
+  displayName: "Team/openai",
   hint: "Ready through the gateway",
   id: providerId,
   modelCount: 1,

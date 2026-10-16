@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { AlertCircle, Check, CircleHelp } from "lucide-react";
-import { type Ref, useEffect, useId, useRef, useState } from "react";
+import { type Ref, useEffect, useRef, useState } from "react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Toggle } from "@/components/ui/toggle";
 import { cn } from "@/lib/utils";
 import { branchLabel, type DelegationFocus, delegationStateLabel } from "./delegation-card";
 import type {
@@ -51,7 +53,6 @@ export function SessionActivityContent({
   focus?: DelegationFocus;
   onFocusChange: (focus?: DelegationFocus) => void;
 }) {
-  const id = useId();
   const [roster, setRoster] = useState(() => ({
     family: requestedFamily ?? initialFamily(fleet),
     sessionId: fleet.sessionId,
@@ -61,80 +62,52 @@ export function SessionActivityContent({
   useEffect(() => {
     if (focusIdentity) headingRef.current?.focus();
   }, [focusIdentity]);
-  const tabRefs = useRef<Record<Family, HTMLButtonElement | null>>({
-    subagent: null,
-    parallel: null,
-    team: null,
-  });
   const family =
     focus?.family ?? (roster.sessionId === fleet.sessionId ? roster.family : initialFamily(fleet));
   const selected = focus && entries(fleet, focus.family).find((item) => item.key === focus.key);
 
-  function chooseFamily(next: Family, moveFocus: boolean) {
+  function chooseFamily(next: Family) {
     setRoster({ family: next, sessionId: fleet.sessionId });
     onFocusChange(undefined);
-    if (moveFocus) tabRefs.current[next]?.focus();
-  }
-
-  function handleTabKey(event: React.KeyboardEvent<HTMLButtonElement>, current: Family) {
-    const index = families.indexOf(current);
-    let next: Family | undefined;
-    if (event.key === "ArrowRight") next = families[(index + 1) % families.length];
-    else if (event.key === "ArrowLeft")
-      next = families[(index + families.length - 1) % families.length];
-    else if (event.key === "Home") next = families[0];
-    else if (event.key === "End") next = families.at(-1);
-    if (!next) return;
-    event.preventDefault();
-    chooseFamily(next, true);
   }
 
   return (
-    <div className="flex min-h-0 min-w-0 max-w-full flex-col gap-3 px-4 py-3 text-sm [overflow-wrap:anywhere]">
+    <Tabs
+      className="min-h-0 min-w-0 max-w-full gap-3 px-4 py-3 text-sm [overflow-wrap:anywhere]"
+      onValueChange={(next) => chooseFamily(next as Family)}
+      value={family}
+    >
       {fleet.incompleteHistory && (
         <p className="rounded-md border border-warning/50 bg-warning/10 px-3 py-2 text-xs">
           Activity history incomplete. Only observed events are shown; an unfinished outcome may be
           unknown.
         </p>
       )}
-      {/* The Tabs primitive's look (TabsList/TabsTrigger), kept on this
-          tablist so its family focus and keyboard rules stay as they are. */}
-      <div
+      <TabsList
         aria-label="Activity families"
-        className="grid min-h-9 min-w-0 grid-cols-3 items-stretch rounded-lg bg-muted p-[3px] text-muted-foreground"
-        role="tablist"
+        className="grid h-auto min-h-9 w-full min-w-0 grid-cols-3 items-stretch"
       >
         {families.map((item) => (
-          <button
+          <TabsTrigger
             aria-label={`${familyLabels[item]} (${entries(fleet, item).length})`}
-            aria-controls={`${id}-panel`}
-            aria-selected={family === item}
-            className="flex min-w-0 flex-wrap items-center justify-center gap-x-1 rounded-md px-1 py-1 text-xs font-medium leading-4 text-foreground transition-[color,box-shadow] focus-visible:outline-1 focus-visible:outline-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[active=true]:bg-background data-[active=true]:shadow-sm dark:text-muted-foreground dark:data-[active=true]:bg-card dark:data-[active=true]:text-foreground"
-            data-active={family === item}
-            id={`${id}-${item}`}
+            className="flex h-auto min-w-0 flex-wrap gap-0 gap-x-1 px-1 text-xs leading-4"
             key={item}
-            onClick={() => chooseFamily(item, false)}
-            onKeyDown={(event) => handleTabKey(event, item)}
-            ref={(node) => {
-              tabRefs.current[item] = node;
-            }}
-            role="tab"
-            tabIndex={family === item ? 0 : -1}
-            type="button"
+            // Tabs chooses a family on press, focus, Enter, and Space; a click
+            // also chooses the selected family again, which clears the
+            // chosen activity.
+            onClick={() => chooseFamily(item)}
+            value={item}
           >
             <span className="whitespace-nowrap">{familyLabels[item]}</span>
             <span className="tabular-nums text-muted-foreground">
               ({entries(fleet, item).length})
             </span>
-          </button>
+          </TabsTrigger>
         ))}
-      </div>
-      <div
-        aria-labelledby={`${id}-${family}`}
-        className="flex min-w-0 flex-col gap-4"
-        id={`${id}-panel`}
-        role="tabpanel"
-      >
+      </TabsList>
+      {/* One panel, for the selected family. It is not a tab stop of its own:
+          Tab goes from the selected tab to the roster's first row. */}
+      <TabsContent className="flex min-w-0 flex-col gap-4" tabIndex={undefined} value={family}>
         <section className="min-w-0">
           <h3 className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
             Roster
@@ -202,8 +175,8 @@ export function SessionActivityContent({
         ) : (
           <p className="text-sm text-muted-foreground">Choose an activity to see its details.</p>
         )}
-      </div>
-    </div>
+      </TabsContent>
+    </Tabs>
   );
 }
 
@@ -241,19 +214,22 @@ function RosterButton({
   state: string;
 }) {
   return (
-    <button
-      aria-pressed={selected}
+    <Toggle
       className={cn(
-        "flex w-full min-w-0 max-w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-xs text-foreground/90 transition-colors hover:bg-secondary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[selected=true]:bg-secondary",
-        (state === "Failed" || state.startsWith("Stopped")) && "text-destructive",
+        "flex h-auto w-full min-w-0 max-w-full items-start justify-start gap-2 px-2 py-1.5 text-left text-xs font-normal whitespace-normal hover:bg-secondary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=on]:bg-secondary [&_svg]:size-3.5",
+        // The row keeps its ink when hovered and while chosen.
+        state === "Failed" || state.startsWith("Stopped")
+          ? "text-destructive hover:text-destructive data-[state=on]:text-destructive"
+          : "text-foreground/90 hover:text-foreground/90 data-[state=on]:text-foreground/90",
       )}
-      data-selected={selected}
+      // A press always chooses the row's activity, so pressing the chosen
+      // row again keeps it chosen.
       onClick={onClick}
-      type="button"
+      pressed={selected}
     >
       <RosterGlyph state={state} />
       <span className="min-w-0 flex-1">{children}</span>
-    </button>
+    </Toggle>
   );
 }
 

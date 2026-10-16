@@ -155,7 +155,25 @@ existing chord a second meaning in the same focus context; stay consistent with 
 The conversation follows the tail while the reader is at the bottom; once they
 scroll up, renders keep a logical reading anchor until they return. Use
 `conversationView` rather than setting viewport offsets directly. Speaker labels,
-hanging alignment, and spacing distinguish turns without color.
+hanging alignment, and spacing distinguish turns without color. User prompts,
+model responses, and ordinary harness notices use accented, bold `▶ you`,
+`◀ mecatl`, and `◆ system` labels in both views; their bodies remain neutral.
+Recovery and tool or hook outcome markers retain their own warning or lifecycle
+meaning.
+
+In the default view, render one aggregate for settled adjacent visible
+Tool, Subagent, and Team calls, followed by any active cards in their original
+relative order. Presentation adjacency, rather than dispatch or concurrency,
+defines the group. The detail view restores settled calls as one-line summaries
+in source order; keep arguments and results in the Toolcalls inspector. Preserve
+one blank row between response blocks or groups, with none between calls in a
+tool group.
+
+Snapshot transcript loads use the server's human-display projection, which omits
+known background-work and no-progress control continuations only with explicit
+stored harness provenance. Preserve user/legacy lookalikes, compaction summaries
+and scheduled deliveries; the stored model conversation and event replay remain
+unchanged.
 
 Collapse large tool arguments and results into cards and keep hidden content
 inspectable. A preview must not flood scrollback or show more than the bounded,
@@ -169,8 +187,21 @@ success claim, and a notice never shows raw transport or credential material.
 
 ## Styling and terminal behavior
 
-Use semantic slots from `theme.Palette` so a surface works in light and dark
-themes. The fixed danger badge and the contrast-calculated selection foreground are
+Use theme-owned semantic styles so a surface works in light and dark themes.
+Transcript actor glyph constants are separate from
+`transcript{LLM,Tool,User,Harness}{Marker,Rail,Text}` styles. Marker styles own
+only the actor symbol; body and label text, reasoning, statistics, and outcome
+indicators have independent styles. Rail roles and `transcriptRunRail` are defined
+without adding connected transcript rails. Markdown keeps its dedicated palette
+and syntax styles.
+
+Built-in Aztec and Solar have separate dark/light transcript recipes. Custom
+themes derive transcript defaults from existing palette slots, including when
+they override a built-in name. Startup background detection selects built-in
+Solar only when no explicit theme is supplied on a real TTY; `switchTheme`
+replaces the renderer and its caches so baked-in styles change together.
+
+The fixed danger badge and the contrast-calculated selection foreground are
 deliberate exceptions, not a model for widget-local colors. Check ANSI-stripped
 rendering when a visual cue carries meaning.
 

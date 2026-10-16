@@ -48,7 +48,8 @@ export function ApprovalPanel({
 }) {
   const card = useRef<HTMLElement>(null);
   const destructive = isDestructiveToolName(approval.tool);
-  const active = useActiveEscapeAsk(approval) && !disabled && !uncertain;
+  const activeAsk = useActiveEscapeAsk(approval);
+  const active = activeAsk && !disabled && !uncertain;
   const openDetail = useOpenApprovalDetail();
   const hasArgs = approval.args.trim().length > 0;
 
@@ -59,6 +60,7 @@ export function ApprovalPanel({
         "my-3 min-w-0 rounded-xl border p-4",
         destructive ? "border-destructive/40 bg-destructive/5" : "border-warning/40 bg-warning/5",
       )}
+      data-active-ask={activeAsk ? "" : undefined}
       data-approval-scope=""
       ref={card}
     >

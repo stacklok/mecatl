@@ -12,6 +12,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "../../components/ui/dropdown-menu";
+import { Toggle } from "../../components/ui/toggle";
 import { effortLabel } from "../../lib/reasoning-effort";
 import { cn } from "../../lib/utils";
 import type { ComposerModelOption } from "./chat-composer";
@@ -149,7 +150,8 @@ function filterGroups(
             ? models.filter(
                 (candidate) =>
                   candidate.label.toLocaleLowerCase().includes(normalized) ||
-                  humanize(providerId).toLocaleLowerCase().includes(normalized),
+                  candidate.providerLabel.toLocaleLowerCase().includes(normalized) ||
+                  candidate.providerId.toLocaleLowerCase().includes(normalized),
               )
             : models,
         ] as const,
@@ -160,8 +162,8 @@ function filterGroups(
 const modelRowClass = "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm";
 
 /**
- * The Model submenu's body: a filter input (matching the model's label or its
- * provider) above the grouped list, for a catalogue too long to scan.
+ * The Model submenu's body: a filter input (matching the model's label, or its
+ * provider's name or ID) above the grouped list, for a catalogue too long to scan.
  */
 function ModelFilterList({
   allowUnset,
@@ -217,7 +219,7 @@ function ModelFilterList({
         {filteredGroups.map(([providerId, models]) => (
           <div key={providerId}>
             <p className="px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground">
-              {humanize(providerId)}
+              {models[0]?.providerLabel}
             </p>
             {models.map((candidate) => {
               const selected = sameModel(model, candidate);
@@ -268,8 +270,13 @@ export function ModelSheetSection({
   const filteredGroups = filterGroups(groupedModels, filter);
   const normalized = filter.trim().toLocaleLowerCase();
   const showDefault = allowUnset && (!normalized || "default".includes(normalized));
+  // One Toggle per model, not a single-choice ToggleGroup: that would turn the
+  // rows into radios with roving focus. Pressing the chosen row picks it again.
+  // The classes undo the Toggle's own size, shape, ink and pressed fill. As
+  // before, hovering the chosen row shows the hover fill in light and keeps
+  // the zinc fill in dark.
   const rowClass =
-    "flex w-full items-center gap-3 px-4 py-3 text-left text-sm transition-colors hover:bg-muted/50 disabled:opacity-50";
+    "flex h-auto w-full min-w-0 items-center justify-start gap-3 rounded-none px-4 py-3 text-left text-sm font-normal whitespace-normal transition-colors hover:bg-muted/50 hover:text-current disabled:opacity-50 data-[state=on]:bg-zinc-100 data-[state=on]:text-current data-[state=on]:hover:bg-muted/50 dark:data-[state=on]:bg-zinc-800 dark:data-[state=on]:hover:bg-zinc-800";
 
   return (
     <div className="flex min-h-0 flex-col">
@@ -286,16 +293,15 @@ export function ModelSheetSection({
       </div>
       <div className="max-h-[50dvh] overflow-y-auto py-1">
         {showDefault && (
-          <button
-            aria-pressed={model === undefined}
-            className={cn(rowClass, model === undefined && "bg-zinc-100 dark:bg-zinc-800")}
+          <Toggle
+            className={rowClass}
             disabled={disabled}
-            onClick={() => onModelChange(undefined)}
-            type="button"
+            onPressedChange={() => onModelChange(undefined)}
+            pressed={model === undefined}
           >
             <span className="flex-1 truncate">Default</span>
             {model === undefined && <Check aria-hidden="true" className="size-4 shrink-0" />}
-          </button>
+          </Toggle>
         )}
         {!showDefault && filteredGroups.length === 0 && (
           <p className="px-4 py-6 text-center text-sm text-muted-foreground" role="status">
@@ -305,24 +311,23 @@ export function ModelSheetSection({
         {filteredGroups.map(([providerId, models]) => (
           <div key={providerId}>
             <p className="px-4 py-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              {humanize(providerId)}
+              {models[0]?.providerLabel}
             </p>
             {models.map((candidate) => {
               const selected = sameModel(model, candidate);
               return (
-                <button
-                  aria-pressed={selected}
-                  className={cn(rowClass, selected && "bg-zinc-100 dark:bg-zinc-800")}
+                <Toggle
+                  className={rowClass}
                   disabled={disabled}
                   key={`${candidate.providerId}:${candidate.id}`}
-                  onClick={() =>
+                  onPressedChange={() =>
                     onModelChange({ id: candidate.id, providerId: candidate.providerId })
                   }
-                  type="button"
+                  pressed={selected}
                 >
                   <span className="flex-1 truncate">{candidate.label}</span>
                   {selected && <Check aria-hidden="true" className="size-4 shrink-0" />}
-                </button>
+                </Toggle>
               );
             })}
           </div>
@@ -330,12 +335,4 @@ export function ModelSheetSection({
       </div>
     </div>
   );
-}
-
-export function humanize(value: string): string {
-  return value
-    .split(/[-_]+/u)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
 }

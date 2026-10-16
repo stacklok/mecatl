@@ -223,8 +223,8 @@ func driveSessionRebindJourney(t *testing.T, journey string, cb client.Clipboard
 		return m, conv.forkedID
 	case "worktree switch":
 		conv.createCount = 1
-		mm, cmd, handled := m.switchToWorktree(client.Worktree{Selector: testWorktreeSelector("opaque-feature"), Label: "feature", Branch: "feature"})
-		if !handled || cmd == nil {
+		mm, cmd := m.switchToWorktree(client.Worktree{Selector: testWorktreeSelector("opaque-feature"), Label: "feature", Branch: "feature"})
+		if cmd == nil {
 			t.Fatal("worktree switch did not issue its create command")
 		}
 		m = mm.(Model)

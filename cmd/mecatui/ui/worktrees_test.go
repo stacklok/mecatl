@@ -25,9 +25,11 @@ type fakeWorktreeLister struct {
 	err       error
 	calls     int
 	sessionID string
+	ctx       context.Context
 }
 
-func (f *fakeWorktreeLister) List(_ context.Context, sessionID string) ([]client.Worktree, error) {
+func (f *fakeWorktreeLister) List(ctx context.Context, sessionID string) ([]client.Worktree, error) {
+	f.ctx = ctx
 	f.calls++
 	f.sessionID = sessionID
 	if f.err != nil {
@@ -48,12 +50,26 @@ func newWorktreesModel(t *testing.T, conv *fakeConv, fw *fakeWorktreeLister) Mod
 	})
 }
 
+// feedWorktreesList reduces only discovery; widget blink timers remain owned by Tea.
+func feedWorktreesList(t *testing.T, m Model, cmd tea.Cmd) Model {
+	t.Helper()
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok || len(batch) != 2 {
+		t.Fatal("open must batch discovery and filter blink")
+	}
+	msg := batch[0]()
+	if _, ok := msg.(worktreesResultMsg); !ok {
+		t.Fatalf("discovery returned %T", msg)
+	}
+	return applyAll(m, msg)
+}
+
 func TestWorktreesDiscoveryIsSessionScoped(t *testing.T) {
 	fw := &fakeWorktreeLister{wts: []client.Worktree{{Selector: testWorktreeSelector("opaque-1"), Kind: "git", Label: "feature", Branch: "refs/heads/feature", Revision: "abcdef1"}}}
 	m := newWorktreesModel(t, &fakeConv{}, fw)
 	mm, cmd := m.openWorktrees()
 	m = mm.(Model)
-	m = feedCmd(t, m, cmd)
+	m = feedWorktreesList(t, m, cmd)
 	if fw.sessionID != "source-session" {
 		t.Fatalf("ListWorktrees session = %q, want source-session", fw.sessionID)
 	}
@@ -67,9 +83,9 @@ func TestWorktreeSwitchUsesOpaqueSelectorAndClosesAfterBinding(t *testing.T) {
 	conv := &fakeConv{}
 	m := newWorktreesModel(t, conv, &fakeWorktreeLister{wts: []client.Worktree{wt}})
 	m.conv.addUser("source transcript")
-	mm, cmd, handled := m.switchToWorktree(wt)
+	mm, cmd := m.switchToWorktree(wt)
 	m = mm.(Model)
-	if !handled || m.sessionID != "source-session" || m.conv.isEmpty() {
+	if m.sessionID != "source-session" || m.conv.isEmpty() {
 		t.Fatal("switch destroyed source binding before successor creation")
 	}
 	if !strings.Contains(m.statusMsg, "starting a new session") || strings.Contains(m.statusMsg, "switching worktree") {
@@ -79,6 +95,9 @@ func TestWorktreeSwitchUsesOpaqueSelectorAndClosesAfterBinding(t *testing.T) {
 	ready, ok := msg.(worktreeSwitchReadyMsg)
 	if !ok {
 		t.Fatalf("switch result = %T, want worktreeSwitchReadyMsg", msg)
+	}
+	if calls := conv.clearCalls(); len(calls) != 1 || calls[0].sourceID != "source-session" || calls[0].selector == nil || *calls[0].selector != wt.Selector {
+		t.Fatalf("successor authority = %+v, want source-session and %q", calls, wt.Selector)
 	}
 	if got := conv.closed(); len(got) != 0 {
 		t.Fatalf("source closed before successor binding: %v", got)
@@ -99,7 +118,7 @@ func TestServerOwnedSessionPlacement_Scenario3_OwnershipRelistAndSafeSwitch(t *t
 	conv := &fakeConv{createErr: errors.New("selector is stale")}
 	m := newWorktreesModel(t, conv, &fakeWorktreeLister{wts: []client.Worktree{wt}})
 	m.conv.addUser("keep me")
-	mm, cmd, _ := m.switchToWorktree(wt)
+	mm, cmd := m.switchToWorktree(wt)
 	m = mm.(Model)
 	failed, ok := cmd().(worktreeSwitchFailedMsg)
 	if !ok {
@@ -118,8 +137,8 @@ func TestServerOwnedSessionPlacement_Scenario3_OwnershipRelistAndSafeSwitch(t *t
 	m.deps.Worktrees = lister
 	mm, listCmd := m.openWorktrees()
 	m = mm.(Model)
-	m = feedCmd(t, m, listCmd)
-	if m.sessionID != "source-session" || m.worktrees.err == nil {
+	m = feedWorktreesList(t, m, listCmd)
+	if m.sessionID != "source-session" || m.modal.(*worktreesState).err == nil {
 		t.Fatal("relist failure changed selected session or hid the error")
 	}
 }
@@ -136,7 +155,7 @@ func TestWorktreeCopyDescribesStartingANewSession(t *testing.T) {
 	wt := client.Worktree{Selector: testWorktreeSelector("opaque-copy"), Label: "feature", Branch: "refs/heads/feature"}
 	m := newWorktreesModel(t, &fakeConv{}, &fakeWorktreeLister{wts: []client.Worktree{wt}})
 	mm, cmd := m.openWorktrees()
-	m = feedCmd(t, mm.(Model), cmd)
+	m = feedWorktreesList(t, mm.(Model), cmd)
 	panel := stripANSIstr(m.View().Content)
 	for _, want := range []string{"select a worktree to start a new session there", "enter: select", "esc: close"} {
 		if !strings.Contains(panel, want) {
@@ -144,7 +163,7 @@ func TestWorktreeCopyDescribesStartingANewSession(t *testing.T) {
 		}
 	}
 
-	mm, _, handled := m.onWorktreesKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	mm, _, handled := m.dispatchSurfaceKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if !handled {
 		t.Fatal("enter was not handled")
 	}

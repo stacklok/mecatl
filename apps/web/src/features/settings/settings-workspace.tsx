@@ -16,6 +16,7 @@ import { Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Badge } from "../../components/ui/badge";
 import { Input } from "../../components/ui/input";
+import { Label } from "../../components/ui/label";
 import { Switch } from "../../components/ui/switch";
 import { modelPreferenceId, useDisabledModels } from "../../lib/model-preferences";
 import { cn } from "../../lib/utils";
@@ -426,7 +427,7 @@ function ProviderRow({ provider }: { provider: GetRuntimeSettingsResponse["provi
       >
         <span aria-hidden="true" className={cn("size-2 shrink-0 rounded-full", state.dot)} />
         <span className="min-w-0 flex-1">
-          <span className="block text-sm font-medium">{humanize(provider.id)}</span>
+          <span className="block text-sm font-medium">{provider.displayName}</span>
           <span className="block truncate text-xs text-muted-foreground tabular-nums">
             {state.label} · {provider.modelCount} model{provider.modelCount === 1 ? "" : "s"}
           </span>
@@ -527,8 +528,8 @@ function ModelCard({
     <article className="rounded-lg border bg-background p-4" title={model.id}>
       <div className="flex flex-wrap items-start justify-between gap-x-3">
         <h3 className="text-sm font-medium">{model.displayName}</h3>
-        <label
-          className="flex min-h-11 items-center gap-2 text-xs text-muted-foreground"
+        <Label
+          className="flex min-h-11 items-center gap-2 text-xs font-normal text-muted-foreground"
           htmlFor={`visible-model-${model.providerId}-${model.id}`}
         >
           Visible
@@ -538,7 +539,7 @@ function ModelCard({
             id={`visible-model-${model.providerId}-${model.id}`}
             onCheckedChange={(checked) => onEnabledChange(checked === true)}
           />
-        </label>
+        </Label>
       </div>
       <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
         <dt className="text-muted-foreground">ID</dt>
@@ -602,14 +603,6 @@ function providerState(state: string): { dot: string; label: string; ready: bool
 /** A short window cannot show the whole nav; keep the current section in view. */
 function keepInView(button: HTMLButtonElement | null) {
   button?.scrollIntoView?.({ block: "nearest" });
-}
-
-function humanize(value: string): string {
-  return value
-    .split(/[-_]+/u)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
 }
 
 function formatContextLimit(value: string): string {

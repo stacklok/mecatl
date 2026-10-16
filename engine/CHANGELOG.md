@@ -39,6 +39,13 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   and `ExecutionTemplateRevision` labels for exact public-create retry matching.
   Execution reattachment still uses the durable environment reference. Added (minor).
 
+- **Shared tool-argument decode (issue #2264)** — adds
+  `governance.CheckToolArgs`, `governance.DecodeToolArgs`,
+  `governance.ErrAmbiguousToolArgs`, and `governance.AmbiguousArgsReason`.
+  `DecodeToolArgs` is the one decode of a tool call's arguments used by
+  permission evaluation, approval display, and execution (`session.ParseArgs`
+  delegates to it). Added (minor).
+
 - **File-backed hierarchy prompt flag** — adds `prompt.Config.ProjectInstructionHierarchy`
   to render the next-request discovery limitation through the default builder,
   without appending to host-owned prompts. Added (minor).
@@ -180,6 +187,12 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   `PendingAsk.Origin`. Missing or unrecognized origins now fail closed and cannot
   execute, learn permission rules, arm hook waivers, or transition plan mode. Changed
   (breaking, pre-v1 minor).
+
+- **Durable workspace-enrollment broker authority provenance** — adds
+  `session.Session.WorkspaceEnrollmentBrokerKeys` and
+  `session.Session.RestoreWorkspaceEnrollmentBrokerKeys` for exact bounded broker
+  registration-key provenance across snapshot/event-source restoration and
+  authority-carrying successors. Restore is write-once per aggregate. Added (minor).
 
 - **Request-manifest schema-byte evidence** — adds `session.RequestManifestPayload.AdvertisedToolSchemaBytes` and exposes it through the target-bound debugger manifest view. Adds catalog registration-key metadata accessors so manifest enumeration does not refresh live tool specifications. Added (minor).
 
@@ -402,7 +415,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   `temp_scope: "system"` previously surfaced an approval whose args held only
   the first two words of the command (`command_summary`). The ask now carries
   `{"command", "timeout_ms", "background", "temp_scope"}` re-encoded from the
-  decoded call, so duplicate or case-variant keys show the value that runs.
+  decoded call.
   The `command_summary` field is removed; no in-repo client read it.
   Runner-owned temporary paths and environment values still never appear.
   Subagent asks follow suit: the isolation auto-approve no longer clears a
@@ -444,6 +457,35 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   late outcomes without clearing a successor. This replaces timestamp-only
   pending recovery with explicit settlement. Changed (breaking behavioral
   contract, pre-v1 minor); exported signatures and API snapshots are unchanged.
+
+- **Ambiguous tool arguments are rejected (issue #2264)** — permission
+  evaluation and tool execution now read a tool call's arguments through one
+  decode, so the policy evaluates exactly the values the tool runs with. An
+  argument object that repeats a key at any depth, has two top-level keys equal
+  under Unicode case folding, or spells a policy-read argument (`command`, `cmd`,
+  `temp_scope`, `path`, `file_path`, `pattern`, `url`, `query`, `source`,
+  `destination`, `server`, `tool`) in another case is refused before policy
+  evaluation with a `permission denied: ambiguous tool arguments: …` tool
+  error; no approval is surfaced and nothing executes. `session.ParseArgs` also
+  refuses a key that names a tagged field of its destination only in another
+  case. `governance.Evaluator.EvaluateWith` denies such calls,
+  `Evaluator.LearnableRule` refuses them, and `governance.ShellCommandFromArgs`
+  returns `("", false)` for them. This replaces the earlier case-insensitive,
+  last-key-wins reading of `tool.LocalFileOperands` (issue #2094) for those
+  shapes. Callers that sent case-variant or repeated keys must send each
+  argument once, spelled as in the tool schema. A key that exactly names an
+  untagged destination field is still accepted. Plan-mode `PresentPlan` calls
+  apply the same check before the plan approval is surfaced.
+
+  A built-in tool's rules now match the argument the tool acts on: `path` for
+  `Read`, `Write`, `Edit`, `Remove`, `ListDir` and `Grep`, `pattern` for `Glob`,
+  `url` for `WebFetch`, and `query` for `WebSearch`. An extra policy-looking
+  argument the tool ignores no longer selects the matched value, and a `Grep`
+  call without `path` matches only tool-wide rules instead of its regular
+  expression. Other tools are still matched on the first of `path`,
+  `file_path`, `pattern`, `url`, and `query`, and a pattern `Deny` or `Ask` on
+  any of the others now also applies. Changed (pre-v1 minor); no exported
+  signatures changed.
 
 - **Target-scoped project guidance and ephemeral snapshot** — `prompt.InstructionAssembler`
   now requires `Assemble(context.Context, []string, *session.InstructionSnapshot, int)`
@@ -528,6 +570,13 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   `sessnap.RestoreState` to accept adapter-owned `sessnap.RestoreData`. Snapshot
   decoding validates canonical fields, ignores unknown fields, and treats an omitted
   empty token ledger as its zero value. Changed/breaking (pre-v1 minor).
+
+- **Workspace-enrollment authority replacement** —
+  `session.New` starts with legacy-absent broker provenance, and
+  `session.Session.CompleteWorkspaceEnrollment` now replaces only the prior
+  recorded broker bundle while retaining excluded broker keys in its ledger
+  across omitted refreshes, and refuses legacy-absent provenance. Changed (breaking,
+  pre-v1 minor).
 
 - **Go compatibility floor** - the engine module requires Go 1.27. The root,
   provider, and authentication modules use the same floor. Changed (breaking,

@@ -125,6 +125,43 @@ Removal deletes the current local grant and records a durable removal state
 before removing the settings profile. It does not revoke an upstream OAuth
 client or remove a shared wrapping key.
 
+## Reset local MCP credentials
+
+If `mcp add` or `mcp login` reports incompatible native credential state, use
+this command to clear saved sign-in data for the selected profile's local
+credential root. It leaves the settings file unchanged. Do not move the
+credential directory or edit OS keyring entries to recover:
+
+```sh
+mecated mcp reset-local-credentials connector
+mecated mcp login connector
+```
+
+The command requires an attended terminal and exact confirmation. It discards
+saved local MCP sign-in credentials for every native profile listed in the
+confirmation, but keeps their settings. Run `mecated mcp login` separately for
+each listed profile. If you selected another settings file, pass the same
+`--file` value to every login:
+
+```sh
+mecated mcp reset-local-credentials connector --file /etc/mecatl/settings.yaml
+mecated mcp login connector --file /etc/mecatl/settings.yaml
+# Repeat the login command for each other profile listed by reset.
+```
+
+If reset reports that another root uses the same file key, it leaves that key
+in place. Change the selected profile's
+`auth.oauth.credentials.local.key.file.path` to a path used by no other root
+before logging in. The other root continues to use the shared key.
+
+Legacy `key_env` profiles sharing the same root, provider credentials, and
+upstream registrations are unchanged. Stop affected daemons before resetting.
+A daemon that is already running may retain the old namespace until it exits.
+
+Reset resumes if interrupted. Re-run the same
+`mecated mcp reset-local-credentials` command to finish, then log in again for
+each affected profile.
+
 ## Configure a profile manually
 
 Hand-authored profiles use the sequence-based `mcp.servers` schema, with OAuth

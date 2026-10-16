@@ -1394,7 +1394,8 @@ conversation is requested.
 #### `mecatl.v1.GetSessionTranscriptResponse`
 
 GetSessionTranscriptResponse is one coherent SessionStore snapshot projection.
-messages are the loaded aggregate&#39;s current Conversation.Messages in order.
+messages are the ordered human-display projection; internal harness control
+continuations are omitted, while a successful empty projection is complete.
 
 | Field | Type | Label | Oneof | Description |
 |---|---|---|---|---|

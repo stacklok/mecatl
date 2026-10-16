@@ -58,6 +58,7 @@ const chat = {
       model: {
         contextWindow: "200000",
         id: "test-model",
+        providerDisplayName: "Test",
         providerId: "test",
         reasoningEffort: "high" as const,
       },

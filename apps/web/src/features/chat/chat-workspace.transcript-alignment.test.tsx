@@ -19,6 +19,8 @@ import { setRequestRecoveryState } from "../../lib/api-client";
 import { AuthRecoveryContext, type AuthRecoveryContextValue } from "../auth/auth-recovery-context";
 import { ShortcutProvider } from "../shortcuts/shortcut-provider";
 import { ChatWorkspace } from "./chat-workspace";
+import { ReasoningDisclosure } from "./reasoning-disclosure";
+import { ToolCallList } from "./tool-call-list";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -171,6 +173,7 @@ async function mountWorkspace(bff: ActivityFixture) {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   cleanup();
   clearUserScopedStorage();
   window.localStorage.clear();
@@ -236,6 +239,117 @@ describe("transcript bottom follow", () => {
   });
 });
 
+describe("transcript bottom follow and disclosures", () => {
+  async function mountAtBottom() {
+    ResizeObserverStub.instances = [];
+    vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+    const bff = new ActivityFixture();
+    const activity = heldStream();
+    bff.responses.set("", [activity.response]);
+    await mountWorkspace(bff);
+    await act(async () => {
+      activity.send(runEvent("user_prompt", 1, "A question"));
+      activity.send(runEvent("message.delta", 2, "First answer"));
+    });
+    await screen.findByText("First answer");
+    const scroll = screen.getByRole("region", { name: "Conversation transcript" });
+    const state = { scrollHeight: 2000 };
+    Object.defineProperties(scroll, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, get: () => state.scrollHeight },
+      scrollTop: { configurable: true, value: 1600, writable: true },
+    });
+    const observer = ResizeObserverStub.instances.find((instance) =>
+      instance.targets.some((target) => scroll.contains(target)),
+    );
+    if (!observer) throw new Error("Nothing observes the transcript's content");
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    scroll.append(toggle);
+    return { observer, scroll, state, toggle };
+  }
+
+  it("does not pull the reader down when a disclosure expands", async () => {
+    const { observer, scroll, state, toggle } = await mountAtBottom();
+    toggle.setAttribute("aria-expanded", "false");
+    act(() => toggle.click());
+    // The disclosure grows before React re-renders: the observer must already hold still.
+    state.scrollHeight = 2600;
+    act(() => observer.resize());
+    expect(scroll.scrollTop).toBe(1600);
+  });
+
+  it("keeps following when a disclosure collapses or the content simply grows", async () => {
+    const { observer, scroll, state, toggle } = await mountAtBottom();
+    toggle.setAttribute("aria-expanded", "true");
+    act(() => toggle.click());
+    state.scrollHeight = 2600;
+    act(() => observer.resize());
+    expect(scroll.scrollTop).toBe(2600);
+  });
+
+  // The two animation frames after an expansion click, on a clock the test controls.
+  function settleExpansion() {
+    act(() => {
+      vi.advanceTimersByTime(50);
+    });
+  }
+
+  it("keeps following after a small expansion, once the resize it caused has passed", async () => {
+    const { observer, scroll, state, toggle } = await mountAtBottom();
+    vi.useFakeTimers({ toFake: ["requestAnimationFrame", "cancelAnimationFrame"] });
+    toggle.setAttribute("aria-expanded", "false");
+    act(() => toggle.click());
+    // Under 80 px: the expansion's own resize is held back...
+    state.scrollHeight = 2040;
+    act(() => observer.resize());
+    expect(scroll.scrollTop).toBe(1600);
+    settleExpansion();
+    // ...and the reader, still near the bottom, follows what streams in next.
+    state.scrollHeight = 2200;
+    act(() => observer.resize());
+    expect(scroll.scrollTop).toBe(2200);
+  });
+
+  it("leaves a reader a tall expansion pushed far from the bottom where they are", async () => {
+    const { observer, scroll, state, toggle } = await mountAtBottom();
+    vi.useFakeTimers({ toFake: ["requestAnimationFrame", "cancelAnimationFrame"] });
+    toggle.setAttribute("aria-expanded", "false");
+    act(() => toggle.click());
+    state.scrollHeight = 2600;
+    act(() => observer.resize());
+    settleExpansion();
+    state.scrollHeight = 3000;
+    act(() => observer.resize());
+    expect(scroll.scrollTop).toBe(1600);
+  });
+
+  it("does not leave follow off when the click grows nothing", async () => {
+    const { observer, scroll, state, toggle } = await mountAtBottom();
+    vi.useFakeTimers({ toFake: ["requestAnimationFrame", "cancelAnimationFrame"] });
+    toggle.setAttribute("aria-expanded", "false");
+    act(() => toggle.click());
+    settleExpansion();
+    state.scrollHeight = 2200;
+    act(() => observer.resize());
+    expect(scroll.scrollTop).toBe(2200);
+  });
+
+  it("matches the real Activity and reasoning toggles when they are collapsed", () => {
+    const tools = [{ args: "{}", id: "t1", name: "Bash" }];
+    render(
+      <>
+        <ToolCallList tools={tools} />
+        <ReasoningDisclosure streaming={false} text="a thought" />
+      </>,
+    );
+    for (const name of [/^Activity/, /^Reasoning summary/]) {
+      const toggle = screen.getByRole("button", { name });
+      expect(toggle.closest('[aria-expanded="false"]')).toBe(toggle);
+    }
+  });
+});
+
 describe("transcript selection: Add to chat", () => {
   it("adds the selection to the composer's draft after a blank line", async () => {
     const bff = new ActivityFixture();
@@ -259,5 +373,25 @@ describe("transcript selection: Add to chat", () => {
     expect(document.activeElement).toBe(composer);
     expect(screen.queryByRole("button", { name: "Add to chat" })).toBeNull();
     expect(window.getSelection()?.toString()).toBe("");
+  });
+
+  it("does not read the selection, or toggle its hidden spans, on a plain click", async () => {
+    const bff = new ActivityFixture();
+    const activity = heldStream();
+    bff.responses.set("", [activity.response]);
+    await mountWorkspace(bff);
+    await act(async () => {
+      activity.send(runEvent("user_prompt", 1, "A question"));
+      activity.send(runEvent("message.delta", 2, "Quotable answer"));
+    });
+    const answer = await screen.findByText("Quotable answer");
+    const range = document.createRange();
+    range.setStart(answer.firstChild as Node, 3);
+    range.collapse(true);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+    const read = vi.spyOn(Selection.prototype, "toString");
+    fireEvent.pointerUp(screen.getByRole("region", { name: "Conversation transcript" }));
+    expect(read).not.toHaveBeenCalled();
   });
 });

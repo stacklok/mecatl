@@ -170,7 +170,7 @@ func firstPermissionAsk(t *testing.T, events []session.Event) session.PendingAsk
 
 // TestSystemTempApprovalShowsFullCommand pins that the system-scope approval
 // shows the whole command and every execution-relevant field as the engine
-// decoded them, so duplicate and case-variant keys project the value that runs.
+// decoded them.
 func TestSystemTempApprovalShowsFullCommand(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ name, args, want string }{
@@ -183,16 +183,6 @@ func TestSystemTempApprovalShowsFullCommand(t *testing.T) {
 			name: "timeout and background",
 			args: `{"temp_scope":"system","background":true,"timeout_ms":5000,"command":"go test ./... | tee out.txt"}`,
 			want: `{"command":"go test ./... | tee out.txt","timeout_ms":5000,"background":true,"temp_scope":"system"}`,
-		},
-		{
-			name: "duplicate key",
-			args: `{"command":"git status","temp_scope":"system","command":"git status && echo done"}`,
-			want: `{"command":"git status && echo done","temp_scope":"system"}`,
-		},
-		{
-			name: "case-variant keys",
-			args: `{"command":"git status","COMMAND":"git status && echo done","Temp_Scope":"system","Timeout_MS":7}`,
-			want: `{"command":"git status && echo done","timeout_ms":7,"temp_scope":"system"}`,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -207,14 +197,53 @@ func TestSystemTempApprovalShowsFullCommand(t *testing.T) {
 	}
 }
 
+// TestSystemTempAmbiguousArgsAreRejectedBeforeApproval pins that a system-scope
+// Shell call whose argument object repeats a key or spells a field in another
+// case never surfaces an approval or reaches the runner. An ambiguity in an
+// argument the policy reads is refused before policy evaluation. A case variant
+// of an option no rule reads, such as Timeout_MS, passes that generic check and
+// is evaluated as an ordinary Shell call; the Shell's own decode then refuses
+// it, so the system-scope approval is never surfaced.
+func TestSystemTempAmbiguousArgsAreRejectedBeforeApproval(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name          string
+		args          string
+		reachesPolicy bool
+	}{
+		{name: "duplicate key", args: `{"command":"git status","temp_scope":"system","command":"git status && echo done"}`},
+		{name: "case-variant keys", args: `{"command":"git status","COMMAND":"git status && echo done","Temp_Scope":"system","Timeout_MS":7}`},
+		{name: "case-variant scope", args: `{"command":"git status","TEMP_SCOPE":"system"}`},
+		{name: "case-variant option", args: `{"command":"git status","temp_scope":"system","Timeout_MS":7}`, reachesPolicy: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			runner := &fakeShellRunner{res: tool.CommandResult{Stdout: "ok"}}
+			catalog := tool.NewCatalog()
+			catalog.MustRegister(NewShellTool())
+			policy := newPolicyArgsRecorder()
+			// runPolicyArgsCall fails the test on any approval request.
+			result := runPolicyArgsCall(t, catalog, policy, shellEnvRunner(runner), session.NewToolCall("c", tool.ShellToolName, []byte(tc.args)))
+			if evaluated := len(policy.observations()) > 0; evaluated != tc.reachesPolicy {
+				t.Errorf("policy evaluated the call = %v, want %v", evaluated, tc.reachesPolicy)
+			}
+			if runner.command != "" {
+				t.Fatalf("ambiguous arguments executed %q", runner.command)
+			}
+			if !result.IsError || !strings.Contains(result.Content, "ambiguous tool arguments") {
+				t.Fatalf("result = %+v, want an ambiguous-arguments tool error", result)
+			}
+		})
+	}
+}
+
 // TestSystemTempApprovalMatchesExecutedCommand approves the system-scope ask
 // and proves the command the approver saw is the command the runner received.
 func TestSystemTempApprovalMatchesExecutedCommand(t *testing.T) {
 	t.Parallel()
 	for _, args := range []string{
 		`{"command":"git status && echo done","temp_scope":"system"}`,
-		`{"command":"git status","temp_scope":"system","command":"git status && echo done"}`,
-		`{"command":"git status","COMMAND":"git status && echo done","TEMP_SCOPE":"system"}`,
+		`{"temp_scope":"system","timeout_ms":5000,"command":"git status && echo done"}`,
 	} {
 		t.Run(args, func(t *testing.T) {
 			t.Parallel()

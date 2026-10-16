@@ -8,7 +8,8 @@ import {
   describeLastRun,
   describeNextRun,
   describeRuns,
-  fireOutcome,
+  fireOutcomeLabel,
+  fireOutcomeVariant,
   scheduleDetailPollInterval,
   scheduleDetailPolling,
   scheduleFirePollInterval,
@@ -25,6 +26,7 @@ function fire(overrides: Partial<Fire> & Pick<Fire, "id">): Fire {
     error: "",
     firedAt: "",
     inFlight: false,
+    outcome: "completed",
     progressAt: "",
     scheduleName: "daily",
     sessionId: "",
@@ -35,11 +37,11 @@ function fire(overrides: Partial<Fire> & Pick<Fire, "id">): Fire {
 }
 
 describe("schedule fire history", () => {
-  it("sorts by outcome with the newest fire as the tie break", () => {
+  it("sorts by outcome label with the newest fire as the tie break", () => {
     const items = [
-      fire({ firedAt: "2026-01-01T00:00:00.000Z", id: "old-done", stop: "end_turn" }),
-      fire({ firedAt: "2026-01-02T00:00:00.000Z", id: "failed", stop: "error" }),
-      fire({ firedAt: "2026-01-03T00:00:00.000Z", id: "new-done", stop: "end_turn" }),
+      fire({ firedAt: "2026-01-01T00:00:00.000Z", id: "old-done", outcome: "completed" }),
+      fire({ firedAt: "2026-01-02T00:00:00.000Z", id: "failed", outcome: "failed" }),
+      fire({ firedAt: "2026-01-03T00:00:00.000Z", id: "new-done", outcome: "completed" }),
     ];
 
     expect(sortScheduleFires(items, "outcome", "asc").map((item) => item.id)).toEqual([
@@ -49,42 +51,31 @@ describe("schedule fire history", () => {
     ]);
   });
 
-  it("maps fire state to product outcome vocabulary with in-flight precedence", () => {
-    const cases: Array<[Fire, string]> = [
-      [fire({ id: "claimed", inFlight: true, startedAt: "", error: "not terminal" }), "Claimed"],
-      [
-        fire({
-          id: "live",
-          inFlight: true,
-          startedAt: "2026-01-01T00:00:00Z",
-          error: "not terminal",
-        }),
-        "In flight",
-      ],
-      [fire({ id: "failed", error: "provider failed", stop: "end_turn" }), "Failed"],
-      [fire({ id: "error", stop: "error" }), "Failed"],
-      [fire({ id: "failures", stop: "max_consecutive_failures" }), "Failed"],
-      [fire({ id: "cancelled", stop: "cancelled" }), "Cancelled"],
-      // The daemon records a timeout with both its stop reason and an error.
-      [
-        fire({
-          id: "timeout",
-          error: "scheduled fire exceeded its wall-clock deadline of 30m0s",
-          stop: "timeout",
-        }),
-        "Timed out",
-      ],
-      [fire({ id: "turns", stop: "max_turns" }), "Limit reached"],
-      [fire({ id: "tools", stop: "max_tool_calls" }), "Limit reached"],
-      [fire({ id: "budget", stop: "budget" }), "Limit reached"],
-      [fire({ id: "stalled", stop: "no_progress" }), "Stopped"],
-      [fire({ id: "unknown", stop: "something_new" }), "Stopped"],
-      [fire({ id: "complete", stop: "end_turn" }), "Completed"],
-      [fire({ id: "structured", stop: "structured_output" }), "Completed"],
-      [fire({ id: "empty", stop: "" }), "Completed"],
+  it("labels and colors every outcome the BFF reports", () => {
+    const cases: Array<[Fire["outcome"], string, string]> = [
+      ["claimed", "Claimed", "success"],
+      ["in_flight", "In flight", "success"],
+      ["completed", "Completed", "muted"],
+      ["failed", "Failed", "destructive"],
+      ["cancelled", "Cancelled", "muted"],
+      ["timed_out", "Timed out", "warning"],
+      ["limit_reached", "Limit reached", "warning"],
+      ["stopped", "Stopped", "muted"],
     ];
 
-    for (const [item, expected] of cases) expect(fireOutcome(item), item.id).toBe(expected);
+    for (const [outcome, label, variant] of cases) {
+      const item = fire({ id: outcome, outcome });
+      expect(fireOutcomeLabel(item), outcome).toBe(label);
+      expect(fireOutcomeVariant(item), outcome).toBe(variant);
+    }
+  });
+
+  it("reads an outcome this build does not know, or a missing one, as stopped", () => {
+    const future = fire({ id: "future", outcome: "something_new" as Fire["outcome"] });
+    expect(fireOutcomeLabel(future)).toBe("Stopped");
+    expect(fireOutcomeVariant(future)).toBe("muted");
+    const missing = fire({ id: "missing", outcome: undefined as unknown as Fire["outcome"] });
+    expect(fireOutcomeLabel(missing)).toBe("Stopped");
   });
 
   it("polls only while the selected schedule or a fire is live", () => {

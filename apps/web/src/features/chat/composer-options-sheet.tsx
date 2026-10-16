@@ -10,9 +10,10 @@ import {
   SlidersHorizontal,
   X,
 } from "lucide-react";
-import { type ReactNode, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Sheet, SheetClose, SheetContent, SheetTitle } from "../../components/ui/sheet";
+import { Toggle } from "../../components/ui/toggle";
 import { MODE_OPTIONS, modeTitle, type SessionPermissionMode } from "../../lib/permission-mode";
 import { EFFORT_OPTIONS, effortLabel } from "../../lib/reasoning-effort";
 import { cn } from "../../lib/utils";
@@ -42,6 +43,14 @@ export interface ComposerModelControl {
 
 const rowClass =
   "flex w-full items-center gap-3 px-4 py-3 text-left text-sm transition-colors hover:bg-muted/50 disabled:opacity-50";
+
+/** Undoes the Toggle's own size, shape, ink and pressed fill on a `rowClass` row. */
+const toggleRowClass =
+  "h-auto min-w-0 justify-start rounded-none font-normal whitespace-normal hover:text-current data-[state=on]:bg-transparent data-[state=on]:text-current data-[state=on]:hover:bg-muted/50";
+
+/** The Effort pill, brand-tinted while pressed, with no hover fill. */
+const effortPillClass =
+  "h-auto min-h-8 min-w-0 rounded-full border px-3 py-1 text-xs font-normal whitespace-normal transition-none hover:bg-transparent hover:text-current data-[state=on]:border-brand data-[state=on]:bg-brand/10 data-[state=on]:text-brand data-[state=on]:hover:bg-brand/10 data-[state=on]:hover:text-brand";
 
 /**
  * The phone composer's options, from the prototype's `MobileComposerMenu`
@@ -75,6 +84,21 @@ export function ComposerOptionsSheet({
   const trigger = useRef<HTMLButtonElement>(null);
   const restoreFocus = useRef(true);
 
+  // A CSS-hidden open modal still owns its overlay and focus trap. Close when the
+  // desktop layout takes over, where this sheet has no trigger or visible content.
+  useEffect(() => {
+    const desktop = window.matchMedia("(min-width: 640px)");
+    const closeOnDesktop = () => {
+      if (!desktop.matches) return;
+      restoreFocus.current = false;
+      setOpen(false);
+      setView("main");
+    };
+    desktop.addEventListener("change", closeOnDesktop);
+    closeOnDesktop();
+    return () => desktop.removeEventListener("change", closeOnDesktop);
+  }, []);
+
   // A modal sheet: app shortcuts must not act on the chat behind it.
   useShortcutSuppression(open);
 
@@ -88,7 +112,7 @@ export function ComposerOptionsSheet({
     <>
       <Button
         aria-label="Composer options"
-        className="size-8 shrink-0 rounded-full border-0 bg-transparent text-muted-foreground shadow-none hover:bg-muted/60 min-[500px]:hidden"
+        className="size-11 shrink-0 rounded-full border-0 bg-transparent text-muted-foreground shadow-none hover:bg-muted/60 min-[640px]:hidden"
         disabled={disabled}
         onClick={() => setOpen(true)}
         ref={trigger}
@@ -106,7 +130,7 @@ export function ComposerOptionsSheet({
         open={open}
       >
         <SheetContent
-          className="max-h-[min(85dvh,40rem)] overflow-y-auto p-0 pb-[env(safe-area-inset-bottom)] min-[500px]:hidden"
+          className="max-h-[min(85dvh,40rem)] overflow-y-auto p-0 pb-[env(safe-area-inset-bottom)] min-[640px]:hidden"
           onCloseAutoFocus={(event) => {
             if (!restoreFocus.current) {
               restoreFocus.current = true;
@@ -217,22 +241,21 @@ export function ComposerOptionsSheet({
                 </legend>
                 <div className="clear-left flex flex-wrap gap-1.5">
                   {EFFORT_OPTIONS.map((option) => (
-                    <button
-                      aria-pressed={option.value === model.effort}
-                      className={cn(
-                        "min-h-8 rounded-full border px-3 py-1 text-xs disabled:opacity-50",
-                        option.value === model.effort && "border-brand bg-brand/10 text-brand",
-                      )}
+                    // Separate Toggles, not a single-choice ToggleGroup: that
+                    // would turn the pills into radios with roving focus.
+                    // Pressing the current pill picks it again.
+                    <Toggle
+                      className={effortPillClass}
                       disabled={model.disabled}
                       key={option.value}
-                      onClick={() => {
+                      onPressedChange={() => {
                         model.onEffortChange(option.value);
                         close();
                       }}
-                      type="button"
+                      pressed={option.value === model.effort}
                     >
                       {option.label}
-                    </button>
+                    </Toggle>
                   ))}
                 </div>
               </fieldset>
@@ -293,13 +316,14 @@ function OptionView<V extends string>({
     <div className="py-2">
       <BackButton label={title} onBack={onBack} />
       {items.map((option) => (
-        <button
-          aria-pressed={option.value === value}
-          className={rowClass}
+        // One Toggle per choice, as for the Effort pills; pressing the
+        // current choice picks it again.
+        <Toggle
+          className={cn(rowClass, toggleRowClass)}
           disabled={disabled}
           key={option.value}
-          onClick={() => onSelect(option.value)}
-          type="button"
+          onPressedChange={() => onSelect(option.value)}
+          pressed={option.value === value}
         >
           {option.dotClassName && (
             <span
@@ -312,7 +336,7 @@ function OptionView<V extends string>({
             <span className="block text-xs text-muted-foreground">{option.description}</span>
           </span>
           {option.value === value && <Check aria-hidden="true" className="size-4 shrink-0" />}
-        </button>
+        </Toggle>
       ))}
     </div>
   );

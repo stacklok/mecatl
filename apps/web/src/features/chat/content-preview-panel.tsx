@@ -446,16 +446,15 @@ function ToolResultPreview({ tool }: { tool: ToolActivity }) {
       <div className="flex items-end justify-between gap-2">
         <PreviewLabel>{showDiff ? "Input — diff" : "Input"}</PreviewLabel>
         {diffable && (
-          <Button
-            aria-pressed={showRaw}
-            className="mb-1 h-6 px-2 text-xs text-muted-foreground hover:text-foreground"
-            onClick={() => setShowRaw((value) => !value)}
+          <Toggle
+            className="mb-1 h-6 min-w-auto px-2 text-xs text-muted-foreground hover:text-foreground"
+            onPressedChange={setShowRaw}
+            pressed={showRaw}
             size="sm"
-            type="button"
             variant="ghost"
           >
             {showRaw ? "Diff" : "Raw"}
-          </Button>
+          </Toggle>
         )}
       </div>
       {showDiff ? (

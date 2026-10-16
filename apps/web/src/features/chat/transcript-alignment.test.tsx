@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // @vitest-environment happy-dom
 
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createRef } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearUserScopedStorage } from "../../lib/account-storage";
@@ -22,6 +22,7 @@ afterEach(() => {
   cleanup();
   clearUserScopedStorage();
   window.localStorage.clear();
+  vi.unstubAllGlobals();
 });
 
 const read: ToolActivity = {
@@ -189,8 +190,18 @@ describe("message rows", () => {
     expect(within(question).getByRole("button", { name: "Reply in side thread" })).toBeTruthy();
   });
 
-  it("shows the configured avatars beside each speaker", () => {
-    render(
+  it("shows the configured avatars beside each speaker", async () => {
+    // happy-dom never loads a picture, and the Avatar primitive shows the
+    // image only once it has loaded, so stand in an already-loaded Image.
+    class LoadedImage extends EventTarget {
+      complete = true;
+      crossOrigin: string | null = null;
+      naturalWidth = 32;
+      referrerPolicy = "";
+      src = "";
+    }
+    vi.stubGlobal("Image", LoadedImage);
+    const { container } = render(
       <ChatTranscript
         agentAvatar="data:image/png;base64,YQ=="
         messages={turn}
@@ -199,6 +210,7 @@ describe("message rows", () => {
         userName="Sam"
       />,
     );
+    await waitFor(() => expect(container.querySelectorAll("img")).toHaveLength(2));
     expect(screen.getByRole("img", { name: "Sam" }).getAttribute("src")).toBe(
       "data:image/png;base64,Yg==",
     );

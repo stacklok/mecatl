@@ -7,6 +7,8 @@ export const modelInventoryItemSchema = z.object({
   displayName: z.string(),
   id: z.string(),
   image: z.boolean(),
+  /** The provider's display name, as on its `providerInventoryItemSchema` entry. */
+  providerDisplayName: z.string(),
   providerId: z.string(),
   reasoning: z.boolean(),
 });
@@ -14,6 +16,8 @@ export const modelInventoryItemSchema = z.object({
 export const providerInventoryItemSchema = z.object({
   availableNotDefault: z.boolean(),
   defaultModelAutoSelected: z.boolean(),
+  /** The BFF's name for the provider: a known registry ID's name, else the ID title-cased. */
+  displayName: z.string(),
   hint: z.string(),
   id: z.string(),
   modelCount: z.number().int().nonnegative(),

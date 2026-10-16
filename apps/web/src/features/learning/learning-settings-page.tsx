@@ -55,9 +55,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Note, SettingsCard } from "@/features/settings/settings-card";
 import { errorMessage } from "@/lib/error-message";
-import { cn } from "@/lib/utils";
 import { LearningModeSection } from "./learning-mode-section";
 import { isProposalConflict, type Proposal, ProposalRow, proposalTitle } from "./proposal-row";
 
@@ -267,18 +267,25 @@ function ProposalQueueCard() {
               </ToggleGroupItem>
             ))}
           </ToggleGroup>
-          <Button
-            aria-label="Refresh suggestions"
-            className="ml-auto min-h-11 min-w-11"
-            disabled={proposals.isFetching}
-            onClick={restart}
-            size="icon"
-            title="Refresh suggestions"
-            type="button"
-            variant="ghost"
-          >
-            <RotateCw aria-hidden="true" className={cn(proposals.isFetching && "animate-spin")} />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                aria-label="Refresh suggestions"
+                className="ml-auto min-h-11 min-w-11"
+                disabled={proposals.isFetching}
+                onClick={restart}
+                size="icon"
+                type="button"
+                variant="ghost"
+              >
+                <RotateCw
+                  aria-hidden="true"
+                  className={proposals.isFetching ? "animate-spin" : undefined}
+                />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Refresh suggestions</TooltipContent>
+          </Tooltip>
         </div>
 
         {notice && (

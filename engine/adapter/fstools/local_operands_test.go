@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
@@ -23,13 +24,15 @@ func TestLocalFileOperandsReadExecution(t *testing.T) {
 		wantError bool
 	}{
 		{`{"path":"a"}`, "a", false},
-		{`{"Path":"b"}`, "b", false},
-		{`{"path":"a","Path":"b"}`, "b", false},
-		{`{"Path":"b","path":"a"}`, "a", false},
-		{`{"path":"a","path":"b"}`, "b", false},
-		{`{"path":"b","path":"a"}`, "a", false},
-		{`{"path":"a","path":null}`, "a", false},
-		{`{"path":null,"path":"a"}`, "a", false},
+		// Ambiguous argument objects (a repeated key, or a field spelled in
+		// another case) yield no operands and are refused by the tool.
+		{`{"Path":"b"}`, "", true},
+		{`{"path":"a","Path":"b"}`, "", true},
+		{`{"Path":"b","path":"a"}`, "", true},
+		{`{"path":"a","path":"b"}`, "", true},
+		{`{"path":"b","path":"a"}`, "", true},
+		{`{"path":"a","path":null}`, "", true},
+		{`{"path":null,"path":"a"}`, "", true},
 		{`{"path":1,"path":"a"}`, "", true},
 		{`{"path":"a","path":1}`, "", true},
 		{`{"path":null}`, "", true},
@@ -63,6 +66,9 @@ func TestLocalFileOperandsReadExecution(t *testing.T) {
 	}
 }
 
+// TestLocalFileOperandsPathToolExecution pins that a path tool given a path
+// field in two spellings derives no operand and refuses the call, leaving both
+// candidate files untouched.
 func TestLocalFileOperandsPathToolExecution(t *testing.T) {
 	for _, tt := range []struct {
 		tool tool.Tool
@@ -88,34 +94,20 @@ func TestLocalFileOperandsPathToolExecution(t *testing.T) {
 				}
 			}
 			call := rawOperandCall(name, tt.args)
-			if got := tool.LocalFileOperands(name, call.Args); !slices.Equal(got, []string{"b"}) {
-				t.Fatalf("operands=%q", got)
+			if got := tool.LocalFileOperands(name, call.Args); got != nil {
+				t.Fatalf("operands=%q, want none", got)
 			}
 			result := exec(t, tt.tool, call, ws)
-			if result.IsError {
-				t.Fatal(result)
+			if !result.IsError || !strings.Contains(result.Content, "ambiguous tool arguments") {
+				t.Fatalf("result=%+v, want an ambiguous-arguments error", result)
 			}
-			switch name {
-			case "ListDir":
-				if result.Content != "RIGHT\n" {
-					t.Fatal(result)
-				}
-			case "Read":
-				if result.Content != "     1\tMARKER_B\n" {
-					t.Fatal(result)
-				}
-			default:
-				data, err := ws.Read(context.Background(), "b")
-				if name == "Remove" {
-					if !errors.Is(err, fs.ErrNotExist) {
-						t.Fatalf("removed b still exists: %q err=%v", data, err)
-					}
-				} else if err != nil || string(data) != "changed" {
-					t.Fatalf("b=%q err=%v", data, err)
-				}
-				data, err = ws.Read(context.Background(), "a")
-				if err != nil || string(data) != "MARKER_A" {
-					t.Fatalf("unselected a changed: %q err=%v", data, err)
+			if name == "ListDir" {
+				return
+			}
+			for path, marker := range map[string]string{"a": "MARKER_A", "b": "MARKER_B"} {
+				data, err := ws.Read(context.Background(), path)
+				if err != nil || string(data) != marker {
+					t.Fatalf("%s changed: %q err=%v", path, data, err)
 				}
 			}
 		})
@@ -130,13 +122,14 @@ func TestLocalFileOperandsCopyMoveExecution(t *testing.T) {
 				source, destination string
 			}{
 				{`{"source":"a","destination":"x"}`, "a", "x"},
-				{`{"source":"a","Source":"b","destination":"x","Destination":"y"}`, "b", "y"},
-				{`{"Source":"b","source":"a","Destination":"y","destination":"x"}`, "a", "x"},
-				{`{"source":"a","source":"b","destination":"x","destination":"y"}`, "b", "y"},
-				{`{"source":"b","source":"a","destination":"y","destination":"x"}`, "a", "x"},
-				{`{"source":"a","source":null,"destination":"x","destination":null}`, "a", "x"},
-				{`{"source":null,"source":"a","destination":null,"destination":"x"}`, "a", "x"},
-				{`{"ſource":"b","destination":"y"}`, "b", "y"},
+				// Ambiguous argument objects yield no operands and are refused.
+				{`{"source":"a","Source":"b","destination":"x","Destination":"y"}`, "", ""},
+				{`{"Source":"b","source":"a","Destination":"y","destination":"x"}`, "", ""},
+				{`{"source":"a","source":"b","destination":"x","destination":"y"}`, "", ""},
+				{`{"source":"b","source":"a","destination":"y","destination":"x"}`, "", ""},
+				{`{"source":"a","source":null,"destination":"x","destination":null}`, "", ""},
+				{`{"source":null,"source":"a","destination":null,"destination":"x"}`, "", ""},
+				{`{"ſource":"b","destination":"y"}`, "", ""},
 				{`{"source":1,"source":"a","destination":"x"}`, "", ""},
 				{`{"source":"a","source":1,"destination":"x"}`, "", ""},
 				{`{"source":"a","destination":1,"destination":"x"}`, "", ""},
@@ -195,13 +188,14 @@ func (r *operandRecordingRunner) Run(_ context.Context, command string) (tool.Co
 func TestLocalFileOperandsShellExecution(t *testing.T) {
 	for _, tt := range []struct{ args, command, path string }{
 		{`{"command":"./a.sh"}`, "./a.sh", "./a.sh"},
-		{`{"Command":"./b.sh"}`, "./b.sh", "./b.sh"},
-		{`{"command":"./a.sh","Command":"./b.sh"}`, "./b.sh", "./b.sh"},
-		{`{"Command":"./b.sh","command":"./a.sh"}`, "./a.sh", "./a.sh"},
-		{`{"command":"./a.sh","command":"./b.sh"}`, "./b.sh", "./b.sh"},
-		{`{"command":"./b.sh","command":"./a.sh"}`, "./a.sh", "./a.sh"},
-		{`{"command":"./a.sh","command":null}`, "./a.sh", "./a.sh"},
-		{`{"command":null,"command":"./a.sh"}`, "./a.sh", "./a.sh"},
+		// Ambiguous argument objects yield no operands and never run.
+		{`{"Command":"./b.sh"}`, "", ""},
+		{`{"command":"./a.sh","Command":"./b.sh"}`, "", ""},
+		{`{"Command":"./b.sh","command":"./a.sh"}`, "", ""},
+		{`{"command":"./a.sh","command":"./b.sh"}`, "", ""},
+		{`{"command":"./b.sh","command":"./a.sh"}`, "", ""},
+		{`{"command":"./a.sh","command":null}`, "", ""},
+		{`{"command":null,"command":"./a.sh"}`, "", ""},
 		{`{"command":1,"command":"./a.sh"}`, "", ""},
 		{`{"command":"./a.sh","command":1}`, "", ""},
 		{`{}`, "", ""},

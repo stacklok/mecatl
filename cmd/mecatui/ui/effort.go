@@ -111,11 +111,8 @@ func (s *effortState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 
 func (s *effortState) HandleWheel(msg tea.MouseWheelMsg) (tea.Cmd, bool) {
 	if !s.compact && s.list.Valid() {
-		switch msg.Button {
-		case tea.MouseWheelUp:
-			s.list.Scroll(bounded.LineUp)
-		case tea.MouseWheelDown:
-			s.list.Scroll(bounded.LineDown)
+		if move, ok := boundedWheelMove(msg); ok {
+			s.list.Scroll(move)
 		}
 	}
 	return nil, true

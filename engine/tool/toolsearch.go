@@ -78,10 +78,8 @@ type matchedSpec struct {
 // tools. ToolSearch never returns itself. Results are ordered by name.
 func (s *Search) Execute(_ context.Context, in session.ToolCall, _ Environment) (session.ToolResult, error) {
 	var args toolSearchArgs
-	if len(in.Args) > 0 {
-		if err := json.Unmarshal(in.Args, &args); err != nil {
-			return session.NewToolError(in.ID, fmt.Sprintf("ToolSearch: invalid args: %v", err)), nil
-		}
+	if msg, ok := session.ParseArgs(in, &args); !ok {
+		return session.NewToolError(in.ID, "ToolSearch: "+msg), nil
 	}
 	q := strings.ToLower(strings.TrimSpace(args.Query))
 

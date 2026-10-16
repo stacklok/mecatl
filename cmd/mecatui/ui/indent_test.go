@@ -185,11 +185,11 @@ func TestAssistantBodyHangsUnderLabel(t *testing.T) {
 	out := r.renderConversation(c, true)
 
 	wantCol := r.indent + assistantBodyHang // base + marker width
-	asstCol := bodyTextColumn(t, out, "● mecatl", 'a')
+	asstCol := bodyTextColumn(t, out, "◀ mecatl", 'a')
 	if asstCol != wantCol {
 		t.Errorf("assistant body text column = %d, want %d (base %d + hang %d, under \"mecatl\")", asstCol, wantCol, r.indent, assistantBodyHang)
 	}
-	userCol := bodyTextColumn(t, out, "▌ you", 'u')
+	userCol := bodyTextColumn(t, out, "▶ you", 'u')
 	if userCol != asstCol {
 		t.Errorf("user body text column = %d, assistant = %d — the two message bodies must align under their labels", userCol, asstCol)
 	}

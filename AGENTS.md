@@ -93,8 +93,16 @@ for that area from [`docs/READING.md`](docs/READING.md).
   and authoring guidance.
 - Markdown changes run `task docs`. User-facing changes update the owning
   `user-docs/` page when documentation adds information beyond UI hints or
-  self-evident behavior. Changing behavior a `docs/` chapter describes updates
-  that chapter.
+  self-evident behavior.
+- Architecture docs record stable boundaries, ownership, dependencies, data flow,
+  contracts, and rationale. Update them only when an existing architectural claim
+  becomes false or materially incomplete, or a new architectural concept needs
+  explaining.
+- A bug fix that restores an existing invariant normally needs no architecture edit.
+  When an edit is needed, make the smallest in-place correction rather than appending
+  a paragraph about the change.
+- Keep per-fix implementation details and regression cases in code and tests; keep
+  change history in PR descriptions or release notes, not architecture chapters.
 
 Path-scoped invariants live in `.claude/rules/*.md`, including test isolation
 (composition helpers and a test-owned `UserModelDir`).

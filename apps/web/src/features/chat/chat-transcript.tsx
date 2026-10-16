@@ -2,7 +2,7 @@
 
 import { ExternalLink } from "lucide-react";
 import { memo, useCallback, useRef } from "react";
-import { ApprovalPanel, type ApprovalRequest, type ApprovalVerdict } from "./approval-panel";
+import type { ApprovalRequest, ApprovalVerdict } from "./approval-panel";
 import { type AuthorizationHandoff, AuthorizationReviewTrigger } from "./authorization-review";
 import { type ChatMessage, messageOwnsApproval, unmatchedApprovals } from "./chat-state";
 import {
@@ -22,7 +22,8 @@ import {
   messageBodyClass,
   messageRowClass,
 } from "./message-bubble";
-import { PlanReviewCard, type PlanVerdict } from "./plan-review-card";
+import { PendingAskCard, pendingAskKey } from "./pending-ask-card";
+import type { PlanVerdict } from "./plan-review-card";
 import { ReasoningDisclosure } from "./reasoning-disclosure";
 import { hasVisibleStopReason, StopReasonChip } from "./stop-reason-chip";
 import { StreamingIndicator } from "./streaming-indicator";
@@ -520,26 +521,19 @@ export function ChatTranscript({
           userName={userName}
         />
       ))}
-      {unmatched.map((approval) =>
-        approval.tool === "PresentPlan" ? (
-          <PlanReviewCard
-            approval={approval}
-            disabled={!approval.controlTarget || (approvalDisabled?.(approval) ?? false)}
-            key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
-            onRespond={(verdict) => respondToPlan(approval, verdict)}
-            uncertain={approvalUncertain?.(approval)}
-            unavailableReason={planUnavailableReason?.(approval)}
-          />
-        ) : (
-          <ApprovalPanel
-            approval={approval}
-            disabled={!approval.controlTarget || (approvalDisabled?.(approval) ?? false)}
-            key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
-            onRespond={(verdict) => respondToApproval(approval, verdict)}
-            uncertain={approvalUncertain?.(approval)}
-          />
-        ),
-      )}
+      {unmatched.map((approval) => (
+        <PendingAskCard
+          approval={approval}
+          controls={{
+            approvalDisabled,
+            approvalUncertain,
+            onRespondToApproval: respondToApproval,
+            onRespondToPlan: respondToPlan,
+            planUnavailableReason,
+          }}
+          key={pendingAskKey(approval)}
+        />
+      ))}
     </div>
   );
 }

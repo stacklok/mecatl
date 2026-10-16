@@ -47,18 +47,35 @@ func brokerEngineResult() SessionEngineResult {
 	return SessionEngineResult{Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}), Close: func() error { return nil }}
 }
 
+func brokerEngineResultWithTools(tools []tool.Tool) SessionEngineResult {
+	result := brokerEngineResult()
+	result.BrokerRegistrationKeys = toolNames(tools)
+	result.NonBrokerRegistrationKeys = []string{"Read"}
+	return result
+}
+
 // brokerEngineResultWithStore mirrors brokerEngineResult but wires the
 // engine's own Store: brokerEngineResult's engine has none, which is a silent
 // no-op save for tests that only exercise enrollment controls, but a test
 // that drives a REAL StartRunContent turn needs it wired to the session's
 // actual store, or nothing the run does ever persists.
 func brokerEngineResultWithStore(store port.SessionStore) SessionEngineResult {
+	return brokerEngineResultWithStoreAndTools(store, nil)
+}
+
+// brokerEngineResultWithStoreAndTools reports the exact registration metadata
+// for the tools supplied to the test factory. The fixture catalog's remaining
+// non-broker registration is Read; keeping that partition explicit exercises
+// the production handoff instead of relying on an omitted-field fallback.
+func brokerEngineResultWithStoreAndTools(store port.SessionStore, tools []tool.Tool) SessionEngineResult {
 	return SessionEngineResult{
 		Engine: agent.NewEngine(agent.Deps{
 			LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: tool.NewCatalog(),
 			Policy: permpolicy.NewPolicy(nil, nil), Store: store,
 		}),
-		Close: func() error { return nil },
+		BrokerRegistrationKeys:    toolNames(tools),
+		NonBrokerRegistrationKeys: []string{"Read"},
+		Close:                     func() error { return nil },
 	}
 }
 
@@ -97,7 +114,7 @@ func TestMCPBrokerCarryoverDoesNotWidenAttenuatedAuthority(t *testing.T) {
 		RootAuthority: func(session.SessionKind) session.Authority {
 			return session.Authority{CapabilitySet: governance.CapabilitySet{Tools: []string{"root-only"}}, Provenance: "fresh-root"}
 		},
-		SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool) (SessionEngineResult, error) {
+		SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool, []string) (SessionEngineResult, error) {
 			return brokerEngineResult(), nil
 		},
 	})
@@ -129,7 +146,7 @@ func TestMCPBrokerCanonicalAttachPersistReattachAndLocalClose(t *testing.T) {
 			t.Fatal("broker session used the factory without explicit tools")
 			return SessionEngineResult{}, nil
 		},
-		SessionEngineWithTools: func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, _ session.PermissionMode, tools []tool.Tool) (SessionEngineResult, error) {
+		SessionEngineWithTools: func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, _ session.PermissionMode, tools []tool.Tool, _ []string) (SessionEngineResult, error) {
 			factoryCalls++
 			if tools == nil {
 				t.Fatal("explicit broker tool slice was nil")
@@ -191,7 +208,7 @@ func TestMCPBrokerPermanentDeleteRemovesLogicalState(t *testing.T) {
 		Engine: brokerEngineResult().Engine, Store: memstore.New(),
 		PlacementProvider: brokerPlacementProvider{}, PlacementScope: "test",
 		NewID: func() session.SessionID { return "permanent-delete" }, MCPBroker: runtime,
-		SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool) (SessionEngineResult, error) {
+		SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool, []string) (SessionEngineResult, error) {
 			return brokerEngineResult(), nil
 		},
 	})
@@ -262,7 +279,7 @@ func newFlakyDeleteService(t *testing.T, id session.SessionID) (*Service, *adapt
 		Engine: brokerEngineResult().Engine, Store: store,
 		PlacementProvider: brokerPlacementProvider{}, PlacementScope: "test",
 		NewID: func() session.SessionID { return id }, MCPBroker: broker,
-		SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool) (SessionEngineResult, error) {
+		SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool, []string) (SessionEngineResult, error) {
 			return brokerEngineResult(), nil
 		},
 	})
@@ -348,7 +365,7 @@ func TestDeleteSessionKeepsBrokerStateWhenDurableDeleteFails(t *testing.T) {
 		Engine: brokerEngineResult().Engine, Store: store,
 		PlacementProvider: brokerPlacementProvider{}, PlacementScope: "test",
 		NewID: func() session.SessionID { return "keep-broker-state" }, MCPBroker: runtime,
-		SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool) (SessionEngineResult, error) {
+		SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool, []string) (SessionEngineResult, error) {
 			return brokerEngineResult(), nil
 		},
 	})
@@ -395,7 +412,7 @@ func TestMCPBrokerAttachRollbackSerializesAgainstReattachCommit(t *testing.T) {
 		Engine: brokerEngineResult().Engine, Store: store,
 		PlacementProvider: brokerPlacementProvider{}, PlacementScope: "test",
 		NewID: func() session.SessionID { return "rollback-race" }, MCPBroker: runtime,
-		SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool) (SessionEngineResult, error) {
+		SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool, []string) (SessionEngineResult, error) {
 			return brokerEngineResult(), nil
 		},
 	})
@@ -455,7 +472,7 @@ func TestMCPBrokerCloseSerializesAgainstEngineRebuild(t *testing.T) {
 		Engine: brokerEngineResult().Engine, Store: memstore.New(),
 		PlacementProvider: brokerPlacementProvider{}, PlacementScope: "test",
 		NewID: func() session.SessionID { return "close-race" }, MCPBroker: runtime,
-		SessionEngineWithTools: func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, _ session.PermissionMode, tools []tool.Tool) (SessionEngineResult, error) {
+		SessionEngineWithTools: func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, _ session.PermissionMode, tools []tool.Tool, _ []string) (SessionEngineResult, error) {
 			factoryCalls.Add(1)
 			wrapper = tools[0]
 			return brokerEngineResult(), nil
@@ -544,7 +561,7 @@ func TestMCPBrokerServiceShutdownBoundsAttachmentDrain(t *testing.T) {
 		Engine: brokerEngineResult().Engine, Store: memstore.New(), Diagnostics: port.NopDiagnostics{},
 		PlacementProvider: brokerPlacementProvider{}, PlacementScope: "test",
 		NewID: func() session.SessionID { return "shutdown-drain" }, MCPBroker: runtime,
-		SessionEngineWithTools: func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, _ session.PermissionMode, tools []tool.Tool) (SessionEngineResult, error) {
+		SessionEngineWithTools: func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, _ session.PermissionMode, tools []tool.Tool, _ []string) (SessionEngineResult, error) {
 			wrapper = tools[0]
 			return brokerEngineResult(), nil
 		},
@@ -585,7 +602,7 @@ func TestMCPBrokerCreateRollbackDeletesOnlyNewLogicalState(t *testing.T) {
 		PlacementProvider: brokerPlacementProvider{}, PlacementScope: "test",
 		NewID:     func() session.SessionID { return "rollback" },
 		MCPBroker: runtime,
-		SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool) (SessionEngineResult, error) {
+		SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool, []string) (SessionEngineResult, error) {
 			return brokerEngineResult(), nil
 		},
 	})

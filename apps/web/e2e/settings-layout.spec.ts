@@ -70,6 +70,7 @@ function stub(bff: OfflineBff) {
         displayName: "Claude Sonnet",
         id: "claude-sonnet",
         image: true,
+        providerDisplayName: "Anthropic",
         providerId: "anthropic",
         reasoning: true,
       },
@@ -78,6 +79,7 @@ function stub(bff: OfflineBff) {
         displayName: "GPT Mini",
         id: "gpt-mini",
         image: false,
+        providerDisplayName: "OpenAI",
         providerId: "openai",
         reasoning: false,
       },
@@ -89,6 +91,7 @@ function stub(bff: OfflineBff) {
       {
         availableNotDefault: false,
         defaultModelAutoSelected: true,
+        displayName: "Anthropic",
         hint: "",
         id: "anthropic",
         modelCount: 1,

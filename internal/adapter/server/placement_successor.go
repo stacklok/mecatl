@@ -205,6 +205,7 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 
 	created := session.New(destinationID, source.Mode, binding.Ref, source.Limits, s.cfg.Now())
 	created.Placement = canonicalPlacementMetadata(binding)
+	brokerKeys, brokerKeysPresent := source.WorkspaceEnrollmentBrokerKeys()
 	authority, bound := source.BoundAuthority()
 	if !bound {
 		authority = session.Authority{}
@@ -216,7 +217,7 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	// successor path never goes through newCreatedSession, so it is stamped
 	// directly here instead.
 	created.AgentDefinitionName = source.AgentDefinitionName
-	if err := setSessionLabels(created, selector, profileForSession(source), source.Owner, authority); err != nil {
+	if err := setSessionLabels(created, selector, profileForSession(source), source.Owner, authority, brokerKeys, brokerKeysPresent); err != nil {
 		return "", err
 	}
 	created.ExecutionTemplateID, created.ExecutionTemplateRevision = source.ExecutionTemplateID, source.ExecutionTemplateRevision
@@ -310,7 +311,7 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 			}
 		}
 		if broker != nil {
-			builtEngine, err = s.buildAndRegisterSessionEngineWithBrokerTools(mutationCtx, created, selector, profile, created.Mode, false, brokerTools(broker), true, inheritedSource)
+			builtEngine, err = s.buildAndRegisterSessionEngineWithBrokerTools(mutationCtx, created, selector, profile, created.Mode, false, brokerTools(broker), nil, true, inheritedSource)
 		} else {
 			builtEngine, err = s.buildAndRegisterSessionEngine(mutationCtx, created, selector, profile, created.Mode, false, inheritedSource)
 		}

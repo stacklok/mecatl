@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { AlertCircle, ChevronDown, ChevronRight } from "lucide-react";
-import { useId } from "react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useDetailsOpen } from "./use-details-open";
 
 /** The card's one-line summary is capped here (an ellipsis marks the cut). */
@@ -37,7 +37,6 @@ export function FailedTurnCard({
   summary: string;
 }) {
   const [expanded, toggleExpanded] = useDetailsOpen();
-  const detailsId = useId();
   const clamped = clampSummary(summary) || GENERIC_SUMMARY;
   const text = permanent ? `${clamped}${PERMANENT_SUFFIX}` : clamped;
   const hasDetails = Boolean(detail?.trim()) && detail !== summary;
@@ -52,32 +51,29 @@ export function FailedTurnCard({
         <p className="mt-0.5 break-words text-foreground">{text}</p>
         {!permanent && <p className="mt-0.5 text-xs text-foreground">Retrying may succeed.</p>}
         {hasDetails && (
-          <>
-            <button
-              aria-controls={detailsId}
-              aria-expanded={expanded}
-              className="mt-1 inline-flex items-center gap-1 rounded text-xs text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              onClick={toggleExpanded}
-              type="button"
-            >
-              {expanded ? (
-                <ChevronDown aria-hidden="true" className="size-3" />
-              ) : (
-                <ChevronRight aria-hidden="true" className="size-3" />
-              )}
-              {expanded ? "Hide details" : "Show details"}
-            </button>
-            {expanded && (
-              <div className="mt-1" id={detailsId}>
-                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                  Raw payload
-                </p>
-                <pre className="mt-0.5 whitespace-pre-wrap break-words font-mono text-xs text-foreground">
-                  {detail}
-                </pre>
-              </div>
-            )}
-          </>
+          <Collapsible onOpenChange={toggleExpanded} open={expanded}>
+            <CollapsibleTrigger asChild>
+              <button
+                className="mt-1 inline-flex items-center gap-1 rounded text-xs text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                type="button"
+              >
+                {expanded ? (
+                  <ChevronDown aria-hidden="true" className="size-3" />
+                ) : (
+                  <ChevronRight aria-hidden="true" className="size-3" />
+                )}
+                {expanded ? "Hide details" : "Show details"}
+              </button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="mt-1">
+              <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                Raw payload
+              </p>
+              <pre className="mt-0.5 whitespace-pre-wrap break-words font-mono text-xs text-foreground">
+                {detail}
+              </pre>
+            </CollapsibleContent>
+          </Collapsible>
         )}
       </div>
     </div>

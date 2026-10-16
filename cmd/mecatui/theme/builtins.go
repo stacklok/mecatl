@@ -9,6 +9,18 @@ const (
 	solarGold = "#B58900" // solar accent / user / code / number
 )
 
+var aztecTranscript = transcriptRecipe{
+	llm: "#c98f9d", tool: "#57b8bf", user: "#e9b949", harness: "#aaa0d4",
+	text: "#e7e2d3", harnessText: "#bac8bf", run: "#6b857a",
+	reasoning: "#9aaba0", stats: "#9aaba0",
+}
+
+var solarTranscript = transcriptRecipe{
+	llm: "#a13d62", tool: "#006f7a", user: "#955b00", harness: "#713bb0",
+	text: "#202d28", harnessText: "#40554a", run: "#687b70",
+	reasoning: "#52665b", stats: "#52665b",
+}
+
 // aztecPalette is the default mecatui palette: jade/turquoise + gold on obsidian,
 // terracotta for errors, bone-coloured text. Tuned for dark terminals. It is
 // also the merge base for partial user themes (see load.go), so every slot here

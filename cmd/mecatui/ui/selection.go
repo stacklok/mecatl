@@ -34,11 +34,12 @@ const (
 )
 
 type selectionPoint struct {
-	blockID      uint64
-	region       regionKind
-	sourceOffset int
-	before       string
-	after        string
+	blockID        uint64
+	region         regionKind
+	sourceOffset   int
+	before         string
+	after          string
+	derivedDisplay string
 }
 
 // selection is the in-app text-selection state: a left-click-drag over the
@@ -111,7 +112,7 @@ func bodyOwnerOpen(m Model) bool {
 		m.agentsInv.view != agentsInvNone || m.modal != nil ||
 		m.reflections.view != reflectionsNone ||
 		m.connect.open || m.executionPicker.open ||
-		m.worktrees.view != worktreesNone || m.schedule.view != scheduleNone
+		m.schedule.view != scheduleNone
 }
 
 // selectable reports whether a left-click may START a selection right now. It is
@@ -364,11 +365,15 @@ func selectionPointFor(frame renderedFrame, line, col int) (selectionPoint, bool
 	if offset < 0 || offset > graphemeCount(lineText) {
 		return selectionPoint{}, false
 	}
-	return selectionPoint{
+	point := selectionPoint{
 		blockID: row.blockID, region: row.region, sourceOffset: row.sourceOffset + offset,
 		before: graphemeSlice(lineText, max(0, offset-selectionContextGraphemes), offset),
 		after:  graphemeSlice(lineText, offset, min(graphemeCount(lineText), offset+selectionContextGraphemes)),
-	}, true
+	}
+	if row.region == conversationRegionToolSummary {
+		point.derivedDisplay = lineText
+	}
+	return point, true
 }
 
 func graphemeSlice(text string, start, end int) string {
@@ -401,6 +406,9 @@ func resolveSelectionPoint(frame renderedFrame, point selectionPoint) (int, int,
 			continue
 		}
 		text, leading := selectionRowText(frame, row, frame.lines[i])
+		if point.region == conversationRegionToolSummary && text != point.derivedDisplay {
+			continue
+		}
 		for offset := 0; offset <= graphemeCount(text); offset++ {
 			if row.sourceOffset+offset != point.sourceOffset {
 				continue

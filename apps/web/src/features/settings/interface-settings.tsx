@@ -19,6 +19,7 @@ import {
 import { useEffect, useState } from "react";
 import { paletteSwatch } from "../../components/palette-swatch";
 import { Button } from "../../components/ui/button";
+import { Label } from "../../components/ui/label";
 import { OptionField } from "../../components/ui/option-field";
 import { Switch } from "../../components/ui/switch";
 import {
@@ -42,6 +43,7 @@ import {
   useUiScale,
 } from "../../lib/profile-preferences";
 import { type Theme, useTheme } from "../../lib/theme";
+import { useSteerAvailable } from "../runtime/use-steer-available";
 import { SettingsCard, SettingsRow } from "./settings-card";
 
 const THEME_OPTIONS = [
@@ -164,6 +166,7 @@ function ChatCard() {
   const startOn = useStartOn();
   const starterPrompts = useShowStarterPrompts();
   const enterSendBehavior = useEnterSendBehavior();
+  const steerAvailable = useSteerAvailable();
   const showToolCalls = useShowToolCalls();
 
   return (
@@ -178,7 +181,7 @@ function ChatCard() {
           />
         </SettingsRow>
         <SettingsRow description="Show suggested prompts on a new chat." label="Starter prompts">
-          <label
+          <Label
             className="flex min-h-11 min-w-11 items-center justify-end"
             htmlFor="starter-prompts"
           >
@@ -188,25 +191,34 @@ function ChatCard() {
               id="starter-prompts"
               onCheckedChange={(checked) => starterPrompts.setValue(checked === true)}
             />
-          </label>
+          </Label>
         </SettingsRow>
         <SettingsRow
-          description="What Enter does while the agent is replying; Shift+Enter does the opposite."
+          description={
+            steerAvailable
+              ? "What Enter does while the agent is replying; Shift+Enter does the opposite."
+              : "Messages wait until the agent finishes; this daemon cannot steer a running agent."
+          }
           label="Messages while the agent works"
         >
           <OptionField
             label="Messages while the agent works"
             onChange={(value) => enterSendBehavior.setValue(value as EnterSendBehavior)}
-            options={BUSY_MESSAGE_OPTIONS}
-            value={enterSendBehavior.value}
+            options={
+              steerAvailable
+                ? BUSY_MESSAGE_OPTIONS
+                : BUSY_MESSAGE_OPTIONS.filter((option) => option.value !== "steer")
+            }
+            // The stored preference survives a daemon without steering; it only reads as Queue.
+            value={steerAvailable ? enterSendBehavior.value : "queue"}
           />
         </SettingsRow>
         <SettingsRow
           description="Show calls and their returned output inside assistant messages."
           label="Tool activity"
         >
-          <label
-            className="flex min-h-11 w-44 items-center justify-between gap-2 text-sm"
+          <Label
+            className="flex min-h-11 w-44 items-center justify-between gap-2 text-sm font-normal"
             htmlFor="show-tool-activity"
           >
             <span className="flex items-center gap-2">
@@ -219,7 +231,7 @@ function ChatCard() {
               id="show-tool-activity"
               onCheckedChange={(checked) => showToolCalls.setValue(checked === true)}
             />
-          </label>
+          </Label>
         </SettingsRow>
       </div>
     </SettingsCard>

@@ -589,12 +589,19 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 			if toolResults != 1 || continuationRequests.Load() != 1 || stats.ownerConverse.Load() != 0 || stats.ownerResolve.Load() != 1 || stats.foreignCalls.Load() != 3 {
 				t.Fatalf("unexpected work counts: tool-results=%d model=%d converse=%d resolve=%d foreign=%d", toolResults, continuationRequests.Load(), stats.ownerConverse.Load(), stats.ownerResolve.Load(), stats.foreignCalls.Load())
 			}
+			wantAggregate := "● 1 tool run · 1 failed"
 			wantSummary := "✗ Shell · printf bridge-command"
 			if tc.wantRun {
+				wantAggregate = "● 1 tool run · f9"
 				wantSummary = "✓ Shell · printf bridge-command"
 			}
-			if strings.Count(view, wantSummary) != 1 || !strings.Contains(view, tc.wantOutput) || !strings.Contains(view, "draft only") || strings.Contains(view, "● mecatl") || strings.Contains(view, "enter queue") || strings.Contains(view, "… Shell") || strings.Contains(view, "│ ✓ Shell") || strings.Contains(view, "│ ✗ Shell") {
-				t.Fatalf("terminal view lost draft, continuation, or one-line resolved tool summary:\n%s", view)
+			if strings.Count(view, wantAggregate) != 1 || strings.Contains(view, wantSummary) || !strings.Contains(view, tc.wantOutput) || !strings.Contains(view, "draft only") || !strings.Contains(view, "◀ mecatl") || strings.Contains(view, "enter queue") || strings.Contains(view, "… Shell") {
+				t.Fatalf("terminal view lost draft, continuation, or settled tool aggregate:\n%s", view)
+			}
+			detailed, _ := final.Model.Update(tea.KeyPressMsg{Code: tea.KeyF9})
+			detailView := ansi.Strip(detailed.View().Content)
+			if strings.Count(detailView, wantSummary) != 1 || strings.Contains(detailView, "● 1 tool run") || !strings.Contains(detailView, tc.wantOutput) || !strings.Contains(detailView, "draft only") || strings.Contains(detailView, "│ ✓ Shell") || strings.Contains(detailView, "│ ✗ Shell") {
+				t.Fatalf("detail view lost draft, continuation, or one-line resolved tool summary:\n%s", detailView)
 			}
 			executor.mu.Lock()
 			operations := append([]executionenv.Operation(nil), executor.operations...)

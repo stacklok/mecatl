@@ -52,7 +52,7 @@ func TestCreateSessionWithBrokerInvalidIDRejected(t *testing.T) {
 					factoryCalls++
 					return brokerEngineResult(), nil
 				},
-				SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool) (SessionEngineResult, error) {
+				SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool, []string) (SessionEngineResult, error) {
 					factoryCalls++
 					return brokerEngineResult(), nil
 				},

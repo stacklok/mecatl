@@ -1,183 +1,299 @@
 package ui
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"strconv"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
-	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
-// worktrees.go is the /worktrees overlay (issue #102) — the SECOND *selecting*
-// overlay after /models. Unlike /models it has NO apply-on-next option: a
-// workspace switch is ALWAYS a restart-now handoff (there is no "pendingNext
-// workspace" concept — switching a live session's workspace is forbidden by
-// design, so the only path is close-old → create-new-rooted-at-worktree). It
-// mirrors the /models cursor+filter+Choose model, but the confirm step offers
-// only restart-now / undo.
-
-// worktreesView is the active /worktrees overlay (none = closed). Like /models it
-// has a real cursor and an enter-to-confirm step; UNLIKE it there is no
-// "switch-next" arm.
-type worktreesView int
-
-const (
-	worktreesNone    worktreesView = iota // overlay closed
-	worktreesPanel                        // the flat, type-to-filter picker
-	worktreesConfirm                      // the post-Enter confirmation overlay (restart-now / undo)
-)
-
-// worktreesState holds the /worktrees overlay state on the Model. Value-embedded
-// so the Model stays a plain struct Update copies; the slices are replaced
-// wholesale on each RPC result / filter recompute (never mutated in place).
+// worktreesState owns one picker lifetime. Only Model can bind a successor session.
 type worktreesState struct {
-	view      worktreesView
-	loading   bool              // the ListWorktrees RPC is in flight
-	err       error             // last ListWorktrees error, rendered distinctly
-	worktrees []client.Worktree // full list as relayed (path-sorted by git)
-	filtered  []client.Worktree // subset matching filter.Value(); recomputed on each key
-	filter    textinput.Model   // the type-to-filter input; focused while the picker is open
-	cursor    int               // index into FILTERED (clamped to its bounds)
-	confirm   client.Worktree   // the candidate worktree when view==worktreesConfirm
+	deps       surfaceDeps
+	lister     client.WorktreeLister
+	sourceID   string
+	cancel     context.CancelFunc
+	request    uint64
+	loading    bool
+	err        error
+	worktrees  []client.Worktree
+	filtered   []client.Worktree
+	filter     textinput.Model
+	list       bounded.List
+	identities map[client.WorktreeSelector]string
+	confirm    *client.Worktree
+	intent     surfaceIntent
+	compact    bool   // view cache: refreshed from every Render offer
+	offer      [2]int // view cache: last geometry, for reveal on resize
 }
 
-// openWorktrees opens the picker and fires the ListWorktrees RPC. Only callable
-// while idle and when a worktree lister is wired; returns the model unchanged
-// otherwise. The result arrives as a client.WorktreesMsg handled in
-// updateWorktreesMsg.
+type worktreesResultMsg struct {
+	owner   *worktreesState
+	request uint64
+	result  client.WorktreesMsg
+}
+
+type worktreeSelectIntent struct {
+	sourceID string
+	worktree client.Worktree
+}
+
+func (worktreeSelectIntent) isSurfaceIntent() {}
+
+func (s *worktreesState) takeSurfaceIntent() surfaceIntent {
+	intent := s.intent
+	s.intent = nil
+	return intent
+}
+
 func (m Model) openWorktrees() (tea.Model, tea.Cmd) {
 	if m.phase != phaseIdle || m.deps.Worktrees == nil {
 		return m, nil
 	}
-	m.prompt.Blur() // overlay owns the keyboard while open
-	m.worktrees.view = worktreesPanel
-	m.worktrees.loading = true
-	m.worktrees.err = nil
-	m.worktrees.cursor = 0
 	ti := textinput.New()
 	ti.Placeholder = "filter worktrees…"
-	ti.SetWidth(40)
 	ti.Focus()
-	m.worktrees.filter = ti
-	m.worktrees.filtered = nil
-	return m, tea.Batch(client.ListWorktreesCmd(m.deps.Ctx, m.deps.Worktrees, m.sessionID), textinput.Blink)
+	s := &worktreesState{deps: (&m).surfaceDeps(), lister: m.deps.Worktrees, sourceID: m.sessionID, filter: ti, compact: true, identities: make(map[client.WorktreeSelector]string)}
+	m.modal = s
+	m.prompt.Blur()
+	return m, tea.Batch(s.listCmd(), textinput.Blink)
 }
 
-// closeWorktrees dismisses the overlay and returns focus to the prompt input.
-func (m Model) closeWorktrees() (tea.Model, tea.Cmd) {
-	m.worktrees.view = worktreesNone
-	m.worktrees.filter = textinput.Model{}
-	m.worktrees.filtered = nil
-	cmd := m.prompt.Focus()
-	return m, cmd
+func (s *worktreesState) listCmd() tea.Cmd {
+	if s.cancel != nil {
+		s.cancel()
+	}
+	ctx, cancel := context.WithCancel(s.deps.ctx)
+	s.cancel = cancel
+	s.request++
+	s.loading, s.err = true, nil
+	request, lister, sourceID := s.request, s.lister, s.sourceID
+	return func() tea.Msg {
+		worktrees, err := lister.List(ctx, sourceID)
+		return worktreesResultMsg{owner: s, request: request, result: client.WorktreesMsg{Worktrees: worktrees, Err: err}}
+	}
 }
 
-// onWorktreesKey routes key presses while the picker is open. Mirrors onModelsKey:
-// the filter input is FOCUSED, so nav/action keys are intercepted first and
-// everything else feeds the input. esc is two-stage (clear filter, then close).
-func (m Model) onWorktreesKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
-	if m.worktrees.view == worktreesNone {
-		return m, nil, false
+func (s *worktreesState) Close() {
+	if s.cancel != nil {
+		s.cancel()
 	}
-	if m.worktrees.view == worktreesConfirm {
-		return m.onWorktreesConfirmKey(msg)
-	}
-	switch {
-	case key.Matches(msg, m.keys.Close):
-		if m.worktrees.filter.Value() != "" {
-			m.worktrees.filter.SetValue("")
-			m = m.syncWorktreesFilter()
-			return m, nil, true
+	s.request++
+	s.intent = nil
+	s.filter.Blur()
+}
+
+func (s *worktreesState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
+	if result, ok := msg.(worktreesResultMsg); ok {
+		if result.owner != s || result.request != s.request || !s.loading {
+			return nil, true, false
 		}
-		mm, cmd := m.closeWorktrees()
-		return mm, cmd, true
-	case msg.String() == "up":
-		if m.worktrees.cursor > 0 {
-			m.worktrees.cursor--
+		s.loading, s.err = false, result.result.Err
+		if s.err == nil {
+			s.worktrees = result.result.Worktrees
+			s.syncFilter()
 		}
-		return m, nil, true
-	case msg.String() == "down":
-		if m.worktrees.cursor < len(m.worktrees.filtered)-1 {
-			m.worktrees.cursor++
-		}
-		return m, nil, true
-	case key.Matches(msg, m.keys.ScrollTop):
-		m.worktrees.cursor = 0
-		return m, nil, true
-	case key.Matches(msg, m.keys.ScrollBottom):
-		m.worktrees.cursor = clampBounded(len(m.worktrees.filtered)-1, len(m.worktrees.filtered))
-		return m, nil, true
-	case key.Matches(msg, m.keys.Choose):
-		return m.chooseWorktree(), nil, true
+		return nil, true, false
 	}
 	var cmd tea.Cmd
-	m.worktrees.filter, cmd = m.worktrees.filter.Update(msg)
-	m = m.syncWorktreesFilter()
-	return m, cmd, true
+	s.filter, cmd = s.filter.Update(msg)
+	return cmd, cmd != nil, false
 }
 
-// syncWorktreesFilter recomputes the filtered slice from the filter input and
-// clamps the cursor.
-func (m Model) syncWorktreesFilter() Model {
-	m.worktrees.filtered = filterWorktrees(m.worktrees.worktrees, m.worktrees.filter.Value())
-	if m.worktrees.cursor >= len(m.worktrees.filtered) {
-		m.worktrees.cursor = 0
+func (s *worktreesState) syncFilter() {
+	s.filtered = filterWorktrees(s.worktrees, s.filter.Value())
+	items := make([]bounded.ListItem, len(s.filtered))
+	for i, wt := range s.filtered {
+		id, ok := s.identities[wt.Selector]
+		if !ok {
+			id = strconv.Itoa(len(s.identities) + 1)
+			s.identities[wt.Selector] = id
+		}
+		items[i] = bounded.ListItem{ID: id, Text: worktreeRowText(wt)}
 	}
-	return m
+	s.list.SetItems(items)
 }
 
-// chooseWorktree handles Enter on the cursor row: opens the confirmation overlay
-// (worktreesConfirm) offering restart-now / undo. A cursor past the list end (or
-// an empty list) is a no-op.
-func (m Model) chooseWorktree() Model {
-	if m.worktrees.cursor < 0 || m.worktrees.cursor >= len(m.worktrees.filtered) {
-		return m
+func (s *worktreesState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
+	if s.compact {
+		return nil, true, key.Matches(msg, s.deps.keys.Close)
 	}
-	m.worktrees.confirm = m.worktrees.filtered[m.worktrees.cursor]
-	m.worktrees.view = worktreesConfirm
-	return m
-}
-
-// onWorktreesConfirmKey routes keys while the confirmation overlay is open. Two
-// choices:
-//   - enter — RESTART NOW: close the old session and create a fresh one rooted at
-//     the chosen worktree (the only path — there is no apply-on-next for workspace).
-//   - esc — UNDO: return to the picker panel without switching.
-//
-// Any other key is swallowed.
-func (m Model) onWorktreesConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
-	chosen := m.worktrees.confirm
+	if s.confirm != nil {
+		switch {
+		case key.Matches(msg, s.deps.keys.Close):
+			s.confirm = nil
+		case key.Matches(msg, s.deps.keys.Choose):
+			if s.sourceID == "" || s.confirm.Selector.IsZero() {
+				s.confirm = nil
+				s.err = errors.New("worktree choice is stale; relist and try again")
+			} else {
+				s.intent = worktreeSelectIntent{sourceID: s.sourceID, worktree: *s.confirm}
+			}
+		}
+		return nil, true, false
+	}
+	move, navigation := boundedFilterNavigationMove(msg, s.deps.keys, bounded.LineUp, bounded.LineDown, bounded.Top, bounded.End)
 	switch {
-	case key.Matches(msg, m.keys.Choose): // enter — restart now
-		return m.switchToWorktree(chosen)
-	case key.Matches(msg, m.keys.Close): // esc — undo
-		m.worktrees.view = worktreesPanel
-		m.worktrees.confirm = client.Worktree{}
-		return m, nil, true
+	case key.Matches(msg, s.deps.keys.Close):
+		if s.filter.Value() == "" {
+			return nil, true, true
+		}
+		s.filter.SetValue("")
+		s.syncFilter()
+	case navigation:
+		s.list.Move(move)
+	case key.Matches(msg, s.deps.keys.Choose):
+		if !s.loading && s.err == nil && len(s.filtered) > 0 {
+			wt := s.filtered[s.list.Cursor()]
+			s.confirm = &wt
+		}
+	default:
+		var cmd tea.Cmd
+		s.filter, cmd = s.filter.Update(msg)
+		s.syncFilter()
+		return cmd, true, false
 	}
-	return m, nil, true
+	return nil, true, false
+}
+
+func (s *worktreesState) HandleWheel(msg tea.MouseWheelMsg) (tea.Cmd, bool) {
+	if !s.compact && s.confirm == nil && !s.loading && s.err == nil {
+		if move, ok := boundedWheelMove(msg); ok {
+			s.list.Scroll(move)
+		}
+	}
+	return nil, true
+}
+
+func (*worktreesState) modalMaxOuterWidth() int { return 128 }
+func (s *worktreesState) modalFrame() bool      { return !s.compact }
+
+func (s *worktreesState) Render(width, height int) (string, []ClickableRegion) {
+	offer := [2]int{width, height}
+	reveal := offer != s.offer || s.list.RevealPending()
+	s.offer = offer
+	s.compact = true
+	if width <= 0 || height <= 0 {
+		s.list.SetGeometry(0, 0, 1, bounded.Wrap)
+		return "", nil
+	}
+	if s.confirm != nil {
+		return s.renderConfirm(width, height), nil
+	}
+	th, hk := s.deps.theme, s.deps.marks
+	title := skillsTextLines(th.Style("askTitle"), "worktrees", width)
+	prefix := append(title, skillsTextLines(th.Style("muted"), "select a worktree to start a new session there", width)...)
+	s.filter.SetWidth(max(1, width-2))
+	prefix = append(prefix, ansi.Cut(s.filter.View(), 0, width))
+	footerText := hk.closeOnly + ": close"
+	if !s.loading && s.err == nil && len(s.filtered) > 0 && s.deps.keys.Choose.Enabled() {
+		footerText = hk.choose + ": select  " + footerText
+	}
+	footer := skillsTextLines(th.Style("muted"), footerText, width)
+	rows := height - len(prefix) - len(footer)
+	s.list.SetGeometry(width, rows, 1, bounded.Wrap)
+	if !s.list.Valid() {
+		return renderSkillsCompact(th, hk, width), nil
+	}
+	state := s.stateLines(width)
+	if len(state) > rows {
+		return renderSkillsCompact(th, hk, width), nil
+	}
+	s.compact = false
+	lines := prefix
+	if state != nil {
+		lines = append(lines, state...)
+	} else {
+		view := s.list.ViewWithIndicators(rows, reveal)
+		if rows == 1 && (view.Above > 0 || view.Below > 0) {
+			lines[0] = ansi.Cut(th.Style("askTitle").Render(fmt.Sprintf("↑ %d ↓ %d more · worktrees", view.Above, view.Below)), 0, width)
+		} else if view.Above > 0 {
+			lines = append(lines, ansi.Cut(th.Style("muted").Render(fmt.Sprintf("↑ %d more", view.Above)), 0, width))
+		}
+		for _, row := range view.Rows {
+			p := presentListRow(row, th.Style("spinner"), th.Style("muted"))
+			lines = append(lines, ansi.Cut(p.Style.Render(p.Text), 0, width))
+		}
+		if rows > 1 && view.Below > 0 {
+			lines = append(lines, ansi.Cut(th.Style("muted").Render(fmt.Sprintf("↓ %d more", view.Below)), 0, width))
+		}
+	}
+	lines = append(lines, footer...)
+	return strings.Join(lines, "\n"), nil
+}
+
+func (s *worktreesState) renderConfirm(width, height int) string {
+	th, hk := s.deps.theme, s.deps.marks
+	lines := skillsTextLines(th.Style("askTitle"), "start session in worktree", width)
+	lines = append(lines, skillsTextLines(th.Style("muted"), "a new session will start in:", width)...)
+	lines = append(lines, skillsTextLines(th.Style("spinner"), terminaltext.SanitizeSingleLine(s.confirm.Label), width)...)
+	if s.confirm.Branch != "" {
+		lines = append(lines, skillsTextLines(th.Style("muted"), "branch: "+terminaltext.SanitizeSingleLine(s.confirm.Branch), width)...)
+	}
+	footer := hk.closeOnly + ": back"
+	if s.deps.keys.Choose.Enabled() {
+		footer = hk.choose + ": start session  " + footer
+	}
+	lines = append(lines, skillsTextLines(th.Style("muted"), footer, width)...)
+	if len(lines) > height {
+		return renderSkillsCompact(th, hk, width)
+	}
+	s.compact = false
+	return strings.Join(lines, "\n")
+}
+
+func (s *worktreesState) stateLines(width int) []string {
+	th := s.deps.theme
+	switch {
+	case s.loading:
+		return skillsTextLines(th.Style("muted"), "loading…", width)
+	case s.err != nil:
+		return skillsTextLines(th.Style("errorText"), "could not list worktrees: "+terminaltext.Sanitize(s.err.Error()), width)
+	case len(s.filtered) == 0:
+		text := "no worktrees found"
+		if s.filter.Value() != "" {
+			text = "no matches — clear filter to see all"
+		}
+		return skillsTextLines(th.Style("muted"), text, width)
+	default:
+		return nil
+	}
+}
+
+func worktreeRowText(w client.Worktree) string {
+	text := terminaltext.SanitizeSingleLine(w.Label)
+	if w.Branch != "" {
+		text += "  (" + terminaltext.SanitizeSingleLine(w.Branch) + ")"
+	} else if w.Revision != "" {
+		text += "  (" + shortSHA(terminaltext.SanitizeSingleLine(w.Revision)) + ")"
+	}
+	return text
 }
 
 // switchToWorktree starts a create-first empty-history successor handoff using
 // only the opaque selector issued for the current session. The old session and
 // transcript stay selected until the server has created and returned the target.
-func (m Model) switchToWorktree(wt client.Worktree) (tea.Model, tea.Cmd, bool) {
+func (m Model) switchToWorktree(wt client.Worktree) (tea.Model, tea.Cmd) {
 	if m.sessionID == "" || wt.Selector.IsZero() {
-		m.worktrees.view = worktreesPanel
-		m.worktrees.err = errors.New("worktree choice is stale; relist and try again")
-		return m, nil, true
+		m.statusMsg = "worktree choice is stale; relist and try again"
+		return m, nil
 	}
 	oldID := m.sessionID
+	m.closeModal()
 	m.phase = phaseConnecting
 	m.statusMsg = "starting a new session in the selected worktree…"
-	m.worktrees.view = worktreesNone
 	m.refreshView()
-	return m, m.switchWorktreeCmd(oldID, wt), true
+	return m, m.switchWorktreeCmd(oldID, wt)
 }
 
 func (m Model) switchWorktreeCmd(oldID string, wt client.Worktree) tea.Cmd {
@@ -207,30 +323,6 @@ type worktreeSwitchFailedMsg struct {
 	err      error
 }
 
-// updateWorktreesMsg reduces a client.WorktreesMsg (the ListWorktrees RPC result):
-// it stores the list, derives the filtered slice, clears loading, and keeps the
-// overlay open. On error it records the error and clears loading (the panel
-// renders an error line). Returns handled=false for any non-WorktreesMsg.
-func (m Model) updateWorktreesMsg(msg tea.Msg) (tea.Model, bool) {
-	wm, ok := msg.(client.WorktreesMsg)
-	if !ok {
-		return m, false
-	}
-	m.worktrees.loading = false
-	if wm.Err != nil {
-		m.worktrees.err = wm.Err
-		m.worktrees.worktrees = nil
-		m.worktrees.filtered = nil
-		return m, true
-	}
-	m.worktrees.err = nil
-	m.worktrees.worktrees = wm.Worktrees
-	m = m.syncWorktreesFilter()
-	return m, true
-}
-
-// filterWorktrees returns the worktrees whose Path/Branch/Head contains q
-// (case-insensitive). An empty query returns the full list.
 func filterWorktrees(wts []client.Worktree, q string) []client.Worktree {
 	if q == "" {
 		return wts
@@ -238,90 +330,15 @@ func filterWorktrees(wts []client.Worktree, q string) []client.Worktree {
 	needle := strings.ToLower(q)
 	out := make([]client.Worktree, 0, len(wts))
 	for _, w := range wts {
-		if strings.Contains(strings.ToLower(w.Label), needle) ||
-			strings.Contains(strings.ToLower(w.Branch), needle) ||
-			strings.Contains(strings.ToLower(w.Revision), needle) {
+		if strings.Contains(strings.ToLower(terminaltext.SanitizeSingleLine(w.Label)), needle) ||
+			strings.Contains(strings.ToLower(terminaltext.SanitizeSingleLine(w.Branch)), needle) ||
+			strings.Contains(strings.ToLower(terminaltext.SanitizeSingleLine(w.Revision)), needle) {
 			out = append(out, w)
 		}
 	}
 	return out
 }
 
-// renderWorktreesOverlay draws the picker (or its post-Enter confirmation
-// overlay). Mirrors renderModelsOverlay's centred-card shape.
-func renderWorktreesOverlay(th theme.Theme, st worktreesState, caps client.Capabilities, hk helpKeys, width, height int) string {
-	switch st.view {
-	case worktreesConfirm:
-		return renderWorktreesConfirm(th, st, hk, width, height)
-	default:
-		return renderWorktreesPanel(th, st, caps, hk, width, height)
-	}
-}
-
-// renderWorktreesPanel renders the worktree list card.
-func renderWorktreesPanel(th theme.Theme, st worktreesState, _ client.Capabilities, hk helpKeys, width, _ int) string {
-	var b strings.Builder
-	b.WriteString(th.Style("title").Render("worktrees") + "\n")
-	b.WriteString(th.Style("muted").Render("select a worktree to start a new session there") + "\n\n")
-	if st.loading {
-		b.WriteString(th.Style("muted").Render("loading…"))
-		return b.String()
-	}
-	if st.err != nil {
-		b.WriteString(th.Style("errorText").Render("could not list worktrees: " + terminaltext.Sanitize(st.err.Error())))
-		b.WriteString("\n" + th.Style("muted").Render(hk.closeOnly+": close"))
-		return b.String()
-	}
-	if len(st.filtered) == 0 {
-		if st.filter.Value() != "" {
-			b.WriteString(th.Style("muted").Render("no matches — clear filter to see all"))
-		} else {
-			b.WriteString(th.Style("muted").Render("no worktrees found"))
-		}
-		b.WriteString("\n" + th.Style("muted").Render(hk.closeOnly+": close"))
-		return b.String()
-	}
-	for i, w := range st.filtered {
-		marker := "  "
-		if i == st.cursor {
-			marker = "▶ "
-		}
-		line := marker + terminaltext.Sanitize(w.Label)
-		if w.Branch != "" {
-			line += "  (" + terminaltext.Sanitize(w.Branch) + ")"
-		} else if w.Revision != "" {
-			line += "  (" + terminaltext.Sanitize(shortSHA(w.Revision)) + ")"
-		}
-		if i == st.cursor {
-			line = renderToolCardText(th.Style("accent"), line, width)
-		} else {
-			line = renderToolCardText(th.Style("toolArgs"), line, width)
-		}
-		b.WriteString(line + "\n")
-	}
-	// The Choose/Close chords read the LIVE keyMap markings (issue #457).
-	b.WriteString("\n" + th.Style("muted").Render(hk.choose+": select  "+hk.closeOnly+": close"))
-	return b.String()
-}
-
-// renderWorktreesConfirm renders the post-Enter confirmation card.
-func renderWorktreesConfirm(th theme.Theme, st worktreesState, hk helpKeys, _, _ int) string {
-	w := st.confirm
-	var b strings.Builder
-	b.WriteString(th.Style("title").Render("start session in worktree") + "\n\n")
-	b.WriteString("a new session will start in:\n")
-	b.WriteString(th.Style("accent").Render("  "+terminaltext.Sanitize(w.Label)) + "\n")
-	if w.Branch != "" {
-		b.WriteString(th.Style("muted").Render("  branch: "+terminaltext.Sanitize(w.Branch)) + "\n")
-	}
-	b.WriteString("\n" + th.Style("muted").Render(hk.choose+": start session  "+hk.closeOnly+": back"))
-	return b.String()
-}
-
-// shortSHA returns a shortened commit SHA (first 8 chars) for display.
 func shortSHA(sha string) string {
-	if len(sha) > 8 {
-		return sha[:8]
-	}
-	return sha
+	return string([]rune(sha)[:min(8, len([]rune(sha)))])
 }

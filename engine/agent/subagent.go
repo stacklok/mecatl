@@ -1529,7 +1529,7 @@ func (t *SubagentTool) MutatesParent(call session.ToolCall) bool {
 		return false
 	}
 	var args subagentArgs
-	if err := json.Unmarshal(call.Args, &args); err != nil {
+	if _, ok := session.ParseArgs(call, &args); !ok {
 		return false
 	}
 	return strings.TrimSpace(args.Mode) == subagentModeReadWrite

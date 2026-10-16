@@ -10,7 +10,6 @@ import {
   cancelAuthorization,
   cancelRun,
   recheckAuthorization,
-  resolvePlanAsk,
   resolveRunPermission,
   retrySession,
   startRun,
@@ -119,9 +118,10 @@ import {
 import { useIsMobile } from "../../lib/use-mobile";
 import { cn } from "../../lib/utils";
 import { useAuthRecovery } from "../auth/auth-recovery-context";
+import { useSteerAvailable } from "../runtime/use-steer-available";
 import { useShortcut, useShortcutSuppression } from "../shortcuts/shortcut-provider";
 import { ApprovalDetailContext } from "./approval-detail-context";
-import { ApprovalPanel, type ApprovalRequest, type ApprovalVerdict } from "./approval-panel";
+import type { ApprovalRequest, ApprovalVerdict } from "./approval-panel";
 import {
   type AuthorizationHandoff,
   type AuthorizationOperation,
@@ -140,11 +140,9 @@ import { takeNextQueuedMessage, useQueuedMessages } from "./chat-queue";
 import { consumeChatSeed } from "./chat-seed";
 import { SessionExecutionStatus, SessionUsageControls } from "./chat-session-controls";
 import {
-  approvalKey,
   type ChatMessage,
   enqueueApproval,
   failureFromResult,
-  messageOwnsApproval,
   payloadImages,
   payloadRecord,
   payloadText,
@@ -153,13 +151,14 @@ import {
   type RunFailure,
   rawResultPayload,
   retractApproval,
+  settledAskKey,
   startsNewRun,
   stopReasonFromResult,
   toolCall,
   toolResult,
 } from "./chat-state";
 import { ChatStatus, type ChatStatusFacts, deriveChatStatus } from "./chat-status";
-import { ChatTranscript, isNearTranscriptBottom, MessageImages } from "./chat-transcript";
+import { ChatTranscript, isNearTranscriptBottom } from "./chat-transcript";
 import {
   type ContentPreview,
   ContentPreviewPanel,
@@ -180,26 +179,13 @@ import { type DelegationAnchor, placeDelegationCards } from "./delegation-placem
 import { DraftGreeting } from "./draft-greeting";
 import { EscapeHintContext } from "./escape-hint-context";
 import { clearFailedRun, readFailedRun, saveFailedRun } from "./failed-run-storage";
-import { FailedTurnCard } from "./failed-turn-card";
 import { FleetStatusChip } from "./fleet-status-chip";
 import { pickLatestEligibleChat } from "./latest-chat";
 import { appendCanvasQuote, useLocalCanvas } from "./local-canvas";
-import { type ChatImage, type ImageAttachment, imagePreview } from "./local-file-preview";
-import { MarkdownMessage } from "./markdown-message";
-import {
-  MessageActions,
-  MessageAvatar,
-  MessageRow,
-  messageAuthorClass,
-  messageBodyClass,
-  messageRowClass,
-} from "./message-bubble";
+import { type ImageAttachment, imagePreview } from "./local-file-preview";
 import { MessageMinimap } from "./message-minimap";
 import { PermissionModeBadge } from "./permission-mode-badge";
-import { exactPlanControlAvailability, followPlanContinuationFromBff } from "./plan-continuation";
-import { PlanReviewCard, type PlanVerdict } from "./plan-review-card";
 import { QueuedMessageStrip } from "./queued-message-strip";
-import { ReasoningDisclosure } from "./reasoning-disclosure";
 import {
   abortsOnSessionSwitch,
   acceptsDelivery,
@@ -217,6 +203,7 @@ import {
   type RunTarget,
   runStreamEnd,
 } from "./run-stream";
+import { selectedTranscriptText } from "./selected-transcript-text";
 import { CopyDebugTargetMenuItem, CopySessionIdMenuItem } from "./session-copy-menu-items";
 import {
   type InspectionView,
@@ -236,8 +223,6 @@ import {
   SteerTrace,
   type SteerTraceEntry,
 } from "./steer-trace";
-import { hasVisibleStopReason, StopReasonChip } from "./stop-reason-chip";
-import { StreamingIndicator } from "./streaming-indicator";
 import { TextSelectionToolbar } from "./text-selection-toolbar";
 import {
   matchingThreadKeyForMessage,
@@ -251,13 +236,14 @@ import {
   useThreadSessionIds,
 } from "./thread-map";
 import type { ToolActivity } from "./tool-activity";
-import { ToolCallList } from "./tool-call-list";
 import { TranscriptMenuItems } from "./transcript-actions";
 import { selectElementContents } from "./transcript-text";
 import { formatTurnStat, usageMenuLines } from "./turn-stats";
 import { useChatMessages } from "./use-chat-messages";
 import { shouldRefreshTranscriptAfterInventory } from "./use-delivery-follow";
 import { useLatestChatAutoOpen } from "./use-latest-chat-auto-open";
+import { usePlanVerdictControl } from "./use-plan-verdict-control";
+import { VerdictLedger } from "./verdict-ledger";
 
 /** A pending destructive confirmation, rendered as one shared AlertDialog. */
 interface ConfirmPrompt {
@@ -441,7 +427,6 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   );
   const [reattached, setReattached] = useState(false);
   const [reattachEpoch, setReattachEpoch] = useState(0);
-  const [planContinuationActive, setPlanContinuationActive] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarHidden, setSidebarHidden] = useState(false);
   const [contentPreview, setContentPreview] = useState<ContentPreview>();
@@ -451,9 +436,6 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const activityRefresh = useRef<
     { authorizationId: string; callId: string; cursor: string; sessionId: string } | undefined
   >(undefined);
-  const planReattach = useRef<{ cursor?: string; runId: string; sessionId: string } | undefined>(
-    undefined,
-  );
   const [, setAuthorizationUncertainEpoch] = useState(0);
   const [authorizationBusy, setAuthorizationBusy] = useState<string>();
   const [inspection, setInspection] = useState<{ sessionId: string; view: InspectionView }>();
@@ -467,14 +449,14 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const [notice, setNotice] = useState<string>();
   const [runTarget, setRunTarget] = useState<RunTarget>();
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
-  const ordinaryVerdictsInFlight = useRef(new Set<string>());
-  const ordinaryVerdictsUncertain = useRef(new Set<string>());
+  const verdicts = useRef(new VerdictLedger());
+  const [verdictEpoch, setVerdictEpoch] = useState(0);
   const settledAskKeys = useRef(new Set<string>());
-  const [ordinaryVerdictEpoch, setOrdinaryVerdictEpoch] = useState(0);
   const [failedRun, setFailedRun] = useState<RunFailure>();
   const [draftConfiguration, setDraftConfiguration] = useState(defaultDraftConfiguration);
   const [composerDraftPresent, setComposerDraftPresent] = useState(false);
   const [clearDraftSignal, setClearDraftSignal] = useState(0);
+  const [focusComposerSignal, setFocusComposerSignal] = useState(0);
   const [steeringQueuedId, setSteeringQueuedId] = useState<string>();
   /** The queued message a steer is delivering; the queue drain skips it. */
   const steeringQueuedRef = useRef<string | undefined>(undefined);
@@ -515,11 +497,29 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const [steerTrace, setSteerTrace] = useState<SteerTraceEntry[]>([]);
   const [showSteerTrace, setShowSteerTrace] = useState(false);
   const [controlPending, setControlPending] = useState(false);
-  const planVerdictsInFlight = useRef(new Set<string>());
-  const planVerdictsUncertain = useRef(new Set<string>());
-  const [planVerdictEpoch, setPlanVerdictEpoch] = useState(0);
-  const planFollowController = useRef<AbortController | undefined>(undefined);
   const viewedSessionId = useRef(sessionId);
+  const plan = usePlanVerdictControl({
+    activeTarget: () => controlTarget(runTarget, sessionId),
+    controlPending,
+    features: runtime.data?.features,
+    isViewed: (id) => id === viewedSessionId.current,
+    ledger: verdicts.current,
+    onStarted: ({ runId, sessionId: startedSessionId }) => {
+      activeRun.current?.controller.abort();
+      activeRun.current = undefined;
+      setRunTarget({ runId, sessionId: startedSessionId });
+      setReattachEpoch((current) => current + 1);
+    },
+    onUncertain: () => setVerdictEpoch((value) => value + 1),
+    retract: (target) => {
+      settledAskKeys.current.add(settledAskKey(target.runId, target.askId));
+      if (viewedSessionId.current === target.sessionId)
+        setApprovals((current) => retractApproval(current, target.askId, target.runId));
+    },
+    setControlPending,
+    setError,
+    setNotice,
+  });
   const [titleCache, setTitleCache] = useState(() => new Map<string, SessionTitleRevision>());
   const awayTracker = useRef(new AwayNoticeTracker());
   const awayFacts = useRef<AwayFacts | undefined>(undefined);
@@ -550,6 +550,21 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const threadCreation = useRef(false);
   const [atTranscriptBottom, setAtTranscriptBottom] = useState(true);
   followTranscriptBottom.current = atTranscriptBottom;
+  const expansionRecheck = useRef(0);
+  // An expansion suspends follow for the resize it causes; the 80 px rule then decides
+  // again, so a small one keeps following and a tall one leaves the reader in place.
+  // Two frames: the first runs before the expansion's layout and observer callback, the
+  // second after them. Waiting on the frame rather than on a resize also covers a click
+  // that grows nothing (a menu trigger), which would otherwise leave follow stuck off.
+  const recheckFollowAfterExpansion = useCallback(() => {
+    cancelAnimationFrame(expansionRecheck.current);
+    expansionRecheck.current = requestAnimationFrame(() => {
+      expansionRecheck.current = requestAnimationFrame(() => {
+        const element = transcriptScroll.current;
+        if (element) setAtTranscriptBottom(isNearTranscriptBottom(element));
+      });
+    });
+  }, []);
   const visibleDelegationFleet =
     delegationFleet.sessionId === (sessionId ?? "")
       ? delegationFleet
@@ -567,7 +582,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const { setValue: setShowToolCalls, value: showToolCalls } = useShowToolCalls();
   const { setValue: setExpandDetails, value: expandDetails } = useExpandDetails();
   const disabledModels = useDisabledModels().disabled;
+  const steerAvailable = useSteerAvailable();
   const enterSendBehavior = useEnterSendBehavior().value;
+  const workingBehavior = steerAvailable ? enterSendBehavior : "queue";
   const queuedMessages = useQueuedMessages(provenChat ? (sessionId ?? "") : "");
   const canvas = useLocalCanvas(sessionId ?? "draft");
   const isMobile = useIsMobile();
@@ -632,11 +649,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
 
   useEffect(() => {
     viewedSessionId.current = sessionId;
-    planFollowController.current?.abort();
-    planFollowController.current = undefined;
+    plan.reset();
     activityRefresh.current = undefined;
-    planReattach.current = undefined;
-    setPlanContinuationActive(false);
     authorizationActivityCursor.current = undefined;
     activityFollowedSession.current = undefined;
     interruptedSettledSession.current = undefined;
@@ -661,11 +675,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     setReturnNotice(undefined);
     awayTracker.current.clear();
     setApprovals([]);
-    ordinaryVerdictsInFlight.current.clear();
-    ordinaryVerdictsUncertain.current.clear();
-    planVerdictsInFlight.current.clear();
-    planVerdictsUncertain.current.clear();
+    verdicts.current.clear();
     settledAskKeys.current.clear();
+    setControlPending(false);
     setFailedRun(sessionId ? readFailedRun(sessionId) : undefined);
     setLiveUsage(undefined);
     setSteerTrace([]);
@@ -687,14 +699,14 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       // into a view that has already left its session.
       if (viewedSessionId.current === sessionId) viewedSessionId.current = undefined;
     };
-  }, [sessionId, setMessages]);
+  }, [sessionId, setMessages, plan.reset]);
 
   useEffect(
     () => () => {
       activeRun.current?.controller.abort();
-      planFollowController.current?.abort();
+      plan.abort();
     },
-    [],
+    [plan.abort],
   );
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: follow every streamed message update while the reader remains at the bottom
@@ -919,12 +931,13 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         image: model.image,
         label: model.displayName,
         providerId: model.providerId,
+        providerLabel: model.providerDisplayName,
         reasoning: model.reasoning,
       })) ?? [];
   const watchable =
     Boolean(selectedSession && isProvenChatSession(selectedSession)) &&
     isActiveSessionState(selectedSession?.state);
-  const shouldWatch = watchable || planContinuationActive;
+  const shouldWatch = watchable || plan.continuationActive;
   const settledState = selectedSession?.state ?? sessionDetail.data?.state;
   const settled =
     settledState === "idle" ||
@@ -1008,7 +1021,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: helpers and QueryClient are stable for this lifetime
   useEffect(() => {
     const refresh = activityRefresh.current;
-    const planRefresh = planReattach.current;
+    const planRefresh = plan.reattachRef.current;
     if (
       !sessionId ||
       (!shouldWatch && refresh?.sessionId !== sessionId && planRefresh?.sessionId !== sessionId) ||
@@ -1024,7 +1037,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           ? refresh.cursor
           : undefined;
     activityRefresh.current = undefined;
-    planReattach.current = undefined;
+    plan.reattachRef.current = undefined;
     const uncertain = refresh
       ? authorizationUncertain.current.get(`${sessionId}\u0000${refresh.authorizationId}`)
       : undefined;
@@ -1108,7 +1121,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             if (end.kind === "settled") end = { kind: "uncertain" };
           }
           activeRun.current = undefined;
-          if (planRefresh?.sessionId === sessionId) setPlanContinuationActive(false);
+          if (planRefresh?.sessionId === sessionId) plan.endContinuation();
           if (end.kind === "settled" || end.kind === "authorization") setRunTarget(undefined);
           setApprovals((current) => retainUncertainApprovals(current));
           setIsRunning(false);
@@ -2165,7 +2178,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           }
         } else if (event.kind === "permission.ask") {
           const approval = permissionAsk(event.payload);
-          if (approval && !settledAskKeys.current.has(`${event.runId}\u0000${approval.askId}`)) {
+          if (approval && !settledAskKeys.current.has(settledAskKey(event.runId, approval.askId))) {
             const controlTarget =
               owner.sessionId && event.runId
                 ? { askId: approval.askId, runId: event.runId, sessionId: owner.sessionId }
@@ -2177,26 +2190,20 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         } else if (event.kind === "permission.retract") {
           const askId = permissionAskId(event.payload);
           if (askId) {
-            settledAskKeys.current.add(`${event.runId}\u0000${askId}`);
-            if (owner.sessionId) {
-              const key = approvalKey({ askId, runId: event.runId, sessionId: owner.sessionId });
-              ordinaryVerdictsUncertain.current.delete(key);
-              planVerdictsUncertain.current.delete(key);
-            }
-            setOrdinaryVerdictEpoch((value) => value + 1);
+            settledAskKeys.current.add(settledAskKey(event.runId, askId));
+            if (owner.sessionId)
+              verdicts.current.reset({ askId, runId: event.runId, sessionId: owner.sessionId });
+            setVerdictEpoch((value) => value + 1);
           }
           setApprovals((current) => retractApproval(current, askId, event.runId || undefined));
           if (owner.sessionId) awayTracker.current.record(owner.sessionId, "approval-resolved");
         } else if (event.kind === "approval") {
           const askId = permissionAskId(event.payload);
           if (askId) {
-            settledAskKeys.current.add(`${event.runId}\u0000${askId}`);
-            if (owner.sessionId) {
-              const key = approvalKey({ askId, runId: event.runId, sessionId: owner.sessionId });
-              ordinaryVerdictsUncertain.current.delete(key);
-              planVerdictsUncertain.current.delete(key);
-            }
-            setOrdinaryVerdictEpoch((value) => value + 1);
+            settledAskKeys.current.add(settledAskKey(event.runId, askId));
+            if (owner.sessionId)
+              verdicts.current.reset({ askId, runId: event.runId, sessionId: owner.sessionId });
+            setVerdictEpoch((value) => value + 1);
           }
           setApprovals((current) => retractApproval(current, askId, event.runId || undefined));
           if (owner.sessionId) awayTracker.current.record(owner.sessionId, "approval-resolved");
@@ -2471,21 +2478,18 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   function retainUncertainApprovals(current: ApprovalRequest[]): ApprovalRequest[] {
     return current.filter(
       (candidate) =>
-        candidate.controlTarget &&
-        (ordinaryVerdictsUncertain.current.has(approvalKey(candidate.controlTarget)) ||
-          planVerdictsUncertain.current.has(approvalKey(candidate.controlTarget))),
+        candidate.controlTarget && verdicts.current.phase(candidate.controlTarget) === "uncertain",
     );
   }
 
-  function ordinaryApprovalUncertain(candidate: ApprovalRequest): boolean {
-    void ordinaryVerdictEpoch;
+  function approvalUncertain(candidate: ApprovalRequest): boolean {
+    void verdictEpoch;
     return Boolean(
-      candidate.controlTarget &&
-        ordinaryVerdictsUncertain.current.has(approvalKey(candidate.controlTarget)),
+      candidate.controlTarget && verdicts.current.phase(candidate.controlTarget) === "uncertain",
     );
   }
 
-  function ordinaryApprovalDisabled(candidate: ApprovalRequest): boolean {
+  function approvalDisabled(candidate: ApprovalRequest): boolean {
     const target = candidate.controlTarget;
     const activeTarget = controlTarget(runTarget, sessionId);
     return Boolean(
@@ -2495,8 +2499,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         target.runId !== activeTarget?.runId ||
         target.sessionId !== viewedSessionId.current ||
         controlPending ||
-        ordinaryVerdictsInFlight.current.has(approvalKey(target)) ||
-        ordinaryVerdictsUncertain.current.has(approvalKey(target)),
+        verdicts.current.blocks(target),
     );
   }
 
@@ -2504,13 +2507,12 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     if (
       candidate.tool === "PresentPlan" ||
       (verdict !== "deny" && !candidate.args.trim()) ||
-      ordinaryApprovalDisabled(candidate)
+      approvalDisabled(candidate)
     )
       return;
     const target = candidate.controlTarget;
     if (!target) return;
-    const key = approvalKey(target);
-    ordinaryVerdictsInFlight.current.add(key);
+    if (!verdicts.current.begin(target)) return;
     setControlPending(true);
     try {
       await resolveRunPermission({
@@ -2518,128 +2520,19 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         path: { askId: target.askId, runId: target.runId, sessionId: target.sessionId },
         throwOnError: true,
       });
-      settledAskKeys.current.add(`${target.runId}\u0000${target.askId}`);
+      verdicts.current.acknowledge(target);
+      settledAskKeys.current.add(settledAskKey(target.runId, target.askId));
       if (viewedSessionId.current === target.sessionId) {
         setApprovals((current) => retractApproval(current, target.askId, target.runId));
         setNotice(`Permission ${verdict.replaceAll("_", " ")} recorded.`);
       }
     } catch (caught) {
-      ordinaryVerdictsUncertain.current.add(key);
-      setOrdinaryVerdictEpoch((value) => value + 1);
+      verdicts.current.markUncertain(target);
+      setVerdictEpoch((value) => value + 1);
       if (viewedSessionId.current === target.sessionId)
         setError(`Could not confirm this verdict: ${errorMessage(caught)}`);
     } finally {
-      ordinaryVerdictsInFlight.current.delete(key);
-      setControlPending(false);
-    }
-  }
-
-  function planUnavailableReason(candidate: ApprovalRequest): string | undefined {
-    const featureReason = exactPlanControlAvailability(runtime.data?.features).reason;
-    if (featureReason) return featureReason;
-    const activeTarget = controlTarget(runTarget, sessionId);
-    const target = candidate.controlTarget;
-    return !target ||
-      target.askId !== candidate.askId ||
-      target.sessionId !== activeTarget?.sessionId ||
-      target.runId !== activeTarget?.runId ||
-      target.sessionId !== viewedSessionId.current
-      ? "This plan ask is stale or its exact run is unavailable. Refresh activity."
-      : undefined;
-  }
-
-  function planApprovalDisabled(candidate: ApprovalRequest): boolean {
-    void planVerdictEpoch;
-    const target = candidate.controlTarget;
-    return Boolean(
-      !target ||
-        controlPending ||
-        planVerdictsInFlight.current.has(approvalKey(target)) ||
-        planVerdictsUncertain.current.has(approvalKey(target)),
-    );
-  }
-
-  function planApprovalUncertain(candidate: ApprovalRequest): boolean {
-    void planVerdictEpoch;
-    return Boolean(
-      candidate.controlTarget &&
-        planVerdictsUncertain.current.has(approvalKey(candidate.controlTarget)),
-    );
-  }
-
-  async function respondToPlan(candidate: ApprovalRequest, verdict: PlanVerdict) {
-    if (
-      candidate.tool !== "PresentPlan" ||
-      planUnavailableReason(candidate) ||
-      planApprovalDisabled(candidate)
-    ) {
-      setError("This plan ask is stale. Refresh activity before deciding.");
-      return;
-    }
-    const target = candidate.controlTarget;
-    if (!target) return;
-    const key = approvalKey(target);
-    planVerdictsInFlight.current.add(key);
-    const askId = target.askId;
-    setControlPending(true);
-    setError(undefined);
-    try {
-      await resolvePlanAsk({
-        body: { verdict },
-        path: { askId, runId: target.runId, sessionId: target.sessionId },
-        throwOnError: true,
-      });
-      settledAskKeys.current.add(`${target.runId}\u0000${askId}`);
-      if (viewedSessionId.current === target.sessionId) {
-        setApprovals((current) => retractApproval(current, askId, target.runId));
-      }
-      if (viewedSessionId.current !== target.sessionId) return;
-      if (verdict === "iterate") {
-        if (viewedSessionId.current === target.sessionId) setNotice("Plan iteration requested.");
-        return;
-      }
-      if (viewedSessionId.current === target.sessionId) {
-        setNotice("Plan approval accepted; checking whether execution started.");
-      }
-      const controller = new AbortController();
-      planFollowController.current = controller;
-      const evidence = await followPlanContinuationFromBff(
-        { askId, planRunId: target.runId, sessionId: target.sessionId },
-        controller.signal,
-      );
-      if (controller.signal.aborted || viewedSessionId.current !== target.sessionId) return;
-      if (evidence.kind === "started") {
-        // The verdict watcher establishes the new run and a durable replay
-        // checkpoint. Transfer this view's one reader to that run so its
-        // transcript and controls follow the same evidence.
-        planReattach.current = {
-          cursor: evidence.resumeFrom,
-          runId: evidence.runId,
-          sessionId: target.sessionId,
-        };
-        setPlanContinuationActive(true);
-        activeRun.current?.controller.abort();
-        activeRun.current = undefined;
-        setRunTarget({ runId: evidence.runId, sessionId: target.sessionId });
-        setReattachEpoch((current) => current + 1);
-      } else if (evidence.kind === "failed") {
-        setNotice(undefined);
-        setError("Plan approval was recorded, but execution could not start.");
-      } else {
-        setNotice(undefined);
-        setError(
-          "Plan approval was recorded, but could not confirm whether execution started. Refresh activity to check.",
-        );
-      }
-    } catch (caught) {
-      planVerdictsUncertain.current.add(key);
-      setPlanVerdictEpoch((value) => value + 1);
-      if (viewedSessionId.current === target.sessionId)
-        setError(`Could not confirm this verdict: ${errorMessage(caught)}`);
-    } finally {
-      planFollowController.current = undefined;
-      planVerdictsInFlight.current.delete(key);
-      setControlPending(false);
+      if (viewedSessionId.current === target.sessionId) setControlPending(false);
     }
   }
 
@@ -2718,8 +2611,13 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
 
   function captureTranscriptSelection(event: ReactPointerEvent<HTMLDivElement>) {
     const selection = window.getSelection();
-    const text = selection?.toString().trim() ?? "";
-    if (!selection || !text || selection.rangeCount === 0) {
+    // A plain click selects nothing: skip the layout work of reading the text.
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+      setSelectionAction(undefined);
+      return;
+    }
+    const text = selectedTranscriptText(selection, event.currentTarget);
+    if (!text) {
       setSelectionAction(undefined);
       return;
     }
@@ -2767,11 +2665,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     }) ?? approvals.find((candidate) => candidate.controlTarget?.sessionId === sessionId);
   useChatEscape({
     active: true,
-    askAvailable: escapeAsk
-      ? escapeAsk.tool === "PresentPlan"
-        ? !planApprovalDisabled(escapeAsk)
-        : !ordinaryApprovalDisabled(escapeAsk)
-      : false,
+    askAvailable: escapeAsk ? !approvalDisabled(escapeAsk) : false,
     draft: composerDraftPresent,
     onClearDraft: () => setClearDraftSignal((value) => value + 1),
     onClosePanel: () => {
@@ -2794,13 +2688,13 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     },
     onHintChange: setEscapeClearHint,
     onIteratePlan: () => {
-      if (escapeAsk) void respondToPlan(escapeAsk, "iterate");
+      if (escapeAsk) void plan.respondToPlan(escapeAsk, "iterate");
     },
     onStopRun: () => void stopRun(),
     onUnavailablePlan: () =>
       setError(
         escapeAsk
-          ? (planUnavailableReason(escapeAsk) ??
+          ? (plan.planUnavailableReason(escapeAsk) ??
               "Exact plan verdict is unavailable. Refresh activity.")
           : "Exact plan verdict is unavailable.",
       ),
@@ -2822,7 +2716,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       inspectionOpen || Boolean(debugTarget) || Boolean(confirmPrompt) || Boolean(textPrompt),
     panelOpen: Boolean(contentPreview || sidebarOpen),
     pendingAsk: escapeAsk?.tool === "PresentPlan" ? "plan" : escapeAsk ? "ordinary" : "none",
-    planAvailable: escapeAsk?.tool === "PresentPlan" && !planUnavailableReason(escapeAsk),
+    planAvailable: escapeAsk?.tool === "PresentPlan" && !plan.planUnavailableReason(escapeAsk),
     runActive: isRunning && Boolean(controlTarget(runTarget, sessionId)),
   });
   const openApprovalDetail = useCallback(
@@ -2848,9 +2742,15 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   // doesn't show.
   const detailClosesOnEscape = detailApproval !== undefined && detailApproval !== escapeAsk;
   // The detail panel shows a live ask only: once the ledger settles it (or the
-  // stream retracts it) the panel closes with its card.
+  // stream retracts it) the panel closes with its card. Focus that fell with the
+  // panel goes to the composer, never to a verdict button; focus the reader has
+  // already moved elsewhere stays put.
   useEffect(() => {
-    if (contentPreview?.kind === "approval" && !detailApproval) setContentPreview(undefined);
+    if (contentPreview?.kind !== "approval" || detailApproval) return;
+    const focused = document.activeElement;
+    setContentPreview(undefined);
+    if (!focused || focused === document.body || focused.closest('[data-chat-surface="approval"]'))
+      setFocusComposerSignal((signal) => signal + 1);
   }, [contentPreview, detailApproval]);
 
   const copyItems = sessionId ? (
@@ -3304,6 +3204,19 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                   minimapNavigation.current = false;
                 }
               }}
+              onClickCapture={(event) => {
+                // Expanding a disclosure grows the content in place: let it, rather than
+                // letting the observer drag the reader (and the toggle) down. The ref is
+                // cleared synchronously because the observer fires before the next render.
+                if (
+                  event.target instanceof Element &&
+                  event.target.closest('[aria-expanded="false"]')
+                ) {
+                  followTranscriptBottom.current = false;
+                  setAtTranscriptBottom(false);
+                  recheckFollowAfterExpansion();
+                }
+              }}
               onPointerDown={() => {
                 minimapNavigation.current = false;
               }}
@@ -3357,16 +3270,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                       <ChatTranscript
                         agentAvatar={agentAvatar}
                         agentName={agentName}
-                        approvalDisabled={(candidate) =>
-                          candidate.tool === "PresentPlan"
-                            ? planApprovalDisabled(candidate)
-                            : ordinaryApprovalDisabled(candidate)
-                        }
-                        approvalUncertain={(candidate) =>
-                          candidate.tool === "PresentPlan"
-                            ? planApprovalUncertain(candidate)
-                            : ordinaryApprovalUncertain(candidate)
-                        }
+                        approvalDisabled={approvalDisabled}
+                        approvalUncertain={approvalUncertain}
                         approvals={approvals}
                         delegationsByMessageId={delegationPlacement.byMessageId}
                         legacyThreadSessionIdForMessage={(message) => {
@@ -3404,9 +3309,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                           void respondToApproval(candidate, verdict)
                         }
                         onRespondToPlan={(candidate, verdict) =>
-                          void respondToPlan(candidate, verdict)
+                          void plan.respondToPlan(candidate, verdict)
                         }
-                        planUnavailableReason={planUnavailableReason}
+                        planUnavailableReason={plan.planUnavailableReason}
                         showToolCalls={showToolCalls}
                         streamingMessageId={
                           isRunning && messages.at(-1)?.role === "assistant"
@@ -3534,7 +3439,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             onDelete={queuedMessages.remove}
             onEdit={queuedMessages.update}
             onSteer={
-              isRunning && controlTarget(runTarget, sessionId)
+              steerAvailable && isRunning && controlTarget(runTarget, sessionId)
                 ? (id) => void steerQueuedMessage(id)
                 : undefined
             }
@@ -3562,6 +3467,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             appendText={appendText}
             canForkModel={displayedDetail?.capabilities.modelSelection === true}
             clearDraftSignal={clearDraftSignal}
+            focusComposerSignal={focusComposerSignal}
             executionInventory={templates.data}
             executionStatus={
               !runtime.data
@@ -3650,7 +3556,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
               isRunning ||
               (statusFacts.phase === "closed" && Boolean(controlTarget(runTarget, sessionId)))
             }
-            workingBehavior={enterSendBehavior}
+            steerAvailable={steerAvailable}
+            workingBehavior={workingBehavior}
           />
         </section>
       )}
@@ -3692,11 +3599,11 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                     disabled:
                       detailApproval.tool === "PresentPlan" ||
                       !detailApproval.controlTarget ||
-                      ordinaryApprovalDisabled(detailApproval),
+                      approvalDisabled(detailApproval),
                     onRespond: (verdict) => void respondToApproval(detailApproval, verdict),
                     position: detailIndex + 1,
                     total: approvals.length,
-                    uncertain: ordinaryApprovalUncertain(detailApproval),
+                    uncertain: approvalUncertain(detailApproval),
                   }
                 : undefined
             }
@@ -3841,155 +3748,6 @@ function RunFailurePanel({
         </Button>
       </div>
     </div>
-  );
-}
-
-/** Exported so the side-thread panel can render a thread's messages with the exact same primitives as the main transcript, instead of duplicating this JSX. */
-export function Message({
-  agentAvatar,
-  agentName,
-  approvalDisabled,
-  approvalUncertain,
-  approvals = [],
-  message,
-  onOpenThread,
-  onPreviewImage,
-  onPreviewTool,
-  onRespondToApproval,
-  onRespondToPlan,
-  planUnavailableReason,
-  showToolCalls,
-  streaming,
-  threadDisabled,
-  threadSessionId,
-  userAvatar,
-  userName,
-}: {
-  agentAvatar: string;
-  agentName: string;
-  approvalDisabled?: (approval: ApprovalRequest) => boolean;
-  approvalUncertain?: (approval: ApprovalRequest) => boolean;
-  approvals?: ApprovalRequest[];
-  message: ChatMessage;
-  onOpenThread?: () => void;
-  onPreviewImage?: (image: ChatImage) => void;
-  onPreviewTool?: (tool: ToolActivity) => void;
-  onRespondToApproval?: (approval: ApprovalRequest, verdict: ApprovalVerdict) => void;
-  onRespondToPlan?: (approval: ApprovalRequest, verdict: PlanVerdict) => void;
-  planUnavailableReason?: (approval: ApprovalRequest) => string | undefined;
-  showToolCalls: boolean;
-  streaming: boolean;
-  threadDisabled: boolean;
-  threadSessionId?: string;
-  userAvatar: string;
-  userName: string;
-}) {
-  const user = message.role === "user";
-  // A turn that ended with no text, no visible tool activity, and nothing
-  // else worth surfacing (reasoning, a failure, a stat line, a stop-reason
-  // chip) renders nothing at all — never a "Thinking…" placeholder for a
-  // run that has already finished (e.g. StopNoProgress with an empty final
-  // turn).
-  const matching = approvals.filter((approval) => messageOwnsApproval(message, approval));
-  const unmatched = approvals.filter((approval) => !matching.includes(approval));
-  const hasVisibleTools = (showToolCalls || matching.length > 0) && Boolean(message.tools?.length);
-  const hasExtras =
-    Boolean(message.images?.length) ||
-    Boolean(message.reasoning) ||
-    Boolean(message.failure) ||
-    Boolean(message.turnStat) ||
-    hasVisibleStopReason(message.stopReason ?? "") ||
-    approvals.length > 0;
-  if (!user && !streaming && !message.content && !hasVisibleTools && !hasExtras) {
-    return null;
-  }
-  const name = user ? userName : agentName;
-  return (
-    <article className={messageRowClass}>
-      <MessageRow
-        actions={
-          <MessageActions
-            onOpenThread={onOpenThread && message.content ? onOpenThread : undefined}
-            threadDisabled={threadDisabled}
-            threadOpen={Boolean(threadSessionId)}
-          />
-        }
-        author={<p className={messageAuthorClass}>{name}</p>}
-        avatar={
-          <MessageAvatar
-            avatarUrl={user ? userAvatar : agentAvatar}
-            fallback={user ? "user" : "agent"}
-            name={name}
-          />
-        }
-      >
-        {message.reasoning && (
-          <ReasoningDisclosure streaming={streaming} text={message.reasoning} />
-        )}
-        {message.images && message.images.length > 0 && (
-          <MessageImages images={message.images} onPreviewImage={onPreviewImage} />
-        )}
-        {message.content ? (
-          <div className={messageBodyClass}>
-            {user ? (
-              <p className="whitespace-pre-wrap">{message.content}</p>
-            ) : (
-              <MarkdownMessage>{message.content}</MarkdownMessage>
-            )}
-          </div>
-        ) : message.tools?.length ? null : streaming ? (
-          <StreamingIndicator />
-        ) : null}
-        {hasVisibleTools && message.tools && (
-          <ToolCallList
-            approvalDisabled={approvalDisabled}
-            approvalUncertain={approvalUncertain}
-            approvals={matching}
-            onPreview={onPreviewTool}
-            onRespondToApproval={onRespondToApproval}
-            onRespondToPlan={onRespondToPlan}
-            planUnavailableReason={planUnavailableReason}
-            tools={message.tools}
-          />
-        )}
-        {unmatched.map((approval) =>
-          approval.tool === "PresentPlan" ? (
-            <PlanReviewCard
-              approval={approval}
-              disabled={!approval.controlTarget || (approvalDisabled?.(approval) ?? false)}
-              key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
-              onRespond={(verdict) => onRespondToPlan?.(approval, verdict)}
-              uncertain={approvalUncertain?.(approval)}
-              unavailableReason={planUnavailableReason?.(approval)}
-            />
-          ) : (
-            <ApprovalPanel
-              approval={approval}
-              disabled={!approval.controlTarget || (approvalDisabled?.(approval) ?? false)}
-              key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
-              onRespond={(verdict) => onRespondToApproval?.(approval, verdict)}
-              uncertain={approvalUncertain?.(approval)}
-            />
-          ),
-        )}
-        {!streaming && !message.failure && <StopReasonChip stopReason={message.stopReason ?? ""} />}
-        {message.failure && (
-          <FailedTurnCard
-            detail={message.failure.detail}
-            permanent={message.failure.permanent}
-            summary={message.failure.message}
-          />
-        )}
-        {!streaming && message.turnStat && (
-          <p
-            className="mt-1 text-[11px] tabular-nums text-muted-foreground/70"
-            title="This turn's tokens sent ↑ and received ↓, model time, and the share of input served from the prompt cache."
-          >
-            {message.turnStat}
-          </p>
-        )}
-      </MessageRow>
-    </article>
   );
 }
 
