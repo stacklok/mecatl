@@ -7,7 +7,6 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
-	"github.com/stacklok/mecatl/internal/adapter/modelhook"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 )
 
@@ -241,27 +240,57 @@ func checkerState(cfg Config, configured bool) (state, reason string) {
 		return checkerDisabled, "kill-switch (--guardrails off)"
 	case !configured:
 		return checkerDisabled, "no checker configured"
+	}
+	compiled, enforcing := compiledGuardrailEnforcement(cfg)
+	switch {
+	case !compiled:
+		return checkerDisabled, noGuardrailRuleCompiled
 	case cfg.MaxAllowedMode == session.ModeYolo:
 		return checkerAdvisory, "demoted in yolo-mode sessions; other modes keep it enforcing"
-	}
-	specs, _ := effectiveGuardrailSpecs(cfg)
-	if highestSeverityGuardrailMode(specs) == string(modelhook.ModeAdvisory) {
+	case !enforcing:
 		return checkerAdvisory, "configured advisory"
 	}
 	return checkerEnforcing, ""
 }
 
+// noGuardrailRuleCompiled is the disabled reason when every configured rule
+// fails compilation, so no reviewer is installed at runtime.
+const noGuardrailRuleCompiled = "no guardrail rule compiled; every configured rule has an invalid match, mode, or phases"
+
+// compiledGuardrailEnforcement compiles the effective rules exactly as the
+// installed reviewer does (buildGuardrailsActionReviewer) and reports whether
+// any rule survived and whether a surviving rule enforces. Raw specs are not
+// enough: settings decoding accepts matchers and phases CompileRule rejects,
+// no reviewer is installed when nothing compiles, and CompileRule normalizes
+// the mode spelling. The per-rule WARNs stay with the engine build.
+func compiledGuardrailEnforcement(cfg Config) (compiled, enforcing bool) {
+	cfg.Diagnostics = port.NopDiagnostics{}
+	specs, _ := effectiveGuardrailSpecs(cfg)
+	rules, ok := compileGuardrailRules(cfg, specs)
+	if !ok {
+		return false, false
+	}
+	for _, rule := range rules {
+		if !rule.Advisory() {
+			return true, true
+		}
+	}
+	return true, false
+}
+
 // autoCheckerEnforcing reports whether an auto session runs with an enforcing
-// checker. Unlike checkerState it ignores the yolo demotion, which applies per
-// session mode (guardrailsDemoted): an auto session on a yolo server still
-// compiles its rules enforcing.
+// checker: a configured checker plus at least one compiled enforcing rule, the
+// same condition under which the runtime installs an enforcing reviewer.
+// Unlike checkerState it ignores the yolo demotion, which applies per session
+// mode (guardrailsDemoted): an auto session on a yolo server still compiles its
+// rules enforcing.
 func autoCheckerEnforcing(cfg Config, configured bool) bool {
 	if cfg.GuardrailsDisabled || !configured {
 		return false
 	}
 	cfg.guardrailSessionMode = session.ModeAuto
-	specs, _ := effectiveGuardrailSpecs(cfg)
-	return highestSeverityGuardrailMode(specs) != string(modelhook.ModeAdvisory)
+	_, enforcing := compiledGuardrailEnforcement(cfg)
+	return enforcing
 }
 
 // Subagent ask reviewer states: the stable vocabulary of the

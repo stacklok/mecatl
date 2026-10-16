@@ -149,6 +149,54 @@ func TestAutoTokenRequiresEnforcingChecker(t *testing.T) {
 	built.Close()
 }
 
+func TestAutoAdmissionUsesCompiledGuardrailRules(t *testing.T) {
+	// Admission follows the rules the installed reviewer compiles, not the raw
+	// specs: settings decoding accepts matchers and phases CompileRule rejects,
+	// and it validates a padded mode trimmed while CompileRule normalizes it.
+	refused := map[string]string{
+		"invalid phase":        "guardrails:\n  rules:\n    - match: Shell\n      phases: [during]\n      mode: block\n",
+		"blank matcher":        "guardrails:\n  rules:\n    - match: \"  \"\n      mode: block\n",
+		"padded advisory mode": "guardrails:\n  rules:\n    - match: Shell\n      mode: \" advisory \"\n",
+		"only the advisory rule compiles": "guardrails:\n  rules:\n    - match: Shell\n      phases: [during]\n      mode: block\n" +
+			"    - match: WebFetch\n      mode: advisory\n",
+	}
+	for name, body := range refused {
+		cfg := permissionModeCfg(t, "auto", port.NopDiagnostics{})
+		cfg.GuardrailsModel = "mock-checker"
+		cfg.PermissionConfigs = []string{writeOperatorSettingsFile(t, body)}
+		if built, err := buildIsolated(t, context.Background(), cfg); err == nil {
+			built.Close()
+			t.Errorf("%s: auto must refuse when no enforcing rule survives compilation", name)
+		} else if !strings.Contains(err.Error(), "requires an enforcing guardrails checker") {
+			t.Errorf("%s: refusal must name the requirement; got %v", name, err)
+		}
+	}
+
+	// A yolo server with no compiled enforcing rule must not advertise auto.
+	yolo := permissionModeCfg(t, "yolo", port.NopDiagnostics{})
+	yolo.GuardrailsModel = "mock-checker"
+	yolo.PermissionConfigs = []string{writeOperatorSettingsFile(t, refused["invalid phase"])}
+	built, err := buildIsolated(t, context.Background(), yolo)
+	if err != nil {
+		t.Fatalf("yolo with uncompilable rules must still start: %v", err)
+	}
+	if _, err := built.Service.CreateSession(context.Background(), session.ModeAuto, defaultLimits()); err == nil {
+		t.Error("yolo with no compiled enforcing rule must refuse an auto session")
+	}
+	built.Close()
+
+	// A valid enforcing rule surviving next to an invalid one admits auto.
+	ok := permissionModeCfg(t, "auto", port.NopDiagnostics{})
+	ok.GuardrailsModel = "mock-checker"
+	ok.PermissionConfigs = []string{writeOperatorSettingsFile(t, refused["invalid phase"]+
+		"    - match: NoSuchTool_inert_checker_rule\n      mode: block\n")}
+	built, err = buildIsolated(t, context.Background(), ok)
+	if err != nil {
+		t.Fatalf("auto with a compiled enforcing rule must start: %v", err)
+	}
+	built.Close()
+}
+
 func TestYoloTokenStartsWithoutChecker(t *testing.T) {
 	// Unchecked autonomy is yolo: it starts with no checker, WARNing only that
 	// its sessions cannot enter auto, and refuses an auto session at runtime.
