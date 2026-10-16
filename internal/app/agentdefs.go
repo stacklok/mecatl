@@ -437,17 +437,21 @@ func lookupModelAlias(cfg Config, sel string) (id string, known bool) {
 
 // resolvePermissionMode maps a def's frontmatter permissionMode string to a
 // domain session.PermissionMode, in the composition layer (the domain never sees
-// the raw string). "default"/empty/unknown => "" (the caller's default — for a team
-// member that means the team-wide WithTeamMode). "plan" and "acceptEdits" map to
-// their domain constants. An unrecognised value warns and falls back to the default.
+// the raw string). Empty => "" (the caller's default — for a team member that
+// means the team-wide WithTeamMode, which inherits an auto or yolo parent).
+// "default", "plan", and "acceptEdits" map to their domain constants, so an
+// explicit default stays default under an auto or yolo parent. An unrecognised
+// value warns and falls back to session.ModeDefault rather than inheriting.
 //
 // Note (critique B2): plan mode hard-denies mutations (existing invariant), so a
 // plan member is effectively read-only even if Mutating. acceptEdits is meaningful
 // only for a Mutating member (a read-only member has no mutating tools to accept).
 func resolvePermissionMode(d port.Diagnostics, def agents.AgentDef) session.PermissionMode {
 	switch strings.TrimSpace(def.PermissionMode) {
-	case "", "default":
+	case "":
 		return "" // caller's default
+	case string(session.ModeDefault):
+		return session.ModeDefault
 	case string(session.ModePlan):
 		return session.ModePlan
 	case string(session.ModeAccept):
@@ -455,7 +459,7 @@ func resolvePermissionMode(d port.Diagnostics, def agents.AgentDef) session.Perm
 	default:
 		d.Log(context.Background(), port.LevelWarn, "agent def references an unknown permissionMode; using the default",
 			"agent", def.Name, "mode", def.PermissionMode, "origin", string(def.Origin))
-		return ""
+		return session.ModeDefault
 	}
 }
 

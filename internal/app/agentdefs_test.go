@@ -524,3 +524,24 @@ func kvArgsContain(args []any, key, val string) bool {
 	}
 	return false
 }
+
+// TestResolvePermissionModeKeepsExplicitDefault pins that only an omitted
+// permissionMode inherits the team default (which follows an auto or yolo
+// parent); an explicit or unrecognised value pins the member's mode.
+func TestResolvePermissionModeKeepsExplicitDefault(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want session.PermissionMode
+	}{
+		{"", ""},
+		{"default", session.ModeDefault},
+		{" default ", session.ModeDefault},
+		{"plan", session.ModePlan},
+		{"acceptEdits", session.ModeAccept},
+		{"bogus", session.ModeDefault},
+	} {
+		if got := resolvePermissionMode(port.NopDiagnostics{}, agents.AgentDef{Name: "m", PermissionMode: tc.in}); got != tc.want {
+			t.Errorf("resolvePermissionMode(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}

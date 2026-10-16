@@ -139,8 +139,8 @@ type ParallelTool struct {
 	// limits bound a single child branch run. Defaults to defaultChildLimits.
 	limits session.Limits
 
-	// childMode is the permission mode each child session runs under. Defaults to
-	// session.ModeDefault.
+	// childMode is the permission mode each child session runs under. Empty (the
+	// default) inherits the parent's mode; see effectiveChildMode.
 	childMode session.PermissionMode
 
 	// maxBranches caps the fan-out per Parallel call.
@@ -210,9 +210,10 @@ func WithParallelChildLimits(l session.Limits) ParallelOption {
 	return func(t *ParallelTool) { t.limits = l }
 }
 
-// WithParallelChildMode sets the permission mode each child branch session runs under
-// (default session.ModeDefault, which inherits an auto or yolo parent's mode; see
-// effectiveChildMode).
+// WithParallelChildMode sets the permission mode each child branch session runs under.
+// Without it a branch inherits an auto or yolo parent's mode and otherwise runs in
+// session.ModeDefault (see effectiveChildMode); an explicit session.ModeDefault keeps
+// default even under an auto or yolo parent.
 func WithParallelChildMode(m session.PermissionMode) ParallelOption {
 	return func(t *ParallelTool) { t.childMode = m }
 }
@@ -335,7 +336,6 @@ func NewParallelTool(childEngine *Engine, forker tool.EnvironmentForker, opts ..
 		childEngine: childEngine,
 		forker:      forker,
 		limits:      defaultChildLimits,
-		childMode:   session.ModeDefault,
 		maxBranches: defaultMaxBranches,
 		concurrency: defaultParallelConcurrency,
 		idPrefix:    strings.TrimSuffix(ParallelSessionPrefix, "-"), // the exported convention is the source
