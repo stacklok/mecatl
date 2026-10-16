@@ -854,7 +854,7 @@ func createLiveSession(t *testing.T, ctx context.Context, addr, token string) li
 		t.Fatal("exact live execution template revision unavailable")
 	}
 	bodyJSON, err := json.Marshal(map[string]any{
-		"limits": map[string]int{"max_turns": 8, "max_tool_calls": 20, "max_consecutive_failures": 3},
+		"limits":    map[string]int{"max_turns": 8, "max_tool_calls": 20, "max_consecutive_failures": 3},
 		"execution": map[string]any{"template": map[string]string{"id": "go", "revision": revision}},
 	})
 	if err != nil {
