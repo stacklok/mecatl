@@ -118,7 +118,7 @@ The broker's agent-instance issuer validates the registration records that the w
 - If there is a parent, the parent is registered to the same broker session.
 - A registration with no parent names a definition that can be a session's root.
 - For a definition that the broker loaded, the reference matches the broker's record.
-- The subject follows the SPIFFE rules. Each segment uses only `[a-zA-Z0-9._-]`. The whole ID is at most 2048 bytes. The nesting is within the depth limit. A registration that breaks a rule fails closed.
+- The subject follows the SPIFFE rules. Each definition category and name uses only `[A-Za-z0-9._-]`, is neither `.` nor `..`, and is at most 63 bytes. The nesting is at most 8 child levels below the root. The whole ID stays within the 2,048 bytes SPIFFE-ID §2.3 says not to exceed. A registration that breaks a rule fails closed; see the [SVID step](credentials-and-lifecycle.md#4-agent-instance-jwt-svid) of the credential flow.
 
 If the checks pass, the issuer associates the supplied incarnation with the registered definition, source, revision, ceiling, and creating instance, if any. It stores the effective ceiling that it computes from them. The session aggregate mints the incarnation. mecak8s persists it and reports it. The broker does not allocate incarnations. A known definition, or a name that the loop supplies, is not enough for issuance.
 

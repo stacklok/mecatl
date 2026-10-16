@@ -38,7 +38,7 @@ Every component records evidence as a [toolhive-core](https://github.com/stacklo
 | Who acted, and for whom | `Subjects` | `user_iss` and `user_id`: the user as the recording component's own issuer knows them. `owner_iss` and `owner_id`: the company identity from `sub_id`. `workload_iss` and `workload_sub`. `agent_spiffe_id` (inside Mecatl only), `agent_actor_id` (the opaque `ag_` identifier in `act`), and `agent_instance_ref`. `run_owner_iss` and `run_owner_id`: the [run owner](run-owner.md), reported by mecak8s. A credential reference is qualified by its issuer, and `client_id` by its authorization server. An identity the recorder did not verify never appears as `user_id`. |
 | Verified or reported | `Metadata.Extra["mecatl.provenance"]` | A map keyed by the `Subjects` key: `verified`, `credential-verified` when the recorder verified a credential but mecak8s reported which instance it belongs to, `record:<AuditID>` when taken from a retained record, `reported:<component>`, or `unavailable`. A missing fact is marked `unavailable`, never left out silently. |
 | Where it originated | `Source` | The network origin, as in ToolHive: the peer address, plus `request_id` and `session_id` for joining. The calling workload's identity belongs in `Subjects`, not here. |
-| Where it was recorded | `Component`, `Metadata.Extra` | `mecatl-broker`, `mecatl-as1`, or the ToolHive component name, plus the recording replica and trust domain. |
+| Where it was recorded | `Component`, `Metadata.Extra` | `mecatl-broker`, `mecatl-as1`, or the ToolHive component name, plus the recording replica and deployment; components with a SPIFFE identity also record its trust domain. |
 | Operation and target | `Target` | toolhive-core's keys: `type=tool`, `name`, `method=tools/call`, and the MCP server. For token-endpoint events, the requested audience and resource. Request metadata appears only if allowlisted for that type. |
 | When | `LoggedAt`, `Metadata.Extra` | `LoggedAt` is the recorder's clock when it created the record, in UTC; a re-send keeps it. `mecatl.occurred_at` (RFC 3339 with offset) and `mecatl.clock` record when the event happened and whose clock said so. Events from different components are ordered by attempt and a per-component sequence number, never by timestamp alone. |
 | Correlation | `Metadata.Extra` | `mecatl.operation_id` and `mecatl.attempt_id`. A retry is a new attempt. A result that arrives after an `unknown` outcome is a new event that references the earlier one; records are never edited. The broker passes the operation and attempt IDs to AS-1 and the vMCP, which record them as reported. |
@@ -62,7 +62,7 @@ The identity work needs these event families:
 - definition load, instance registration, and agent-instance credential issuance;
 - each delegation from one run to another;
 - broker session open and close, AS-1's conversion record at session open, and any open refused because the token's user does not own the session; per-call events point to the session-open record for the user;
-- sign-out everywhere, with each run stopped, broker session deleted, refresh token revoked, and schedule authority revoked;
+- sign-out everywhere, with each run stopped, broker session closed, refresh token revoked, and schedule authority revoked, and the revocation reason;
 - an upstream re-check failure and the revocation that follows;
 - ID-JAG issuance and denial at AS-1;
 - redemption and denial at AS-2, and consent-link creation and revocation in external mode;
