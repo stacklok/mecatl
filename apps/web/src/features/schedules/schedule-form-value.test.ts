@@ -12,6 +12,7 @@ import {
   phraseTriggerPatch,
   type Schedule,
   scheduleFormProblem,
+  scheduleModeLabel,
   TRIGGER_FIELDS,
   type TriggerPatch,
   triggerFromValue,
@@ -59,6 +60,34 @@ describe("schedule form value mapping", () => {
         permission,
       );
     }
+  });
+
+  it("keeps a mode set outside Studio by omitting it, and plan when writes go off", () => {
+    // Studio cannot send auto, yolo, or the server default; an edit must not
+    // replace them with a mode it can.
+    for (const mode of ["auto", "yolo", "serverDefault"] as const) {
+      const existing = schedule({ mode, mutating: true });
+      const value = valueFromSchedule(existing);
+      expect(bodyFromValue(value, existing), mode).toMatchObject({
+        mode: undefined,
+        mutating: true,
+      });
+      expect(bodyFromValue({ ...value, allowWrites: false }, existing), mode).toMatchObject({
+        mode: "plan",
+        mutating: false,
+      });
+      expect(bodyFromValue({ ...value, writeMode: "acceptEdits" }, existing), mode).toMatchObject({
+        mode: "acceptEdits",
+        mutating: true,
+      });
+    }
+  });
+
+  it("labels the modes set outside Studio honestly", () => {
+    expect(scheduleModeLabel("auto")).toBe("Auto (set outside Studio)");
+    expect(scheduleModeLabel("yolo")).toBe("YOLO (set outside Studio)");
+    expect(scheduleModeLabel("serverDefault")).toBe("Server default");
+    expect(scheduleModeLabel("default")).toBe("Default");
   });
 
   it("sends an existing schedule's trigger exactly as stored", () => {

@@ -61,6 +61,7 @@ import { useShortcutSuppression } from "../shortcuts/shortcut-provider";
 import { describeCron } from "./describe-cron";
 import { RunTime } from "./run-time";
 import { canEditSchedule, ScheduleForm, toastScheduleSaved } from "./schedule-form";
+import { scheduleModeLabel } from "./schedule-form-value";
 import { ScheduleStatusBadge } from "./schedule-status";
 
 type Schedule = ListSchedulesResponse["items"][number];
@@ -254,7 +255,17 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <ScheduleStatusBadge status={schedule.status} />
-        <Badge variant="outline">{modeLabel(schedule.mode)}</Badge>
+        <Badge
+          variant={
+            schedule.mode === "yolo"
+              ? "destructive"
+              : schedule.mode === "auto"
+                ? "warning"
+                : "outline"
+          }
+        >
+          {scheduleModeLabel(schedule.mode)}
+        </Badge>
         {schedule.mutating && <Badge variant="warning">writes enabled</Badge>}
         {schedule.profile === "noFilesystem" && <Badge variant="outline">no filesystem</Badge>}
       </div>
@@ -272,7 +283,7 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
 
         <div className="mt-8 grid gap-5 sm:grid-cols-2">
           <FactGroup title="Details">
-            <Fact label="Mode" value={modeLabel(schedule.mode)} />
+            <Fact label="Mode" value={scheduleModeLabel(schedule.mode)} />
             <Fact label="Write access" value={schedule.mutating ? "Writes allowed" : "Read-only"} />
             <Fact label="Owner" value={schedule.owner || "Deployment default"} />
             <Fact
@@ -706,8 +717,4 @@ function HistoryState({ destructive, text }: { destructive?: boolean; text: stri
       </EmptyHeader>
     </Empty>
   );
-}
-
-function modeLabel(mode: Schedule["mode"]) {
-  return mode === "acceptEdits" ? "Accept edits" : mode === "plan" ? "Plan" : "Default";
 }

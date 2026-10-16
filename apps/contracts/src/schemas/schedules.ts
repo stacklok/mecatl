@@ -12,6 +12,21 @@ export const maximumInt32 = 2_147_483_647;
 
 export const scheduleModeSchema = z.enum(["default", "plan", "acceptEdits"]);
 
+/**
+ * A schedule's reported mode. It adds what a schedule created outside Studio
+ * can run in: `auto` and `yolo` (an in-chat schedule records its creating
+ * session's mode), and `serverDefault` (no mode was set, so each fire uses the
+ * server's default session mode). Studio reads these but never requests them.
+ */
+export const scheduleReportedModeSchema = z.enum([
+  "default",
+  "plan",
+  "acceptEdits",
+  "auto",
+  "yolo",
+  "serverDefault",
+]);
+
 /** Each segment of an IANA zone name starts with an uppercase letter. */
 const ianaZoneName = /^[A-Z][A-Za-z0-9_+-]*(?:\/[A-Z][A-Za-z0-9_+-]*)*$/u;
 
@@ -72,7 +87,14 @@ export const createScheduleRequestSchema = scheduleWriteSchema.extend({
   name: z.string().trim().min(1).max(160),
 });
 
-export const updateScheduleRequestSchema = scheduleWriteSchema;
+/**
+ * An update may omit `mode` to keep the stored one, which is how a writing
+ * schedule whose mode Studio cannot set (`auto`, `yolo`, `serverDefault`) is
+ * edited without changing it. A sent mode is still one Studio can create.
+ */
+export const updateScheduleRequestSchema = scheduleWriteSchema.extend({
+  mode: scheduleModeSchema.optional(),
+});
 
 export const scheduleSchema = z.object({
   enabled: z.boolean(),
@@ -80,7 +102,7 @@ export const scheduleSchema = z.object({
   lastFireAt: z.string().nullable(),
   lastFireSessionId: z.string(),
   maxFires: z.number().int().nonnegative(),
-  mode: scheduleModeSchema,
+  mode: scheduleReportedModeSchema,
   modelId: z.string(),
   mutating: z.boolean(),
   name: z.string(),
