@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"strings"
 	"testing"
@@ -128,6 +129,43 @@ func TestAliasCombinationsStillResolve(t *testing.T) {
 			}
 			if ac.AllowAllTools != tc.wantAllow {
 				t.Fatalf("%q AllowAllTools = %v, want %v", tc.argv, ac.AllowAllTools, tc.wantAllow)
+			}
+		})
+	}
+}
+
+// TestCombinedLegacyAliasesBuildRaisedPair drives the real flag, appConfig, and
+// app.Build path: a deprecated --posture combined with --yolo must land on the
+// session mode and ceiling of the raised tier, exactly as --yolo alone does,
+// not on the pair the lower --posture value implies.
+func TestCombinedLegacyAliasesBuildRaisedPair(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	for _, argv := range [][]string{
+		{"--yolo"},
+		{"--posture", "strict", "--yolo"},
+		{"--posture", "auto", "--yolo"},
+	} {
+		t.Run(strings.Join(argv, " "), func(t *testing.T) {
+			cfg, err := parseFlags(append([]string{"--workspace", t.TempDir(), "--guardrails", "off"}, argv...))
+			if err != nil {
+				t.Fatalf("parseFlags: %v", err)
+			}
+			ac := appConfig(cfg, nil, nil, nil, nil, port.NopDiagnostics{})
+			ac.UseMock, ac.NoSoul, ac.Privileged = true, true, false
+			built, err := buildIsolated(t, context.Background(), ac)
+			if err != nil {
+				t.Fatalf("app.Build: %v", err)
+			}
+			defer built.Close()
+			sess, err := built.Service.CreateSession(context.Background(), "", session.Limits{})
+			if err != nil {
+				t.Fatalf("CreateSession: %v", err)
+			}
+			if sess.Mode != session.ModeYolo {
+				t.Fatalf("%q: unspecified-mode session started in %q, want yolo", argv, sess.Mode)
+			}
+			if _, err := built.Service.CreateSession(context.Background(), session.ModeYolo, session.Limits{}); err != nil {
+				t.Fatalf("%q: the yolo ceiling must admit a yolo session: %v", argv, err)
 			}
 		})
 	}
