@@ -15,7 +15,7 @@ import {
   DialogTitle,
 } from "../../components/ui/dialog";
 import { formatDate } from "../../lib/formatters";
-import { transcriptAccess } from "../chat/session-inspection";
+import { transcriptAccess } from "../chat/transcript-access";
 import { TranscriptView } from "../chat/transcript-dialog";
 import { useShortcutSuppression } from "../shortcuts/shortcut-provider";
 

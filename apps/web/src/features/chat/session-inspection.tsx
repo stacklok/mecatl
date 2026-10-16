@@ -21,6 +21,7 @@ import {
 import { cn } from "../../lib/utils";
 import { SessionDetailsView } from "./session-details-dialog";
 import { SoulView } from "./soul-dialog";
+import { transcriptAccess, unavailable } from "./transcript-access";
 import { TranscriptView } from "./transcript-dialog";
 import { WorktreePickerView } from "./worktree-picker-dialog";
 
@@ -67,29 +68,6 @@ const titles: Record<InspectionView, string> = {
   soul: "Soul inspection",
   worktrees: "Choose successor worktree",
 };
-
-function unavailable(reason: string, fallback: string): string {
-  return reason || fallback;
-}
-
-/**
- * Whether the caller may read a session's saved transcript, and the reason to
- * show when not. The capability rides the session inventory row; the session
- * detail does not carry it. Inspection and the schedule run log share this one
- * gate.
- */
-export function transcriptAccess(
-  session: SessionSummaryResponse,
-  runtime: RuntimeResponse | undefined,
-): { readable: boolean; reason: string } {
-  const online = runtime?.connection === "online";
-  return {
-    readable: online && session.capabilities.inspect && session.capabilities.viewTranscript,
-    reason: !online
-      ? "Transcript unavailable while offline."
-      : unavailable(session.capabilities.viewTranscriptReason, "Transcript unavailable."),
-  };
-}
 
 /** Only a selector-specific rejection warrants relisting; other failures are not the choice's fault. */
 function isSelectorRejection(caught: unknown): boolean {
