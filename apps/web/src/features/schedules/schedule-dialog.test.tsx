@@ -20,6 +20,14 @@ async function openCreate(user: ReturnType<typeof userEvent.setup>) {
   return screen.getByRole("dialog", { name: "Schedule a task" });
 }
 
+async function openOnce(user: ReturnType<typeof userEvent.setup>) {
+  const dialog = await openCreate(user);
+  await user.type(within(dialog).getByRole("textbox", { name: "Name" }), "launch");
+  await user.type(within(dialog).getByRole("textbox", { name: "Prompt" }), "Remind me");
+  await user.click(within(dialog).getByRole("tab", { name: "Run once" }));
+  return dialog;
+}
+
 describe("the schedule dialog", () => {
   it("keeps Create disabled until the name and prompt are filled", async () => {
     const user = userEvent.setup();
@@ -65,10 +73,8 @@ describe("the schedule dialog", () => {
     const create = within(dialog).getByRole<HTMLButtonElement>("button", {
       name: "Create schedule",
     });
-    // No date yet, so there is no run time: a time alone cannot enable Create.
-    fireEvent.change(time, { target: { value: "15:30" } });
-    expect(create.disabled).toBe(true);
-    // A date on its own runs at 9:00.
+    // A date on its own, with no time ever chosen, runs at 9:00.
+    expect(time.value).toBe("");
     fireEvent.change(date, { target: { value: "2030-01-02" } });
     expect(time.value).toBe("09:00");
     expect(create.disabled).toBe(false);
@@ -103,11 +109,100 @@ describe("the schedule dialog", () => {
     expect(create.disabled).toBe(true);
   });
 
-  it("is sm:max-w-lg wide, as in the prototype", async () => {
+  it("keeps a time typed before the date", async () => {
+    const user = userEvent.setup();
+    const { requests } = mountSchedules([schedule({ name: "Alpha" })], "/workspace/schedules");
+    const dialog = await openOnce(user);
+    const date = within(dialog).getByLabelText<HTMLInputElement>("Date");
+    const time = within(dialog).getByLabelText<HTMLInputElement>("Time");
+    const create = within(dialog).getByRole<HTMLButtonElement>("button", {
+      name: "Create schedule",
+    });
+    fireEvent.change(time, { target: { value: "15:30" } });
+    // No date yet, so there is no run time, but the time stays in its input.
+    expect(time.value).toBe("15:30");
+    expect(create.disabled).toBe(true);
+    fireEvent.change(date, { target: { value: "2030-01-02" } });
+    expect(time.value).toBe("15:30");
+    await user.click(create);
+    await waitFor(() =>
+      expect(requests.filter((request) => request.method === "POST")).toHaveLength(1),
+    );
+    expect(requests.find((request) => request.method === "POST")?.body).toMatchObject({
+      trigger: { at: new Date("2030-01-02T15:30").toISOString(), kind: "once" },
+    });
+  });
+
+  it("keeps the time when the date is cleared and picked again", async () => {
+    const user = userEvent.setup();
+    const { requests } = mountSchedules([schedule({ name: "Alpha" })], "/workspace/schedules");
+    const dialog = await openOnce(user);
+    const date = within(dialog).getByLabelText<HTMLInputElement>("Date");
+    const time = within(dialog).getByLabelText<HTMLInputElement>("Time");
+    const create = within(dialog).getByRole<HTMLButtonElement>("button", {
+      name: "Create schedule",
+    });
+    fireEvent.change(date, { target: { value: "2030-01-02" } });
+    fireEvent.change(time, { target: { value: "15:30" } });
+    // A cleared date (or one segment of it, mid-edit) leaves no run time but
+    // never touches the time.
+    fireEvent.change(date, { target: { value: "" } });
+    expect(time.value).toBe("15:30");
+    expect(create.disabled).toBe(true);
+    fireEvent.change(date, { target: { value: "2030-02-03" } });
+    expect(time.value).toBe("15:30");
+    await user.click(create);
+    await waitFor(() =>
+      expect(requests.filter((request) => request.method === "POST")).toHaveLength(1),
+    );
+    expect(requests.find((request) => request.method === "POST")?.body).toMatchObject({
+      trigger: { at: new Date("2030-02-03T15:30").toISOString(), kind: "once" },
+    });
+  });
+});
+
+describe("the reason Create is disabled", () => {
+  function problemOf(button: HTMLElement) {
+    const id = button.getAttribute("aria-describedby");
+    return id ? document.getElementById(id) : null;
+  }
+
+  it("is hidden until the form is touched", async () => {
     const user = userEvent.setup();
     mountSchedules([schedule({ name: "Alpha" })], "/workspace/schedules");
     const dialog = await openCreate(user);
-    expect(dialog.className).toContain("sm:max-w-lg");
+    const create = within(dialog).getByRole("button", { name: "Create schedule" });
+    expect(problemOf(create)).toBeNull();
+    expect(within(dialog).queryByText("Name is required.")).toBeNull();
+  });
+
+  it("names the first missing field under the form and describes Create with it", async () => {
+    const user = userEvent.setup();
+    mountSchedules([schedule({ name: "Alpha" })], "/workspace/schedules");
+    const dialog = await openCreate(user);
+    const create = within(dialog).getByRole("button", { name: "Create schedule" });
+    await user.type(within(dialog).getByRole("textbox", { name: "Name" }), "nightly");
+    const reason = problemOf(create);
+    expect(reason?.textContent).toBe("Prompt is required.");
+    expect(reason?.className).toContain("text-muted-foreground");
+    expect(dialog.contains(reason)).toBe(true);
+
+    await user.click(within(dialog).getByRole("tab", { name: "Run once" }));
+    await user.type(within(dialog).getByRole("textbox", { name: "Prompt" }), "Summarize");
+    expect(problemOf(create)?.textContent).toBe("Run time is required.");
+
+    fireEvent.change(within(dialog).getByLabelText("Date"), { target: { value: "2030-01-02" } });
+    expect(problemOf(create)).toBeNull();
+    expect(within(dialog).queryByText(/is required\./)).toBeNull();
+  });
+
+  it("appears when Enter is pressed in an untouched form", async () => {
+    const user = userEvent.setup();
+    mountSchedules([schedule({ name: "Alpha" })], "/workspace/schedules");
+    const dialog = await openCreate(user);
+    fireEvent.submit(dialog.querySelector("form") as HTMLFormElement);
+    const create = within(dialog).getByRole("button", { name: "Create schedule" });
+    expect(problemOf(create)?.textContent).toBe("Name is required.");
   });
 });
 

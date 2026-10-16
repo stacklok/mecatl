@@ -17,7 +17,15 @@ export interface FormValue {
   cron: string;
   maxFires: string;
   name: string;
+  /** The one-shot wall clock, "YYYY-MM-DDTHH:MM", or "" while there is no date. */
   oneShotAt: string;
+  /**
+   * The one-shot time as last chosen ("HH:MM"), or "" until one is. It is kept
+   * apart from {@link oneShotAt} so that the Date and Time inputs stay
+   * independent: a time chosen before the date, or kept while the date is
+   * cleared, is not lost.
+   */
+  oneShotTime: string;
   /** The schedule's original one-shot instant, re-sent unchanged while the wall clock is unedited. */
   oneShotOriginal: string;
   oneShotMaxRetries: string;
@@ -36,15 +44,17 @@ export interface FormValue {
 export function valueFromSchedule(schedule?: Schedule): FormValue {
   const timezone =
     schedule?.trigger.kind === "cron" ? schedule.trigger.timezone : browserTimezone();
+  const oneShotAt = schedule?.trigger.kind === "once" ? toLocalInput(schedule.trigger.at) : "";
   return {
     allowWrites: schedule?.mutating ?? false,
     cron: schedule?.trigger.kind === "cron" ? schedule.trigger.expression : "0 9 * * *",
     maxFires: String(schedule?.maxFires ?? 0),
     name: schedule?.name ?? "",
-    oneShotAt: schedule?.trigger.kind === "once" ? toLocalInput(schedule.trigger.at) : "",
+    oneShotAt,
     oneShotOriginal: schedule?.trigger.kind === "once" ? schedule.trigger.at : "",
     oneShotMaxRetries: String(schedule?.oneShotMaxRetries || 3),
     oneShotRetry: schedule?.oneShotRetry ?? false,
+    oneShotTime: oneShotAt.slice(11, 16),
     profile: schedule?.profile ?? "all",
     prompt: schedule?.prompt ?? "",
     timezone,
@@ -67,6 +77,7 @@ export const TRIGGER_FIELDS = [
   "timezone",
   "oneShotAt",
   "oneShotOriginal",
+  "oneShotTime",
 ] as const satisfies ReadonlyArray<keyof FormValue>;
 
 export type TriggerPatch = Partial<Pick<FormValue, (typeof TRIGGER_FIELDS)[number]>>;
@@ -106,6 +117,7 @@ export function displayedValue(value: FormValue, schedule?: Schedule): FormValue
     cron: stored.cron,
     oneShotAt: stored.oneShotAt,
     oneShotOriginal: stored.oneShotOriginal,
+    oneShotTime: stored.oneShotTime,
     timezone: stored.timezone,
     triggerKind: stored.triggerKind,
   };
@@ -157,18 +169,35 @@ export function scheduleFormProblem(value: FormValue, schedule?: Schedule): stri
   return null;
 }
 
-/** "YYYY-MM-DDTHH:MM" → its date and time halves ("" when absent). */
-export function oneShotParts(local: string): { date: string; time: string } {
-  return { date: local.slice(0, 10), time: local.slice(11, 16) };
+/** The time a one-shot date runs at when no time has been chosen, as in the prototype. */
+const DEFAULT_ONE_SHOT_TIME = "09:00";
+
+/** What the one-shot Date and Time inputs show. */
+export function oneShotInputs(value: FormValue): { date: string; time: string } {
+  return { date: value.oneShotAt.slice(0, 10), time: value.oneShotTime };
 }
 
 /**
- * Joins the one-shot date and time inputs into the wall clock the form holds.
- * No date means no run time yet; a date without a time runs at 9:00, as the
- * prototype's form does.
+ * The trigger edit for a new Date input value: the run time becomes that date
+ * at the chosen time, or at 9:00 if no time was ever chosen. An empty value (a
+ * cleared date, or a segment mid-edit) leaves no run time, so the form cannot
+ * be sent, but it never touches the time.
  */
-export function joinOneShot(date: string, time: string): string {
-  return date ? `${date}T${time || "09:00"}` : "";
+export function oneShotDatePatch(value: FormValue, date: string): TriggerPatch {
+  if (!date) return { oneShotAt: "" };
+  const time = value.oneShotTime || DEFAULT_ONE_SHOT_TIME;
+  return { oneShotAt: `${date}T${time}`, oneShotTime: time };
+}
+
+/**
+ * The trigger edit for a new Time input value. The time is kept even without
+ * a date, and joins the date once there is one. An empty value is a segment
+ * mid-edit: the last time stays.
+ */
+export function oneShotTimePatch(value: FormValue, time: string): TriggerPatch {
+  if (!time) return {};
+  const date = value.oneShotAt.slice(0, 10);
+  return { oneShotAt: date ? `${date}T${time}` : "", oneShotTime: time };
 }
 
 /** What the phrase input last produced — drives the line under it. */
@@ -191,9 +220,10 @@ export function phraseTriggerPatch(
     return { outcome: compiled, patch: { cron: compiled.cron, triggerKind: "cron" } };
   }
   if (compiled?.kind === "one-shot") {
+    const oneShotAt = toLocalDateTimeInput(compiled.at);
     return {
       outcome: compiled,
-      patch: { oneShotAt: toLocalDateTimeInput(compiled.at), triggerKind: "once" },
+      patch: { oneShotAt, oneShotTime: oneShotAt.slice(11, 16), triggerKind: "once" },
     };
   }
   if (looksLikeCron(text)) {
