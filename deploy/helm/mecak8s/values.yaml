@@ -38,7 +38,7 @@ logging:
 # the escape hatch for flags not modeled by the chart; when it contains --log-level,
 # it is appended after logging.level and therefore takes precedence. The chart owns
 # the permission mode: rendering fails if extraArgs sets --posture,
-# --permission-mode, or --yolo; set permissionMode instead.
+# --permission-mode, or --yolo (with one or two dashes); set permissionMode instead.
 extraArgs: []
 
 # First-class remote Streamable HTTP MCP connections. Authentication is an
