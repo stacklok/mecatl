@@ -148,7 +148,7 @@ function toSdkSpec(
     },
     maxFires: cron ? request.maxFires : 0,
     misfire: current?.misfire ?? 0,
-    mode: modeToSdk(request.mode),
+    mode: writeModeToSdk(request, current),
     mutating: request.mutating,
     name,
     oneShotMaxRetries: once && request.oneShotRetry ? request.oneShotMaxRetries : 0,
@@ -282,10 +282,27 @@ function modeToSdk(mode: UpdateScheduleRequest["mode"]): PermissionMode {
   return PermissionMode.PLAN;
 }
 
+/**
+ * The mode an update sends. An omitted mode on a writing schedule keeps the
+ * stored one verbatim, including an unspecified mode (the server default) and
+ * the autonomous modes Studio cannot request; a read-only schedule is plan.
+ */
+function writeModeToSdk(request: UpdateScheduleRequest, current?: ScheduleSpec): PermissionMode {
+  if (request.mode !== undefined) return modeToSdk(request.mode);
+  if (!request.mutating) return PermissionMode.PLAN;
+  return current?.mode ?? PermissionMode.PLAN;
+}
+
+// Auto, yolo, and an unspecified mode are reported as such, not folded into
+// plan: an in-chat schedule records its creator's mode, and a schedule created
+// without a mode fires in the server's default session mode.
 function modeFromSdk(mode: PermissionMode): ScheduleResponse["mode"] {
+  if (mode === PermissionMode.PLAN) return "plan";
   if (mode === PermissionMode.DEFAULT) return "default";
   if (mode === PermissionMode.ACCEPT_EDITS) return "acceptEdits";
-  return "plan";
+  if (mode === PermissionMode.AUTO) return "auto";
+  if (mode === PermissionMode.YOLO) return "yolo";
+  return "serverDefault";
 }
 
 function profileToSdk(profile: UpdateScheduleRequest["profile"]): string {

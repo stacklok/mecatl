@@ -52,6 +52,18 @@ const TRIGGER_LOCKED_NOTE =
 
 const NO_PHRASE: PhraseOutcome = { kind: "none" };
 
+/**
+ * The write-mode options offered only to keep a stored writing schedule's mode
+ * as it is: modes Studio never offers for a new schedule. Accept edits and
+ * default are always offered, so they have no entry here.
+ */
+const KEPT_MODE_OPTIONS: Partial<Record<Schedule["mode"], string>> = {
+  auto: "Keep Auto, set outside Studio",
+  plan: "Plan only, changes are refused",
+  serverDefault: "Keep the server's default mode",
+  yolo: "Keep YOLO, set outside Studio",
+};
+
 const PHRASE_PLACEHOLDER = "every 30 minutes · daily at 9am · next monday 3pm · in 2 hours";
 const PHRASE_HINT = 'Not recognised — try "every weekday at 9am" or a cron expression';
 
@@ -140,8 +152,9 @@ export function ScheduleForm({
     }
   }
 
-  // `plan` is offered only to keep a stored writing schedule's mode as it is.
-  const offerPlanMode = schedule?.mutating === true && schedule.mode === "plan";
+  // `plan` and the modes set outside Studio are offered only to keep a stored
+  // writing schedule's mode as it is.
+  const keptMode = schedule?.mutating === true ? KEPT_MODE_OPTIONS[schedule.mode] : undefined;
   const phrasePreview = describePhraseOutcome(phraseOutcome);
   const phraseNote = phrasePreview ?? (phrase.trim() ? PHRASE_HINT : null);
   // Formatted from the very trigger that will be sent, never from the inputs.
@@ -284,9 +297,7 @@ export function ScheduleForm({
                   options={[
                     { label: "Accept edits automatically", value: "acceptEdits" },
                     { label: "Ask when approval is needed", value: "default" },
-                    ...(offerPlanMode
-                      ? [{ label: "Plan only, changes are refused", value: "plan" }]
-                      : []),
+                    ...(keptMode && schedule ? [{ label: keptMode, value: schedule.mode }] : []),
                   ]}
                   value={value.writeMode}
                 />
