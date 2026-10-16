@@ -2,7 +2,7 @@
 
 *This chapter describes the intended architecture, not current implementation status.*
 
-This chapter lists the attackers the design considers, what each can do, and which protections depend on where the broker runs. The [overview](README.md#deployment-and-threats) summarizes it. Limits the design accepts are listed under [what this design does not guarantee](README.md#what-this-design-does-not-guarantee).
+This chapter lists the attackers the design considers, what each can do, and which protections depend on where the broker runs. The [overview](README.md#deployment-and-threats) summarizes it.
 
 ## Deployment
 

@@ -48,7 +48,7 @@ The **identity broker** establishes who is acting. It is the existing MCP broker
 
 Downstream, the **vMCP gateway** sends protected calls to MCP backends and providers. It has three parts: AS-2; storage for users' provider credentials, such as GitHub tokens; and the vMCP, ToolHive's virtual MCP server, which dispatches the calls. The gateway runs inside the Mecatl deployment (embedded mode) or outside it (external mode).
 
-Mecatl uses two authorization servers because the gateway may belong to someone else. One server that both holds users' provider credentials and issues grants naming the user and the agent works when Mecatl runs the gateway, but not when another operator runs it and owns the credentials. AS-1 therefore issues the grants, and AS-2 holds the credentials and redeems the grants, so one protocol serves both modes. The two keep separate keys even in embedded mode, where the split is a protocol boundary, not a security boundary.
+Mecatl uses two authorization servers so that it can work with an MCP gateway it does not operate, such as the connector gateway in the Stacklok Enterprise Platform. That gateway holds users' provider connections, such as their GitHub or Google tokens, under its own administration, and its vMCP accepts only access tokens from the gateway's own authorization server; Mecatl can neither mint those tokens nor hold the credentials behind them. So AS-1, Mecatl's server, issues a grant naming the user and the acting agent, and AS-2, the gateway's server, verifies the grant, decides whether to honor it, and issues its own access token. When Mecatl runs the gateway itself (embedded mode), it uses the same two servers and the same protocol, so there is one code path; there the split is a protocol boundary rather than a security boundary, although the two servers still keep separate keys.
 
 ```mermaid
 flowchart LR
@@ -93,9 +93,6 @@ Alice asks her main agent to list pull requests and review PR 42. The main agent
 
 See [credentials and lifecycle](credentials-and-lifecycle.md#interactive-execution) for the full walkthrough and [MCP gateway modes](mcp-gateway-modes.md) for the gateway side.
 
-## What mecak8s reports
-
-AS-1 and the broker cannot verify the instance registration, the creation ancestry, the run, or the delegation: only mecak8s observes them, because the agents are goroutines in its memory, and mecak8s reports them. The broker records them as reported and checks them for consistency: the instance is registered to the session, its parent belongs to the same session tree, the run owner matches the grant in use, and a session's root is root-eligible. It also loads definition content and ceilings itself, so mecak8s cannot supply them. These checks catch mistakes, not a compromised mecak8s. Each agent has its own credential, but agents that share one mecak8s process are not isolated from each other.
 
 ## Deployment and threats
 
@@ -103,27 +100,15 @@ The broker starts as modules inside the mecak8s process and later moves, as a wh
 
 Some protections hold in both deployments. Executor Pods get no broker or database credentials. A prompt-injected agent never sees or chooses credentials, because harness code attaches them and the model supplies only tool names and arguments. And correct mecak8s code cannot name a user who did not sign in at AS-1.
 
-Against an attacker with code execution in mecak8s, the split is what matters. While the broker runs inside mecak8s, that attacker holds AS-1's keys and can act as any user connected to the gateway. Once the broker is separate, the attacker holds no keys, can act only in open sessions bound to its workload, and every false report it makes must pass the broker's checks and is recorded where it cannot erase it. In both deployments, which agent acted, which instance created which, and the run and delegation context remain mecak8s's word: checked for consistency, not verified.
+Against an attacker with code execution in mecak8s, the split is what matters. While the broker runs inside mecak8s, that attacker holds AS-1's keys and can act as any user connected to the gateway. Once the broker is separate, the attacker holds no keys, can act only in open sessions bound to its workload, and every false report it makes must pass the broker's checks and is recorded where it cannot erase it.
 
 The [threat model](threat-model.md) has the full table, the facts mecak8s reports and how the broker checks them, and what the split requires to be real.
-
-## What this design does not guarantee
-
-Precise limits matter as much as guarantees. This design does not provide:
-
-- **Isolation between agents in one process.** Per-agent credentials attribute calls; they do not stop code inside mecak8s from acting as another agent.
-- **Verification of what mecak8s reports.** Which instance acted, which definition is a session's root, which instance created which child, and the run and delegation context stay mecak8s's word, marked as such in audit.
-- **Protection against a compromised mecak8s while the broker runs inside it.** See the [threat model](threat-model.md#a-compromised-mecak8s).
-- **Coverage beyond the broker.** Calls that bypass the broker, and filesystem tools, Shell, and spawning, are outside this design.
-- **Non-repudiation.** Audit records are unsigned.
-- **Proof of provider-side effects.** A record shows what the recording component observed; an unknown outcome stays unknown.
-- **Instant downstream revocation.** ID-JAGs and vMCP access tokens already issued stay valid until they expire, so their lifetimes are short.
 
 ## Standards
 
 The design composes existing OAuth and workload-identity standards rather than inventing a token format. Sign-in is OIDC with the authorization code flow and PKCE, and mecak8s validates AS-1's access token as an RFC 9068 JWT access token. Session open and ID-JAG issuance are RFC 8693 token exchanges, and AS-2 redeems the ID-JAG with the RFC 7523 JWT-bearer grant. The broker authenticates as a confidential client with `private_key_jwt`, so the refresh tokens it holds are useless without its key. That key belongs to the broker, ideally in a key management service; ToolHive's authorization server also accepts a SPIFFE JWT-SVID as client authentication, which could later replace the key with the broker's own workload identity.
 
-ID-JAG ([draft-ietf-oauth-identity-assertion-authz-grant](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/)) and identity chaining ([draft-ietf-oauth-identity-chaining](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-chaining/)), which external mode follows, are Internet-Drafts and may change. ID-JAG is scoped to parties in different trust domains; embedded mode, where all parties share one, reuses the format to keep one protocol path.
+The grant format is ID-JAG ([draft-ietf-oauth-identity-assertion-authz-grant](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/)), and external mode follows identity chaining ([draft-ietf-oauth-identity-chaining](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-chaining/)). ID-JAG is scoped to parties in different trust domains; embedded mode, where all parties share one, reuses the format to keep one protocol path.
 
 Agent credentials are SPIFFE JWT-SVIDs. Each protected call is authenticated at two layers, as the WIMSE architecture recommends: the platform workload, and the acting agent. The ID-JAG and the vMCP access token are bearer tokens; short lifetimes, a single audience, and single use of the ID-JAG limit what a stolen one can do.
 
