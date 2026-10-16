@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -124,44 +126,80 @@ func TestDefaultsReproduceCurrentBehaviour(t *testing.T) {
 }
 
 func TestBareMecak8sRefusesWithoutCheckerChoice(t *testing.T) {
-	// The checker gate is now a startup WARN, not a refusal.
-	// Build succeeds; entering auto mode without a checker is refused at SetMode time.
-	var buf bytes.Buffer
-	diag := slogdiag.NewFromLogger(slog.New(slog.NewTextHandler(&buf, nil)))
-	cfg, err := parseFlags(nil)
-	if err != nil {
-		t.Fatalf("parseFlags: %v", err)
+	// The bare default is auto, which requires an enforcing checker: no checker
+	// and the explicit kill-switch both refuse; unchecked autonomy is yolo.
+	build := func(t *testing.T, args ...string) error {
+		t.Helper()
+		cfg, err := parseFlags(args)
+		if err != nil {
+			t.Fatalf("parseFlags %v: %v", args, err)
+		}
+		ac := appConfig(cfg, port.NopDiagnostics{}, observability{})
+		ac.RedisURL = ""
+		ac.SchedulerEnabled = false
+		ac.SessionLeaseK8sNamespace = ""
+		ac.Workspace = t.TempDir()
+		ac.MockProvider = mockllm.New()
+		built, err := buildIsolated(t, context.Background(), ac)
+		if err == nil {
+			built.Close()
+		}
+		return err
 	}
-	ac := appConfig(cfg, diag, observability{})
-	ac.RedisURL = ""
-	ac.SchedulerEnabled = false
-	ac.SessionLeaseK8sNamespace = ""
-	ac.Workspace = t.TempDir()
-	ac.MockProvider = mockllm.New()
-	built, err := buildIsolated(t, context.Background(), ac)
-	if err != nil {
-		t.Fatalf("bare mecak8s must start (checker gate is now a WARN): %v", err)
+	for _, args := range [][]string{nil, {"--guardrails=off"}} {
+		if err := build(t, args...); err == nil || !strings.Contains(err.Error(), "requires an enforcing guardrails checker") {
+			t.Fatalf("mecak8s %v: err = %v, want the enforcing-checker refusal", args, err)
+		}
 	}
-	built.Close()
-	if !strings.Contains(buf.String(), "no guardrails checker") || !strings.Contains(buf.String(), "--guardrails off") {
-		t.Errorf("bare mecak8s must WARN naming --guardrails off; log:\n%s", buf.String())
+	if err := build(t, "--permission-mode=yolo", "--guardrails=off"); err != nil {
+		t.Fatalf("mecak8s --permission-mode=yolo --guardrails=off must start: %v", err)
 	}
-	// With --guardrails off, Build must still succeed (no checker needed).
-	cfgOff, err := parseFlags([]string{"--guardrails=off"})
-	if err != nil {
-		t.Fatalf("parseFlags --guardrails=off: %v", err)
+}
+
+// TestChartAutoInheritsMountedSettingsChecker covers the chart's default argv
+// shape (--permission-mode=auto with no guardrails flag, because guardrails.model
+// and guardrails.disabled are unset) composed with mounted operator settings:
+// a checker configured there lets auto start, none refuses, and the explicit
+// kill-switch (guardrails.disabled) wins over the settings checker.
+func TestChartAutoInheritsMountedSettingsChecker(t *testing.T) {
+	settings := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := os.WriteFile(settings, []byte("guardrails:\n  model: mock-checker\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	acOff := appConfig(cfgOff, port.NopDiagnostics{}, observability{})
-	acOff.RedisURL = ""
-	acOff.SchedulerEnabled = false
-	acOff.SessionLeaseK8sNamespace = ""
-	acOff.Workspace = t.TempDir()
-	acOff.MockProvider = mockllm.New()
-	built2, err := buildIsolated(t, context.Background(), acOff)
-	if err != nil {
-		t.Fatalf("mecak8s with an explicit --guardrails=off: %v", err)
+	slot := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := os.WriteFile(slot, []byte("models:\n  slots:\n    guardrail: mock-checker\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	built2.Close()
+	build := func(argv ...string) error {
+		t.Helper()
+		cfg, err := parseFlags(append([]string{"--mock", "--headless=true", "--permission-mode=auto"}, argv...))
+		if err != nil {
+			t.Fatalf("parseFlags: %v", err)
+		}
+		ac := appConfig(cfg, port.NopDiagnostics{}, observability{})
+		ac.RedisURL = ""
+		ac.SchedulerEnabled = false
+		ac.SessionLeaseK8sNamespace = ""
+		ac.Workspace = t.TempDir()
+		built, err := buildIsolated(t, context.Background(), ac)
+		if err == nil {
+			built.Close()
+		}
+		return err
+	}
+	for name, path := range map[string]string{"guardrails model": settings, "guardrail slot": slot} {
+		if err := build("--permission-config=" + path); err != nil {
+			t.Fatalf("auto with a mounted %s checker must start: %v", name, err)
+		}
+	}
+	for name, argv := range map[string][]string{
+		"no inherited checker": nil,
+		"explicit kill-switch": {"--guardrails=off", "--permission-config=" + settings},
+	} {
+		if err := build(argv...); err == nil || !strings.Contains(err.Error(), "requires an enforcing guardrails checker") {
+			t.Fatalf("auto with %s err = %v, want the enforcing-checker refusal", name, err)
+		}
+	}
 }
 
 func TestPermissionModeFlagConflictsAndUnknownTokens(t *testing.T) {

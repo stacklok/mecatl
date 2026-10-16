@@ -47,8 +47,11 @@ on:
         default: ""
       posture:
         description: >-
-          Operator posture ladder (strict < trusted < auto < yolo). Default "auto" — the
-          documented CI posture (allow-all, child injection-defence ON).
+          Passed to the action's DEPRECATED `posture` input (the binary WARNs): strict,
+          trusted, auto, or yolo. Default "auto" resolves to permission mode auto (allow-all,
+          child injection-defence ON), which refuses to start without an ENFORCING
+          guardrails checker; use "yolo" to run allow-all with no checker. It never grants
+          project trust.
         type: string
         required: false
         default: auto
@@ -84,7 +87,10 @@ on:
       guardrails-model:
         description: >-
           Guardrails (issue #27) checker model id / alias that inspects outbound tool args +
-          inbound results. Empty (default) disables guardrails.
+          inbound results. Empty (default) passes no guardrails flag, so the checker
+          configured in operator settings applies, if any. "off" is the kill-switch. Any
+          other value names the checker model. With posture "auto", an empty value and no
+          settings checker, or "off", refuses to start.
         type: string
         required: false
         default: ""

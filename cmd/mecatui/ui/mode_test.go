@@ -172,9 +172,18 @@ func TestRefusedModeDoesNotTrapCycle(t *testing.T) {
 	}
 	conv.setModeErr = errors.New(`mode "auto" requires an enforcing guardrails checker`)
 	press()
-	if m.activeMode != "accept-edits" || !strings.Contains(stripANSIstr(m.statusMsg), "mode auto refused") {
-		t.Fatalf("after auto refusal: active=%q status=%q", m.activeMode, stripANSIstr(m.statusMsg))
+	status := stripANSIstr(m.statusMsg)
+	if m.activeMode != "accept-edits" || m.headerMode() != "accept-edits" ||
+		!strings.Contains(status, "mode auto refused, staying in accept-edits") ||
+		!strings.Contains(status, "auto needs an enforcing guardrails checker on the server") {
+		t.Fatalf("after auto refusal: active=%q header=%q status=%q", m.activeMode, m.headerMode(), status)
 	}
+	// The refusal freezes nothing: the draft stays editable.
+	m = applyAll(m, tea.KeyPressMsg{Code: 'x', Text: "x"})
+	if got := m.prompt.Value(); got != "x" {
+		t.Fatalf("prompt after refusal = %q, want editable", got)
+	}
+	m.prompt.Rewrite("")
 	conv.setModeErr = nil
 	press()
 	if got := conv.setModes(); len(got) != 2 || got[1] != "yolo" {

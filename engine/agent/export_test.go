@@ -36,3 +36,6 @@ func RefreshReviewTasksForTest(r *Run, messages []session.Message) {
 func WithParallelBranchRegisteredForTest(fn func(int)) ParallelOption {
 	return func(t *ParallelTool) { t.onBranchRegistered = fn }
 }
+
+// EffectiveChildModeForTest exposes the delegated-child mode rule.
+var EffectiveChildModeForTest = effectiveChildMode

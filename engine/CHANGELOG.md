@@ -449,6 +449,14 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   before persisting them. Changed (breaking pre-v1 minor); existing ordinary-session
   wire clients are unaffected.
 
+- **Delegated children inherit an auto or yolo parent's mode** — a Subagent
+  child, Parallel branch, or Team member whose configured mode is the default
+  (`ModeDefault`) now runs in its parent session's mode when that mode is
+  `ModeAuto` or `ModeYolo`, so the parent's mode-driven authority reaches its
+  delegates. An explicitly configured narrower mode (`WithChildMode`,
+  `WithParallelChildMode`, `WithTeamMode`, or a member definition's
+  `permissionMode`) is kept. No signature changes.
+
 - **Atomic one-shot retry eligibility (issue #2273)** —
   `port.ScheduleOneShotReArmer.ReArmOneShot` now requires store-side atomic
   validation of current disabled/settled-failure state, one-shot retry policy,

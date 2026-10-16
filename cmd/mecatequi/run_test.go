@@ -73,6 +73,51 @@ func gitInRepo(t *testing.T, dir string, args ...string) {
 	}
 }
 
+// TestRunUsesPermissionModeFromFlags drives the real CLI boundary — parseFlags,
+// appConfig, app.Build, run — and proves the run's session starts in the mode
+// --permission-mode selected rather than a hard-coded default.
+func TestRunUsesPermissionModeFromFlags(t *testing.T) {
+	ctx := context.Background()
+	for token, want := range map[string]session.PermissionMode{
+		"plan":         session.ModePlan,
+		"default":      session.ModeDefault,
+		"accept-edits": session.ModeAccept,
+		"yolo":         session.ModeYolo,
+	} {
+		t.Run(token, func(t *testing.T) {
+			repo := t.TempDir()
+			initTestRepo(t, repo)
+			args := []string{"--prompt", "x", "--workspace", repo, "--permission-mode", token}
+			if token == "yolo" {
+				args = append(args, "--guardrails", "off")
+			}
+			f, err := parseFlags(args)
+			if err != nil {
+				t.Fatalf("parseFlags: %v", err)
+			}
+			cfg := appConfig(f, port.NopDiagnostics{}, observability{})
+			cfg.UseMock, cfg.NoSoul = true, true
+			built, err := buildIsolated(t, ctx, cfg)
+			if err != nil {
+				t.Fatalf("app.Build: %v", err)
+			}
+			defer built.Close()
+			var human bytes.Buffer
+			outcome, err := run(ctx, built.Service, session.Limits{}, "summarise the repo", &human)
+			if err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			sess, err := built.Service.GetSession(ctx, session.SessionID(outcome.Summary.SessionID))
+			if err != nil {
+				t.Fatalf("GetSession: %v", err)
+			}
+			if sess.Mode != want {
+				t.Fatalf("--permission-mode %s ran in session mode %q, want %q", token, sess.Mode, want)
+			}
+		})
+	}
+}
+
 // TestRunEndToEndMockProvider is the model-facing e2e: a full app.Build over a
 // hermetic git repo with UseMock, then run() against the real Service. It asserts the
 // run completes cleanly (end_turn), leaves no diff, carries a usage struct, writes a

@@ -103,9 +103,11 @@
             {"const": ""},
             {"pattern": "^\\S(?:.*\\S)?$"}
           ]
-        }
+        },
+        "disabled": {"type": "boolean"}
       }
     },
+    "permissionMode": {"type": "string"},
     "telemetry": {
       "type": "object",
       "additionalProperties": false,

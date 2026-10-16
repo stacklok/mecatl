@@ -403,10 +403,11 @@ func permissionModeSubtree(docs Docs) *Subtree {
 	return &Subtree{
 		Key:  "permissionMode",
 		Tier: TierOperator,
-		Doc: "OPERATOR-TIER named permission mode: plan, default, accept-edits, trusted, " +
-			"trusted-accept-edits, auto, or yolo. Each token sets two things: the process-wide posture, " +
-			"fixed at startup, and the mode new sessions start in, which each session may change. auto " +
-			"and yolo refuse to start without a guardrails checker unless guardrails are explicitly off. " +
+		Doc: "OPERATOR-TIER named permission mode: plan, default, accept-edits, auto, or yolo. " +
+			"Each token sets two things: the mode new sessions start in, and the server ceiling, " +
+			"fixed at startup, which is the most permissive mode a session may switch to " +
+			"(accept-edits for plan, default, and accept-edits). auto refuses to start without an " +
+			"enforcing guardrails checker; yolo needs none. A mode never grants workspace trust. " +
 			"An explicit --permission-mode out-ranks this key, and it out-ranks the deprecated posture: " +
 			"key. A project-tier permissionMode: is IGNORED with a WARN. Empty = keep the CLI/default.",
 		CommentedOut: true,
@@ -416,7 +417,7 @@ func permissionModeSubtree(docs Docs) *Subtree {
 			Type:         "string",
 			Default:      "(empty)",
 			Doc:          docFor(docs, "Config.PermissionMode", "the named permission-mode token"),
-			ExampleValue: "trusted-accept-edits",
+			ExampleValue: "accept-edits",
 		}},
 	}
 }

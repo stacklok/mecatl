@@ -3,7 +3,7 @@ package customization
 // modeSegmentTemplate is the header's permission-mode segment. The yolo mode is
 // marked with the alarm pill (the danger token, its text carrying the pill's
 // padding), preceded by a ⚡️ bolt outside the pill on an emoji-capable
-// terminal; every other mode, including a pending or blocked yolo, is plain
+// terminal; every other mode, including a pending yolo, is plain
 // warning text.
 const modeSegmentTemplate = `{{if .Session.Mode}}<warning> · mode </warning>{{if eq .Session.Mode "yolo"}}{{if .Terminal.Emoji}}<text>⚡️ </text>{{end}}<danger>  YOLO  </danger>{{else}}<warning>{{.Session.Mode}}</warning>{{end}}{{end}}`
 

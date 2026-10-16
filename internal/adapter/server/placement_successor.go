@@ -160,6 +160,11 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	if err != nil || absent {
 		return "", err
 	}
+	// The successor inherits source.Mode, so it must be admissible under the
+	// current deployment before anything (including clearing the source) happens.
+	if err := s.admitStoredMode(source); err != nil {
+		return "", err
+	}
 	if copyHistory {
 		if err := s.attachLiveInstructions(source, false); err != nil {
 			return "", err

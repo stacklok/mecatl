@@ -19,11 +19,11 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
-// escapepolicy.go is the path-escape-posture decision half: a root-aware
+// escapepolicy.go is the path-escape decision half: a root-aware
 // wrapping port.PermissionPolicy that relaxes an out-of-root Read/ListDir
-// escape at the yolo/auto operator postures, an out-of-root WRITE escape at
-// yolo (Allow) / auto (Ask), and resolves a strict/trusted out-of-root read OR
-// write escape to ASK (instead of a
+// escape in yolo/auto SESSION modes, an out-of-root WRITE escape in yolo
+// (Allow) / auto (Ask), and resolves an out-of-root read OR write escape in
+// every other mode to ASK (instead of a
 // hard ErrPathEscape dead-end that only pushes the model to an opaque Shell
 // `cat /path`). It is COMPOSITION, not domain — the escape decision is a
 // posture/policy concern, and the osfs containment vetting is never stripped
@@ -36,8 +36,8 @@ import (
 // Ask) into an escape Allow/Ask. The plan-mode hard-deny inside permpolicy's
 // EvaluateWith therefore runs BEFORE any escape decision (AC4.4).
 
-// escapePolicy wraps an inner port.PermissionPolicy with the posture-derived
-// out-of-root read-escape decision, keyed to the session workspace root on
+// escapePolicy wraps an inner port.PermissionPolicy with the mode-derived
+// out-of-root escape decision, keyed to the session workspace root on
 // EVERY Evaluate (via the ws the loop hands it). It is a permpolicy sibling:
 // it implements the SAME port.PermissionPolicy seam, delegating the ordinary
 // deny/ask/allow fold to the inner policy and layering ONLY the escape
@@ -50,12 +50,11 @@ import (
 // first call for that root. Learn is forwarded so an "allow always" verdict
 // on a non-escape call still records against the inner store.
 type escapePolicy struct {
-	inner   port.PermissionPolicy
-	posture Posture
+	inner port.PermissionPolicy
 
-	// route is the guardrail-routed escape checker: non-nil ONLY at
-	// posture auto WITH the operator-tier escape knob configured. nil is the
-	// byte-identical no-route posture (the ordinary posture table).
+	// route is the guardrail-routed escape checker: non-nil only WITH the
+	// operator-tier escape knob configured, and consulted only for calls in an
+	// auto-mode session. nil is the ordinary mode table.
 	route *escapeGuardrailRoute
 
 	mu   sync.Mutex
@@ -66,28 +65,26 @@ type escapePolicy struct {
 // optional wiring (today: the guardrail-routed escape check).
 type escapePolicyOption func(*escapePolicy)
 
-// withEscapeGuardrailRoute arms the guardrail-routed escape checker.
-// It is a NO-OP unless the posture is auto AND the checker is non-nil — the
-// route is the auto-only knob (yolo demotes guardrails to advisory
-// and never spends a checker call; strict/trusted keep their own
-// Scenario-4 escape Ask).
+// withEscapeGuardrailRoute arms the guardrail-routed escape checker. It is a
+// no-op for a nil checker. Evaluate consults it only in auto-mode sessions:
+// yolo demotes guardrails to advisory and never spends a checker call, and the
+// ordinary modes keep their own Scenario-4 escape Ask.
 func withEscapeGuardrailRoute(checker modelhook.VerdictChecker) escapePolicyOption {
 	return func(p *escapePolicy) {
-		if p.posture != PostureAuto || checker == nil {
+		if checker == nil {
 			return
 		}
 		p.route = &escapeGuardrailRoute{checker: checker}
 	}
 }
 
-// newEscapePolicy builds the shared-engine wrapper. It is active at EVERY
-// posture (the caller installs it uniformly): at strict/trusted it converts a
-// non-denied escape into the Scenario-4 escape Ask.
-func newEscapePolicy(inner port.PermissionPolicy, posture Posture, opts ...escapePolicyOption) port.PermissionPolicy {
+// newEscapePolicy builds the shared-engine wrapper. It is active in EVERY
+// session mode and decides from the mode Evaluate receives, never from the
+// process posture, so a session switched out of yolo regains the escape Ask.
+func newEscapePolicy(inner port.PermissionPolicy, opts ...escapePolicyOption) port.PermissionPolicy {
 	p := &escapePolicy{
-		inner:   inner,
-		posture: posture,
-		clfs:    make(map[string]*escapeClassifier),
+		inner: inner,
+		clfs:  make(map[string]*escapeClassifier),
 	}
 	for _, o := range opts {
 		o(p)
@@ -126,19 +123,18 @@ func (p *escapePolicy) classifierFor(ws tool.WorkspaceReader) *escapeClassifier 
 //  1. inner Deny → returned verbatim (deny-dominance: a configured deny, the
 //     plan-mode hard-deny, or any inner deny is never relaxed);
 //  2. inner Ask with ConfiguredAsk → returned verbatim (the configured-Ask
-//     floor: a CONFIGURED ask on the tool is never suppressed by the posture
+//     floor: a CONFIGURED ask on the tool is never suppressed by the mode
 //     relax — it demands a human, exactly as the bash substitution floor's
 //     configured-Ask-never-suppressed invariant requires);
-//  3. pseudo-fs (/proc, /sys, /dev) → Deny at EVERY posture (the never-relaxed
+//  3. pseudo-fs (/proc, /sys, /dev) → Deny in EVERY mode and posture (the never-relaxed
 //     category — an in-process Read of /proc/self/environ would return the
 //     SERVER's raw, unscrubbed environment, a channel the envscrub-scrubbed
 //     Shell parity path does not provide);
-//  4. an out-of-root Read/ListDir escape at auto/yolo → Allow (Shell parity); at
-//     strict/trusted → Ask (Scenario 4 — the legible FS-tool ask instead of
-//     the ErrPathEscape dead-end);
-//  5. an out-of-root WRITE escape → Allow at yolo, Ask at auto AND at
-//     strict/trusted (Scenarios 3+4 — never a silent un-asked mutation below
-//     yolo);
+//  4. an out-of-root Read/ListDir escape in an auto/yolo session → Allow (Shell
+//     parity); in any other mode → Ask (Scenario 4 — the legible FS-tool ask
+//     instead of the ErrPathEscape dead-end);
+//  5. an out-of-root WRITE escape → Allow in yolo, Ask in auto AND every other
+//     mode (Scenarios 3+4 — never a silent un-asked mutation below yolo);
 //  6. everything else → the inner decision verbatim.
 func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) port.PermissionResult {
 	decision := p.inner.Evaluate(ctx, sessionID, mode, c, ws)
@@ -155,7 +151,7 @@ func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID
 	kind := clf.classify(c.Name, c.Args)
 	switch kind {
 	case escapePseudoFS:
-		// Never-relaxed at every posture: an FS read of a pseudo-fs path would
+		// Never-relaxed in every mode: an FS read of a pseudo-fs path would
 		// exfiltrate the SERVER's raw environment, a channel Shell does not
 		// provide (the env-scrub gotcha). Hard-deny even at yolo.
 		decision.Decision = governance.PermissionDecision{
@@ -165,10 +161,10 @@ func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID
 		return decision
 	case escapeEscape:
 		// Auto + the operator-tier escape knob only: route the
-		// escape through the guardrail checker BEFORE the posture row. An
+		// escape through the guardrail checker BEFORE the mode row. An
 		// unsafe verdict vetoes (Deny); a checker ERROR fails CLOSED to the
 		// write-escape Ask; a safe verdict falls through to the ordinary row.
-		if p.route != nil {
+		if p.route != nil && mode == session.ModeAuto {
 			result, err := p.route.review(ctx, c)
 			decision.Usage = decision.Usage.Merge(result.Usage)
 			if err != nil {
@@ -179,12 +175,12 @@ func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID
 				decision.Decision = p.route.denyDecision(result.Verdict)
 				return decision
 			}
-			// safe: fall through to the posture row below.
+			// safe: fall through to the mode row below.
 		}
 		path := escapePath(c.Args)
 		switch c.Name {
 		case "Read", listDirToolName:
-			if p.posture >= PostureAuto {
+			if mode == session.ModeAuto || mode == session.ModeYolo {
 				// Shell parity: at auto/yolo Shell already reads the same bytes, so
 				// the FS read boundary was cosmetic. The relaxed workspace serves
 				// the read; the wrapper only has to not stand in its way.
@@ -216,14 +212,14 @@ func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID
 			// configured Ask both returned above (deny-dominance + the
 			// configured-Ask floor), so the relax only ever replaces an inner
 			// ALLOW or an unconfigured floor Ask — never a configured one.
-			if p.posture >= PostureYolo {
+			if mode == session.ModeYolo {
 				decision.Decision = governance.PermissionDecision{Effect: governance.Allow}
 				return decision
 			}
-			if p.posture >= PostureAuto {
+			if mode == session.ModeAuto {
 				decision.Decision = governance.PermissionDecision{
 					Effect: governance.Ask,
-					Reason: "out-of-workspace write: the path escapes the session workspace root (posture auto allows reads but never writes silently)",
+					Reason: "out-of-workspace write: the path escapes the session workspace root (auto mode allows reads but never writes silently)",
 				}
 				return decision
 			}
@@ -240,17 +236,17 @@ func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID
 // --- the guardrail-routed escape checker (auto + knob only) ---
 
 // escapeGuardrailRoute is the composition-level escape PRE-CHECK: an
-// out-of-root escape at posture auto, when the operator-tier escape knob is
-// configured, is judged by the LLM guardrail checker BEFORE the posture row
+// out-of-root escape in an auto-mode session, when the operator-tier escape knob is
+// configured, is judged by the LLM guardrail checker BEFORE the mode row
 // decides. It reuses the SAME engine-backed modelhook.VerdictChecker
 // (agent.RunGuardrailCheck + ParseVerdict over a tool-less one-turn checker
 // engine) the modelhook hook-path runner uses — the dual-LLM quarantine, the
 // whole-output-single-object verdict parse, and the bounded checker engine
 // are all inherited, not re-implemented. The route is:
 //
-//   - auto-only (withEscapeGuardrailRoute refuses to arm it at any other
-//     posture — yolo demotes guardrails to advisory and never
-//     spends a checker call; strict/trusted keep their own Scenario-4 Ask);
+//   - auto-only (Evaluate consults it only for an auto-mode session — yolo
+//     demotes guardrails to advisory and never spends a checker call; the
+//     ordinary modes keep their own Scenario-4 Ask);
 //   - main-engine-only (it rides ONLY the main escape policy; a child engine
 //     never relaxes escapes at all — Scenario 5 — so there is no child route);
 //   - deny-dominant (the inner policy fold runs FIRST — a configured Deny or
@@ -260,7 +256,7 @@ func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID
 //     headless — never to a silent allow and never to a plain pass-through of
 //     the read-allow row).
 //
-// Verdict mapping: safe → fall through to the ordinary auto posture row
+// Verdict mapping: safe → fall through to the ordinary auto mode row
 // (read Allow / write Ask); unsafe → DENY the escape (a checker block is a
 // veto, mirroring the hook-path PreToolUse block). The content under review
 // is the call's RAW args JSON, fenced with governance.UntrustedFence and
@@ -328,10 +324,10 @@ func escapePath(args json.RawMessage) string {
 // Learn forwards rule-learning to the inner policy (an "allow always" verdict
 // on an ordinary call still records against the inner learned-rule store) —
 // EXCEPT for an out-of-root escape call, which it NEVER forwards: the escape
-// relax is posture-derived, not learned, and v1 escape asks are allow-once
+// relax is mode-derived, not learned, and v1 escape asks are allow-once
 // only (a learned out-of-root Write/Edit rule would silently pre-approve
 // every later write to that path in the session, bypassing the escape Ask the
-// posture table promises). Without a session workspace here the call is
+// mode table promises). Without a session workspace here the call is
 // classified against ANY root the policy has already classified for — a call
 // that escapes under every known root is suppressed; anything else is left to
 // the inner policy's own LearnableRule discipline.

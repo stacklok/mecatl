@@ -6,6 +6,7 @@ import {
   type Client,
   connect,
   createHttpTransport,
+  ProtocolError,
   SESSION_ID_HEADER_NAME,
   ServerError,
   SessionMode,
@@ -271,6 +272,147 @@ describe("session lifecycle transport parity", () => {
       title: "fork title",
       worktree_selector: "fork-selector",
     });
+    await http.close();
+  });
+
+  it("auto and yolo session modes round-trip over grpc", async () => {
+    const seenModes: number[] = [];
+    let stored: number = SessionMode.Unspecified;
+    let override: number | undefined;
+    const grpc = connect({
+      transport: createRouterTransport((router) => {
+        router.service(HarnessService, {
+          createSession: (request) => {
+            seenModes.push(request.mode);
+            stored = request.mode;
+            return { sessionId: "session" };
+          },
+          getCompatibilityInfo: () => ({
+            apiMajor: 1,
+            capabilities: {},
+            features: ["server_info", "session_permission_modes"],
+          }),
+          getSession: (request) => ({
+            session: { mode: override ?? stored, sessionId: request.sessionId },
+          }),
+          setMode: (request) => {
+            seenModes.push(request.mode);
+            stored = request.mode;
+            return { session: { mode: stored, sessionId: request.sessionId } };
+          },
+        });
+      }),
+      transportKind: "grpc",
+    });
+
+    const session = await grpc.sessions.create({ mode: SessionMode.Auto });
+    expect((await session.snapshot()).mode).toBe(SessionMode.Auto);
+    expect((await (await grpc.sessions.get(session.id)).snapshot()).mode).toBe(SessionMode.Auto);
+    expect((await session.setMode(SessionMode.Yolo)).mode).toBe(SessionMode.Yolo);
+    expect((await session.snapshot()).mode).toBe(SessionMode.Yolo);
+    expect((await session.setMode(SessionMode.Auto)).mode).toBe(SessionMode.Auto);
+    expect(seenModes).toEqual([SessionMode.Auto, SessionMode.Yolo, SessionMode.Auto]);
+
+    override = SessionMode.Yolo;
+    await expect(session.snapshot()).resolves.toMatchObject({ mode: SessionMode.Yolo });
+    override = 6;
+    await expect(session.snapshot()).rejects.toBeInstanceOf(ProtocolError);
+    await grpc.close();
+  });
+
+  it("auto and yolo session modes round-trip over http", async () => {
+    const seenModes: unknown[] = [];
+    // Mirrors the server's modeFromString and string(session.Mode) projection.
+    const canonical: Record<string, string> = {
+      accept_edits: "acceptEdits",
+      auto: "auto",
+      default: "default",
+      plan: "plan",
+      yolo: "yolo",
+    };
+    let stored = "";
+    let override: string | undefined;
+    const http = connect({
+      transport: createHttpTransport({
+        baseUrl: "http://mecatl.test",
+        fetch: async (input, init) => {
+          const path = new URL(String(input)).pathname;
+          if (path === "/v1/compatibility") {
+            return Response.json({
+              api_major: 1,
+              capabilities: {},
+              features: ["server_info", "session_permission_modes"],
+            });
+          }
+          const body = init?.body === undefined ? {} : JSON.parse(String(init.body));
+          if (path === "/v1/sessions") {
+            seenModes.push(body.mode);
+            stored = canonical[body.mode] ?? "";
+            return Response.json({ session_id: "session" }, { status: 201 });
+          }
+          if (path === "/v1/sessions/session/mode") {
+            seenModes.push(body.mode);
+            stored = canonical[body.mode] ?? "";
+            return Response.json({ mode: stored, session_id: "session" });
+          }
+          if (path === "/v1/sessions/session") {
+            return Response.json({ mode: override ?? stored, session_id: "session" });
+          }
+          throw new Error(`unexpected path ${path}`);
+        },
+      }),
+      transportKind: "http",
+    });
+
+    const session = await http.sessions.create({ mode: SessionMode.Auto });
+    expect((await session.snapshot()).mode).toBe(SessionMode.Auto);
+    expect((await (await http.sessions.get(session.id)).snapshot()).mode).toBe(SessionMode.Auto);
+    expect((await session.setMode(SessionMode.Yolo)).mode).toBe(SessionMode.Yolo);
+    expect((await session.snapshot()).mode).toBe(SessionMode.Yolo);
+    expect((await session.setMode(SessionMode.AcceptEdits)).mode).toBe(SessionMode.AcceptEdits);
+    expect((await session.setMode(SessionMode.Auto)).mode).toBe(SessionMode.Auto);
+    expect(seenModes).toEqual(["auto", "yolo", "accept_edits", "auto"]);
+
+    override = "yolo";
+    expect((await session.snapshot()).mode).toBe(SessionMode.Yolo);
+    override = "acceptEdits";
+    expect((await session.snapshot()).mode).toBe(SessionMode.AcceptEdits);
+    override = "";
+    expect((await session.snapshot()).mode).toBe(SessionMode.Unspecified);
+    await http.close();
+  });
+
+  it("an unspecified http create omits mode so the server default applies", async () => {
+    const createBodies: Record<string, unknown>[] = [];
+    const http = connect({
+      transport: createHttpTransport({
+        baseUrl: "http://mecatl.test",
+        fetch: async (input, init) => {
+          const path = new URL(String(input)).pathname;
+          if (path === "/v1/compatibility") {
+            return Response.json({
+              api_major: 1,
+              capabilities: {},
+              features: ["server_info", "session_permission_modes"],
+            });
+          }
+          if (path === "/v1/sessions") {
+            createBodies.push(init?.body === undefined ? {} : JSON.parse(String(init.body)));
+            return Response.json({ session_id: "session" }, { status: 201 });
+          }
+          if (path === "/v1/sessions/session") {
+            return Response.json({ mode: "yolo", session_id: "session" });
+          }
+          throw new Error(`unexpected path ${path}`);
+        },
+      }),
+      transportKind: "http",
+    });
+    const session = await http.sessions.create({});
+    await http.sessions.create({ mode: SessionMode.Default });
+    expect("mode" in (createBodies[0] ?? {})).toBe(false);
+    expect(createBodies[1]?.mode).toBe("default");
+    expect((await session.snapshot()).mode).toBe(SessionMode.Yolo);
     await http.close();
   });
 

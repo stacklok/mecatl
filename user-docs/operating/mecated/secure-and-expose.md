@@ -51,19 +51,20 @@ for the full behavior.
 ## Permission mode
 
 `--permission-mode` defaults to `default`. It accepts `plan`, `default`,
-`accept-edits`, `trusted`, `trusted-accept-edits`, `auto`, or `yolo`, and it
-sets the process-wide posture and the mode new sessions start in. The
+`accept-edits`, `auto`, or `yolo`, and it sets the mode new sessions start in
+and the server ceiling, the most permissive mode a session can switch to. The
 operator-global `settings.yaml` `permissionMode:` key sets the same value; the
-flag overrides it. See
+flag overrides it. A mode never grants project trust; pass `--trust-project` or
+add the workspace to `trustedWorkspaces:`. See
 [Choose a permission mode](/features/security-and-execution/permissions-and-posture.md#choose-a-permission-mode)
 for what each mode allows.
 
-`mecated` refuses to start in two cases:
-
-- `auto` or `yolo` with no guardrails checker. Pass `--guardrails-model`, bind
-  the `guardrail` model slot, or pass `--guardrails off`.
-- `trusted` or `trusted-accept-edits` on a `--headless` root with no trust
-  source. Pass `--trust-project` or add the workspace to `trustedWorkspaces:`.
+`mecated` refuses to start with `auto` unless an enforcing guardrails checker is
+configured: pass `--guardrails-model` or bind the `guardrail` model slot.
+`--guardrails off` or an advisory-only checker does not satisfy `auto`; choose
+`yolo` to run without a checker. If you lower the ceiling or remove the checker,
+sessions stored in a mode the server no longer admits stay intact but refuse to
+run until their owner switches them to an admitted mode.
 
 On a headless root, `auto` and `yolo` start without a trust source but load no
 project steering and give read-only subagents no Shell, because `.git` is not

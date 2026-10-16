@@ -366,13 +366,15 @@ Flags:
         precedence; configured deny and ask rules always override allows.
   --permission-mode string
         permission mode, one of: plan, default, accept-edits, auto, yolo. Sets two
-        things: the process-wide posture, fixed at startup (strict for plan, default,
-        and accept-edits; auto; yolo), and the session mode new sessions start in,
-        which each session may change. Default: default. auto and yolo allow tools
-        without asking, so they need a guardrails checker (--guardrails-model) or an
-        explicit --guardrails off, and are refused for root unless MECATL_SANDBOX=1 or
-        IS_SANDBOX=1. Deny rules and configured ask rules still apply. Replaces the
-        deprecated --posture and --yolo; --trust-project still combines with it.
+        things: the mode new sessions start in, and the process-wide server ceiling,
+        fixed at startup, which is the most permissive mode a session may switch to
+        (accept-edits for plan, default, and accept-edits). Default: default. auto and
+        yolo allow tools without asking. auto needs an enforcing guardrails checker (--
+        guardrails-model or the guardrail model slot) and refuses to start without one;
+        yolo runs without one. Both are refused for root unless MECATL_SANDBOX=1 or
+        IS_SANDBOX=1. Deny rules and configured ask rules still apply. A mode never
+        grants project trust; use --trust-project. Replaces the deprecated --posture
+        and --yolo.
   --permissions-conventional
         load project and user permission settings for each session. Enabled by default.
         Project allow rules require --trust-project; project deny and ask rules always
@@ -819,14 +821,15 @@ Usage: mecak8s [flags]
         Trusted permission YAML file. Repeatable
   --permission-mode string
         Permission mode, one of: plan, default, accept-edits, auto, yolo. Sets two
-        things: the process-wide posture, fixed at startup (strict for plan, default,
-        and accept-edits; auto; yolo), and the session mode new sessions start in,
-        which each session may change. Default: auto (posture auto, auto session mode).
-        auto and yolo allow tools without asking, so they need a guardrails checker (--
-        guardrails-model or the guardrail model slot) or an explicit --guardrails off,
-        and require MECATL_SANDBOX when running as root. Deny rules and configured ask
-        rules still apply. Replaces the deprecated --posture; --trust-project still
-        combines with it
+        things: the mode new sessions start in, and the process-wide server ceiling,
+        fixed at startup, which is the most permissive mode a session may switch to
+        (accept-edits for plan, default, and accept-edits). Default: auto. auto and
+        yolo allow tools without asking and require MECATL_SANDBOX when running as
+        root. auto needs an enforcing guardrails checker (--guardrails-model or the
+        guardrail model slot) and refuses to start without one, including with --
+        guardrails off; yolo runs without one. Deny rules and configured ask rules
+        still apply. A mode never grants project trust; use --trust-project. Replaces
+        the deprecated --posture
   --permissions-conventional
         Discover project and user permission settings for each session (default true)
   --posture string

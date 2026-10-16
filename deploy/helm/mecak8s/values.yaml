@@ -36,7 +36,9 @@ logging:
 
 # extraArgs appends command-line arguments to the mecak8s agent container. It remains
 # the escape hatch for flags not modeled by the chart; when it contains --log-level,
-# it is appended after logging.level and therefore takes precedence.
+# it is appended after logging.level and therefore takes precedence. The chart owns
+# the permission mode: rendering fails if extraArgs sets --posture,
+# --permission-mode, or --yolo; set permissionMode instead.
 extraArgs: []
 
 # First-class remote Streamable HTTP MCP connections. Authentication is an
@@ -110,19 +112,28 @@ model: ""
 maxRunTokens: null
 maxTeamTokens: null
 
-# guardrails declares the checker choice for the chart's allow-all permission
-# mode (--permission-mode=auto: every tool runs without asking, only deny rules
-# and configured ask rules still apply). mecak8s refuses to start an allow-all
-# mode without a checker unless the operator opts out explicitly, so the chart
-# always passes one of two flags:
-#   - model set: --guardrails-model=<model>, a tool-free checker model that
-#     inspects outbound tool arguments and inbound results.
-#   - model empty (the default): --guardrails=off, a DELIBERATE choice to run
-#     unsupervised, with no checker inspecting tool content. The kill-switch also
-#     disables a guardrail model slot bound in mounted settings, so set model here
-#     to the checker you want rather than relying on a slot.
+# permissionMode renders --permission-mode=<value>: one of plan, default,
+# accept-edits, auto, or yolo. auto (the default) runs every tool without asking;
+# only deny rules and configured ask rules still apply. mecak8s refuses to start
+# in auto without an ENFORCING guardrails checker: set guardrails.model, or bind
+# a checker in mounted settings (a `guardrails:` model or the `guardrail` model
+# slot). yolo is the explicit choice to run every tool without a checker.
+# Migration: earlier charts always ran --posture=auto with --guardrails=off. Such
+# a deployment must now configure a checker or set permissionMode: yolo. Move
+# any --posture, --permission-mode, or --yolo entry from extraArgs to this
+# value (--posture=strict is permissionMode: default).
+permissionMode: auto
+
+# guardrails selects the checker for tool arguments and results. Set at most one:
+#   - neither (the default): the chart passes no guardrails flag, so mecak8s uses
+#     the checker configured in mounted settings, if any.
+#   - model: --guardrails-model=<model>, a tool-free checker model that inspects
+#     outbound tool arguments and inbound results.
+#   - disabled: true: --guardrails=off, the kill-switch. It also disables a
+#     checker configured in mounted settings, and auto refuses to start with it.
 guardrails:
   model: ""
+  disabled: false
 
 # Stable, non-secret identity exported on mecak8s OTel resources. Empty is safe
 # only for live Helm install/upgrade: Helm creates a UUID on install and preserves

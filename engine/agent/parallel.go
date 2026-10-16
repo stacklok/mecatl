@@ -211,7 +211,8 @@ func WithParallelChildLimits(l session.Limits) ParallelOption {
 }
 
 // WithParallelChildMode sets the permission mode each child branch session runs under
-// (default session.ModeDefault).
+// (default session.ModeDefault, which inherits an auto or yolo parent's mode; see
+// effectiveChildMode).
 func WithParallelChildMode(m session.PermissionMode) ParallelOption {
 	return func(t *ParallelTool) { t.childMode = m }
 }
@@ -1179,12 +1180,12 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 	if caps.parentSessionID == "" {
 		// Direct Tool.Execute has no parent aggregate identity. Classify that
 		// custom-host path unknown rather than fabricating lineage or granting main.
-		childSess = newChildSessionInEnvironment(t.childSessionID("", callID, i), t.childMode,
+		childSess = newChildSessionInEnvironment(t.childSessionID("", callID, i), effectiveChildMode(t.childMode, caps.parentMode),
 			childEnv, t.limits, branchEngine.now())
 		err = childSess.RestoreSessionMetadata(session.SessionKindUnknown, session.SessionRelationship{})
 	} else {
 		childSess, err = newParallelBranchSessionInEnvironment(
-			t.childSessionID(caps.parentSessionID, callID, i), t.childMode,
+			t.childSessionID(caps.parentSessionID, callID, i), effectiveChildMode(t.childMode, caps.parentMode),
 			childEnv, t.limits, branchEngine.now(),
 			caps.parentSessionID, caps.parentIncarnation, callID, i)
 	}

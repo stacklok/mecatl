@@ -51,29 +51,56 @@ One Shell line can hold many programs, so `engine/governance/shell.go` decompose
 Plan mode uses the separate `ReadOnlyShell` classifier. Children add approval steps for
 floored segments; see [subagents and teams](subagents-and-teams.md).
 
-## Posture ladder
+## Permission modes
 
-Posture (`internal/app/posture.go`) is the one operator knob for how much the harness
-approves on its own. It composes rules and evaluator options; it never bypasses the
-evaluator.
+The operator's `--permission-mode` token or `permissionMode:` key
+(`internal/app/permission_mode.go`) sets two values: the mode new sessions start in and
+the server ceiling (`MaxAllowedMode`), the most permissive mode a session may enter.
+`plan`, `default`, and `accept-edits` share the ceiling `accept-edits`; `auto` and `yolo`
+are their own ceilings. Allow-all is driven by each session's current mode at
+evaluation time, not by a process-wide posture, so switching a session from `yolo` to
+`default` restores ordinary asks. Modes compose rules and evaluator options; they never
+bypass the evaluator.
 
-| Posture | Allow-all rule | Substitution floor loosened | Raises project trust |
-| --- | --- | --- | --- |
-| `strict` (default) | No | No | No |
-| `trusted` | No | No | Unless headless |
-| `auto` | Main and children | Main engine | Unless headless |
-| `yolo` | Main and children | Main and children | Unless headless |
-
-`trusted` changes no permission rule; its only effect is raising project trust. Headless
-is a per-binary setting, not inferred from the environment: `mecatui` is always
-interactive, `mecated` is interactive unless started with `--headless`, and `mecak8s` and
-`mecatequi` default to headless.
+| Session mode | Allow-all rule | Substitution floor loosened |
+| --- | --- | --- |
+| `plan`, `default`, `accept-edits` | No | No |
+| `auto` | Main and children | Main engine |
+| `yolo` | Main and children | Main and children |
 
 The allow-all rule is one ordinary `ScopeCLI` Allow, pinned per audience, so it loosens
 only the built-in floor: every Deny and configured Ask still applies at `yolo`. Only
 `yolo` lets children auto-run substitutions, which turns off the child prompt-injection
-defense. A project file's `posture:` is ignored with a warning, an unknown value fails
-closed to `strict`, and `auto` or `yolo` are refused as root without a declared sandbox.
+defense.
+
+`Service.admitMode` (`internal/adapter/server/service.go`) refuses a created or switched
+mode above the ceiling, and `auto` without an enforcing guardrails checker; a server
+whose default mode is `auto` refuses to start without one. Unchecked autonomy is the
+explicit `yolo` choice, where a configured checker is advisory. `admitStoredMode`
+re-checks a persisted session's mode at run, approval resume, fork, and clear, so a
+mode admitted under a looser deployment fails with `FailedPrecondition` until the owner
+switches it; history is untouched. A project file's `permissionMode:` is ignored with a
+warning, and `auto` or `yolo` are refused as root without a declared sandbox.
+
+Delegated children receive the parent session's mode through `parentCaps.parentMode`:
+`effectiveChildMode` (`engine/agent/subagent.go`) runs a default-configured Subagent
+child, Parallel branch, or Team member in its parent's mode when that mode is `auto` or
+`yolo`, and keeps an explicitly configured child mode or a member definition's
+`permissionMode`. `Service.AdmittedModes` lists the modes `admitMode` accepts, which the
+ACP adapter offers as its mode picker.
+
+A mode change is a session-aggregate transition that `session.SetMode` refuses while the
+session is `StateAwaiting`: a pending ask is resolved under the mode it was raised in,
+and the new mode applies from the next run. Re-evaluating a parked ask on a mode switch
+is deliberately not supported; a mode change never interrupts a command that has
+already started.
+
+A mode never grants project trust. The deprecated `--posture` ladder
+(`strict < trusted < auto < yolo`, `internal/app/posture.go`) still raises project
+trust on an interactive root; combining it with `--permission-mode` is an error.
+Headless is a per-binary setting, not inferred from the environment: `mecatui` is always
+interactive, `mecated` is interactive unless started with `--headless`, and `mecak8s` and
+`mecatequi` default to headless.
 
 ## Workspace trust
 

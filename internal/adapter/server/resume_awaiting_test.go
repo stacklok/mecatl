@@ -215,6 +215,59 @@ func TestApproveAfterRestartResumesAwaiting(t *testing.T) {
 	}
 }
 
+// TestApproveAfterTighterRestartRefusesStoredMode pins that an awaiting session
+// persisted in a mode the restarted deployment no longer admits cannot resume
+// through Approve: the refusal precedes provider and tool work and leaves the
+// pending ask in place.
+func TestApproveAfterTighterRestartRefusesStoredMode(t *testing.T) {
+	ctx := context.Background()
+	store := memstore.New()
+	var ran1 atomic.Int64
+	svc1 := newAskingService(t, store, permstore.New(), &ran1,
+		mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("w1", "Write", json.RawMessage(`{"path":"a.go"}`)))), false)
+	sess, err := svc1.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	askID := driveServiceToAwaiting(t, svc1, sess.ID)
+	// Model a snapshot written under a looser deployment that admitted yolo.
+	parked, err := store.Load(ctx, sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parked.Mode = session.ModeYolo
+	if err := store.Save(ctx, parked); err != nil {
+		t.Fatal(err)
+	}
+
+	var ran2 atomic.Int64
+	cat := tool.NewCatalog()
+	cat.MustRegister(&writeAskTool{ran: &ran2})
+	llm := mockllm.New(mockllm.TextTurn("done after approval"))
+	svc2, err := newPlacementTestService(server.Config{
+		Engine:         agent.NewEngine(agent.Deps{LLM: llm, Catalog: cat, Policy: permpolicy.NewPolicy(nil, permstore.New()), Model: "test-model", Store: store}),
+		Store:          store,
+		Now:            func() time.Time { return time.Unix(0, 0) },
+		MaxAllowedMode: session.ModeAccept,
+	})
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	if run, err := svc2.ApproveRun(ctx, sess.ID, askID, session.VerdictAllowOnce, ""); !errors.Is(err, server.ErrFailedPrecondition) || run != nil {
+		t.Fatalf("ApproveRun = run %v, err %v; want ErrFailedPrecondition", run, err)
+	}
+	if ran2.Load() != 0 || llm.Calls() != 0 {
+		t.Fatalf("work started before refusal: tool executions %d, provider calls %d", ran2.Load(), llm.Calls())
+	}
+	kept, err := store.Load(ctx, sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending, ok := kept.PendingAsk(); kept.State != session.StateAwaiting || !ok || pending.AskID != askID {
+		t.Fatalf("refusal consumed the pending ask: state %s present %t", kept.State, ok)
+	}
+}
+
 // TestApproveNonAwaitingYieldsNoActiveRun is the state-gate mutation oracle: a
 // COMPLETED (terminal, non-awaiting) session resumed via Approve yields
 // ErrNoActiveRun and is NOT re-entered. Dropping the State!=StateAwaiting gate in

@@ -66,7 +66,12 @@ func TestTokenTableResolvesExactPairs(t *testing.T) {
 
 		// Through the real Build: the posture echo and the session default.
 		cfg := permissionModeCfg(t, name, port.NopDiagnostics{})
-		cfg.GuardrailsDisabled = pair.posture >= PostureAuto
+		switch pair.posture {
+		case PostureAuto:
+			cfg.GuardrailsModel = "mock-checker"
+		case PostureYolo:
+			cfg.GuardrailsDisabled = true
+		}
 		built, err := buildIsolated(t, context.Background(), cfg)
 		if err != nil {
 			t.Fatalf("Build %s: %v", name, err)
@@ -118,50 +123,57 @@ func TestTrustedKeepsCurrentMeaning(t *testing.T) {
 	}
 }
 
-func TestAllowAllTokenRequiresChecker(t *testing.T) {
-	// The checker gate is now a runtime WARN, not a startup refusal.
-	// Build succeeds; entering auto mode without a checker is refused at SetMode time.
-	for _, token := range []string{"auto", "yolo"} {
-		rec := slogdiagBuffer(t)
-		cfg := permissionModeCfg(t, token, rec.diag)
-		built, err := buildIsolated(t, context.Background(), cfg)
-		if err != nil {
-			t.Fatalf("%s with no checker must still start (checker gate is now a WARN): %v", token, err)
+func TestAutoTokenRequiresEnforcingChecker(t *testing.T) {
+	// auto's guarantee is an enforcing checker, with no default-mode exemption:
+	// every non-enforcing checker state refuses at startup.
+	for name, mutate := range map[string]func(*Config){
+		"missing":       func(*Config) {},
+		"disabled":      func(c *Config) { c.GuardrailsDisabled = true; c.GuardrailsModel = "mock-checker" },
+		"advisory-only": func(c *Config) { c.GuardrailsModel = "mock-checker"; c.GuardrailsDefaultMode = "advisory" },
+	} {
+		cfg := permissionModeCfg(t, "auto", port.NopDiagnostics{})
+		mutate(&cfg)
+		if built, err := buildIsolated(t, context.Background(), cfg); err == nil {
+			built.Close()
+			t.Fatalf("auto with a %s checker must refuse to start", name)
+		} else if !strings.Contains(err.Error(), "requires an enforcing guardrails checker") {
+			t.Fatalf("auto with a %s checker: refusal must name the requirement; got %v", name, err)
 		}
-		built.Close()
-		if !strings.Contains(rec.String(), "no guardrails checker") {
-			t.Errorf("%s without checker must WARN about missing checker; log:\n%s", token, rec.String())
-		}
-		// Either declared choice keeps the WARN from appearing.
-		off := permissionModeCfg(t, token, port.NopDiagnostics{})
-		off.GuardrailsDisabled = true
-		built2, err := buildIsolated(t, context.Background(), off)
-		if err != nil {
-			t.Fatalf("%s with --guardrails off must start: %v", token, err)
-		}
-		built2.Close()
-		checked := permissionModeCfg(t, token, port.NopDiagnostics{})
-		checked.GuardrailsModel = "mock-checker"
-		built3, err := buildIsolated(t, context.Background(), checked)
-		if err != nil {
-			t.Fatalf("%s with a configured checker must start: %v", token, err)
-		}
-		built3.Close()
+	}
+	checked := permissionModeCfg(t, "auto", port.NopDiagnostics{})
+	checked.GuardrailsModel = "mock-checker"
+	built, err := buildIsolated(t, context.Background(), checked)
+	if err != nil {
+		t.Fatalf("auto with an enforcing checker must start: %v", err)
+	}
+	built.Close()
+}
+
+func TestYoloTokenStartsWithoutChecker(t *testing.T) {
+	// Unchecked autonomy is yolo: it starts with no checker, WARNing only that
+	// its sessions cannot enter auto, and refuses an auto session at runtime.
+	rec := slogdiagBuffer(t)
+	built, err := buildIsolated(t, context.Background(), permissionModeCfg(t, "yolo", rec.diag))
+	if err != nil {
+		t.Fatalf("yolo with no checker must start: %v", err)
+	}
+	defer built.Close()
+	if !strings.Contains(rec.String(), "sessions cannot enter auto") {
+		t.Errorf("yolo without a checker must WARN that auto is unavailable; log:\n%s", rec.String())
+	}
+	if _, err := built.Service.CreateSession(context.Background(), session.ModeAuto, defaultLimits()); err == nil {
+		t.Error("yolo without a checker must refuse an auto session")
 	}
 }
 
 func TestCheckerRefusalNamesEveryFix(t *testing.T) {
-	// Checker absence is now a startup WARN (not a refusal); the WARN must name every fix.
-	rec := slogdiagBuffer(t)
-	cfg := permissionModeCfg(t, "auto", rec.diag)
-	built, err := buildIsolated(t, context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("auto with no checker must start (WARN only); got error: %v", err)
+	_, err := buildIsolated(t, context.Background(), permissionModeCfg(t, "auto", port.NopDiagnostics{}))
+	if err == nil {
+		t.Fatal("auto with no checker must refuse to start")
 	}
-	built.Close()
-	for _, want := range []string{"no guardrails checker", "--guardrails-model", "`guardrail` model slot", "--guardrails off"} {
-		if !strings.Contains(rec.String(), want) {
-			t.Errorf("checker-absent WARN must name %q; log:\n%s", want, rec.String())
+	for _, want := range []string{"--guardrails-model", "guardrail model slot", "choose yolo"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal must name %q; got: %v", want, err)
 		}
 	}
 }
@@ -312,7 +324,11 @@ func TestHeadlessAllowAllStartsWithoutTrust(t *testing.T) {
 	for _, token := range []string{"auto", "yolo"} {
 		rec := slogdiagBuffer(t)
 		cfg := headlessCfg(t, token, rec.diag)
-		cfg.GuardrailsDisabled = true
+		if token == "auto" {
+			cfg.GuardrailsModel = "mock-checker"
+		} else {
+			cfg.GuardrailsDisabled = true
+		}
 		built, err := buildIsolated(t, context.Background(), cfg)
 		if err != nil {
 			t.Fatalf("%s on a headless root must start: %v", token, err)
@@ -351,10 +367,54 @@ func TestInteractiveTrustTokenGrantsTrust(t *testing.T) {
 	}
 }
 
+// TestPermissionModeTokenDerivesNoTrust pins that the mode surface is not a
+// trust decision: an interactive root under any --permission-mode token stays
+// untrusted unless an explicit trust source is present, while the deprecated
+// --posture surface keeps its interactive trust floor for compatibility.
+func TestPermissionModeTokenDerivesNoTrust(t *testing.T) {
+	trustOf := func(t *testing.T, cfg Config, rec *slogdiagRecorder) bool {
+		t.Helper()
+		built, err := buildIsolated(t, context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		built.Close()
+		return strings.Contains(rec.lineContaining(`msg="operator posture"`), "trust_project=true")
+	}
+	for _, token := range PermissionModeNames() {
+		t.Run(token, func(t *testing.T) {
+			withTrustEnv(t, trustSettingsEnv(t.TempDir(), nil))
+			rec := slogdiagBuffer(t)
+			cfg := permissionModeCfg(t, token, rec.diag)
+			switch token {
+			case "auto":
+				cfg.GuardrailsModel = "mock-checker"
+			case "yolo":
+				cfg.GuardrailsDisabled = true
+			}
+			if trustOf(t, cfg, rec) {
+				t.Fatalf("interactive --permission-mode %s granted project trust with no trust source", token)
+			}
+			rec = slogdiagBuffer(t)
+			cfg.Diagnostics = rec.diag
+			cfg.TrustProject = true
+			if !trustOf(t, cfg, rec) {
+				t.Fatalf("--permission-mode %s --trust-project must be trusted", token)
+			}
+		})
+	}
+	withTrustEnv(t, trustSettingsEnv(t.TempDir(), nil))
+	rec := slogdiagBuffer(t)
+	legacy := Config{Workspace: t.TempDir(), Model: "mock", UseMock: true, NoSoul: true, Posture: PostureYolo, PostureFlagSet: true, GuardrailsDisabled: true, Diagnostics: rec.diag}
+	if !trustOf(t, legacy, rec) {
+		t.Fatal("deprecated interactive --posture yolo must keep its trust floor")
+	}
+}
+
 func TestAllowAllNarratesSubagentAsymmetry(t *testing.T) {
 	rec := slogdiagBuffer(t)
 	cfg := permissionModeCfg(t, "auto", rec.diag)
-	cfg.GuardrailsDisabled = true
+	cfg.GuardrailsModel = "mock-checker"
 	built, err := buildIsolated(t, context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
@@ -366,11 +426,11 @@ func TestAllowAllNarratesSubagentAsymmetry(t *testing.T) {
 	}
 }
 
-// headlessAllowAll is a headless auto deployment with the checker declared off.
+// headlessAllowAll is a headless auto deployment with an enforcing checker.
 func headlessAllowAll(t *testing.T, diag port.Diagnostics) Config {
 	t.Helper()
 	cfg := headlessCfg(t, "auto", diag)
-	cfg.GuardrailsDisabled = true
+	cfg.GuardrailsModel = "mock-checker"
 	return cfg
 }
 
@@ -663,5 +723,13 @@ func TestAuthoritativePostureFoldsPermissionModeKey(t *testing.T) {
 	}
 	if PostureRefusalReason(ResolveAuthoritativePosture(cfg), true) == nil {
 		t.Fatal("a YAML-only permissionMode: yolo must hit the root/no-sandbox refusal fast path")
+	}
+}
+
+func TestPostureReplacementToken(t *testing.T) {
+	for p, want := range map[Posture]string{PostureStrict: "default", PostureTrusted: "default", PostureAuto: "auto", PostureYolo: "yolo"} {
+		if got := PostureReplacementToken(p); got != want {
+			t.Errorf("PostureReplacementToken(%s) = %q, want %q", p, got, want)
+		}
 	}
 }

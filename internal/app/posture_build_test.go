@@ -46,15 +46,14 @@ func postureEchoFromBuild(t *testing.T, built *Built) string {
 func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 	t.Run("operator auto flows to composed posture", func(t *testing.T) {
 		diag := slogdiagBuffer(t)
-		built, err := buildIsolated(t, context.Background(), Config{
-			Workspace:          t.TempDir(),
-			Model:              "mock",
-			UseMock:            true,
-			NoSoul:             true,
-			PermissionConfigs:  []string{writeOperatorPostureFile(t, "auto")},
-			GuardrailsDisabled: true,
-			Diagnostics:        diag.diag,
-		})
+		built, err := buildIsolated(t, context.Background(), withInertEnforcingChecker(Config{
+			Workspace:         t.TempDir(),
+			Model:             "mock",
+			UseMock:           true,
+			NoSoul:            true,
+			PermissionConfigs: []string{writeOperatorPostureFile(t, "auto")},
+			Diagnostics:       diag.diag,
+		}))
 		if err != nil {
 			t.Fatalf("Build: %v", err)
 		}
@@ -76,16 +75,15 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 	t.Run("injected user-global posture is discovered", func(t *testing.T) {
 		env := trustSettingsEnv(t.TempDir(), []byte("posture: auto\n"))
 		withTrustEnv(t, env)
-		built, err := buildIsolated(t, context.Background(), Config{
+		built, err := buildIsolated(t, context.Background(), withInertEnforcingChecker(Config{
 			Workspace:               t.TempDir(),
 			Model:                   "mock",
 			UseMock:                 true,
 			NoSoul:                  true,
 			PermissionsConventional: true,
 			permConfigEnv:           &env,
-			GuardrailsDisabled:      true,
 			Diagnostics:             port.NopDiagnostics{},
-		})
+		}))
 		if err != nil {
 			t.Fatalf("Build: %v", err)
 		}
@@ -99,17 +97,16 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 	// narration and the shell consumer must both report the fail-safe result.
 	t.Run("operator auto headless withholds ingestion (fail-safe)", func(t *testing.T) {
 		diag := slogdiagBuffer(t)
-		built, err := buildIsolated(t, context.Background(), Config{
-			Workspace:          t.TempDir(),
-			Model:              "mock",
-			UseMock:            true,
-			NoSoul:             true,
-			Headless:           true,
-			Shell:              "/bin/sh", // a configured shell so the UNTRUSTED cause (not the empty-shell cause) is operative for the shell-DISABLED fact
-			PermissionConfigs:  []string{writeOperatorPostureFile(t, "auto")},
-			GuardrailsDisabled: true,
-			Diagnostics:        diag.diag,
-		})
+		built, err := buildIsolated(t, context.Background(), withInertEnforcingChecker(Config{
+			Workspace:         t.TempDir(),
+			Model:             "mock",
+			UseMock:           true,
+			NoSoul:            true,
+			Headless:          true,
+			Shell:             "/bin/sh", // a configured shell so the UNTRUSTED cause (not the empty-shell cause) is operative for the shell-DISABLED fact
+			PermissionConfigs: []string{writeOperatorPostureFile(t, "auto")},
+			Diagnostics:       diag.diag,
+		}))
 		if err != nil {
 			t.Fatalf("Build: %v", err)
 		}
@@ -143,17 +140,16 @@ func TestBuildOperatorYAMLPostureSeam(t *testing.T) {
 	// both project steering and the read-only child shell.
 	t.Run("operator auto interactive grants ingestion (dev default)", func(t *testing.T) {
 		diag := slogdiagBuffer(t)
-		built, err := buildIsolated(t, context.Background(), Config{
-			Workspace:          t.TempDir(),
-			Model:              "mock",
-			UseMock:            true,
-			NoSoul:             true,
-			Headless:           false,
-			Shell:              "/bin/sh", // a configured shell so the untrusted-shell-DISABLED fact would fire if the gate tripped (it must NOT here)
-			PermissionConfigs:  []string{writeOperatorPostureFile(t, "auto")},
-			GuardrailsDisabled: true,
-			Diagnostics:        diag.diag,
-		})
+		built, err := buildIsolated(t, context.Background(), withInertEnforcingChecker(Config{
+			Workspace:         t.TempDir(),
+			Model:             "mock",
+			UseMock:           true,
+			NoSoul:            true,
+			Headless:          false,
+			Shell:             "/bin/sh", // a configured shell so the untrusted-shell-DISABLED fact would fire if the gate tripped (it must NOT here)
+			PermissionConfigs: []string{writeOperatorPostureFile(t, "auto")},
+			Diagnostics:       diag.diag,
+		}))
 		if err != nil {
 			t.Fatalf("Build: %v", err)
 		}
@@ -326,6 +322,46 @@ func TestBuildEchoesProjectTrust(t *testing.T) {
 			}
 			if got := caps.GetProjectTrusted(); got != tc.want {
 				t.Fatalf("project_trusted = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestBuildEchoesSubagentAskReviewer pins that the capabilities echo carries
+// the reviewer state from the same reviewerStatus the startup line narrates.
+func TestBuildEchoesSubagentAskReviewer(t *testing.T) {
+	cases := []struct {
+		name        string
+		token       string
+		interactive bool
+		reviewer    string
+		want        string
+	}{
+		{"headless default is off", "default", false, "", reviewerOff},
+		{"headless yolo defaults on", "yolo", false, "", reviewerOn},
+		{"interactive configured is inert", "default", true, "mock", reviewerInert},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.token == "yolo" {
+				t.Setenv("MECATL_SANDBOX", "1")
+			}
+			cfg := permissionModeCfg(t, tc.token, port.NopDiagnostics{})
+			cfg.Headless = !tc.interactive
+			cfg.Interactive = tc.interactive
+			cfg.SubagentAskReviewerModel = tc.reviewer
+			cfg.GuardrailsDisabled = tc.token == "yolo"
+			built, err := buildIsolated(t, context.Background(), cfg)
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			defer built.Close()
+			caps := built.Service.CompatibilityInfo(context.Background()).GetCapabilities()
+			if caps.SubagentAskReviewer == nil {
+				t.Fatal("subagent_ask_reviewer must be set by a composed server")
+			}
+			if got := caps.GetSubagentAskReviewer(); got != tc.want {
+				t.Fatalf("subagent_ask_reviewer = %q, want %q", got, tc.want)
 			}
 		})
 	}

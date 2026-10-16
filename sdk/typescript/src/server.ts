@@ -26,6 +26,7 @@ export const ServerFeature = {
   ServerInfo: "server_info",
   SessionActivityInventory: "session_activity_inventory",
   SessionAgentDefinitions: "session_agent_definitions",
+  SessionPermissionModes: "session_permission_modes",
   SkillFiles: "skill_files",
   WatchSessionEvents: "watch_session_events",
 } as const;

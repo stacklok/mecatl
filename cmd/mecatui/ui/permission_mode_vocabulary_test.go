@@ -48,21 +48,21 @@ func pressModeSwitch(t *testing.T, m Model) (Model, bool) {
 	return applyAll(m, cmd()), true
 }
 
-// modeCycleStep is one ModeSwitch press: the mode it lands on, whether it
-// applies a session half (issues SetMode) or is blocked pending a restart, and
-// phrases the footer status or the input area must carry.
+// modeCycleStep is one ModeSwitch press: the mode the cycle cursor lands on,
+// whether it applies a session half (issues SetMode), and phrases the footer
+// status must carry. stays is set when the mode is unavailable (above the server
+// ceiling): the confirmed mode the header must keep showing.
 type modeCycleStep struct {
 	token   string
 	setMode bool
-	blocked bool
+	stays   string
 	status  []string
 }
 
-// visibleModeText is the footer status plus the input area, with wrapping and
-// the rail border collapsed so a phrase can be matched across a wrapped line.
+// visibleModeText is the footer status with wrapping collapsed so a phrase can
+// be matched across a wrapped line.
 func visibleModeText(m Model) string {
-	input := strings.ReplaceAll(stripANSIstr(m.renderInput()), "│", " ")
-	return strings.Join(strings.Fields(stripANSIstr(m.statusMsg)+" "+input), " ")
+	return strings.Join(strings.Fields(stripANSIstr(m.statusMsg)), " ")
 }
 
 func runModeCycle(t *testing.T, m Model, steps []modeCycleStep) Model {
@@ -76,20 +76,23 @@ func runModeCycle(t *testing.T, m Model, steps []modeCycleStep) Model {
 		if got := m.currentModeToken(); got != s.token {
 			t.Fatalf("step %d: landed on %q, want %q", i, got, s.token)
 		}
-		if got := m.modeBlocked(); got != s.blocked {
-			t.Fatalf("step %d (%s): blocked = %v, want %v", i, s.token, got, s.blocked)
-		}
 		wantHeader := s.token
-		if s.blocked {
-			wantHeader += " blocked"
+		if s.stays != "" {
+			wantHeader = s.stays
 		}
 		if got := statusMode(m); got != wantHeader {
 			t.Fatalf("step %d: header mode = %q, want %q", i, got, wantHeader)
 		}
 		text := visibleModeText(m)
+		if s.stays != "" {
+			want := "mode " + s.token + " unavailable, staying in " + s.stays
+			if !strings.Contains(text, want) {
+				t.Fatalf("step %d (%s): status %q missing %q", i, s.token, text, want)
+			}
+		}
 		for _, want := range s.status {
 			if !strings.Contains(text, want) {
-				t.Fatalf("step %d (%s): visible text %q missing %q", i, s.token, text, want)
+				t.Fatalf("step %d (%s): status %q missing %q", i, s.token, text, want)
 			}
 		}
 	}
@@ -105,8 +108,8 @@ func TestModeSwitchCyclesEveryMode(t *testing.T) {
 	m = runModeCycle(t, m, []modeCycleStep{
 		{token: "plan", setMode: true, status: []string{"mode plan"}},
 		{token: "accept-edits", setMode: true, status: []string{"mode accept-edits"}},
-		{token: "auto", blocked: true, status: []string{"guardrails checker", "guardrails.model", "mecatui --permission-mode auto", "prompts and edits are paused"}},
-		{token: "yolo", blocked: true, status: []string{"guardrails checker", "mecatui --permission-mode yolo"}},
+		{token: "auto", stays: "accept-edits", status: []string{"enforcing guardrails checker", "guardrails.model", "mecatui --permission-mode auto", "shift+tab next mode"}},
+		{token: "yolo", stays: "accept-edits", status: []string{"mecatui --permission-mode yolo"}},
 		{token: "default", setMode: true, status: []string{"mode default"}},
 		{token: "plan", setMode: true},
 	})
@@ -122,7 +125,7 @@ func TestModeSwitchCyclesEveryMode(t *testing.T) {
 // TestModeSwitchUnderTrustedPosture pins that a server running with the legacy
 // trusted posture (reachable via deprecated --posture trusted) handles the
 // 5-token vocabulary correctly: strict-posture tokens apply their session half,
-// posture-raising tokens (auto, yolo) are blocked.
+// posture-raising tokens (auto, yolo) are unavailable.
 // Since "trusted" is no longer a named token, the start position is the session
 // mode itself ("default"), and cycling visits all five tokens.
 func TestModeSwitchUnderTrustedPosture(t *testing.T) {
@@ -136,9 +139,9 @@ func TestModeSwitchUnderTrustedPosture(t *testing.T) {
 	runModeCycle(t, m, []modeCycleStep{
 		{token: "plan", setMode: true},
 		{token: "accept-edits", setMode: true},
-		// auto and yolo raise posture above trusted → blocked (need restart).
-		{token: "auto", blocked: true, status: []string{"auto needs a guardrails checker", "esc back to accept-edits"}},
-		{token: "yolo", blocked: true, status: []string{"yolo needs a guardrails checker"}},
+		// auto and yolo raise posture above trusted → unavailable (need restart).
+		{token: "auto", stays: "accept-edits", status: []string{"auto also needs an enforcing guardrails checker"}},
+		{token: "yolo", stays: "accept-edits", status: []string{"mecatui --permission-mode yolo"}},
 		// In the new architecture, switching to a lower-ceiling mode is fully effective:
 		// the session mode drives allow-all, so "posture stays" no longer applies.
 		{token: "default", setMode: true, status: []string{"mode default"}},
@@ -157,8 +160,8 @@ func TestModeSwitchConnectNamesServerRestart(t *testing.T) {
 	m := permissionModeTestModel(t, conv, postureStrict, false)
 	m.activeMode = "accept-edits"
 	m = runModeCycle(t, m, []modeCycleStep{
-		{token: "auto", blocked: true, status: []string{"--permission-mode auto and a guardrails checker"}},
-		{token: "yolo", blocked: true, status: []string{"remote server"}},
+		{token: "auto", stays: "accept-edits", status: []string{"remote server's operator must restart mecated with --permission-mode auto and an enforcing guardrails checker"}},
+		{token: "yolo", stays: "accept-edits", status: []string{"remote server's operator must restart mecated with --permission-mode yolo"}},
 	})
 	if text := visibleModeText(m); strings.Contains(text, "mecatui --permission-mode") {
 		t.Fatalf("connect hint offers a local relaunch: %q", text)
@@ -168,11 +171,11 @@ func TestModeSwitchConnectNamesServerRestart(t *testing.T) {
 	}
 }
 
-// TestBlockedModeHoldsPromptUntilEscape pins that landing on a mode that needs
-// a restart holds the prompt: typing, enter, and paste neither edit nor send the
-// draft, at idle or mid-run, and esc returns to the accepted mode with the draft
-// intact rather than cancelling the run.
-func TestBlockedModeHoldsPromptUntilEscape(t *testing.T) {
+// TestUnavailableModeKeepsComposerUsable pins that landing on a mode above the
+// server ceiling freezes nothing: at idle or mid-run, typing and paste still edit
+// the draft, the input area still shows it, enter still reaches the send/queue
+// path, the header keeps the confirmed mode, and the next press moves on.
+func TestUnavailableModeKeepsComposerUsable(t *testing.T) {
 	for _, phase := range []phase{phaseIdle, phaseRunning} {
 		t.Run(fmt.Sprint(phase), func(t *testing.T) {
 			conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, mode: "default"}
@@ -181,48 +184,28 @@ func TestBlockedModeHoldsPromptUntilEscape(t *testing.T) {
 			m = runModeCycle(t, m, []modeCycleStep{
 				{token: "plan", setMode: true},
 				{token: "accept-edits", setMode: true},
-				{token: "auto", blocked: true},
+				{token: "auto", stays: "accept-edits"},
 			})
-			m.phase = phaseRunning
-			if phase == phaseIdle {
-				m.phase = phaseIdle
+			m.phase = phase
+
+			m = applyAll(m, tea.KeyPressMsg{Code: 'x', Text: "x"}, tea.PasteMsg{Content: " pasted"})
+			if got := m.prompt.Value(); got != "keep this draftx pasted" {
+				t.Fatalf("prompt = %q, want typing and paste to reach the composer", got)
 			}
-			for _, msg := range []tea.Msg{
-				tea.KeyPressMsg{Code: 'x', Text: "x"},
-				tea.KeyPressMsg{Code: tea.KeyEnter},
-				tea.PasteMsg{Content: "pasted"},
-			} {
-				mm, cmd := m.Update(msg)
-				m = mm.(Model)
-				if cmd != nil {
-					t.Fatalf("%T while blocked issued a command", msg)
-				}
+			if !strings.Contains(stripANSIstr(m.renderInput()), "keep this draftx pasted") {
+				t.Fatalf("input area does not show the draft: %q", stripANSIstr(m.renderInput()))
 			}
-			if got := m.prompt.Value(); got != "keep this draft" {
-				t.Fatalf("blocked prompt changed to %q", got)
-			}
-			if len(m.queued) != 0 || m.phase != phase {
-				t.Fatalf("blocked enter queued %v / moved phase to %v", m.queued, m.phase)
-			}
-			if text := visibleModeText(m); !strings.Contains(text, "mode auto is blocked") || strings.Contains(stripANSIstr(m.renderInput()), "keep this draft") {
-				t.Fatalf("blocked input area = %q", text)
+			if got := statusMode(m); got != "accept-edits" {
+				t.Fatalf("header mode = %q, want the confirmed accept-edits", got)
 			}
 
-			mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+			mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 			m = mm.(Model)
-			if cmd != nil || strings.Contains(stripANSIstr(m.statusMsg), "cancelling") {
-				t.Fatalf("esc while blocked must only leave the mode, status %q", stripANSIstr(m.statusMsg))
+			if m.prompt.Value() != "" || (cmd == nil && len(m.queued) == 0) {
+				t.Fatalf("enter did not send or queue the draft: prompt=%q queued=%v cmd=%v", m.prompt.Value(), m.queued, cmd != nil)
 			}
-			if m.modeBlocked() || statusMode(m) != "accept-edits" {
-				t.Fatalf("after esc: blocked=%v header=%q, want accept-edits", m.modeBlocked(), statusMode(m))
-			}
-			if !strings.Contains(stripANSIstr(m.renderInput()), "keep this draft") {
-				t.Fatal("draft not shown again after esc")
-			}
-			m = applyAll(m, tea.KeyPressMsg{Code: '!', Text: "!"})
-			if got := m.prompt.Value(); got != "keep this draft!" {
-				t.Fatalf("prompt after esc = %q, want editable again", got)
-			}
+
+			m = runModeCycle(t, m, []modeCycleStep{{token: "yolo", stays: "accept-edits"}})
 			if got := conv.setModes(); strings.Join(got, ",") != "plan,accept-edits" {
 				t.Fatalf("SetMode calls = %v, want only the two applied modes", got)
 			}
@@ -230,24 +213,45 @@ func TestBlockedModeHoldsPromptUntilEscape(t *testing.T) {
 	}
 }
 
-// TestBlockedModeHoldsQueuedPrompt pins that a run ending while the mode is
-// blocked does not auto-send the queued follow-up.
-func TestBlockedModeHoldsQueuedPrompt(t *testing.T) {
+// TestUnavailableModeDoesNotHoldQueuedPrompt pins that a run ending while the
+// cycle sits on an unavailable mode still auto-sends the queued follow-up.
+func TestUnavailableModeDoesNotHoldQueuedPrompt(t *testing.T) {
 	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, mode: "default"}
 	m := permissionModeTestModel(t, conv, postureStrict, true)
 	m = runModeCycle(t, m, []modeCycleStep{
 		{token: "plan", setMode: true},
 		{token: "accept-edits", setMode: true},
-		{token: "auto", blocked: true},
+		{token: "auto", stays: "accept-edits"},
 	})
 	m.queued = []string{"queued follow-up"}
 	mm, cmd := m.drainQueue("end_turn")
 	m = mm.(Model)
-	if cmd != nil || m.queuePaused != "mode" {
-		t.Fatalf("drain while blocked: cmd=%v paused=%q, want held", cmd != nil, m.queuePaused)
+	if cmd == nil || m.queuePaused != "" || m.phase != phaseRunning {
+		t.Fatalf("drain: cmd=%v paused=%q phase=%v, want the follow-up sent", cmd != nil, m.queuePaused, m.phase)
 	}
-	if got := m.prompt.Value(); got != "/queue queued follow-up" {
-		t.Fatalf("held queue text = %q", got)
+}
+
+// TestUnavailableModeHintNamesCheckerOnlyForAuto pins that only auto's
+// unavailable hint mentions the guardrails checker; yolo needs only the restart.
+func TestUnavailableModeHintNamesCheckerOnlyForAuto(t *testing.T) {
+	for _, embedded := range []bool{true, false} {
+		t.Run(fmt.Sprintf("embedded=%v", embedded), func(t *testing.T) {
+			conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, mode: "accept-edits"}
+			m := permissionModeTestModel(t, conv, postureStrict, embedded)
+			m.activeMode = "accept-edits"
+			m, _ = pressModeSwitch(t, m)
+			if auto := visibleModeText(m); !strings.Contains(auto, "mode auto unavailable") || !strings.Contains(auto, "guardrails checker") {
+				t.Fatalf("auto hint = %q, want it to name the guardrails checker", auto)
+			}
+			m, _ = pressModeSwitch(t, m)
+			yolo := visibleModeText(m)
+			if !strings.Contains(yolo, "mode yolo unavailable") || !strings.Contains(yolo, "--permission-mode yolo") {
+				t.Fatalf("yolo hint = %q, want the restart with --permission-mode yolo", yolo)
+			}
+			if strings.Contains(yolo, "checker") || strings.Contains(yolo, "guardrails") {
+				t.Fatalf("yolo hint = %q, must not mention a guardrails checker", yolo)
+			}
+		})
 	}
 }
 
@@ -261,7 +265,6 @@ func TestHelpOverlayShowsVocabularyAndScopeSplit(t *testing.T) {
 	body := stripANSIstr(m.helpBody())
 
 	// The token table, written out independently of PermissionModeVocabulary.
-	// 5-token vocabulary: trusted and trusted-accept-edits removed.
 	// auto and yolo sessions start in their own named modes, not "default".
 	want := []struct{ token, posture, session string }{
 		{"plan", "strict", "plan"},
@@ -289,10 +292,17 @@ func TestHelpOverlayShowsVocabularyAndScopeSplit(t *testing.T) {
 		"The posture half applies to the whole server and is fixed when it starts.",
 		"The session half is only the default for new sessions.",
 		m.helpKeyMarkings().modeSwitch + " cycles every mode. A mode that raises the posture needs a restart",
+		"and auto also an enforcing guardrails checker",
+		"keeps the current mode and your draft",
 		"mecatui --permission-mode <token>",
 	} {
 		if !strings.Contains(body, phrase) {
 			t.Errorf("help overlay missing %q", phrase)
+		}
+	}
+	for _, stale := range []string{"auto or yolo", "blocked", "holds prompts", "trusted-accept-edits"} {
+		if strings.Contains(body, stale) {
+			t.Errorf("help overlay carries stale %q", stale)
 		}
 	}
 }
@@ -322,12 +332,12 @@ func TestHeaderShowsModeNotPosture(t *testing.T) {
 }
 
 // TestHeaderKeepsPostureAcrossModeCycle pins that under auto, cycling through
-// yolo (blocked: above the auto ceiling), then through lower modes keeps the
+// yolo (unavailable: above the auto ceiling), then through lower modes keeps the
 // trust badge on every frame, including the pending frames before the server
 // confirms each switch.
 //
 // A session on an auto-posture server starts in "auto" mode. The cycle order
-// from "auto" is: yolo (blocked) → default → plan → accept-edits → auto → …
+// from "auto" is: yolo (unavailable) → default → plan → accept-edits → auto → …
 // Yolo is the only mode that needs a restart; every other landing sends a
 // SetMode and shows "pending" until the server confirms.
 func TestHeaderKeepsPostureAcrossModeCycle(t *testing.T) {
@@ -358,13 +368,14 @@ func TestHeaderKeepsPostureAcrossModeCycle(t *testing.T) {
 	}
 	assertAuto("start", "auto")
 
-	// yolo is above the auto ceiling → blocked, no server round trip.
+	// yolo is above the auto ceiling → unavailable, no server round trip, and
+	// the header keeps the confirmed auto.
 	mm, cmd := m.Update(modeKey())
 	m = mm.(Model)
 	if cmd != nil {
-		t.Fatalf("landing on yolo issued a command: should be blocked, not switched")
+		t.Fatalf("landing on yolo issued a command: should be unavailable, not switched")
 	}
-	assertAuto("landed yolo", "yolo blocked")
+	assertAuto("landed yolo", "auto")
 
 	// Switching to modes below auto (default, plan, accept-edits) all require
 	// a SetMode round trip: the session is in "auto", switching to anything lower

@@ -587,7 +587,7 @@ func (m Model) runLearningSensitivity() (tea.Model, tea.Cmd) {
 // non-empty. The summary names the four defenses the posture controls so an operator
 // can confirm, e.g., that the child prompt-injection defense is OFF under yolo.
 func (m Model) runPosture() (tea.Model, tea.Cmd) {
-	base := postureSummary(m.caps.Posture, m.caps.ProjectTrust)
+	base := postureSummary(m.caps.Posture, m.caps.ProjectTrust, m.caps.SubagentAskReviewer)
 	if m.deps.Guardrails == nil || m.sessionID == "" {
 		m.statusMsg = m.deps.Theme.Style("muted").Render(base + "; checker unknown (server does not expose guardrail coverage)")
 		return m, nil
@@ -646,8 +646,9 @@ func (m Model) runDebugAsk() (tea.Model, tea.Cmd) {
 // description names the ceiling rather than claiming allow-all is always on.
 // Project-trust is the server-reported trust when known (trust), else inferred
 // from the posture, which raises it for trusted+ on interactive roots. An
-// empty/unknown token degrades to a bare label.
-func postureSummary(p, projectTrust string) string {
+// empty/unknown token degrades to a bare label. The subagent ask reviewer is
+// named only when the server reported it.
+func postureSummary(p, projectTrust, reviewer string) string {
 	ceilingAuto := p == postureAuto
 	ceilingYolo := p == postureYolo
 	childDefenseOff := p == postureYolo // yolo session mode loosens child substitution
@@ -675,7 +676,27 @@ func postureSummary(p, projectTrust string) string {
 		" — ceiling " + ceiling +
 		"; child $()/heredoc auto-run when in yolo mode (injection-defense off) " + onoff(childDefenseOff) +
 		"; project-trust " + onoff(trust) +
-		" (allow-all is mode-driven: auto/yolo sessions inject it; Deny & configured Ask always apply)"
+		" (allow-all is mode-driven: auto/yolo sessions inject it; Deny & configured Ask always apply)" +
+		reviewerSummary(reviewer)
+}
+
+// reviewerSummary renders the /posture segment for the server-reported subagent
+// ask reviewer state. Empty (an older server) renders nothing; an unrecognized
+// value is never echoed raw.
+func reviewerSummary(state string) string {
+	const prefix = "; subagent ask reviewer "
+	switch state {
+	case "":
+		return ""
+	case "on":
+		return prefix + "on (a model may approve subagent permission requests no human can answer)"
+	case "off":
+		return prefix + "off"
+	case "inert":
+		return prefix + "inert (configured, but you answer subagent permission requests)"
+	default:
+		return prefix + unknownLabel
+	}
 }
 
 type builtinName struct {

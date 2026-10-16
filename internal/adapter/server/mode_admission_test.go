@@ -18,6 +18,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -27,15 +28,21 @@ import (
 // ceiling, default mode, and enforcing-checker state.
 func modeAdmissionService(t *testing.T, ceiling, defaultMode session.PermissionMode, checker bool) *server.Service {
 	t.Helper()
-	llm := mockllm.New()
-	svc, err := newPlacementTeamTestService(server.Config{
+	return modeAdmissionServiceOn(t, memstore.New(), mockllm.New(), ceiling, defaultMode, checker)
+}
+
+// modeAdmissionServiceOn is modeAdmissionService over an explicit store and
+// provider, so a test can model a deployment restart over persisted sessions.
+func modeAdmissionServiceOn(t *testing.T, store port.SessionStore, llm *mockllm.Provider, ceiling, defaultMode session.PermissionMode, checker bool) *server.Service {
+	t.Helper()
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{
 			LLM:     llm,
 			Catalog: tool.NewCatalog(),
 			Policy:  permpolicy.NewPolicy(allowRules(), nil),
 			Model:   "test-model",
 		}),
-		Store:                      memstore.New(),
+		Store:                      store,
 		PlacementProvider:          testPlacementProvider{},
 		PlacementScope:             "test",
 		Now:                        func() time.Time { return time.Unix(0, 0) },
@@ -145,21 +152,111 @@ func TestGRPCModeAdmissionRefusals(t *testing.T) {
 	}
 }
 
-// TestOperatorDefaultAutoAdmittedWithoutChecker pins that the operator's
-// configured default mode stays admissible without an enforcing checker (the
-// operator chose it; startup WARNs), both for an unspecified create and for
-// an explicit request of that same mode.
-func TestOperatorDefaultAutoAdmittedWithoutChecker(t *testing.T) {
-	svc := modeAdmissionService(t, session.ModeAuto, session.ModeAuto, false)
+// TestAutoDefaultWithoutCheckerRefusedAtConstruction pins that auto has no
+// default-mode exemption: a service whose default is auto refuses to start
+// without an enforcing checker, and starts with one.
+func TestAutoDefaultWithoutCheckerRefusedAtConstruction(t *testing.T) {
+	_, err := newPlacementTestService(server.Config{
+		Engine:            agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model"}),
+		Store:             memstore.New(),
+		PlacementProvider: testPlacementProvider{},
+		PlacementScope:    "test",
+		DefaultMode:       session.ModeAuto,
+		MaxAllowedMode:    session.ModeAuto,
+	})
+	if !errors.Is(err, server.ErrConfig) || !strings.Contains(err.Error(), "enforcing guardrails checker") {
+		t.Fatalf("auto default without checker: err = %v, want ErrConfig naming the checker", err)
+	}
+	svc := modeAdmissionService(t, session.ModeAuto, session.ModeAuto, true)
+	sess, err := svc.CreateSession(context.Background(), "", session.Limits{})
+	if err != nil || sess.Mode != session.ModeAuto {
+		t.Fatalf("auto default with checker: mode %v, err %v", sess, err)
+	}
+}
+
+// TestAutoRequiresCheckerEvenWhenNotDefault pins that, without an enforcing
+// checker, explicit auto creation and switching (back) to auto are refused on
+// every ceiling that would otherwise admit auto, while yolo stays admissible.
+func TestAutoRequiresCheckerEvenWhenNotDefault(t *testing.T) {
 	ctx := context.Background()
-	for _, mode := range []session.PermissionMode{"", session.ModeAuto} {
-		sess, err := svc.CreateSession(ctx, mode, session.Limits{})
+	for _, def := range []session.PermissionMode{session.ModeDefault, session.ModeYolo} {
+		svc := modeAdmissionService(t, session.ModeYolo, def, false)
+		if _, err := svc.CreateSession(ctx, session.ModeAuto, session.Limits{}); !errors.Is(err, server.ErrInvalidArgument) {
+			t.Fatalf("default %s: CreateSession(auto) err = %v, want ErrInvalidArgument", def, err)
+		}
+		sess, err := svc.CreateSession(ctx, "", session.Limits{})
 		if err != nil {
-			t.Fatalf("CreateSession(%q): %v", mode, err)
+			t.Fatalf("default %s: CreateSession: %v", def, err)
 		}
-		if sess.Mode != session.ModeAuto {
-			t.Fatalf("CreateSession(%q) mode = %q, want auto", mode, sess.Mode)
+		if _, err := svc.SetMode(ctx, sess.ID, session.ModeAuto); !errors.Is(err, server.ErrInvalidArgument) {
+			t.Fatalf("default %s: SetMode(auto) err = %v, want ErrInvalidArgument", def, err)
 		}
+		if _, err := svc.SetMode(ctx, sess.ID, session.ModeYolo); err != nil {
+			t.Fatalf("default %s: SetMode(yolo) positive control: %v", def, err)
+		}
+	}
+}
+
+// TestStoredModeReadmittedAfterTighterRestart persists a permissive session,
+// reopens the store under a tighter deployment, and proves prompt, fork, and
+// clear refuse BEFORE any provider work, without touching the session; a
+// SetMode to an admitted mode then lets the same session continue.
+func TestStoredModeReadmittedAfterTighterRestart(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name    string
+		stored  session.PermissionMode
+		ceiling session.PermissionMode
+		checker bool
+	}{
+		{"yolo above default ceiling", session.ModeYolo, session.ModeAccept, true},
+		{"auto above default ceiling", session.ModeAuto, session.ModeAccept, true},
+		{"auto after checker removed", session.ModeAuto, session.ModeYolo, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := memstore.New()
+			loose := modeAdmissionServiceOn(t, store, mockllm.New(), session.ModeYolo, session.ModeDefault, true)
+			sess, err := loose.CreateSession(ctx, tc.stored, session.Limits{})
+			if err != nil {
+				t.Fatalf("CreateSession(%s) on loose deployment: %v", tc.stored, err)
+			}
+
+			llm := mockllm.New(mockllm.TextTurn("ran"))
+			tight := modeAdmissionServiceOn(t, store, llm, tc.ceiling, session.ModeDefault, tc.checker)
+			if run, err := tight.StartRun(ctx, sess.ID, "go"); !errors.Is(err, server.ErrFailedPrecondition) || run != nil {
+				t.Fatalf("StartRun = run %v, err %v; want ErrFailedPrecondition", run, err)
+			}
+			if _, err := tight.ForkSessionSuccessor(ctx, server.ForkSuccessorRequest{Source: sess.ID}); !errors.Is(err, server.ErrFailedPrecondition) {
+				t.Fatalf("ForkSessionSuccessor err = %v, want ErrFailedPrecondition", err)
+			}
+			if _, err := tight.ClearSessionSuccessor(ctx, sess.ID, server.SuccessorPlacement{}); !errors.Is(err, server.ErrFailedPrecondition) {
+				t.Fatalf("ClearSessionSuccessor err = %v, want ErrFailedPrecondition", err)
+			}
+			if llm.Calls() != 0 {
+				t.Fatalf("provider called %d time(s) before refusal, want 0", llm.Calls())
+			}
+			kept, err := store.Load(ctx, sess.ID)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if kept.Mode != tc.stored || kept.State != sess.State {
+				t.Fatalf("refusal mutated the session: mode %q state %q", kept.Mode, kept.State)
+			}
+
+			if _, err := tight.SetMode(ctx, sess.ID, session.ModeDefault); err != nil {
+				t.Fatalf("SetMode(default): %v", err)
+			}
+			run, err := tight.StartRun(ctx, sess.ID, "go")
+			if err != nil {
+				t.Fatalf("StartRun after SetMode(default): %v", err)
+			}
+			for range run.Events() {
+			}
+			tight.FinishRun(sess.ID, run)
+			if llm.Calls() != 1 {
+				t.Fatalf("provider calls after re-admission = %d, want 1", llm.Calls())
+			}
+		})
 	}
 }
 

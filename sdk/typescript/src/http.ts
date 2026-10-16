@@ -61,6 +61,10 @@ function permissionMode(value: JsonValue | undefined): string {
       return "plan";
     case 3:
       return "accept_edits";
+    case 4:
+      return "auto";
+    case 5:
+      return "yolo";
     default:
       return "default";
   }
@@ -127,7 +131,11 @@ function encodeInput(
   const json = record(
     toJson(method.input, message, { enumAsInteger: true, useProtoFieldName: true }),
   );
-  if (method.name === "CreateSession" || method.name === "SetMode") {
+  if (method.name === "CreateSession" && (json.mode === undefined || json.mode === 0)) {
+    // An unspecified create mode is omitted so the server's configured default
+    // mode applies, matching gRPC.
+    delete json.mode;
+  } else if (method.name === "CreateSession" || method.name === "SetMode") {
     json.mode = permissionMode(json.mode);
   }
   if (method.name === "ApprovePlan" && json.target_mode !== undefined) {
@@ -163,7 +171,12 @@ function permissionModeTextToNumber(value: JsonValue | undefined): number {
       return 2;
     case "accept_edits":
     case "acceptedits":
+    case "acceptEdits":
       return 3;
+    case "auto":
+      return 4;
+    case "yolo":
+      return 5;
     default:
       return 0;
   }

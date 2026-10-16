@@ -78,11 +78,11 @@ OPERATOR-TIER LLM content-checker (issue #27). Parsed strictly. A project-tier g
 
 Tier: **operator**
 
-OPERATOR-TIER named permission mode: plan, default, accept-edits, trusted, trusted-accept-edits, auto, or yolo. Each token sets two things: the process-wide posture, fixed at startup, and the mode new sessions start in, which each session may change. auto and yolo refuse to start without a guardrails checker unless guardrails are explicitly off. An explicit --permission-mode out-ranks this key, and it out-ranks the deprecated posture: key. A project-tier permissionMode: is IGNORED with a WARN. Empty = keep the CLI/default.
+OPERATOR-TIER named permission mode: plan, default, accept-edits, auto, or yolo. Each token sets two things: the mode new sessions start in, and the server ceiling, fixed at startup, which is the most permissive mode a session may switch to (accept-edits for plan, default, and accept-edits). auto refuses to start without an enforcing guardrails checker; yolo needs none. A mode never grants workspace trust. An explicit --permission-mode out-ranks this key, and it out-ranks the deprecated posture: key. A project-tier permissionMode: is IGNORED with a WARN. Empty = keep the CLI/default.
 
 | Value | Type | Default | Description |
 | --- | --- | --- | --- |
-| `permissionMode` | `string` | `(empty)` | PermissionMode is the OPERATOR-TIER named permission-mode token (plan/default/accept-edits/trusted/trusted-accept-edits/auto/yolo). It sets the posture and the default session mode together and supersedes the deprecated posture: key. Like Posture it is honoured ONLY from the user-global + CLI tiers; a project-tier occurrence is IGNORED with a WARN. Empty = absent. The composition layer parses the token. |
+| `permissionMode` | `string` | `(empty)` | PermissionMode is the OPERATOR-TIER named permission-mode token (plan/default/accept-edits/auto/yolo). It sets the mode new sessions start in and the server ceiling (the most permissive mode a session may switch to) together, and supersedes the deprecated posture: key. It never grants workspace trust. Like Posture it is honoured ONLY from the user-global + CLI tiers; a project-tier occurrence is IGNORED with a WARN. Empty = absent. The composition layer parses the token. |
 
 ## `posture`
 

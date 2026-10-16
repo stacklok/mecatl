@@ -247,7 +247,7 @@ func TestContextualGuardrailUsage_Scenario2_PathEscapeUsageProductionFlow(t *tes
 	catalog.MustRegister(productionPathUsageTool{})
 	call := session.NewToolCall("escape", "Read", []byte(`{"path":"`+fixture.target+`"}`))
 	engine := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.ToolCallTurn(call), mockllm.TextTurn("done")), Catalog: catalog, Policy: policy})
-	sess := session.New("path-usage", session.ModeDefault, env.Ref(), session.Limits{}, time.Now())
+	sess := session.New("path-usage", session.ModeAuto, env.Ref(), session.Limits{}, time.Now())
 	for range engine.Run(t.Context(), sess, env, agent.RunRequest{Text: "read outside"}).Events() {
 	}
 	bucket := sess.TokenUsageSnapshot()[session.UsageKindGuardrail]
@@ -281,7 +281,7 @@ func TestContextualGuardrailUsage_Scenario2_PathEscapeRetryAndRepeatedChecksPers
 		t.Fatal(err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(t.Context(), session.ModeAuto, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -331,7 +331,7 @@ func TestContextualGuardrailUsage_Scenario2_PathEscapeTerminalFailurePersistsPar
 		t.Fatal(err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(t.Context(), session.ModeAuto, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -391,7 +391,7 @@ func TestContextualGuardrailUsage_Scenario2_PathEscapeReevaluationAfterAwaiting(
 	if err != nil {
 		t.Fatal(err)
 	}
-	sess, err := built1.Service.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
+	sess, err := built1.Service.CreateSession(t.Context(), session.ModeAuto, session.Limits{})
 	if err != nil {
 		built1.Close()
 		t.Fatal(err)
@@ -483,7 +483,7 @@ func TestContextualGuardrailUsage_Scenario2_ComposedChildNeverArmsPathEscape(t *
 		t.Fatal(err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(t.Context(), session.ModeAuto, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -589,10 +589,10 @@ func TestEscapePolicyPreservesInnerAndCheckerUsage(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			inner := usagePermissionPolicy{port.PermissionResult{Decision: tc.inner, Usage: pathCheckerUsage(2)}}
-			policy := newEscapePolicy(inner, PostureAuto, withEscapeGuardrailRoute(pathUsageChecker{
+			policy := newEscapePolicy(inner, withEscapeGuardrailRoute(pathUsageChecker{
 				result: modelhook.CheckResult{Verdict: tc.verdict, Usage: pathCheckerUsage(3)}, err: tc.err,
 			}))
-			got := policy.Evaluate(t.Context(), "s1", session.ModeDefault, call, ws)
+			got := policy.Evaluate(t.Context(), "s1", session.ModeAuto, call, ws)
 			if got.Decision.Effect != tc.want || got.Usage.Buckets[session.UsageKindGuardrail].Total.InputTokens != tc.usage {
 				t.Fatalf("result = %+v; want effect %s and usage %d", got, tc.want, tc.usage)
 			}

@@ -7,6 +7,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/learning"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/skillstore"
 )
 
@@ -22,6 +23,23 @@ func isolateConfig(t testing.TB, cfg Config) Config {
 func buildIsolated(t testing.TB, ctx context.Context, cfg Config) (*Built, error) {
 	t.Helper()
 	return Build(ctx, isolateConfig(t, cfg))
+}
+
+// withInertEnforcingChecker declares an enforcing guardrails checker whose
+// only rule matches no tool, so an auto deployment is admissible without the
+// checker reviewing (or consuming mock turns for) the test's own calls.
+func withInertEnforcingChecker(cfg Config) Config {
+	cfg.GuardrailsDisabled = false
+	cfg.GuardrailsModel = "mock-checker"
+	cfg.GuardrailsRules = []GuardrailRule{{Match: "NoSuchTool_inert_checker_rule", Mode: "block"}}
+	return cfg
+}
+
+// postureSessionMode is the default session mode a deployment at posture p
+// creates, so a posture-parameterized test can run its session in that mode.
+func postureSessionMode(p Posture) session.PermissionMode {
+	mode, _ := postureToSessionModes(p)
+	return mode
 }
 
 func TestBuildIsolatedIgnoresAmbientUserModel(t *testing.T) {

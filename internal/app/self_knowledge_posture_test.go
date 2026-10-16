@@ -541,6 +541,21 @@ func TestSelfKnowledgeBehaviouralClaimsMatchImplementation(t *testing.T) {
 		}
 	})
 
+	t.Run("a permission-mode token never grants trust", func(t *testing.T) {
+		for _, name := range PermissionModeNames() {
+			tok, err := ParsePermissionMode(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if applyPosture(Config{Posture: tok.Posture, permissionModeName: tok.Name}).TrustProject {
+				t.Errorf("--permission-mode %s raises TrustProject on an interactive root; the self-knowledge note tells the model a token never grants trust", name)
+			}
+		}
+		if !strings.Contains(selfKnowledgePostureAxes, "--permission-mode token never grants trust") {
+			t.Error("the axes clause must state that a --permission-mode token never grants workspace trust")
+		}
+	})
+
 	t.Run("headless project trust is not limited to --trust-project", func(t *testing.T) {
 		// resolveTrust is the implementation of the claim that a declared or
 		// remembered trust source, not only the --trust-project flag, can grant

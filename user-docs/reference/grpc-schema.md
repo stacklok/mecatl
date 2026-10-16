@@ -3064,6 +3064,7 @@ old clients ignore and new clients reading an old server see as false.
 | `mcp_refresh` | `bool` |  |  | mcp_refresh is true when direct/global MCP source reconciliation is wired. It is mutually exclusive with workspace_enrollment in a valid deployment. |
 | `execution_templates` | `bool` |  |  | execution_templates is true only when an authenticated template catalog is wired; an eligible inventory may still be empty. |
 | `project_trusted` | `bool` | optional |  | project_trusted reports whether the server trusts its launch workspace&#39;s project content (rules, instructions, soul). It is an axis separate from the permission mode. CHROME ONLY. Additive: an older server leaves it unset and the client shows no trust indicator. |
+| `subagent_ask_reviewer` | `string` | optional |  | subagent_ask_reviewer reports the subagent ask reviewer, a model that may approve a subagent&#39;s, team member&#39;s, or parallel branch&#39;s permission request that no human can answer: &#34;on&#34; (enabled), &#34;off&#34; (not enabled), or &#34;inert&#34; (configured, but an interactive approver answers instead). Clients treat other values as unknown. CHROME ONLY. Additive: an older server leaves it unset and the client shows nothing. |
 
 
 

@@ -168,6 +168,12 @@ Replace `v0.0.3` with the latest released tag. The workflow preserves the three
 jobs and their separate permissions. Its composite action builds `mecatequi`
 from the tagged Mecatl source.
 
+The workflow's `posture` input defaults to `auto`, which refuses to start
+without an enforcing guardrails checker. Set `guardrails-model` to a checker
+model, or set `posture: yolo` with `guardrails-model: "off"` to run without one.
+Callers that relied on earlier releases running `auto` unchecked must make one
+of these choices when they move to a newer tag.
+
 Use `.github/workflows/mecatequi-example.yml` as a customizable alternative when
 you need a different trigger, approval stage, or author gate.
 
@@ -246,7 +252,7 @@ corrupt both.
 |`--workspace`|cwd|Session workspace root. Must be a git repository top level.|
 |`--default-provider`|`""`|Provider ID: `openai`, `openai-codex`, `openrouter`, `anthropic`, or `opencode`.|
 |`--model`|`""`|Per-session passthrough model ID. Accepts any ID the provider serves, including IDs newer than the embedded catalog. Prefer this over `--default-model` for newer models.|
-|`--permission-mode`|`default`|Permission mode. Use `auto` for autonomous CI, together with `--guardrails-model` or `--guardrails off`. With `default` and `--headless`, a main-agent permission ask cancels the run and exits 1. `--posture` is a deprecated alias.|
+|`--permission-mode`|`default`|Permission mode. Use `auto` for autonomous CI with an enforcing guardrails checker, or `yolo` to run with no checker. With `default` and `--headless`, a main-agent permission ask cancels the run and exits 1. `--posture` is a deprecated alias.|
 |`--trust-project`|`false`|Trust this workspace for project content and read-only child shell access. No posture grants project trust in headless mode. Without this flag or a declared or remembered trust decision, Mecatl ignores project content such as `AGENTS.md` and does not give read-only children a shell.|
 |`--headless`|`true`|Controls child permission requests. The default denies them or routes them to the optional ask reviewer. See [Headless posture and permission asks](#headless-posture-and-permission-asks).|
 |`--timeout`|`0` (disabled)|Wall-clock bound on the whole run (for example, `40m`). A timeout-cancelled run exits 1 with `stop_reason: cancelled`.|
@@ -319,16 +325,19 @@ another permission mode.
 
 Use `--permission-mode auto` for autonomous CI. It allows main-agent and child
 tool calls while retaining child prompt-injection defenses. It refuses to start
-until you choose a guardrails checker with `--guardrails-model` or opt out with
-`--guardrails off`. Reserve `yolo` for a disposable, isolated, single-tenant
-environment. `trusted` and `trusted-accept-edits` also need `--trust-project`
-or a declared trust decision, or the run refuses to start.
+without an enforcing guardrails checker, set with `--guardrails-model` or
+configured in operator settings. `yolo` runs with no checker; reserve it for a
+disposable, isolated, single-tenant environment.
 
 The GitHub Action passes `--permission-mode auto` unless you set its
-`permission-mode` input; its `posture` input is a deprecated alias. The action
-passes `--guardrails-model` when its `guardrails-model` input is set and
-`--guardrails off` when it is empty, so an action run with no checker model
-runs with nothing inspecting tool content.
+`permission-mode` input; its `posture` input is a deprecated alias. The
+`guardrails-model` input has three choices:
+
+- Empty, the default: the action passes no guardrails flag, and the run uses
+  the checker configured in operator settings, if any.
+- `off`: the action passes the `--guardrails off` kill-switch, which also
+  disables a checker in settings. Pair it with `permission-mode: yolo`.
+- Any other value: the action passes `--guardrails-model <VALUE>`.
 
 For shared posture behavior, project trust, and permission-rule precedence, see
 [Permissions and posture](/features/security-and-execution/permissions-and-posture.md).

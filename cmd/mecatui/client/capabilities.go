@@ -49,6 +49,9 @@ type Capabilities struct {
 	// ProjectTrust is "trusted" or "untrusted" for the server's launch
 	// workspace, CHROME ONLY: the ui's header badge. Empty on an older server.
 	ProjectTrust string
+	// SubagentAskReviewer is the server's subagent ask reviewer state ("on",
+	// "off", "inert"), CHROME ONLY: shown by /posture. Empty on an older server.
+	SubagentAskReviewer string
 	// Worktrees is true when a WorktreeLister is wired (ListWorktrees may return a
 	// non-empty list for a real git repo). It gates the /worktrees overlay — the
 	// first-class operator workflow for binding a session to an EXISTING sibling
@@ -133,6 +136,7 @@ func capabilitiesFrom(c *mecatlv1.ServerCapabilities) Capabilities {
 		Audio:               c.GetAudio(),
 		Posture:             c.GetPosture(),
 		ProjectTrust:        projectTrustFrom(c),
+		SubagentAskReviewer: c.GetSubagentAskReviewer(),
 		Worktrees:           c.GetWorktrees(),
 		Scheduling:          c.GetScheduling(),
 		Reflection:          c.GetReflection(),
