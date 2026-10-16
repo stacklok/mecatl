@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -406,6 +407,143 @@ func TestStoredModeReadmittedUnderAcquiredLease(t *testing.T) {
 	}
 	if kept.Mode != session.ModeYolo || kept.State != session.StateIdle {
 		t.Fatalf("refusal mutated the session: mode %q state %q", kept.Mode, kept.State)
+	}
+}
+
+// gatedLeaseFor wraps a fresh shared memlease so owner's first Acquire parks
+// until the test releases it.
+func gatedLeaseFor(owner string) *gatedLease {
+	return &gatedLease{
+		SessionLease: memlease.New(wallclock.Clock{}, time.Minute),
+		owner:        owner, entered: make(chan struct{}), release: make(chan struct{}),
+	}
+}
+
+// awaitGate waits until the gated owner is parked at lease acquisition.
+func awaitGate(t *testing.T, lease *gatedLease) {
+	t.Helper()
+	select {
+	case <-lease.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the gated replica never reached lease acquisition")
+	}
+}
+
+// TestRunEntryAdoptsAdmittedDowngradeUnderLease is the admitted-downgrade
+// variant of TestStoredModeReadmittedUnderAcquiredLease: both replicas admit
+// yolo, so mode admission alone cannot catch the race. Replica A reads a
+// completed yolo session and waits for the lease; replica B downgrades it to
+// default and releases; A must then run on the adopted default snapshot and
+// must not reopen and save its stale yolo copy over B's change.
+func TestRunEntryAdoptsAdmittedDowngradeUnderLease(t *testing.T) {
+	ctx := context.Background()
+	store := memstore.New()
+	seed := modeAdmissionServiceOn(t, store, mockllm.New(mockllm.TextTurn("first")), session.ModeYolo, session.ModeDefault, true)
+	sess, err := seed.CreateSession(ctx, session.ModeYolo, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	first, err := seed.StartRun(ctx, sess.ID, "first")
+	if err != nil {
+		t.Fatalf("seed StartRun: %v", err)
+	}
+	for range first.Events() {
+	}
+	seed.Persist(ctx, sess.ID)
+	seed.FinishRun(sess.ID, first)
+	if done, err := store.Load(ctx, sess.ID); err != nil || done.State != session.StateCompleted || done.Mode != session.ModeYolo {
+		t.Fatalf("seeded session = %+v, %v; want a completed yolo session", done, err)
+	}
+
+	lease := gatedLeaseFor("replica-a")
+	llmA := mockllm.New(mockllm.TextTurn("second"))
+	a := leasedModeService(t, store, lease, "replica-a", llmA, session.ModeYolo)
+	b := leasedModeService(t, store, lease, "replica-b", mockllm.New(), session.ModeYolo)
+
+	result := make(chan error, 1)
+	go func() {
+		run, err := a.StartRun(ctx, sess.ID, "second")
+		if run != nil {
+			for range run.Events() {
+			}
+			a.Persist(ctx, sess.ID)
+			a.FinishRun(sess.ID, run)
+		}
+		result <- err
+	}()
+	awaitGate(t, lease)
+	if _, err := b.SetMode(ctx, sess.ID, session.ModeDefault); err != nil {
+		t.Fatalf("peer SetMode(default): %v", err)
+	}
+	close(lease.release)
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("StartRun on the downgraded session: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("replica A StartRun did not return")
+	}
+	if llmA.Calls() != 1 {
+		t.Fatalf("replica A provider calls = %d, want 1", llmA.Calls())
+	}
+	after, err := store.Load(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if after.Mode != session.ModeDefault || after.State != session.StateCompleted {
+		t.Fatalf("after A's run: mode %q state %q; want B's default downgrade kept and the run completed", after.Mode, after.State)
+	}
+}
+
+// TestApprovalResumeAdoptsPeerCancelledTurnUnderLease: replica A preflights an
+// approval for a pending ask and waits for the lease; replica B, which refuses
+// the stored yolo mode, cancels that pending turn through the refused-mode
+// SetMode downgrade and releases. A must refuse the resume on the adopted
+// snapshot with no provider or tool work, leaving B's cancellation in place.
+func TestApprovalResumeAdoptsPeerCancelledTurnUnderLease(t *testing.T) {
+	ctx := context.Background()
+	store := memstore.New()
+	id, askID := parkAwaitingInMode(t, store, session.ModeYolo)
+
+	lease := gatedLeaseFor("replica-a")
+	var ranA, ranB atomic.Int64
+	llmA := mockllm.New(mockllm.TextTurn("resumed"))
+	a := recoveryServiceAs(t, store, llmA, &ranA, session.ModeYolo, true, lease, "replica-a")
+	b := recoveryServiceAs(t, store, mockllm.New(), &ranB, session.ModeAccept, true, lease, "replica-b")
+
+	result := make(chan error, 1)
+	go func() {
+		run, err := a.ApproveRun(ctx, id, askID, session.VerdictAllowOnce, "")
+		if run != nil {
+			for range run.Events() {
+			}
+			a.FinishRun(id, run)
+		}
+		result <- err
+	}()
+	awaitGate(t, lease)
+	if _, err := b.SetMode(ctx, id, session.ModeDefault); err != nil {
+		t.Fatalf("peer refused-mode recovery SetMode(default): %v", err)
+	}
+	close(lease.release)
+	select {
+	case err := <-result:
+		if !errors.Is(err, server.ErrNoActiveRun) {
+			t.Fatalf("ApproveRun err = %v, want ErrNoActiveRun for the cancelled turn", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("replica A ApproveRun did not return")
+	}
+	if llmA.Calls() != 0 || ranA.Load() != 0 || ranB.Load() != 0 {
+		t.Fatalf("work ran after the peer cancelled: provider calls %d, tool executions A=%d B=%d", llmA.Calls(), ranA.Load(), ranB.Load())
+	}
+	kept, err := store.Load(ctx, id)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if _, pending := kept.PendingAsk(); pending || kept.State != session.StateCancelled || kept.Mode != session.ModeDefault {
+		t.Fatalf("stored after refused resume: mode %q state %q pending %t; want cancelled/default", kept.Mode, kept.State, pending)
 	}
 }
 
