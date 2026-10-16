@@ -62,7 +62,7 @@ The identity work needs these event families:
 - definition load, instance registration, and agent-instance credential issuance;
 - each delegation from one run to another;
 - broker session open and close, AS-1's conversion record at session open, and any open refused because the token's user does not own the session; per-call events point to the session-open record for the user;
-- sign-out everywhere, with each run stopped, broker session closed, refresh token revoked, and schedule authority revoked, and the revocation reason;
+- sign-out everywhere, with each run stopped, broker session closed, refresh token revoked, and schedule grants revoked, and the revocation reason;
 - an upstream re-check failure and the revocation that follows;
 - ID-JAG issuance and denial at AS-1;
 - redemption and denial at AS-2, and consent-link creation and revocation in external mode;
