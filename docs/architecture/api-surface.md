@@ -189,7 +189,10 @@ entry; `engine/agent` knows nothing about it.
   explanation and no session id: no execution was admitted. It does not leave
   an uncertain pending owner blocking the next fresh slot.
 - Each fire creates a fresh `sched--` session owned by the schedule's captured owner,
-  with bounded limits. A schedule not marked mutating runs in plan mode. The fire
+  with bounded limits. A schedule not marked mutating runs in plan mode. A mutating
+  schedule runs in its recorded mode, or the server's default session mode when the
+  mode is unset (UNSPECIFIED on the wire); the fire's session creation admits that
+  mode against the current ceiling. The fire
   reattaches the exact placement persisted at creation, and fails before creating a
   session if that placement has drifted (`internal/app/scheduler_fire.go`).
 

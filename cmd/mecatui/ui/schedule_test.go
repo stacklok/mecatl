@@ -37,6 +37,7 @@ type fakeScheduleLister struct {
 	lastFireName   string
 	lastFiresName  string
 	lastGetname    string
+	lastCreateSpec client.ScheduleSpec
 }
 
 func (f *fakeScheduleLister) ListSchedules(_ context.Context) ([]client.Schedule, error) {
@@ -56,8 +57,9 @@ func (f *fakeScheduleLister) GetSchedule(_ context.Context, name string) (client
 	return f.sched, nil
 }
 
-func (f *fakeScheduleLister) CreateSchedule(_ context.Context, _ client.ScheduleSpec) (client.Schedule, error) {
+func (f *fakeScheduleLister) CreateSchedule(_ context.Context, spec client.ScheduleSpec) (client.Schedule, error) {
 	f.createCalls++
+	f.lastCreateSpec = spec
 	if f.err != nil {
 		return client.Schedule{}, f.err
 	}
@@ -1181,5 +1183,57 @@ func TestScheduleInspectRendersNeverFired(t *testing.T) {
 	}
 	if strings.Contains(out, "in-flight") {
 		t.Errorf("never-fired inspect rendered \"in-flight\" (a never-claimed schedule must NOT render in-flight):\n%s", out)
+	}
+}
+
+// TestScheduleCreateFormModeFollowsMutating pins the mode the create form
+// sends. A read-leaning schedule must name plan, which the server requires; an
+// empty mode there was refused. A mutating one leaves mode unset so its fires
+// use the server's default session mode rather than an explicit default that
+// asks with no approver on an allow-all server.
+func TestScheduleCreateFormModeFollowsMutating(t *testing.T) {
+	for _, tc := range []struct {
+		toggle   string
+		mutating bool
+		wantMode string
+	}{
+		{toggle: "y", mutating: true, wantMode: ""},
+		{toggle: "n", mutating: false, wantMode: "plan"},
+	} {
+		t.Run("mutating="+tc.toggle, func(t *testing.T) {
+			fs := &fakeScheduleLister{sched: sampleSchedule("s")}
+			m := newScheduleModel(t, newScheduleConv(scheduleCaps()), fs, scheduleCaps())
+			mm, _ := m.openSchedule()
+			m = applyAll(mm.(Model), client.SchedulesMsg{Schedules: nil})
+			press := func(k tea.KeyPressMsg) tea.Cmd {
+				mm, cmd, _ := m.onScheduleKey(k)
+				m = mm.(Model)
+				return cmd
+			}
+			typeText := func(s string) {
+				for _, r := range s {
+					press(tea.KeyPressMsg{Code: r, Text: string(r)})
+				}
+			}
+			tab := tea.KeyPressMsg{Code: tea.KeyTab, Text: "tab"}
+			press(tea.KeyPressMsg{Code: 'c', Text: "c"})
+			typeText("s")
+			press(tab)
+			typeText("run it")
+			press(tab)
+			typeText("0 9 * * *")
+			press(tab)
+			press(tea.KeyPressMsg{Code: rune(tc.toggle[0]), Text: tc.toggle})
+			cmd := press(tea.KeyPressMsg{Code: tea.KeyEnter})
+			if cmd == nil {
+				t.Fatalf("submit returned no command (actionErr=%q)", m.schedule.actionErr)
+			}
+			m = feedCmd(t, m, cmd)
+			got := fs.lastCreateSpec
+			if fs.createCalls != 1 || got.Mutating != tc.mutating || got.Mode != tc.wantMode {
+				t.Fatalf("create sent (mutating %t, mode %q) in %d calls, want (mutating %t, mode %q) once",
+					got.Mutating, got.Mode, fs.createCalls, tc.mutating, tc.wantMode)
+			}
+		})
 	}
 }

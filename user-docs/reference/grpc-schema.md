@@ -4442,7 +4442,7 @@ ScheduleState; the two halves together form a Schedule.
 | `trigger` | `TriggerSpec` |  |  | trigger is the firing trigger (cron XOR one_shot). |
 | `selector` | `ScheduleProviderSelector` |  |  | selector selects the provider+model the fires run on. A zero value means the deployment default. |
 | `profile` | `string` |  |  | profile is the session tool-surface profile (&#34;&#34; default, &#34;no-fs&#34; file-less). |
-| `mode` | `PermissionMode` |  |  | mode is the session permission posture. Reuses the PermissionMode enum from harness.proto (same package — proto allows cross-file refs within a package). |
+| `mode` | `PermissionMode` |  |  | mode is the session permission posture. Reuses the PermissionMode enum from harness.proto (same package — proto allows cross-file refs within a package). A non-mutating schedule must use PLAN. For a mutating schedule, unspecified means each fire uses the server&#39;s configured default session mode at fire time; it reads back as unspecified. Every fire checks the mode against the server&#39;s mode ceiling and fails if the ceiling no longer allows it. |
 | `limits` | `Limits` |  |  | limits are the bounded per-fire budgets. Reuses the Limits message from harness.proto. They are PER-FIRE: each fire gets a fresh session with these limits. |
 | `mutating` | `bool` |  |  | mutating is the explicit write opt-in. The DEFAULT is false (read-leaning), the same conservative default as a subagent. |
 | `max_fires` | `int32` |  |  | max_fires bounds the TOTAL number of fires for a cron schedule (0 = forever). Cron-only: a one-shot fires once by definition and max_fires is ignored. |
