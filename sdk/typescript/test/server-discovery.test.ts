@@ -266,6 +266,7 @@ describe("SDK server discovery", () => {
       PromptFreeControls: "prompt_free_controls",
       ServerInfo: "server_info",
       SessionActivityInventory: "session_activity_inventory",
+      SessionPermissionModes: "session_permission_modes",
       SkillFiles: "skill_files",
       WatchSessionEvents: "watch_session_events",
     });
@@ -880,6 +881,72 @@ describe("SDK server discovery", () => {
     await expect(httpMalformedInfo.server.info()).rejects.toBeInstanceOf(ProtocolError);
   });
 
+  it("projectTrusted stays absent when omitted and exact when present over grpc and http", async () => {
+    for (const projectTrusted of [undefined, true, false]) {
+      const grpcTransport = new DiscoveryTransport();
+      const grpcResponse = {
+        ...validCompatibility,
+        capabilities: { ...completeCapabilities, projectTrusted },
+      };
+      grpcTransport.compatibility.push(
+        async () => grpcResponse,
+        async () => grpcResponse,
+      );
+      const http = connect({
+        baseUrl: "http://mecatl.test",
+        fetch: async () =>
+          Response.json({
+            api_major: 1,
+            capabilities: {
+              ...completeCapabilities,
+              ...(projectTrusted === undefined ? {} : { project_trusted: projectTrusted }),
+            },
+            features: ["server_info"],
+          }),
+      });
+      for (const client of [connect({ transport: grpcTransport }), http]) {
+        const { capabilities } = await client.server.compatibility();
+        expect(capabilities.projectTrusted).toBe(projectTrusted);
+        expect(Object.hasOwn(capabilities, "projectTrusted")).toBe(projectTrusted !== undefined);
+      }
+    }
+  });
+
+  it("subagentAskReviewer stays absent when omitted and exact when present over grpc and http", async () => {
+    for (const subagentAskReviewer of [undefined, "on", "off", "inert"]) {
+      const grpcTransport = new DiscoveryTransport();
+      const grpcResponse = {
+        ...validCompatibility,
+        capabilities: { ...completeCapabilities, subagentAskReviewer },
+      };
+      grpcTransport.compatibility.push(
+        async () => grpcResponse,
+        async () => grpcResponse,
+      );
+      const http = connect({
+        baseUrl: "http://mecatl.test",
+        fetch: async () =>
+          Response.json({
+            api_major: 1,
+            capabilities: {
+              ...completeCapabilities,
+              ...(subagentAskReviewer === undefined
+                ? {}
+                : { subagent_ask_reviewer: subagentAskReviewer }),
+            },
+            features: ["server_info"],
+          }),
+      });
+      for (const client of [connect({ transport: grpcTransport }), http]) {
+        const { capabilities } = await client.server.compatibility();
+        expect(capabilities.subagentAskReviewer).toBe(subagentAskReviewer);
+        expect(Object.hasOwn(capabilities, "subagentAskReviewer")).toBe(
+          subagentAskReviewer !== undefined,
+        );
+      }
+    }
+  });
+
   it("server discovery exports and api reports stay complete", () => {
     const typeProof: [Server, ServerCompatibility, ServerInfo, ServerInfoOptions] | undefined =
       undefined;
@@ -926,6 +993,7 @@ describe("SDK server discovery", () => {
         'readonly PromptFreeControls: "prompt_free_controls";',
         'readonly ServerInfo: "server_info";',
         'readonly SessionActivityInventory: "session_activity_inventory";',
+        'readonly SessionPermissionModes: "session_permission_modes";',
         'readonly SkillFiles: "skill_files";',
         'readonly WatchSessionEvents: "watch_session_events";',
       ]);

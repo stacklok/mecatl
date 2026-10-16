@@ -216,7 +216,15 @@ func resolvePosture(cfg Config, ceiling Posture) Posture {
 // at call time). DefaultSessionMode and MaxAllowedMode are set by foldPermissionMode
 // (for explicit token/posture flags) or by the backward-compat fallback in Build()
 // (for the deprecated --yolo alias path).
+//
+// A posture written by a --permission-mode token or the permissionMode: key
+// derives NO trust: workspace trust is a separate decision taken only from
+// explicit or remembered trust sources (--trust-project, trustedWorkspaces,
+// a remembered grant). Only the deprecated posture surface keeps the floor.
 func applyPosture(cfg Config) Config {
+	if cfg.permissionModeName != "" {
+		return cfg
+	}
 	switch cfg.Posture {
 	case PostureYolo:
 		// TrustProject floor: INTERACTIVE-only. On a HEADLESS root the ladder does

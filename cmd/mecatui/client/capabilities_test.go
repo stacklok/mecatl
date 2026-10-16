@@ -79,6 +79,11 @@ func TestCapabilitiesFrom(t *testing.T) {
 			want: Capabilities{ManualCompaction: true},
 		},
 		{
+			name: "subagent_ask_reviewer maps independently",
+			in:   &mecatlv1.ServerCapabilities{SubagentAskReviewer: new("inert")},
+			want: Capabilities{SubagentAskReviewer: "inert"},
+		},
+		{
 			name: "model_selection maps independently",
 			in:   &mecatlv1.ServerCapabilities{ModelSelection: true},
 			want: Capabilities{ModelSelection: true},

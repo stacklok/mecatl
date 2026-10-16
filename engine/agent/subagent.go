@@ -80,6 +80,10 @@ type observableTool interface {
 // adapter/server/proto type crosses. A tool that does not implement childCapableTool
 // (or a nil caps) gets the legacy headless auto-deny posture, unchanged.
 type parentCaps struct {
+	// parentMode is the parent session's permission mode at dispatch. A child of
+	// an auto or yolo parent inherits that mode (effectiveChildMode) so the
+	// parent's mode-driven authority carries to its delegates.
+	parentMode session.PermissionMode
 	// reviewRoot shares only harness-owned trajectory/reviewer state with workers.
 	// It never carries a parent conversation or model-authored summary.
 	reviewRoot *reviewRoot
@@ -1013,10 +1017,24 @@ func WithChildLimits(l session.Limits) SubagentOption {
 }
 
 // WithChildMode sets the permission mode the child session runs under (default
-// session.ModeDefault). session.ModePlan additionally hides any non-read-only
+// session.ModeDefault, which inherits an auto or yolo parent's mode; see
+// effectiveChildMode). session.ModePlan additionally hides any non-read-only
 // tools from the child at the catalog level.
 func WithChildMode(m session.PermissionMode) SubagentOption {
 	return func(t *SubagentTool) { t.childMode = m }
+}
+
+// effectiveChildMode is the mode a delegated child session runs in. A child
+// configured with the default mode inherits an auto or yolo parent's mode, so
+// the parent's mode-driven authority (allow-all, and in yolo the loosened
+// substitution floor) carries to its delegates; plan, default, and accept-edits
+// parents keep the configured child mode. An explicitly narrower configured
+// mode (for example plan) is never widened.
+func effectiveChildMode(configured, parent session.PermissionMode) session.PermissionMode {
+	if configured == session.ModeDefault && (parent == session.ModeAuto || parent == session.ModeYolo) {
+		return parent
+	}
+	return configured
 }
 
 // WithSubagentStopHook injects the HookRunner that fires the SubagentStop hook
@@ -2261,7 +2279,7 @@ func (t *SubagentTool) resolveEngineAndLimits(callID session.ToolCallID, args su
 // still on disk — because this is the only place that sees the resumed session's
 // PERSISTED workspace before buildChildSession re-homes it. See editsSurvived's
 // doc-comment on the named result below and resumeWritableNote.
-func (t *SubagentTool) prepareChildSession(ctx context.Context, call session.ToolCall, env tool.Environment, args subagentArgs, resuming, writable bool, childID, parentID session.SessionID, parentIncarnation session.IncarnationID, limits session.Limits, forkHistory []session.Message, forkInstructions session.InstructionSnapshot) (child *session.Session, runEnv tool.Environment, cleanup func() error, advisory string, editsSurvived bool, errResult session.ToolResult, ok bool) {
+func (t *SubagentTool) prepareChildSession(ctx context.Context, call session.ToolCall, env tool.Environment, args subagentArgs, resuming, writable bool, childID, parentID session.SessionID, parentIncarnation session.IncarnationID, parentMode session.PermissionMode, limits session.Limits, forkHistory []session.Message, forkInstructions session.InstructionSnapshot) (child *session.Session, runEnv tool.Environment, cleanup func() error, advisory string, editsSurvived bool, errResult session.ToolResult, ok bool) {
 	noop := func() error { return nil }
 	var resumedChild *session.Session
 	priorRef := session.EnvironmentRef{}
@@ -2299,7 +2317,7 @@ func (t *SubagentTool) prepareChildSession(ctx context.Context, call session.Too
 	// otherwise is the exact falsehood resumeWritableNote exists to prevent, inverted.
 	// The path comparison is the honest test and needs no new persisted field.
 	editsSurvived = writable && priorRef.Valid() && priorRef == env.Ref()
-	child, errRes, bok := t.buildChildSession(call.ID, childID, parentID, parentIncarnation, resumedChild, runEnv, limits, forkHistory, forkInstructions)
+	child, errRes, bok := t.buildChildSession(call.ID, childID, parentID, parentIncarnation, parentMode, resumedChild, runEnv, limits, forkHistory, forkInstructions)
 	if !bok {
 		_ = cleanupWS()
 		return nil, tool.Environment{}, noop, "", false, errRes, false
@@ -2580,7 +2598,7 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 	// Resume load + fork + session build (see prepareChildSession). The cleanup is
 	// always non-nil and tears the worktree down after the child fully drains (the
 	// run is drained below in this call), so a deferred cleanup is correct.
-	child, runEnv, cleanupWS, forkAdvisory, editsSurvived, errResult, ok := t.prepareChildSession(ctx, call, env, args, resuming, writable, childID, caps.parentSessionID, caps.parentIncarnation, limits, forkHistory, forkInstructions)
+	child, runEnv, cleanupWS, forkAdvisory, editsSurvived, errResult, ok := t.prepareChildSession(ctx, call, env, args, resuming, writable, childID, caps.parentSessionID, caps.parentIncarnation, caps.parentMode, limits, forkHistory, forkInstructions)
 	if !ok {
 		return errResult, nil
 	}
@@ -2967,7 +2985,7 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 		return
 	}
 	defer func() { _ = cleanupWS() }()
-	child, errResult, ok := t.buildChildSession(b.call.ID, b.childID, b.caps.parentSessionID, b.caps.parentIncarnation, b.resumed, runEnv, b.limits, b.forkHistory, b.forkInstructions)
+	child, errResult, ok := t.buildChildSession(b.call.ID, b.childID, b.caps.parentSessionID, b.caps.parentIncarnation, b.caps.parentMode, b.resumed, runEnv, b.limits, b.forkHistory, b.forkInstructions)
 	if !ok {
 		endOnError(errResult)
 		return
@@ -4186,7 +4204,7 @@ func (t *SubagentTool) forkChildEnvironment(ctx context.Context, callID session.
 // torn down, and without the re-home the re-persisted snapshot would record a dead
 // path. (The child's prompt cwd is independently sourced from the engine's PromptConfig
 // and is NOT affected by this field.)
-func (t *SubagentTool) buildChildSession(callID session.ToolCallID, childID, parentID session.SessionID, parentIncarnation session.IncarnationID, resumedChild *session.Session, env tool.Environment, limits session.Limits, forkHistory []session.Message, forkInstructions session.InstructionSnapshot) (*session.Session, session.ToolResult, bool) {
+func (t *SubagentTool) buildChildSession(callID session.ToolCallID, childID, parentID session.SessionID, parentIncarnation session.IncarnationID, parentMode session.PermissionMode, resumedChild *session.Session, env tool.Environment, limits session.Limits, forkHistory []session.Message, forkInstructions session.InstructionSnapshot) (*session.Session, session.ToolResult, bool) {
 	if resumedChild == nil {
 		// When a named agent def pins limits, the child runs under THOSE; otherwise it uses
 		// the Subagent tool's default limits.
@@ -4195,10 +4213,10 @@ func (t *SubagentTool) buildChildSession(callID session.ToolCallID, childID, par
 		if parentID == "" {
 			// Direct Tool.Execute has no parent aggregate identity. Classify that
 			// custom-host path unknown rather than fabricating lineage or granting main.
-			child = newChildSessionInEnvironment(childID, t.childMode, env, limits, t.childEngine.now())
+			child = newChildSessionInEnvironment(childID, effectiveChildMode(t.childMode, parentMode), env, limits, t.childEngine.now())
 			err = child.RestoreSessionMetadata(session.SessionKindUnknown, session.SessionRelationship{})
 		} else {
-			child, err = newSubagentSessionInEnvironment(childID, t.childMode, env, limits, t.childEngine.now(), parentID, parentIncarnation, callID)
+			child, err = newSubagentSessionInEnvironment(childID, effectiveChildMode(t.childMode, parentMode), env, limits, t.childEngine.now(), parentID, parentIncarnation, callID)
 		}
 		if err != nil {
 			return nil, session.NewToolError(callID,

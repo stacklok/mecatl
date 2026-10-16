@@ -4513,6 +4513,14 @@ readonly storageCleanup: boolean;
 readonly storageHealth: boolean;
 ```
 
+<Heading as="h4" id="api-servercapabilities-subagentaskreviewer-propertysignature"><code>ServerCapabilities.subagentAskReviewer</code></Heading>
+
+Subagent ask reviewer state: `"on"`, `"off"`, or `"inert"`; treat other values as unknown. Absent from older servers.
+
+```ts
+readonly subagentAskReviewer?: string;
+```
+
 <Heading as="h4" id="api-servercapabilities-teams-propertysignature"><code>ServerCapabilities.teams</code></Heading>
 
 ```ts
@@ -7493,6 +7501,7 @@ ServerFeature: {
     readonly PromptFreeControls: "prompt_free_controls";
     readonly ServerInfo: "server_info";
     readonly SessionActivityInventory: "session_activity_inventory";
+    readonly SessionPermissionModes: "session_permission_modes";
     readonly SkillFiles: "skill_files";
     readonly WatchSessionEvents: "watch_session_events";
 }
@@ -7529,6 +7538,8 @@ SessionMode: {
     readonly Default: 1;
     readonly Plan: 2;
     readonly AcceptEdits: 3;
+    readonly Auto: 4;
+    readonly Yolo: 5;
 }
 ```
 

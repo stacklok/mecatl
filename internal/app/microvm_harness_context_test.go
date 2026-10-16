@@ -569,8 +569,8 @@ func TestMicroVMRepositorySelectionDoesNotGrantProjectAdmission(t *testing.T) {
 	daemon := startPlacementTestDaemon(t)
 	cfg := microVMHarnessConfig(t, daemon, "repository")
 	cfg.TrustProject = false
-	cfg.Posture, cfg.PostureFlagSet, cfg.GuardrailsDisabled = PostureAuto, true, true
-	built, err := buildIsolated(t, t.Context(), cfg)
+	cfg.Posture, cfg.PostureFlagSet = PostureAuto, true
+	built, err := buildIsolated(t, t.Context(), withInertEnforcingChecker(cfg))
 	if err != nil {
 		t.Fatal(err)
 	}

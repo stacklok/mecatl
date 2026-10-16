@@ -528,6 +528,10 @@ type Config struct {
 	// workspace, projected into the ServerCapabilities echo as CHROME ONLY. nil
 	// (an unconfigured child service) leaves the echo unset.
 	ProjectTrusted *bool
+	// SubagentAskReviewer is the headless subagent ask reviewer state ("on",
+	// "off", "inert"), projected into the ServerCapabilities echo. nil (an
+	// unconfigured child service) leaves the echo unset.
+	SubagentAskReviewer *string
 	// DeploymentID is an optional, opaque, operator-set label for this deployment,
 	// surfaced on GetServerInfo. It is empty by default and is NEVER derived from
 	// hostname, pod name, or environment: infrastructure topology is not something
@@ -1567,8 +1571,8 @@ func NewService(cfg Config) (*Service, error) {
 		return nil, err
 	}
 	cfg.ServerImplementation = normalizeServerImplementation(cfg.ServerImplementation)
-	if cfg.DefaultMode == "" {
-		cfg.DefaultMode = session.ModeDefault
+	if err := normalizeDefaultMode(&cfg); err != nil {
+		return nil, err
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
@@ -2977,22 +2981,23 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		// matches the client's documented semantics ("true when ≥1 provider is
 		// available"); opening the picker fires ListModels, which runs the refresher
 		// and populates the list, and the empty-list state is handled gracefully.
-		ModelSelection:    len(s.currentModels()) > 0 || s.modelsRefresher.Load() != nil,
-		Memory:            has(memory.RememberToolName),
-		Skills:            has(skills.ToolName),
-		Shell:             has(tool.ShellToolName),
-		Image:             pcaps.Image,
-		Audio:             pcaps.Audio,
-		Posture:           s.cfg.Posture,
-		ProjectTrusted:    s.cfg.ProjectTrusted,
-		Worktrees:         s.placementDiscoveryAvailable(),
-		Reflection:        s.cfg.ReflectSession != nil,
-		LearningProposals: s.cfg.Proposals != nil,
-		LearnedSkills:     s.cfg.LearnedSkills != nil,
-		Scheduling:        s.scheduleStore() != nil,
-		StorageHealth:     s.cfg.StorageManagementAuthorized != nil && (implementsStorageHealth(s.cfg.Store) || s.scheduleStore() != nil),
-		StorageCleanup:    s.cfg.StorageManagementAuthorized != nil && s.maintenanceMutationAvailable() && supportsCleanupDelete(s.cfg.Store),
-		ManualDream:       toProtoDreamCapabilities(s.ManualDreamCapabilities()),
+		ModelSelection:      len(s.currentModels()) > 0 || s.modelsRefresher.Load() != nil,
+		Memory:              has(memory.RememberToolName),
+		Skills:              has(skills.ToolName),
+		Shell:               has(tool.ShellToolName),
+		Image:               pcaps.Image,
+		Audio:               pcaps.Audio,
+		Posture:             s.cfg.Posture,
+		ProjectTrusted:      s.cfg.ProjectTrusted,
+		SubagentAskReviewer: s.cfg.SubagentAskReviewer,
+		Worktrees:           s.placementDiscoveryAvailable(),
+		Reflection:          s.cfg.ReflectSession != nil,
+		LearningProposals:   s.cfg.Proposals != nil,
+		LearnedSkills:       s.cfg.LearnedSkills != nil,
+		Scheduling:          s.scheduleStore() != nil,
+		StorageHealth:       s.cfg.StorageManagementAuthorized != nil && (implementsStorageHealth(s.cfg.Store) || s.scheduleStore() != nil),
+		StorageCleanup:      s.cfg.StorageManagementAuthorized != nil && s.maintenanceMutationAvailable() && supportsCleanupDelete(s.cfg.Store),
+		ManualDream:         toProtoDreamCapabilities(s.ManualDreamCapabilities()),
 		// Steer reads the SAME wired engine knob the runs consult (Deps.EnableSteer
 		// via Engine.SteerEnabled) — the advertisement can never claim a steer
 		// path the engine did not arm, and it is computed HERE, once, never
@@ -4517,9 +4522,9 @@ func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode sessio
 // admitMode is the single admission check for a caller-requested session mode,
 // shared by CreateSession, SetMode, and schedule fires (which create through
 // CreateSession). A mode above the server ceiling is refused, and auto requires
-// an enforcing guardrails checker. The operator-configured DefaultMode is
-// always admissible: the operator chose it at startup (where a missing checker
-// is narrated as a WARN), so a session may start in it and return to it.
+// an enforcing guardrails checker with no exemption: unchecked autonomy is yolo.
+// admitStoredMode applies the same check to a persisted session at every run
+// entry, so a mode admitted under an earlier, looser deployment cannot execute.
 func (s *Service) admitMode(mode session.PermissionMode) error {
 	if modeRank(mode) == 0 {
 		return fmt.Errorf("%w: unknown permission mode %q", ErrInvalidArgument, mode)
@@ -4527,8 +4532,45 @@ func (s *Service) admitMode(mode session.PermissionMode) error {
 	if s.cfg.MaxAllowedMode != "" && !modeWithinCeiling(mode, s.cfg.MaxAllowedMode) {
 		return fmt.Errorf("%w: mode %q exceeds the server ceiling %q; the server must be relaunched with a higher --permission-mode to allow it", ErrInvalidArgument, mode, s.cfg.MaxAllowedMode)
 	}
-	if mode == session.ModeAuto && mode != s.cfg.DefaultMode && !s.hasEnforcingChecker() {
+	if mode == session.ModeAuto && !s.hasEnforcingChecker() {
 		return fmt.Errorf("%w: mode %q requires an enforcing guardrails checker; configure one with --guardrails-model <model> or bind the guardrail model slot, or use yolo for gate-free autonomous operation", ErrInvalidArgument, mode)
+	}
+	return nil
+}
+
+// normalizeDefaultMode defaults an empty DefaultMode to default and refuses
+// an auto default without an enforcing checker: auto has no default-mode
+// exemption.
+func normalizeDefaultMode(cfg *Config) error {
+	if cfg.DefaultMode == "" {
+		cfg.DefaultMode = session.ModeDefault
+	}
+	if cfg.DefaultMode == session.ModeAuto && !cfg.EnforcingCheckerConfigured {
+		return fmt.Errorf("%w: default mode %q requires an enforcing guardrails checker; configure one or use yolo for unchecked autonomous operation", ErrConfig, cfg.DefaultMode)
+	}
+	return nil
+}
+
+// AdmittedModes lists, in plan → yolo order, the permission modes this server
+// admits for a session right now (the ceiling and the auto checker
+// requirement), so a client can offer exactly the modes SetMode will accept.
+func (s *Service) AdmittedModes() []session.PermissionMode {
+	var out []session.PermissionMode
+	for _, mode := range []session.PermissionMode{session.ModePlan, session.ModeDefault, session.ModeAccept, session.ModeAuto, session.ModeYolo} {
+		if s.admitMode(mode) == nil {
+			out = append(out, mode)
+		}
+	}
+	return out
+}
+
+// admitStoredMode re-admits a persisted session's mode against the CURRENT
+// ceiling and checker before execution, approval resume, or successor
+// publication. A refusal leaves the session and its history untouched; the
+// owner can SetMode to an admitted mode and continue.
+func (s *Service) admitStoredMode(sess *session.Session) error {
+	if err := s.admitMode(sess.Mode); err != nil {
+		return fmt.Errorf("%w: session %q is in permission mode %q, which this server does not admit (%v); switch it to an admitted mode with SetMode to continue", ErrFailedPrecondition, sess.ID, sess.Mode, err)
 	}
 	return nil
 }
@@ -8926,6 +8968,11 @@ func (s *Service) cleanupRunAdmission(id session.SessionID, st *runState, promot
 // path so concurrent approvals wait for its resumeMu transaction to promote.
 // The caller holds runEntryMu for id.
 func (s *Service) beginRunAdmission(parent context.Context, id session.SessionID, sess *session.Session, resumeAdmission bool) (*runState, context.Context, error) {
+	// Every run entry (prompt, approval resume, plan continuation, retry) passes
+	// here before any lease, engine, provider, or tool work.
+	if err := s.admitStoredMode(sess); err != nil {
+		return nil, nil, err
+	}
 	operationRelease := func() {}
 	if s.cfg.OperationPin != nil {
 		var err error

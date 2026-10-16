@@ -265,8 +265,8 @@ func (a *Agent) handleInitialize(params json.RawMessage) (any, error) {
 // Client-provided streaming-HTTP MCP servers are validated and mounted PER-SESSION (so
 // their tools and auth never leak into other sessions). A stdio (command-shaped)
 // entry and an sse entry are hard-rejected (CLAUDE.md: no stdio MCP, ever; mecatl
-// never spawns a server process). The session mode is always default this phase;
-// the available modes are reflected so the editor can show them.
+// never spawns a server process). The session starts in the server's default
+// mode; the admitted modes are reflected so the editor can show them.
 func (a *Agent) handleSessionNew(ctx context.Context, params json.RawMessage) (any, error) {
 	var req newSessionRequest
 	if err := json.Unmarshal(params, &req); err != nil {
@@ -293,7 +293,9 @@ func (a *Agent) handleSessionNew(ctx context.Context, params json.RawMessage) (a
 			return tool.NewEnvironment(base.Ref(), ws, base.ReadLedger(), nil)
 		}
 	}
-	sess, err := a.svc.CreateACPSession(ctx, req.Cwd, session.ModeDefault, session.Limits{}, specs, overlay)
+	// An empty mode applies the server's configured default mode, exactly as an
+	// unspecified CreateSession does on gRPC and HTTP.
+	sess, err := a.svc.CreateACPSession(ctx, req.Cwd, "", session.Limits{}, specs, overlay)
 	if err != nil {
 		return nil, newMethodErr(codeInvalidParams, "acp: session/new: "+err.Error())
 	}
@@ -308,22 +310,30 @@ func (a *Agent) handleSessionNew(ctx context.Context, params json.RawMessage) (a
 
 	return newSessionResponse{
 		SessionID: string(sess.ID),
-		Modes:     modeStateFor(sess.Mode),
+		Modes:     a.modeStateFor(sess.Mode),
 	}, nil
 }
 
-// modeStateFor builds the ACP sessionModeState advertising mecatl's three
-// permission modes with current as the session's CURRENT mode. It is shared by
-// session/new and session/load so both seed the editor's mode picker identically.
-func modeStateFor(current session.PermissionMode) *sessionModeState {
-	return &sessionModeState{
-		CurrentModeID: string(current),
-		AvailableModes: []sessionMode{
-			{ID: string(session.ModeDefault), Name: "Default", Description: "Standard deny/ask/allow permissions"},
-			{ID: string(session.ModePlan), Name: "Plan", Description: "Read-only planning (no mutations)"},
-			{ID: string(session.ModeAccept), Name: "Accept Edits", Description: "Auto-accept edits"},
-		},
+// acpModes names and describes every mecatl permission mode an editor may be
+// offered, in plan → yolo order.
+var acpModes = map[session.PermissionMode]sessionMode{
+	session.ModePlan:    {ID: string(session.ModePlan), Name: "Plan", Description: "Read-only planning (no mutations)"},
+	session.ModeDefault: {ID: string(session.ModeDefault), Name: "Default", Description: "Standard deny/ask/allow permissions"},
+	session.ModeAccept:  {ID: string(session.ModeAccept), Name: "Accept Edits", Description: "Auto-accept edits"},
+	session.ModeAuto:    {ID: string(session.ModeAuto), Name: "Auto", Description: "Run tools without asking, with an enforcing guardrails checker"},
+	session.ModeYolo:    {ID: string(session.ModeYolo), Name: "YOLO", Description: "Run tools without asking and without a preventive checker"},
+}
+
+// modeStateFor builds the ACP sessionModeState with current as the session's
+// CURRENT mode, advertising only the modes the server admits now (its ceiling
+// and the auto checker requirement), so the editor's picker never offers a
+// mode session/set_mode would refuse. Shared by session/new and session/load.
+func (a *Agent) modeStateFor(current session.PermissionMode) *sessionModeState {
+	state := &sessionModeState{CurrentModeID: string(current)}
+	for _, mode := range a.svc.AdmittedModes() {
+		state.AvailableModes = append(state.AvailableModes, acpModes[mode])
 	}
+	return state
 }
 
 // notifyAvailableCommands lists the slash commands for the workspace via the
@@ -419,7 +429,7 @@ func (a *Agent) handleSessionLoad(ctx context.Context, params json.RawMessage) (
 	// Rebuild the editor's transcript from the persisted history BEFORE returning,
 	// so a re-attaching editor sees the prior turns rather than an empty session.
 	a.replayHistory(ctx, req.SessionID, sess.Conversation)
-	return loadSessionResponse{Modes: modeStateFor(sess.Mode)}, nil
+	return loadSessionResponse{Modes: a.modeStateFor(sess.Mode)}, nil
 }
 
 // handleSetMode applies a session/set_mode by mapping the ACP modeId to a mecatl
@@ -467,6 +477,10 @@ func modeFromACP(modeID string) (session.PermissionMode, bool) {
 		return session.ModePlan, true
 	case session.ModeAccept:
 		return session.ModeAccept, true
+	case session.ModeAuto:
+		return session.ModeAuto, true
+	case session.ModeYolo:
+		return session.ModeYolo, true
 	default:
 		return "", false
 	}

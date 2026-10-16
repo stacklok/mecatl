@@ -398,7 +398,7 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	fs.StringVar(&cfg.workspace, "workspace", "", "embedded server only: absolute deployment workspace root (default: cwd); not accepted by connect")
 	registerMicroVMDevelopmentFlags(fs, &cfg.microVMDevRelease, &cfg.microVMDevAcknowledge)
 	fs.StringVar(&cfg.mode, "mode", "default", "deprecated, use --permission-mode: start sessions in permission mode: default, plan, or accept-edits")
-	fs.StringVar(&cfg.permissionMode, "permission-mode", "", "set the permission mode: "+strings.Join(app.PermissionModeNames(), ", ")+"; the posture half is process-wide for the embedded server, the session half is only the default for new sessions")
+	fs.StringVar(&cfg.permissionMode, "permission-mode", "", "set the permission mode: "+strings.Join(app.PermissionModeNames(), ", ")+"; sets the mode new sessions start in and, for the embedded server, the most permissive mode a session may switch to. It never grants project trust; use --trust-project")
 	fs.Func("debug-mcp", "attach configured streaming-HTTP MCP server NAME to debug sessions (repeatable)", func(value string) error {
 		cfg.debugMCP = append(cfg.debugMCP, value)
 		return nil

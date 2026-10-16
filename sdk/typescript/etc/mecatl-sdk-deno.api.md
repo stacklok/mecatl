@@ -1338,6 +1338,7 @@ export interface ServerCapabilities {
     readonly storageCleanup: boolean;
     // (undocumented)
     readonly storageHealth: boolean;
+    readonly subagentAskReviewer?: string;
     // (undocumented)
     readonly teams: boolean;
     // (undocumented)
@@ -1377,6 +1378,7 @@ export const ServerFeature: {
     readonly PromptFreeControls: "prompt_free_controls";
     readonly ServerInfo: "server_info";
     readonly SessionActivityInventory: "session_activity_inventory";
+    readonly SessionPermissionModes: "session_permission_modes";
     readonly SkillFiles: "skill_files";
     readonly WatchSessionEvents: "watch_session_events";
 };
@@ -1502,6 +1504,8 @@ export const SessionMode: {
     readonly Default: 1;
     readonly Plan: 2;
     readonly AcceptEdits: 3;
+    readonly Auto: 4;
+    readonly Yolo: 5;
 };
 
 // @public

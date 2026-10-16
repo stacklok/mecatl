@@ -869,6 +869,13 @@ message ServerCapabilities {
   // the permission mode. CHROME ONLY. Additive: an older server leaves it
   // unset and the client shows no trust indicator.
   optional bool project_trusted = 32;
+  // subagent_ask_reviewer reports the subagent ask reviewer, a model that may
+  // approve a subagent's, team member's, or parallel branch's permission
+  // request that no human can answer: "on" (enabled), "off" (not enabled), or
+  // "inert" (configured, but an interactive approver answers instead). Clients
+  // treat other values as unknown. CHROME ONLY. Additive: an older server
+  // leaves it unset and the client shows nothing.
+  optional string subagent_ask_reviewer = 33;
 }
 
 // ListSessionMcpConnectorsRequest names an owned, broker-bound session.

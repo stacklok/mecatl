@@ -126,12 +126,14 @@ inputs:
     default: ${{ github.workspace }}
   permission-mode:
     description: >-
-      Permission mode → --permission-mode: one of plan, default, accept-edits,
-      trusted, trusted-accept-edits, auto, yolo. Empty (the input default) resolves to
-      "auto", the documented CI mode (allow-all, child injection-defence ON), unless the
-      deprecated `posture` input is set. "default" would CANCEL the run on the first
-      mutate because a headless run has no approver. auto and yolo need a checker choice;
-      see `guardrails-model`. Setting both this and `posture` fails the step.
+      Permission mode → --permission-mode: one of plan, default, accept-edits, auto,
+      yolo. Empty (the input default) resolves to "auto", the documented CI mode
+      (allow-all, child injection-defence ON), unless the deprecated `posture` input is
+      set. auto refuses to start without an ENFORCING guardrails checker, inherited from
+      operator settings or named with `guardrails-model`. yolo is the explicit choice to
+      run allow-all with no checker. "default" would CANCEL the run on the first mutate
+      because a headless run has no approver. Setting both this and `posture` fails the
+      step.
     required: false
     default: ""
   posture:
@@ -196,12 +198,13 @@ inputs:
   guardrails-model:
     description: >-
       GUARDRAILS (issue #27) checker model id / alias inspecting outbound args + inbound
-      results → --guardrails-model. mecatequi refuses an allow-all permission mode (auto,
-      yolo) with no checker unless the opt-out is explicit, so this action always declares
-      the choice: a non-empty value passes --guardrails-model; empty (default) passes
-      --guardrails off, a DELIBERATE choice to run unsupervised with nothing inspecting
-      tool content. The kill-switch also disables a guardrail model slot from settings,
-      so name the checker here if you want one.
+      results. Empty (default) passes no guardrails flag, so the binary uses the checker
+      configured in operator settings (a `guardrails:` model or the `guardrail` model
+      slot), if any. The literal "off" passes --guardrails off, the kill-switch, which
+      also disables a checker configured in settings. Any other value passes
+      --guardrails-model <value>. The auto permission mode refuses to start without an
+      enforcing checker, so pair "off" or an unconfigured empty value with
+      `permission-mode: yolo`.
     required: false
     default: ""
   subagent-ask-reviewer:
@@ -458,12 +461,12 @@ runs:
         [ -n "${MQ_DEFAULT_MODEL}" ] && args+=( --default-model "${MQ_DEFAULT_MODEL}" )
         [ "${openai_on}" = "true" ] && args+=( --openai )
         [ -n "${MQ_OPENAI_BASE_URL}" ] && args+=( --openai-base-url "${MQ_OPENAI_BASE_URL}" )
-        # Checker choice is ALWAYS declared: a named checker, or the explicit unsupervised
-        # kill-switch (an allow-all mode with neither is refused at startup).
-        if [ -n "${MQ_GUARDRAILS_MODEL}" ]; then
-          args+=( --guardrails-model "${MQ_GUARDRAILS_MODEL}" )
-        else
+        # Checker choice: empty inherits the operator-settings checker (no flag), "off"
+        # is the explicit kill-switch, anything else names the checker model.
+        if [ "${MQ_GUARDRAILS_MODEL}" = "off" ]; then
           args+=( --guardrails off )
+        elif [ -n "${MQ_GUARDRAILS_MODEL}" ]; then
+          args+=( --guardrails-model "${MQ_GUARDRAILS_MODEL}" )
         fi
         [ -n "${MQ_ASK_REVIEWER}" ] && args+=( --subagent-ask-reviewer "${MQ_ASK_REVIEWER}" )
         [ -n "${MQ_ASK_REVIEWER_MAX_DENIES}" ] && args+=( --subagent-ask-reviewer-max-denies "${MQ_ASK_REVIEWER_MAX_DENIES}" )

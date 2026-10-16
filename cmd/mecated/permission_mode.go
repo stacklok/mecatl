@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/stacklok/mecatl/engine/port"
-	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/app"
 )
 
@@ -14,10 +13,9 @@ import (
 // both halves a token sets and their lifetimes, and lists every valid token from
 // the composition table so help and parsing cannot drift.
 var permissionModeHelp = "permission mode, one of: " + strings.Join(app.PermissionModeNames(), ", ") +
-	". Sets two things: the process-wide posture, fixed at startup (strict for plan, default, and accept-edits; auto; yolo), " +
-	"and the session mode new sessions start in, which each session may change. Default: default. " +
-	"auto and yolo allow tools without asking, so they need a guardrails checker (--guardrails-model) or an explicit --guardrails off, and are refused for root unless MECATL_SANDBOX=1 or IS_SANDBOX=1. " +
-	"Deny rules and configured ask rules still apply. Replaces the deprecated --posture and --yolo; --trust-project still combines with it."
+	". Sets two things: the mode new sessions start in, and the process-wide server ceiling, fixed at startup, which is the most permissive mode a session may switch to (accept-edits for plan, default, and accept-edits). Default: default. " +
+	"auto and yolo allow tools without asking. auto needs an enforcing guardrails checker (--guardrails-model or the guardrail model slot) and refuses to start without one; yolo runs without one. Both are refused for root unless MECATL_SANDBOX=1 or IS_SANDBOX=1. " +
+	"Deny rules and configured ask rules still apply. A mode never grants project trust; use --trust-project. Replaces the deprecated --posture and --yolo."
 
 // validatePermissionModeFlags fails fast on an unknown --permission-mode token
 // and on a --permission-mode combined with one of its deprecated aliases, so the
@@ -48,25 +46,11 @@ func warnDeprecatedPermissionFlags(diag port.Diagnostics, cfg config) {
 	if cfg.postureFlagSet {
 		diag.Log(context.Background(), port.LevelWarn,
 			"--posture is DEPRECATED; use --permission-mode instead",
-			"posture", cfg.posture, "replacement", "--permission-mode "+postureReplacementToken(cfg.posture))
+			"posture", cfg.posture, "replacement", "--permission-mode "+app.PostureReplacementToken(app.ParsePosture(cfg.posture)))
 	}
 	if cfg.yoloFlagSet {
 		diag.Log(context.Background(), port.LevelWarn,
 			"--yolo is DEPRECATED; use --permission-mode yolo instead",
 			"replacement", "--permission-mode yolo")
 	}
-}
-
-// postureReplacementToken names the token that replaces a legacy --posture value.
-// auto and yolo are their own tokens; the strict-posture tiers map to "default".
-func postureReplacementToken(raw string) string {
-	p := app.ParsePosture(raw)
-	switch p {
-	case app.PostureAuto, app.PostureYolo:
-		return p.String() // "auto" or "yolo", matching the token name
-	}
-	if tok, ok := app.PermissionModeForPair(p, session.ModeDefault); ok {
-		return tok.Name
-	}
-	return "default"
 }

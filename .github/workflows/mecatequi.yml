@@ -221,9 +221,10 @@ jobs:
         with:
           prompt-file: ${{ steps.prompt.outputs.prompt-file }}
           untrusted: "true"
-          permission-mode: "auto"
-          # No guardrails-model: the action passes --guardrails off, a deliberate
-          # unsupervised choice for this private, split-privilege CI run.
+          # yolo: a deliberate unchecked choice for this private, split-privilege CI
+          # run. auto would refuse to start because no guardrails checker is configured.
+          permission-mode: "yolo"
+          guardrails-model: "off"
           # Use `model` (per-session passthrough), NOT `default-model`: a deployment
           # default is validated against the embedded models.dev catalog at startup, and
           # claude-sonnet-4.6 is newer than that snapshot (it would fail "not catalogued").

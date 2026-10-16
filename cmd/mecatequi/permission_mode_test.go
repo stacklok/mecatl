@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -15,6 +17,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 	"github.com/stacklok/mecatl/internal/app"
 )
@@ -119,7 +122,8 @@ func runActionScript(t *testing.T, action actionFile, with map[string]string) ([
 	step := action.Runs.Steps[idx]
 	dir := t.TempDir()
 	argsOut := filepath.Join(dir, "argv")
-	fake := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$ARGS_OUT\"\n"
+	// NUL-separated, so a multi-line value (the default instructions) stays one arg.
+	fake := "#!/bin/sh\nprintf '%s\\0' \"$@\" > \"$ARGS_OUT\"\n"
 	if err := os.WriteFile(filepath.Join(dir, "mecatequi"), []byte(fake), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +174,7 @@ func runActionScript(t *testing.T, action actionFile, with map[string]string) ([
 	if rerr != nil {
 		t.Fatalf("fake mecatequi was not invoked: %v\n%s", rerr, out)
 	}
-	return strings.Split(strings.TrimRight(string(raw), "\n"), "\n"), string(out), nil
+	return strings.Split(strings.TrimSuffix(string(raw), "\x00"), "\x00"), string(out), nil
 }
 
 // hasPair reports whether argv carries flag immediately followed by value.
@@ -183,12 +187,14 @@ func hasPair(argv []string, flag, value string) bool {
 	return false
 }
 
-// TestShippedAllowAllDefaultsDeclareCheckerChoice pins the checker declaration
-// for the composite action and this repo's live workflow: whenever they run an
-// allow-all mode they pass a checker model or the explicit --guardrails off, so
-// the startup refusal never fires on a shipped default. It executes the action's
-// real bash body against a fake binary rather than grepping it.
-func TestShippedAllowAllDefaultsDeclareCheckerChoice(t *testing.T) {
+// hasGuardrailsFlag reports whether argv carries any guardrails checker flag.
+func hasGuardrailsFlag(argv []string) bool {
+	return slices.ContainsFunc(argv, func(a string) bool { return strings.HasPrefix(a, "--guardrails") })
+}
+
+// loadAction parses the composite action, skipping when bash is unavailable.
+func loadAction(t *testing.T) actionFile {
+	t.Helper()
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash is required to execute the composite action body")
 	}
@@ -200,14 +206,109 @@ func TestShippedAllowAllDefaultsDeclareCheckerChoice(t *testing.T) {
 	if err := yaml.Unmarshal(raw, &action); err != nil {
 		t.Fatalf("parse action.yml: %v", err)
 	}
+	return action
+}
 
-	t.Run("action defaults", func(t *testing.T) {
+// buildFromActionArgv runs the action body with the given inputs against a fake
+// binary, then feeds the argv it produced (plus extra flags, for example a
+// mounted operator settings file) through the real CLI composition with the
+// mock provider. The workspace input is pointed at a hermetic git repo.
+func buildFromActionArgv(t *testing.T, action actionFile, with map[string]string, extra ...string) (*app.Built, error) {
+	t.Helper()
+	repo := t.TempDir()
+	initTestRepo(t, repo)
+	inputs := map[string]string{"workspace": repo}
+	for k, v := range with {
+		inputs[k] = v
+	}
+	argv, out, err := runActionScript(t, action, inputs)
+	if err != nil {
+		t.Fatalf("action body failed: %v\n%s", err, out)
+	}
+	f, err := parseFlags(append(argv, extra...))
+	if err != nil {
+		t.Fatalf("parseFlags(%q): %v", argv, err)
+	}
+	cfg := appConfig(f, port.NopDiagnostics{}, observability{})
+	cfg.UseMock, cfg.NoSoul = true, true
+	return buildIsolated(t, context.Background(), cfg)
+}
+
+// TestOmittedGuardrailsInputInheritsSettingsChecker covers the default action
+// input (no guardrails flag) composed with operator settings: a checker
+// configured there lets auto start enforcing, and with none auto refuses.
+func TestOmittedGuardrailsInputInheritsSettingsChecker(t *testing.T) {
+	action := loadAction(t)
+	for name, settings := range map[string]string{
+		"guardrails model": "guardrails:\n  model: mock-checker\n",
+		"guardrail slot":   "models:\n  slots:\n    guardrail: mock-checker\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "settings.yaml")
+			if err := os.WriteFile(path, []byte(settings), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			built, err := buildFromActionArgv(t, action, nil, "--permission-config", path)
+			if err != nil {
+				t.Fatalf("auto with an inherited %s checker must start: %v", name, err)
+			}
+			defer built.Close()
+			ctx := context.Background()
+			outcome, err := run(ctx, built.Service, session.Limits{}, "summarise the repo", io.Discard)
+			if err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			sess, err := built.Service.GetSession(ctx, session.SessionID(outcome.Summary.SessionID))
+			if err != nil {
+				t.Fatalf("GetSession: %v", err)
+			}
+			if sess.Mode != session.ModeAuto {
+				t.Fatalf("session mode = %q, want auto", sess.Mode)
+			}
+		})
+	}
+	t.Run("no inherited checker refuses", func(t *testing.T) {
+		built, err := buildFromActionArgv(t, action, nil)
+		if err == nil {
+			built.Close()
+			t.Fatal("auto with no inherited checker must refuse to start")
+		}
+		if !strings.Contains(err.Error(), "requires an enforcing guardrails checker") {
+			t.Fatalf("refusal = %v, want the enforcing-checker error", err)
+		}
+	})
+	t.Run("explicit off overrides the settings checker", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "settings.yaml")
+		if err := os.WriteFile(path, []byte("guardrails:\n  model: mock-checker\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		built, err := buildFromActionArgv(t, action, map[string]string{"guardrails-model": "off"}, "--permission-config", path)
+		if err == nil {
+			built.Close()
+			t.Fatal("auto with the explicit kill-switch must refuse to start")
+		}
+		if !strings.Contains(err.Error(), "requires an enforcing guardrails checker") {
+			t.Fatalf("refusal = %v, want the enforcing-checker error", err)
+		}
+	})
+}
+
+// TestShippedAllowAllDefaultsDeclareCheckerChoice pins the tri-state checker
+// input of the composite action and this repo's live workflow: an empty
+// guardrails-model passes no flag (the binary inherits the settings checker),
+// "off" passes the kill-switch, and any other value names the checker. It
+// executes the action's real bash body against a fake binary rather than
+// grepping it.
+func TestShippedAllowAllDefaultsDeclareCheckerChoice(t *testing.T) {
+	action := loadAction(t)
+
+	t.Run("action defaults inherit the checker", func(t *testing.T) {
 		argv, out, err := runActionScript(t, action, nil)
 		if err != nil {
 			t.Fatalf("action body failed: %v\n%s", err, out)
 		}
-		if !hasPair(argv, "--permission-mode", "auto") || !hasPair(argv, "--guardrails", "off") || slices.Contains(argv, "--posture") {
-			t.Fatalf("default action argv = %q, want --permission-mode auto with --guardrails off and no --posture", argv)
+		if !hasPair(argv, "--permission-mode", "auto") || hasGuardrailsFlag(argv) || slices.Contains(argv, "--posture") {
+			t.Fatalf("default action argv = %q, want --permission-mode auto with no guardrails flag and no --posture", argv)
 		}
 	})
 	t.Run("checker model", func(t *testing.T) {
@@ -219,13 +320,22 @@ func TestShippedAllowAllDefaultsDeclareCheckerChoice(t *testing.T) {
 			t.Fatalf("argv = %q, want --guardrails-model checker-model and no kill-switch", argv)
 		}
 	})
+	t.Run("explicit off", func(t *testing.T) {
+		argv, out, err := runActionScript(t, action, map[string]string{"guardrails-model": "off"})
+		if err != nil {
+			t.Fatalf("action body failed: %v\n%s", err, out)
+		}
+		if !hasPair(argv, "--guardrails", "off") || slices.Contains(argv, "--guardrails-model") {
+			t.Fatalf("argv = %q, want --guardrails off and no --guardrails-model", argv)
+		}
+	})
 	t.Run("deprecated posture input", func(t *testing.T) {
 		argv, out, err := runActionScript(t, action, map[string]string{"posture": "auto"})
 		if err != nil {
 			t.Fatalf("action body failed: %v\n%s", err, out)
 		}
-		if !hasPair(argv, "--posture", "auto") || slices.Contains(argv, "--permission-mode") || !hasPair(argv, "--guardrails", "off") {
-			t.Fatalf("argv = %q, want the deprecated --posture auto alone with --guardrails off", argv)
+		if !hasPair(argv, "--posture", "auto") || slices.Contains(argv, "--permission-mode") || hasGuardrailsFlag(argv) {
+			t.Fatalf("argv = %q, want the deprecated --posture auto alone with no guardrails flag", argv)
 		}
 		if !strings.Contains(out, "::warning::") || !strings.Contains(out, "permission-mode") {
 			t.Fatalf("deprecated posture input did not warn naming permission-mode: %s", out)
@@ -263,15 +373,12 @@ func TestShippedAllowAllDefaultsDeclareCheckerChoice(t *testing.T) {
 						with[k] = fmt.Sprint(v)
 					}
 				}
-				argv, out, err := runActionScript(t, action, with)
-				if err != nil {
-					t.Fatalf("workflow inputs failed the action body: %v\n%s", err, out)
-				}
-				if !hasPair(argv, "--permission-mode", "auto") {
-					t.Fatalf("workflow argv = %q, want --permission-mode auto", argv)
-				}
-				if !hasPair(argv, "--guardrails", "off") && !slices.Contains(argv, "--guardrails-model") {
-					t.Fatalf("workflow runs allow-all without a checker choice: %q", argv)
+				// The live workflow mounts no operator settings, so its argv alone must
+				// start: the real composition, not a flag-shape check, decides.
+				if built, err := buildFromActionArgv(t, action, with); err != nil {
+					t.Fatalf("workflow inputs do not start mecatequi: %v", err)
+				} else {
+					built.Close()
 				}
 			}
 		}

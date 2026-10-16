@@ -319,9 +319,7 @@ type PermissionModeEntry struct {
 // cannot import the composition layer, so this is a display copy; a test in the
 // mecatui main package pins it to app.ParsePermissionMode so the two never drift.
 func PermissionModeVocabulary() []PermissionModeEntry {
-	// 5-token vocabulary (trusted and trusted-accept-edits removed; auto and yolo
-	// now have their own session modes ModeAuto/ModeYolo, which the proto wire and
-	// TUI render as "default" via ModeString(ModeFromString(...))).
+	// auto and yolo each have their own session mode on the wire.
 	return []PermissionModeEntry{
 		{Name: "plan", Posture: postureStrict, SessionMode: "plan"},
 		{Name: "default", Posture: postureStrict, SessionMode: client.ModeDefaultString},
@@ -346,9 +344,9 @@ func writeHelpPermissionModes(b *strings.Builder, th theme.Theme, hk helpKeys, e
 	writeHelpBodyLines(b, th,
 		"The posture half applies to the whole server and is fixed when it starts.",
 		"The session half is only the default for new sessions.",
-		hk.modeSwitch+" cycles every mode. A mode that raises the posture needs a restart, and auto or yolo a guardrails checker;",
-		"cycling marks it blocked and holds prompts until you press "+hk.cancel+" to return or move on.",
-		"A mode below the posture applies its session half; the posture stays.",
+		hk.modeSwitch+" cycles every mode. A mode that raises the posture needs a restart, and auto also an enforcing guardrails checker;",
+		"cycling onto one keeps the current mode and your draft, and the footer says what makes it available.",
+		"A mode at or below the posture applies its session half live.",
 	)
 	if embedded {
 		writeHelpBodyLines(b, th,

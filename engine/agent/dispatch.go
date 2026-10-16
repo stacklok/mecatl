@@ -2140,6 +2140,7 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int, reporter
 		// parentCaps.parentSessionID.
 		caps.parentSessionID = sess.ID
 		caps.parentIncarnation = sess.Incarnation()
+		caps.parentMode = sess.Mode
 	}
 	// The OPT-IN headless ask reviewer: bind the engine's reviewer + THIS run's
 	// breaker + the timeout into a closure resolveChildAsk consults on the headless

@@ -11,14 +11,12 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 )
 
-// permission_mode.go is the COMPOSITION-LAYER named permission-mode vocabulary
-//. A token is an operator shorthand that writes an exact pair of
-// EXISTING values: the process-wide Posture and the default session
-// PermissionMode (server.Config.DefaultMode). It introduces no third source of
-// permission state: the table below is the whole mechanism, and it is a lookup,
-// not an ordering. Permission relaxation and project trust are independent axes,
-// so no total order over the tokens exists and none may be inferred from their
-// position in the table.
+// permission_mode.go is the COMPOSITION-LAYER named permission-mode vocabulary.
+// A token is an operator shorthand that writes EXISTING values: the
+// process-wide Posture, the default session PermissionMode
+// (server.Config.DefaultMode), and the server ceiling (MaxAllowedMode). The
+// table below is the whole mechanism. A token never grants project trust: that
+// is a separate decision (--trust-project, trustedWorkspaces, remembered trust).
 
 // PermissionModeToken is one named combination of server ceiling and default
 // session mode.
@@ -136,6 +134,19 @@ func foldPermissionMode(cfg Config) (Config, error) {
 	return cfg, nil
 }
 
+// PostureReplacementToken names the --permission-mode token that replaces a
+// deprecated posture value, so every root's deprecation warning names the same
+// replacement. trusted maps to default: its trust half is now --trust-project.
+func PostureReplacementToken(p Posture) string {
+	mode, _ := postureToSessionModes(p)
+	for _, tok := range permissionModeTable {
+		if tok.SessionMode == mode {
+			return tok.Name
+		}
+	}
+	return string(session.ModeDefault)
+}
+
 // postureToSessionModes maps a Posture to (DefaultSessionMode, MaxAllowedMode)
 // for the deprecated --posture flag path, maintaining backward compat.
 func postureToSessionModes(p Posture) (session.PermissionMode, session.PermissionMode) {
@@ -149,20 +160,25 @@ func postureToSessionModes(p Posture) (session.PermissionMode, session.Permissio
 	}
 }
 
-// checkerRefusal WARNs (no longer refuses) when an allow-all mode is configured
-// but no guardrails checker is set. In the new architecture the checker
-// requirement is enforced at SetMode time (entering ModeAuto requires a checker);
-// the startup check is advisory so the operator sees the misconfiguration early.
-func checkerRefusal(cfg Config, checkerConfigured bool) {
-	if cfg.Posture < PostureAuto || checkerConfigured || cfg.GuardrailsDisabled {
-		return
+// checkerRefusal refuses a deployment whose DEFAULT session mode is auto
+// without an enforcing checker (missing, --guardrails off, or advisory-only):
+// auto's defining guarantee has no default-mode exemption, and unchecked
+// autonomy must be chosen explicitly as yolo. A yolo deployment without a
+// checker only WARNs that its sessions cannot enter auto.
+func checkerRefusal(cfg Config, checkerConfigured bool) error {
+	if cfg.DefaultSessionMode == session.ModeAuto && !autoCheckerEnforcing(cfg, checkerConfigured) {
+		state, reason := checkerState(cfg, checkerConfigured)
+		if state == checkerEnforcing {
+			state, reason = checkerAdvisory, "configured advisory"
+		}
+		return fmt.Errorf("permission mode %q requires an enforcing guardrails checker, but the checker is %s (%s). Fix it by setting a checker with --guardrails-model <model> or binding the guardrail model slot (in enforcing mode), or choose yolo for autonomous operation without a preventive checker",
+			cfg.resolvedPermissionModeName(), state, reason)
 	}
-	msg := fmt.Sprintf("permission mode %q: no guardrails checker configured; entering auto mode will be refused at runtime. Fix it by setting a checker with --guardrails-model <model> or binding the guardrail model slot, or run unsupervised with --guardrails off",
-		cfg.resolvedPermissionModeName())
-	if cfg.Posture >= PostureYolo {
-		msg += ". " + yoloCheckerAdvisoryNote
+	if cfg.MaxAllowedMode == session.ModeYolo && !autoCheckerEnforcing(cfg, checkerConfigured) {
+		cfg.diag().Log(context.Background(), port.LevelWarn,
+			fmt.Sprintf("permission mode %q: no enforcing guardrails checker, so sessions cannot enter auto; configure one with --guardrails-model <model> to allow it", cfg.resolvedPermissionModeName()))
 	}
-	cfg.diag().Log(context.Background(), port.LevelWarn, msg)
+	return nil
 }
 
 // yoloCheckerAdvisoryNote states what a configured checker does NOT do at the
@@ -248,20 +264,46 @@ func autoCheckerEnforcing(cfg Config, configured bool) bool {
 	return highestSeverityGuardrailMode(specs) != string(modelhook.ModeAdvisory)
 }
 
-// reviewerState reports the subagent ask reviewer for the startup line.
-func reviewerState(cfg Config) string {
+// Subagent ask reviewer states: the stable vocabulary of the
+// ServerCapabilities.subagent_ask_reviewer echo and the startup line.
+const (
+	reviewerOn    = "on"
+	reviewerOff   = "off"
+	reviewerInert = "inert"
+)
+
+// reviewerStatus reports the subagent ask reviewer as one stable state plus a
+// human-readable reason (empty when there is none). It is the single source
+// for both the startup line and the capabilities echo.
+func reviewerStatus(cfg Config) (state, reason string) {
 	switch {
 	case cfg.askReviewerDefaultOn:
-		return "on (default for headless allow-all)"
+		return reviewerOn, "default for headless allow-all"
 	case cfg.SubagentAskReviewerModel != "" && cfg.Interactive:
-		return "inert (interactive deployment)"
+		return reviewerInert, "interactive deployment"
 	case cfg.SubagentAskReviewerModel != "":
-		return "on (configured)"
+		return reviewerOn, "configured"
 	case cfg.askReviewerOptOut:
-		return "off (--subagent-ask-reviewer off)"
+		return reviewerOff, "--subagent-ask-reviewer off"
 	default:
-		return "off"
+		return reviewerOff, ""
 	}
+}
+
+// subagentAskReviewerCapability is the reviewer state for the capabilities
+// echo; the reason stays in diagnostics only.
+func subagentAskReviewerCapability(cfg Config) *string {
+	state, _ := reviewerStatus(cfg)
+	return &state
+}
+
+// reviewerState reports the subagent ask reviewer for the startup line.
+func reviewerState(cfg Config) string {
+	state, reason := reviewerStatus(cfg)
+	if reason == "" {
+		return state
+	}
+	return state + " (" + reason + ")"
 }
 
 // narratePermissionMode is the ONE build-once line reporting the resolved token,

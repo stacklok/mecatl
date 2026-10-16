@@ -1,11 +1,7 @@
 package ui
 
 import (
-	"strings"
-
-	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 )
 
 // modeCycleOrder is the ModeSwitch order over every permission mode: the
@@ -88,9 +84,11 @@ func nextModeToken(cur string) string {
 }
 
 // cycleMode lands on the next permission mode. A mode whose posture is at or
-// below the running one applies its session half live; one that would raise the
-// posture cannot, because the posture is fixed when the server starts, so the
-// cycle stops on it and says what to configure and restart.
+// below the running one applies its session half live. One that would raise the
+// posture cannot apply, because the posture (the server ceiling) is fixed when
+// the server starts: the cycle only parks its cursor there so the next press
+// moves on, while the session keeps its confirmed mode, the draft stays usable,
+// and the footer says what would make the mode available.
 func (m Model) cycleMode() (tea.Model, tea.Cmd) {
 	cur := m.currentModeToken()
 	if m.modeRefused != "" {
@@ -99,7 +97,7 @@ func (m Model) cycleMode() (tea.Model, tea.Cmd) {
 	next := permissionModeEntry(nextModeToken(cur))
 	if postureRank(next.Posture) > postureRank(m.caps.Posture) {
 		m.modeCursor = modeCursor{token: next.Name, session: m.desiredMode()}
-		m.statusMsg = m.deps.Theme.Style("warning").Render(m.modeBlockedStatus())
+		m.statusMsg = m.deps.Theme.Style("warning").Render(m.modeUnavailableStatus(next))
 		(&m).relayout()
 		return m, nil
 	}
@@ -110,8 +108,9 @@ func (m Model) cycleMode() (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// headerMode is the session mode the header shows: the mode the cycle landed
-// on when it did, else the session's mode, marked blocked or pending.
+// headerMode is the session mode the header shows: the confirmed mode, or the
+// requested one marked pending. A mode the cycle parked on because it is
+// unavailable never shows here: the session is not running it.
 //
 // "pending" means a SetMode round-trip is in flight. When the pending mode
 // equals the server-confirmed active mode (m.pendingMode == m.activeMode) the
@@ -127,86 +126,21 @@ func (m Model) headerMode() string {
 	}
 	if m.pendingMode != "" {
 		mode = m.pendingMode
-	}
-	if m.modeCursor.token != "" && m.modeCursor.session == m.desiredMode() {
-		mode = m.modeCursor.token
-	}
-	switch {
-	case m.modeBlocked():
-		mode += modeBlockedSuffix
-	case m.pendingMode != "" && m.pendingMode != m.activeMode:
-		// Only show "pending" when the in-flight mode differs from what the
-		// server has already confirmed — a genuine transition, not a no-op.
-		mode += " pending"
+		if m.pendingMode != m.activeMode {
+			// Only show "pending" when the in-flight mode differs from what the
+			// server has already confirmed — a genuine transition, not a no-op.
+			mode += " pending"
+		}
 	}
 	return mode
 }
 
-// modeBlocked reports that the cycle sits on a mode that needs a restart. The
-// session keeps running its accepted mode, but prompts and edits are held so
-// nothing is sent under a mode the operator did not mean.
-func (m Model) modeBlocked() bool {
-	e := permissionModeEntry(m.currentModeToken())
-	return e.Name != "" && postureRank(e.Posture) > postureRank(m.caps.Posture)
-}
-
-func (m Model) modeEscapeHint() string {
-	return firstKey(m.keys.Cancel, "esc") + " back to " + m.acceptedModeToken() + " · " +
-		firstKey(m.keys.ModeSwitch, "shift+tab") + " next mode"
-}
-
-func (m Model) modeBlockedStatus() string {
-	return "mode " + m.currentModeToken() + " is blocked — " + m.modeEscapeHint()
-}
-
-// leaveBlockedMode is the escape hatch: drop the cursor so the session's
-// accepted mode is the current one again.
-func (m Model) leaveBlockedMode() Model {
-	m.modeCursor = modeCursor{}
-	m.statusMsg = m.deps.Theme.Style("success").Render("mode " + m.acceptedModeToken())
-	(&m).relayout()
-	return m
-}
-
-// onModeBlockedKey holds the prompt while the cycle sits on a blocked mode. Esc
-// returns to the accepted mode; the mode switch, scrolling, help, and (at idle)
-// the read-only panels still work; every key that would edit or send the draft
-// is swallowed with a reminder. The draft itself is kept untouched.
-func (m Model) onModeBlockedKey(msg tea.KeyPressMsg) (Model, bool) {
-	if !m.modeBlocked() || (m.phase != phaseIdle && m.phase != phaseRunning) {
-		return m, false
-	}
-	switch {
-	case key.Matches(msg, m.keys.Cancel):
-		return m.leaveBlockedMode(), true
-	case key.Matches(msg, m.keys.Help):
-		opened, _ := m.runHelp()
-		return opened.(Model), true
-	case key.Matches(msg, m.keys.ModeSwitch), key.Matches(msg, m.keys.CopySelection),
-		key.Matches(msg, m.keys.ScrollU), key.Matches(msg, m.keys.ScrollD),
-		key.Matches(msg, m.keys.ScrollTop), key.Matches(msg, m.keys.ScrollBottom):
-		return m, false
-	case m.phase == phaseIdle && (key.Matches(msg, m.keys.Agents) || key.Matches(msg, m.keys.MCPPanel) ||
-		key.Matches(msg, m.keys.Resources) || key.Matches(msg, m.keys.Prompts) || key.Matches(msg, m.keys.Effort)):
-		return m, false
-	}
-	m.statusMsg = m.deps.Theme.Style("warning").Render(m.modeBlockedStatus())
-	return m, true
-}
-
-// renderModeBlocked replaces the prompt while the mode is blocked: why the mode
-// cannot apply, what makes it apply, and how to get back.
-func (m Model) renderModeBlocked() string {
-	th := m.deps.Theme
-	style := inputRailStyle(th, m.inputMode())
-	contentW := max(1, m.width-style.GetHorizontalFrameSize())
-	wrap := lipgloss.NewStyle().Width(contentW).Background(th.Color("bgPanel"))
-	lines := []string{
-		wrap.Inherit(th.Style("warning")).Bold(true).Render("⚠ mode " + m.currentModeToken() + " is blocked: prompts and edits are paused, your draft is kept"),
-		wrap.Inherit(th.Style("text")).Render(m.modeRestartHint(permissionModeEntry(m.currentModeToken()))),
-		wrap.Inherit(th.Style("muted")).Render(m.modeEscapeHint()),
-	}
-	return style.Render(strings.Join(lines, "\n"))
+// modeUnavailableStatus is the footer notice for a mode above the server
+// ceiling: the session stays in its confirmed mode, what would make the mode
+// available, and that the next press moves on.
+func (m Model) modeUnavailableStatus(e PermissionModeEntry) string {
+	return "mode " + e.Name + " unavailable, staying in " + m.acceptedModeToken() + " — " +
+		m.modeRestartHint(e) + " · " + firstKey(m.keys.ModeSwitch, "shift+tab") + " next mode"
 }
 
 // modeLabel names a landed mode for the footer. All modes at or below the
@@ -217,18 +151,30 @@ func (Model) modeLabel(e PermissionModeEntry) string {
 	return e.Name
 }
 
-// modeRestartHint says why a mode cannot apply now and what makes it apply.
+// modeRestartHint says what makes a mode above the server ceiling available: a
+// restart with a higher --permission-mode and, for auto only, an enforcing
+// guardrails checker on the server.
 func (m Model) modeRestartHint(e PermissionModeEntry) string {
-	checker := postureRank(e.Posture) >= postureRank(postureAuto)
+	checker := e.Posture == postureAuto
 	if !m.deps.Embedded {
-		hint := e.Name + " is fixed by the remote server: its operator must restart mecated with --permission-mode " + e.Name
+		hint := "the remote server's operator must restart mecated with --permission-mode " + e.Name
 		if checker {
-			hint += " and a guardrails checker"
+			hint += " and an enforcing guardrails checker"
 		}
 		return hint
 	}
+	hint := "quit and relaunch with mecatui --permission-mode " + e.Name
 	if checker {
-		return e.Name + " needs a guardrails checker and a restart: set guardrails.model in settings.yaml, then relaunch with mecatui --permission-mode " + e.Name
+		hint += "; auto also needs an enforcing guardrails checker (set guardrails.model in settings.yaml)"
 	}
-	return e.Name + " needs a restart: quit and relaunch with mecatui --permission-mode " + e.Name
+	return hint
+}
+
+// modeRefusedHint adds what the server needs before it accepts a refused mode.
+// Only auto has a prerequisite beyond the ceiling.
+func modeRefusedHint(mode string) string {
+	if mode == "auto" {
+		return " — auto needs an enforcing guardrails checker on the server"
+	}
+	return ""
 }

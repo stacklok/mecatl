@@ -218,11 +218,10 @@ for delegation behavior and the information available in `mecatui`.
 
 ## Change conversation settings
 
-Press `shift+tab` to cycle through every permission mode. `default`, `plan`,
-and `accept-edits` apply immediately. A mode that raises the server's posture,
-such as `auto`, needs a restart. The cycle marks it blocked, holds prompts and
-edits, and says what to configure and how to relaunch. Press `esc` to return
-to the mode the session is running. See
+Press `shift+tab` to cycle through every permission mode. A mode up to the
+server's ceiling applies immediately. A mode above it keeps the session in its
+current mode and leaves your draft usable, and the footer says how to relaunch
+with a higher `--permission-mode`. See
 [Change the mode after launch](/features/security-and-execution/permissions-and-posture.md#change-the-mode-after-launch).
 
 |Command|Result|
@@ -232,7 +231,7 @@ to the mode the session is running. See
 |`/compact`|Reduces model history while keeping the session and visible scrollback. Run it without arguments while idle. Creating a cascade summary can use model tokens.|
 |`/clear`|Creates an empty-history session with the same placement. It does not roll back workspace changes.|
 |`/session`|Shows path-free details for the active session.|
-|`/posture`|Shows the server's operator posture and the independent effective checker state. Off includes setup guidance; unavailable posture status is unknown. See [Permissions and posture](/features/security-and-execution/permissions-and-posture.md).|
+|`/posture`|Shows the server's operator posture, the independent effective checker state, and the subagent ask reviewer state when the server reports it. Off includes setup guidance; unavailable posture status is unknown. See [Permissions and posture](/features/security-and-execution/permissions-and-posture.md).|
 
 If `/clear` cancels an active run or approval and then fails to create the
 replacement, the original session remains selected and may be cancelled. Wait

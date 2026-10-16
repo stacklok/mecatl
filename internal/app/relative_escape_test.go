@@ -41,7 +41,7 @@ func TestYoloRelativeEscapeTools(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeYolo, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestYoloRelativeEscapeConfiguredDeny(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeYolo, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestYoloRelativeEscapeConfiguredAsk(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeYolo, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +226,7 @@ func TestYoloRelativeEscapeServiceRefusals(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer built.Close()
-			sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+			sess, err := built.Service.CreateSession(context.Background(), session.ModeYolo, session.Limits{})
 			if err != nil {
 				t.Fatal(err)
 			}

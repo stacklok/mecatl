@@ -64,8 +64,8 @@ type keyMap struct {
 	ScrollBottom key.Binding
 
 	// ModeSwitch (shift+tab) cycles every permission mode: default → plan →
-	// accept-edits → trusted → trusted-accept-edits → auto → yolo → default (see
-	// cycleMode for modes that need a restart). Unlike Alt+M, Shift+Tab does not depend on a terminal
+	// accept-edits → auto → yolo → default (see cycleMode for modes above the
+	// server ceiling). Unlike Alt+M, Shift+Tab does not depend on a terminal
 	// mapping macOS Option to Meta, and it never collides with prose input.
 	ModeSwitch key.Binding
 

@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/stacklok/mecatl/engine/port"
-	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/app"
 )
 
@@ -14,10 +13,9 @@ import (
 // both halves a token sets and their lifetimes, and lists every valid token from
 // the composition table so help and parsing cannot drift.
 var permissionModeHelp = "Permission mode, one of: " + strings.Join(app.PermissionModeNames(), ", ") +
-	". Sets two things: the process-wide posture, fixed at startup (strict for plan, default, and accept-edits; auto; yolo), " +
-	"and the session mode the run's session starts in. Default: default. " +
-	"auto and yolo allow tools without asking, so they need a guardrails checker (--guardrails-model or the guardrail model slot) or an explicit --guardrails off. " +
-	"Deny and configured ask rules still apply. Replaces the deprecated --posture; --trust-project still combines with it."
+	". Sets the mode the run's session starts in and the process-wide ceiling on the modes it may enter. Default: default. " +
+	"auto and yolo allow tools without asking. auto needs an enforcing guardrails checker (--guardrails-model or the guardrail model slot) and refuses to start without one; yolo runs without one. " +
+	"Deny and configured ask rules still apply. A mode never grants project trust; use --trust-project. Replaces the deprecated --posture."
 
 // validatePermissionModeFlags fails fast on an unknown --permission-mode token
 // and on a --permission-mode combined with the deprecated --posture alias.
@@ -42,20 +40,5 @@ func warnDeprecatedPermissionFlags(diag port.Diagnostics, f flags) {
 	}
 	diag.Log(context.Background(), port.LevelWarn,
 		"--posture is DEPRECATED; use --permission-mode instead",
-		"posture", f.posture, "replacement", "--permission-mode "+postureReplacementToken(f.posture))
-}
-
-// postureReplacementToken names the token that replaces a legacy --posture value.
-// auto and yolo are their own tokens; the strict-posture tiers map to "default".
-func postureReplacementToken(raw string) string {
-	switch app.ParsePosture(raw) {
-	case app.PostureAuto:
-		return "auto"
-	case app.PostureYolo:
-		return "yolo"
-	}
-	if tok, ok := app.PermissionModeForPair(app.ParsePosture(raw), session.ModeDefault); ok {
-		return tok.Name
-	}
-	return "default"
+		"posture", f.posture, "replacement", "--permission-mode "+app.PostureReplacementToken(app.ParsePosture(f.posture)))
 }

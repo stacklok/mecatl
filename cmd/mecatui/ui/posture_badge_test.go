@@ -108,11 +108,46 @@ func TestPostureSummary(t *testing.T) {
 		{"yolo", []string{"posture yolo", "ceiling all modes including yolo", "child $()/heredoc auto-run when in yolo mode (injection-defense off) on", "project-trust on"}},
 	}
 	for _, tc := range cases {
-		got := postureSummary(tc.posture, "")
+		got := postureSummary(tc.posture, "", "")
 		for _, sub := range tc.want {
 			if !strings.Contains(got, sub) {
 				t.Errorf("postureSummary(%q) missing %q; got %q", tc.posture, sub, got)
 			}
+		}
+	}
+}
+
+// TestPostureShowsSubagentAskReviewer pins that /posture names the
+// server-reported subagent ask reviewer state, says nothing about it when an
+// older server omits it, and never echoes an unrecognized value raw.
+func TestPostureShowsSubagentAskReviewer(t *testing.T) {
+	cases := []struct {
+		reviewer string
+		want     string // "" means the reviewer must not be mentioned
+	}{
+		{"", ""},
+		{"on", "; subagent ask reviewer on (a model may approve subagent permission requests no human can answer)"},
+		{"off", "; subagent ask reviewer off"},
+		{"inert", "; subagent ask reviewer inert (configured, but you answer subagent permission requests)"},
+		{"\x1b[31mfuture", "; subagent ask reviewer unknown"},
+	}
+	for _, tc := range cases {
+		m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
+		m = applyAll(m, tea.WindowSizeMsg{Width: 400, Height: 30},
+			client.SessionReadyMsg{SessionID: "sess-test-0001", Capabilities: client.Capabilities{Posture: postureAuto, SubagentAskReviewer: tc.reviewer}})
+		next, _ := m.runPosture()
+		got := stripANSIstr(next.(Model).statusMsg)
+		if tc.want == "" {
+			if strings.Contains(got, "subagent ask reviewer") {
+				t.Errorf("reviewer %q: /posture must not mention the reviewer; got %q", tc.reviewer, got)
+			}
+			continue
+		}
+		if !strings.Contains(got, tc.want) {
+			t.Errorf("reviewer %q: /posture missing %q; got %q", tc.reviewer, tc.want, got)
+		}
+		if strings.Contains(got, "future") {
+			t.Errorf("reviewer %q: unrecognized value echoed raw; got %q", tc.reviewer, got)
 		}
 	}
 }

@@ -1122,7 +1122,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			if msg.Err == nil {
 				checker = guardrailPostureSummary(msg.Coverage)
 			}
-			m.statusMsg = m.deps.Theme.Style("muted").Render(postureSummary(m.caps.Posture, m.caps.ProjectTrust) + "; " + checker)
+			m.statusMsg = m.deps.Theme.Style("muted").Render(postureSummary(m.caps.Posture, m.caps.ProjectTrust, m.caps.SubagentAskReviewer) + "; " + checker)
 		} else if msg.Err != nil {
 			m.conv.addNotice("Guardrails status unavailable; checker state is unknown, not off or healthy.")
 		} else {
@@ -2297,12 +2297,6 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return mm, nil
 	}
 
-	// A blocked permission mode holds the prompt before paste or any phase key
-	// can edit or send it.
-	if mm, handled := m.onModeBlockedKey(msg); handled {
-		return mm, nil
-	}
-
 	// ctrl+v reads the OS clipboard into the prompt (image → staged attachment,
 	// text → inserted). It is handled here — before the phase switch — for the two
 	// input-accepting phases (idle + running, both keep the textarea focused for
@@ -2701,7 +2695,8 @@ func (m Model) onModeChanged(msg client.ModeChangedMsg) tea.Model {
 			m.pendingMode = ""
 			m.modeCursor = modeCursor{}
 			m.modeRefused = requested
-			m.statusMsg = m.deps.Theme.Style("warning").Render("mode " + requested + " refused: " + client.ModeErrorText(msg.Err))
+			m.statusMsg = m.deps.Theme.Style("warning").Render("mode " + requested + " refused, staying in " + m.acceptedModeToken() +
+				": " + client.ModeErrorText(msg.Err) + modeRefusedHint(requested))
 			return m
 		}
 		m.pendingMode = requested
@@ -2992,7 +2987,7 @@ func normalizePastedNewlines(content string) string {
 // primary-selection paste trigger (onMousePress), so the two paths can never
 // drift apart.
 func (m Model) pasteGateOpen() bool {
-	if m.phase == phaseAwaitingApproval || m.modeBlocked() ||
+	if m.phase == phaseAwaitingApproval ||
 		m.modal != nil || m.team.view != teamNone || m.agentsInv.view != agentsInvNone {
 		return false
 	}
@@ -4988,11 +4983,6 @@ func (m Model) popAndSubmit() (tea.Model, tea.Cmd) {
 	m.pendingPromptMedia = m.queuedMedia
 	m.queuedMedia = client.MediaResult{}
 	m.prompt.Rewrite(merged)
-	if m.modeBlocked() {
-		m.statusMsg = m.deps.Theme.Style("warning").Render("queued prompt held: " + m.modeBlockedStatus())
-		m.queuePaused = "mode"
-		return m, nil
-	}
 	if m.pendingMode != "" {
 		submit := firstKey(m.keys.Submit, "enter")
 		m.statusMsg = m.deps.Theme.Style("warning").Render("mode " + m.pendingMode + " will apply before the queued prompt — press " + submit + " to continue")

@@ -403,6 +403,11 @@ func (t *TeamTool) run(ctx context.Context, call session.ToolCall, env tool.Envi
 	// ask can surface and each member's durable relationship is correlated before it
 	// is registered, persisted, or projected.
 	opts = append(opts, withParentCaps(caps), withParentTeamCall(call.ID))
+	// Members of an auto or yolo parent inherit its mode (effectiveChildMode); a
+	// member definition's own permissionMode still overrides the team default.
+	if mode := effectiveChildMode(session.ModeDefault, caps.parentMode); mode != session.ModeDefault {
+		opts = append(opts, WithTeamMode(mode))
+	}
 	sup := NewSupervisor(tm, env, factory, opts...)
 
 	roster := teamRoster(args.Members)

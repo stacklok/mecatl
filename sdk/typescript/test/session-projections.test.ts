@@ -320,6 +320,7 @@ describe("session projections", () => {
         "slashCommands",
         "soul",
         "steer",
+        "subagentAskReviewer",
         "storageCleanup",
         "storageHealth",
         "teams",

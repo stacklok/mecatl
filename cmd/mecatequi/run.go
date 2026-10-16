@@ -162,8 +162,11 @@ type runOutcome struct {
 // filled from the Service's DefaultLimits inside CreateSession, so passing the zero
 // value preserves the deployment defaults, and passing only MaxTurns caps turns while
 // the tool-call / failure caps stay at their defaults (never silently disabled).
+//
+// The session mode is left unspecified so the Service's DefaultMode — the mode
+// resolved from --permission-mode — applies.
 func run(ctx context.Context, svc *server.Service, limits session.Limits, prompt string, w io.Writer) (runOutcome, error) {
-	sess, err := svc.CreateSession(ctx, session.ModeDefault, limits)
+	sess, err := svc.CreateSession(ctx, "", limits)
 	if err != nil {
 		return runOutcome{}, fmt.Errorf("create session: %w", err)
 	}

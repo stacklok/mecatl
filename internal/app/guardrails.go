@@ -699,7 +699,7 @@ func buildGuardrailsChecker(cfg Config, provReg *providerRegistry, provider port
 }
 
 // buildGuardrailsEscapeChecker builds the guardrail-routed permission escape check.
-// It is armed only on the main session at posture auto with the escape knob
+// It rides only the main session, applies only to auto-mode sessions, and needs the escape knob
 // and guardrails configured. Generic HookRunner requests carry no usage reporter.
 func buildGuardrailsEscapeChecker(cfg Config, provReg *providerRegistry, provider port.LLMProvider) modelhook.VerdictChecker {
 	if !cfg.GuardrailsEscape || !guardrailsConfigured(cfg) {

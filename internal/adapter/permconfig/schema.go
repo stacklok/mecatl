@@ -166,9 +166,10 @@ type Config struct {
 	// reads the scalar.
 	Posture string `yaml:"posture"`
 	// PermissionMode is the OPERATOR-TIER named permission-mode token
-	// (plan/default/accept-edits/trusted/trusted-accept-edits/auto/yolo). It sets
-	// the posture and the default session mode together and supersedes the
-	// deprecated posture: key. Like Posture it is honoured ONLY from the
+	// (plan/default/accept-edits/auto/yolo). It sets the mode new sessions start in
+	// and the server ceiling (the most permissive mode a session may switch to)
+	// together, and supersedes the deprecated posture: key. It never grants
+	// workspace trust. Like Posture it is honoured ONLY from the
 	// user-global + CLI tiers; a project-tier occurrence is IGNORED with a WARN.
 	// Empty = absent. The composition layer parses the token.
 	PermissionMode string `yaml:"permissionMode"`

@@ -2112,7 +2112,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if !checkerConfigured {
 		_, _, checkerConfigured = resolveGuardrailsCheckerModel(cfg)
 	}
-	checkerRefusal(cfg, checkerConfigured)
+	if err := checkerRefusal(cfg, checkerConfigured); err != nil {
+		return nil, err
+	}
 	cfg = resolveAskReviewerDefault(cfg)
 	narratePermissionMode(cfg, checkerConfigured)
 	// Emit the build-once composition facts (token counter / compaction strategy /
@@ -2598,6 +2600,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		// ProjectTrusted: the effective trust fold for the launch workspace (flag,
 		// declared, remembered, or the interactive posture floor), CHROME ONLY.
 		ProjectTrusted: &cfg.TrustProject,
+		// SubagentAskReviewer: the reviewer state from the same reviewerStatus the
+		// startup line narrates, so the echo and the diagnostics cannot drift.
+		SubagentAskReviewer: subagentAskReviewerCapability(cfg),
 		// DeploymentID: the operator-set, opaque deployment label surfaced on
 		// GetCompatibilityInfo. It is passed through VERBATIM and is never
 		// derived here from hostname, pod name, or environment — an inferred label
@@ -4287,7 +4292,7 @@ func escapePolicyForConfig(cfg Config, reg *providerRegistry, provider port.LLMP
 		// host paths and could relax the inner decision on that false basis.
 		return inner
 	}
-	return newEscapePolicy(inner, cfg.Posture,
+	return newEscapePolicy(inner,
 		withEscapeGuardrailRoute(buildGuardrailsEscapeChecker(cfg, reg, provider)))
 }
 
@@ -9156,24 +9161,26 @@ const (
 	// no path to trust, which is false.
 	// The "Three SEPARATE safety axes" substring is a stable test key.
 	selfKnowledgePostureAxes = "Three SEPARATE safety axes, never conflated. (1) SESSION PERMISSION MODE: " +
-		"exactly three, one per session, in your <env> as `permission-mode`. `default` resolves each call " +
+		"exactly five, one per session, in your <env> as `permission-mode`. `default` resolves each call " +
 		"deny→ask→allow; `plan` denies mutations and expects a plan presented for approval; `acceptEdits` " +
 		"(accept-edits in mecatui) auto-allows Edit and Write only, leaving Shell and every other mutating " +
-		"tool on the normal rules. mecatui shows the mode in its header, takes a starting mode at launch, and " +
-		"cycles default → plan → accept-edits on shift+tab. (2) OPERATOR POSTURE: deployment-wide and fixed " +
-		"at startup, rising strict < trusted < auto < yolo. The operator sets both with one --permission-mode " +
-		"token (plan, default, accept-edits, trusted, trusted-accept-edits, auto, yolo): its posture half " +
-		"is process-wide, its mode half is only the default a new session starts in, and cycling the session " +
-		"mode never changes the posture. auto and yolo widen what a call is authorized " +
-		"to do, not only how much runs without asking: both set an allow-all rule for every tool call. " +
-		"Posture raises project trust on INTERACTIVE roots only: a HEADLESS deployment does NOT trust the " +
+		"tool on the normal rules; `auto` and `yolo` widen what a call is authorized to do, not only how " +
+		"much runs without asking: both set an allow-all rule for every tool call. `auto` requires an " +
+		"enforcing guardrails checker; `yolo` runs without a preventive checker. The operator's " +
+		"--permission-mode token (plan, default, accept-edits, auto, yolo) sets the mode new sessions start " +
+		"in and the most permissive mode a session may switch to; switching applies the chosen mode's full " +
+		"behaviour, so leaving yolo for default restores ordinary approvals. mecatui shows the mode in its " +
+		"header, takes --permission-mode at launch, and cycles the modes on shift+tab. (2) WORKSPACE TRUST: " +
+		"a separate yes/no decision about whether the workspace's project instructions and configuration " +
+		"are adopted; an untrusted workspace can still be read and searched as data. An explicit " +
+		"--trust-project flag, a declared trusted workspace, or remembered trust grant it on any root. A " +
+		"--permission-mode token never grants trust; only the deprecated --posture ladder (strict < trusted " +
+		"< auto < yolo) still raises it, on INTERACTIVE roots only: a HEADLESS deployment does NOT trust the " +
 		"checkout by posture alone. Project ingestion and the read-only child shell follow from project " +
-		"trust however it was granted — an explicit --trust-project flag, a declared trusted workspace, or " +
-		"remembered trust grant it on any root, while posture alone grants it only on an interactive one. " +
-		"(3) GUARDRAILS: an optional model-backed checker over selected " +
-		"tool arguments and results, independent of permissions and inert until an operator configures a " +
-		"checker model. Under every mode and posture a matching deny wins and a configured ask is never " +
-		"suppressed."
+		"trust. (3) GUARDRAILS: an optional model-backed checker over selected tool arguments and results, " +
+		"independent of permissions and inert until an operator configures a checker model; it enforces in " +
+		"every mode except yolo, where it is advisory. Under every mode a matching deny wins and a configured " +
+		"ask is never suppressed."
 
 	// selfKnowledgePostureMap is the doc-tree shape, so a lookup lands on the right
 	// page instead of the site root. Every path here is pinned by the drift gate.

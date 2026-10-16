@@ -630,7 +630,7 @@ test("the lifecycle surface is exported documented and API reviewed", () => {
       "--eval",
       `
 import { SessionMode } from "@stacklok-oss/mecatl-sdk";
-if (JSON.stringify(SessionMode) !== JSON.stringify({ Unspecified: 0, Default: 1, Plan: 2, AcceptEdits: 3 })) {
+if (JSON.stringify(SessionMode) !== JSON.stringify({ Unspecified: 0, Default: 1, Plan: 2, AcceptEdits: 3, Auto: 4, Yolo: 5 })) {
   throw new Error("unexpected SessionMode export");
 }
 `,
