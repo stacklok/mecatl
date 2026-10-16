@@ -427,12 +427,14 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 ### Changed
 
 - **Delegated children inherit an auto or yolo parent's mode** — a Subagent
-  child, Parallel branch, or Team member whose configured mode is the default
-  (`ModeDefault`) now runs in its parent session's mode when that mode is
-  `ModeAuto` or `ModeYolo`, so the parent's mode-driven authority reaches its
-  delegates. An explicitly configured narrower mode (`WithChildMode`,
-  `WithParallelChildMode`, `WithTeamMode`, or a member definition's
-  `permissionMode`) is kept. No signature changes.
+  child, Parallel branch, or Team member with no configured mode now runs in its
+  parent session's mode when that mode is `ModeAuto` or `ModeYolo`, so the
+  parent's mode-driven authority reaches its delegates. Any explicitly
+  configured mode (`WithChildMode`, `WithParallelChildMode`, `WithTeamMode`, or
+  a member definition's `permissionMode`), `ModeDefault` included, is kept. A
+  resumed Subagent child's persisted mode is re-admitted against the current
+  parent: it runs in the narrower of its stored mode and the mode a fresh child
+  would get. No signature changes.
 
 - **Atomic one-shot retry eligibility (issue #2273)** —
   `port.ScheduleOneShotReArmer.ReArmOneShot` now requires store-side atomic

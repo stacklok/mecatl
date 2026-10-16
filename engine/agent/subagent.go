@@ -683,8 +683,8 @@ type SubagentTool struct {
 	// limits bound a single child run. Defaults to defaultChildLimits.
 	limits session.Limits
 
-	// childMode is the permission mode the child session runs under. Defaults to
-	// session.ModeDefault.
+	// childMode is the permission mode the child session runs under. Empty (the
+	// default) inherits the parent's mode; see effectiveChildMode.
 	childMode session.PermissionMode
 
 	// hooks fires the SubagentStop lifecycle hook when a child finishes
@@ -1016,25 +1016,62 @@ func WithChildLimits(l session.Limits) SubagentOption {
 	return func(t *SubagentTool) { t.limits = l }
 }
 
-// WithChildMode sets the permission mode the child session runs under (default
-// session.ModeDefault, which inherits an auto or yolo parent's mode; see
-// effectiveChildMode). session.ModePlan additionally hides any non-read-only
-// tools from the child at the catalog level.
+// WithChildMode sets the permission mode the child session runs under. Without
+// it the child inherits an auto or yolo parent's mode and otherwise runs in
+// session.ModeDefault (see effectiveChildMode); an explicit session.ModeDefault
+// keeps default even under an auto or yolo parent. session.ModePlan additionally
+// hides any non-read-only tools from the child at the catalog level.
 func WithChildMode(m session.PermissionMode) SubagentOption {
 	return func(t *SubagentTool) { t.childMode = m }
 }
 
 // effectiveChildMode is the mode a delegated child session runs in. A child
-// configured with the default mode inherits an auto or yolo parent's mode, so
-// the parent's mode-driven authority (allow-all, and in yolo the loosened
-// substitution floor) carries to its delegates; plan, default, and accept-edits
-// parents keep the configured child mode. An explicitly narrower configured
-// mode (for example plan) is never widened.
+// with no configured mode ("") inherits an auto or yolo parent's mode, so the
+// parent's mode-driven authority (allow-all, and in yolo the loosened
+// substitution floor) carries to its delegates, and runs in session.ModeDefault
+// under any other parent. Any explicitly configured mode, session.ModeDefault
+// included, is kept.
 func effectiveChildMode(configured, parent session.PermissionMode) session.PermissionMode {
-	if configured == session.ModeDefault && (parent == session.ModeAuto || parent == session.ModeYolo) {
+	if configured != "" {
+		return configured
+	}
+	if parent == session.ModeAuto || parent == session.ModeYolo {
 		return parent
 	}
-	return configured
+	return session.ModeDefault
+}
+
+// resumedChildMode re-admits a persisted child's mode against the mode a fresh
+// child of the CURRENT parent would get: the narrower of the two in the
+// plan < default < acceptEdits < auto < yolo order. A child created under a
+// yolo parent therefore cannot keep yolo's authority after the parent (or the
+// deployment ceiling that admitted the parent) tightens, while a stored mode
+// that is already narrower is preserved.
+func resumedChildMode(stored, configured, parent session.PermissionMode) session.PermissionMode {
+	admitted := effectiveChildMode(configured, parent)
+	if childModeRank(stored) <= childModeRank(admitted) {
+		return stored
+	}
+	return admitted
+}
+
+// childModeRank orders permission modes by authority. An unknown mode ranks
+// below plan, so it is never replaced by a wider one.
+func childModeRank(mode session.PermissionMode) int {
+	switch mode {
+	case session.ModePlan:
+		return 1
+	case session.ModeDefault:
+		return 2
+	case session.ModeAccept:
+		return 3
+	case session.ModeAuto:
+		return 4
+	case session.ModeYolo:
+		return 5
+	default:
+		return 0
+	}
 }
 
 // WithSubagentStopHook injects the HookRunner that fires the SubagentStop hook
@@ -1352,7 +1389,6 @@ func NewSubagentTool(childEngine *Engine, opts ...SubagentOption) tool.Tool {
 	t := &SubagentTool{
 		childEngine: childEngine,
 		limits:      defaultChildLimits,
-		childMode:   session.ModeDefault,
 		idPrefix:    strings.TrimSuffix(SubagentSessionPrefix, "-"), // the exported convention is the source
 		inFlight:    make(map[session.SessionID]struct{}),
 	}
@@ -4203,7 +4239,8 @@ func (t *SubagentTool) forkChildEnvironment(ctx context.Context, callID session.
 // stays consistent with where this run actually executes — the original worktree is
 // torn down, and without the re-home the re-persisted snapshot would record a dead
 // path. (The child's prompt cwd is independently sourced from the engine's PromptConfig
-// and is NOT affected by this field.)
+// and is NOT affected by this field.) A resumed child's persisted mode is also
+// re-admitted against the current parent (resumedChildMode).
 func (t *SubagentTool) buildChildSession(callID session.ToolCallID, childID, parentID session.SessionID, parentIncarnation session.IncarnationID, parentMode session.PermissionMode, resumedChild *session.Session, env tool.Environment, limits session.Limits, forkHistory []session.Message, forkInstructions session.InstructionSnapshot) (*session.Session, session.ToolResult, bool) {
 	if resumedChild == nil {
 		// When a named agent def pins limits, the child runs under THOSE; otherwise it uses
@@ -4241,6 +4278,14 @@ func (t *SubagentTool) buildChildSession(callID session.ToolCallID, childID, par
 	if err := rehomeSessionInEnvironment(resumedChild, env); err != nil {
 		return nil, session.NewToolError(callID,
 			fmt.Sprintf("Subagent: failed to re-home resumed subagent %q: %v", childID, err)), false
+	}
+	// Re-admit the persisted mode before the resumed child runs or is re-persisted
+	// (foreground and background resume both land here); history is untouched.
+	if mode := resumedChildMode(resumedChild.Mode, t.childMode, parentMode); mode != resumedChild.Mode {
+		if err := resumedChild.SetMode(mode); err != nil {
+			return nil, session.NewToolError(callID,
+				fmt.Sprintf("Subagent: failed to re-admit resumed subagent %q permission mode: %v", childID, err)), false
+		}
 	}
 	return resumedChild, session.ToolResult{}, true
 }

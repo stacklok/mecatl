@@ -39,3 +39,6 @@ func WithParallelBranchRegisteredForTest(fn func(int)) ParallelOption {
 
 // EffectiveChildModeForTest exposes the delegated-child mode rule.
 var EffectiveChildModeForTest = effectiveChildMode
+
+// ResumedChildModeForTest exposes the resumed-child mode re-admission rule.
+var ResumedChildModeForTest = resumedChildMode
