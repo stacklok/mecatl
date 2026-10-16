@@ -686,7 +686,7 @@ func (e *Engine) prepareActionAssessment(ctx context.Context, r *Run, sess *sess
 func (e *Engine) reviewChildPermissionAsk(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, ask session.PendingAsk) *uint64 {
 	if e.deps.Role == "" || r == nil || r.reviewRoot == nil || r.reviewRoot.reviewer == nil ||
 		ask.AskProvenance != governance.AskProvenanceBuiltinSubstitutionFloor ||
-		ask.Tool != tool.ShellToolName || sess.Mode == session.ModePlan {
+		ask.Tool != tool.ShellToolName || sess.Mode == session.ModePlan || sess.Mode == session.ModeYolo {
 		return nil
 	}
 	call := session.NewToolCall(ask.Call, ask.Tool, append(json.RawMessage(nil), ask.Args...))
@@ -817,7 +817,7 @@ func (e *Engine) resolveActionAssessment(ctx context.Context, r *Run, sess *sess
 		decision = "unresolved"
 		result.Assessment = ReviewUnresolved
 	}
-	_, enforce := reviewPolicy(r.reviewRoot.reviewer, call.Name, ReviewJobAction, assessment.err != nil)
+	_, enforce := reviewPolicy(r.reviewRoot.reviewer, sess.Mode, call.Name, ReviewJobAction, assessment.err != nil)
 	if assessment.err != nil {
 		var terminal GuardrailReviewTerminalFailure
 		if errors.As(assessment.err, &terminal) && terminal.GuardrailReviewTerminalFailure() {
@@ -938,7 +938,7 @@ func (e *Engine) reviewActionWithTail(ctx context.Context, r *Run, sess *session
 	if r.reviewRoot == nil || r.reviewRoot.reviewer == nil {
 		return session.ToolResult{}, nil, false, true
 	}
-	if applies, _ := reviewPolicy(r.reviewRoot.reviewer, call.Name, ReviewJobAction, false); !applies {
+	if applies, _ := reviewPolicy(r.reviewRoot.reviewer, sess.Mode, call.Name, ReviewJobAction, false); !applies {
 		if !r.reviewRoot.admitPrincipalRevisions(nil, auth.permissionReviewRevision) {
 			res := session.NewToolError(call.ID, "contextual guardrail review context changed before execution; retry the action for a fresh assessment")
 			e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})

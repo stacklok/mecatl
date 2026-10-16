@@ -157,14 +157,18 @@ type ReviewEvidencePreparer interface {
 // toolName and job identify the candidate rule; operationalFailure selects its
 // checker-down posture. The returns report whether review applies and whether a
 // finding or unresolved assessment is enforced. A ToolReviewer without this
-// capability retains action-only enforcement.
+// capability retains action-only enforcement. Report the operator's configured
+// enforcement independent of permission mode: the engine demotes it to advisory
+// for each executing yolo-mode session, including delegated children that share
+// the reviewer.
 type ReviewPolicyProvider interface {
 	GuardrailReviewPolicy(toolName string, job ReviewJob, operationalFailure bool) (applies, enforce bool)
 }
 
 // PermissionReviewPolicyProvider reports whether an exact child Shell call has
 // enabled, enforcing, matching action-review coverage. Advisory, skipped, and
-// unmatched rules must return false.
+// unmatched rules must return false. The engine never consults it for a
+// yolo-mode child.
 type PermissionReviewPolicyProvider interface {
 	GuardrailPermissionReviewEligible(session.ToolCall) bool
 }

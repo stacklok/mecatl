@@ -432,7 +432,7 @@ func (e *Engine) fanOutReadBatchActionAssessments(ctx context.Context, r *Run, s
 		if r.reviewRoot == nil || r.reviewRoot.reviewer == nil {
 			continue
 		}
-		if applies, _ := reviewPolicy(r.reviewRoot.reviewer, p.call.Name, ReviewJobAction, false); applies {
+		if applies, _ := reviewPolicy(r.reviewRoot.reviewer, sess.Mode, p.call.Name, ReviewJobAction, false); applies {
 			assessment := e.prepareActionAssessment(ctx, r, sess, env, p.call)
 			p.assessment = &assessment
 			reviewWG.Add(1)

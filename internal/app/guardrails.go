@@ -326,7 +326,7 @@ func buildGuardrailsActionReviewer(cfg Config, provReg *providerRegistry, provid
 	if base == nil {
 		return nil
 	}
-	specs, _ := effectiveGuardrailSpecs(cfg)
+	specs, _ := configuredGuardrailSpecs(cfg)
 	rules, ok := compileGuardrailRules(cfg, specs)
 	if !ok {
 		return nil
@@ -443,17 +443,31 @@ var defaultGuardrailSpecs = []modelhook.RuleSpec{
 // ENFORCING: under auto the approve-once ask IS the auto-mode behaviour (the checker
 // blocks, an interactive human allows once — CC auto-mode parity), so demoting auto
 // would remove that very behaviour. The interactive approve-once path is gated on
-// Deps.Interactive, NOT on posture. This is composition-only (no engine change) and
-// posture is operator-tier, consistent with guardrails being operator-tier (no
-// project-tier downgrade).
+// Deps.Interactive, NOT on posture. Posture is operator-tier, consistent with
+// guardrails being operator-tier (no project-tier downgrade). These demoted specs
+// feed coverage and narration; the engine reviewer compiles configuredGuardrailSpecs
+// and the engine applies the same yolo demotion per executing session.
 func effectiveGuardrailSpecs(cfg Config) (specs []modelhook.RuleSpec, usedDefaults bool) {
+	specs, usedDefaults = configuredGuardrailSpecs(cfg)
+	for i := range specs {
+		specs[i].Mode = demoteForPosture(cfg, specs[i].Mode)
+	}
+	return specs, usedDefaults
+}
+
+// configuredGuardrailSpecs returns the operator's rule specs (or the default set)
+// WITHOUT the yolo demotion. The engine reviewer compiles these: a reviewRoot is
+// shared with delegated children, so the engine selects enforcement from each
+// executing session's mode (a yolo session is advisory, a narrower child of it
+// still enforces) instead of freezing the parent's demotion into the rules.
+func configuredGuardrailSpecs(cfg Config) (specs []modelhook.RuleSpec, usedDefaults bool) {
 	if len(cfg.GuardrailsRules) > 0 {
 		out := make([]modelhook.RuleSpec, 0, len(cfg.GuardrailsRules))
 		for i, gr := range cfg.GuardrailsRules {
 			out = append(out, modelhook.RuleSpec{
 				Match:         gr.Match,
 				Phases:        gr.Phases,
-				Mode:          demoteForPosture(cfg, gr.Mode),
+				Mode:          gr.Mode,
 				Prompt:        gr.Prompt,
 				FailClosed:    gr.FailClosed,
 				FailClosedSet: gr.FailClosedSet,
@@ -472,7 +486,6 @@ func effectiveGuardrailSpecs(cfg Config) (specs []modelhook.RuleSpec, usedDefaul
 		if dm := strings.TrimSpace(cfg.GuardrailsDefaultMode); dm != "" {
 			s.Mode = dm
 		}
-		s.Mode = demoteForPosture(cfg, s.Mode)
 		out[i] = s
 	}
 	return out, true

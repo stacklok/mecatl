@@ -436,6 +436,15 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   parent: it runs in the narrower of its stored mode and the mode a fresh child
   would get. No signature changes.
 
+- **Contextual review enforcement follows the executing session's mode** —
+  the engine now demotes a `ReviewPolicyProvider`'s enforcement to advisory
+  for an executing `ModeYolo` session, and never consults
+  `PermissionReviewPolicyProvider` for a yolo child. A reviewer shared with
+  delegated children should report the operator's configured enforcement:
+  a yolo parent stays advisory while its narrower child keeps an enforcing
+  checker. A reviewer that already demoted for yolo is unaffected. Changed
+  (breaking, pre-v1 minor); no signature changes.
+
 - **Atomic one-shot retry eligibility (issue #2273)** —
   `port.ScheduleOneShotReArmer.ReArmOneShot` now requires store-side atomic
   validation of current disabled/settled-failure state, one-shot retry policy,

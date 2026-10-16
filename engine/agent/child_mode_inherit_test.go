@@ -254,3 +254,58 @@ func TestResumedChildMode(t *testing.T) {
 		}
 	}
 }
+
+// rejectingActionReviewer prohibits every action and enforces its finding.
+type rejectingActionReviewer struct{}
+
+func (rejectingActionReviewer) Review(context.Context, agent.ToolReviewRequest, agent.ReviewEvidenceSource) (agent.ToolReviewResult, session.AuxiliaryUsage, error) {
+	return agent.ToolReviewResult{Assessment: agent.ReviewProhibited}, session.AuxiliaryUsage{}, nil
+}
+
+func (rejectingActionReviewer) GuardrailReviewPolicy(_ string, job agent.ReviewJob, _ bool) (bool, bool) {
+	return job == agent.ReviewJobAction, true
+}
+
+// TestSharedReviewerEnforcesForNarrowerChildOfYoloParent proves the reviewer a
+// yolo parent shares with its Subagent child selects enforcement from the
+// CHILD's mode: an explicitly default child's prohibited action is blocked,
+// while an inheriting yolo child (like its parent) treats it as advisory.
+func TestSharedReviewerEnforcesForNarrowerChildOfYoloParent(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts []agent.SubagentOption
+		want bool
+	}{
+		{"explicit-default", []agent.SubagentOption{agent.WithChildMode(session.ModeDefault)}, false},
+		{"inherit", nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var executed atomic.Bool
+			probe := &fakeTool{name: "Probe", readOnly: true,
+				exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+					executed.Store(true)
+					return session.NewToolResult(in.ID, "probed"), nil
+				}}
+			childEngine := agent.NewEngine(agent.Deps{
+				LLM:     mockllm.New(mockllm.ToolCallTurn(toolCall("k1", "Probe", `{}`)), mockllm.TextTurn("child done")),
+				Catalog: catalogWith(t, probe),
+				Policy:  permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
+				Model:   "child-model",
+			})
+			task := agent.NewSubagentTool(childEngine, tc.opts...)
+			sess := newSession(t, session.Limits{})
+			if err := sess.SetMode(session.ModeYolo); err != nil {
+				t.Fatal(err)
+			}
+			e := newEngine(agent.Deps{
+				LLM:          mockllm.New(mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"go"}`)), mockllm.TextTurn("ok")),
+				Catalog:      catalogWith(t, task),
+				ToolReviewer: rejectingActionReviewer{},
+			})
+			drainObserving(t, e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"}), nil)
+			if executed.Load() != tc.want {
+				t.Errorf("child Probe executed=%t under a yolo parent with a rejecting reviewer, want %t", executed.Load(), tc.want)
+			}
+		})
+	}
+}
