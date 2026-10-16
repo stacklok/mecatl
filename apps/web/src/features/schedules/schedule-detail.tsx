@@ -651,7 +651,7 @@ function FactGroup({ children, title }: { children: React.ReactNode; title: stri
 function Fact({ label, title, value }: { label: string; title?: string; value: React.ReactNode }) {
   return (
     <div className="flex items-start justify-between gap-4 px-4 py-3">
-      <dt className="text-sm">{label}</dt>
+      <dt className="shrink-0 text-sm">{label}</dt>
       <dd className="min-w-0 text-right text-sm text-muted-foreground" title={title}>
         {value}
       </dd>

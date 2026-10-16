@@ -30,7 +30,15 @@ export function RunTime({
   return (
     <time dateTime={at}>
       {label}
-      {exact === "hidden" ? <span className="sr-only"> ({date})</span> : ` · ${date}`}
+      {exact === "hidden" ? (
+        <span className="sr-only"> ({date})</span>
+      ) : (
+        // A narrow row breaks after the dot, never inside the date.
+        <>
+          {" · "}
+          <span className="whitespace-nowrap">{date}</span>
+        </>
+      )}
     </time>
   );
 }

@@ -283,6 +283,9 @@ describe("schedule detail", () => {
       expect(value?.querySelector("time")?.getAttribute("datetime")).toBe(at);
       // Visible now, so a hover title would only repeat it.
       expect(value?.hasAttribute("title")).toBe(false);
+      // On a phone the row wraps after the dot, not inside the date or the label.
+      expect(value?.querySelector("time .whitespace-nowrap")?.textContent).toBe(formatDate(at));
+      expect(value?.previousElementSibling?.classList.contains("shrink-0")).toBe(true);
     }
   });
 
