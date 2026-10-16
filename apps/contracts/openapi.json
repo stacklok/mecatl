@@ -1814,7 +1814,9 @@
                       "enum": [
                         "default",
                         "plan",
-                        "acceptEdits"
+                        "acceptEdits",
+                        "auto",
+                        "yolo"
                       ]
                     },
                     "model": {
@@ -2991,7 +2993,9 @@
                       "enum": [
                         "default",
                         "plan",
-                        "acceptEdits"
+                        "acceptEdits",
+                        "auto",
+                        "yolo"
                       ]
                     }
                   },

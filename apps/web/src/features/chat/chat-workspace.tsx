@@ -103,6 +103,7 @@ import { notifyRunCompletion } from "../../lib/browser-notifications";
 import { copyToClipboard } from "../../lib/clipboard";
 import { errorMessage } from "../../lib/error-message";
 import { modelPreferenceId, useDisabledModels } from "../../lib/model-preferences";
+import { isSelectableMode, modeTitle } from "../../lib/permission-mode";
 import {
   defaultAgentName,
   useAgentAvatar,
@@ -1004,7 +1005,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           ? "Plan"
           : seedMode === "acceptEdits"
             ? "Accept edits"
-            : "Loading permission mode",
+            : seedMode === "auto" || seedMode === "yolo"
+              ? `${modeTitle(seedMode)} (set outside Studio)`
+              : "Loading permission mode",
     execution: sessionId
       ? displayedDetail
         ? `Files: ${displayedDetail.capabilities.executionFiles ? "available" : "unavailable"}; built-in Shell: ${displayedDetail.capabilities.builtInShell ? "available" : "unavailable"}`
@@ -3492,7 +3495,11 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             draftKey={sessionId ?? "new"}
             imageAttachmentsSupported={imageAttachmentsSupported}
             liveControlsDisabled={liveControlsDisabled}
-            liveMode={sessionId ? displayedDetail?.mode : undefined}
+            liveMode={
+              sessionId && isSelectableMode(displayedDetail?.mode)
+                ? displayedDetail.mode
+                : undefined
+            }
             liveModel={sessionId ? displayedDetail?.model : undefined}
             models={models}
             onConfigurationChange={setDraftConfiguration}

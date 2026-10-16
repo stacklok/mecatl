@@ -4,6 +4,12 @@ import { z } from "zod";
 
 export const sessionModeSchema = z.enum(["default", "plan", "acceptEdits"]);
 
+/**
+ * A session's reported mode. It adds the autonomous modes a session created
+ * outside Studio can run in; Studio reads them but never requests them.
+ */
+export const sessionReportedModeSchema = z.enum(["default", "plan", "acceptEdits", "auto", "yolo"]);
+
 export const sessionToolAccessSchema = z.enum(["all", "noFilesystem"]);
 
 export const reasoningEffortSchema = z.enum(["default", "low", "medium", "high", "xhigh", "max"]);
@@ -123,7 +129,7 @@ export const sessionDetailResponseSchema = z.object({
   }),
   id: z.string(),
   kind: z.string(),
-  mode: sessionModeSchema,
+  mode: sessionReportedModeSchema,
   model: sessionModelSelectionSchema
     .extend({
       contextWindow: z.string(),
@@ -155,7 +161,7 @@ export const setSessionModeRequestSchema = z.object({
 });
 
 export const setSessionModeResponseSchema = z.object({
-  mode: sessionModeSchema,
+  mode: sessionReportedModeSchema,
 });
 
 export const forkSessionRequestSchema = z.object({

@@ -517,6 +517,30 @@ describe("Mecatl chat sessions", () => {
     });
   });
 
+  it("reports an autonomous session's mode instead of folding it into default", async () => {
+    // A session created elsewhere in auto or yolo must not read as Manual.
+    for (const [mode, want] of [
+      [SessionMode.Auto, "auto"],
+      [SessionMode.Yolo, "yolo"],
+    ] as const) {
+      const snapshot = vi.fn().mockResolvedValue({
+        sessionId: "session-1",
+        state: "idle",
+        mode,
+        tokenUsage: {},
+      });
+      const service = createMecatlChatService(
+        { sessions: { get: vi.fn().mockResolvedValue({ snapshot }) } } as unknown as Client,
+        () =>
+          ({
+            capabilities: { manualCompaction: false, modelSelection: true },
+          }) as ServerCompatibility,
+      );
+
+      await expect(service.detail("session-1")).resolves.toMatchObject({ mode: want });
+    }
+  });
+
   it("keeps the resolved model's fields for a provider with no display name", async () => {
     // Pins the session model served before provider display names (#2260).
     const snapshot = vi.fn().mockResolvedValue({
