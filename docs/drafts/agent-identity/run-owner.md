@@ -32,7 +32,7 @@ Shared sessions build on the run owner with additions:
 | Members other than the creator | The creator recorded separately | A member list kept by mecak8s; the owner check becomes a membership check |
 | Revoking one member | Revocation by user | Nothing |
 
-Shared sessions should arrive together with [run grants](credentials-and-lifecycle.md#3-session-open-and-the-broker-refresh-token), not with a standing refresh token per member. With standing tokens, mecak8s's report of who started a run would select that member's token, so a compromised mecak8s could act as any member. A run grant is minted from the access token of the person who started the run, so no report from mecak8s decides whose credentials are used. A run grant could take the shape of a transaction token issued by AS-1 or the broker, whose `txn` and `sub` cannot change; it never reaches AS-2 or the vMCP.
+Shared sessions should arrive together with [run grants](credentials-and-lifecycle.md#later-work), not with a standing refresh token per member. With standing tokens, mecak8s's report of who started a run would select that member's token, so a compromised mecak8s could act as any member. A run grant is minted from the access token of the person who started the run, so no report from mecak8s decides whose credentials are used. A run grant could take the shape of a transaction token issued by AS-1 or the broker, whose `txn` and `sub` cannot change; it never reaches AS-2 or the vMCP.
 
 Shared sessions also raise product questions outside identity:
 
