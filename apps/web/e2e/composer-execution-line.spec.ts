@@ -4,7 +4,7 @@ import type { Locator, Page } from "@playwright/test";
 import { expect, type OfflineBff, test } from "./fixtures";
 
 const sessionId = "chat-a";
-const widths = [500, 640, 1280];
+const widths = [640, 1280];
 
 function serve(bff: OfflineBff) {
   bff.json("GET", "/api/v1/auth/session", {

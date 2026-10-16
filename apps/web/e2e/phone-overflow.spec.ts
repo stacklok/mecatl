@@ -110,16 +110,30 @@ function stub(bff: OfflineBff) {
     ],
   });
   bff.json("GET", "/api/v1/sessions/s1", {
-    capabilities: { image: true, manualCompaction: false, modelSelection: false },
+    capabilities: {
+      audio: false,
+      builtInShell: true,
+      executionFiles: true,
+      image: true,
+      manualCompaction: true,
+      modelSelection: true,
+    },
     id: "s1",
     kind: "main",
     mode: "default",
+    model: {
+      contextWindow: "200000",
+      id: "claude-sonnet-with-a-long-model-identifier",
+      providerDisplayName: "Anthropic",
+      providerId: "anthropic",
+      reasoningEffort: "default",
+    },
     state: "idle",
     usage: {
       cacheReadTokens: "0",
       cacheWriteTokens: "0",
-      inputTokens: "0",
-      outputTokens: "0",
+      inputTokens: "1200",
+      outputTokens: "800",
       reasoningTokens: "0",
     },
   });
@@ -328,6 +342,94 @@ test.describe("phone widths", () => {
         expect(await sidewaysScroll(page)).toEqual([]);
       });
     }
+  }
+});
+
+test.describe("compact phone conversation", () => {
+  test.skip(({ isMobile }) => !isMobile, "The mobile project supplies the touch viewport.");
+
+  for (const width of [360, 540, 639]) {
+    test(`keeps the transcript and session controls usable at ${width}px`, async ({
+      offlineBff,
+      page,
+    }) => {
+      await page.addInitScript(() => localStorage.setItem("studio.account", "phone-overflow"));
+      stub(offlineBff);
+      await page.setViewportSize({ height: 480, width });
+      await page.goto("/workspace/chat?sessionId=s1", { waitUntil: "domcontentloaded" });
+
+      const transcript = page.getByRole("region", { name: "Conversation transcript" });
+      const configuration = page.getByRole("region", { name: "Chat configuration and usage" });
+      const textarea = page.getByRole("textbox", { name: "Message Mecatl" });
+      await expect(page.getByText(/^Updated the import\./u)).toBeVisible();
+      expect(await transcript.evaluate((element) => element.clientHeight)).toBeGreaterThanOrEqual(
+        160,
+      );
+      await expect(configuration).toBeHidden();
+
+      await textarea.fill(Array.from({ length: 12 }, (_, index) => `Line ${index + 1}`).join("\n"));
+      const textareaBox = await textarea.boundingBox();
+      expect(textareaBox).not.toBeNull();
+      expect(textareaBox?.height ?? 0).toBeLessThanOrEqual(96);
+      expect(
+        await textarea.evaluate((element) => element.scrollHeight > element.clientHeight),
+      ).toBe(true);
+      expect(await transcript.evaluate((element) => element.clientHeight)).toBeGreaterThanOrEqual(
+        120,
+      );
+
+      const options = page.getByRole("button", { name: "Composer options" });
+      for (const button of [
+        options,
+        page.getByRole("button", { name: "Attach files" }),
+        page.getByRole("button", { name: "Start dictation" }),
+        page.getByRole("button", { name: "Clear draft" }),
+        page.getByRole("button", { name: "Send message" }),
+      ]) {
+        const box = await button.boundingBox();
+        expect(box).not.toBeNull();
+        expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
+        expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+      }
+
+      await options.click();
+      const sheet = page.locator('[data-slot="sheet-content"]');
+      await expect(sheet).toBeVisible();
+      expect(await sheet.evaluate((element) => getComputedStyle(element).overflowY)).toBe("auto");
+      expect(
+        await sheet.evaluate((element) => element.getBoundingClientRect().height),
+      ).toBeLessThanOrEqual(408);
+      await expect(page.getByRole("button", { name: /^Mode Manual$/u })).toBeVisible();
+      await expect(page.getByRole("button", { name: /^Model Claude Sonnet/u })).toBeVisible();
+      await expect(
+        page.getByRole("status", { name: "Session execution capabilities" }),
+      ).toBeVisible();
+      await expect(page.getByRole("button", { name: "Compact" })).toBeVisible();
+
+      await page.getByRole("button", { name: /^Mode Manual$/u }).click();
+      await expect(page.getByRole("button", { name: "Back from Mode" })).toBeVisible();
+      await expect(page.getByRole("button", { name: /^Manual/u })).toBeVisible();
+      await page.getByRole("button", { name: "Back from Mode" }).click();
+
+      await page.getByRole("button", { name: /^Model Claude Sonnet/u }).click();
+      await expect(page.getByRole("textbox", { name: "Search models" })).toBeVisible();
+      await page.getByRole("button", { name: "Back from Model" }).click();
+
+      await page.setViewportSize({ height: 480, width: 640 });
+      await expect(configuration).toBeVisible();
+      await expect(options).toBeHidden();
+      await expect(page.locator('[data-slot="sheet-overlay"]')).toHaveCount(0);
+      await expect(sheet).toHaveCount(0);
+      expect(
+        await page
+          .locator('button[aria-label="Composer options"]')
+          .evaluate((element) => element === document.activeElement),
+      ).toBe(false);
+      await textarea.focus();
+      await expect(textarea).toBeFocused();
+      await page.keyboard.type("Desktop draft");
+      await expect(textarea).toHaveValue(/Desktop draft$/u);
+    });
   }
 });
 
