@@ -4919,25 +4919,42 @@ func (s *Service) cancelRefusedAwaiting(sess *session.Session, mode session.Perm
 	return nil
 }
 
-// admitLeasedMode re-admits the AUTHORITATIVE stored mode once this process
-// holds id's session lease. beginRunAdmission checked the pre-lease snapshot
-// only: while this request waited for the lease, a peer on a looser
-// configuration (a rolling upgrade) may have taken the lease and saved a mode
-// this server does not admit. The caller holds runEntryMu and the lease, so
-// the snapshot read here is the one any later reload observes; every later
-// replacement of the run's aggregate re-admits it, and the launch fences
-// check the executed aggregate once more.
-func (s *Service) admitLeasedMode(ctx context.Context, id session.SessionID) error {
+// adoptLeasedSession replaces a run entry's pre-lease snapshot with the
+// AUTHORITATIVE one once this process holds id's session lease, re-admits its
+// mode, and adopts it as the run's aggregate (st.sess). The pre-lease snapshot
+// was only a preflight: while this request waited for the lease, a peer may
+// have saved the session, e.g. downgraded its mode or cancelled its pending
+// turn, and continuing with the stale copy would execute or persist over that
+// change. The caller must repeat its entry-specific state, run, and ask checks
+// against the returned aggregate before any recovery effect, persistence, or
+// execution. Every later replacement of the aggregate re-admits it, and the
+// launch fences check the executed aggregate once more.
+//
+// Without a shared lease it returns sess unchanged: there is no peer writer,
+// and every in-process writer of a session (run entry, SetMode, management
+// operations) serializes on runEntryMu, which the caller held across the
+// pre-lease load.
+func (s *Service) adoptLeasedSession(ctx context.Context, id session.SessionID, st *runState, sess *session.Session) (*session.Session, error) {
 	if s.cfg.SessionLease == nil {
-		// Without a shared lease there is no peer writer to race; the
-		// pre-lease snapshot was read under runEntryMu.
-		return nil
+		return sess, nil
 	}
-	sess, err := s.cfg.Store.Load(ctx, id)
+	loaded, err := s.GetSession(ctx, id)
 	if err != nil {
-		return fmt.Errorf("%w: %q", ErrNotFound, id)
+		return nil, err
 	}
-	return s.admitStoredMode(sess)
+	if err := s.admitStoredMode(loaded); err != nil {
+		return nil, err
+	}
+	st.persistMu.Lock()
+	defer st.persistMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.runs[id] != st || st.cancelling || st.cancelSignaled {
+		return nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
+	}
+	st.sess = loaded
+	st.titleRevision = loaded.TitleRevision
+	return loaded, nil
 }
 
 // modeWithinCeiling reports whether mode is at or below ceiling in the
@@ -5529,6 +5546,8 @@ func (s *Service) StartScheduledRunContent(ctx context.Context, id session.Sessi
 // FinishRun, exactly as for StartRunContent. Eligibility is derived exclusively from the
 // persisted typed terminal metadata and is consumed only after every fallible setup step
 // has succeeded and the recovered idle snapshot has been saved.
+//
+//nolint:gocyclo // Retry entry keeps preflight, lease, adopted-snapshot gates, and launch in one ordered transaction.
 func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*agent.Run, error) {
 	generation := s.captureRunEntryGeneration(id)
 	if s.draining.Load() {
@@ -5558,9 +5577,8 @@ func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*ag
 	if err := s.deregisterTerminalRunForEntry(id, sess, ErrFailedStepRetryIneligible); err != nil {
 		return nil, err
 	}
-	eligibleFailure, err := failedStepRetryEligibility(sess)
-	if err != nil {
-		return nil, fmt.Errorf("%w: session %q: %v", ErrFailedStepRetryIneligible, id, err)
+	if _, err := s.retryEntryEligibility(id, sess); err != nil {
+		return nil, err
 	}
 
 	st, admissionParent, err := s.beginRunAdmission(ctx, id, sess, false)
@@ -5579,7 +5597,13 @@ func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*ag
 		}
 	}()
 	ctx = admissionCtx
-	if err := s.admitLeasedMode(ctx, id); err != nil {
+	if sess, err = s.adoptLeasedSession(ctx, id, st, sess); err != nil {
+		return nil, err
+	}
+	// Repeat the retry gates against the adopted aggregate: a peer may have
+	// retried, recovered, or otherwise moved the session on.
+	eligibleFailure, err := s.retryEntryEligibility(id, sess)
+	if err != nil {
 		return nil, err
 	}
 	engine, env, governanceRoot, err := s.engineAndEnvironmentFor(ctx, sess)
@@ -5613,6 +5637,23 @@ func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*ag
 	promoted = true
 	s.startExecutionRenewal(id, st, run)
 	return run, nil
+}
+
+// retryEntryEligibility is RetryFailedRun's entry gate, run on the preflight
+// snapshot and again on the aggregate adopted under the lease. It reports
+// whether the session is still in its failed terminal (versus a prepared retry).
+func (s *Service) retryEntryEligibility(id session.SessionID, sess *session.Session) (bool, error) {
+	if err := s.validatePersistedWorkspace(sess); err != nil {
+		return false, err
+	}
+	if err := admitRunPurpose(sess, runPurposeChat); err != nil {
+		return false, fmt.Errorf("%w: session %q is not eligible for chat retry", ErrFailedStepRetryIneligible, id)
+	}
+	eligibleFailure, err := failedStepRetryEligibility(sess)
+	if err != nil {
+		return false, fmt.Errorf("%w: session %q: %v", ErrFailedStepRetryIneligible, id, err)
+	}
+	return eligibleFailure, nil
 }
 
 func failedStepRetryEligibility(sess *session.Session) (bool, error) {
@@ -5807,8 +5848,19 @@ func (s *Service) startRunContentLocked(ctx context.Context, id session.SessionI
 		}
 	}()
 	ctx = admissionCtx
-	if err := s.admitLeasedMode(ctx, id); err != nil {
+	if sess, err = s.adoptLeasedSession(ctx, id, st, sess); err != nil {
 		return nil, err
+	}
+	// Repeat the entry gates against the adopted aggregate before recovery can
+	// mutate or persist it.
+	if err := s.validatePersistedWorkspace(sess); err != nil {
+		return nil, err
+	}
+	if err := admitRunPurpose(sess, purpose); err != nil {
+		return nil, err
+	}
+	if _, pending := sess.FailedStepRetryPending(); pending {
+		return nil, fmt.Errorf("%w: session %q has a pending failed-step retry", ErrFailedPrecondition, id)
 	}
 	// Apply the unchanged reopen/interrupt/recover funnel only after the trusted
 	// purpose and ownership gates and lease acquisition. Rejected kinds are never
@@ -7620,6 +7672,30 @@ func (s *Service) ResolveApprovalRun(ctx context.Context, id session.SessionID, 
 	return s.resumeFromAwaiting(ctx, id, resolution, expectedRunID, generation)
 }
 
+// validateAwaitingResume is resumeFromAwaiting's exact-run/ask proof, run on
+// the preflight snapshot and again on the aggregate adopted under the lease.
+func (s *Service) validateAwaitingResume(sess *session.Session, resolution agent.ApprovalResolution, expectedRunID string) error {
+	if err := s.validatePersistedWorkspace(sess); err != nil {
+		return err
+	}
+	// On this path the persisted session IS the run — it parked awaiting the ask
+	// and no live *agent.Run exists — so the stored id is the authoritative answer
+	// to "which run would this verdict resolve?".
+	if err := checkExpectedRun(expectedRunID, sess.RunID()); err != nil {
+		return err
+	}
+	if sess.State != session.StateAwaiting {
+		// Awaiting is the only resumable non-terminal state. Everything else stays
+		// stranded-for-Approve (last-write-wins / nothing to resume).
+		return ErrNoActiveRun
+	}
+	pending, ok := sess.PendingAsk()
+	if !ok || pending.AskID != resolution.AskID {
+		return fmt.Errorf("%w: ask is unknown, stale, or already resolved", agent.ErrApprovalNotPending)
+	}
+	return agent.ValidateApprovalResolution(pending, resolution)
+}
+
 // resumeFromAwaiting is the service half of the fourth (awaiting-only) run-entry
 // seam: it handles an Approve/Deny against a session whose process died while parked
 // awaiting approval. It loads the persisted session and:
@@ -7688,25 +7764,7 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 	if err != nil {
 		return nil, err
 	}
-	if err := s.validatePersistedWorkspace(sess); err != nil {
-		return nil, err
-	}
-	// On this path the persisted session IS the run — it parked awaiting the ask
-	// and no live *agent.Run exists — so the stored id is the authoritative answer
-	// to "which run would this verdict resolve?".
-	if err := checkExpectedRun(expectedRunID, sess.RunID()); err != nil {
-		return nil, err
-	}
-	if sess.State != session.StateAwaiting {
-		// Awaiting is the only resumable non-terminal state. Everything else stays
-		// stranded-for-Approve (last-write-wins / nothing to resume).
-		return nil, ErrNoActiveRun
-	}
-	pending, ok := sess.PendingAsk()
-	if !ok || pending.AskID != resolution.AskID {
-		return nil, fmt.Errorf("%w: ask is unknown, stale, or already resolved", agent.ErrApprovalNotPending)
-	}
-	if err := agent.ValidateApprovalResolution(pending, resolution); err != nil {
+	if err := s.validateAwaitingResume(sess, resolution, expectedRunID); err != nil {
 		return nil, err
 	}
 	st, admissionParent, err := s.beginRunAdmission(ctx, id, sess, true)
@@ -7728,7 +7786,12 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 		}
 	}()
 	ctx = admissionCtx
-	if err := s.admitLeasedMode(ctx, id); err != nil {
+	// The pre-lease snapshot was a preflight: a peer may have resumed, cancelled,
+	// or recovered the pending turn while this request waited for the lease.
+	if sess, err = s.adoptLeasedSession(ctx, id, st, sess); err != nil {
+		return nil, err
+	}
+	if err := s.validateAwaitingResume(sess, resolution, expectedRunID); err != nil {
 		return nil, err
 	}
 	if err := s.attachLiveInstructions(sess, true); err != nil {

@@ -51,6 +51,13 @@ func parkAwaitingInMode(t *testing.T, store port.SessionStore, stored session.Pe
 // and checker; lease, when non-nil, is shared with a peer.
 func recoveryService(t *testing.T, store port.SessionStore, llm *mockllm.Provider, ran *atomic.Int64, ceiling session.PermissionMode, checker bool, lease port.SessionLease) *server.Service {
 	t.Helper()
+	return recoveryServiceAs(t, store, llm, ran, ceiling, checker, lease, "recovering")
+}
+
+// recoveryServiceAs is recoveryService with an explicit lease owner, so two
+// replicas can share one lease backend.
+func recoveryServiceAs(t *testing.T, store port.SessionStore, llm *mockllm.Provider, ran *atomic.Int64, ceiling session.PermissionMode, checker bool, lease port.SessionLease, owner string) *server.Service {
+	t.Helper()
 	cat := tool.NewCatalog()
 	cat.MustRegister(&writeAskTool{ran: ran})
 	cfg := server.Config{
@@ -61,7 +68,7 @@ func recoveryService(t *testing.T, store port.SessionStore, llm *mockllm.Provide
 		EnforcingCheckerConfigured: checker,
 	}
 	if lease != nil {
-		cfg.SessionLease, cfg.LeaseOwner, cfg.LeaseTTL, cfg.LeaseRenewInterval = lease, "recovering", time.Minute, time.Hour
+		cfg.SessionLease, cfg.LeaseOwner, cfg.LeaseTTL, cfg.LeaseRenewInterval = lease, owner, time.Minute, time.Hour
 	}
 	svc, err := newPlacementTestService(cfg)
 	if err != nil {
