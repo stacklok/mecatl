@@ -86,7 +86,7 @@ For both calls, Alice's use of her GitHub account is checked downstream. AS-2 re
 
 ## Authorization, credentials, and dispatch
 
-Local permissions and hooks apply before invocation. The broker then authenticates the workload and actor, checks session and execution context, evaluates the effective server/tool ceiling, and verifies the route. A failure stops the call before any exchange. If these checks pass, the broker uses a cached `V` or obtains one through AS-1 and AS-2, then dispatches to vMCP.
+Local permissions and hooks apply before invocation. The broker then authenticates the workload and actor, checks session and execution context including the run owner, verifies the route, and, once the authority work is in place, evaluates the effective server/tool ceiling. A failure stops the call before any exchange. If these checks pass, the broker uses a cached `V` or obtains one through AS-1 and AS-2, then dispatches to vMCP.
 
 | Outcome | Dispatch behavior |
 | --- | --- |
