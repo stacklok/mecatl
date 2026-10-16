@@ -212,7 +212,8 @@ The footer shows running and completed counts after delegated work begins. Use
 the overlay to inspect bounded activity previews; `/team` opens the same overlay
 on the Teams tab.
 
-See
+For prompts that start investigations, isolated implementations, and team
+reviews, see [Work with delegated agents](./delegated-agents.md). See
 [Subagents, teams, and parallel](/features/agent-behavior/subagents-and-teams.md#watch-a-delegation-in-mecatui)
 for delegation behavior and the information available in `mecatui`.
 

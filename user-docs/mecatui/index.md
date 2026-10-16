@@ -34,6 +34,7 @@ For an operator-provided deployment, follow [Connect to a remote deployment](./r
 - [Connect to a server](./remote-servers.md)
 - [Manage sessions](./sessions.md)
 - [Use the TUI](./using-the-tui.md)
+- [Work with delegated agents](./delegated-agents.md)
 - [Keybindings](./keybindings.md)
 - [Commands and memory](./commands-and-memory.md)
 - [Customize `mecatui`](./customization.md)
