@@ -73,10 +73,7 @@ test("the schedule time field is wide enough to show its meridiem on a phone", a
   // "11:59 PM" to "11:59 P" there; 136px was the narrowest that showed it whole.
   await page.setViewportSize({ height: 800, width: 390 });
   await page.goto("/workspace/schedules");
-  await page
-    .getByRole("button", { name: /Schedule task/ })
-    .first()
-    .click();
+  await page.getByRole("button", { name: "New scheduled task" }).first().click();
   const time = page.locator("#schedule-time");
   await expect(time).toBeVisible();
   const box = await time.boundingBox();
@@ -284,7 +281,7 @@ test("schedule mutations preserve backend-owned fields and surface failures", as
 
   await page.goto("/workspace/schedules");
   const mobile = testInfo.project.name === "chromium-mobile";
-  await page.getByRole("button", { name: "Schedule task" }).click();
+  await page.getByRole("button", { name: "New scheduled task" }).click();
   const createDialog = page.getByRole("dialog", { name: "Schedule a task" });
   await createDialog.getByRole("textbox", { name: "Name" }).fill("new-report");
   await createDialog.getByRole("textbox", { name: "Prompt" }).fill("Create from the browser");
@@ -318,8 +315,9 @@ test("schedule mutations preserve backend-owned fields and surface failures", as
     await page.getByRole("button", { name: `Actions for ${name}` }).click();
   };
   const expectExistingStatus = async (status: string) => {
+    // The Title-case label also names the "Scheduled" navigation link, so look in the page.
     const statusLabel = mobile
-      ? page.getByText(status, { exact: true })
+      ? page.getByRole("main").getByText(status, { exact: true })
       : page
           .getByRole("row")
           .filter({ hasText: "mutable-report" })
@@ -360,16 +358,16 @@ test("schedule mutations preserve backend-owned fields and surface failures", as
 
   await openActions("mutable-report");
   await page.getByRole("menuitem", { name: "Pause" }).click();
-  await expectExistingStatus("paused");
+  await expectExistingStatus("Paused");
   await openActions("mutable-report");
   await page.getByRole("menuitem", { name: "Resume" }).click();
-  await expectExistingStatus("scheduled");
+  await expectExistingStatus("Scheduled");
 
   failNextAction = true;
   await openActions("mutable-report");
   await page.getByRole("menuitem", { name: "Pause" }).click();
   await expect(page.getByText("Scheduler conflict.", { exact: true })).toBeVisible();
-  await expectExistingStatus("scheduled");
+  await expectExistingStatus("Scheduled");
 
   if (mobile) {
     await page.getByRole("link", { name: "Back to scheduled" }).click();
@@ -395,4 +393,49 @@ test("schedule mutations preserve backend-owned fields and surface failures", as
   expect(actions).toEqual(["pause", "resume", "pause"]);
   expect(offlineBff.requestsFor("DELETE", "/api/v1/schedules/new-report")).toHaveLength(1);
   expect(offlineBff.requestsFor("GET", "/api/v1/schedules").length).toBeGreaterThan(4);
+});
+
+test("a schedule row opens on a plain click, not on a modified click or a text selection", async ({
+  offlineBff,
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name === "chromium-mobile",
+    "The clickable row is the desktop table's.",
+  );
+  stubWorkspace(offlineBff);
+  offlineBff.json("GET", "/api/v1/schedules", {
+    items: [schedule({ prompt: "Summarize project activity for the weekly review" })],
+    reason: "",
+    supported: true,
+  });
+  offlineBff.json("GET", "/api/v1/schedules/daily-report/fires", { items: [] });
+
+  await page.goto("/workspace/schedules");
+  const prompt = page
+    .getByRole("table")
+    .getByText("Summarize project activity for the weekly review");
+  await expect(prompt).toBeVisible();
+
+  // Dragging across the prompt selects it; the click that ends the drag stays on the list.
+  const box = await prompt.boundingBox();
+  if (!box) throw new Error("no prompt box");
+  await page.mouse.move(box.x + 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width - 2, box.y + box.height / 2, { steps: 8 });
+  await page.mouse.up();
+  expect(await page.evaluate(() => window.getSelection()?.toString() ?? "")).not.toBe("");
+  await page.waitForTimeout(200);
+  await expect(page).toHaveURL(/\/workspace\/schedules$/);
+
+  // A modified click on the row body is the browser's, not the row's.
+  await page.evaluate(() => window.getSelection()?.removeAllRanges());
+  await prompt.click({ modifiers: ["ControlOrMeta"] });
+  await prompt.click({ modifiers: ["Shift"] });
+  await page.evaluate(() => window.getSelection()?.removeAllRanges());
+  await page.waitForTimeout(200);
+  await expect(page).toHaveURL(/\/workspace\/schedules$/);
+
+  await prompt.click();
+  await expect(page).toHaveURL(/\/workspace\/schedules\/daily-report$/);
 });

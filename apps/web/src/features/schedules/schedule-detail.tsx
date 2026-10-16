@@ -15,7 +15,7 @@ import {
 } from "@mecatl-studio/contracts/query";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { CalendarClock, Ellipsis } from "lucide-react";
+import { CalendarClock, Ellipsis, Loader2 } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { SortableHead, type SortDir } from "@/components/sortable-head";
 import { PageShell } from "../../components/shell/page-shell";
@@ -59,6 +59,7 @@ import { formatDate, formatRelativeTime, formatUntilTime } from "../../lib/forma
 import { pageTitleClass } from "../../lib/typography";
 import { useShortcutSuppression } from "../shortcuts/shortcut-provider";
 import { describeCron } from "./describe-cron";
+import { RunTime } from "./run-time";
 import { canEditSchedule, ScheduleForm } from "./schedule-form";
 import { ScheduleStatusBadge } from "./schedule-status";
 
@@ -194,7 +195,7 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
 
   const busy = action.isPending || remove.isPending || update.isPending;
   return (
-    <PageShell className="max-w-5xl">
+    <PageShell>
       <Button asChild className="rounded-full" size="sm" variant="outline">
         <Link to="/workspace/schedules">
           <span aria-hidden="true">‹</span>
@@ -203,12 +204,18 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
       </Button>
 
       <div className="mt-7 flex items-start justify-between gap-4">
-        <h1 className={pageTitleClass("min-w-0 break-words")}>{schedule.name}</h1>
+        <h1
+          className={pageTitleClass(
+            "min-w-0 break-words text-[44px] leading-[1.05] max-[499px]:text-3xl",
+          )}
+        >
+          {schedule.name}
+        </h1>
         <DropdownMenu modal={false}>
           <DropdownMenuTrigger asChild>
             <Button
               aria-label={`Actions for ${schedule.name}`}
-              className="shrink-0 rounded-full"
+              className="mt-2 shrink-0 rounded-full"
               ref={actionMenuRef}
               size="icon"
               variant="outline"
@@ -252,84 +259,96 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
         {schedule.profile === "noFilesystem" && <Badge variant="outline">no filesystem</Badge>}
       </div>
 
-      {error && (
-        <Alert className="mt-5" variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
+      <div className="max-w-4xl">
+        {error && (
+          <Alert className="mt-5" variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
 
-      <p className="mt-8 max-w-3xl whitespace-pre-wrap rounded-xl border bg-card p-5 text-sm leading-6">
-        {schedule.prompt}
-      </p>
+        <p className="mt-8 whitespace-pre-wrap rounded-xl border bg-card p-5 text-sm leading-6">
+          {schedule.prompt}
+        </p>
 
-      <div className="mt-8 grid gap-5 sm:grid-cols-2">
-        <FactGroup title="Details">
-          <Fact label="Mode" value={modeLabel(schedule.mode)} />
-          <Fact label="Write access" value={schedule.mutating ? "Writes allowed" : "Read-only"} />
-          <Fact label="Owner" value={schedule.owner || "Deployment default"} />
-          <Fact
-            label="Tools"
-            value={schedule.profile === "noFilesystem" ? "No filesystem" : "All"}
-          />
-          <Fact
-            label="Model"
-            value={
-              [schedule.providerId, schedule.modelId].filter(Boolean).join(" / ") ||
-              "Deployment default"
-            }
-          />
-        </FactGroup>
-        <FactGroup title="Frequency">
-          <Fact
-            label="Repeat"
-            title={
-              schedule.trigger.kind === "cron"
-                ? `${schedule.trigger.expression} (${timezoneLabel(schedule.trigger.timezone)})`
-                : undefined
-            }
-            value={
-              schedule.trigger.kind === "cron"
-                ? describeCron(schedule.trigger.expression)
-                : `Once at ${formatDate(schedule.trigger.at)}`
-            }
-          />
-          {schedule.trigger.kind === "cron" && (
-            <Fact label="Timezone" value={timezoneLabel(schedule.trigger.timezone)} />
-          )}
-          <Fact
-            label="Next run"
-            title={schedule.nextFireAt ? formatDate(schedule.nextFireAt) : undefined}
-            value={describeNextRun(schedule)}
-          />
-          <Fact
-            label="Last run"
-            title={schedule.lastFireAt ? formatDate(schedule.lastFireAt) : undefined}
-            value={describeLastRun(schedule)}
-          />
-          <Fact label="Runs" value={describeRuns(schedule)} />
-          {schedule.trigger.kind === "once" && (
+        <div className="mt-8 grid gap-5 sm:grid-cols-2">
+          <FactGroup title="Details">
+            <Fact label="Mode" value={modeLabel(schedule.mode)} />
+            <Fact label="Write access" value={schedule.mutating ? "Writes allowed" : "Read-only"} />
+            <Fact label="Owner" value={schedule.owner || "Deployment default"} />
             <Fact
-              label="Retry"
+              label="Tools"
+              value={schedule.profile === "noFilesystem" ? "No filesystem" : "All"}
+            />
+            <Fact
+              label="Model"
               value={
-                schedule.oneShotRetry
-                  ? schedule.oneShotMaxRetries
-                    ? `Up to ${schedule.oneShotMaxRetries} times`
-                    : "Enabled without a fixed limit"
-                  : "Disabled"
+                [schedule.providerId, schedule.modelId].filter(Boolean).join(" / ") ||
+                "Deployment default"
               }
             />
-          )}
-        </FactGroup>
-      </div>
+          </FactGroup>
+          <FactGroup title="Frequency">
+            <Fact
+              label="Repeat"
+              title={
+                schedule.trigger.kind === "cron"
+                  ? `${schedule.trigger.expression} (${timezoneLabel(schedule.trigger.timezone)})`
+                  : undefined
+              }
+              value={
+                schedule.trigger.kind === "cron"
+                  ? describeCron(schedule.trigger.expression)
+                  : `Once at ${formatDate(schedule.trigger.at)}`
+              }
+            />
+            {schedule.trigger.kind === "cron" && (
+              <Fact label="Timezone" value={timezoneLabel(schedule.trigger.timezone)} />
+            )}
+            <Fact
+              label="Next run"
+              value={
+                <RunTime
+                  at={nextRunAt(schedule)}
+                  exact="visible"
+                  label={describeNextRun(schedule)}
+                />
+              }
+            />
+            <Fact
+              label="Last run"
+              value={
+                <RunTime
+                  at={schedule.lastFireAt}
+                  exact="visible"
+                  label={describeLastRun(schedule)}
+                />
+              }
+            />
+            <Fact label="Runs" value={describeRuns(schedule)} />
+            {schedule.trigger.kind === "once" && (
+              <Fact
+                label="Retry"
+                value={
+                  schedule.oneShotRetry
+                    ? schedule.oneShotMaxRetries
+                      ? `Up to ${schedule.oneShotMaxRetries} times`
+                      : "Enabled without a fixed limit"
+                    : "Disabled"
+                }
+              />
+            )}
+          </FactGroup>
+        </div>
 
-      <section className="mt-8">
-        <h2 className="font-semibold">Run history</h2>
-        <ScheduleFireHistory
-          error={fires.isError ? errorMessage(fires.error) : undefined}
-          fires={fires.data?.items}
-          loading={fires.isPending}
-        />
-      </section>
+        <section className="mt-8">
+          <h2 className="text-sm font-semibold">Run log</h2>
+          <ScheduleFireHistory
+            error={fires.isError ? errorMessage(fires.error) : undefined}
+            fires={fires.data?.items}
+            loading={fires.isPending}
+          />
+        </section>
+      </div>
 
       {editing && (
         <ScheduleForm
@@ -392,13 +411,23 @@ function ScheduleFireHistory({
     }
   }
 
-  if (loading) return <HistoryState text="Reading run history…" />;
+  if (loading) {
+    return (
+      <div
+        className="mt-3 flex items-center gap-2 rounded-lg border border-dashed px-4 py-8 text-sm text-muted-foreground"
+        role="status"
+      >
+        <Loader2 aria-hidden="true" className="size-4 animate-spin" />
+        Reading the run log…
+      </div>
+    );
+  }
   if (error) return <HistoryState destructive text={error} />;
   if (sorted.length === 0) return <HistoryState text="This task has not run yet." />;
 
   return (
     <>
-      <div className="mt-3 overflow-hidden rounded-xl border bg-card max-[500px]:hidden">
+      <div className="mt-3 overflow-hidden rounded-lg border max-[500px]:hidden">
         <Table className="min-w-[42rem]">
           <TableHeader className="bg-muted/50 text-xs text-muted-foreground">
             <TableRow className="hover:bg-transparent">
@@ -445,7 +474,7 @@ function ScheduleFireHistory({
       </div>
 
       <div
-        className="mt-3 divide-y overflow-hidden rounded-xl border bg-card min-[500px]:hidden"
+        className="mt-3 divide-y overflow-hidden rounded-lg border min-[500px]:hidden"
         data-schedule-fire-mobile-list
       >
         {sorted.map((fire) => (
@@ -510,9 +539,21 @@ export function timezoneLabel(timezone: string) {
 }
 
 /** A paused or completed schedule will not fire, so it has no next run to promise. */
+export function nextRunAt(schedule: Pick<Schedule, "enabled" | "nextFireAt">) {
+  return schedule.enabled ? schedule.nextFireAt : "";
+}
+
+/**
+ * The next run as time remaining. A run whose time has come reads "Due now"
+ * for its first minute, while the daemon claims it, then "Overdue": a schedule
+ * stuck past its time must not read "in <1m" for ever.
+ */
 export function describeNextRun(schedule: Pick<Schedule, "enabled" | "nextFireAt">) {
-  const at = Date.parse(schedule.nextFireAt);
-  if (!schedule.enabled || Number.isNaN(at)) return "—";
+  const at = Date.parse(nextRunAt(schedule));
+  if (Number.isNaN(at)) return "—";
+  const late = Date.now() - at;
+  if (late >= 60_000) return "Overdue";
+  if (late >= 0) return "Due now";
   return `in ${formatUntilTime(at)}`;
 }
 
@@ -602,15 +643,15 @@ function FactGroup({ children, title }: { children: React.ReactNode; title: stri
       <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
         {title}
       </h2>
-      <dl className="divide-y rounded-xl border bg-card">{children}</dl>
+      <dl className="divide-y rounded-lg border">{children}</dl>
     </section>
   );
 }
 
-function Fact({ label, title, value }: { label: string; title?: string; value: string }) {
+function Fact({ label, title, value }: { label: string; title?: string; value: React.ReactNode }) {
   return (
     <div className="flex items-start justify-between gap-4 px-4 py-3">
-      <dt className="text-sm">{label}</dt>
+      <dt className="shrink-0 text-sm">{label}</dt>
       <dd className="min-w-0 text-right text-sm text-muted-foreground" title={title}>
         {value}
       </dd>

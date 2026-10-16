@@ -11,7 +11,7 @@ import {
   updateScheduleMutation,
 } from "@mecatl-studio/contracts/query";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { CalendarClock, Ellipsis, Plus } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { SortableHead, type TableSort, useTableSort } from "@/components/sortable-head";
@@ -57,7 +57,14 @@ import { errorMessage } from "../../lib/error-message";
 import { formatDate } from "../../lib/formatters";
 import { pageTitleClass } from "../../lib/typography";
 import { useShortcut, useShortcutSuppression } from "../shortcuts/shortcut-provider";
-import { canRunNow, canTogglePause } from "./schedule-detail";
+import { RunTime } from "./run-time";
+import {
+  canRunNow,
+  canTogglePause,
+  describeLastRun,
+  describeNextRun,
+  nextRunAt,
+} from "./schedule-detail";
 import { canEditSchedule, ScheduleForm } from "./schedule-form";
 import {
   deriveMobileScheduleInventory,
@@ -66,7 +73,7 @@ import {
   type ScheduleInventoryOrder,
   scheduleTriggerLabel,
 } from "./schedule-inventory";
-import { ScheduleStatusBadge, ScheduleStatusDot } from "./schedule-status";
+import { ScheduleStatusDot, ScheduleStatusLabel } from "./schedule-status";
 
 type Schedule = ListSchedulesResponse["items"][number];
 type Filter = "all" | "paused" | "scheduled";
@@ -223,18 +230,8 @@ export function SchedulesWorkspace() {
   return (
     <PageShell>
       <div className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className={pageTitleClass()}>Scheduled</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Recurring and one-off work run by the connected Mecatl instance.
-          </p>
-        </div>
-        {schedules.data?.supported && (
-          <Button onClick={() => openEditor("new")} variant="action">
-            <Plus />
-            Schedule task
-          </Button>
-        )}
+        <h1 className={pageTitleClass("min-w-0 truncate")}>Scheduled</h1>
+        {schedules.data?.supported && <NewScheduleButton onClick={() => openEditor("new")} />}
       </div>
 
       {error && (
@@ -292,15 +289,7 @@ export function SchedulesWorkspace() {
           </div>
 
           {items.length === 0 ? (
-            <EmptyState
-              action={query.trim() ? () => setQuery("") : undefined}
-              actionLabel="Clear filter"
-              text={
-                query.trim()
-                  ? `No scheduled tasks match “${query.trim()}”.`
-                  : "No scheduled tasks match this filter."
-              }
-            />
+            <FilterEmpty onClear={() => setQuery("")} query={query.trim()} />
           ) : (
             <ScheduleInventory
               busy={action.isPending || remove.isPending}
@@ -372,10 +361,11 @@ function ScheduleInventory({
   onEdit: (schedule: Schedule, opener: HTMLButtonElement) => void;
   sort: TableSort<ScheduleInventoryOrder>;
 }) {
+  const navigate = useNavigate();
   return (
     <>
       <div
-        className="mt-4 overflow-hidden rounded-xl border bg-card max-[500px]:hidden"
+        className="mt-4 overflow-hidden rounded-lg border max-[500px]:hidden"
         data-schedule-desktop-table
       >
         <Table>
@@ -392,10 +382,24 @@ function ScheduleInventory({
           </TableHeader>
           <TableBody>
             {items.map((schedule) => (
-              <TableRow className="has-aria-expanded:bg-muted/50" key={schedule.name}>
+              <TableRow
+                className="cursor-pointer has-aria-expanded:bg-muted/50"
+                key={schedule.name}
+                // The whole row opens the detail page for the pointer, as in
+                // the prototype. The keyboard keeps the name link, so the row
+                // itself takes no focus and no role.
+                onClick={(event) => {
+                  if (!opensRow(event)) return;
+                  void navigate({
+                    params: { scheduleName: schedule.name },
+                    to: "/workspace/schedules/$scheduleName",
+                  });
+                }}
+              >
                 <TableCell className="max-w-0 whitespace-normal">
                   <Link
                     className="block truncate font-medium hover:underline"
+                    onClick={(event) => event.stopPropagation()}
                     params={{ scheduleName: schedule.name }}
                     to="/workspace/schedules/$scheduleName"
                   >
@@ -415,17 +419,32 @@ function ScheduleInventory({
                     {scheduleTriggerLabel(schedule)}
                   </span>
                 </TableCell>
-                <TableCell className="text-muted-foreground">
-                  {schedule.enabled && schedule.nextFireAt ? formatDate(schedule.nextFireAt) : "—"}
+                <TableCell
+                  className="text-muted-foreground tabular-nums"
+                  title={fullDate(nextRunAt(schedule))}
+                >
+                  <RunTime
+                    at={nextRunAt(schedule)}
+                    exact="hidden"
+                    label={describeNextRun(schedule)}
+                  />
                 </TableCell>
-                <TableCell className="text-muted-foreground">
-                  {schedule.lastFireAt ? formatDate(schedule.lastFireAt) : "Never"}
+                <TableCell
+                  className="text-muted-foreground tabular-nums"
+                  title={fullDate(schedule.lastFireAt)}
+                >
+                  <RunTime
+                    at={schedule.lastFireAt}
+                    exact="hidden"
+                    label={describeLastRun(schedule)}
+                  />
                 </TableCell>
                 <TableCell className="text-right tabular-nums">{runCount(schedule)}</TableCell>
                 <TableCell>
-                  <ScheduleStatusBadge status={schedule.status} />
+                  <ScheduleStatusLabel status={schedule.status} />
                 </TableCell>
-                <TableCell className="w-0">
+                {/* The actions menu, and its portalled items, must not open the row. */}
+                <TableCell className="w-0" onClick={(event) => event.stopPropagation()}>
                   <ScheduleActions
                     busy={busy}
                     onAction={(name) => onAction(schedule, name)}
@@ -441,7 +460,7 @@ function ScheduleInventory({
       </div>
 
       <div
-        className="mt-4 divide-y overflow-hidden rounded-xl border bg-card min-[500px]:hidden"
+        className="mt-4 divide-y overflow-hidden rounded-lg border min-[500px]:hidden"
         data-schedule-mobile-list
       >
         {mobileItems.map((schedule) => (
@@ -451,15 +470,26 @@ function ScheduleInventory({
             params={{ scheduleName: schedule.name }}
             to="/workspace/schedules/$scheduleName"
           >
-            <ScheduleStatusDot status={schedule.status} />
+            <span className="mt-1.5 flex shrink-0">
+              <ScheduleStatusDot status={schedule.status} />
+            </span>
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-medium">{schedule.name}</span>
               <span className="line-clamp-2 text-xs text-muted-foreground">{schedule.prompt}</span>
               <span className="block text-[11px] text-muted-foreground tabular-nums">
                 {runCount(schedule)} {schedule.fireCount === 1 ? "run" : "runs"}
-                {schedule.lastFireAt
-                  ? ` · last ${formatDate(schedule.lastFireAt)}`
-                  : " · never run"}
+                {schedule.lastFireAt ? (
+                  <>
+                    {" · last "}
+                    <RunTime
+                      at={schedule.lastFireAt}
+                      exact="hidden"
+                      label={describeLastRun(schedule)}
+                    />
+                  </>
+                ) : (
+                  " · never run"
+                )}
               </span>
             </span>
           </Link>
@@ -534,14 +564,50 @@ function LoadingState() {
   );
 }
 
+/**
+ * The create button, as in the prototype's `create-schedule-dialog.tsx`: the
+ * short label on a phone. The accessible name stays the long one at every
+ * width, and starts with the short label a phone shows.
+ */
+function NewScheduleButton({ onClick }: { onClick: () => void }) {
+  return (
+    <Button aria-label="New scheduled task" onClick={onClick} size="sm" variant="action">
+      <Plus className="size-4" />
+      <span className="max-[499px]:hidden">New scheduled task</span>
+      <span className="min-[500px]:hidden">New</span>
+    </Button>
+  );
+}
+
+/**
+ * Nothing matches the search or the status filter: a plain bordered box, as
+ * in the prototype. Only a search can be cleared from here; the status
+ * filter is the control right above it.
+ */
+function FilterEmpty({ onClear, query }: { onClear: () => void; query: string }) {
+  return (
+    <div
+      className="mt-4 flex flex-col items-center gap-3 rounded-lg border border-dashed py-12 text-center text-sm text-muted-foreground"
+      role="status"
+    >
+      <p>
+        {query ? `No scheduled tasks match “${query}”.` : "No scheduled tasks match this filter."}
+      </p>
+      {query && (
+        <Button onClick={onClear} size="sm" variant="ghost">
+          Clear filter
+        </Button>
+      )}
+    </div>
+  );
+}
+
 function EmptyState({
   action,
-  actionLabel = "Schedule task",
   text,
   title,
 }: {
   action?: () => void;
-  actionLabel?: string;
   text: string;
   title?: string;
 }) {
@@ -556,14 +622,31 @@ function EmptyState({
       </EmptyHeader>
       {action && (
         <EmptyContent>
-          <Button onClick={action} variant="action">
-            {actionLabel === "Schedule task" && <Plus />}
-            {actionLabel}
-          </Button>
+          <NewScheduleButton onClick={action} />
         </EmptyContent>
       )}
     </Empty>
   );
+}
+
+/**
+ * The full local date behind a relative time, for the pointer's hover. The
+ * cell's `RunTime` also carries it as text, so the title is never the only way
+ * to it.
+ */
+function fullDate(value: string) {
+  return value && !Number.isNaN(Date.parse(value)) ? formatDate(value) : undefined;
+}
+
+/**
+ * Whether a click on a row's body should open the detail page. A modified
+ * click is the browser's (new tab, new window, extend a selection), and a
+ * click that ends a text selection in the row selects rather than navigates.
+ */
+function opensRow(event: React.MouseEvent) {
+  if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return false;
+  const selection = window.getSelection();
+  return !selection || selection.isCollapsed;
 }
 
 function runCount(schedule: Schedule) {

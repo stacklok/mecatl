@@ -85,7 +85,7 @@ reachable schedule store.
 ## Manage schedules in Studio
 
 [Studio](/operating/studio.md) lists every schedule you can see, with a detail
-page that shows the run history. Each run links to its session in Chats.
+page whose **Run log** lists past runs. Each run links to its session in Chats.
 
 - **Filter and search.** Press `/` to search by name, prompt, or cadence.
   **Scheduled** lists schedules that are running, claimed, or waiting for their

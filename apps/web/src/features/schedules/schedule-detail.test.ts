@@ -157,9 +157,17 @@ describe("schedule frequency facts", () => {
   it("shows the next run as time remaining, and nothing for a schedule that will not fire", () => {
     expect(describeNextRun({ enabled: true, nextFireAt: "2026-10-08T12:30:00Z" })).toBe("in 30m");
     expect(describeNextRun({ enabled: true, nextFireAt: "2026-10-08T17:00:00Z" })).toBe("in 5h");
-    expect(describeNextRun({ enabled: true, nextFireAt: "2026-10-08T11:00:00Z" })).toBe("in <1m");
+    expect(describeNextRun({ enabled: true, nextFireAt: "2026-10-08T12:00:30Z" })).toBe("in <1m");
     expect(describeNextRun({ enabled: false, nextFireAt: "2026-10-09T12:00:00Z" })).toBe("—");
     expect(describeNextRun({ enabled: true, nextFireAt: "" })).toBe("—");
+  });
+
+  it("reads a next run that has passed as due, then overdue, never as in <1m", () => {
+    expect(describeNextRun({ enabled: true, nextFireAt: "2026-10-08T12:00:00Z" })).toBe("Due now");
+    expect(describeNextRun({ enabled: true, nextFireAt: "2026-10-08T11:59:30Z" })).toBe("Due now");
+    expect(describeNextRun({ enabled: true, nextFireAt: "2026-10-08T11:59:00Z" })).toBe("Overdue");
+    expect(describeNextRun({ enabled: true, nextFireAt: "2026-10-01T12:00:00Z" })).toBe("Overdue");
+    expect(describeNextRun({ enabled: false, nextFireAt: "2026-10-01T12:00:00Z" })).toBe("—");
   });
 
   it("shows the last run as time elapsed", () => {

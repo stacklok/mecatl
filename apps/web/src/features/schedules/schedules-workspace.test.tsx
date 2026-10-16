@@ -194,7 +194,7 @@ describe("schedule inventory controls", () => {
     const user = userEvent.setup();
     mount([schedule({ name: "Alpha" })]);
 
-    await user.click(screen.getByRole("button", { name: "Schedule task" }));
+    await user.click(screen.getByRole("button", { name: "New scheduled task" }));
     expect(screen.queryByText("Timezone")).toBeNull();
     expect(screen.queryByText(/Maximum runs/)).toBeNull();
     expect(screen.queryByText("Retry if the run fails")).toBeNull();
@@ -204,7 +204,7 @@ describe("schedule inventory controls", () => {
   it("restores focus after cancelling schedule creation", async () => {
     const user = userEvent.setup();
     mount([schedule({ name: "Alpha" })]);
-    const trigger = screen.getByRole("button", { name: "Schedule task" });
+    const trigger = screen.getByRole("button", { name: "New scheduled task" });
     await user.click(trigger);
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(document.activeElement).toBe(trigger));
@@ -420,7 +420,7 @@ describe("schedule keyboard focus and shortcuts", () => {
   it("does not let / reach the search from a button inside the create dialog", async () => {
     const user = userEvent.setup();
     mount([alpha]);
-    await user.click(screen.getByRole("button", { name: "Schedule task" }));
+    await user.click(screen.getByRole("button", { name: "New scheduled task" }));
     const cancel = screen.getByRole("button", { name: "Cancel" });
     cancel.focus();
 
