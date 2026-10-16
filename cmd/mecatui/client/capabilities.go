@@ -1,6 +1,8 @@
 package client
 
 import (
+	"slices"
+
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
 
@@ -46,6 +48,12 @@ type Capabilities struct {
 	// "yolo"). It bounds which modes the ui's mode cycle may switch to. NOT
 	// session state. Empty on an older server.
 	Posture string
+	// SessionPermissionModes reports the session_permission_modes feature: the
+	// five modes are session-scoped (auto and yolo are session modes, and a lower
+	// session mode drops the posture's allow-all). An older server without it
+	// applies its auto/yolo posture process-wide whatever the session mode, so the
+	// ui must not present a session mode as the effective permission mode there.
+	SessionPermissionModes bool
 	// ProjectTrust is "trusted" or "untrusted" for the server's launch
 	// workspace, CHROME ONLY: the ui's header badge. Empty on an older server.
 	ProjectTrust string
@@ -109,6 +117,18 @@ func capabilitiesWithSessionMediaFrom(caps Capabilities, sessionCaps *mecatlv1.S
 		caps.BuiltInShell = sessionCaps.GetBuiltInShell()
 		caps.SessionMediaPresent = true
 	}
+	return caps
+}
+
+// SessionPermissionModesFeature is the compatibility feature identifier for
+// session-scoped permission modes.
+const SessionPermissionModesFeature = "session_permission_modes"
+
+// compatibilityCapabilitiesFrom maps a compatibility response: the capability
+// message plus the feature bits the ui consumes.
+func compatibilityCapabilitiesFrom(resp *mecatlv1.GetCompatibilityInfoResponse) Capabilities {
+	caps := capabilitiesFrom(resp.GetCapabilities())
+	caps.SessionPermissionModes = slices.Contains(resp.GetFeatures(), SessionPermissionModesFeature)
 	return caps
 }
 

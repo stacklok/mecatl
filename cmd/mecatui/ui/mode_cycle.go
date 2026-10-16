@@ -6,15 +6,43 @@ import (
 
 // modeCycleOrder is the ModeSwitch order over every permission mode: the
 // vocabulary with default and plan swapped, keeping the established
-// default → plan → accept-edits start before the posture-raising modes.
-func modeCycleOrder() []string {
+// default → plan → accept-edits start before the posture-raising modes. A
+// legacy server (see legacyPermissionModes) has no auto or yolo session mode,
+// so its cycle stops at the three session modes it understands.
+func modeCycleOrder(legacy bool) []string {
 	vocab := PermissionModeVocabulary()
-	names := make([]string, len(vocab))
-	for i, e := range vocab {
-		names[i] = e.Name
+	names := make([]string, 0, len(vocab))
+	for _, e := range vocab {
+		if legacy && e.Posture != postureStrict {
+			continue
+		}
+		names = append(names, e.Name)
 	}
 	names[0], names[1] = names[1], names[0]
 	return names
+}
+
+// legacyPermissionModes reports a server without the session_permission_modes
+// feature. Its auto or yolo posture is process-wide: it applies to every
+// session whatever the session mode, and SetMode cannot remove it. The ui then
+// cycles only the legacy session modes and labels the header with the server
+// posture, so a session mode is never presented as the effective permission mode.
+func (m Model) legacyPermissionModes() bool {
+	return !m.caps.SessionPermissionModes
+}
+
+// legacyAllowAllPosture is the process-wide allow-all posture a legacy server
+// applies over every session mode, or "" when there is none.
+func (m Model) legacyAllowAllPosture() string {
+	if !m.legacyPermissionModes() {
+		return ""
+	}
+	switch m.caps.Posture {
+	case postureAuto, postureYolo:
+		return m.caps.Posture
+	default:
+		return ""
+	}
 }
 
 // modeCursor is the permission mode the cycle last landed on, valid only while
@@ -64,6 +92,9 @@ func (m Model) currentModeToken() string {
 // session mode itself.
 func (m Model) acceptedModeToken() string {
 	session := m.desiredMode()
+	if m.legacyPermissionModes() {
+		return session
+	}
 	for _, e := range PermissionModeVocabulary() {
 		if e.Posture == m.caps.Posture && e.SessionMode == session {
 			return e.Name
@@ -72,8 +103,8 @@ func (m Model) acceptedModeToken() string {
 	return session
 }
 
-func nextModeToken(cur string) string {
-	order := modeCycleOrder()
+func nextModeToken(cur string, legacy bool) string {
+	order := modeCycleOrder(legacy)
 	for i, name := range order {
 		if name == cur {
 			return order[(i+1)%len(order)]
@@ -94,7 +125,7 @@ func (m Model) cycleMode() (tea.Model, tea.Cmd) {
 	if m.modeRefused != "" {
 		cur, m.modeRefused = m.modeRefused, ""
 	}
-	next := permissionModeEntry(nextModeToken(cur))
+	next := permissionModeEntry(nextModeToken(cur, m.legacyPermissionModes()))
 	if postureRank(next.Posture) > postureRank(m.caps.Posture) {
 		m.modeCursor = modeCursor{token: next.Name, session: m.desiredMode()}
 		m.statusMsg = m.deps.Theme.Style("warning").Render(m.modeUnavailableStatus(next))
@@ -132,6 +163,10 @@ func (m Model) headerMode() string {
 			mode += " pending"
 		}
 	}
+	if posture := m.legacyAllowAllPosture(); posture != "" && mode != "" {
+		// An older server's allow-all posture overrides every session mode.
+		mode += " (server " + posture + ")"
+	}
 	return mode
 }
 
@@ -147,7 +182,13 @@ func (m Model) modeUnavailableStatus(e PermissionModeEntry) string {
 // server ceiling are fully effective — allow-all and loose-substitution are
 // session-mode-driven, not posture-driven, so switching to a lower mode
 // actually changes behavior and nothing "stays until restart".
-func (Model) modeLabel(e PermissionModeEntry) string {
+//
+// On a legacy server with an allow-all posture the label says that posture
+// still applies, because the session mode cannot lower it there.
+func (m Model) modeLabel(e PermissionModeEntry) string {
+	if posture := m.legacyAllowAllPosture(); posture != "" {
+		return e.Name + " (the server's " + posture + " posture still applies to every session)"
+	}
 	return e.Name
 }
 

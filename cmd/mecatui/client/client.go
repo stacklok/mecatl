@@ -473,7 +473,7 @@ func (c *Client) compatibilityCapabilities(ctx context.Context) (Capabilities, e
 	if err != nil {
 		return Capabilities{}, fmt.Errorf("get compatibility info: %w", err)
 	}
-	return capabilitiesFrom(resp.GetCapabilities()), nil
+	return compatibilityCapabilitiesFrom(resp), nil
 }
 
 // createSession is the shared CreateSession proto call and response unwrap body.

@@ -271,7 +271,9 @@ and deployments can observe:
 
 Clients detect a server with session-scoped modes through the
 `session_permission_modes` feature identifier. The API major version is
-unchanged.
+unchanged. Against an older server without that feature, `mecatui` cycles only
+`plan`, `default`, and `accept-edits`, and labels the header mode with the
+server's `auto` or `yolo` posture, which still applies to every session there.
 
 ## Approve and constrain work
 

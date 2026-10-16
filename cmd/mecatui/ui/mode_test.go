@@ -161,6 +161,7 @@ func TestRefusedModeDoesNotTrapCycle(t *testing.T) {
 	m := newTestModelFromDeps(Deps{Session: conv, Conv: conv, Theme: theme.New("aztec", theme.AztecPalette()), Mode: "accept-edits", Ctx: context.Background(), Embedded: true})
 	m = applyAll(m, tea.WindowSizeMsg{Width: 120, Height: 30}, client.SessionReadyMsg{SessionID: "sess-test-0001", Mode: "accept-edits"})
 	m.caps.Posture = postureYolo
+	m.caps.SessionPermissionModes = true
 
 	press := func() {
 		t.Helper()

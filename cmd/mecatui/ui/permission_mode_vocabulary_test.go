@@ -26,7 +26,7 @@ func permissionModeTestModel(t *testing.T, conv *fakeConv, posture string, embed
 	})
 	return applyAll(m,
 		tea.WindowSizeMsg{Width: 140, Height: 30},
-		client.SessionReadyMsg{SessionID: "sess-test-0001", Mode: "default", Capabilities: client.Capabilities{Posture: posture}},
+		client.SessionReadyMsg{SessionID: "sess-test-0001", Mode: "default", Capabilities: client.Capabilities{Posture: posture, SessionPermissionModes: true}},
 	)
 }
 
@@ -353,7 +353,7 @@ func TestHeaderKeepsPostureAcrossModeCycle(t *testing.T) {
 	})
 	m = applyAll(m,
 		tea.WindowSizeMsg{Width: 140, Height: 30},
-		client.SessionReadyMsg{SessionID: "sess-auto-cycle", Mode: "auto", Capabilities: client.Capabilities{Posture: postureAuto, ProjectTrust: client.ProjectTrusted}},
+		client.SessionReadyMsg{SessionID: "sess-auto-cycle", Mode: "auto", Capabilities: client.Capabilities{Posture: postureAuto, ProjectTrust: client.ProjectTrusted, SessionPermissionModes: true}},
 	)
 
 	assertAuto := func(step, wantMode string) {
@@ -464,5 +464,67 @@ func TestModeServerDefaultRequestsUnspecifiedAndReadsBack(t *testing.T) {
 	// Once known, later creates carry the current mode explicitly, as before.
 	if got := m.desiredMode(); got != "plan" {
 		t.Fatalf("desiredMode after ready = %q, want plan", got)
+	}
+}
+
+// legacyYoloModel is a session on an API-major-1 server that predates the
+// session_permission_modes feature but advertises a yolo posture: its allow-all
+// is process-wide and no session mode removes it.
+func legacyYoloModel(t *testing.T, conv *fakeConv) Model {
+	t.Helper()
+	m := newTestModelFromDeps(Deps{
+		Session: conv,
+		Conv:    conv,
+		Theme:   theme.New("aztec", theme.AztecPalette()),
+		Mode:    "default",
+		Ctx:     context.Background(),
+	})
+	return applyAll(m,
+		tea.WindowSizeMsg{Width: 140, Height: 30},
+		client.SessionReadyMsg{SessionID: "sess-legacy-yolo", Mode: "default", Capabilities: client.Capabilities{Posture: postureYolo}},
+	)
+}
+
+// TestLegacyYoloServerNeverPresentsSessionModeAsEffective pins the legacy
+// presentation: against an older yolo server the header names the server's
+// posture next to every session mode, the cycle offers only the session modes
+// that server understands (never auto or yolo), and landing on one says the
+// server's yolo still applies.
+func TestLegacyYoloServerNeverPresentsSessionModeAsEffective(t *testing.T) {
+	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, mode: "default"}
+	m := legacyYoloModel(t, conv)
+	if got := statusMode(m); got != "default (server yolo)" {
+		t.Fatalf("start: status mode = %q, want the server posture named", got)
+	}
+	want := []string{"plan", "accept-edits", "default", "plan"}
+	for i, mode := range want {
+		var issued bool
+		m, issued = pressModeSwitch(t, m)
+		if !issued {
+			t.Fatalf("step %d: no SetMode issued for %s", i, mode)
+		}
+		if got := statusMode(m); got != mode+" (server yolo)" {
+			t.Fatalf("step %d: status mode = %q, want %q", i, got, mode+" (server yolo)")
+		}
+		if status := visibleModeText(m); !strings.Contains(status, "yolo posture still applies") {
+			t.Fatalf("step %d: status = %q, want the posture caveat", i, status)
+		}
+	}
+	for _, sent := range conv.setModes() {
+		if sent == "auto" || sent == "yolo" {
+			t.Fatalf("SetMode calls = %v: a legacy server has no %s session mode", conv.setModes(), sent)
+		}
+	}
+}
+
+// TestLegacyStrictServerShowsPlainSessionMode pins that the legacy label is
+// only added for an allow-all posture: a strict older server's session mode is
+// its effective mode.
+func TestLegacyStrictServerShowsPlainSessionMode(t *testing.T) {
+	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}, mode: "default"}
+	m := legacyYoloModel(t, conv)
+	m.caps.Posture = postureStrict
+	if got := statusMode(m); got != "default" {
+		t.Fatalf("status mode = %q, want default", got)
 	}
 }

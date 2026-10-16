@@ -63,6 +63,7 @@ func TestStatusLine_YoloModeRendersAlarmPill(t *testing.T) {
 		m.phase = phaseIdle
 		m.activeMode = mode
 		m.caps.Posture = postureYolo
+		m.caps.SessionPermissionModes = true
 		updated, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
 		m = updated.(Model)
 		updated, _ = m.update(waitStatusMessage(t, m.statusLineWaitCmd()))
