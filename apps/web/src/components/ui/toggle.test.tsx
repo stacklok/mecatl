@@ -5,12 +5,32 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Toggle } from "./toggle";
+import { Tooltip, TooltipTrigger } from "./tooltip";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 afterEach(cleanup);
 
 describe("Toggle", () => {
+  it("tags itself with data-slot and data-toggle, which an asChild trigger keeps", () => {
+    render(
+      <>
+        <Toggle>Bold</Toggle>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Toggle>Italic</Toggle>
+          </TooltipTrigger>
+        </Tooltip>
+      </>,
+    );
+    const bold = screen.getByRole("button", { name: "Bold" });
+    expect(bold.getAttribute("data-slot")).toBe("toggle");
+    expect(bold.hasAttribute("data-toggle")).toBe(true);
+    const italic = screen.getByRole("button", { name: "Italic" });
+    expect(italic.getAttribute("data-slot")).toBe("tooltip-trigger");
+    expect(italic.hasAttribute("data-toggle")).toBe(true);
+  });
+
   it("flips aria-pressed on click", async () => {
     const user = userEvent.setup();
     const onPressedChange = vi.fn();

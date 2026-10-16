@@ -270,13 +270,15 @@ export function ModelSheetSection({
   const filteredGroups = filterGroups(groupedModels, filter);
   const normalized = filter.trim().toLocaleLowerCase();
   const showDefault = allowUnset && (!normalized || "default".includes(normalized));
-  // One Toggle per model, not a single-choice ToggleGroup: that would turn the
-  // rows into radios with roving focus. Pressing the chosen row picks it again.
-  // The classes undo the Toggle's own size, shape, ink and pressed fill. As
-  // before, hovering the chosen row shows the hover fill in light and keeps
-  // the zinc fill in dark.
+  // One ghost Toggle per model, not a single-choice ToggleGroup: that would
+  // turn the rows into radios with roving focus. Pressing the chosen row picks
+  // it again. The classes undo the Toggle's own size, shape and hover ink,
+  // inset its focus ring, which the scrolling list would clip, and fill the
+  // chosen row with zinc. Hovering the chosen row shows the hover fill in
+  // light; in dark the zinc fill stays, because the dark variant sorts after
+  // hover, as it did before the rows were Toggles.
   const rowClass =
-    "flex h-auto w-full min-w-0 items-center justify-start gap-3 rounded-none px-4 py-3 text-left text-sm font-normal whitespace-normal transition-colors hover:bg-muted/50 hover:text-current disabled:opacity-50 data-[state=on]:bg-zinc-100 data-[state=on]:text-current data-[state=on]:hover:bg-muted/50 dark:data-[state=on]:bg-zinc-800 dark:data-[state=on]:hover:bg-zinc-800";
+    "flex h-auto w-full min-w-0 items-center justify-start gap-3 rounded-none px-4 py-3 text-left text-sm font-normal whitespace-normal transition-colors hover:bg-muted/50 hover:text-current focus-visible:ring-inset disabled:opacity-50 data-[state=on]:bg-zinc-100 data-[state=on]:hover:bg-muted/50 dark:data-[state=on]:bg-zinc-800";
 
   return (
     <div className="flex min-h-0 flex-col">
@@ -298,6 +300,7 @@ export function ModelSheetSection({
             disabled={disabled}
             onPressedChange={() => onModelChange(undefined)}
             pressed={model === undefined}
+            variant="ghost"
           >
             <span className="flex-1 truncate">Default</span>
             {model === undefined && <Check aria-hidden="true" className="size-4 shrink-0" />}
@@ -324,6 +327,7 @@ export function ModelSheetSection({
                     onModelChange({ id: candidate.id, providerId: candidate.providerId })
                   }
                   pressed={selected}
+                  variant="ghost"
                 >
                   <span className="flex-1 truncate">{candidate.label}</span>
                   {selected && <Check aria-hidden="true" className="size-4 shrink-0" />}

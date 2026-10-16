@@ -36,11 +36,14 @@ const Toggle = React.forwardRef<
   React.ElementRef<typeof TogglePrimitive.Root>,
   React.ComponentPropsWithoutRef<typeof TogglePrimitive.Root> & VariantProps<typeof toggleVariants>
 >(({ className, size, variant, ...props }, ref) => (
+  // As on Button, data-toggle comes after the spread so it survives an asChild
+  // trigger's data-slot: the phone glyph rule in styles.css keys on it.
   <TogglePrimitive.Root
     data-slot="toggle"
     className={cn(toggleVariants({ className, size, variant }))}
     ref={ref}
     {...props}
+    data-toggle=""
   />
 ));
 Toggle.displayName = TogglePrimitive.Root.displayName;

@@ -44,13 +44,16 @@ export interface ComposerModelControl {
 const rowClass =
   "flex w-full items-center gap-3 px-4 py-3 text-left text-sm transition-colors hover:bg-muted/50 disabled:opacity-50";
 
-/** Undoes the Toggle's own size, shape, ink and pressed fill on a `rowClass` row. */
+/**
+ * A ghost Toggle (no pressed fill) as a `rowClass` row: undoes its size, shape
+ * and hover ink, and insets its focus ring, which the sheet would clip.
+ */
 const toggleRowClass =
-  "h-auto min-w-0 justify-start rounded-none font-normal whitespace-normal hover:text-current data-[state=on]:bg-transparent data-[state=on]:text-current data-[state=on]:hover:bg-muted/50";
+  "h-auto min-w-0 justify-start rounded-none font-normal whitespace-normal hover:text-current focus-visible:ring-inset";
 
-/** The Effort pill, brand-tinted while pressed, with no hover fill. */
+/** The Effort pill, a ghost Toggle brand-tinted while pressed, with no hover fill. */
 const effortPillClass =
-  "h-auto min-h-8 min-w-0 rounded-full border px-3 py-1 text-xs font-normal whitespace-normal transition-none hover:bg-transparent hover:text-current data-[state=on]:border-brand data-[state=on]:bg-brand/10 data-[state=on]:text-brand data-[state=on]:hover:bg-brand/10 data-[state=on]:hover:text-brand";
+  "h-auto min-h-8 min-w-0 border px-3 py-1 text-xs font-normal whitespace-normal transition-none hover:bg-transparent hover:text-current data-[state=on]:border-brand data-[state=on]:bg-brand/10 data-[state=on]:text-brand data-[state=on]:hover:bg-brand/10 data-[state=on]:hover:text-brand";
 
 /**
  * The phone composer's options, from the prototype's `MobileComposerMenu`
@@ -238,6 +241,7 @@ export function ComposerOptionsSheet({
                         close();
                       }}
                       pressed={option.value === model.effort}
+                      variant="ghost"
                     >
                       {option.label}
                     </Toggle>
@@ -309,6 +313,7 @@ function OptionView<V extends string>({
           key={option.value}
           onPressedChange={() => onSelect(option.value)}
           pressed={option.value === value}
+          variant="ghost"
         >
           {option.dotClassName && (
             <span

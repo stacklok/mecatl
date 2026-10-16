@@ -519,6 +519,22 @@ describe("side thread dictation toggle pins", () => {
     client.clear();
   });
 
+  it("shares the composer's look and leaves its glyph to the Toggle phone rule", async () => {
+    render(<ChatComposer onSend={vi.fn().mockResolvedValue(true)} />);
+    const composer = screen.getByRole("button", { name: "Start dictation" });
+    const composerLook = composer.className;
+    cleanup();
+    const client = await renderSideThread();
+    const thread = await screen.findByRole("button", { name: "Start dictation" });
+    expect(thread.className).toBe(composerLook);
+    for (const toggle of [composer, thread]) {
+      // The phone rule in styles.css sizes a Toggle's glyph that has no size of its own.
+      expect(toggle.hasAttribute("data-toggle")).toBe(true);
+      expect(toggle.querySelector("svg")?.getAttribute("class")).not.toMatch(/(^|\s)(size|h|w)-/);
+    }
+    client.clear();
+  });
+
   it("is absent where the browser cannot dictate", async () => {
     Reflect.deleteProperty(window, "SpeechRecognition");
     const client = await renderSideThread();

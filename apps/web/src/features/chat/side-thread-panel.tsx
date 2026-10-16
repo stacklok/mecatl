@@ -31,7 +31,7 @@ import {
   Square,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { Button, buttonVariants } from "../../components/ui/button";
+import { Button } from "../../components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -53,7 +53,6 @@ import {
   useUserAvatar,
   useUserDisplayName,
 } from "../../lib/profile-preferences";
-import { cn } from "../../lib/utils";
 import { useAuthRecovery } from "../auth/auth-recovery-context";
 import type { ApprovalRequest, ApprovalVerdict } from "./approval-panel";
 import type { ComposerModelOption } from "./chat-composer";
@@ -67,6 +66,7 @@ import {
   retractApproval,
   unmatchedApprovals,
 } from "./chat-state";
+import { dictationToggleClass } from "./dictation-toggle";
 import { EscapeHintContext } from "./escape-hint-context";
 import { Message } from "./message";
 import { groupModels, ModelEffortMenu } from "./model-effort-menu";
@@ -367,24 +367,14 @@ export function SideThreadPanel({
                 {voice.isSupported && (
                   <Toggle
                     aria-label={voice.isListening ? "Stop dictation" : "Start dictation"}
-                    // The ghost icon button's look: brand tint while listening,
-                    // the ghost's hover ink in both states.
-                    className={cn(
-                      buttonVariants({ size: "icon", variant: "ghost" }),
-                      "size-8 min-w-0 shrink-0 rounded-full px-0 text-muted-foreground hover:bg-muted/60 data-[state=on]:bg-brand/10 data-[state=on]:text-brand data-[state=on]:hover:bg-brand/20 data-[state=on]:hover:text-accent-foreground",
-                    )}
+                    className={dictationToggleClass}
                     disabled={busy}
                     onPressedChange={voice.toggle}
                     pressed={voice.isListening}
                     size="sm"
+                    variant="ghost"
                   >
-                    {/* Sized here: the phone's 20px glyph rule covers size-4 icons
-                        and Button's bare ones, not a Toggle's. */}
-                    {voice.isListening ? (
-                      <MicOff aria-hidden="true" className="size-4" />
-                    ) : (
-                      <Mic aria-hidden="true" className="size-4" />
-                    )}
+                    {voice.isListening ? <MicOff aria-hidden="true" /> : <Mic aria-hidden="true" />}
                   </Toggle>
                 )}
                 <Button

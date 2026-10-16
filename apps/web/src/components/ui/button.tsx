@@ -45,6 +45,8 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     // A Radix trigger with asChild (TooltipTrigger, DropdownMenuTrigger) passes its own
     // data-slot through props, so data-slot names the outermost part. data-button comes
     // after the spread and always marks a Button, for styles that apply to every Button.
+    // An element that only borrows buttonVariants classes has no data-button, so the
+    // phone glyph rule doesn't size its icons.
     return (
       <Component
         data-slot="button"

@@ -14,7 +14,7 @@ import {
   useState,
 } from "react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Button, buttonVariants } from "../../components/ui/button";
+import { Button } from "../../components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -44,6 +44,7 @@ import {
   type ComposerModelControl,
   ComposerOptionsSheet,
 } from "./composer-options-sheet";
+import { dictationToggleClass } from "./dictation-toggle";
 import {
   acceptImageAttachments,
   type ImageAttachment,
@@ -791,21 +792,15 @@ export function ChatComposer({
             </Button>
             <Toggle
               aria-label={voice.isListening ? "Stop dictation" : "Start dictation"}
-              // The ghost icon button's look: brand tint while listening, the
-              // ghost's hover ink in both states.
-              className={cn(
-                buttonVariants({ size: "icon", variant: "ghost" }),
-                "size-8 min-w-0 shrink-0 rounded-full border-0 bg-transparent px-0 text-muted-foreground shadow-none hover:bg-muted/60 data-[state=on]:bg-brand/10 data-[state=on]:text-brand data-[state=on]:hover:bg-brand/20 data-[state=on]:hover:text-accent-foreground",
-              )}
+              className={dictationToggleClass}
               disabled={busy}
               onPressedChange={voice.toggle}
               pressed={voice.isListening}
               size="sm"
               title={voice.isSupported ? "Dictate a message" : "Check dictation availability"}
+              variant="ghost"
             >
-              {/* Sized here: the phone's 20px glyph rule covers size-4 icons and
-                  Button's bare ones, not a Toggle's. */}
-              <Mic aria-hidden="true" className="size-4" />
+              <Mic aria-hidden="true" />
             </Toggle>
             <div className="ml-auto flex items-center gap-1">
               <ClearDraftButton
