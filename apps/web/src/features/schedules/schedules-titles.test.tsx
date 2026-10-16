@@ -111,7 +111,11 @@ describe("native titles in the schedule workspace", () => {
     const user = userEvent.setup();
     mountSchedules(ITEMS, "/workspace/schedules/Alpha", FIRES, sessions());
     await screen.findByRole("table");
-    expect(auditTitles().filter((entry) => entry.startsWith("dd:"))).toHaveLength(3);
+    // Only the Repeat fact keeps a title (its raw cron); the next and last run
+    // facts show their exact dates as text (#2369 review).
+    expect(auditTitles().filter((entry) => entry.startsWith("dd:"))).toEqual([
+      "dd: 0 9 * * * (UTC)",
+    ]);
 
     await user.click(screen.getByRole("button", { name: "Actions for Alpha" }));
     auditTitles();
