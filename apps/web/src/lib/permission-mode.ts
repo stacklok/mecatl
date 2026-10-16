@@ -3,6 +3,20 @@
 /** Mirrors `sessionModeSchema` in `contracts/src/schemas/chat.ts`. */
 export type SessionPermissionMode = "acceptEdits" | "default" | "plan";
 
+/**
+ * Mirrors `sessionReportedModeSchema`: what a live chat reports. Auto and yolo
+ * come from a chat created outside Studio. Studio shows them but cannot set
+ * them, so a chat in either has no Mode control here.
+ */
+export type SessionReportedMode = SessionPermissionMode | "auto" | "yolo";
+
+/** Whether Studio's Mode control can show and change this mode. */
+export function isSelectableMode(
+  mode: SessionReportedMode | undefined,
+): mode is SessionPermissionMode {
+  return mode === "default" || mode === "plan" || mode === "acceptEdits";
+}
+
 export interface PermissionModeOption {
   description: string;
   /** The posture dot before the title: none for Manual, green for Accept edits, blue for Plan. */
@@ -39,5 +53,7 @@ export const MODE_OPTIONS: PermissionModeOption[] = [
 ];
 
 export function modeTitle(mode: string | undefined): string {
+  if (mode === "auto") return "Auto";
+  if (mode === "yolo") return "YOLO";
   return MODE_OPTIONS.find((option) => option.value === mode)?.title ?? "Manual";
 }

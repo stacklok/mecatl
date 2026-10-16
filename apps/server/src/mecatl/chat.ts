@@ -112,7 +112,7 @@ export interface ChatService {
   setMode(
     sessionId: string,
     mode: CreateSessionRequest["mode"],
-  ): Promise<{ mode: CreateSessionRequest["mode"] }>;
+  ): Promise<{ mode: SessionDetailResponse["mode"] }>;
   transcript(sessionId: string, signal?: AbortSignal): Promise<SessionTranscriptResponse>;
 }
 
@@ -609,9 +609,13 @@ function toSessionMode(mode: CreateSessionRequest["mode"]) {
   return SessionMode.Default;
 }
 
-function fromSessionMode(mode: SessionMode): CreateSessionRequest["mode"] {
+// Auto and yolo are kept, not folded into default: a session created elsewhere
+// in an autonomous mode must not read as one that asks before every change.
+function fromSessionMode(mode: SessionMode): SessionDetailResponse["mode"] {
   if (mode === SessionMode.Plan) return "plan";
   if (mode === SessionMode.AcceptEdits) return "acceptEdits";
+  if (mode === SessionMode.Auto) return "auto";
+  if (mode === SessionMode.Yolo) return "yolo";
   return "default";
 }
 

@@ -702,7 +702,7 @@ export type GetSessionDetailResponses = {
         };
         id: string;
         kind: string;
-        mode: 'default' | 'plan' | 'acceptEdits';
+        mode: 'default' | 'plan' | 'acceptEdits' | 'auto' | 'yolo';
         model?: {
             id: string;
             providerId: string;
@@ -1033,7 +1033,7 @@ export type SetSessionModeResponses = {
      * The authoritative session permission mode.
      */
     200: {
-        mode: 'default' | 'plan' | 'acceptEdits';
+        mode: 'default' | 'plan' | 'acceptEdits' | 'auto' | 'yolo';
     };
 };
 

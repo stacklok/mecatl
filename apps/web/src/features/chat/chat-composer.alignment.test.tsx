@@ -10,6 +10,7 @@ import {
   reconcileAccount,
 } from "../../lib/account-storage";
 import { readDraft, writeDraft } from "../../lib/draft-store";
+import { isSelectableMode } from "../../lib/permission-mode";
 import { ShortcutProvider, useShortcut } from "../shortcuts/shortcut-provider";
 import { ChatComposer, type DraftChatConfiguration } from "./chat-composer";
 import { composerFrameClass } from "./composer-frame";
@@ -800,6 +801,24 @@ describe("PermissionModeBadge", () => {
     );
     view.rerender(<PermissionModeBadge mode="plan" />);
     expect(view.container.textContent).toBe("Permission mode: Plan");
+  });
+
+  it("names an autonomous mode set outside Studio instead of hiding it as Manual", () => {
+    const view = render(<PermissionModeBadge mode="auto" />);
+    expect(view.container.textContent).toBe("Permission mode: Auto");
+    view.rerender(<PermissionModeBadge mode="yolo" />);
+    expect(view.container.textContent).toBe("Permission mode: YOLO");
+  });
+});
+
+describe("isSelectableMode", () => {
+  it("offers the Mode control only for the modes Studio can set", () => {
+    expect(
+      ["default", "plan", "acceptEdits"].every((mode) => isSelectableMode(mode as never)),
+    ).toBe(true);
+    expect(isSelectableMode("auto")).toBe(false);
+    expect(isSelectableMode("yolo")).toBe(false);
+    expect(isSelectableMode(undefined)).toBe(false);
   });
 });
 

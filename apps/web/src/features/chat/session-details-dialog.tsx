@@ -51,8 +51,10 @@ const PROVENANCE_LABEL: Record<string, string> = {
 
 const MODE_LABEL: Record<string, string> = {
   acceptEdits: "Accept edits",
+  auto: "Auto",
   default: "Default",
   plan: "Plan",
+  yolo: "YOLO",
 };
 
 /** A no-filesystem session's placement kinds. */
