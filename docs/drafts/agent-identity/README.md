@@ -41,7 +41,7 @@ The existing `AgentDef` structure currently combines instructions, execution set
 
 The agent loop uses those definitions to perform work, but it cannot decide which identities or permissions the rest of the system should trust. Definition loading, authorization, and audit therefore need trusted responsibilities outside the loop.
 
-The harness hosts the API and agent loop and validates the initiating user's AS-1 access token. An **agent-definition loader**, a broker module, loads definitions from configured sources into the broker and supplies the harness with execution configuration. An **identity broker** is a trusted component that governs access to protected tools. It starts as modules inside the mecak8s process and later becomes a separate service; see [deployment and threats](#deployment-and-threats). It issues agent credentials, checks requested operations against policy, and arranges downstream access using credentials it controls. It also records the decisions and actions it observes.
+The harness hosts the API and agent loop and validates the initiating user's AS-1 access token. The **identity broker** is the existing MCP broker, extended to govern access to protected tools; it is one trusted component, not several. It starts as modules inside the mecak8s process and later becomes a separate service; see [deployment and threats](#deployment-and-threats). Its modules are the **definition loader**, which loads agent definitions from configured sources and supplies the harness with execution configuration; the **agent-instance issuer**; **AS-1**, Mecatl's login authorization server; and the authorization and audit logic. Together they issue agent credentials, check requested operations against policy, arrange downstream access using credentials the broker controls, and record the decisions and actions they observe.
 
 This design scopes broker authorization to MCP tools. Extending that boundary to filesystem operations, Shell, and agent spawning is a [future direction](all-tool-mediation.md); their authorization and routing remain to be designed.
 
@@ -54,7 +54,7 @@ flowchart LR
     F["Agent-definition sources"] -->|"Global definitions at startup"| R
     R -->|"Execution configuration"| H
     subgraph B["Identity broker"]
-        R["Agent-definition loader"]
+        R["Definition loader"]
         I["Authorization and audit<br/>OAuth client mecatl"]
         A1["AS-1: login and ID-JAG issuer"]
         R -->|"Definition records and ceilings"| I
@@ -78,7 +78,7 @@ The diagram shows the broker-backed remote architecture's MCP path. Local deploy
 
 At startup, the broker's [definition loader](agent-definitions.md#loading-definitions) loads the global agent definitions from configured sources and records their sources, revisions, and ceilings in the broker. How other definitions, such as repository definitions, are loaded is not yet decided. Before the agent loop starts, mecak8s's trusted session lifecycle code persists the session's fixed definition selection and [registers the main instance](agent-definitions.md#registering-instances) with the broker under workload authentication, naming its definition by reference. The registration API, durable schema, verified per-operation binding for reported context, and protection from same-process substitution remain open.
 
-The broker contains the definition loader, the agent trust issuer, authorization and audit logic, and AS-1, Mecatl's login authorization server. The vMCP gateway contains AS-2, provider credential storage, and the vMCP. The gateway can run inside the Mecatl deployment or as an external gateway.
+The vMCP gateway contains AS-2, provider credential storage, and the vMCP. The gateway can run inside the Mecatl deployment or as an external gateway.
 
 Alice signs in through AS-1, which redirects her to the company IdP. Her client then calls mecak8s with an AS-1 access token. mecak8s validates that token and current session ownership. At session open it passes the token to the broker once, and the broker exchanges it at AS-1 for a refresh token bound to that broker session. On each tool call the broker presents that refresh token and the acting agent's JWT-SVID to AS-1, which returns an ID-JAG naming Alice and the agent. The broker redeems the ID-JAG at AS-2 for the vMCP access token `V`. The broker is a single OAuth client, `mecatl`, at both AS-1 and AS-2, and authenticates with `private_key_jwt`. AS-2 maps the AS-1 subject to its native user; an external gateway also requires a one-time consent link created at AS-2's own login. AS-2 receives neither Alice's AS-1 token nor the agent SVID. See [credentials and lifecycle](credentials-and-lifecycle.md#interactive-execution) for the walkthrough and [MCP gateway modes](mcp-gateway-modes.md) for the gateway side. The tools themselves execute the operations.
 
