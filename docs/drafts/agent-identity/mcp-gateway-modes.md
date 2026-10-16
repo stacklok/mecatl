@@ -122,7 +122,7 @@ Here `access_token` carries the grant for AS-2; it is not an access token the vM
   "sub": "u-alice-91",
   "aud": "https://gateway.example.com",
   "client_id": "mecatl",
-  "act": {"iss": "https://broker.example.com/as", "sub": "agent:reviewer-gh56"},
+  "act": {"iss": "https://broker.example.com/as", "sub": "agent:7hq2x9"},
   "jti": "jag-pr42-001",
   "iat": 1800000001,
   "exp": 1800000121
@@ -172,7 +172,7 @@ An unresolved or unlinked subject fails closed. AS-2 must not create an unlinked
   "sub": "usr-alice-7c1d",
   "aud": "https://gateway.example.com/mcp",
   "client_id": "mecatl",
-  "act": {"iss": "https://broker.example.com/as", "sub": "agent:reviewer-gh56"},
+  "act": {"iss": "https://broker.example.com/as", "sub": "agent:7hq2x9"},
   "iat": 1800000005,
   "exp": 1800000120,
   "jti": "access-pr42-001"

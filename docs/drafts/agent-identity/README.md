@@ -42,7 +42,7 @@ mecak8s hosts the API and the harness. It validates the AS-1 access token of the
 The **identity broker** establishes who is acting. It is the existing MCP broker, extended, and one trusted component. Once the authority work is in place, it also bounds what each agent can reach. Its modules are:
 
 - The **definition loader** loads agent definitions from configured sources, records each one's source and revision, and gives the harness the execution configuration. A session's selected definitions stay fixed, so a later change at the source cannot silently replace them. The operator says which definitions may be a session's root, and the broker refuses to register a root instance outside that set. See [agent definitions](agent-definitions.md#loading-definitions).
-- The **agent-instance issuer** signs a SPIFFE JWT-SVID for each instance that mecak8s registers, in an agent trust domain separate from the platform's and from AS-1 and AS-2. It signs on mecak8s's report: in SPIRE terms, the broker is the attestor, and mecak8s's registration is its only evidence.
+- The **agent-instance issuer** signs a SPIFFE JWT-SVID for each instance that mecak8s registers, in an agent trust domain separate from the platform's and from AS-1 and AS-2. It signs on mecak8s's workload-authenticated registration, which is an assertion, not attestation: no evidence about the agent itself is produced or checked.
 - **AS-1**, Mecatl's login authorization server, signs users in through the company identity provider (IdP) and issues ID-JAGs (Identity Assertion JWT Authorization Grants). An ID-JAG is a short-lived, single-use signed grant that names the user and the acting agent. It is addressed only to AS-2, the gateway's authorization server, which redeems it for an access token, and only when the broker's client presents it.
 - The **authorization and audit** logic checks each protected MCP call and records what it decided and observed.
 
@@ -110,7 +110,7 @@ The design composes existing OAuth and workload-identity standards rather than i
 
 The grant format is ID-JAG ([draft-ietf-oauth-identity-assertion-authz-grant](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/)), and external mode follows identity chaining ([draft-ietf-oauth-identity-chaining](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-chaining/)). ID-JAG is scoped to parties in different trust domains; embedded mode, where all parties share one, reuses the format to keep one protocol path.
 
-Agent credentials are SPIFFE JWT-SVIDs. Each protected call is authenticated at two layers, as the WIMSE architecture recommends: the platform workload, and the acting agent. The ID-JAG and the vMCP access token are bearer tokens; short lifetimes, a single audience, and single use of the ID-JAG limit what a stolen one can do.
+Agent credentials are SPIFFE JWT-SVIDs. Each protected call is authenticated at two layers, as the WIMSE architecture describes: the platform workload, and the acting agent. The ID-JAG and the vMCP access token are bearer tokens; short lifetimes, a single audience, and single use of the ID-JAG limit what a stolen one can do.
 
 ## Order of work
 

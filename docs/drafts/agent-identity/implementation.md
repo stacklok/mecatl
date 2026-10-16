@@ -55,13 +55,13 @@ Accepting a token whose `aud` is the Mecatl API from a different client is an ex
 | --- | --- | --- |
 | Client | `mecatl` | Only the authenticated broker can use it. |
 | AS-1 `sub` | `u-alice-91` | Subject of every ID-JAG issued from it. |
+| Owner | `(https://login.example.com, alice-204)` | The session owner, recorded at the first open; later opens for another user are refused. |
 | Broker session reference | `A42` | The session binding. |
 | Host session and incarnation | `hostS42` | Restart and recovery continuity. |
 | Source access-token `jti` | | One conversion per session. |
 | Issue time and hard expiry | | Authority horizon. |
-| Rotation chain | | Reuse detection. |
 
-The broker supplies the session reference. Rotation inherits the record and does not extend the hard expiry. Session close revokes the token and deletes the record. The refresh token is not tied to the user's AS-1 login session; [sign-out and revocation](credentials-and-lifecycle.md#sign-out-and-revocation) describes what ends it.
+The broker supplies the session reference. The refresh token does not rotate; client authentication already binds it to the broker. Session close revokes the token and deletes the record. The refresh token is not tied to the user's AS-1 login session; [sign-out and revocation](credentials-and-lifecycle.md#sign-out-and-revocation) describes what ends it.
 
 **Per-call ID-JAG.** When no cached `V` exists for (session, instance, gateway, user), the broker asks AS-1 for an ID-JAG ([draft-ietf-oauth-identity-assertion-authz-grant-04](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/)) with RFC 8693: the broker refresh token as `subject_token` (`subject_token_type=urn:ietf:params:oauth:token-type:refresh_token`), the agent-instance JWT-SVID as `actor_token` (`actor_token_type=urn:ietf:params:oauth:token-type:jwt`), `requested_token_type=urn:ietf:params:oauth:token-type:id-jag`, and AS-2's issuer as `audience`. AS-1:
 
@@ -116,7 +116,7 @@ Test the session-open exchange:
 
 - AS-1 rejects access tokens it did not issue, tokens for another audience, expired or revoked tokens, a second conversion of the same `jti`, and requests for wider scope.
 - AS-1 accepts a Mecatl-API-audience token only from client `mecatl`; another client presenting the same token is rejected.
-- The refresh token record names the session; rotation keeps the hard expiry; reuse of a rotated token is detected; session close revokes it.
+- The refresh token record names the session and its owner; session close revokes it; presenting it at the refresh-token grant returns `invalid_grant`; a retried open with the same `jti`, client, and session returns the existing refresh token.
 
 Test ID-JAG issuance:
 
