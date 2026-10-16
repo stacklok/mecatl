@@ -42,25 +42,32 @@ type inboundAssessment struct {
 	err               error
 	applies           bool
 	enforce           bool
+	mode              session.PermissionMode
 	principalRevision uint64
 }
 
-func reviewPolicy(reviewer ToolReviewer, toolName string, job ReviewJob, operationalFailure bool) (bool, bool) {
+// reviewPolicy resolves the reviewer's configured applicability and enforcement
+// for the EXECUTING session's mode. A shared reviewRoot carries the operator's
+// undemoted rules, so a yolo session (no enforcing checker; advisory monitoring
+// only) demotes enforcement here while a narrower delegated child of that yolo
+// parent keeps it.
+func reviewPolicy(reviewer ToolReviewer, mode session.PermissionMode, toolName string, job ReviewJob, operationalFailure bool) (bool, bool) {
+	applies, enforce := job == ReviewJobAction, true
 	if policy, ok := reviewer.(ReviewPolicyProvider); ok {
-		return policy.GuardrailReviewPolicy(toolName, job, operationalFailure)
+		applies, enforce = policy.GuardrailReviewPolicy(toolName, job, operationalFailure)
 	}
 	// ToolReviewer predated inbound escrow. Reviewers that do not explicitly
 	// advertise policy retain action-only behavior rather than unexpectedly
 	// inspecting and holding every tool result.
-	return job == ReviewJobAction, true
+	return applies, enforce && mode != session.ModeYolo
 }
 
 func (e *Engine) prepareInboundAssessment(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, call session.ToolCall, result session.ToolResult) inboundAssessment {
 	if r.reviewRoot == nil || r.reviewRoot.reviewer == nil {
 		return inboundAssessment{}
 	}
-	applies, enforce := reviewPolicy(r.reviewRoot.reviewer, call.Name, ReviewJobInbound, false)
-	assessment := inboundAssessment{applies: applies, enforce: enforce}
+	applies, enforce := reviewPolicy(r.reviewRoot.reviewer, sess.Mode, call.Name, ReviewJobInbound, false)
+	assessment := inboundAssessment{applies: applies, enforce: enforce, mode: sess.Mode}
 	if !applies {
 		return assessment
 	}
@@ -115,7 +122,7 @@ func assessInbound(parent context.Context, r *Run, assessment *inboundAssessment
 	if assessment.err != nil {
 		assessment.result.Assessment = ReviewUnresolved
 		recordReviewFailure(r.reviewRoot.reviewer, assessment.result, assessment.err)
-		_, assessment.enforce = reviewPolicy(r.reviewRoot.reviewer, assessment.request.EffectiveCall.Name, ReviewJobInbound, true)
+		_, assessment.enforce = reviewPolicy(r.reviewRoot.reviewer, assessment.mode, assessment.request.EffectiveCall.Name, ReviewJobInbound, true)
 		var terminal GuardrailReviewTerminalFailure
 		if errors.As(assessment.err, &terminal) && terminal.GuardrailReviewTerminalFailure() {
 			assessment.enforce = true
@@ -136,7 +143,7 @@ func assessInbound(parent context.Context, r *Run, assessment *inboundAssessment
 		assessment.err = reviewFailure(ReviewFailureInvalidAssessment)
 	}
 	if assessment.err != nil {
-		_, assessment.enforce = reviewPolicy(r.reviewRoot.reviewer, assessment.request.EffectiveCall.Name, ReviewJobInbound, true)
+		_, assessment.enforce = reviewPolicy(r.reviewRoot.reviewer, assessment.mode, assessment.request.EffectiveCall.Name, ReviewJobInbound, true)
 		var terminal GuardrailReviewTerminalFailure
 		if errors.As(assessment.err, &terminal) && terminal.GuardrailReviewTerminalFailure() {
 			assessment.enforce = true
