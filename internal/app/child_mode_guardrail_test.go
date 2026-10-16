@@ -19,15 +19,19 @@ import (
 // its yolo parent.
 func TestYoloParentNarrowerTeamMemberKeepsEnforcingChecker(t *testing.T) {
 	const canary = "MEMBER-READ-CANARY"
-	const prohibited = `{"assessment":"prohibited","concerns":["unsafe"],"evidence":[],"missing_evidence":[]}`
+	const prohibited = `{"assessment":"prohibited","concerns":[{"ref":"C1","category":"data_exfiltration","rationale":"member read is unsafe","source_ref":"call"}],"evidence":[],"missing_evidence":[]}`
+	// wantReason pins how the narrower member was stopped. For the action
+	// review it names a PARSED prohibited verdict; a malformed verdict fails
+	// closed with "could not approve this action" instead.
 	for _, tc := range []struct {
 		name, phase, agent string
 		wantLeak           bool
+		wantReason         string
 	}{
-		{"action-narrow", "pre", "narrow", false},
-		{"action-inherit", "pre", "", true},
-		{"inbound-narrow", "post", "narrow", false},
-		{"inbound-inherit", "post", "", true},
+		{"action-narrow", "pre", "narrow", false, "contextual guardrail requires human approval for this action"},
+		{"action-inherit", "pre", "", true, ""},
+		{"inbound-narrow", "post", "narrow", false, "tool result withheld by contextual guardrail"},
+		{"inbound-inherit", "post", "", true, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			workspace := t.TempDir()
@@ -97,6 +101,9 @@ func TestYoloParentNarrowerTeamMemberKeepsEnforcingChecker(t *testing.T) {
 			}
 			if leaked := strings.Contains(read.Content, canary); leaked != tc.wantLeak {
 				t.Fatalf("member Read result leaked=%t, want %t (enforcement must follow the member's own mode): %q", leaked, tc.wantLeak, read.Content)
+			}
+			if tc.wantReason != "" && !strings.Contains(read.Content, tc.wantReason) {
+				t.Fatalf("member Read result = %q, want the reason %q", read.Content, tc.wantReason)
 			}
 		})
 	}
