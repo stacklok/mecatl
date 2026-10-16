@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useState } from "react";
+import { toast } from "sonner";
 import { Alert, AlertDescription } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
 import {
@@ -37,10 +38,14 @@ import {
   displayedValue,
   type FormValue,
   isTriggerEditable,
+  oneShotDatePatch,
+  oneShotInputs,
+  oneShotTimePatch,
   type PhraseOutcome,
   phraseTriggerPatch,
   type Schedule,
   type ScheduleBody,
+  scheduleFormProblem,
   type TriggerPatch,
   triggerFromValue,
   valueFromSchedule,
@@ -59,6 +64,15 @@ const PHRASE_HINT = 'Not recognised — try "every weekday at 9am" or a cron exp
 // profile changes. Timezone, run limits, and retry policy remain wire state but
 // are not visible controls; edits round-trip their stored values unchanged.
 // Create and update bodies still pass through the authenticated BFF contract.
+
+/**
+ * The toast after a create or an edit is saved, as in the prototype's create
+ * and edit dialogs. The dialog has closed by then, so the toast is the
+ * confirmation.
+ */
+export function toastScheduleSaved(name: string, created: boolean) {
+  toast.success(`Scheduled task “${name}” ${created ? "created" : "updated"}`);
+}
 
 /**
  * DECISION: A one-shot whose time has passed stays inspect-only, whatever its
@@ -98,6 +112,9 @@ export function ScheduleForm({
   const [value, setValue] = useState<FormValue>(() => valueFromSchedule(schedule));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string>();
+  // Whether the user has edited a field or tried to submit: only then does the
+  // reason Create is disabled appear, so a fresh dialog does not open on one.
+  const [touched, setTouched] = useState(false);
 
   // The phrase is an authoring aid: it compiles INTO value.cron/oneShotAt,
   // which stay the wire truth. Its text and preview are local; a successful
@@ -146,9 +163,15 @@ export function ScheduleForm({
   const phraseNote = phrasePreview ?? (phrase.trim() ? PHRASE_HINT : null);
   // Formatted from the very trigger that will be sent, never from the inputs.
   const savedOneShot = formatOneShot(triggerFromValue(shown, schedule));
+  // The submit button stays disabled until the form could be sent.
+  const problem = scheduleFormProblem(shown, schedule);
+  const problemShown = touched && problem !== null;
+  const runAt = oneShotInputs(shown);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
+    setTouched(true);
+    if (problem || submitting) return;
     setSubmitting(true);
     setError(undefined);
     try {
@@ -163,7 +186,8 @@ export function ScheduleForm({
   return (
     <Dialog onOpenChange={(open) => !open && onCancel()} open>
       <DialogContent className="max-h-[90dvh] overflow-y-auto">
-        <form onSubmit={submit}>
+        {/* Change events from every text, date and time field bubble here. */}
+        <form onChange={() => setTouched(true)} onSubmit={submit}>
           <DialogHeader>
             <DialogTitle>{schedule ? "Edit scheduled task" : "Schedule a task"}</DialogTitle>
             <DialogDescription>
@@ -250,19 +274,39 @@ export function ScheduleForm({
                 onChange={(cron) => changeTrigger({ cron })}
               />
             ) : (
-              <Field htmlFor="schedule-run-at" label="Run at">
-                <Input
-                  disabled={triggerLocked}
-                  id="schedule-run-at"
-                  onChange={(event) => changeTrigger({ oneShotAt: event.target.value })}
-                  required
-                  type="datetime-local"
-                  value={shown.oneShotAt}
-                />
+              <fieldset className="min-w-0 space-y-2">
+                {/* Separate date and time inputs, as in the prototype, instead of
+                    the native datetime-local widget. */}
+                <legend className="mb-2 text-sm font-medium">Run at</legend>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Input
+                    aria-label="Date"
+                    className="w-fit"
+                    disabled={triggerLocked}
+                    id="schedule-run-at-date"
+                    // An empty value (cleared, or a segment mid-edit) leaves no
+                    // run time but keeps the time, as the Time input does.
+                    onChange={(event) => changeTrigger(oneShotDatePatch(shown, event.target.value))}
+                    required
+                    type="date"
+                    value={runAt.date}
+                  />
+                  <Input
+                    aria-label="Time"
+                    className="w-fit"
+                    disabled={triggerLocked}
+                    // Segment editing fires transient empty values; keep the last
+                    // time. A time chosen before the date is kept for it.
+                    onChange={(event) => changeTrigger(oneShotTimePatch(shown, event.target.value))}
+                    required
+                    type="time"
+                    value={runAt.time}
+                  />
+                </div>
                 {savedOneShot ? (
                   <p className="mt-1 text-xs text-muted-foreground">Saves as {savedOneShot}</p>
                 ) : null}
-              </Field>
+              </fieldset>
             )}
 
             <div className="rounded-lg border p-3">
@@ -321,11 +365,24 @@ export function ScheduleForm({
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           )}
-          <DialogFooter className="mt-5">
+          {problemShown && (
+            <p
+              className="mt-4 text-xs text-muted-foreground sm:text-right"
+              id="schedule-form-problem"
+            >
+              {problem}
+            </p>
+          )}
+          <DialogFooter className={problemShown ? "mt-2" : "mt-5"}>
             <Button onClick={onCancel} type="button" variant="outline">
               Cancel
             </Button>
-            <Button disabled={submitting} type="submit" variant="action">
+            <Button
+              aria-describedby={problemShown ? "schedule-form-problem" : undefined}
+              disabled={submitting || problem !== null}
+              type="submit"
+              variant="action"
+            >
               {submitting ? "Saving…" : schedule ? "Save changes" : "Create schedule"}
             </Button>
           </DialogFooter>
