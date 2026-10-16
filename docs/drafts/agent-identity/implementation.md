@@ -269,6 +269,11 @@ Verify the [AuditEvent profile](audit.md#auditevent-profile) through the real to
 - Each reconciliation check flags an injected mismatch: an AS-2 redemption without AS-1 issuance, a vMCP call without broker dispatch, a dispatch without a vMCP call, and a session-open conversion without AS-1 issuance.
 - The broker's lineage check rejects a delegation whose instances are in different session trees or whose parent delegation's receiving run differs.
 
+## Root eligibility checks
+
+- The broker refuses to register a root instance whose definition is not root-eligible for that user, and records the refusal.
+- A child instance's definition need not be root-eligible.
+
 ## Session binding checks
 
 - AS-1 refuses a session-open conversion when the token's `sub_id` differs from the owner mecak8s sends, and records the refusal.
