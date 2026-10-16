@@ -107,7 +107,7 @@
         "disabled": {"type": "boolean"}
       }
     },
-    "permissionMode": {"type": "string"},
+    "permissionMode": {"type": "string", "enum": ["plan", "default", "accept-edits", "auto", "yolo"]},
     "telemetry": {
       "type": "object",
       "additionalProperties": false,

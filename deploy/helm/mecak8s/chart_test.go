@@ -3130,7 +3130,8 @@ func TestPermissionModeValuesAreValidated(t *testing.T) {
 		extra []string
 		want  []string
 	}{
-		{name: "unknown mode", extra: []string{"--set", "permissionMode=trusted"}, want: []string{"permissionMode", "plan, default, accept-edits, auto, yolo"}},
+		// The schema enum rejects it first; its message format varies by Helm version.
+		{name: "unknown mode", extra: []string{"--set", "permissionMode=trusted"}, want: []string{"permissionMode", "accept-edits"}},
 		{name: "posture in extraArgs", extra: []string{"--set", "extraArgs[0]=--posture=strict"}, want: []string{"--posture=strict", "permissionMode"}},
 		{name: "split posture in extraArgs", extra: []string{"--set", "extraArgs[0]=--posture,extraArgs[1]=auto"}, want: []string{"--posture", "permissionMode"}},
 		{name: "permission-mode in extraArgs", extra: []string{"--set", "extraArgs[0]=--permission-mode=yolo"}, want: []string{"--permission-mode=yolo", "permissionMode"}},
