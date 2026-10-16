@@ -3135,6 +3135,13 @@ func TestPermissionModeValuesAreValidated(t *testing.T) {
 		{name: "split posture in extraArgs", extra: []string{"--set", "extraArgs[0]=--posture,extraArgs[1]=auto"}, want: []string{"--posture", "permissionMode"}},
 		{name: "permission-mode in extraArgs", extra: []string{"--set", "extraArgs[0]=--permission-mode=yolo"}, want: []string{"--permission-mode=yolo", "permissionMode"}},
 		{name: "yolo in extraArgs", extra: []string{"--set", "extraArgs[0]=--yolo"}, want: []string{"--yolo", "permissionMode"}},
+		// Go's flag parser also accepts single-dash long flags.
+		{name: "single-dash posture in extraArgs", extra: []string{"--set", "extraArgs[0]=-posture=strict"}, want: []string{"-posture=strict", "permissionMode"}},
+		{name: "single-dash split posture in extraArgs", extra: []string{"--set", "extraArgs[0]=-posture,extraArgs[1]=strict"}, want: []string{"-posture", "permissionMode"}},
+		{name: "single-dash permission-mode in extraArgs", extra: []string{"--set", "extraArgs[0]=-permission-mode=yolo"}, want: []string{"-permission-mode=yolo", "permissionMode"}},
+		{name: "single-dash split permission-mode in extraArgs", extra: []string{"--set", "extraArgs[0]=-permission-mode,extraArgs[1]=yolo"}, want: []string{"-permission-mode", "permissionMode"}},
+		{name: "split permission-mode in extraArgs", extra: []string{"--set", "extraArgs[0]=--permission-mode,extraArgs[1]=yolo"}, want: []string{"--permission-mode", "permissionMode"}},
+		{name: "single-dash yolo in extraArgs", extra: []string{"--set", "extraArgs[0]=-yolo"}, want: []string{"-yolo", "permissionMode"}},
 		{name: "model and disabled", extra: []string{"--set", "guardrails.model=checker,guardrails.disabled=true"}, want: []string{"guardrails.model", "guardrails.disabled"}},
 	}
 	for _, tc := range cases {

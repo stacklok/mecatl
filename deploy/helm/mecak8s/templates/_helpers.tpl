@@ -163,7 +163,8 @@ mounted
 {{- end -}}
 {{- range $arg := .Values.extraArgs -}}
 {{- $a := toString $arg -}}
-{{- if or (hasPrefix "--posture" $a) (hasPrefix "--permission-mode" $a) (hasPrefix "--yolo" $a) -}}
+{{- /* Go's flag parser accepts one or two leading dashes, with the value after "=" or in the next argument. */ -}}
+{{- if regexMatch "^--?(posture|permission-mode|yolo)(=|$)" $a -}}
 {{- fail (printf "extraArgs entry %q sets the permission mode, which the chart owns; remove it and set permissionMode instead (--posture=strict becomes permissionMode: default, --posture=auto becomes permissionMode: auto, --posture=yolo or --yolo becomes permissionMode: yolo)" $a) -}}
 {{- end -}}
 {{- end -}}
