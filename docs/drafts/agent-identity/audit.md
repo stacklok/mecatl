@@ -35,7 +35,7 @@ Every component records evidence as a [toolhive-core](https://github.com/stacklo
 | Which event | `Metadata.AuditID` | Minted once and stored before the first send. A re-send reuses it, and ingestion removes duplicates by it. |
 | What kind of event | `Type` | A `mecatl_`-prefixed snake_case type, such as `mecatl_tool_decision`. The vMCP keeps ToolHive's own types, such as `mcp_tool_call`. Whether an event is a decision, a dispatch, or an observed outcome is part of its type. |
 | Result | `Outcome` | toolhive-core's `success`, `failure`, `error`, and `denied`, plus `unknown` once #341 defines it. Each type uses a fixed subset; see the next table. |
-| Who acted, and for whom | `Subjects` | `user_iss` and `user_id`: the user as the recording component's own issuer knows them. `owner_iss` and `owner_id`: the company identity from `sub_id`. `workload_iss` and `workload_sub`. `agent_spiffe_id` (inside Mecatl only), `agent_actor_id` (the opaque `agent:` identifier), and `agent_instance_ref`. `run_owner_iss` and `run_owner_id`: the [run owner](run-owner.md), reported by mecak8s. A credential reference is qualified by its issuer, and `client_id` by its authorization server. An identity the recorder did not verify never appears as `user_id`. |
+| Who acted, and for whom | `Subjects` | `user_iss` and `user_id`: the user as the recording component's own issuer knows them. `owner_iss` and `owner_id`: the company identity from `sub_id`. `workload_iss` and `workload_sub`. `agent_spiffe_id` (inside Mecatl only), `agent_actor_id` (the opaque `ag_` identifier in `act`), and `agent_instance_ref`. `run_owner_iss` and `run_owner_id`: the [run owner](run-owner.md), reported by mecak8s. A credential reference is qualified by its issuer, and `client_id` by its authorization server. An identity the recorder did not verify never appears as `user_id`. |
 | Verified or reported | `Metadata.Extra["mecatl.provenance"]` | A map keyed by the `Subjects` key: `verified`, `credential-verified` when the recorder verified a credential but mecak8s reported which instance it belongs to, `record:<AuditID>` when taken from a retained record, `reported:<component>`, or `unavailable`. A missing fact is marked `unavailable`, never left out silently. |
 | Where it originated | `Source` | The network origin, as in ToolHive: the peer address, plus `request_id` and `session_id` for joining. The calling workload's identity belongs in `Subjects`, not here. |
 | Where it was recorded | `Component`, `Metadata.Extra` | `mecatl-broker`, `mecatl-as1`, or the ToolHive component name, plus the recording replica and trust domain. |
@@ -72,14 +72,14 @@ The identity work needs these event families:
 
 The authority work adds Cedar evaluation status, policy IDs, and policy and ceiling revisions. Until then, decision events record that no ceiling was evaluated.
 
-For the reviewer's call in the [walkthrough](credentials-and-lifecycle.md#interactive-execution), the broker's decision event carries `Type` `mecatl_tool_decision`, `Outcome` `success`, `Subjects` with Alice's `user_id` `u-alice-91` (`record:` the session-open event), her `owner_id` `alice-204`, the verified workload, and the reviewer's `agent_spiffe_id` and `agent_actor_id` `agent:7hq2x9`, `Target` `pull_request_read` on the payments server, operation `op-pr42-001` and its attempt, and `Data.lineage` with run `R42` and a reference to the delegation event for `D42`. Its dispatch and outcome events share the operation and attempt. AS-1's issuance event links the reviewer's SPIFFE ID to `agent:7hq2x9` and records ID-JAG `(https://broker.example.com/as, jag-pr42-001)`; AS-2's redemption event links that ID-JAG to its access token; the vMCP's tool-call event records that access token and the reported operation ID.
+For the reviewer's call in the [walkthrough](credentials-and-lifecycle.md#interactive-execution), the broker's decision event carries `Type` `mecatl_tool_decision`, `Outcome` `success`, `Subjects` with Alice's `user_id` `u-alice-91` (`record:` the session-open event), her `owner_id` `alice-204`, the verified workload, and the reviewer's `agent_spiffe_id` and `agent_actor_id` `ag_7hq2x9`, `Target` `pull_request_read` on the payments server, operation `op-pr42-001` and its attempt, and `Data.lineage` with run `R42` and a reference to the delegation event for `D42`. Its dispatch and outcome events share the operation and attempt. AS-1's issuance event links the reviewer's SPIFFE ID to `ag_7hq2x9` and records ID-JAG `(https://broker.example.com/as, jag-pr42-001)`; AS-2's redemption event links that ID-JAG to its access token; the vMCP's tool-call event records that access token and the reported operation ID.
 
 These records have limits:
 
 - They are unsigned, so they do not provide non-repudiation.
 - In external mode, AS-2 and vMCP records belong to the gateway operator; the Mecatl-side trail ends at the broker's dispatch event.
-- AS-2 may accept the same ID-JAG more than once (ID-JAG §4.4.3 allows re-submission), so one ID-JAG can lead to several redemption events.
-- Reaching one operation from a gateway record depends on the propagated operation ID; the mechanism that carries it is not yet chosen.
+- AS-2 rejects a reused ID-JAG `jti`, so each ID-JAG leads to at most one redemption event. ID-JAG §4.4.3 would allow re-submission; single use is Mecatl policy.
+- Reaching one operation from a gateway record depends on the propagated operation ID, which vMCP records as reported, not verified.
 
 ### Lineage
 
@@ -92,7 +92,7 @@ Lineage events are audit records. They are kept for the audit retention period, 
 
 From any tool call, an investigator follows the delegation reference up to the root to reconstruct execution delegation, and registration references to reconstruct creation ancestry. If a reference does not resolve, the reconstruction reports the chain as incomplete, names where it stopped, and gives the reason: unresolved, truncated, or malformed. It stops on a cycle. It never presents a partial chain as complete.
 
-The `agent:` identifiers in `act` are opaque on purpose: the SPIFFE path, with its creation ancestry, stays inside Mecatl. AS-1's issuance record must link each `agent:` identifier it writes to the registered instance it validated, so an investigator can map a gateway record back to that instance.
+The `ag_` identifiers in `act` are opaque on purpose: the SPIFFE path, with its creation ancestry, stays inside Mecatl. AS-1's issuance record must link each `ag_` identifier it writes to the registered instance it validated, so an investigator can map a gateway record back to that instance.
 
 ## Decision, dispatch, and observed outcome
 
@@ -100,7 +100,7 @@ The broker records its authorization decision, whether it attempted dispatch, an
 
 Decision, dispatch, and observed-outcome evidence must survive broker restart; [delivery, protection, and reconciliation](#delivery-protection-and-reconciliation) sets the write order and what happens when evidence cannot be delivered. This design does not claim atomicity between an audit write and an external effect.
 
-Use operation and attempt references to connect the evidence; individual events also need their own references. The operation ID, the ID-JAG `jti`, and the AS-2 access token `(iss, jti)` are separate references. A cached access token serves several calls, so its `jti` cannot replace a per-operation reference. To reach one operation from a gateway record, the broker must propagate the operation ID with each MCP request, and vMCP records it as reported, unverified trace context. This propagation is required for correlation; the mechanism is still to be chosen, and it is not an authenticated propagation contract. Because `act` names only the current actor, this operation ID is what keeps delegation `D42` reachable from a gateway log.
+Use operation and attempt references to connect the evidence; individual events also need their own references. The operation ID, the ID-JAG `jti`, and the AS-2 access token `(iss, jti)` are separate references. A cached access token serves several calls, so its `jti` cannot replace a per-operation reference. To reach one operation from a gateway record, the broker must propagate the operation ID with each MCP request, and vMCP records it as reported, unverified trace context. This propagation is required for correlation. The broker sends the IDs in each MCP request's `_meta` and as request parameters at AS-1; it is not an authenticated propagation contract. Because `act` names only the current actor, this operation ID is what keeps delegation `D42` reachable from a gateway log.
 
 ## Delivery, protection, and reconciliation
 
