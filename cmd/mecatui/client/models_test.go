@@ -256,6 +256,32 @@ func TestCreateSessionUsesSessionMediaCapabilities(t *testing.T) {
 	}
 }
 
+// TestCreateSessionReadsSessionPermissionModesFeature pins that the
+// session_permission_modes feature, not the legacy posture capability, decides
+// whether the ui may present the session-scoped mode semantics. An API-major-1
+// server that advertises yolo posture without the feature is a legacy server.
+func TestCreateSessionReadsSessionPermissionModesFeature(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		features []string
+		want     bool
+	}{
+		{name: "older yolo server without the feature", features: []string{"server_info"}, want: false},
+		{name: "server advertising the feature", features: []string{"server_info", SessionPermissionModesFeature}, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeModelsClient{caps: &mecatlv1.ServerCapabilities{Posture: "yolo"}, features: tc.features}
+			_, caps, _, err := newFakeClient(fake).CreateSession(context.Background(), mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT, ModelSelection{})
+			if err != nil {
+				t.Fatalf("CreateSession: %v", err)
+			}
+			if caps.Posture != "yolo" || caps.SessionPermissionModes != tc.want {
+				t.Fatalf("capabilities posture=%q sessionPermissionModes=%v, want yolo/%v", caps.Posture, caps.SessionPermissionModes, tc.want)
+			}
+		})
+	}
+}
+
 // TestReasoningEffortIsZero asserts an effort-only selection is NOT zero (the client
 // must still send it) while a fully-empty selection is.
 func TestReasoningEffortIsZero(t *testing.T) {
