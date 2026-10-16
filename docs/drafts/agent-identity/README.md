@@ -31,7 +31,7 @@ An **instance** is one use of a definition in a session. Alice and Bob can use t
 
 A **run** is one execution by an instance. Reviewing PR 42 and later PR 57 uses the same reviewer instance in two runs. A delegated child has its own instance and run, linked to the instance that created it and to the run that delegated to it.
 
-The **user** is the person on whose behalf the agents act. mecak8s, the service that hosts the agents, is the platform **workload**: it serves many users at once and has its own infrastructure identity. Each agent instance also has an identity of its own, in a separate agent trust domain.
+The **user** is the person on whose behalf the agents act. mecak8s, the service that hosts the agents, is the platform **workload**: it serves many users at once and has its own infrastructure identity. Each agent instance also has a name of its own: a SPIFFE ID in a separate agent trust domain, signed by the broker's agent-instance issuer. That name is for attribution, not isolation; every agent runs inside the same mecak8s process.
 
 ## Where trust lives
 
@@ -50,32 +50,64 @@ Downstream, the **vMCP gateway** sends protected calls to MCP backends and provi
 
 Mecatl uses two authorization servers so that it can work with an MCP gateway it does not operate, such as the connector gateway in the Stacklok Enterprise Platform. That gateway holds users' provider connections, such as their GitHub or Google tokens, under its own administration, and its vMCP accepts only access tokens from the gateway's own authorization server; Mecatl can neither mint those tokens nor hold the credentials behind them. So AS-1, Mecatl's server, issues a grant naming the user and the acting agent, and AS-2, the gateway's server, verifies the grant, decides whether to honor it, and issues its own access token. When Mecatl runs the gateway itself (embedded mode), it uses the same two servers and the same protocol, so there is one code path; there the split is a protocol boundary rather than a security boundary, although the two servers still keep separate keys.
 
+The diagram draws each administrative domain as a box and each trust boundary as a numbered thick arrow, labelled with what crosses it and who checks it.
+
 ```mermaid
 flowchart LR
-    U["Client"] -->|"Sign-in"| A1
-    U -->|"Session creation and requests, AS-1 access token"| H["mecak8s"]
-    F["Agent-definition sources"] -->|"Global definitions at startup"| R
-    R -->|"Execution configuration"| H
-    subgraph B["Identity broker"]
-        R["Definition loader"]
-        I["Authorization and audit<br/>OAuth client mecatl"]
-        A1["AS-1: login and ID-JAG issuer"]
-        R -->|"Definition records and ceilings"| I
+    C["Alice's client"]
+    IdP["Company IdP"]
+    subgraph P["Mecatl platform"]
+        subgraph K["mecak8s"]
+            H["Harness"]
+            M["Model<br/>untrusted"]
+            AG["Agent instances<br/>acting agent, asserted<br/>spiffe://agents.example.com/..."]
+            EX["Executor Pods<br/>untrusted workspace code"]
+        end
+        subgraph B["Identity broker"]
+            DL["Definition loader"]
+            IS["Agent-instance issuer"]
+            A1["AS-1<br/>login and ID-JAG issuer"]
+            BC["Broker core<br/>authorization, client mecatl"]
+            AU["Audit"]
+        end
     end
-    A1 -->|"Redirect to company sign-in"| IdP["Company IdP"]
-    subgraph W["vMCP gateway (embedded or external)"]
-        T["Gateway AS (AS-2) and credential storage"]
+    subgraph G["Gateway"]
+        A2["AS-2"]
         V["vMCP"]
-        T --- V
+        S["Provider credential store"]
     end
-    H -->|"Workload-authenticated instance registration"| I
-    H <-->|"Workload-authenticated MCP calls; AS-1 access token once at session open; agent JWT-SVID per call"| I
-    I -->|"Session refresh token; ID-JAG on a cache miss"| A1
-    I -->|"Redeem ID-JAG for V"| T
-    I <-->|"Authorized MCP calls with V"| V
-    V <-->|"Protected calls"| P["MCP backends / providers"]
-    I -->|"Decisions and observed outcomes"| A["Audit records"]
+    subgraph PR["Providers"]
+        GH["GitHub"]
+    end
+    C ==>|"1 User entry: OIDC sign-in, AS-1 checks"| A1
+    A1 <-->|"OIDC federation"| IdP
+    C ==>|"1 AS-1 access token, mecak8s checks"| H
+    H --- M
+    H --- AG
+    H -->|"workspace operations"| EX
+    H ==>|"2 Custody: workload credential plus reported agent, run, delegation. Broker checks"| BC
+    IS -.->|"agent JWT-SVIDs"| AG
+    DL -->|"definitions and ceilings"| BC
+    A1 -->|"ID-JAG on a cache miss"| BC
+    BC -->|"decisions and outcomes"| AU
+    A1 -.->|"3 AS-2 trusts AS-1 as ID-JAG issuer"| A2
+    BC ==>|"3 Gateway entry: ID-JAG, consent link required. AS-2 checks"| A2
+    BC ==>|"3 MCP call with V, vMCP checks"| V
+    A2 --- V
+    V --- S
+    V ==>|"4 Provider egress: Alice's stored credential, GitHub checks"| GH
 ```
+
+| Boundary | What crosses | Who checks |
+| --- | --- | --- |
+| 1. User entry | Alice signs in at AS-1 with OIDC, and AS-1 sends her on to the company IdP. Her client then sends the AS-1 access token to mecak8s. | AS-1 at sign-in; mecak8s on each API request. |
+| 2. Credential custody | mecak8s calls the broker with its workload credential, which the broker authenticates. The acting agent, run, and delegation are reports from mecak8s, which the broker checks for consistency but cannot verify. mecak8s holds no signing keys or refresh tokens. | The broker. |
+| 3. Gateway entry | The broker redeems an ID-JAG from AS-1 at AS-2, which in external mode requires Alice's consent link, and calls the vMCP with the resulting access token `V`. | AS-2 when it redeems the ID-JAG; the vMCP when it validates `V`. |
+| 4. Provider egress | The vMCP calls GitHub with Alice's stored GitHub credential. | GitHub. |
+
+AS-1 sits on two boundaries: it signs Alice in at boundary 1 and signs the ID-JAG that AS-2 checks at boundary 3. The agent trust domain is not a boundary; it names agents for attribution, inside mecak8s.
+
+The diagram shows the intended deployment. Today the broker runs inside mecak8s, so credential custody is a module seam and an attacker with code execution in mecak8s holds AS-1's key; and an embedded gateway shares Mecatl's administrative domain, so gateway entry there is a protocol boundary, not a security one. The [threat model](threat-model.md#a-compromised-mecak8s) says what each deployment closes.
 
 This design scopes broker authorization to MCP tools. Local deployments can keep direct tool access, and none of these guarantees apply to them. Extending the boundary to filesystem operations, Shell, and agent spawning is a [future direction](all-tool-mediation.md). The broker does not decide whether agents start or whether runs execute; mecak8s owns agent lifecycle and run execution, and registering an instance records its identity without granting permission to run.
 
@@ -108,7 +140,7 @@ The [threat model](threat-model.md) has the full table, the facts mecak8s report
 
 The design composes existing OAuth and workload-identity standards rather than inventing a token format. Sign-in is OIDC with the authorization code flow and PKCE, and mecak8s validates AS-1's access token as an RFC 9068 JWT access token. Session open and ID-JAG issuance are RFC 8693 token exchanges, and AS-2 redeems the ID-JAG with the RFC 7523 JWT-bearer grant. The broker authenticates as a confidential client with `private_key_jwt`, so the refresh tokens it holds are useless without its key. That key belongs to the broker, ideally in a key management service; ToolHive's authorization server also accepts a SPIFFE JWT-SVID as client authentication, which could later replace the key with the broker's own workload identity.
 
-The grant format is ID-JAG ([draft-ietf-oauth-identity-assertion-authz-grant](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/)), and external mode follows identity chaining ([draft-ietf-oauth-identity-chaining](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-chaining/)). ID-JAG is scoped to parties in different trust domains in the OAuth sense ([administrative domains](credentials-and-lifecycle.md#7-id-jag-from-as-1)); embedded mode, where all parties share one, reuses the format to keep one protocol path.
+The grant format is ID-JAG ([draft-ietf-oauth-identity-assertion-authz-grant](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/)), and external mode follows identity chaining ([draft-ietf-oauth-identity-chaining](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-chaining/)). ID-JAG is scoped to parties in different [administrative domains](credentials-and-lifecycle.md#7-id-jag-from-as-1) (trust domains, in OAuth's term); embedded mode, where all parties share one, reuses the format to keep one protocol path.
 
 Agent credentials are SPIFFE JWT-SVIDs. Each protected call carries two identities, comparable to the layered workload authentication the WIMSE architecture describes, except that only the first is authenticated: the platform workload is authenticated, and the acting agent is asserted by the agent-instance issuer. Registration links the two: the broker accepts an agent only if it was registered to a session bound to that workload. The ID-JAG and the vMCP access token are bearer tokens; short lifetimes, a single audience, and single use of the ID-JAG limit what a stolen one can do.
 
