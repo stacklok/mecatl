@@ -73,7 +73,11 @@ func makeFireFuncWithCancel(svc *server.Service, store port.ScheduleStore, defau
 		// mutating (Mutating=true) honors its explicit Mode (or the server's
 		// DefaultMode when unset, which reflects the operator's permission
 		// configuration — for allow-all deployments this is ModeAuto or ModeYolo).
-		// Passing "" to CreateSessionWithProfile falls back to s.cfg.DefaultMode.
+		// The in-chat Schedule tool always records its creating session's mode;
+		// "" comes only from an out-of-band or legacy spec. Passing "" to
+		// CreateSessionWithProfile falls back to s.cfg.DefaultMode. Either way
+		// CreateSessionWithProfile admits the mode against the current ceiling,
+		// so a mode recorded under a looser deployment fails the fire.
 		// This is the fire-time enforcement; the create seam (the schedule
 		// manager) additionally rejects Mutating=false with a non-plan Mode at save time.
 		mode := sched.Spec.Mode // "" means "use server's DefaultMode"

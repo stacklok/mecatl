@@ -370,9 +370,22 @@ func (t *ScheduleTool) create(ctx context.Context, call session.ToolCall, args s
 	if err != nil {
 		return session.NewToolError(call.ID, "Schedule create: "+err.Error())
 	}
-	mode := session.ModeDefault
-	if !args.Mutating {
-		mode = session.ModePlan
+	// A read-leaning schedule always fires in plan (the Mutating/Mode
+	// invariant). A mutating one fires in the CREATING session's mode, read
+	// from the run context and never from args: a yolo session's schedule must
+	// not fire into a default session whose writes ask with no approver. The
+	// fire re-admits that mode against the server's ceiling, so a server
+	// tightened after creation refuses the fire rather than escalating it. An
+	// unbound context (no executing session) keeps the conservative default.
+	mode := session.ModePlan
+	if args.Mutating {
+		mode = sessionModeFromContext(ctx)
+		if mode == "" {
+			mode = session.ModeDefault
+		}
+		if mode == session.ModePlan {
+			return session.NewToolError(call.ID, "Schedule create: plan mode is active: a mutating Schedule create is not permitted; present a plan and exit plan mode first")
+		}
 	}
 	origin := sessionOriginFromContext(ctx)
 	spec := port.ScheduleSpec{
