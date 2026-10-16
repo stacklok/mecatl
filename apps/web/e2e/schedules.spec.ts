@@ -397,3 +397,48 @@ test("schedule mutations preserve backend-owned fields and surface failures", as
   expect(offlineBff.requestsFor("DELETE", "/api/v1/schedules/new-report")).toHaveLength(1);
   expect(offlineBff.requestsFor("GET", "/api/v1/schedules").length).toBeGreaterThan(4);
 });
+
+test("a schedule row opens on a plain click, not on a modified click or a text selection", async ({
+  offlineBff,
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name === "chromium-mobile",
+    "The clickable row is the desktop table's.",
+  );
+  stubWorkspace(offlineBff);
+  offlineBff.json("GET", "/api/v1/schedules", {
+    items: [schedule({ prompt: "Summarize project activity for the weekly review" })],
+    reason: "",
+    supported: true,
+  });
+  offlineBff.json("GET", "/api/v1/schedules/daily-report/fires", { items: [] });
+
+  await page.goto("/workspace/schedules");
+  const prompt = page
+    .getByRole("table")
+    .getByText("Summarize project activity for the weekly review");
+  await expect(prompt).toBeVisible();
+
+  // Dragging across the prompt selects it; the click that ends the drag stays on the list.
+  const box = await prompt.boundingBox();
+  if (!box) throw new Error("no prompt box");
+  await page.mouse.move(box.x + 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width - 2, box.y + box.height / 2, { steps: 8 });
+  await page.mouse.up();
+  expect(await page.evaluate(() => window.getSelection()?.toString() ?? "")).not.toBe("");
+  await page.waitForTimeout(200);
+  await expect(page).toHaveURL(/\/workspace\/schedules$/);
+
+  // A modified click on the row body is the browser's, not the row's.
+  await page.evaluate(() => window.getSelection()?.removeAllRanges());
+  await prompt.click({ modifiers: ["ControlOrMeta"] });
+  await prompt.click({ modifiers: ["Shift"] });
+  await page.evaluate(() => window.getSelection()?.removeAllRanges());
+  await page.waitForTimeout(200);
+  await expect(page).toHaveURL(/\/workspace\/schedules$/);
+
+  await prompt.click();
+  await expect(page).toHaveURL(/\/workspace\/schedules\/daily-report$/);
+});

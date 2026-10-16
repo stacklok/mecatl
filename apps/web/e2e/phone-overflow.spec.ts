@@ -293,9 +293,6 @@ const surfaces: ReadonlyArray<{
   {
     name: "schedules",
     path: "/workspace/schedules",
-    // The page header's title and Schedule task button share one unwrapped row; the
-    // schedules workspace belongs to #2194, which takes the fix.
-    pending: { owner: "#2194", widths: [320] },
     ready: async (page) => {
       await expect(
         page
