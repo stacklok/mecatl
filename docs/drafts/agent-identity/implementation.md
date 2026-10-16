@@ -18,7 +18,7 @@ Verify that scheduled invocations preserve owner attribution without treating sa
 
 Use literal, nonempty SPIFFE-safe definition names (`[A-Za-z0-9._-]+`, except `.` and `..`); reject invalid names rather than rewriting them. Agent-instance incarnations use persisted `inc_` values with 26 lowercase base32 characters, or deterministic `legacy_` values for older snapshots.
 
-Apply any issuance limit to the **whole URI**, including child hops, without truncating it. [SPIFFE-ID §2.3](https://github.com/spiffe/spiffe/blob/main/standards/SPIFFE-ID.md#23-maximum-spiffe-id-length) requires support through 2048 bytes and advises against generating longer IDs. The proposed caps are names up to 63 bytes and up to 8 child levels below the root, which keeps the longest subject near 1,400 bytes; registration past either cap is refused. Legacy-name compatibility is also open. The path has no version segment, so incompatible grammar requires migration.
+Apply any issuance limit to the **whole URI**, including child hops, without truncating it. [SPIFFE-ID §2.3](https://github.com/spiffe/spiffe/blob/main/standards/SPIFFE-ID.md#23-maximum-spiffe-id-length) requires support through 2048 bytes and advises against generating longer IDs. The proposed caps are the definition category and name each up to 63 bytes, and up to 8 child levels below the root, which keeps the longest subject near 1,600 bytes; registration past either cap is refused. Legacy-name compatibility is also open. The path has no version segment, so incompatible grammar requires migration.
 
 ## AS-1 grant and AS-2 user resolution
 
@@ -64,9 +64,9 @@ Accepting a token whose `aud` is the Mecatl API from a different client is an ex
 | Source access-token `jti` | | Refuses a second session opened with the same token. |
 | Issue time and hard expiry | | Authority horizon. |
 | Source schedule grant | | For a scheduled run's session only: revoking the schedule grant revokes this refresh token. |
-| Revocation reason | | Set when revoked: `session_closed`, `signed_out`, `upstream_revoked`, or `owner_action_required`. |
+| Revocation reason | | Set when revoked: `session_closed`, `signed_out`, `upstream_revoked`, `owner_action_required`, or, for a schedule grant, `schedule_ended`. |
 
-The broker supplies the session reference. The `mecatl_session` type requires AS-1 to echo the entry unchanged (RFC 9396 §7); the broker checks it is identical, revokes the refresh token and fails the open if not, and otherwise stores the refresh token with the echoed owner in its shared session storage. AS-1 refuses an open while the session already has a live refresh token. A retry of the same open, with the same `jti`, client, and session, within the source token's `exp`, while the session is open and its refresh token is not revoked, revokes the first refresh token and issues a new one; AS-1 writes the converted-`jti` record, the owner, and the refresh-token record in one transaction. The broker runs at most one open per session at a time, and a retry carries a new client assertion. The refresh token does not rotate; client authentication already binds it to the broker. Session close revokes the token and keeps a closed-session record (ID, owner, closing time) so the session is never reopened; the converted `jti` is kept until the source token's `exp` plus the clock skew. Losing the refresh token for any reason closes the session. The refresh token is not tied to the user's AS-1 login session; [sign-out and revocation](credentials-and-lifecycle.md#sign-out-and-revocation) describes what ends it.
+The broker supplies the session reference. The `mecatl_session` type requires AS-1 to echo the entry unchanged (RFC 9396 §7); the broker checks it is identical, revokes the refresh token and fails the open if not, and otherwise stores the refresh token with the echoed owner in its shared session storage. A later open by the same owner with a fresh token replaces the live refresh token in the same transaction. A retry of the same open, with the same `jti`, client, and session, within the source token's `exp`, while the session is open and its refresh token is not revoked, revokes the first refresh token and issues a new one; AS-1 writes the converted-`jti` record, the owner, and the refresh-token record in one transaction. The broker runs at most one open per session at a time, and a retry carries a new client assertion. The refresh token does not rotate; client authentication already binds it to the broker. Session close revokes the token and keeps a closed-session record (ID, owner, closing time) so the session is never reopened; the converted `jti` is kept until the source token's `exp` plus the clock skew. Losing the refresh token for any reason closes the session. The refresh token is not tied to the user's AS-1 login session; [sign-out and revocation](credentials-and-lifecycle.md#sign-out-and-revocation) describes what ends it.
 
 **Per-call ID-JAG.** When no cached `V` exists for (session, instance, gateway, user), the broker asks AS-1 for an ID-JAG ([draft-ietf-oauth-identity-assertion-authz-grant-04](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/)) with RFC 8693: the broker refresh token as `subject_token` (`subject_token_type=urn:ietf:params:oauth:token-type:refresh_token`), the agent-instance JWT-SVID as `actor_token` (`actor_token_type=urn:ietf:params:oauth:token-type:jwt`), `requested_token_type=urn:ietf:params:oauth:token-type:id-jag`, and AS-2's issuer as `audience`. AS-1:
 
@@ -130,7 +130,7 @@ Test the session-open exchange:
 - A crash between writing the converted-`jti` record and the refresh-token record leaves neither.
 - The response echoes the `mecatl_session` entry unchanged; an owner that differs from the token's `sub_id` is refused with `invalid_request`, and a session owned by another user or closed is refused with `invalid_authorization_details`.
 - An echoed entry that differs from the request makes the broker revoke the refresh token and fail the open.
-- A second open of a session that has a live refresh token, with a different `jti`, is refused. Two concurrent opens with one `jti` for two sessions yield one session.
+- A later open of a session that has a live refresh token, by the same owner with a fresh `jti`, replaces it and revokes the old one; an exchange still holding the old one gets `superseded`. An open by a different owner is refused. Two concurrent opens with one `jti` for two sessions yield one session.
 - A broker crash after AS-1 issued the refresh token, before the broker stored it, is recovered by a retry that revokes the orphan.
 - A retry after a lost response, with a new client assertion, succeeds; mecak8s's client refreshes and retries at most once.
 - Losing the refresh token closes the session, and a new open of the same session ID is refused.
@@ -333,12 +333,12 @@ Verify the [AuditEvent profile](audit.md#auditevent-profile) through the real to
 
 - The broker refuses a call whose reported run owner differs from the owner recorded with the grant in use, the company identity, and records the denial.
 - A child run's owner equals its parent run's owner; the broker refuses a delegation that changes it.
-- `ReportDelegation` is refused for an unknown delegating run, an instance not registered to the session, or a delegating run that is not its parent delegation's receiving run. A repeat with the same content succeeds; a repeat with different content returns `ALREADY_EXISTS`.
+- `ReportDelegation` is refused for an unknown delegating run whose instance is not a root instance, an instance not registered to the session, or a delegating run that is not its parent delegation's receiving run. A repeat with the same content succeeds; a repeat with different content returns `ALREADY_EXISTS`.
 - A call naming a delegation that was not reported is denied.
 - Registration into a closed session, or a session bound to another workload, is refused.
 - A call whose SVID instance differs from the run record's instance is denied; a new run naming no delegation from a child instance is denied; two replicas recording the same new run keep one record.
 - `ReportDelegation` for a delegating root run with no record yet records it and succeeds.
-- Re-registering an instance into a new session for the same host session keeps its incarnation and `ag_` identifier; re-registering it under a different owner is refused; a repeated registration with the same content returns the same reference, with different content `ALREADY_EXISTS`.
+- Re-registering an instance into a new session for the same host session keeps its incarnation and `ag_` identifier; re-registering a SPIFFE ID with a different host session, owner, definition revision, or parent is refused; a repeated registration with the same content returns the same reference, with different content `ALREADY_EXISTS`.
 
 Test the checks at each hop:
 
@@ -359,7 +359,7 @@ Verify the behavior in [sign-out and revocation](credentials-and-lifecycle.md#si
 - After it, session open and schedule setup refuse an access token issued before the revocation time, including one opened concurrently with the revocation.
 - It reaches sessions served by another replica.
 - After it, an ID-JAG exchange with any revoked refresh token fails, and each schedule's next run ends with "needs owner action".
-- When the upstream IdP returns `invalid_grant` before the upstream token's recorded expiry, or when no expiry is recorded, AS-1 runs the sign-out-everywhere path with reason `upstream_revoked`, revoking all the user's grants and client refresh tokens, and the exchange fails.
+- When the upstream IdP returns `invalid_grant` before the upstream token's recorded expiry, after a clean previous refresh, AS-1 runs the sign-out-everywhere path with reason `upstream_revoked`, revoking all the user's grants and client refresh tokens, and the exchange fails.
 - When it returns `invalid_grant` at or after the recorded expiry, or the recorded expiry passes, or the IdP issued no refresh token and the re-check is not turned off for it, AS-1 runs the same path with reason `owner_action_required`.
 - A later exchange for a revoked session returns the stored reason, not `session_closed`; a grant is never revived by a new sign-in.
 - A network error or 5xx fails that exchange and revokes nothing.
