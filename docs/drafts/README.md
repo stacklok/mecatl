@@ -5,6 +5,7 @@ rely on them for how Mecatl works.
 
 | File | Author | Summary | Decide by (keep, move to an issue, or delete) |
 |---|---|---|---|
+| [mecatl-operator.md](mecatl-operator.md) | Mecatl | Proposal for a Kubernetes operator with approved offerings, runtime publication, and explicit ownership boundaries. | **2026-11-06** |
 | [agent-identity-model.md](agent-identity-model.md) | Juan Antonio Osorio | Strawman for agent identity: Mecatl as its own SPIFFE trust domain with JWT delegation chains. | **2026-11-06** |
 | [agent-identity-outbound.md](agent-identity-outbound.md) | Juan Antonio Osorio | Part 2 of the identity model: how the harness reaches tools and gateways on the outbound hop. | **2026-11-06** |
 | [cloud-native-harness-kit.md](cloud-native-harness-kit.md) | Juan Antonio Osorio | Positioning definition of the cloud-native harness kit and where its responsibility ends. | **2026-11-06** |
