@@ -14,3 +14,4 @@ rely on them for how Mecatl works.
 | [agent-fabric-protocol.md](agent-fabric-protocol.md) | Dániel Kántor | Draft HTTP/JSON protocol for remote files, folders, and callable actions. | **2026-11-06** |
 | [mecak8s-vmcp-delegation-contract.md](mecak8s-vmcp-delegation-contract.md) | Jakub Hrozek | Work record of the mecak8s and vMCP token-delegation contract qualification. | **2026-11-06** |
 | [contextual-guardrails-capacity.md](contextual-guardrails-capacity.md) | Juan Antonio Osorio | Work record of capacity calibration evidence for contextual guardrails. | **2026-11-06** |
+| [identity-broker-startup.md](identity-broker-startup.md) | Chris Burns | Work record of the first identity broker increment: validated startup inputs and the definition snapshot. | **2026-11-06** |
