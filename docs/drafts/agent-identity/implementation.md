@@ -20,7 +20,7 @@ Use literal, nonempty SPIFFE-safe definition names (`[A-Za-z0-9._-]+`, except `.
 
 Apply any issuance limit to the **whole URI**, including child hops, without truncating it. [SPIFFE-ID §2.3](https://github.com/spiffe/spiffe/blob/main/standards/SPIFFE-ID.md#23-maximum-spiffe-id-length) requires support through 2048 bytes and advises against generating longer IDs. The proposed caps are the definition category and name each up to 63 bytes, and up to 8 child levels below the root, which keeps the longest subject near 1,600 bytes; registration past either cap is refused. Legacy-name compatibility is also open. The path has no version segment, so incompatible grammar requires migration.
 
-## AS-1 grant and AS-2 user resolution
+## Grant record
 
 The flow has four integration points: AS-1 sign-in, the session-open exchange, the per-call ID-JAG, and AS-2 redemption. [Credentials and lifecycle](credentials-and-lifecycle.md#interactive-execution) gives each one's request, ordered checks, response, and errors; this section adds only what an implementer needs beyond that. The original company token never leaves AS-1: AS-1 is an ordinary OIDC client of the company IdP, keeps only the upstream refresh token for its re-check, and nothing downstream receives or exchanges a company token.
 
@@ -38,7 +38,7 @@ The flow has four integration points: AS-1 sign-in, the session-open exchange, t
 | Source schedule grant | | For a scheduled run's session only: revoking the schedule grant revokes this refresh token. |
 | Revocation reason | | Set when revoked: `session_closed`, `signed_out`, `upstream_revoked`, `owner_action_required`, or, for a schedule grant, `schedule_ended`. |
 
-**Open.** Whether external gateways adopt the AS-2 reason codes in `error_description`; until one does, the broker treats its `invalid_grant` as `consent_required`. No callback or private mapping-response fields are specified. Whether the "Allow Mecatl" step and the provider's consent screen can be one redirect chain is also open; candidates include an AS-2 login chain through AS-1, MCP URL elicitation, and the connector gateway's connect and status APIs.
+**Open.** The persistence ordering of the correlation records. Whether external gateways adopt the AS-2 reason codes in `error_description`; until one does, the broker treats its `invalid_grant` as `consent_required`. No callback or private mapping-response fields are specified. How an external gateway that does not send reason codes reports "needs authorization" or "consent required" as a structured outcome is also open; candidates include an AS-2 login chain through AS-1, MCP URL elicitation, and the connector gateway's connect and status APIs. So is whether the "Allow Mecatl" step and the provider's consent screen can be one redirect chain.
 
 ## Credential verification
 
@@ -92,14 +92,14 @@ Test the `V` cache:
 Test schedule grants:
 
 - Setting up a schedule converts a fresh access token with a `mecatl_schedule` entry into a schedule grant.
-- When the schedule fires, the broker exchanges the schedule grant for a session refresh token whose expiry is no later than the horizon; the run's calls then pass steps (6) to (9). Revoking the schedule grant revokes that session's refresh token.
+- When the schedule fires, the broker exchanges the schedule grant for a broker refresh token whose expiry is no later than the horizon; the run's calls then pass steps (6) to (9). Revoking the schedule grant revokes that session's refresh token.
 - A schedule grant is refused as the subject token of an ID-JAG exchange, and a session's refresh token is refused for opening a scheduled run.
 - A scheduled run whose owner differs from the owner recorded with the schedule grant is refused.
 - A scheduled-run open retried with the same schedule grant, client, and session succeeds; a schedule grant past its horizon or revoked is refused with its reason.
 - A run's session closes, revoking its refresh token, when the run ends.
 - A schedule grant presented at the refresh-token grant returns `invalid_grant`.
 
-Test vMCP and the upstream credential:
+Test vMCP and the provider credential:
 
 - vMCP rejects a `V` with the wrong issuer, audience, `typ`, or expiry.
 - vMCP loads the credential for (gateway, native user, provider) of a delegated `V` that carries no `tsid`, and returns "needs authorization" when none exists. One user's `V` never loads another user's credential.
@@ -255,7 +255,7 @@ Verify the [AuditEvent profile](audit.md#auditevent-profile) through the real to
 - After `A42` is opened for Alice, AS-1 refuses to open `A42` again with Bob's token, including after a broker restart.
 - A session ID is never reused for a new session.
 
-**Later work for session-bound tokens.** Before adopting [session-bound tokens](credentials-and-lifecycle.md#3-session-open-and-the-broker-refresh-token), check how each client would hold them. The TUI keeps tokens in the OS keyring and Studio in sealed server-side cookies; both would need one session-bound token per open session, refreshed silently. Studio's server holds those tokens for the browser, so check how it stores and selects them per session and whether that changes its cookie and CSRF handling.
+**Later work for session-bound tokens.** Before adopting [session-bound tokens](credentials-and-lifecycle.md#later-work), check how each client would hold them. The TUI keeps tokens in the OS keyring and Studio in sealed server-side cookies; both would need one session-bound token per open session, refreshed silently. Studio's server holds those tokens for the browser, so check how it stores and selects them per session and whether that changes its cookie and CSRF handling.
 
 ## Run owner checks
 

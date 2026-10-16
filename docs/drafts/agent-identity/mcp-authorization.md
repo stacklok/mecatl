@@ -82,7 +82,7 @@ In the [interactive walkthrough](credentials-and-lifecycle.md#interactive-execut
 
 Both requests also require valid credentials and execution-context checks, and must pass local checks and the downstream AS-2 and vMCP checks. The reviewer's SVID identifies the child; even with creation ancestry in its subject, it does not prove authority under `D42`. The child presents its own credential, not the parent's SVID. Future broker enforcement of task-specific delegated bounds will need trusted evidence of those bounds.
 
-For both calls, Alice's use of her GitHub account is checked downstream. AS-2 redeems the ID-JAG only for a mapped or consent-linked native user, and vMCP loads only the credential stored for `(gateway.example.com, usr-alice-7c1d, github)`. The model cannot select another user's credential. Matching account names or email addresses establish nothing. The broker holds no connection evidence of its own. See [the vMCP step](credentials-and-lifecycle.md#9-vmcp-decision-and-upstream-credential).
+For both calls, Alice's use of her GitHub account is checked downstream. AS-2 redeems the ID-JAG only for a mapped or consent-linked native user, and vMCP loads only the credential stored for `(gateway.example.com, usr-alice-7c1d, github)`. The model cannot select another user's credential. Matching account names or email addresses establish nothing. The broker holds no connection evidence of its own. See [the vMCP step](credentials-and-lifecycle.md#9-vmcp-decision-and-provider-credential).
 
 ## Authorization, credentials, and dispatch
 
