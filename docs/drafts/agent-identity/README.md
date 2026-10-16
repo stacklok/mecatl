@@ -19,46 +19,36 @@ Four problems follow:
 - A user's credential can do more than the agent should do. For example, Alice's GitHub credential can merge a PR, but the `code-reviewer` agent must only review. The design combines the user's permissions with the agent's permissions. A child agent can have the same authority as its parent, or less, so a main agent cannot reach tools it lacks by delegating to a child whose definition allows them.
 - The harness (the code that runs the agent loop) cannot give independent evidence of its own actions. Its execution log helps explain what it tried to do. Evidence of an external action must come from the component that checked and dispatched the action, together with the result that the component observed.
 
-These guarantees hold only for calls that pass through the broker. A call that goes around the broker skips its checks and its audit trail. In the remote deployment, protected operations must pass through the broker.
+These guarantees hold only for calls that pass through the broker. A call that goes around the broker skips its checks and its audit trail.
 
 The architecture must connect these facts. An auditor should be able to follow Alice's request through the delegation to the tool call, identify the authority under which it was permitted, and distinguish a successful operation from a denied call or an unknown outcome.
 
 ## The identity model
 
-A definition describes a kind of agent, such as `code-reviewer`. Its source is part of that identity: a repository's definition and an administrator's definition with the same name are not interchangeable.
+A **definition** describes a kind of agent, such as `code-reviewer`. Its source is part of that identity: a repository's definition and an administrator's definition with the same name are not interchangeable. A definition's **ceiling** is the set of MCP server/tool pairs that an agent built from it may call. Changing an execution setting such as a turn limit does not change a definition's identity, and loading a definition grants no access to a user's accounts.
 
-An instance is one use of a definition in a session. Alice and Bob can use the same definition but have distinct instances. Restoration preserves an instance; a new session creates another.
+An **instance** is one use of a definition in a session. Alice and Bob can use the same definition but have distinct instances. Restoring a session preserves its instances; a new session creates new ones. A session's **root** is the definition its main agent uses.
 
-A run is one execution by an instance. Reviewing PR 42 and later PR 57 uses the same reviewer identity but separate authorization contexts. A delegated child has its own instance and run, linked to the creating instance and delegating run.
+A **run** is one execution by an instance. Reviewing PR 42 and later PR 57 uses the same reviewer instance in two runs. A delegated child has its own instance and run, linked to the instance that created it and to the run that delegated to it.
 
-The user is the person on whose behalf the agents act. mecak8s, the service that hosts the agents, is the platform workload: it serves many users at once and has its own infrastructure identity. Each agent instance also has an identity of its own, in a separate agent trust domain.
-
-## Establishing an agent's identity
-
-The [agent-definition loader](agent-definitions.md#loading-definitions) resolves definitions from configured sources, such as administrator-managed files, repositories, or APIs; the loop cannot establish identity by supplying a name. The selected definitions stay fixed for the session. Their sources and revisions must remain available across pauses and restoration, so repository changes cannot silently replace them.
-
-An agent definition is a value, `AgentDef`, that combines instructions, execution settings, and tool configuration. This design proposes to split it. The harness gets the configuration that it needs to execute the agent. The broker gets the definition records and the authority ceilings that it needs to authorize MCP calls. A ceiling is the set of MCP server/tool pairs that an agent can call.
-
-Changing a turn limit must not change the agent's identity. Loading a definition must not grant access to a user's accounts.
+The **user** is the person on whose behalf the agents act. mecak8s, the service that hosts the agents, is the platform **workload**: it serves many users at once and has its own infrastructure identity. Each agent instance also has an identity of its own, in a separate agent trust domain.
 
 ## Where trust lives
 
-The agent loop uses those definitions to perform work, but it cannot decide which identities or permissions the rest of the system should trust. Definition loading, authorization, and audit therefore need trusted responsibilities outside the loop.
+The agent loop uses definitions to do work, but it cannot decide which identities or permissions the rest of the system trusts; otherwise a prompt-injected model or a buggy harness could grant itself access. Definition loading, credential issuance, authorization, and audit therefore live outside the loop.
 
-mecak8s hosts the API and the harness, which runs the agent loop. It validates the access token of the user who starts the session. AS-1, Mecatl's login authorization server, issued that token.
+mecak8s hosts the API and the harness. It validates the AS-1 access token of the user who starts a session, and it authenticates to the broker with its platform workload credential, such as a Kubernetes ServiceAccount token.
 
-The **identity broker** establishes who is acting. Its modules load agent definitions, accept instance registrations from mecak8s and issue instance credentials, sign users in, check each protected MCP tool call, and get downstream access with credentials that the broker controls. Once the authority work is in place, the broker also bounds what each agent can reach. It records the audit trail. It is the existing MCP broker, extended, and one trusted component. It starts as modules inside the mecak8s process and later becomes a separate service. See [deployment and threats](#deployment-and-threats).
+The **identity broker** establishes who is acting. It is the existing MCP broker, extended, and one trusted component. Once the authority work is in place, it also bounds what each agent can reach. Its modules are:
 
-The broker has these modules:
+- The **definition loader** loads agent definitions from configured sources, records each one's source and revision, and gives the harness the execution configuration. A session's selected definitions stay fixed, so a later change at the source cannot silently replace them. The operator says which definitions may be a session's root, and the broker refuses to register a root instance outside that set. See [agent definitions](agent-definitions.md#loading-definitions).
+- The **agent-instance issuer** signs a SPIFFE JWT-SVID for each instance that mecak8s registers, in an agent trust domain separate from the platform's and from AS-1 and AS-2. It signs on mecak8s's report: in SPIRE terms, the broker is the attestor, and mecak8s's registration is its only evidence.
+- **AS-1**, Mecatl's login authorization server, signs users in through the company identity provider (IdP) and issues ID-JAGs (Identity Assertion JWT Authorization Grants). An ID-JAG is a short-lived, single-use signed grant that names the user and the acting agent. It is addressed only to AS-2, the gateway's authorization server, which redeems it for an access token, and only when the broker's client presents it.
+- The **authorization and audit** logic checks each protected MCP call and records what it decided and observed.
 
-- The **definition loader** loads agent definitions from configured sources. It gives the harness the execution configuration.
-- The **agent-instance issuer** signs a JWT-SVID for each instance that mecak8s registers, in an agent trust domain separate from the platform's and from AS-1 and AS-2. It signs on mecak8s's report: in SPIRE terms, the broker is the attestor, and mecak8s's registration is its only evidence.
-- **AS-1** signs users in and issues ID-JAGs. An ID-JAG is a short-lived, single-use signed grant that names the user and the acting agent. It is addressed only to AS-2, the gateway's authorization server, which redeems it for an access token, and only when the broker's client presents it.
-- The authorization and audit logic.
+Downstream, the **vMCP gateway** sends protected calls to MCP backends and providers. It has three parts: AS-2; storage for users' provider credentials, such as GitHub tokens; and the vMCP, ToolHive's virtual MCP server, which dispatches the calls. The gateway runs inside the Mecatl deployment (embedded mode) or outside it (external mode).
 
-This design scopes broker authorization to MCP tools. Extending that boundary to filesystem operations, Shell, and agent spawning is a [future direction](all-tool-mediation.md); their authorization and routing remain to be designed.
-
-The broker does not decide whether agents start or whether runs execute; mecak8s owns agent lifecycle and run execution. Registering an instance with the broker records its identity and grants no permission to run.
+Mecatl uses two authorization servers because the gateway may belong to someone else. One server that both holds users' provider credentials and issues grants naming the user and the agent works when Mecatl runs the gateway, but not when another operator runs it and owns the credentials. AS-1 therefore issues the grants, and AS-2 holds the credentials and redeems the grants, so one protocol serves both modes. The two keep separate keys even in embedded mode, where the split is a protocol boundary, not a security boundary.
 
 ```mermaid
 flowchart LR
@@ -78,43 +68,34 @@ flowchart LR
         V["vMCP"]
         T --- V
     end
-    H -->|"Workload-authenticated instance registration by definition reference"| I
+    H -->|"Workload-authenticated instance registration"| I
     H <-->|"Workload-authenticated MCP calls; AS-1 access token once at session open; agent JWT-SVID per call"| I
-    I -->|"RFC 8693: session refresh token, then ID-JAG on a cache miss"| A1
-    I -->|"RFC 7523: redeem ID-JAG for V"| T
+    I -->|"Session refresh token; ID-JAG on a cache miss"| A1
+    I -->|"Redeem ID-JAG for V"| T
     I <-->|"Authorized MCP calls with V"| V
     V <-->|"Protected calls"| P["MCP backends / providers"]
     I -->|"Decisions and observed outcomes"| A["Audit records"]
 ```
 
-The diagram shows the broker-backed remote architecture's MCP path. Local deployments can retain direct tool access; protected operations in the remote deployment must pass through the broker.
+This design scopes broker authorization to MCP tools. Local deployments can keep direct tool access, and none of these guarantees apply to them. Extending the boundary to filesystem operations, Shell, and agent spawning is a [future direction](all-tool-mediation.md). The broker does not decide whether agents start or whether runs execute; mecak8s owns agent lifecycle and run execution, and registering an instance records its identity without granting permission to run.
 
-At startup, the broker's [definition loader](agent-definitions.md#loading-definitions) loads the global agent definitions from configured sources and records their sources, revisions, and ceilings in the broker. Before the agent loop starts, mecak8s's trusted session lifecycle code persists the session's fixed definition selection and [registers the main instance](agent-definitions.md#registering-instances) with the broker under workload authentication, naming its definition by reference. Several points about loading and registration are still open. See [open questions](#open-questions).
+## One request, end to end
 
-The vMCP gateway sends protected MCP calls to MCP backends and providers. It has three parts: AS-2, the gateway's authorization server; provider credential storage; and the vMCP, which dispatches the calls. The gateway can run inside the Mecatl deployment (embedded mode) or outside it (external mode).
+Alice asks her main agent to list pull requests and review PR 42. The main agent calls `pull_request_list`, then delegates to `code-reviewer`, which calls `pull_request_read` for PR 42. Each call gets its own authorization decision.
 
-Mecatl uses two authorization servers because the gateway may belong to someone else. One server that both holds users' provider credentials and issues grants naming the user and the agent works when Mecatl runs the gateway, but not when another operator runs it and owns the credentials. AS-1 therefore issues the grants, and AS-2, the gateway's server, holds the credentials and redeems the grants, so one protocol serves both modes. The two keep separate keys even in embedded mode, where the split is a protocol boundary, not a security boundary.
+**Sign-in and session open.** Alice signs in at AS-1, which redirects her to the company IdP, and her client calls mecak8s with the AS-1 access token. Sign-in happens at AS-1 rather than in mecak8s so that Mecatl cannot invent a user: mecak8s checks that Alice owns the session and forwards the token to the broker once, and the broker exchanges it at AS-1 for a refresh token bound to that broker session. Every later grant names the user from AS-1's record of that refresh token, never from anything mecak8s sends with a call. The broker holds the refresh token because agents keep working after Alice closes her client. It carries her authority for that one session, has a hard expiry, and is revoked when the session closes or she signs out everywhere. The broker is one OAuth client, `mecatl`, at both AS-1 and AS-2, so a leaked refresh token is useless without the broker's key.
 
-Sign-in happens at AS-1 rather than in mecak8s so that Mecatl cannot invent a user: mecak8s only forwards a token AS-1 signed, and every later grant names the user from AS-1's record. This is how Alice's tool calls get access:
+**Each call.** When the broker has no cached access token for this session, agent, gateway, and user, it sends the refresh token and the acting agent's JWT-SVID to AS-1. AS-1 checks that the agent is registered to the session and that the combination of client, user, agent, and gateway is allowed, then returns an ID-JAG naming Alice and the agent in its `act` claim. The JWT-SVID gives the gateway and the audit trail the acting agent; it asserts that agent rather than authenticating it, because agents share one process. The broker redeems the ID-JAG at AS-2 for the vMCP access token `V`. AS-2 maps AS-1's user to its own account for Alice and never receives her AS-1 token or the agent's JWT-SVID. An external gateway also requires a one-time consent link, which Alice creates at AS-2's own login. The link is her own statement, made at the gateway, that Mecatl may act for her, so a compromised AS-1 cannot use the gateway credentials of a user who never chose Mecatl.
 
-1. Alice signs in at AS-1. AS-1 redirects her to the company identity provider (IdP).
-2. Her client calls mecak8s with an AS-1 access token.
-3. mecak8s validates the token and checks that Alice currently owns the session.
-4. At session open, mecak8s passes the token to the broker once.
-5. The broker exchanges the token at AS-1 for a refresh token. The refresh token is bound to the broker session.
-6. When the broker has no cached vMCP access token for this session, agent, gateway, and user, it sends the refresh token and the acting agent's JWT-SVID to AS-1. The JWT-SVID lets AS-1 name the acting agent in the ID-JAG's `act` claim, so the gateway and the audit trail can attribute the call. It asserts the agent rather than authenticating it, because agents share one process. AS-1 returns an ID-JAG that names Alice and the agent.
-7. The broker redeems the ID-JAG at AS-2 and gets the vMCP access token `V`.
+**The checks.** During the identity work, the broker checks the session, the workload, that the acting instance is registered to the session, and the route. Once the [authority work](#order-of-work) is in place, it also uses Cedar, a policy engine, to check the reviewer's effective ceiling: the reviewer's definition ceiling, narrowed by the main agent's. Even then, the design does not evaluate PR-specific bounds or comprehensive enterprise user policy. AS-2 redeems only for a mapped user, and in external mode only for a linked one, and the vMCP dispatches only with Alice's stored GitHub credential, which never reaches the harness or the model. If any check denies the call, no request reaches GitHub. Missing, stale, or revoked identity, consent, connection, or authorization evidence fails closed, with no fallback to a service credential, another user, or a more privileged agent.
 
-The broker holds the refresh token because agents keep working after Alice closes her client. The token carries her authority for that one broker session, has a hard expiry, and is revoked when the session closes or she signs out everywhere. The broker is one OAuth client, `mecatl`, at both AS-1 and AS-2, and authenticates with `private_key_jwt`, so a leaked refresh token is useless without the broker's key. AS-2 maps the AS-1 subject to its native user. An external gateway also requires a one-time consent link, which the user creates at AS-2's own login. The link is the user's own statement, made at the gateway, that Mecatl may act for them, so a compromised AS-1 cannot use the gateway credentials of a user who never chose Mecatl. AS-2 never receives Alice's AS-1 token or the agent's JWT-SVID. The tools themselves execute the operations.
+**The record.** GitHub sees access under Alice's account. The audit trail supplies the rest: which reviewer acted, which agent delegated the work, why the call was permitted, and what result was observed. A missing result is recorded as unknown, not as proof that the operation never happened. Each record is written by the component that made the decision: the broker, AS-1, AS-2, and the vMCP all record through the toolhive-core audit logger, to a store mecak8s cannot write.
 
 See [credentials and lifecycle](credentials-and-lifecycle.md#interactive-execution) for the full walkthrough and [MCP gateway modes](mcp-gateway-modes.md) for the gateway side.
 
-AS-1 issued Alice's token after her company-IdP sign-in, and every ID-JAG takes its subject from AS-1's record of the refresh token, never from anything mecak8s sends with a call. When the broker asks for an ID-JAG, AS-1 checks two things:
+## What mecak8s reports
 
-- The acting instance is registered to the broker session.
-- The combination of client, subject, actor, and target is allowed. The client is `mecatl`. The subject is Alice. The actor is the acting agent instance. The target is the AS-2 gateway.
-
-AS-1 cannot check that the agent registration, the ancestry, the run, and the delegation are genuine. Trusted lifecycle code in mecak8s reports these facts. The agent loop must not choose them. Each agent has its own credential, but agents that share one mecak8s process are not isolated from each other.
+AS-1 and the broker cannot verify the instance registration, the creation ancestry, the run, or the delegation: only mecak8s observes them, because the agents are goroutines in its memory, and mecak8s reports them. The broker records them as reported and checks them for consistency: the instance is registered to the session, its parent belongs to the same session tree, the run owner matches the grant in use, and a session's root is root-eligible. It also loads definition content and ceilings itself, so mecak8s cannot supply them. These checks catch mistakes, not a compromised mecak8s. Each agent has its own credential, but agents that share one mecak8s process are not isolated from each other.
 
 ## Deployment and threats
 
@@ -138,23 +119,9 @@ Precise limits matter as much as guarantees. This design does not provide:
 - **Proof of provider-side effects.** A record shows what the recording component observed; an unknown outcome stays unknown.
 - **Instant downstream revocation.** ID-JAGs and vMCP access tokens already issued stay valid until they expire, so their lifetimes are short.
 
-## Following an action through the architecture
-
-Alice asks her main agent to list pull requests and review PR 42. Once the session's definitions are loaded, the main agent calls `pull_request_list`, then delegates to `code-reviewer`. The reviewer calls `pull_request_read` for PR 42. Each call requires its own authorization decision.
-
-During the identity work, the broker checks the session, the workload, that the acting instance is registered to the session, and the route. Once the [authority work](#order-of-work) is in place, it also uses Cedar, a policy engine, to check the reviewer's effective ceiling: the reviewer's definition ceiling, narrowed by the main agent's. Even then, the design does not evaluate PR-specific delegated bounds or comprehensive enterprise user policy.
-
-AS-2 and vMCP enforce the user and the connection. AS-2 redeems the ID-JAG only for a mapped user. In external mode, the user must also have a consent link. vMCP dispatches only with Alice's stored credential.
-
-If all required checks pass, vMCP dispatches the call through the authorized connection with its native provider credential. That credential stays outside the harness and the model. In embedded mode, it can be inside the Mecatl deployment. If any check denies the call, no request reaches GitHub. Missing, stale, or revoked identity, consent, connection, or authorization evidence fails closed, with no fallback to a service credential, another user, or a more privileged agent.
-
-GitHub sees access under Alice's account. The broker's audit record supplies the rest of the story: which reviewer acted, which agent delegated the work, why the call was permitted, and what result was observed. A missing result is recorded as unknown, not as proof that the operation never happened. Each record is written by the component that made the decision: the broker, AS-1, AS-2, and the vMCP all record through the toolhive-core audit logger, to a store mecak8s cannot write.
-
-See [Interactive execution](credentials-and-lifecycle.md#interactive-execution) for the detailed credentials sequence.
-
 ## Standards
 
-The design composes existing OAuth and workload-identity standards rather than inventing a token format. Sign-in is OIDC with the authorization code flow and PKCE, and mecak8s validates AS-1's access token as an RFC 9068 JWT access token. Session open and ID-JAG issuance are RFC 8693 token exchanges, and AS-2 redeems the ID-JAG with the RFC 7523 JWT-bearer grant. The broker authenticates as a confidential client with `private_key_jwt`, so the refresh tokens it holds are useless without its key.
+The design composes existing OAuth and workload-identity standards rather than inventing a token format. Sign-in is OIDC with the authorization code flow and PKCE, and mecak8s validates AS-1's access token as an RFC 9068 JWT access token. Session open and ID-JAG issuance are RFC 8693 token exchanges, and AS-2 redeems the ID-JAG with the RFC 7523 JWT-bearer grant. The broker authenticates as a confidential client with `private_key_jwt`, so the refresh tokens it holds are useless without its key. That key belongs to the broker, ideally in a key management service; ToolHive's authorization server also accepts a SPIFFE JWT-SVID as client authentication, which could later replace the key with the broker's own workload identity.
 
 ID-JAG ([draft-ietf-oauth-identity-assertion-authz-grant](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/)) and identity chaining ([draft-ietf-oauth-identity-chaining](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-chaining/)), which external mode follows, are Internet-Drafts and may change. ID-JAG is scoped to parties in different trust domains; embedded mode, where all parties share one, reuses the format to keep one protocol path.
 
@@ -166,35 +133,29 @@ Mecatl builds this design in two steps. The identity work comes first, and the a
 
 The **identity work** establishes who acts and records it:
 
-- the broker modules: definition loader, agent-instance issuer, AS-1, and broker core;
-- definitions loaded with their provenance;
-- instance registration, with the incarnation, definition reference, and creation parent;
-- agent-instance credentials;
-- the credential flow: sign-in at AS-1, the session-bound refresh token, ID-JAG issuance, AS-2 redemption, and per-user provider credentials at the gateway;
-- the broker's identity checks: session, workload, and that the acting instance is registered to the broker session;
-- the run owner on every call, checked against the grant in use, so that shared sessions can come later without a call using the wrong user's credentials;
-- sign-out and revocation: signing out of one client leaves background agents running, so signing out everywhere stops every agent and schedule acting for the user, and AS-1's upstream re-check does the same when the company IdP disables the account;
+- the identity broker and its modules, with definitions loaded with their provenance and root eligibility checked at registration;
+- instance registration and agent-instance credentials;
+- the credential flow, from sign-in at AS-1 to per-user provider credentials at the gateway;
+- the [run owner](run-owner.md) on every call, so that shared sessions can come later without a call using the wrong user's credentials;
+- sign-out everywhere, which stops every agent and schedule acting for the user, and AS-1's re-check of the company-IdP grant, which does the same when the account is disabled;
 - audit of who acted, for whom, through which delegation, and what was decided, dispatched, and observed.
 
 The **authority work** decides what each agent may do:
 
-- the definition loader resolving each definition's ceiling into permitted MCP server/tool pairs, and the operator's loader configuration naming which definitions may be a session's root and capping the ceiling of definitions from other sources;
-- each instance's effective ceiling, its definition ceiling narrowed by its parent's;
-- Cedar policy generation and a ceiling check on every call;
+- ceilings resolved by the loader, narrowed on delegation, and checked with Cedar on every call;
 - grants scoped to a run the user started, replacing the session's standing refresh token, so that sessions of absent users carry no authority;
 - task-specific delegation bounds, and user, resource, and argument policy.
 
-Until the authority work is in place, the only ceiling checks are the harness's delegation restrictions. The broker adds none. The identity work records the definition reference and the creation parent at registration. So the authority work adds computation, not a migration. The chapters describe the whole design and say which parts belong to the authority work.
+Until the authority work is in place, the only ceiling checks are the harness's delegation restrictions. The identity work already records the definition reference and creation parent at registration, so the authority work adds computation, not a migration. The [implementation companion](implementation.md#work-breakdown) has the full breakdown.
 
 ## Open questions
 
-The design does not yet settle these points:
+Two questions bear on what the design can promise:
 
-- How the broker stores the source and revision of each agent definition.
-- How the broker loads definitions that do not come from the global sources, such as repository definitions.
-- The API that mecak8s uses to register an agent instance with the broker, and the durable schema of the registration records.
-- How the broker verifies the context that mecak8s reports with each call: the instance, the run, the delegation, and the session. Today the broker accepts this context as a report. It checks only the session, against the user's token and the session's recorded owner.
+- How the broker could verify the context mecak8s reports with each call, the instance, run, and delegation, rather than only checking it for consistency.
 - How to stop code inside the mecak8s process from posing as the trusted lifecycle code or as another agent.
+
+Narrower open points, such as how repository definitions are loaded and the registration API, are listed in the chapters.
 
 ## Detailed chapters
 
