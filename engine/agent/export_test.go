@@ -11,6 +11,11 @@ import "github.com/stacklok/mecatl/engine/session"
 // test-only on purpose — see the withSessionOrigin doc-comment.
 var WithSessionOrigin = withSessionOrigin
 
+// WithSessionMode exposes withSessionMode so the external tests can pin the
+// schedule tool's handling of a context the dispatch stamp cannot produce for
+// it (a plan-mode session holding the non-plan tool).
+var WithSessionMode = withSessionMode
+
 // EnqueueSteerForTest exposes the canonical Run steer entry point to external
 // drain tests.
 var EnqueueSteerForTest = (*Run).EnqueueSteer

@@ -459,6 +459,15 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   parent: it runs in the narrower of its stored mode and the mode a fresh child
   would get. No signature changes.
 
+- **Mutating in-chat schedules fire in their creator's mode** — a
+  `mutating: true` schedule created through the `Schedule` tool now records the
+  executing session's permission mode as `ScheduleSpec.Mode` instead of always
+  `ModeDefault`. A yolo session's schedule therefore fires in yolo rather than
+  in a default session whose writes ask with no approver. Read-leaning
+  schedules still record `ModePlan`, and an unbound context still records
+  `ModeDefault`. The host re-admits the recorded mode at every fire. No
+  signature changes.
+
 - **Contextual review enforcement follows the executing session's mode** —
   the engine now demotes a `ReviewPolicyProvider`'s enforcement to advisory
   for an executing `ModeYolo` session, and never consults

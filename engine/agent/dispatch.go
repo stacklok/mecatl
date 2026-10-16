@@ -2058,6 +2058,11 @@ func (e *Engine) timeExecute(ctx context.Context, r *Run, sess *session.Session,
 		ev.Turn = turnIdx
 		r.children.safeEmit(ev)
 	}
+	if sess != nil {
+		// Read at execution, like parentCaps' parentMode, so a schedule created
+		// after a mid-session mode change records the mode it was created under.
+		ctx = withSessionMode(ctx, sess.Mode)
+	}
 	switch ct := t.(type) {
 	case childCapableTool:
 		// Child-capable tools may execute in read-batch workers. Keep their returned

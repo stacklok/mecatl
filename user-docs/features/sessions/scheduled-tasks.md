@@ -57,6 +57,11 @@ It defaults to read-leaning behavior. A schedule that may use `Edit`, `Write`,
 or `Shell` must explicitly set `mutating: true`; this is not an implicit
 allow-all mode.
 
+A mutating schedule created with the in-chat `Schedule` tool fires in the
+permission mode its creating session had when it created the schedule. Every
+fire checks that mode against the server ceiling again. If the server has since
+restarted with a lower ceiling, the fire fails without running.
+
 For an independently created schedule, the server selects placement from its
 configured default. The create request has no workspace field. Use the HTTP
 listener for this REST workflow:

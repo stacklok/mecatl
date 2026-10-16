@@ -37,3 +37,24 @@ func sessionOriginFromContext(ctx context.Context) session.SessionID {
 	id, _ := ctx.Value(sessionOriginContextKey{}).(session.SessionID)
 	return id
 }
+
+type sessionModeContextKey struct{}
+
+// withSessionMode returns a child context carrying the executing session's
+// permission mode at the moment a tool call executes. Its one writer is
+// timeExecute, which stamps sess.Mode per call (not once per run) because the
+// mode can change between dispatches; its one reader is ScheduleTool.create,
+// which records it as a mutating schedule's fire mode. Unexported for the same
+// reason as withSessionOrigin: the mode must come from the run, never from an
+// embedder or from model arguments, or a schedule could name a mode its
+// creating session never held.
+func withSessionMode(ctx context.Context, mode session.PermissionMode) context.Context {
+	return context.WithValue(ctx, sessionModeContextKey{}, mode)
+}
+
+// sessionModeFromContext reads the executing session's mode, returning the
+// empty mode when the context did not come from timeExecute.
+func sessionModeFromContext(ctx context.Context) session.PermissionMode {
+	mode, _ := ctx.Value(sessionModeContextKey{}).(session.PermissionMode)
+	return mode
+}
