@@ -39,6 +39,19 @@ includes:
     dir: .
 
 vars:
+  GO_MODULES:
+    - '.'
+    - engine
+    - internal/adaptersupport
+    - contracts/gen/go/mecatl/driver
+    - adapters
+    - authn/oidc
+    - environment/microvm
+    - integration/microvm
+    - provider/ssefilter
+    - provider/anthropic
+    - provider/openai
+    - provider/openaichat
   PKG: github.com/stacklok/mecatl
   # BUILD_ID is an optional explicit linker stamp. Otherwise, resolve the source
   # checkout identity at build time; direct Go/ko builds retain the runtime VCS fallback.
@@ -338,6 +351,9 @@ tasks:
     vars:
       RACE: '{{default "" .RACE}}'
       TEST_GOWORK: '{{default "off" .TEST_GOWORK}}'
+    preconditions:
+      - sh: '{{if has .MODULE .GO_MODULES}}true{{else}}false{{end}}'
+        msg: 'MODULE must be one of: {{join ", " .GO_MODULES}}'
     cmds:
       # Go's default 10m per-package budget is too tight for cmd/mecatui/ui under
       # -race (about 400-600s on CI runners); the job-level timeout still bounds the run.
@@ -350,30 +366,9 @@ tasks:
     vars:
       TEST_GOWORK: '{{default "" .TEST_GOWORK}}'
     deps:
-      - task: test:_module
-        vars: {MODULE: '.', RACE: '{{.RACE}}', TEST_GOWORK: '{{.TEST_GOWORK}}'}
-      - task: test:_module
-        vars: {MODULE: engine, RACE: '{{.RACE}}', TEST_GOWORK: '{{.TEST_GOWORK}}'}
-      - task: test:_module
-        vars: {MODULE: internal/adaptersupport, RACE: '{{.RACE}}', TEST_GOWORK: '{{.TEST_GOWORK}}'}
-      - task: test:_module
-        vars: {MODULE: contracts/gen/go/mecatl/driver, RACE: '{{.RACE}}', TEST_GOWORK: '{{.TEST_GOWORK}}'}
-      - task: test:_module
-        vars: {MODULE: adapters, RACE: '{{.RACE}}', TEST_GOWORK: '{{.TEST_GOWORK}}'}
-      - task: test:_module
-        vars: {MODULE: authn/oidc, RACE: '{{.RACE}}', TEST_GOWORK: '{{.TEST_GOWORK}}'}
-      - task: test:_module
-        vars: {MODULE: environment/microvm, RACE: '{{.RACE}}', TEST_GOWORK: '{{.TEST_GOWORK}}'}
-      - task: test:_module
-        vars: {MODULE: integration/microvm, RACE: '{{.RACE}}', TEST_GOWORK: '{{.TEST_GOWORK}}'}
-      - task: test:_module
-        vars: {MODULE: provider/ssefilter, RACE: '{{.RACE}}', TEST_GOWORK: '{{.TEST_GOWORK}}'}
-      - task: test:_module
-        vars: {MODULE: provider/anthropic, RACE: '{{.RACE}}', TEST_GOWORK: '{{.TEST_GOWORK}}'}
-      - task: test:_module
-        vars: {MODULE: provider/openai, RACE: '{{.RACE}}', TEST_GOWORK: '{{.TEST_GOWORK}}'}
-      - task: test:_module
-        vars: {MODULE: provider/openaichat, RACE: '{{.RACE}}', TEST_GOWORK: '{{.TEST_GOWORK}}'}
+      - for: {var: GO_MODULES}
+        task: test:_module
+        vars: {MODULE: '{{.ITEM}}', RACE: '{{.RACE}}', TEST_GOWORK: '{{.TEST_GOWORK}}'}
       - task: test:microvm-dev-tag
         vars: {RACE: '{{.RACE}}', TEST_GOWORK: '{{.TEST_GOWORK}}'}
 
@@ -540,6 +535,30 @@ tasks:
     cmds:
       - task: test:_suite
         vars: {RACE: '-race', TEST_GOWORK: {sh: 'printf "%s/go.work" "$(pwd -P)"'}}
+
+  test:module:
+    desc: Run one module's tests with GOWORK=off (MODULE=. for root)
+    cmds:
+      - task: test:_module
+        vars: {MODULE: '{{.MODULE}}', RACE: '', TEST_GOWORK: 'off'}
+
+  test:module:race:
+    desc: Run one module's tests with GOWORK=off and the race detector
+    cmds:
+      - task: test:_module
+        vars: {MODULE: '{{.MODULE}}', RACE: '-race', TEST_GOWORK: 'off'}
+
+  test:workspace:module:
+    desc: Run one module's tests against this checkout's workspace
+    cmds:
+      - task: test:_module
+        vars: {MODULE: '{{.MODULE}}', RACE: '', TEST_GOWORK: {sh: 'printf "%s/go.work" "$(pwd -P)"'}}
+
+  test:workspace:module:race:
+    desc: Run one module's tests against this checkout's workspace with the race detector
+    cmds:
+      - task: test:_module
+        vars: {MODULE: '{{.MODULE}}', RACE: '-race', TEST_GOWORK: {sh: 'printf "%s/go.work" "$(pwd -P)"'}}
 
   test:module-metadata:
     desc: Verify Go module metadata is tracked and clean without modifying the checkout
@@ -1175,6 +1194,16 @@ tasks:
     desc: Fail if any Go file is not gofmt-clean
     cmds:
       - cmd: test -z "$(gofmt -l .)" || { echo "gofmt needs to run on:"; gofmt -l .; exit 1; }
+
+  tidy:module:
+    desc: Tidy one module with GOWORK=off, without workspace synchronization
+    requires:
+      vars: [MODULE]
+    preconditions:
+      - sh: '{{if has .MODULE .GO_MODULES}}true{{else}}false{{end}}'
+        msg: 'MODULE must be one of: {{join ", " .GO_MODULES}}'
+    cmds:
+      - cd {{.MODULE | shellQuote}} && GOWORK=off go mod tidy
 
   tidy:
     desc: Tidy root and every nested module, including standalone adapters

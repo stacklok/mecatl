@@ -129,6 +129,71 @@ sys.exit(1 if os.environ.get("FAIL_LEG") == ("tag" if tagged else module) else 0
         self.assertEqual(calls[0]["gowork"], str(self.unrelated))
         self.assertNotIn("-timeout=20m", calls[0]["args"])
 
+    def test_module_dispatch_flags_pinning_and_failures(self):
+        self.fake_go()
+        for task in ("test:module", "test:module:race", "test:workspace:module",
+                     "test:workspace:module:race"):
+            workspace = "workspace" in task
+            race = task.endswith(":race")
+            for module in self.modules:
+                for ambient in ("", "off", str(self.unrelated)):
+                    with self.subTest(task=task, module=module, ambient=ambient):
+                        calls = self.dispatch(task, ambient, f"MODULE={module}",
+                                              f"TEST_GOWORK={self.unrelated}",
+                                              f"GOWORK={self.unrelated}",
+                                              f"ROOT_DIR={self.base / 'wrong'}")
+                        self.assertEqual(calls, [{
+                            "module": module,
+                            "gowork": str(self.root / "go.work") if workspace else "off",
+                            "args": ["test", "-mod=readonly", "-timeout=20m"]
+                                    + (["-race"] if race else []) + ["./..."],
+                        }])
+            nested = self.root / "provider/openai"
+            calls = self.dispatch(task, "off", "MODULE=provider/openai", cwd=nested)
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0]["module"], "provider/openai")
+            self.assertEqual(calls[0]["gowork"], str(self.root / "go.work") if workspace else "off")
+            calls = self.dispatch(task, "off", "MODULE=provider/openai", succeeds=False,
+                                  fail="provider/openai")
+            self.assertEqual(len(calls), 1)
+
+    def test_module_validation_and_tidy_dispatch(self):
+        self.fake_go()
+        tasks = ("test:module", "test:module:race", "test:workspace:module",
+                 "test:workspace:module:race", "tidy:module")
+        for task in tasks:
+            for overrides in ((), ("MODULE=",), ("MODULE=../unrelated",),
+                              (f"MODULE={self.root / 'engine'}",),
+                              ("MODULE=provider",), ("MODULE=engine; false",)):
+                with self.subTest(task=task, overrides=overrides):
+                    self.assertEqual(self.dispatch(task, "off", *overrides, succeeds=False), [])
+        for module in self.modules:
+            with self.subTest(module=module):
+                self.assertEqual(self.dispatch("tidy:module", str(self.unrelated),
+                                               f"MODULE={module}",
+                                               f"TEST_GOWORK={self.unrelated}"), [{
+                    "module": module, "gowork": "off", "args": ["mod", "tidy"],
+                }])
+        calls = self.dispatch("tidy:module", "off", "MODULE=engine", succeeds=False, fail="engine")
+        self.assertEqual(len(calls), 1)
+
+    def test_real_tidy_only_changes_selected_module(self):
+        for module in self.modules:
+            (self.root / module / "go.mod").write_text(
+                f"module fixture.invalid/{module if module != '.' else 'root'}\n\n"
+                "go 1.27.2\n\nrequire fixture.invalid/unused v1.0.0\n")
+            (self.root / module / "fixture.go").write_text("package fixture\n")
+        metadata = [self.root / "go.work"]
+        metadata += [self.root / module / "go.mod" for module in self.modules]
+        before = {path: path.read_bytes() for path in metadata}
+        self.run_command([TASK, "tidy:module", "MODULE=provider/openai"],
+                         env=dict(self.env, GOWORK=str(self.unrelated)))
+        selected = self.root / "provider/openai/go.mod"
+        self.assertNotIn("fixture.invalid/unused", selected.read_text())
+        for path in metadata:
+            if path != selected:
+                self.assertEqual(path.read_bytes(), before[path])
+
     def test_nested_and_tag_failures_propagate(self):
         self.fake_go()
         nested = next(module for module in self.modules if "/" in module)
@@ -198,6 +263,9 @@ sys.exit(1 if os.environ.get("FAIL_LEG") == ("tag" if tagged else module) else 0
             with self.subTest(ambient=ambient):
                 self.run_command([TASK, "test:workspace", f"TEST_GOWORK={ambient}",
                                   f"GOWORK={ambient}"], env=dict(self.env, GOWORK=ambient))
+                self.run_command([TASK, "test:workspace:module", "MODULE=.",
+                                  f"TEST_GOWORK={ambient}", f"GOWORK={ambient}"],
+                                 env=dict(self.env, GOWORK=ambient))
         sums = (self.root / "go.work.sum").read_text()
         self.assertIn("fixture.invalid/supplement v1.0.0 h1:", sums)
         self.assertIn("fixture.invalid/supplement v1.0.0/go.mod h1:", sums)
