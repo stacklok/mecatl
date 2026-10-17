@@ -861,13 +861,9 @@ jobs:
           (cd provider/openaichat && go build ./...)
 
       - name: Verify Go module and workspace metadata freshness
-        shell: bash
         run: |
-          set -euo pipefail
           task tidy
-          git diff --exit-code -- go.mod go.sum go.work go.work.sum ':(glob)**/go.mod' ':(glob)**/go.sum'
-          untracked=$(git ls-files --others --exclude-standard -- go.mod go.sum go.work go.work.sum ':(glob)**/go.mod' ':(glob)**/go.sum')
-          if [[ -n "$untracked" ]]; then printf 'Untracked Go metadata:\n%s\n' "$untracked" >&2; exit 1; fi
+          task test:module-metadata
 
       - name: Verify nested module publication
         if: needs.changes.outputs.module_publication_relevant == 'true'
@@ -1004,12 +1000,18 @@ jobs:
           go-version-file: go.mod
           cache: true
           cache-dependency-path: '**/go.sum'
+      - name: Test workspace task infrastructure
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
+        run: task test:workspace-infrastructure
       - name: Test modules
         if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
         env:
           IS_DRAFT: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}
         run: |
           if [ "$IS_DRAFT" = true ]; then task --concurrency 3 test; else task --concurrency 3 test:race; fi
+      - name: Verify Go module metadata freshness
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
+        run: task test:module-metadata
 
   analysis:
     name: Analysis

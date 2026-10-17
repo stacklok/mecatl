@@ -34,6 +34,8 @@ foundations.
 
 Also for contributors:
 
+- [Develop changes across Go modules](module-development.md): workspace tests,
+  dependency metadata, and dependency-first release verification.
 - [Developing the `mecatui` terminal UI](tui.md): client boundaries and UI conventions.
 - [Performance regression tracking](perf-tracking.md) and
   [measuring performance](perf-measurement-survey.md): benchmarks, gates, and live

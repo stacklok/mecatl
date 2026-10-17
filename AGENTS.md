@@ -27,6 +27,10 @@ go run ./cmd/mecademo    # offline session smoke test
 - Tests are offline and isolated from operator state: prefer `mockllm`, `memfs`,
   `memstore`, and the conformance suites; real-adapter tests need explicit fixtures.
   `task e2e` uses live providers and costs money; it is not an offline gate.
+- For changes spanning Go modules, follow [the cross-module workflow](docs/module-development.md)
+  before changing dependency pins. Use `task test:workspace:race` for same-checkout
+  evidence; it does not replace standalone/publication checks. Keep module sums
+  tracked; root `go.work.sum` is ignored.
 - See [Taskfile.yml](Taskfile.yml) for golden updates, benchmarks, and other tasks.
 
 ## Module layout

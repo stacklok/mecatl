@@ -337,42 +337,45 @@ tasks:
       vars: [MODULE]
     vars:
       RACE: '{{default "" .RACE}}'
+      TEST_GOWORK: '{{default "off" .TEST_GOWORK}}'
     cmds:
       # Go's default 10m per-package budget is too tight for cmd/mecatui/ui under
       # -race (about 400-600s on CI runners); the job-level timeout still bounds the run.
-      - cd {{.MODULE}} && GOWORK=off go test -mod=readonly -timeout=20m {{.RACE}} ./...
+      - cd {{.MODULE | shellQuote}} && GOWORK={{.TEST_GOWORK | shellQuote}} go test -mod=readonly -timeout=20m {{.RACE}} ./...
 
   test:_suite:
     internal: true
     requires:
       vars: [RACE]
+    vars:
+      TEST_GOWORK: '{{default "" .TEST_GOWORK}}'
     deps:
       - task: test:_module
-        vars: {MODULE: '.', RACE: '{{.RACE}}'}
+        vars: {MODULE: '.', RACE: '{{.RACE}}', TEST_GOWORK: '{{.TEST_GOWORK}}'}
       - task: test:_module
-        vars: {MODULE: engine, RACE: '{{.RACE}}'}
+        vars: {MODULE: engine, RACE: '{{.RACE}}', TEST_GOWORK: '{{.TEST_GOWORK}}'}
       - task: test:_module
-        vars: {MODULE: internal/adaptersupport, RACE: '{{.RACE}}'}
+        vars: {MODULE: internal/adaptersupport, RACE: '{{.RACE}}', TEST_GOWORK: '{{.TEST_GOWORK}}'}
       - task: test:_module
-        vars: {MODULE: contracts/gen/go/mecatl/driver, RACE: '{{.RACE}}'}
+        vars: {MODULE: contracts/gen/go/mecatl/driver, RACE: '{{.RACE}}', TEST_GOWORK: '{{.TEST_GOWORK}}'}
       - task: test:_module
-        vars: {MODULE: adapters, RACE: '{{.RACE}}'}
+        vars: {MODULE: adapters, RACE: '{{.RACE}}', TEST_GOWORK: '{{.TEST_GOWORK}}'}
       - task: test:_module
-        vars: {MODULE: authn/oidc, RACE: '{{.RACE}}'}
+        vars: {MODULE: authn/oidc, RACE: '{{.RACE}}', TEST_GOWORK: '{{.TEST_GOWORK}}'}
       - task: test:_module
-        vars: {MODULE: environment/microvm, RACE: '{{.RACE}}'}
+        vars: {MODULE: environment/microvm, RACE: '{{.RACE}}', TEST_GOWORK: '{{.TEST_GOWORK}}'}
       - task: test:_module
-        vars: {MODULE: integration/microvm, RACE: '{{.RACE}}'}
+        vars: {MODULE: integration/microvm, RACE: '{{.RACE}}', TEST_GOWORK: '{{.TEST_GOWORK}}'}
       - task: test:_module
-        vars: {MODULE: provider/ssefilter, RACE: '{{.RACE}}'}
+        vars: {MODULE: provider/ssefilter, RACE: '{{.RACE}}', TEST_GOWORK: '{{.TEST_GOWORK}}'}
       - task: test:_module
-        vars: {MODULE: provider/anthropic, RACE: '{{.RACE}}'}
+        vars: {MODULE: provider/anthropic, RACE: '{{.RACE}}', TEST_GOWORK: '{{.TEST_GOWORK}}'}
       - task: test:_module
-        vars: {MODULE: provider/openai, RACE: '{{.RACE}}'}
+        vars: {MODULE: provider/openai, RACE: '{{.RACE}}', TEST_GOWORK: '{{.TEST_GOWORK}}'}
       - task: test:_module
-        vars: {MODULE: provider/openaichat, RACE: '{{.RACE}}'}
+        vars: {MODULE: provider/openaichat, RACE: '{{.RACE}}', TEST_GOWORK: '{{.TEST_GOWORK}}'}
       - task: test:microvm-dev-tag
-        vars: {RACE: '{{.RACE}}'}
+        vars: {RACE: '{{.RACE}}', TEST_GOWORK: '{{.TEST_GOWORK}}'}
 
   microvm:build:
     desc: Build the opt-in microvmd and Linux guest-agent artifacts without widening standard binaries.
@@ -512,7 +515,7 @@ tasks:
     desc: Run the complete offline test suite without the race detector
     cmds:
       - task: test:_suite
-        vars: {RACE: ''}
+        vars: {RACE: '', TEST_GOWORK: ''}
 
   test:non-race:
     desc: Compatibility alias for the complete offline test suite
@@ -523,7 +526,31 @@ tasks:
     desc: Run the complete offline test suite with the race detector
     cmds:
       - task: test:_suite
-        vars: {RACE: '-race'}
+        vars: {RACE: '-race', TEST_GOWORK: ''}
+
+  test:workspace:
+    desc: Run the complete offline test suite against this checkout's workspace
+    # Resolve in Task's checkout directory; ROOT_DIR is CLI-overridable.
+    cmds:
+      - task: test:_suite
+        vars: {RACE: '', TEST_GOWORK: {sh: 'printf "%s/go.work" "$(pwd -P)"'}}
+
+  test:workspace:race:
+    desc: Run the complete offline workspace test suite with the race detector
+    cmds:
+      - task: test:_suite
+        vars: {RACE: '-race', TEST_GOWORK: {sh: 'printf "%s/go.work" "$(pwd -P)"'}}
+
+  test:module-metadata:
+    desc: Verify Go module metadata is tracked and clean without modifying the checkout
+    cmds:
+      - sh .github/scripts/module-metadata.sh
+
+  test:workspace-infrastructure:
+    desc: Run offline workspace and module-metadata task regression tests
+    cmds:
+      - python3 .github/scripts/module-metadata_test.py
+      - PATH="$(go env GOROOT)/bin:$PATH" python3 .github/scripts/workspace-tests_test.py
 
   test:module-publication:
     desc: Check releaseable module pins against main and compile the published adapters tag through the public Go proxy without workspace replacements.
@@ -545,8 +572,9 @@ tasks:
     desc: Compile and run the offline developer-only MicroVM activation gates.
     vars:
       RACE: '{{default "" .RACE}}'
+      TEST_GOWORK: '{{default "" .TEST_GOWORK}}'
     cmds:
-      - go test -mod=readonly {{.RACE}} -tags=microvm_dev ./internal/adapter/microvmmanager ./cmd/mecated ./cmd/mecatui
+      - '{{if .TEST_GOWORK}}GOWORK={{.TEST_GOWORK | shellQuote}} {{end}}go test -mod=readonly {{if .TEST_GOWORK}}-timeout=20m {{end}}{{.RACE}} -tags=microvm_dev ./internal/adapter/microvmmanager ./cmd/mecated ./cmd/mecatui'
 
   test:microvm-standalone:
     desc: Prove the opt-in microVM module builds and tests with GOWORK=off.
@@ -1116,6 +1144,7 @@ tasks:
       # still fails the build.
       - go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -ignore 'specifying action "\$/.*" in invalid format'
       - task: lint:action-templates
+      - task: test:workspace-infrastructure
       - bash .github/scripts/ensure-perf-dashboard-noindex_test.sh
       - bash .github/scripts/deslop-workflow_test.sh
       - bash .github/scripts/microvm-ci-release_test.sh
