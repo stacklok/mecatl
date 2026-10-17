@@ -22,8 +22,9 @@ go run ./cmd/mecademo    # offline session smoke test
   after every edit.
 - Before a PR is ready, `task lint && task test:race` must pass and the offline demo
   must show tool call, permission ask/approval, and result. CI verifies the branch
-  independently; it does not replace these local gates. Give full gates a 600-second
-  timeout.
+  independently; it does not replace these local gates. Give complete Go test suites
+  (`test`, `test:race`, `test:workspace`, and `test:workspace:race`) an outer timeout
+  of 1800 seconds (30 minutes). Give other full gates a 600-second timeout.
 - Tests are offline and isolated from operator state: prefer `mockllm`, `memfs`,
   `memstore`, and the conformance suites; real-adapter tests need explicit fixtures.
   `task e2e` uses live providers and costs money; it is not an offline gate.
