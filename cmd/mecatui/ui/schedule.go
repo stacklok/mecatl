@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -9,744 +10,876 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/schedparse"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
-// schedule.go is the /schedule overlay (issue #234) — a selecting
-// overlay mirroring /worktrees' cursor+filter+confirm shape, with an added
-// read-only inspect sub-view (full spec + state + fires), per-row action keys
-// (pause/resume/fire-now/delete), and a Create form (issue #236). The
-// form's trigger field accepts EITHER raw cron OR a natural-language phrase
-// (compiled client-side via cmd/mecatui/schedparse, stdlib-only).
-//
-// UNLIKE /worktrees and /models, the filter input is NOT focused on open — the
-// panel's own single-letter action keys (p/r/f/d/c) would otherwise be
-// unreachable (they'd always hit the focused filter instead of firing).
-// Pressing "/" enters filter mode (focuses the input); esc or enter while
-// filtering exits it (blur, value kept). See onScheduleKey.
-
-// scheduleView is the active /schedule overlay (none = closed).
 type scheduleView int
 
 const (
-	scheduleNone    scheduleView = iota // overlay closed
-	schedulePanel                       // the flat, type-to-filter list
-	scheduleConfirm                     // the post-d delete confirmation
-	scheduleInspect                     // the read-only full-spec + fires view
-	scheduleCreate                      // the in-overlay Create form
+	schedulePanel scheduleView = iota
+	scheduleInspect
+	scheduleDetails
+	scheduleConfirm
+	scheduleCreate
 )
 
-// scheduleState holds the /schedule overlay state on the Model. Value-embedded so
-// the Model stays a plain struct Update copies. On List, schedules is replaced
-// wholesale; on a Get-driven refresh (ScheduleMsg), the matching element is
-// updated in place instead. filtered is always rebuilt from schedules by
-// syncScheduleFilter.
+// scheduleState owns one open lifetime; raw names and fire IDs address the lists.
 type scheduleState struct {
-	view         scheduleView
-	loading      bool
-	err          error
-	schedules    []client.Schedule
-	filtered     []client.Schedule
-	filter       textinput.Model
-	cursor       int
-	confirm      client.Schedule
-	inspect      client.Schedule
-	fires        []client.ScheduleFire
-	firesLoading bool
-	firesErr     error
-	actionErr    string
-	fireCursor   int // cursor into fires in the inspect sub-view (jump-to-fire, #235)
-	form         scheduleForm
+	deps            surfaceDeps
+	lister          client.ScheduleLister
+	transcriptWired bool
+
+	view                 scheduleView
+	loading              bool
+	err                  error
+	schedules, filtered  []client.Schedule
+	filter               textinput.Model
+	list, runs           bounded.List
+	details              bounded.Viewport
+	confirm, inspect     client.Schedule
+	fires                []client.ScheduleFire
+	firesLoading         bool
+	firesErr, inspectErr error
+	actionErr, notice    string
+	form                 scheduleForm
+
+	listRequest                uint64
+	inspectRequest             uint64
+	mutationRequest            uint64
+	specPending                bool
+	pendingName, pendingAction string
+	intent                     surfaceIntent
+	closed                     bool
+
+	compact    bool                       // view cache: refreshed on every geometry offer
+	offers     [scheduleCreate + 1][2]int // view cache: each view reveals after a hidden resize
+	rowBudgets [scheduleInspect + 1]int   // view cache: capacity before bounded overflow indicators
+	detailRows int                        // view cache: physical detail content rows
 }
 
-// scheduleForm is the in-overlay Create form (issue #236): a small,
-// common-path authoring surface mirroring the per-row action keys. The form
-// keeps it SIMPLE — name, prompt, trigger (cron OR NL), mutating. The trigger
-// field accepts EITHER a raw cron expression OR a natural-language phrase; on
-// submit, schedparse.Compile is tried first (compile to cron or one-shot), and
-// only on no-match is the value treated verbatim as raw cron. Mode defaults to
-// plan for non-mutating (the server enforces the mode↔mutating invariant);
-// singleton defaults true. focusIdx is the cursor over the fields.
 type scheduleForm struct {
-	name     textinput.Model
-	prompt   textinput.Model
-	trigger  textinput.Model
-	mutating bool
-	focusIdx int
+	name, prompt, trigger textinput.Model
+	mutating              bool
+	focusIdx              int
 }
 
-// openSchedule opens the picker and fires the ListSchedules RPC. Only callable
-// while idle and when a schedule lister is wired; returns the model unchanged
-// otherwise. The result arrives as a client.SchedulesMsg handled in
-// updateScheduleMsg.
+const scheduleFormFieldCount = 3
+
+// Read and mutation sequences are independent: navigation must not lose an owned
+// mutation completion. Starting AND completing a mutation invalidate read snapshots.
+type scheduleResultMsg struct {
+	owner      *scheduleState
+	request    uint64
+	kind, name string
+	result     tea.Msg
+}
+type scheduleTranscriptIntent struct{ sessionID string }
+
+func (scheduleTranscriptIntent) isSurfaceIntent() {}
+func (s *scheduleState) takeSurfaceIntent() surfaceIntent {
+	intent := s.intent
+	s.intent = nil
+	return intent
+}
+
 func (m Model) openSchedule() (tea.Model, tea.Cmd) {
-	if m.phase != phaseIdle || m.deps.Sched == nil {
+	if m.phase != phaseIdle || m.modal != nil || m.deps.Sched == nil {
 		return m, nil
 	}
-	m.prompt.Blur()
-	m.schedule.view = schedulePanel
-	m.schedule.loading = true
-	m.schedule.err = nil
-	m.schedule.cursor = 0
-	m.schedule.actionErr = ""
 	ti := textinput.New()
 	ti.Placeholder = "filter schedules…"
-	ti.SetWidth(40)
-	m.schedule.filter = ti
-	m.schedule.filtered = nil
-	return m, client.ListSchedulesCmd(m.deps.Ctx, m.deps.Sched)
+	s := &scheduleState{deps: (&m).surfaceDeps(), lister: m.deps.Sched, transcriptWired: m.deps.Transcript != nil, filter: ti, compact: true}
+	m.modal = s
+	m.prompt.Blur()
+	return m, s.listCmd()
+}
+func (*scheduleState) modalPlacement() modalPlacement { return modalPlacementFill }
+func (s *scheduleState) Close() {
+	s.closed = true
+	s.invalidateReads()
+	s.filter.Blur()
+	s.intent = nil
+}
+func (s *scheduleState) wrap(cmd tea.Cmd, kind, name string, request uint64) tea.Cmd {
+	return func() tea.Msg {
+		return scheduleResultMsg{owner: s, request: request, kind: kind, name: name, result: cmd()}
+	}
+}
+func (s *scheduleState) listCmd() tea.Cmd {
+	s.listRequest++
+	s.loading, s.err = true, nil
+	return s.wrap(client.ListSchedulesCmd(s.deps.ctx, s.lister), "list", "", s.listRequest)
+}
+func (s *scheduleState) inspectCmd() tea.Cmd {
+	s.inspectRequest++
+	s.specPending, s.firesLoading, s.firesErr, s.inspectErr = true, true, nil, nil
+	name := s.inspect.Spec.Name
+	return tea.Batch(
+		s.wrap(client.GetScheduleCmd(s.deps.ctx, s.lister, name), "spec", name, s.inspectRequest),
+		s.wrap(client.ListFiresCmd(s.deps.ctx, s.lister, name), "fires", name, s.inspectRequest),
+	)
+}
+func (s *scheduleState) invalidateReads() {
+	s.listRequest++
+	s.inspectRequest++
+	s.loading, s.specPending, s.firesLoading = false, false, false
+}
+func (s *scheduleState) mutate(cmd tea.Cmd, action, name string) tea.Cmd {
+	if s.pendingAction != "" {
+		return nil
+	}
+	s.invalidateReads()
+	s.mutationRequest++
+	s.pendingAction, s.pendingName = action, name
+	s.actionErr, s.notice = "", ""
+	return s.wrap(cmd, action, name, s.mutationRequest)
+}
+func (s *scheduleState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
+	r, ok := msg.(scheduleResultMsg)
+	if !ok {
+		return s.handleScheduleMessage(msg)
+	}
+	if r.owner != s || s.closed {
+		return nil, true, false
+	}
+	switch r.kind {
+	case "list":
+		s.handleListResult(r)
+	case "spec":
+		s.handleSpecResult(r)
+	case "fires":
+		s.handleFiresResult(r)
+	default:
+		return s.handleMutationResult(r)
+	}
+	return nil, true, false
 }
 
-// closeSchedule dismisses the overlay and returns focus to the prompt input.
-func (m Model) closeSchedule() (tea.Model, tea.Cmd) {
-	m.schedule = scheduleState{}
-	cmd := m.prompt.Focus()
-	return m, cmd
+func (s *scheduleState) handleScheduleMessage(msg tea.Msg) (tea.Cmd, bool, bool) {
+	if s.view != schedulePanel {
+		return nil, false, false
+	}
+	var cmd tea.Cmd
+	s.filter, cmd = s.filter.Update(msg)
+	return cmd, cmd != nil, false
 }
 
-// onScheduleKey routes key presses while the overlay is open. UNLIKE
-// onWorktreesKey/onModelsKey, the filter is NOT focused by default — the panel
-// has per-row action keys (p/r/f/d) that would otherwise be unreachable through
-// a focused filter. Two modes, keyed off m.schedule.filter.Focused():
-//
-//   - Filter mode (focused): esc or enter blurs the input (exits filter mode,
-//     keeps the value so the list stays narrowed); everything else feeds the
-//     textinput.
-//   - Action mode (blurred, the default): "/" focuses the filter (enters filter
-//     mode); esc is two-stage (clear filter if set, else close); nav/inspect/
-//     action keys behave as before; any other key is swallowed (never leaks
-//     into the filter).
-func (m Model) onScheduleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
-	if m.schedule.view == scheduleNone {
-		return m, nil, false
+func (s *scheduleState) handleListResult(r scheduleResultMsg) {
+	if r.request != s.listRequest || !s.loading {
+		return
 	}
-	if m.schedule.view == scheduleConfirm {
-		return m.onScheduleConfirmKey(msg)
+	result, ok := r.result.(client.SchedulesMsg)
+	if !ok {
+		return
 	}
-	if m.schedule.view == scheduleInspect {
-		return m.onScheduleInspectKey(msg)
+	s.loading, s.err = false, result.Err
+	if result.Err == nil {
+		s.schedules = result.Schedules
+		s.syncFilter()
 	}
-	if m.schedule.view == scheduleCreate {
-		return m.onScheduleCreateKey(msg)
+}
+
+func (s *scheduleState) validInspectResult(r scheduleResultMsg) bool {
+	return r.request == s.inspectRequest && r.name == s.inspect.Spec.Name &&
+		(s.view == scheduleInspect || s.view == scheduleDetails)
+}
+
+func (s *scheduleState) handleSpecResult(r scheduleResultMsg) {
+	if !s.validInspectResult(r) {
+		return
 	}
-	if m.schedule.filter.Focused() {
-		switch {
-		case key.Matches(msg, m.keys.Close), key.Matches(msg, m.keys.Choose):
-			m.schedule.filter.Blur()
-			return m, nil, true
+	result, ok := r.result.(client.ScheduleMsg)
+	if !ok || !s.specPending || result.Err == nil && result.Schedule.Spec.Name != r.name {
+		return
+	}
+	s.specPending, s.inspectErr = false, result.Err
+	if result.Err != nil {
+		return
+	}
+	s.inspect = result.Schedule
+	for i, row := range s.schedules {
+		if row.Spec.Name == r.name {
+			s.schedules[i] = result.Schedule
+			break
 		}
-		var cmd tea.Cmd
-		m.schedule.filter, cmd = m.schedule.filter.Update(msg)
-		m = m.syncScheduleFilter()
-		return m, cmd, true
 	}
-	return m.onSchedulePanelActionKey(msg)
+	s.syncFilter()
 }
 
-// onSchedulePanelActionKey routes bare-rune action keys while the panel is in
-// action mode (filter not focused). It handles nav, filter-entry, and the
-// per-row action keys (p/r/f/d/c).
-func (m Model) onSchedulePanelActionKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
+func (s *scheduleState) handleFiresResult(r scheduleResultMsg) {
+	if !s.validInspectResult(r) {
+		return
+	}
+	result, ok := r.result.(client.ScheduleFiresMsg)
+	if !ok || !s.firesLoading {
+		return
+	}
+	for _, fire := range result.Fires {
+		if fire.ScheduleName != r.name {
+			return
+		}
+	}
+	s.firesLoading, s.firesErr = false, result.Err
+	if result.Err == nil {
+		s.fires = result.Fires
+		s.syncRuns()
+	}
+}
+
+func (s *scheduleState) handleMutationResult(r scheduleResultMsg) (tea.Cmd, bool, bool) {
+	if r.request != s.mutationRequest || r.kind != s.pendingAction || r.name != s.pendingName || s.pendingAction == "" {
+		return nil, true, false
+	}
+	ok, err := s.mutationResultError(r)
+	if !ok {
+		return nil, true, false
+	}
+	s.pendingAction, s.pendingName = "", ""
+	s.invalidateReads()
+	if err != nil {
+		s.actionErr = err.Error()
+	} else {
+		s.actionErr = ""
+	}
+	cmds := []tea.Cmd{s.listCmd()}
+	if s.view == scheduleInspect || s.view == scheduleDetails {
+		cmds = append(cmds, s.inspectCmd())
+	}
+	return tea.Batch(cmds...), true, false
+}
+
+func (s *scheduleState) mutationResultError(r scheduleResultMsg) (bool, error) {
+	switch result := r.result.(type) {
+	case client.ScheduleMsg:
+		if r.kind != "create" || result.Err == nil && result.Schedule.Spec.Name != r.name {
+			return false, nil
+		}
+		return true, result.Err
+	case client.ScheduleActionMsg:
+		if result.Name != r.name || result.Action != r.kind {
+			return false, nil
+		}
+		if result.Err == nil && result.FireID != "" {
+			s.notice = "fired " + result.Name + " — fire id: " + result.FireID
+		}
+		return true, result.Err
+	default:
+		return false, nil
+	}
+}
+func (s *scheduleState) syncFilter() {
+	s.filtered = filterSchedules(s.schedules, s.filter.Value())
+	items := make([]bounded.ListItem, len(s.filtered))
+	for i, row := range s.filtered {
+		items[i] = bounded.ListItem{ID: row.Spec.Name, Text: scheduleRowText(row)}
+	}
+	s.list.SetItems(items)
+}
+func (s *scheduleState) syncRuns() {
+	items := make([]bounded.ListItem, len(s.fires))
+	for i, f := range s.fires {
+		items[i] = bounded.ListItem{ID: f.ID, Text: renderScheduleFireLine(f)}
+	}
+	s.runs.SetItems(items)
+}
+func (s *scheduleState) selectedSchedule() (client.Schedule, bool) {
+	for _, row := range s.filtered {
+		if row.Spec.Name == s.list.CursorID() {
+			return row, true
+		}
+	}
+	return client.Schedule{}, false
+}
+func (s *scheduleState) openInspect() tea.Cmd {
+	row, ok := s.selectedSchedule()
+	if !ok || s.loading || s.err != nil {
+		return nil
+	}
+	if row.Spec.Name != s.inspect.Spec.Name {
+		s.runs = bounded.List{}
+		s.details.Reset()
+		s.fires = nil
+	}
+	s.inspect, s.view = row, scheduleInspect
+	return s.inspectCmd()
+}
+
+// Details is a local action, chosen outside the captured navigation/activation
+// bindings (and transcript's bare t). Its actual chord is rendered in the footer.
+func (s *scheduleState) detailsKey() string {
+	for _, chord := range []string{"d", "i", "ctrl+o", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12"} {
+		if !s.reservedScheduleKey(chord, true) {
+			return chord
+		}
+	}
+	return ""
+}
+
+func (s *scheduleState) reservedScheduleKey(chord string, includeChoose bool) bool {
+	bindings := []key.Binding{s.deps.keys.Close, s.deps.keys.Up, s.deps.keys.Down, s.deps.keys.ScrollU, s.deps.keys.ScrollD, s.deps.keys.ScrollTop, s.deps.keys.ScrollBottom}
+	if includeChoose {
+		bindings = append(bindings, s.deps.keys.Choose)
+	}
+	for _, binding := range bindings {
+		if binding.Enabled() {
+			for _, k := range binding.Keys() {
+				if k == chord {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func (s *scheduleState) chooseKey() string {
+	if !s.deps.keys.Choose.Enabled() {
+		return ""
+	}
+	for _, chord := range s.deps.keys.Choose.Keys() {
+		if !s.reservedScheduleKey(chord, false) {
+			if chord == firstKey(s.deps.keys.Choose, "") {
+				return s.deps.marks.choose
+			}
+			return chord
+		}
+	}
+	return ""
+}
+func (s *scheduleState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
+	if s.compact {
+		return nil, true, key.Matches(msg, s.deps.keys.Close)
+	}
+	switch s.view {
+	case scheduleCreate:
+		return s.createKey(msg), true, false
+	case scheduleConfirm:
+		return s.confirmKey(msg)
+	case schedulePanel:
+		if s.filter.Focused() {
+			return s.filterKey(msg)
+		}
+	}
+	return s.activeViewKey(msg)
+}
+
+func (s *scheduleState) confirmKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 	switch {
-	case key.Matches(msg, m.keys.Close):
-		if m.schedule.filter.Value() != "" {
-			m.schedule.filter.SetValue("")
-			m = m.syncScheduleFilter()
-			return m, nil, true
-		}
-		mm, c := m.closeSchedule()
-		return mm, c, true
-	case msg.String() == "/":
-		cmd := m.schedule.filter.Focus()
-		return m, cmd, true
-	case msg.String() == keyMenuUp:
-		if m.schedule.cursor > 0 {
-			m.schedule.cursor--
-		}
-		return m, nil, true
-	case msg.String() == keyMenuDown:
-		if m.schedule.cursor < len(m.schedule.filtered)-1 {
-			m.schedule.cursor++
-		}
-		return m, nil, true
-	case key.Matches(msg, m.keys.ScrollTop):
-		m.schedule.cursor = 0
-		return m, nil, true
-	case key.Matches(msg, m.keys.ScrollBottom):
-		m.schedule.cursor = clampBounded(len(m.schedule.filtered)-1, len(m.schedule.filtered))
-		return m, nil, true
-	case key.Matches(msg, m.keys.Choose):
-		return m.openScheduleInspect()
-	case msg.String() == "p":
-		return m.scheduleAction("pause")
-	case msg.String() == "r":
-		return m.scheduleAction("resume")
-	case msg.String() == "f":
-		return m.scheduleAction("fire")
-	case msg.String() == "d":
-		return m.openScheduleConfirm()
-	case msg.String() == "c":
-		return m.openScheduleCreate()
+	case key.Matches(msg, s.deps.keys.Close):
+		s.view = schedulePanel
+	case key.Matches(msg, s.deps.keys.Choose) && s.pendingAction == "":
+		s.view = schedulePanel
+		return s.mutate(client.DeleteScheduleCmd(s.deps.ctx, s.lister, s.confirm.Spec.Name), "deleted", s.confirm.Spec.Name), true, false
 	}
-	// Swallow anything unmatched — action mode never feeds the filter.
-	return m, nil, true
+	return nil, true, false
 }
 
-// openScheduleInspect opens the inspect sub-view for the cursor row, firing
-// GetSchedule + ListFires. A cursor past the list end is a no-op.
-func (m Model) openScheduleInspect() (tea.Model, tea.Cmd, bool) {
-	if m.schedule.cursor < 0 || m.schedule.cursor >= len(m.schedule.filtered) {
-		return m, nil, true
+func (s *scheduleState) filterKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
+	if key.Matches(msg, s.deps.keys.Close, s.deps.keys.Choose) {
+		s.filter.Blur()
+		return nil, true, false
 	}
-	m.schedule.inspect = m.schedule.filtered[m.schedule.cursor]
-	m.schedule.view = scheduleInspect
-	m.schedule.firesLoading = true
-	m.schedule.firesErr = nil
-	m.schedule.actionErr = ""
-	m.schedule.fireCursor = 0
-	name := m.schedule.inspect.Spec.Name
-	return m, tea.Batch(
-		client.GetScheduleCmd(m.deps.Ctx, m.deps.Sched, name),
-		client.ListFiresCmd(m.deps.Ctx, m.deps.Sched, name),
-	), true
+	var cmd tea.Cmd
+	s.filter, cmd = s.filter.Update(msg)
+	s.syncFilter()
+	return cmd, true, false
 }
 
-// openScheduleConfirm opens the delete-confirmation sub-view for the cursor row.
-func (m Model) openScheduleConfirm() (tea.Model, tea.Cmd, bool) {
-	if m.schedule.cursor < 0 || m.schedule.cursor >= len(m.schedule.filtered) {
-		return m, nil, true
+func (s *scheduleState) activeViewKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
+	move, nav := boundedNavigationMove(msg, s.deps.keys)
+	switch {
+	case key.Matches(msg, s.deps.keys.Close):
+		return s.closeViewKey()
+	case nav:
+		s.moveActiveView(move)
+	case key.Matches(msg, s.deps.keys.Choose):
+		return s.chooseActiveView()
+	default:
+		return s.activeViewAction(msg)
 	}
-	m.schedule.confirm = m.schedule.filtered[m.schedule.cursor]
-	m.schedule.view = scheduleConfirm
-	return m, nil, true
+	return nil, true, false
 }
 
-// openScheduleCreate opens the in-overlay Create form (issue #236).
-// It mints a fresh scheduleForm with the focus on the name field and default
-// values (singleton=true, mutating=false). The form is a common-path authoring
-// surface and keeps it simple.
-func (m Model) openScheduleCreate() (tea.Model, tea.Cmd, bool) {
-	newInput := func(placeholder string) textinput.Model {
+func (s *scheduleState) closeViewKey() (tea.Cmd, bool, bool) {
+	switch s.view {
+	case scheduleDetails:
+		s.view = scheduleInspect
+	case scheduleInspect:
+		s.view = schedulePanel
+		s.inspectRequest++
+		s.specPending, s.firesLoading = false, false
+	default:
+		if s.filter.Value() == "" {
+			return nil, true, true
+		}
+		s.filter.SetValue("")
+		s.syncFilter()
+	}
+	return nil, true, false
+}
+
+func (s *scheduleState) moveActiveView(move bounded.Move) {
+	switch s.view {
+	case schedulePanel:
+		s.list.Move(move)
+	case scheduleInspect:
+		s.runs.Move(move)
+	case scheduleDetails:
+		s.details.Move(move, s.detailRows)
+	}
+}
+
+func (s *scheduleState) chooseActiveView() (tea.Cmd, bool, bool) {
+	switch s.view {
+	case schedulePanel:
+		return s.openInspect(), true, false
+	case scheduleInspect:
+		s.jumpTranscript()
+	}
+	return nil, true, false
+}
+
+func (s *scheduleState) activeViewAction(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
+	switch s.view {
+	case scheduleInspect:
+		if chord := s.detailsKey(); chord != "" && msg.String() == chord {
+			s.view = scheduleDetails
+		} else if msg.String() == "t" {
+			s.jumpTranscript()
+		}
+	case schedulePanel:
+		return s.panelAction(msg), true, false
+	}
+	return nil, true, false
+}
+func (s *scheduleState) panelAction(msg tea.KeyPressMsg) tea.Cmd {
+	if msg.String() == "/" {
+		return s.filter.Focus()
+	}
+	if s.pendingAction != "" {
+		return nil
+	}
+	if msg.String() == "c" {
+		s.openCreate()
+		return nil
+	}
+	row, ok := s.selectedSchedule()
+	if !ok || s.loading || s.err != nil {
+		return nil
+	}
+	name := row.Spec.Name
+	switch msg.String() {
+	case "p":
+		return s.mutate(client.PauseScheduleCmd(s.deps.ctx, s.lister, name), "paused", name)
+	case "r":
+		return s.mutate(client.ResumeScheduleCmd(s.deps.ctx, s.lister, name), "resumed", name)
+	case "f":
+		return s.mutate(client.FireNowCmd(s.deps.ctx, s.lister, name), "fired", name)
+	case "d":
+		s.confirm, s.view = row, scheduleConfirm
+	}
+	return nil
+}
+func (s *scheduleState) jumpTranscript() {
+	if !s.transcriptWired {
+		s.notice = "transcript inspection unavailable"
+		return
+	}
+	if !s.firesLoading && s.firesErr == nil {
+		for _, fire := range s.fires {
+			if fire.ID == s.runs.CursorID() && fire.SessionID != "" {
+				s.intent = scheduleTranscriptIntent{sessionID: fire.SessionID}
+				return
+			}
+		}
+	}
+	s.notice = "fire has no session id"
+}
+func (s *scheduleState) HandleWheel(msg tea.MouseWheelMsg) (tea.Cmd, bool) {
+	if move, ok := boundedWheelMove(msg); ok && !s.compact {
+		switch s.view {
+		case schedulePanel:
+			s.list.Scroll(move)
+		case scheduleInspect:
+			s.runs.Scroll(move)
+		case scheduleDetails:
+			s.details.Move(move, s.detailRows)
+		}
+	}
+	return nil, true
+}
+func (s *scheduleState) openCreate() {
+	input := func(placeholder string) textinput.Model {
 		ti := textinput.New()
 		ti.Placeholder = placeholder
-		ti.SetWidth(50)
 		return ti
 	}
-	f := scheduleForm{
-		name:     newInput("schedule name"),
-		prompt:   newInput("prompt to run on each fire"),
-		trigger:  newInput("cron (e.g. 0 9 * * *) or NL (e.g. every 30 minutes)"),
-		mutating: false,
-		focusIdx: 0,
-	}
-	f.name.Focus()
-	m.schedule.form = f
-	m.schedule.view = scheduleCreate
-	m.schedule.actionErr = ""
-	return m, nil, true
+	s.form = scheduleForm{name: input("schedule name"), prompt: input("prompt to run on each fire"), trigger: input("cron or natural-language trigger")}
+	s.form.name.Focus()
+	s.view, s.actionErr = scheduleCreate, ""
 }
-
-// scheduleFormFields is the ordered list of editable text fields for focus
-// cycling. The mutating toggle is cycled separately (a bool, not a textinput).
-const scheduleFormFieldCount = 3 // name, prompt, trigger
-
-// focusScheduleField moves the focus to the field at form.focusIdx, blurring all
-// others. Tab/↑↓ call this after incrementing/decrementing focusIdx.
-func (m Model) focusScheduleField() Model {
-	fields := []*textinput.Model{
-		&m.schedule.form.name,
-		&m.schedule.form.prompt,
-		&m.schedule.form.trigger,
-	}
-	for i, f := range fields {
-		if i == m.schedule.form.focusIdx {
+func (s *scheduleState) focusField() {
+	for i, f := range []*textinput.Model{&s.form.name, &s.form.prompt, &s.form.trigger} {
+		if i == s.form.focusIdx {
 			f.Focus()
 		} else {
 			f.Blur()
 		}
 	}
-	return m
 }
-
-// onScheduleCreateKey routes keys while the Create form is open. tab/↑↓ cycle
-// focus through the text fields + the mutating toggle; enter on the last field
-// (the mutating toggle) submits; esc returns to the panel; "y"/"n" toggles
-// mutating when the toggle is focused.
-func (m Model) onScheduleCreateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
-	// When the mutating toggle (focusIdx == scheduleFormFieldCount) is focused,
-	// handle the toggle keys; enter submits.
-	if m.schedule.form.focusIdx == scheduleFormFieldCount {
-		switch {
-		case key.Matches(msg, m.keys.Close):
-			m.schedule.view = schedulePanel
-			m.schedule.form = scheduleForm{}
-			return m, nil, true
-		case msg.String() == "y":
-			m.schedule.form.mutating = true
-			return m, nil, true
-		case msg.String() == "n":
-			m.schedule.form.mutating = false
-			return m, nil, true
-		case key.Matches(msg, m.keys.Choose):
-			return m.submitScheduleCreate()
-		case msg.String() == "tab", msg.String() == keyMenuDown:
-			m.schedule.form.focusIdx = 0
-			return m.focusScheduleField(), nil, true
-		case msg.String() == keyMenuUp:
-			m.schedule.form.focusIdx = scheduleFormFieldCount - 1
-			return m.focusScheduleField(), nil, true
-		}
-		return m, nil, true
-	}
-	// A text field is focused.
+func (s *scheduleState) createKey(msg tea.KeyPressMsg) tea.Cmd {
 	switch {
-	case key.Matches(msg, m.keys.Close):
-		m.schedule.view = schedulePanel
-		m.schedule.form = scheduleForm{}
-		return m, nil, true
+	case key.Matches(msg, s.deps.keys.Close):
+		s.view = schedulePanel
+		s.form = scheduleForm{}
+		return nil
+	case key.Matches(msg, s.deps.keys.Choose):
+		if s.form.focusIdx == scheduleFormFieldCount {
+			return s.submitCreate()
+		}
+		s.form.focusIdx++
+		s.focusField()
+		return nil
 	case msg.String() == "tab", msg.String() == keyMenuDown:
-		m.schedule.form.focusIdx++
-		if m.schedule.form.focusIdx > scheduleFormFieldCount {
-			m.schedule.form.focusIdx = 0
-		}
-		return m.focusScheduleField(), nil, true
+		s.form.focusIdx = (s.form.focusIdx + 1) % (scheduleFormFieldCount + 1)
+		s.focusField()
+		return nil
 	case msg.String() == keyMenuUp:
-		m.schedule.form.focusIdx--
-		if m.schedule.form.focusIdx < 0 {
-			m.schedule.form.focusIdx = scheduleFormFieldCount
+		s.form.focusIdx = (s.form.focusIdx + scheduleFormFieldCount) % (scheduleFormFieldCount + 1)
+		s.focusField()
+		return nil
+	}
+	if s.form.focusIdx == scheduleFormFieldCount {
+		if msg.String() == "y" {
+			s.form.mutating = true
 		}
-		return m.focusScheduleField(), nil, true
-	case key.Matches(msg, m.keys.Choose):
-		// enter on a text field advances to the next field; on the last text
-		// field it advances to the mutating toggle.
-		m.schedule.form.focusIdx++
-		if m.schedule.form.focusIdx > scheduleFormFieldCount {
-			m.schedule.form.focusIdx = 0
+		if msg.String() == "n" {
+			s.form.mutating = false
 		}
-		return m.focusScheduleField(), nil, true
+		return nil
 	}
-	// Feed the textinput.
-	var fields = []*textinput.Model{
-		&m.schedule.form.name,
-		&m.schedule.form.prompt,
-		&m.schedule.form.trigger,
-	}
-	idx := m.schedule.form.focusIdx
-	if idx >= 0 && idx < len(fields) {
-		var cmd tea.Cmd
-		updated, cmd := fields[idx].Update(msg)
-		*fields[idx] = updated
-		return m, cmd, true
-	}
-	return m, nil, true
+	fields := []*textinput.Model{&s.form.name, &s.form.prompt, &s.form.trigger}
+	var cmd tea.Cmd
+	*fields[s.form.focusIdx], cmd = fields[s.form.focusIdx].Update(msg)
+	return cmd
 }
-
-// submitScheduleCreate validates the form, compiles the trigger (NL→cron via
-// schedparse when applicable), builds a client.ScheduleSpec, and fires
-// CreateScheduleCmd. On validation failure it sets actionErr and stays in the
-// form. On success it returns to the panel (the ScheduleMsg reducer appends the
-// new schedule on arrival).
-func (m Model) submitScheduleCreate() (tea.Model, tea.Cmd, bool) {
-	f := m.schedule.form
-	m.schedule.actionErr = ""
-	if f.name.Value() == "" {
-		m.schedule.actionErr = "name is required"
-		return m, nil, true
+func (s *scheduleState) submitCreate() tea.Cmd {
+	if s.pendingAction != "" {
+		return nil
 	}
-	if f.prompt.Value() == "" {
-		m.schedule.actionErr = "prompt is required"
-		return m, nil, true
+	f := s.form
+	switch {
+	case f.name.Value() == "":
+		s.actionErr = "name is required"
+		return nil
+	case f.prompt.Value() == "":
+		s.actionErr = "prompt is required"
+		return nil
+	case f.trigger.Value() == "":
+		s.actionErr = "trigger (cron or NL) is required"
+		return nil
 	}
-	if f.trigger.Value() == "" {
-		m.schedule.actionErr = "trigger (cron or NL) is required"
-		return m, nil, true
-	}
-	// Try NL→cron first; fall back to raw cron.
 	var trigger client.ScheduleTrigger
-	if res, ok := schedparse.Compile(f.trigger.Value(), time.Now()); ok {
-		if res.Cron != "" {
-			trigger.Cron = res.Cron
-		} else if !res.OneShot.IsZero() {
-			trigger.OneShot = res.OneShot
-		}
+	if result, ok := schedparse.Compile(f.trigger.Value(), time.Now()); ok {
+		trigger.Cron, trigger.OneShot = result.Cron, result.OneShot
 	} else {
 		trigger.Cron = f.trigger.Value()
 	}
-	spec := client.ScheduleSpec{
-		Name:      f.name.Value(),
-		Prompt:    f.prompt.Value(),
-		Trigger:   trigger,
-		Mutating:  f.mutating,
-		Singleton: true,
-		Timezone:  "UTC",
-	}
-	// Return to the panel; the ScheduleMsg reducer appends the new row.
-	m.schedule.view = schedulePanel
-	m.schedule.form = scheduleForm{}
-	return m, client.CreateScheduleCmd(m.deps.Ctx, m.deps.Sched, spec), true
+	spec := client.ScheduleSpec{Name: f.name.Value(), Prompt: f.prompt.Value(), Trigger: trigger, Mutating: f.mutating, Singleton: true, Timezone: "UTC"}
+	s.view, s.form = schedulePanel, scheduleForm{}
+	return s.mutate(client.CreateScheduleCmd(s.deps.ctx, s.lister, spec), "create", spec.Name)
 }
 
-// scheduleAction fires the per-row action RPC (pause/resume/fire) for the cursor
-// row, clearing any prior actionErr. The result arrives as a ScheduleActionMsg.
-func (m Model) scheduleAction(action string) (tea.Model, tea.Cmd, bool) {
-	if m.schedule.cursor < 0 || m.schedule.cursor >= len(m.schedule.filtered) {
-		return m, nil, true
+func (s *scheduleState) Render(width, height int) (string, []ClickableRegion) {
+	reveal := s.offers[s.view] != [2]int{width, height}
+	s.offers[s.view], s.compact = [2]int{width, height}, true
+	if width <= 0 || height <= 0 {
+		return "", nil
 	}
-	name := m.schedule.filtered[m.schedule.cursor].Spec.Name
-	m.schedule.actionErr = ""
-	var cmd tea.Cmd
-	switch action {
-	case "pause":
-		cmd = client.PauseScheduleCmd(m.deps.Ctx, m.deps.Sched, name)
-	case "resume":
-		cmd = client.ResumeScheduleCmd(m.deps.Ctx, m.deps.Sched, name)
-	case "fire":
-		cmd = client.FireNowCmd(m.deps.Ctx, m.deps.Sched, name)
+	s.filter.SetWidth(max(1, width-2))
+	for _, field := range []*textinput.Model{&s.form.name, &s.form.prompt, &s.form.trigger} {
+		field.SetWidth(max(1, width-14))
 	}
-	return m, cmd, true
+	switch s.view {
+	case scheduleConfirm, scheduleCreate:
+		return s.renderOverlay(width, height)
+	default:
+		return s.renderSurface(width, height, reveal)
+	}
 }
 
-// onScheduleConfirmKey routes keys while the delete-confirmation overlay is open.
-// enter deletes; esc returns to the panel. Any other key is swallowed.
-func (m Model) onScheduleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
-	chosen := m.schedule.confirm
-	switch {
-	case key.Matches(msg, m.keys.Choose): // enter — delete
-		m.schedule.view = schedulePanel
-		m.schedule.confirm = client.Schedule{}
-		return m, client.DeleteScheduleCmd(m.deps.Ctx, m.deps.Sched, chosen.Spec.Name), true
-	case key.Matches(msg, m.keys.Close): // esc — back to panel
-		m.schedule.view = schedulePanel
-		m.schedule.confirm = client.Schedule{}
-		return m, nil, true
-	}
-	return m, nil, true
+func (s *scheduleState) renderCompact(width int) (string, []ClickableRegion) {
+	return renderSkillsCompact(s.deps.theme, s.deps.marks, width), nil
 }
 
-// onScheduleInspectKey routes keys while the inspect sub-view is open. esc
-// returns to the panel; ↑/↓ move the fire cursor (clamped to len(fires));
-// enter or "t" loads the selected fire's authoritative transcript for read-only
-// inspection. Jump guards: Transcript nil → no-op; fireCursor out of range or
-// the fire's SessionID empty → set a statusMsg and stay in inspect.
-func (m Model) onScheduleInspectKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
-	if key.Matches(msg, m.keys.Close) {
-		m.schedule.view = schedulePanel
-		m.schedule.inspect = client.Schedule{}
-		m.schedule.fires = nil
-		m.schedule.firesErr = nil
-		m.schedule.fireCursor = 0
-		return m, nil, true
+func (s *scheduleState) renderOverlay(width, height int) (string, []ClickableRegion) {
+	th, hk := s.deps.theme, s.deps.marks
+	body := renderScheduleConfirm(th, *s, hk, width, height)
+	if s.view == scheduleCreate {
+		body = renderScheduleCreate(th, *s, hk, width, height)
 	}
-	switch {
-	case msg.String() == keyMenuUp:
-		if m.schedule.fireCursor > 0 {
-			m.schedule.fireCursor--
+	lines := strings.Split(ansi.Hardwrap(body, width, true), "\n")
+	if width < 16 || len(lines) > height {
+		return s.renderCompact(width)
+	}
+	s.compact = false
+	return strings.Join(lines, "\n"), nil
+}
+
+func (s *scheduleState) renderSurface(width, height int, reveal bool) (string, []ClickableRegion) {
+	th := s.deps.theme
+	title, footer := s.surfaceChrome()
+	prefix := s.surfacePrefix(th, title, width)
+	prefix = s.appendSurfaceStatus(th, prefix, width)
+	foot := skillsTextLines(th.Style("muted"), footer, width)
+	rows := height - len(prefix) - len(foot)
+	if width < 4 || rows < 1 {
+		return s.renderCompact(width)
+	}
+	if s.view == scheduleDetails {
+		return s.renderDetails(th, prefix, foot, width, rows)
+	}
+	return s.renderList(th, title, prefix, foot, width, rows, reveal)
+}
+
+func (s *scheduleState) surfaceChrome() (string, string) {
+	closeHint := s.deps.marks.closeOnly
+	choose := s.chooseKey()
+	if s.view == schedulePanel {
+		if s.filter.Focused() {
+			hints := []string{}
+			if s.deps.keys.Choose.Enabled() {
+				hints = append(hints, s.deps.marks.choose+": done")
+			}
+			hints = append(hints, closeHint+": done")
+			return "schedules", strings.Join(hints, "  ")
 		}
-		return m, nil, true
-	case msg.String() == keyMenuDown:
-		if m.schedule.fireCursor < len(m.schedule.fires)-1 {
-			m.schedule.fireCursor++
+		hints := []string{}
+		if choose != "" {
+			hints = append(hints, choose+": runs")
 		}
-		return m, nil, true
-	case key.Matches(msg, m.keys.Choose), msg.String() == "t":
-		return m.jumpToFireTranscript()
-	}
-	return m, nil, true
-}
-
-// jumpToFireTranscript loads a schedule fire's authoritative transcript for
-// read-only inspection. It never rebinds the active chat.
-func (m Model) jumpToFireTranscript() (tea.Model, tea.Cmd, bool) {
-	if m.deps.Transcript == nil {
-		return m, nil, true
-	}
-	if m.schedule.fireCursor < 0 || m.schedule.fireCursor >= len(m.schedule.fires) {
-		m.statusMsg = m.deps.Theme.Style("warning").Render("fire has no session id")
-		return m, nil, true
-	}
-	fire := m.schedule.fires[m.schedule.fireCursor]
-	if fire.SessionID == "" {
-		m.statusMsg = m.deps.Theme.Style("warning").Render("fire has no session id")
-		return m, nil, true
-	}
-	item := client.SessionListItem{
-		ID: fire.SessionID, Kind: client.SessionKindScheduled,
-		Capabilities: client.SessionInventoryCapabilities{Inspect: true},
-	}
-	m.schedule = scheduleState{}
-	return m.loadSessionTranscript(item, true)
-}
-
-// syncScheduleFilter recomputes the filtered slice from the filter input and
-// clamps the cursor.
-func (m Model) syncScheduleFilter() Model {
-	m.schedule.filtered = filterSchedules(m.schedule.schedules, m.schedule.filter.Value())
-	if m.schedule.cursor >= len(m.schedule.filtered) {
-		m.schedule.cursor = 0
-	}
-	return m
-}
-
-// updateScheduleMsg reduces the schedule-overlay msgs. Returns handled=false for
-// any non-schedule msg.
-func (m Model) updateScheduleMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
-	switch msg := msg.(type) {
-	case client.SchedulesMsg:
-		m.schedule.loading = false
-		if msg.Err != nil {
-			m.schedule.err = msg.Err
-			m.schedule.schedules = nil
-			m.schedule.filtered = nil
-			return m, nil, true
-		}
-		m.schedule.err = nil
-		m.schedule.schedules = msg.Schedules
-		m = m.syncScheduleFilter()
-		return m, nil, true
-	case client.ScheduleMsg:
-		if msg.Err != nil {
-			// A Create/Get failure (bad cron, duplicate name, validation error).
-			// Surface it in the panel — the form has already closed to
-			// schedulePanel on submit, so a silent discard would leave the user
-			// with no feedback. Mirrors the ScheduleActionMsg error path.
-			m.schedule.actionErr = msg.Err.Error()
-			return m, nil, true
-		}
-		// A Get-driven refresh: update the matching row, or append if new (Create).
-		s := msg.Schedule
-		updated := false
-		for i, ex := range m.schedule.schedules {
-			if ex.Spec.Name == s.Spec.Name {
-				m.schedule.schedules[i] = s
-				updated = true
-				break
+		for _, hint := range []struct{ key, label string }{{"c", "create"}, {"p", "pause"}, {"r", "resume"}, {"f", "fire-now"}, {"d", "delete"}, {"/", "filter"}} {
+			if !s.reservedScheduleKey(hint.key, true) {
+				hints = append(hints, hint.key+": "+hint.label)
 			}
 		}
-		if !updated {
-			m.schedule.schedules = append(m.schedule.schedules, s)
-		}
-		// If the inspect sub-view is showing this schedule, refresh it too.
-		if m.schedule.view == scheduleInspect && m.schedule.inspect.Spec.Name == s.Spec.Name {
-			m.schedule.inspect = s
-		}
-		m = m.syncScheduleFilter()
-		return m, nil, true
-	case client.ScheduleFiresMsg:
-		m.schedule.firesLoading = false
-		if msg.Err != nil {
-			m.schedule.firesErr = msg.Err
-			m.schedule.fires = nil
-			return m, nil, true
-		}
-		m.schedule.firesErr = nil
-		m.schedule.fires = msg.Fires
-		return m, nil, true
-	case client.ScheduleActionMsg:
-		if msg.Err != nil {
-			m.schedule.actionErr = msg.Err.Error()
-			return m, nil, true
-		}
-		m.schedule.actionErr = ""
-		// On a successful fire, surface the fire id in the status line.
-		if msg.Action == "fired" && msg.FireID != "" {
-			m.statusMsg = m.deps.Theme.Style("muted").Render("fired " + msg.Name + " — fire id: " + terminaltext.Sanitize(msg.FireID))
-		}
-		// Re-list to reflect the new state (enabled toggle, fire count, next fire).
-		return m, client.ListSchedulesCmd(m.deps.Ctx, m.deps.Sched), true
+		hints = append(hints, closeHint+": close")
+		return "schedules", strings.Join(hints, "  ")
 	}
-	return m, nil, false
+	title := "schedule — " + terminaltext.SanitizeSingleLine(s.inspect.Spec.Name)
+	footer := closeHint + ": back"
+	if s.view == scheduleInspect {
+		if chord := s.detailsKey(); chord != "" {
+			footer = chord + ": details  " + footer
+		}
+		if s.transcriptWired {
+			hints := []string{}
+			if choose != "" {
+				hints = append(hints, choose)
+			}
+			if !s.reservedScheduleKey("t", true) {
+				hints = append(hints, "t")
+			}
+			if len(hints) > 0 {
+				footer = strings.Join(hints, "/") + ": open transcript  " + footer
+			}
+		}
+		return title, footer
+	}
+	return title, s.deps.marks.scroll + ": scroll  " + footer
 }
 
-// filterSchedules returns the schedules whose Name or trigger summary contains q
-// (case-insensitive). An empty query returns the full list.
+func (s *scheduleState) surfacePrefix(th theme.Theme, title string, width int) []string {
+	prefix := skillsTextLines(th.Style("title"), title, width)
+	switch s.view {
+	case schedulePanel:
+		if s.filter.Focused() {
+			return append(prefix, ansi.Cut(s.filter.View(), 0, width))
+		}
+		if s.filter.Value() != "" {
+			return append(prefix, skillsTextLines(th.Style("muted"), "filter: "+terminaltext.SanitizeSingleLine(s.filter.Value()), width)...)
+		}
+	case scheduleInspect:
+		return append(prefix, skillsTextLines(th.Style("muted"), scheduleLifecycle(s.inspect), width)...)
+	}
+	return prefix
+}
+
+func (s *scheduleState) appendSurfaceStatus(th theme.Theme, prefix []string, width int) []string {
+	if s.view != schedulePanel && s.inspectErr != nil {
+		prefix = append(prefix, skillsTextLines(th.Style("errorText"), "could not inspect: "+terminaltext.Sanitize(s.inspectErr.Error()), width)...)
+	}
+	if s.actionErr != "" {
+		prefix = append(prefix, skillsTextLines(th.Style("errorText"), "action failed: "+terminaltext.Sanitize(s.actionErr), width)...)
+	}
+	if s.notice != "" {
+		prefix = append(prefix, skillsTextLines(th.Style("muted"), terminaltext.Sanitize(s.notice), width)...)
+	}
+	if s.pendingAction != "" {
+		prefix = append(prefix, skillsTextLines(th.Style("muted"), "operation pending (closing does not undo it)", width)...)
+	}
+	return prefix
+}
+
+func (s *scheduleState) renderDetails(th theme.Theme, prefix, foot []string, width, rows int) (string, []ClickableRegion) {
+	if rows < 2 {
+		return s.renderCompact(width)
+	}
+	lines := skillsTextLines(th.Style("muted"), scheduleDetailText(th, s.inspect), width)
+	s.details.SetGeometry(width, rows-1, 0, bounded.Clip)
+	s.detailRows = len(lines)
+	view := s.details.View(lines)
+	prefix = append(prefix, ansi.Cut(fmt.Sprintf("↑ %d · ↓ %d more", view.Above, view.Below), 0, width))
+	prefix = append(prefix, view.Rows...)
+	s.compact = false
+	return strings.Join(append(prefix, foot...), "\n"), nil
+}
+
+func (s *scheduleState) renderList(th theme.Theme, title string, prefix, foot []string, width, rows int, reveal bool) (string, []ClickableRegion) {
+	list, loading, empty, err := s.activeScheduleList()
+	reveal = reveal || s.rowBudgets[s.view] != rows
+	s.rowBudgets[s.view] = rows
+	list.SetGeometry(width, rows, 1, bounded.Wrap)
+	state := scheduleListState(list, loading, err, empty)
+	if state != "" {
+		lines := skillsTextLines(th.Style("muted"), state, width)
+		if len(lines) > rows {
+			return s.renderCompact(width)
+		}
+		prefix = append(prefix, lines...)
+	} else {
+		prefix = renderScheduleListRows(th, prefix, title, list, width, rows, reveal)
+	}
+	s.compact = false
+	return strings.Join(append(prefix, foot...), "\n"), nil
+}
+
+func (s *scheduleState) activeScheduleList() (*bounded.List, bool, string, error) {
+	if s.view == scheduleInspect {
+		s.syncRuns()
+		empty := "no runs recorded"
+		if s.inspect.State.LastFireSessionID == "pending" && s.inspect.State.LastFireStartedAt.IsZero() {
+			empty = "waiting to start (session pending)"
+		}
+		return &s.runs, s.firesLoading, empty, s.firesErr
+	}
+	if s.filter.Value() != "" {
+		return &s.list, s.loading, "no matches — clear filter to see all", s.err
+	}
+	return &s.list, s.loading, "no schedules yet — press c to create one", s.err
+}
+
+func scheduleListState(list *bounded.List, loading bool, err error, empty string) string {
+	switch {
+	case loading:
+		return "loading…"
+	case err != nil:
+		return "could not list: " + terminaltext.Sanitize(err.Error())
+	case list.CursorID() == "":
+		return empty
+	default:
+		return ""
+	}
+}
+
+func renderScheduleListRows(th theme.Theme, prefix []string, title string, list *bounded.List, width, rows int, reveal bool) []string {
+	view := list.ViewWithIndicators(rows, reveal || list.RevealPending())
+	if view.Above > 0 && rows > 1 {
+		prefix = append(prefix, ansi.Cut(fmt.Sprintf("↑ %d more", view.Above), 0, width))
+	}
+	if rows == 1 && (view.Above > 0 || view.Below > 0) {
+		prefix[0] = ansi.Cut(fmt.Sprintf("↑ %d ↓ %d · %s", view.Above, view.Below, title), 0, width)
+	}
+	for _, row := range view.Rows {
+		presented := presentListRow(row, th.Style("spinner"), th.Style("muted"))
+		prefix = append(prefix, ansi.Cut(presented.Style.Render(presented.Text), 0, width))
+	}
+	if view.Below > 0 && rows > 1 {
+		prefix = append(prefix, ansi.Cut(fmt.Sprintf("↓ %d more", view.Below), 0, width))
+	}
+	return prefix
+}
+func scheduleLifecycle(s client.Schedule) string {
+	state := "enabled"
+	if !s.State.Enabled {
+		state = "paused"
+	}
+	if s.State.DeletionPending {
+		state += " · cleanup pending · d: retry delete from inventory"
+	}
+	if !s.State.LastFireStartedAt.IsZero() {
+		state += " · in-flight"
+		if !s.State.FireDeadline.IsZero() && !time.Now().Before(s.State.FireDeadline) {
+			state += " (overdue/degraded; termination unconfirmed)"
+		}
+	} else if s.State.LastFireSessionID == "pending" {
+		state += " · claimed (session pending; termination unconfirmed)"
+	}
+	return state
+}
+func scheduleRowText(s client.Schedule) string {
+	return terminaltext.SanitizeSingleLine(s.Spec.Name) + "  " + terminaltext.SanitizeSingleLine(triggerSummary(s.Spec)) + "  " + scheduleLifecycle(s) + "  next:" + formatScheduleTime(s.State.NextFireAt) + "  last:" + formatScheduleTime(s.State.LastFireAt) + "  fires:" + strconv.Itoa(int(s.State.FireCount))
+}
+func scheduleDetailText(th theme.Theme, s client.Schedule) string {
+	var b strings.Builder
+	muted := th.Style("muted")
+	renderScheduleSpecBlock(&b, muted, s.Spec)
+	b.WriteString("\nstate\n" + scheduleLifecycle(s) + "\n")
+	b.WriteString("enabled: " + boolStr(s.State.Enabled) + "  deletion_pending: " + boolStr(s.State.DeletionPending) + "  runs: " + strconv.Itoa(int(s.State.FireCount)) + "\n")
+	if s.State.DeletionPending {
+		b.WriteString("placement cleanup is pending — go back and press d to retry delete\n")
+	}
+	b.WriteString("next run: " + formatScheduleTime(s.State.NextFireAt) + "\nlast run: " + formatScheduleTime(s.State.LastFireAt) + "\n")
+	if s.State.LastFireSessionID != "" {
+		b.WriteString("last run session: " + terminaltext.Sanitize(s.State.LastFireSessionID) + "\n")
+	}
+	if !s.State.LastFireStartedAt.IsZero() || !s.State.LastFireProgressAt.IsZero() || !s.State.FireDeadline.IsZero() {
+		b.WriteString("running: started " + formatScheduleTime(s.State.LastFireStartedAt) + "  last update " + formatScheduleTime(s.State.LastFireProgressAt) + "  deadline " + formatScheduleTime(s.State.FireDeadline) + "\n")
+	}
+	if s.State.LastFireSessionID == "pending" && s.State.LastFireStartedAt.IsZero() {
+		b.WriteString("pending admission: ownership/termination unconfirmed; elapsed timeout does not prove termination\n")
+	}
+	return b.String()
+}
 func filterSchedules(scheds []client.Schedule, q string) []client.Schedule {
 	if q == "" {
 		return scheds
 	}
 	needle := strings.ToLower(q)
-	out := make([]client.Schedule, 0, len(scheds))
+	var out []client.Schedule
 	for _, s := range scheds {
-		if strings.Contains(strings.ToLower(s.Spec.Name), needle) ||
-			strings.Contains(strings.ToLower(triggerSummary(s.Spec)), needle) {
+		if strings.Contains(strings.ToLower(s.Spec.Name), needle) || strings.Contains(strings.ToLower(triggerSummary(s.Spec)), needle) {
 			out = append(out, s)
 		}
 	}
 	return out
 }
-
-// renderScheduleOverlay draws the overlay, dispatching on the view.
-// transcriptWired gates the jump-to-fire footer hint in the inspect sub-view.
-func renderScheduleOverlay(th theme.Theme, st scheduleState, caps client.Capabilities, transcriptWired bool, hk helpKeys, width, height int) string {
-	switch st.view {
-	case scheduleConfirm:
-		return renderScheduleConfirm(th, st, hk, width, height)
-	case scheduleInspect:
-		return renderScheduleInspect(th, st, transcriptWired, hk, width, height)
-	case scheduleCreate:
-		return renderScheduleCreate(th, st, hk, width, height)
-	default:
-		return renderSchedulePanel(th, st, caps, hk, width, height)
-	}
+func renderScheduleConfirm(th theme.Theme, st scheduleState, hk helpKeys, _, _ int) string {
+	return th.Style("title").Render("delete schedule") + "\n\ndelete " + terminaltext.Sanitize(st.confirm.Spec.Name) + "? This cannot be undone.\n\n" + hk.choose + ": delete  " + hk.closeOnly + ": back"
 }
-
-// renderSchedulePanel renders the schedule list card.
-func renderSchedulePanel(th theme.Theme, st scheduleState, _ client.Capabilities, hk helpKeys, _, _ int) string {
+func renderScheduleCreate(th theme.Theme, st scheduleState, hk helpKeys, _, _ int) string {
 	var b strings.Builder
-	b.WriteString(th.Style("title").Render("schedules") + "\n")
-	b.WriteString(th.Style("muted").Render("manage scheduled tasks") + "\n\n")
-	switch {
-	case st.filter.Focused():
-		b.WriteString(st.filter.View() + "\n\n")
-	case st.filter.Value() != "":
-		b.WriteString(th.Style("muted").Render("filter: "+terminaltext.Sanitize(st.filter.Value())) + "\n\n")
-	}
-	if st.loading {
-		b.WriteString(th.Style("muted").Render("loading…"))
-		return b.String()
-	}
-	if st.err != nil {
-		b.WriteString(th.Style("errorText").Render("could not list schedules: " + terminaltext.Sanitize(st.err.Error())))
-		b.WriteString("\n" + th.Style("muted").Render(hk.closeOnly+": close"))
-		return b.String()
-	}
-	if st.actionErr != "" {
-		b.WriteString(th.Style("errorText").Render("action failed: "+terminaltext.Sanitize(st.actionErr)) + "\n\n")
-	}
-	if len(st.filtered) == 0 {
-		if st.filter.Value() != "" {
-			b.WriteString(th.Style("muted").Render("no matches — clear filter to see all"))
-		} else {
-			b.WriteString(th.Style("muted").Render("no schedules yet — press c to create one"))
-		}
-		b.WriteString("\n" + th.Style("muted").Render(hk.closeOnly+": close"))
-		return b.String()
-	}
-	for i, s := range st.filtered {
+	b.WriteString(th.Style("title").Render("create schedule") + "\n\n")
+	f := st.form
+	for i, field := range []struct{ label, value string }{{"name", f.name.View()}, {"prompt", f.prompt.View()}, {"trigger", f.trigger.View()}, {"may change workspace", boolStr(f.mutating)}} {
 		marker := "  "
-		if i == st.cursor {
+		if i == f.focusIdx {
 			marker = "▶ "
 		}
-		state := "enabled"
-		if s.State.DeletionPending {
-			state = "cleanup pending · d: retry delete"
-		} else if !s.State.Enabled {
-			state = "paused"
-		}
-		inFlight := ""
-		if !s.State.LastFireStartedAt.IsZero() {
-			inFlight = "  in-flight"
-		} else if s.State.LastFireSessionID == "pending" {
-			inFlight = "  claimed"
-		}
-		line := marker + terminaltext.Sanitize(s.Spec.Name) +
-			"  " + terminaltext.Sanitize(triggerSummary(s.Spec)) +
-			"  " + state +
-			"  next:" + formatScheduleTime(s.State.NextFireAt) +
-			"  last:" + formatScheduleTime(s.State.LastFireAt) +
-			"  fires:" + strconv.Itoa(int(s.State.FireCount)) +
-			inFlight
-		if i == st.cursor {
-			line = th.Style("accent").Render(line)
-		}
-		b.WriteString(line + "\n")
+		b.WriteString(marker + field.label + ": " + field.value + "\n")
 	}
-	// The enter (Choose) and esc (Close) chords read the LIVE keyMap markings;
-	// the c/p/r/f/d// action keys are BARE keys consumed via msg.String (NOT
-	// keyMap bindings), so they stay literal (issue #457).
-	b.WriteString("\n" + th.Style("muted").Render(hk.choose+": inspect  c: create  p: pause  r: resume  f: fire-now  d: delete  /: filter  "+hk.closeOnly+": close"))
+	if st.actionErr != "" {
+		b.WriteString("\n" + terminaltext.Sanitize(st.actionErr) + "\n")
+	}
+	b.WriteString("\ntab/↑↓: next  " + hk.choose + ": advance/submit  y/n: allow/disallow changes  " + hk.closeOnly + ": back")
 	return b.String()
 }
-
-// renderScheduleConfirm renders the delete-confirmation card.
-func renderScheduleConfirm(th theme.Theme, st scheduleState, hk helpKeys, _, _ int) string {
-	var b strings.Builder
-	b.WriteString(th.Style("title").Render("delete schedule") + "\n\n")
-	b.WriteString("delete " + th.Style("accent").Render(terminaltext.Sanitize(st.confirm.Spec.Name)) + "? This cannot be undone.\n")
-	b.WriteString("\n" + th.Style("muted").Render(hk.choose+": delete  "+hk.closeOnly+": back"))
-	return b.String()
-}
-
-// renderScheduleInspect renders the full-spec + state + fires card. The fire
-// list is cursor-navigable (#235): the cursor row is highlighted with the
-// accent style + a ▶ marker, and the footer hint advertises the jump-to-fire
-// action only when a replayer is wired.
-//
-// An IN-FLIGHT fire (#386) is rendered with an explicit "in-flight" marker plus
-// its started/last-progress/deadline instants — it is NEVER silently rendered
-// with an empty stop. A CLAIMED fire (the post-Claim, pre-RecordFireStart state
-// where the state's LastFireSessionID is the "pending" sentinel and the run has
-// not started) is rendered as an explicit "claimed (session pending)" line, so
-// a claimed-but-not-yet-run fire never renders as "no fires recorded" (the
-// genuinely-never-fired case).
-func renderScheduleInspect(th theme.Theme, st scheduleState, replayerWired bool, hk helpKeys, _, _ int) string {
-	s := st.inspect
-	var b strings.Builder
-	b.WriteString(th.Style("title").Render("schedule — "+terminaltext.Sanitize(s.Spec.Name)) + "\n\n")
-	muted := th.Style("muted")
-	renderScheduleSpecBlock(&b, muted, s.Spec)
-	b.WriteString("\n" + muted.Render("state") + "\n")
-	b.WriteString(muted.Render("enabled: ") + boolStr(s.State.Enabled) +
-		"  deletion_pending: " + boolStr(s.State.DeletionPending) +
-		"  runs: " + strconv.Itoa(int(s.State.FireCount)) + "\n")
-	if s.State.DeletionPending {
-		b.WriteString(th.Style("warning").Render("placement cleanup is pending — go back and press d to retry delete") + "\n")
-	}
-	b.WriteString(muted.Render("next run: ") + formatScheduleTime(s.State.NextFireAt) + "\n")
-	b.WriteString(muted.Render("last run: ") + formatScheduleTime(s.State.LastFireAt) + "\n")
-	if s.State.LastFireSessionID != "" {
-		b.WriteString(muted.Render("last run session: ") + terminaltext.Sanitize(s.State.LastFireSessionID) + "\n")
-	}
-	if !s.State.LastFireStartedAt.IsZero() || !s.State.LastFireProgressAt.IsZero() || !s.State.FireDeadline.IsZero() {
-		b.WriteString(muted.Render("running:") +
-			" started " + formatScheduleTime(s.State.LastFireStartedAt) +
-			"  last update " + formatScheduleTime(s.State.LastFireProgressAt) +
-			"  deadline " + formatScheduleTime(s.State.FireDeadline) + "\n")
-	}
-	if s.State.LastFireSessionID == "pending" && s.State.LastFireStartedAt.IsZero() {
-		b.WriteString(th.Style("warning").Render("pending admission: ownership/termination unconfirmed; elapsed timeout does not prove termination") + "\n")
-	}
-	b.WriteString("\n" + muted.Render("runs") + "\n")
-	if st.firesLoading {
-		b.WriteString(muted.Render("loading…"))
-	} else if st.firesErr != nil {
-		b.WriteString(th.Style("errorText").Render("could not list fires: " + terminaltext.Sanitize(st.firesErr.Error())))
-	} else if len(st.fires) == 0 {
-		// A CLAIMED fire (LastFireSessionID == "pending", no run started) is
-		// NOT the same as "no fires recorded" — render it explicitly so a
-		// claimed-but-not-yet-run fire is never mistaken for never-fired.
-		if s.State.LastFireSessionID == "pending" && s.State.LastFireStartedAt.IsZero() {
-			b.WriteString(muted.Render("waiting to start (session pending)"))
-		} else {
-			b.WriteString(muted.Render("no runs recorded"))
-		}
-	} else {
-		for i, f := range st.fires {
-			line := renderScheduleFireLine(f, i == st.fireCursor)
-			if i == st.fireCursor {
-				line = th.Style("accent").Render(line)
-			}
-			b.WriteString(line + "\n")
-		}
-	}
-	// The esc (Close) and enter (Choose) chords read the LIVE keyMap markings;
-	// the ↑↓ (bare keyMenuUp/Down) and t are BARE keys via msg.String (NOT
-	// keyMap bindings), so they stay literal (issue #457).
-	hint := hk.closeOnly + ": back"
-	if replayerWired {
-		hint = "↑↓: select fire  " + hk.choose + "/t: open transcript  " + hk.closeOnly + ": back"
-	}
-	b.WriteString("\n" + muted.Render(hint))
-	return b.String()
-}
-
-// renderScheduleSpecBlock renders the spec-card fields (trigger/prompt/selector/
-// profile/mode/mutating row/timezone/fire_timeout) for the inspect
-// view. Extracted from renderScheduleInspect to keep its cyclomatic complexity
-// in check (#386 added the fire_timeout branch).
 func renderScheduleSpecBlock(b *strings.Builder, muted lipgloss.Style, spec client.ScheduleSpec) {
 	b.WriteString(muted.Render("trigger: ") + terminaltext.Sanitize(triggerSummary(spec)) + "\n")
 	if spec.Prompt != "" {
@@ -761,10 +894,8 @@ func renderScheduleSpecBlock(b *strings.Builder, muted lipgloss.Style, spec clie
 	if spec.Mode != "" {
 		b.WriteString(muted.Render("permission mode: ") + terminaltext.Sanitize(spec.Mode) + "\n")
 	}
-	b.WriteString(muted.Render("may change workspace: ") + boolStr(spec.Mutating) +
-		"  run overlap: " + scheduleOverlapText(spec.Singleton) + "\n")
-	b.WriteString(muted.Render("missed run: ") + scheduleMisfireText(spec.Misfire) +
-		"  run limit: " + scheduleRunLimitText(spec) + "\n")
+	b.WriteString(muted.Render("may change workspace: ") + boolStr(spec.Mutating) + "  run overlap: " + scheduleOverlapText(spec.Singleton) + "\n")
+	b.WriteString(muted.Render("missed run: ") + scheduleMisfireText(spec.Misfire) + "  run limit: " + scheduleRunLimitText(spec) + "\n")
 	if spec.Timezone != "" {
 		b.WriteString(muted.Render("timezone: ") + terminaltext.Sanitize(spec.Timezone) + "\n")
 	}
@@ -772,28 +903,24 @@ func renderScheduleSpecBlock(b *strings.Builder, muted lipgloss.Style, spec clie
 		b.WriteString(muted.Render("run timeout: ") + spec.FireTimeout.String() + "\n")
 	}
 }
-
 func scheduleWorkspaceAccessText(profile string) string {
 	if profile == "no-fs" {
 		return "no workspace files (no-fs)"
 	}
 	return terminaltext.Sanitize(profile)
 }
-
 func scheduleOverlapText(singleton bool) string {
 	if singleton {
 		return "skip overlapping runs"
 	}
 	return "allowed"
 }
-
 func scheduleMisfireText(policy string) string {
 	if policy == "skip" {
 		return "skip and wait for the next one"
 	}
 	return "run once now"
 }
-
 func scheduleRunLimitText(spec client.ScheduleSpec) string {
 	if !spec.Trigger.OneShot.IsZero() {
 		return "one run"
@@ -803,16 +930,7 @@ func scheduleRunLimitText(spec client.ScheduleSpec) string {
 	}
 	return strconv.Itoa(int(spec.MaxFires))
 }
-
-// renderScheduleFireLine renders one fire row for the inspect view's fire list.
-// An in-flight fire (Stop empty, #386) renders the "in-flight" marker + its
-// started/last-progress/deadline instants; a terminal fire renders its stop
-// reason + error. The cursor marker (▶) is prepended when selected.
-func renderScheduleFireLine(f client.ScheduleFire, selected bool) string {
-	marker := "  "
-	if selected {
-		marker = "▶ "
-	}
+func renderScheduleFireLine(f client.ScheduleFire) string {
 	stop := terminaltext.Sanitize(f.Stop)
 	if stop == "" {
 		stop = "in-flight"
@@ -820,77 +938,14 @@ func renderScheduleFireLine(f client.ScheduleFire, selected bool) string {
 			stop = "in-flight (overdue/degraded; termination unconfirmed)"
 		}
 	}
-	line := marker + terminaltext.Sanitize(f.ID) +
-		"  " + formatScheduleTime(f.FiredAt) +
-		"  " + stop
+	line := terminaltext.Sanitize(f.ID) + "  " + formatScheduleTime(f.FiredAt) + "  " + stop
 	if f.Stop == "" {
-		line += "  started " + formatScheduleTime(f.StartedAt) +
-			"  last update " + formatScheduleTime(f.ProgressAt) +
-			"  deadline " + formatScheduleTime(f.Deadline)
+		line += "  started " + formatScheduleTime(f.StartedAt) + "  last update " + formatScheduleTime(f.ProgressAt) + "  deadline " + formatScheduleTime(f.Deadline)
 	} else if f.Err != "" {
 		line += "  err: " + terminaltext.Sanitize(f.Err)
 	}
 	return line
 }
-
-// renderScheduleCreate renders the in-overlay Create form (issue #236).
-// The focused field is highlighted with the accent style; the mutating toggle
-// shows y/n when focused. The footer hint advertises the keybindings.
-func renderScheduleCreate(th theme.Theme, st scheduleState, hk helpKeys, _, _ int) string {
-	var b strings.Builder
-	b.WriteString(th.Style("title").Render("create schedule") + "\n\n")
-	f := st.form
-	muted := th.Style("muted")
-	fields := []struct {
-		label string
-		val   string
-	}{
-		{"name", f.name.View()},
-		{"prompt", f.prompt.View()},
-		{"trigger", f.trigger.View()},
-	}
-	for i, fld := range fields {
-		marker := "  "
-		if i == f.focusIdx {
-			marker = "▶ "
-		}
-		line := marker + muted.Render(fld.label+": ") + fld.val
-		if i == f.focusIdx {
-			line = th.Style("accent").Render(line)
-		}
-		b.WriteString(line + "\n")
-	}
-	// Mutating toggle (focusIdx == scheduleFormFieldCount).
-	mutMarker := "  "
-	if f.focusIdx == scheduleFormFieldCount {
-		mutMarker = "▶ "
-	}
-	mutLine := mutMarker + muted.Render("may change workspace: ")
-	if f.mutating {
-		mutLine += "yes"
-	} else {
-		mutLine += "no"
-	}
-	if f.focusIdx == scheduleFormFieldCount {
-		mutLine = th.Style("accent").Render(mutLine)
-	}
-	b.WriteString(mutLine + "\n")
-	if st.actionErr != "" {
-		// terminaltext.Sanitize for defense-in-depth parity with the panel sink — a
-		// server-sourced actionErr (e.g. a rejected cron) could carry control runes.
-		b.WriteString("\n" + th.Style("errorText").Render(terminaltext.Sanitize(st.actionErr)) + "\n")
-	}
-	// The enter (Choose) and esc (Close) chords read the LIVE keyMap markings;
-	// tab/↑↓/y/n are BARE keys via msg.String (NOT keyMap bindings), so they
-	// stay literal (issue #457).
-	b.WriteString("\n" + muted.Render("tab/↑↓: next  "+hk.choose+": advance/submit  y/n: allow/disallow changes  "+hk.closeOnly+": back"))
-	return b.String()
-}
-
-// triggerSummary renders a compact one-line summary of a schedule's trigger:
-// "cron: <expr>" for a cron trigger, "one-shot: <time>" for a one-shot, or
-// "one-shot: (fired)" for a one-shot whose NextFireAt is zero (it has fired or
-// is exhausted).
 func triggerSummary(spec client.ScheduleSpec) string {
 	if spec.Trigger.Cron != "" {
 		return "cron: " + spec.Trigger.Cron
@@ -900,16 +955,12 @@ func triggerSummary(spec client.ScheduleSpec) string {
 	}
 	return "one-shot: (unset)"
 }
-
-// formatScheduleTime renders a compact absolute timestamp (zero → "—").
 func formatScheduleTime(t time.Time) string {
 	if t.IsZero() {
 		return "—"
 	}
 	return t.UTC().Format("2006-01-02 15:04")
 }
-
-// boolStr renders a bool as "true"/"false".
 func boolStr(b bool) string {
 	if b {
 		return "true"

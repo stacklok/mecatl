@@ -408,8 +408,8 @@ func (s *sessionsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 		if key.Matches(msg, s.deps.keys.Close) {
 			s.closeTranscript()
 			s.intent = sessionsPhaseIntent{phase: sessionsIntentPhaseIdle}
-			if s.nextCursor != "" {
-				return s.beginPage(s.nextCursor), true, false
+			if cmd := s.refreshTranscriptInventory(); cmd != nil {
+				return cmd, true, false
 			}
 			return nil, true, false
 		}
@@ -904,6 +904,16 @@ func (s *sessionsState) closeTranscript() {
 	s.transcript = conversation{}
 	s.transcriptRend = nil
 	s.view = sessionsPanel
+}
+
+func (s *sessionsState) refreshTranscriptInventory() tea.Cmd {
+	if s.pager != nil && s.pageCtx == nil {
+		return s.beginPage("")
+	}
+	if s.nextCursor != "" {
+		return s.beginPage(s.nextCursor)
+	}
+	return nil
 }
 
 func (s *sessionsState) Close() {
