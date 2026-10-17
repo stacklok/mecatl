@@ -63,7 +63,7 @@ func TestSteer_WatermarkPrefixDrainPreservesSuffixMediaForEditBack(t *testing.T)
 	mm, cmd := m.editBackQueue()
 	m = mm.(Model)
 	runBatchLeaves(cmd)
-	if m.prompt.Value() != "second [Image #2]" || string(m.stagedMedia["[Image #2]"].data) != "suffix" {
+	if m.prompt.Value() != "/steer second [Image #2]" || string(m.stagedMedia["[Image #2]"].data) != "suffix" {
 		t.Fatalf("suffix media did not survive edit-back: draft=%q staged=%#v", m.prompt.Value(), m.stagedMedia)
 	}
 }

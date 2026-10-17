@@ -15,9 +15,9 @@ bindings and dims features that the connected server does not provide.
 
 |Key|Action|
 |-|-|
-|`enter`|Send a prompt; while work is running, steer when the server supports it or queue a follow-up otherwise.|
+|`enter`|Send a prompt; during a run, add to the pending delivery kind. With nothing pending, steer if supported or queue otherwise. See [Steer or queue input](./using-the-tui.md#keep-working-while-a-run-is-active).|
 |`shift+enter`, `ctrl+j`, `ctrl+enter`, or `alt+enter`|Insert a newline. Your terminal decides which of these chords it can send; see [Newline chords and your terminal](#newline-chords-and-your-terminal).|
-|`↑`|With empty input, bring queued follow-ups back for editing.|
+|`↑`|With empty input, pull back pending steers or queued follow-ups into one editable draft.|
 |`ctrl+u`|Clear the unsent draft and staged attachments (`ClearPrompt`; remappable).|
 |physical `esc` twice within 500ms|Clear an idle draft in terminals with enhanced key events. See [Clear a draft with Escape](#clear-a-draft-with-escape).|
 |`esc`|Clear an active selection first. While work is running, cancel directly and preserve the draft, queued follow-ups, and steer. While idle with a paused queue, clear that queue but preserve the draft.|

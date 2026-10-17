@@ -14,12 +14,12 @@
 
 
 
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃                                         ┃
-┃  ⏳ steer queued · ↑ edit · esc cancel  ┃
-┃    also check b.go                      ┃
-┃                                         ┃
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+
+
+
+ ▶ you · steer queued                                                            ↑ edit · esc cancel
+ │ also check b.go
 
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)

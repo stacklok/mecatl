@@ -525,12 +525,10 @@ func (m Model) selectionStatus() string {
 // right-aligned usage segment so they never touch.
 const footerGapPad = 2
 
-// queuePreviewLimit is the number of staged follow-ups previewed in the queue
-// card; the rest are summarised as a "+K more" line so a deep queue stays compact.
+// queuePreviewLimit bounds the visible pending messages; deeper queues show a count.
 const queuePreviewLimit = 3
 
-// queuePreviewWidth caps each preview line's display width so a long staged prompt
-// can't blow out the card; truncate appends an ellipsis past the cap.
+// queuePreviewWidth caps the queued prompt preview's display width.
 const queuePreviewWidth = 60
 
 // queuePreviewBound caps how many leading RUNES of a queued prompt feed the
@@ -558,19 +556,8 @@ func runePrefix(s string, n int) string {
 	return s
 }
 
-// renderQueue draws the "staged follow-ups" card shown just above the input
-// whenever the queue is non-empty. It reuses existing theme slots only (muted /
-// toolArgs for the normal card, ctxWarn for the paused header) — no new slots — so
-// it inherits the palette/card visual language. Returns "" for an empty queue (View
-// omits it then).
-//
-// Two states:
-//   - DRAINING (m.queuePaused == ""): a run is streaming (or about to) and the queue
-//     will fire FIFO at its clean completion — a muted "⏳ N queued".
-//   - PAUSED (m.queuePaused != ""): the last run ended on a non-clean stop (error /
-//     cancel / repeated failures / stream close) so the queue is HELD, not fired. A
-//     ctxWarn "⏸ N queued · paused: <reason>" header plus the resume/clear keys, so
-//     a held queue never reads as a silent hang (the whole point of this card).
+// renderQueue shows staged follow-ups as a pending user prompt. A non-clean
+// stop keeps the queue paused, with its reason and recovery keys in the heading.
 func (m Model) renderQueue() string {
 	n := len(m.queued)
 	if n == 0 {
@@ -578,82 +565,75 @@ func (m Model) renderQueue() string {
 	}
 	th := m.deps.Theme
 	hk := m.helpKeyMarkings()
-	muted := th.Style("muted")
-	var b strings.Builder
+	status := th.Style("muted").Render(fmt.Sprintf("%d queued", n))
+	hints := ""
+	if strings.TrimSpace(m.prompt.Value()) == "" {
+		hints = hk.editBack + " edit"
+	}
 	if m.queuePaused != "" {
 		reason, _ := renderfmt.StopReasonLabel(m.queuePaused)
-		b.WriteString(th.Style("ctxWarn").Render(fmt.Sprintf("⏸ %d queued · paused: %s", n, reason)))
-	} else {
-		// The edit hint only applies when EditBack is actionable, which
-		// requires an EMPTY input line; a draft present would make the
-		// hint misleading.
-		if strings.TrimSpace(m.prompt.Value()) == "" {
-			b.WriteString(muted.Render(fmt.Sprintf("⏳ %d queued · %s edit", n, hk.editBack)))
-		} else {
-			b.WriteString(muted.Render(fmt.Sprintf("⏳ %d queued", n)))
+		status = th.Style("ctxWarn").Render(fmt.Sprintf("%d queued · paused: %s", n, terminaltext.SanitizeSingleLine(reason)))
+		if hints != "" {
+			hints = hk.submit + " sends · " + hints + " · "
 		}
+		hints += hk.cancel + " clears"
 	}
-	shown := min(n, queuePreviewLimit)
-	for i := 0; i < shown; i++ {
-		// Bound the flatten to a rune prefix (queuePreviewBound) so a multi-KB
-		// queued payload is never whitespace-scanned in full on every frame.
-		b.WriteString("\n" + th.Style("toolArgs").Render("  "+truncate(oneLine(runePrefix(m.queued[i], queuePreviewBound)), queuePreviewWidth)))
-	}
-	if rest := n - shown; rest > 0 {
-		b.WriteString("\n" + muted.Render(fmt.Sprintf("  +%d more", rest)))
-	}
-	if m.queuePaused != "" {
-		b.WriteString("\n" + muted.Render("  "+hk.submit+" sends · "+hk.editBack+" edit · "+hk.cancel+" clears"))
-	}
-	return th.Style("askCard").Render(b.String())
+	return m.renderPendingPrompt(status, m.queued, hints)
 }
 
-// renderSteer draws the steer-mode (Capabilities.Steer) "in-flight steer" card
-// shown just above the input whenever a steer is live. It mirrors renderQueue's
-// visual language (muted / toolArgs / ctxWarn on the askCard style) but reflects
-// the AUTHORITATIVE server-reported state — the engine is the sole authority on
-// what happened to a steer (the client cannot observe the drain moment across
-// stream latency), so the card shows what the server acked/echoed, never a
-// client-side guess. Returns "" when no steer is in flight (layout omits it then).
-//
-// Four honest states:
-//   - PENDING (steerPending): sent, ack not yet back — a muted "⏳ steer: sending…".
-//   - SENT (steerSent): acked accepted/appended, parked for the next turn
-//     boundary — a muted "⏳ steer queued · ↑ edit · esc cancel".
-//   - PROMOTED (steerPromoted): acked too_late — the run had ended, so the text
-//     auto-started a follow-up — a ctxWarn "↪ steer sent as a follow-up (run had
-//     already ended)".
-//   - RETRACTED (steerRetracted): the steer_cancel won — a muted "✕ steer
-//     retracted".
+// renderSteer reflects the server-acknowledged lifecycle, not a local guess at
+// when a steer drained. It shares the local queue's pending user-prompt styling.
 func (m Model) renderSteer() string {
 	if m.steer == nil {
 		return ""
 	}
 	th := m.deps.Theme
 	hk := m.helpKeyMarkings()
-	muted := th.Style("muted")
-	var b strings.Builder
+	status, hints := "", ""
 	switch m.steer.Phase {
 	case steerPending:
-		b.WriteString(muted.Render("⏳ steer: sending…"))
+		status = th.Style("muted").Render("steer: sending…")
 	case steerSent:
-		b.WriteString(muted.Render("⏳ steer queued · " + hk.editBack + " edit · " + hk.cancel + " cancel"))
-	case steerPromoted:
-		b.WriteString(th.Style("ctxWarn").Render("↪ steer sent as a follow-up (run had already ended)"))
-	case steerRetracted:
-		b.WriteString(muted.Render("✕ steer retracted"))
-	}
-	// Preview each logical message on its own line. A re-composed (↑-edit)
-	// fragment carries the WHOLE merged bundle in its Text (with blank-line
-	// separators INSIDE), so split each send's text on the merge separator:
-	// the wire stays one frame while the card shows the parts as separate
-	// queued lines.
-	for _, s := range m.steer.Sends {
-		for _, part := range strings.Split(s.Text, queueMergeSep) {
-			b.WriteString("\n" + th.Style("toolArgs").Render("  "+truncate(oneLine(runePrefix(part, queuePreviewBound)), queuePreviewWidth)))
+		status = th.Style("muted").Render("steer queued")
+		hints = hk.cancel + " cancel"
+		if strings.TrimSpace(m.prompt.Value()) == "" {
+			hints = hk.editBack + " edit · " + hints
 		}
+	case steerPromoted:
+		status = th.Style("ctxWarn").Render("↪ steer sent as a follow-up (run had already ended)")
+	case steerRetracted:
+		status = th.Style("muted").Render("✕ steer retracted")
 	}
-	return th.Style("askCard").Render(b.String())
+	var previews []string
+	for _, send := range m.steer.Sends {
+		previews = append(previews, strings.Split(send.Text, queueMergeSep)...)
+	}
+	return m.renderPendingPrompt(status, previews, hints)
+}
+
+// renderPendingPrompt uses the transcript's user heading, neutral text and left
+// rail, without the permission card's border or padding. Each message preview is
+// a single bounded line; only the heading carries state and controls.
+func (m Model) renderPendingPrompt(status string, texts []string, hints string) string {
+	th := m.deps.Theme
+	width := m.widthOr()
+	heading := " " + th.Style("transcriptUserMarker").Render(theme.TranscriptUserGlyph) +
+		th.Style("transcriptUserHeading").Render(" you") + th.Style("muted").Render(" · ") + status
+	heading = ansi.Truncate(heading, width, "…")
+	if hints != "" && ansi.StringWidth(heading)+2+ansi.StringWidth(hints) <= width {
+		heading += strings.Repeat(" ", width-ansi.StringWidth(heading)-ansi.StringWidth(hints)) + th.Style("muted").Render(hints)
+	}
+	lines := []string{heading}
+	for _, text := range texts[:min(len(texts), queuePreviewLimit)] {
+		preview := terminaltext.SanitizeSingleLine(oneLine(runePrefix(text, queuePreviewBound)))
+		line := " " + th.Style("transcriptUserRail").Render("│") + " " +
+			th.Style("transcriptUserText").Render(ansi.Truncate(preview, min(queuePreviewWidth, max(0, width-3)), "…"))
+		lines = append(lines, ansi.Truncate(line, width, ""))
+	}
+	if rest := len(texts) - queuePreviewLimit; rest > 0 {
+		lines = append(lines, ansi.Truncate(th.Style("muted").Render(fmt.Sprintf("   +%d more", rest)), width, ""))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // renderInput renders the textarea (now always focused — it stays editable while a

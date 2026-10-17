@@ -7,10 +7,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// A re-composed (↑-edit) fragment carries the WHOLE merged bundle in a single
-// send's Text — the card must show each part on its own line (the "steer 7 /
-// steer 8a as one line" UI glitch in session 8d9c51278).
-func TestSteer_RecomposedFragmentRendersPerPart(t *testing.T) {
+// Re-composed fragments keep the merged message in the body preview, separate
+// from the pending-state heading.
+func TestSteer_RecomposedFragmentRendersPendingUserPrompt(t *testing.T) {
 	m, _ := newSteerModel(t, true)
 	m = startRunning(t, m, "original")
 
@@ -19,7 +18,7 @@ func TestSteer_RecomposedFragmentRendersPerPart(t *testing.T) {
 	mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	m = mm.(Model)
 	runBatchLeaves(cmd)
-	if got := m.prompt.Value(); got != "steer 7"+queueMergeSep+"steer 8" {
+	if got := m.prompt.Value(); got != "/steer steer 7"+queueMergeSep+"steer 8" {
 		t.Fatalf("↑ must pull the merged bundle into the textarea, got %q", got)
 	}
 	m = typeText(t, m, "a")
@@ -31,14 +30,8 @@ func TestSteer_RecomposedFragmentRendersPerPart(t *testing.T) {
 	if !strings.Contains(card, "steer 7") || !strings.Contains(card, "steer 8a") {
 		t.Fatalf("the card must show both parts, got:\n%s", card)
 	}
-	i7 := strings.Index(card, "steer 7")
-	i8 := strings.Index(card, "steer 8a")
-	if i7 < 0 || i8 < 0 {
-		t.Fatalf("the card must show both parts, got:\n%s", card)
-	}
-	// The parts live on DIFFERENT rendered lines — a single-line merge would
-	// put them on the same \n-free span.
-	if !strings.Contains(card[i7:i8], "\n") {
-		t.Fatalf("the parts must render on separate lines, got:\n%s", card)
+	lines := strings.Split(card, "\n")
+	if len(lines) != 3 || strings.Contains(lines[0], "steer 7") || lines[1] != " │ steer 7" || lines[2] != " │ steer 8a" {
+		t.Fatalf("queued steer must separate heading and logical message previews, got:\n%s", card)
 	}
 }

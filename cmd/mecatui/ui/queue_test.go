@@ -228,7 +228,7 @@ func TestDrainMergePausesOnPendingMode(t *testing.T) {
 	if m.queuePaused != "mode" {
 		t.Fatalf("pending mode must pause the merged drain, queuePaused=%q", m.queuePaused)
 	}
-	if got := m.prompt.Value(); got != "second"+queueMergeSep+"third" {
+	if got := m.prompt.Value(); got != "/queue second"+queueMergeSep+"third" {
 		t.Fatalf("merged text must sit in the textarea, got %q", got)
 	}
 	if len(m.queued) != 0 {

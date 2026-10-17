@@ -178,12 +178,16 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 	})
 
 	b.WriteString("\n" + heading.Render("While a run is active") + "\n")
-	streamingSubmit := "queue a follow-up to send after this run"
+	streamingSubmit := "add to pending input; otherwise queue a follow-up after this run"
 	if caps.Steer {
-		streamingSubmit = "guide the running agent at its next step; built-in commands still run here"
+		streamingSubmit = "add to pending input; otherwise guide the running agent at its next step"
 	}
 	writeHelpRows(&b, th, []helpRow{
 		{key: hk.submit, action: streamingSubmit},
+		{key: "/queue TEXT", action: "hold a follow-up until this run finishes"},
+		{key: "/steer TEXT", action: "guide this run at its next turn boundary", available: caps.Steer, gated: true},
+		{key: hk.editBack, action: "with empty input, pull pending messages into one prefixed draft"},
+		{key: "", action: "pending steers and queued follow-ups cannot mix; built-in commands still run here"},
 		{key: hk.clearPrompt, action: "clear the current draft"},
 		{key: hk.cancel, action: "cancel the current run"},
 	})
