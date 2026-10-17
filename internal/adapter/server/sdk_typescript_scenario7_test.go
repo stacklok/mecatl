@@ -81,7 +81,7 @@ func TestSDKTypescriptRelease_Scenario7_NodeMatrixShape(t *testing.T) {
 	if integrationJob.TimeoutMinutes <= 0 {
 		t.Fatal("sdk-integration job must declare a positive timeout-minutes")
 	}
-	assertSDKScenario7ActionInput(t, integrationJob, "oven-sh/setup-bun@", "bun-version", "1.4.1")
+	assertSDKScenario7ActionInput(t, integrationJob, "oven-sh/setup-bun@", "bun-version", "1.4.2")
 	assertSDKScenario7ActionInput(t, integrationJob, "actions/setup-node@", "node-version", "24.x")
 	for _, command := range []string{
 		"task generate",
