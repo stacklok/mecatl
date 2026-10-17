@@ -71,6 +71,13 @@ type scheduleForm struct {
 
 const scheduleFormFieldCount = 3
 
+func (f scheduleForm) permissionMode() string {
+	if f.mutating {
+		return client.ModeDefaultString
+	}
+	return "plan"
+}
+
 // Read and mutation sequences are independent: navigation must not lose an owned
 // mutation completion. Starting AND completing a mutation invalidate read snapshots.
 type scheduleResultMsg struct {
@@ -246,6 +253,12 @@ func (s *scheduleState) handleMutationResult(r scheduleResultMsg) (tea.Cmd, bool
 		s.actionErr = err.Error()
 	} else {
 		s.actionErr = ""
+		if r.kind == "create" {
+			s.form = scheduleForm{}
+			if s.view == scheduleCreate {
+				s.view = schedulePanel
+			}
+		}
 	}
 	cmds := []tea.Cmd{s.listCmd()}
 	if s.view == scheduleInspect || s.view == scheduleDetails {
@@ -539,6 +552,8 @@ func (s *scheduleState) createKey(msg tea.KeyPressMsg) tea.Cmd {
 		s.view = schedulePanel
 		s.form = scheduleForm{}
 		return nil
+	case s.pendingAction != "":
+		return nil
 	case key.Matches(msg, s.deps.keys.Choose):
 		if s.form.focusIdx == scheduleFormFieldCount {
 			return s.submitCreate()
@@ -591,8 +606,7 @@ func (s *scheduleState) submitCreate() tea.Cmd {
 	} else {
 		trigger.Cron = f.trigger.Value()
 	}
-	spec := client.ScheduleSpec{Name: f.name.Value(), Prompt: f.prompt.Value(), Trigger: trigger, Mutating: f.mutating, Singleton: true, Timezone: "UTC"}
-	s.view, s.form = schedulePanel, scheduleForm{}
+	spec := client.ScheduleSpec{Name: f.name.Value(), Prompt: f.prompt.Value(), Trigger: trigger, Mode: f.permissionMode(), Mutating: f.mutating, Singleton: true, Timezone: "UTC"}
 	return s.mutate(client.CreateScheduleCmd(s.deps.ctx, s.lister, spec), "create", spec.Name)
 }
 
@@ -606,12 +620,15 @@ func (s *scheduleState) Render(width, height int) (string, []ClickableRegion) {
 	for _, field := range []*textinput.Model{&s.form.name, &s.form.prompt, &s.form.trigger} {
 		field.SetWidth(max(1, width-14))
 	}
+	var body string
+	var regions []ClickableRegion
 	switch s.view {
 	case scheduleConfirm, scheduleCreate:
-		return s.renderOverlay(width, height)
+		body, regions = s.renderOverlay(width, height)
 	default:
-		return s.renderSurface(width, height, reveal)
+		body, regions = s.renderSurface(width, height, reveal)
 	}
+	return lipgloss.NewStyle().Height(height).Render(body), regions
 }
 
 func (s *scheduleState) renderCompact(width int) (string, []ClickableRegion) {
@@ -874,8 +891,12 @@ func renderScheduleCreate(th theme.Theme, st scheduleState, hk helpKeys, _, _ in
 		}
 		b.WriteString(marker + field.label + ": " + field.value + "\n")
 	}
+	b.WriteString("\npermission mode: " + f.permissionMode() + "\n")
 	if st.actionErr != "" {
 		b.WriteString("\n" + terminaltext.Sanitize(st.actionErr) + "\n")
+	}
+	if st.pendingAction != "" {
+		b.WriteString("\noperation pending (closing does not undo it)\n")
 	}
 	b.WriteString("\ntab/↑↓: next  " + hk.choose + ": advance/submit  y/n: allow/disallow changes  " + hk.closeOnly + ": back")
 	return b.String()

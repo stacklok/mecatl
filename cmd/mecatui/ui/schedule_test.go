@@ -116,7 +116,7 @@ func scheduleKey(t *testing.T, m Model, msg tea.KeyPressMsg) Model {
 	if m.modal == nil {
 		return m
 	}
-	if s, ok := m.modal.(*scheduleState); ok && (s.filter.Focused() || s.view == scheduleCreate) {
+	if s, ok := m.modal.(*scheduleState); ok && (s.filter.Focused() || s.view == scheduleCreate && s.pendingAction == "") {
 		return m
 	}
 	return feedCmd(t, m, cmd)
@@ -130,6 +130,9 @@ func scheduleBody(t *testing.T, s *scheduleState, w, h int) string {
 	body, hits := s.Render(w, h)
 	if len(hits) > 0 || lipgloss.Width(body) > w || (h > 0 && lipgloss.Height(body) > h) {
 		t.Fatalf("body exceeds %dx%d: %dx%d\n%s", w, h, lipgloss.Width(body), lipgloss.Height(body), body)
+	}
+	if w > 0 && h > 0 && lipgloss.Height(body) != h {
+		t.Fatalf("body height = %d, want offered height %d", lipgloss.Height(body), h)
 	}
 	if w <= 0 || h <= 0 {
 		if body != "" || !s.compact {
@@ -313,7 +316,7 @@ func TestScheduleCreateForm(t *testing.T) {
 			if trigger == "every 30 minutes" {
 				cron = "*/30 * * * *"
 			}
-			if fs.createCalls != 1 || fs.created.Name != "ny-new" || fs.created.Prompt != "run nightly tests" || !fs.created.Mutating || !fs.created.Singleton || fs.created.Timezone != "UTC" || fs.created.Trigger.Cron != cron || !fs.created.Trigger.OneShot.IsZero() || s.view != schedulePanel || len(s.schedules) != 1 {
+			if fs.createCalls != 1 || fs.created.Name != "ny-new" || fs.created.Prompt != "run nightly tests" || fs.created.Mode != "default" || !fs.created.Mutating || !fs.created.Singleton || fs.created.Timezone != "UTC" || fs.created.Trigger.Cron != cron || !fs.created.Trigger.OneShot.IsZero() || s.view != schedulePanel || len(s.schedules) != 1 {
 				t.Fatalf("create semantics lost: %+v", fs.created)
 			}
 			m = scheduleRune(t, m, "c")
@@ -328,6 +331,114 @@ func TestScheduleCreateForm(t *testing.T) {
 		})
 	}
 }
+func TestScheduleCreateRetainsFormUntilSuccess(t *testing.T) {
+	for _, mutating := range []bool{false, true} {
+		t.Run(fmt.Sprint(mutating), func(t *testing.T) {
+			fs := &fakeScheduleLister{}
+			m, s := openedSchedule(t, fs)
+			m.prompt.Rewrite("unsent draft")
+			m = scheduleRune(t, m, "c")
+			s.form.name.SetValue("nightly")
+			s.form.prompt.SetValue("review the changes")
+			s.form.trigger.SetValue("invalid cron")
+			s.form.focusIdx = scheduleFormFieldCount
+			s.focusField()
+			if mutating {
+				m = scheduleRune(t, m, "y")
+			}
+			mode := "plan"
+			if mutating {
+				mode = "default"
+			}
+			before := s.form
+			if body := scheduleBody(t, s, m.width, m.vp.Height()); !strings.Contains(body, "permission mode: "+mode) {
+				t.Fatal("permission mode is not visible: " + body)
+			}
+
+			mm, submit := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+			m = mm.(Model)
+			if submit == nil || s.view != scheduleCreate || s.pendingAction != "create" {
+				t.Fatal("submission left the form before confirmation")
+			}
+			for _, msg := range []tea.KeyPressMsg{{Code: tea.KeyEnter}, {Code: tea.KeyTab}, navigationTestKey("y"), navigationTestKey("x")} {
+				mm, duplicate := m.Update(msg)
+				m = mm.(Model)
+				if duplicate != nil {
+					t.Fatal("pending creation accepted more input or another submission")
+				}
+			}
+			if s.form.name.Value() != before.name.Value() || s.form.prompt.Value() != before.prompt.Value() || s.form.trigger.Value() != before.trigger.Value() || s.form.mutating != before.mutating || s.form.focusIdx != before.focusIdx {
+				t.Fatal("pending creation changed form values or focus")
+			}
+			if body := scheduleBody(t, s, m.width, m.vp.Height()); !strings.Contains(body, "operation pending (closing does not undo it)") {
+				t.Fatal("pending creation has no visible feedback: " + body)
+			}
+
+			fs.err = errors.New("invalid cron expression")
+			m = feedCmd(t, m, submit)
+			if fs.createCalls != 1 || fs.created.Mode != mode || fs.created.Mutating != mutating {
+				t.Fatalf("creation did not request the expected permission mode: %+v", fs.created)
+			}
+			if s.view != scheduleCreate || s.pendingAction != "" || s.form.name.Value() != before.name.Value() || s.form.prompt.Value() != before.prompt.Value() || s.form.trigger.Value() != before.trigger.Value() || s.form.mutating != before.mutating || s.form.focusIdx != before.focusIdx {
+				t.Fatal("failed creation discarded form values or focus")
+			}
+			if body := scheduleBody(t, s, m.width, m.vp.Height()); !strings.Contains(body, "invalid cron expression") {
+				t.Fatal("creation error is not visible inline: " + body)
+			}
+
+			// Correct the rejected field using the normal input route, then retry.
+			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
+			m = scheduleKey(t, m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
+			m = scheduleKey(t, m, tea.KeyPressMsg{Code: 'k', Mod: tea.ModCtrl})
+			for _, r := range "0 9 * * *" {
+				m = scheduleRune(t, m, string(r))
+			}
+			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+			fs.err = nil
+			m = scheduleKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+			if fs.createCalls != 2 || fs.created.Trigger.Cron != "0 9 * * *" || fs.created.Mode != mode || fs.created.Mutating != mutating || s.view != schedulePanel || s.form.name.Value() != "" || len(s.schedules) != 1 || s.actionErr != "" {
+				t.Fatalf("corrected creation failed: spec=%+v, view=%d, error=%q", fs.created, s.view, s.actionErr)
+			}
+			if m.prompt.Value() != "unsent draft" {
+				t.Fatal("form editing changed the chat draft")
+			}
+		})
+	}
+}
+
+func TestScheduleCreatePendingBackDoesNotCancelRequest(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprint(fail), func(t *testing.T) {
+			fs := &fakeScheduleLister{}
+			m, s := openedSchedule(t, fs)
+			m.prompt.Rewrite("retained draft")
+			m = scheduleRune(t, m, "c")
+			s.form.name.SetValue("new")
+			s.form.prompt.SetValue("review changes")
+			s.form.trigger.SetValue("0 9 * * *")
+			s.form.focusIdx = scheduleFormFieldCount
+			s.focusField()
+			mm, submit := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+			m = mm.(Model)
+			mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+			m = mm.(Model)
+			if s.view != schedulePanel || s.pendingAction != "create" {
+				t.Fatal("explicit Back failed to leave pending form")
+			}
+			if fail {
+				fs.err = errors.New("creation rejected")
+			}
+			m = feedCmd(t, m, submit)
+			if fs.createCalls != 1 || s.view != schedulePanel || s.pendingAction != "" || m.modal != s || m.prompt.Value() != "retained draft" {
+				t.Fatal("late creation result cancelled, reopened form, or changed the draft")
+			}
+			if fail && !strings.Contains(scheduleBody(t, s, 100, 30), "creation rejected") {
+				t.Fatal("late creation error was lost")
+			}
+		})
+	}
+}
+
 func TestScheduleStableIDsBackAndFallback(t *testing.T) {
 	fs := &fakeScheduleLister{schedules: scheduleRows(50), fires: scheduleFires("schedule-25", 40)}
 	m, s := openedSchedule(t, fs)
@@ -470,11 +581,14 @@ func TestScheduleRunningLifecycleRendered(t *testing.T) {
 }
 
 func TestScheduleEmptyClaimedAndErrors(t *testing.T) {
-	for _, state := range []string{"empty", "claimed", "list-error", "action-error", "create-error", "fires-error", "spec-error"} {
+	for _, state := range []string{"empty", "inventory-empty", "no-match", "claimed", "list-error", "action-error", "create-error", "fires-error", "spec-error"} {
 		t.Run(state, func(t *testing.T) {
 			fs := &fakeScheduleLister{schedules: []client.Schedule{sampleSchedule("nightly")}}
 			if state == "claimed" {
 				fs.schedules[0].State.LastFireSessionID = "pending"
+			}
+			if state == "inventory-empty" {
+				fs.schedules = nil
 			}
 			if state == "list-error" {
 				fs.err = errors.New("list failed\x1b[31m")
@@ -482,6 +596,12 @@ func TestScheduleEmptyClaimedAndErrors(t *testing.T) {
 			m, s := openedSchedule(t, fs)
 			want := "no runs recorded"
 			switch state {
+			case "inventory-empty":
+				want = "no schedules yet"
+			case "no-match":
+				s.filter.SetValue("absent")
+				s.syncFilter()
+				want = "no matches"
 			case "list-error":
 				want = "list failed"
 			case "action-error":

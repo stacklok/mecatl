@@ -25,8 +25,19 @@ func TestScheduleFillPlacementRetainsRootChrome(t *testing.T) {
 		}
 		s.confirm = s.schedules[0]
 		body, _ := s.Render(m.width, m.vp.Height())
+		if got := lipgloss.Height(body); got != m.vp.Height() {
+			t.Fatalf("view %d body height = %d, want %d", view, got, m.vp.Height())
+		}
 		if got := m.renderBody(); got != body {
 			t.Fatalf("view %d does not use parent fill placement", view)
+		}
+		frame := strings.Split(m.View().Content, "\n")
+		if len(frame) != m.height {
+			t.Fatalf("view %d frame height = %d, want %d", view, len(frame), m.height)
+		}
+		footer := strings.Split(m.renderFooter(), "\n")
+		if got := frame[len(frame)-len(footer):]; !slices.Equal(got, footer) {
+			t.Fatalf("view %d displaced footer: got %q, want %q", view, got, footer)
 		}
 		if m.metrics.outerBounds != m.metrics.contentBounds || s.offers[view] != [2]int{m.width, m.vp.Height()} {
 			t.Fatal("parent offered a card instead of the conversation")
