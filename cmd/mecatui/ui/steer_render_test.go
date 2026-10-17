@@ -31,7 +31,7 @@ func TestSteer_RecomposedFragmentRendersPendingUserPrompt(t *testing.T) {
 		t.Fatalf("the card must show both parts, got:\n%s", card)
 	}
 	lines := strings.Split(card, "\n")
-	if len(lines) != 3 || strings.Contains(lines[0], "steer 7") || lines[1] != " │ steer 7" || lines[2] != " │ steer 8a" {
+	if len(lines) != 4 || strings.Contains(lines[0], "steer 7") || lines[1] != " │ steer 7" || lines[2] != " │ " || lines[3] != " │ steer 8a" {
 		t.Fatalf("queued steer must separate heading and logical message previews, got:\n%s", card)
 	}
 }

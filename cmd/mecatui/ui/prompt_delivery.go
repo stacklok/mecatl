@@ -48,12 +48,12 @@ func (m Model) deliverPrompt(kind, text string) (tea.Model, tea.Cmd) {
 	}
 	if kind == "queue" {
 		if m.hasPendingSteer() {
-			return m.deliveryError("pending steers must drain or be pulled back before queueing")
+			return m.deliveryError("pending steers must drain before queueing; to pull them back, clear the input and press " + m.helpKeyMarkings().editBack)
 		}
 		return m.queuePrompt(text)
 	}
 	if len(m.queued) > 0 {
-		return m.deliveryError("pending queued prompts must drain or be pulled back before steering")
+		return m.deliveryError("pending queued prompts must drain before steering; to pull them back, clear the input and press " + m.helpKeyMarkings().editBack)
 	}
 	if !m.caps.Steer || m.stream == nil {
 		return m.deliveryError("steering is unavailable for this active run")

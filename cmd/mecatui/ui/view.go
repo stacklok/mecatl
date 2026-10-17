@@ -525,22 +525,15 @@ func (m Model) selectionStatus() string {
 // right-aligned usage segment so they never touch.
 const footerGapPad = 2
 
-// queuePreviewLimit bounds the visible pending messages; deeper queues show a count.
+// queuePreviewLimit bounds visible pending preview rows; overflow shows a count.
 const queuePreviewLimit = 3
 
 // queuePreviewWidth caps the queued prompt preview's display width.
 const queuePreviewWidth = 60
 
-// queuePreviewBound caps how many leading RUNES of a queued prompt feed the
-// per-frame preview flatten (oneLine) + truncate. renderQueue runs on every
-// rendered frame while the queue is non-empty, and an enqueue-expanded staged
-// paste can be a multi-KB payload — flattening it in full made every frame pay
-// O(payload) until the queue drained (the very lag issue #45's staging removes
-// from the input). 4× the preview's display width is always enough runes to fill
-// the truncate(…, queuePreviewWidth) output, except for a prefix that is almost
-// entirely collapsed whitespace — then the preview just shows less of a huge
-// payload, which is fine for a one-line hint. Output is byte-identical to the
-// unbounded algorithm for any queued string under the bound.
+// queuePreviewBound caps how many leading RUNES of each queued prompt feed the
+// per-frame line splitting, whitespace cleanup and truncation. Expanded pastes
+// can be large, so preview rendering must not scan the full payload.
 const queuePreviewBound = 4 * queuePreviewWidth
 
 // runePrefix returns the first n runes of s without scanning past them (no
@@ -606,14 +599,14 @@ func (m Model) renderSteer() string {
 	}
 	var previews []string
 	for _, send := range m.steer.Sends {
-		previews = append(previews, strings.Split(send.Text, queueMergeSep)...)
+		previews = append(previews, send.Text)
 	}
 	return m.renderPendingPrompt(status, previews, hints)
 }
 
 // renderPendingPrompt uses the transcript's user heading, neutral text and left
-// rail, without the permission card's border or padding. Each message preview is
-// a single bounded line; only the heading carries state and controls.
+// rail, without the permission card's border or padding. Logical lines, including
+// blank lines, are preserved within the preview row limit.
 func (m Model) renderPendingPrompt(status string, texts []string, hints string) string {
 	th := m.deps.Theme
 	width := m.widthOr()
@@ -623,14 +616,18 @@ func (m Model) renderPendingPrompt(status string, texts []string, hints string) 
 	if hints != "" && ansi.StringWidth(heading)+2+ansi.StringWidth(hints) <= width {
 		heading += strings.Repeat(" ", width-ansi.StringWidth(heading)-ansi.StringWidth(hints)) + th.Style("muted").Render(hints)
 	}
+	var previewLines []string
+	for _, text := range texts {
+		previewLines = append(previewLines, strings.Split(runePrefix(text, queuePreviewBound), "\n")...)
+	}
 	lines := []string{heading}
-	for _, text := range texts[:min(len(texts), queuePreviewLimit)] {
-		preview := terminaltext.SanitizeSingleLine(oneLine(runePrefix(text, queuePreviewBound)))
+	for _, text := range previewLines[:min(len(previewLines), queuePreviewLimit)] {
+		preview := terminaltext.SanitizeSingleLine(oneLine(text))
 		line := " " + th.Style("transcriptUserRail").Render("│") + " " +
 			th.Style("transcriptUserText").Render(ansi.Truncate(preview, min(queuePreviewWidth, max(0, width-3)), "…"))
 		lines = append(lines, ansi.Truncate(line, width, ""))
 	}
-	if rest := len(texts) - queuePreviewLimit; rest > 0 {
+	if rest := len(previewLines) - queuePreviewLimit; rest > 0 {
 		lines = append(lines, ansi.Truncate(th.Style("muted").Render(fmt.Sprintf("   +%d more", rest)), width, ""))
 	}
 	return strings.Join(lines, "\n")

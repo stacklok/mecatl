@@ -88,6 +88,34 @@ func TestPromptDeliveryPendingQueueOwnsEnter(t *testing.T) {
 	}
 }
 
+func TestPromptDeliveryPullbackRendersBlankLines(t *testing.T) {
+	for _, kind := range []string{"queue", "steer"} {
+		t.Run(kind, func(t *testing.T) {
+			m, _ := newSteerModel(t, true)
+			m = startRunning(t, m, "first")
+			m = submitDelivery(t, m, "/"+kind+" second")
+			m = submitDelivery(t, m, "/"+kind+" third")
+			m = pressUp(t, m)
+			if got, want := m.prompt.Value(), "/"+kind+" second\n\nthird"; got != want {
+				t.Fatalf("draft = %q, want %q", got, want)
+			}
+			rows := strings.Split(stripANSIstr(m.renderInput()), "\n")
+			first, last := -1, -1
+			for i, row := range rows {
+				if strings.Contains(row, "second") {
+					first = i
+				}
+				if strings.Contains(row, "third") {
+					last = i
+				}
+			}
+			if first < 0 || last != first+2 {
+				t.Fatalf("pullback must render a blank line between prompts:\n%s", strings.Join(rows, "\n"))
+			}
+		})
+	}
+}
+
 func TestPromptDeliveryMergedMediaPullback(t *testing.T) {
 	for _, kind := range []string{"queue", "steer"} {
 		t.Run(kind, func(t *testing.T) {
@@ -527,8 +555,8 @@ func TestPromptDeliveryErrorsVisibleDuringRun(t *testing.T) {
 		name, pending, rejected, feedback string
 		steerCap                          bool
 	}{
-		{"queue conflicts with steer", "/steer pending", "/queue rejected", "pending steers must drain or be pulled back before queueing", true},
-		{"steer conflicts with queue", "/queue pending", "/steer rejected", "pending queued prompts must drain or be pulled back before steering", true},
+		{"queue conflicts with steer", "/steer pending", "/queue rejected", "pending steers must drain before queueing; to pull them back, clear the input and press ↑", true},
+		{"steer conflicts with queue", "/queue pending", "/steer rejected", "pending queued prompts must drain before steering; to pull them back, clear the input and press ↑", true},
 		{"steer unavailable", "", "/steer rejected", "steering is unavailable for this active run", false},
 		{"empty instruction", "", "/queue ", "prompt is empty; add text or attached content", true},
 	} {
@@ -549,6 +577,32 @@ func TestPromptDeliveryErrorsVisibleDuringRun(t *testing.T) {
 			}
 			if got := stripANSIstr(m.View().Content); !strings.Contains(got, tc.feedback) {
 				t.Fatalf("rejection must be visible while the footer shows tool activity; missing %q:\n%s", tc.feedback, got)
+			}
+		})
+	}
+}
+
+func TestPromptDeliveryConflictHintUsesEditBackBinding(t *testing.T) {
+	for _, kind := range []string{"queue", "steer"} {
+		t.Run(kind, func(t *testing.T) {
+			m, _ := newSteerModel(t, true)
+			m.keys = applyKeyOverrides(m.keys, map[string][]string{"EditBack": {"ctrl+b"}})
+			m = startRunning(t, m, "first")
+			m = submitDelivery(t, m, "/"+kind+" pending")
+			opposite := "queue"
+			if kind == "queue" {
+				opposite = "steer"
+			}
+			m = submitDelivery(t, m, "/"+opposite+" rejected")
+			if got := stripANSIstr(m.View().Content); !strings.Contains(strings.Join(strings.Fields(got), " "), "clear the input and press ctrl+b") {
+				t.Fatalf("missing rebound pullback guidance:\n%s", got)
+			}
+			m.prompt.Reset()
+			mm, cmd := m.Update(tea.KeyPressMsg{Code: 'b', Mod: tea.ModCtrl})
+			m = mm.(Model)
+			runBatchLeaves(cmd)
+			if got, want := m.prompt.Value(), "/"+kind+" pending"; got != want {
+				t.Fatalf("rebound pullback = %q, want %q", got, want)
 			}
 		})
 	}

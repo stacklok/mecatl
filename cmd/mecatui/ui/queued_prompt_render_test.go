@@ -36,7 +36,7 @@ func TestPendingPromptsSeparateHeadingAndBody(t *testing.T) {
 				if len(lines) < 2 || strings.Contains(lines[0], "first") {
 					t.Errorf("%s heading and body must be separate: %q", state, card)
 				}
-				if width >= 30 && (!strings.HasPrefix(lines[0], " ▶ you · ") || !strings.HasPrefix(lines[1], " │ first 漢字 ") || !strings.HasSuffix(lines[1], "…")) {
+				if width >= 30 && (!strings.HasPrefix(lines[0], " ▶ you · ") || lines[1] != " │ first" || !strings.HasPrefix(lines[2], " │ 漢字 ") || !strings.HasSuffix(lines[2], "…")) {
 					t.Errorf("%s must look like a user prompt with a bounded body preview: %q", state, card)
 				}
 			}
@@ -50,8 +50,48 @@ func TestPendingPromptsSeparateHeadingAndBody(t *testing.T) {
 						t.Errorf("%s controls must align to the heading's right edge: %q", state, heading)
 					}
 				}
-				if card := ansi.Strip(cards["queue"]); !strings.Contains(card, "4 queued") || !strings.Contains(card, " │ second\n │ third\n   +1 more") || strings.Contains(card, "fourth") {
+				if card := ansi.Strip(cards["queue"]); !strings.Contains(card, "4 queued") || !strings.Contains(card, " │ second\n   +2 more") || strings.Contains(card, "third") || strings.Contains(card, "fourth") {
 					t.Errorf("queue must retain count and cap visible previews: %q", card)
+				}
+			}
+		})
+	}
+}
+
+func TestPendingPromptsPreserveDirectMultilineInput(t *testing.T) {
+	for _, kind := range []string{"queue", "steer"} {
+		for _, text := range []string{"test 1\ntest 2", "test 1\n\ntest 2"} {
+			t.Run(kind+"/"+fmt.Sprintf("%q", text), func(t *testing.T) {
+				m, _ := newSteerModel(t, true)
+				m = startRunning(t, m, "original")
+				m = submitDelivery(t, m, "/"+kind+" "+text)
+				want := " │ " + strings.ReplaceAll(text, "\n", "\n │ ")
+				if got := ansi.Strip(m.View().Content); !strings.Contains(got, want) {
+					t.Fatalf("pending preview must preserve line breaks %q:\n%s", want, got)
+				}
+			})
+		}
+	}
+}
+
+func TestPendingPromptsKeepSectionsAfterPullbackAndResend(t *testing.T) {
+	for _, kind := range []string{"queue", "steer"} {
+		t.Run(kind, func(t *testing.T) {
+			m, _ := newSteerModel(t, true)
+			m = startRunning(t, m, "original")
+			m = submitDelivery(t, m, "/"+kind+" test 1")
+			m = submitDelivery(t, m, "test 2")
+			for range 2 {
+				m = pressUp(t, m)
+				if got, want := m.prompt.Value(), "/"+kind+" test 1\n\ntest 2"; got != want {
+					t.Fatalf("pullback = %q, want %q", got, want)
+				}
+				m = submitDelivery(t, m, m.prompt.Value())
+				if kind == "queue" && (len(m.queued) != 1 || m.queued[0] != "test 1\n\ntest 2") {
+					t.Fatalf("resend changed merged queue payload: %q", m.queued)
+				}
+				if got := ansi.Strip(m.View().Content); !strings.Contains(got, " │ test 1\n │ \n │ test 2") {
+					t.Fatalf("resend must keep separate pending preview rows:\n%s", got)
 				}
 			}
 		})
@@ -87,8 +127,11 @@ func TestPendingPromptPreviewBoundedAndSafe(t *testing.T) {
 		if a, b := render(head+strings.Repeat("tail-a", 4000)), render(head+strings.Repeat("tail-b", 4000)); a != b {
 			t.Errorf("steer=%v: preview depends on content past the bound", steer)
 		}
+		if a, b := render(head+strings.Repeat("\ntail", 4000)), render(head); a != b {
+			t.Errorf("steer=%v: preview depends on line breaks past the bound", steer)
+		}
 		body := strings.Split(ansi.Strip(render("hello\x1b[2J\x07\u009b\u2028\u2029\nworld")), "\n")[1]
-		if strings.ContainsAny(body, "\x1b\x07\u009b\u2028\u2029\n") || !strings.Contains(body, "hello[2J world") {
+		if strings.ContainsAny(body, "\x1b\x07\u009b\u2028\u2029\n") || !strings.Contains(body, "hello[2J") {
 			t.Errorf("steer=%v: preview must be terminal-safe single-line text: %q", steer, body)
 		}
 	}
@@ -129,8 +172,8 @@ func TestPendingPromptLayout(t *testing.T) {
 		} else {
 			m = enqueue(t, m, "follow-up\nwith more text")
 		}
-		if got := m.vp.Height(); got != baseline-2 {
-			t.Errorf("steer=%v: one pending prompt must reserve a heading and body row, viewport went from %d to %d", steer, baseline, got)
+		if got := m.vp.Height(); got != baseline-3 {
+			t.Errorf("steer=%v: pending prompt must reserve a heading and two body rows, viewport went from %d to %d", steer, baseline, got)
 		}
 		m = applyAll(m, tea.WindowSizeMsg{Width: 60, Height: 30})
 		if got := lipgloss.Height(m.View().Content); got > m.height {
