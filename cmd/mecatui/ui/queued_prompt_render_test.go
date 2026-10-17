@@ -46,12 +46,59 @@ func TestPendingPromptsSeparateHeadingAndBody(t *testing.T) {
 					fmt.Sprintf("steer-%d", steerSent): "↑ edit · esc cancel",
 				} {
 					heading := strings.Split(ansi.Strip(cards[state]), "\n")[0]
-					if !strings.HasSuffix(heading, hints) || ansi.StringWidth(heading) != width {
-						t.Errorf("%s controls must align to the heading's right edge: %q", state, heading)
+					if !strings.Contains(heading, " · "+hints) || strings.Contains(heading, "  ") {
+						t.Errorf("%s controls must follow the status inline: %q", state, heading)
 					}
 				}
 				if card := ansi.Strip(cards["queue"]); !strings.Contains(card, "4 queued") || !strings.Contains(card, " │ second\n   +2 more") || strings.Contains(card, "third") || strings.Contains(card, "fourth") {
 					t.Errorf("queue must retain count and cap visible previews: %q", card)
+				}
+			}
+		})
+	}
+}
+
+func TestPendingPromptUsesAvailableWidth(t *testing.T) {
+	for _, width := range []int{80, 160, 400} {
+		t.Run(fmt.Sprint(width), func(t *testing.T) {
+			m, _ := newQueueModel(t)
+			m.width = width
+			text := strings.Repeat("界x", width)
+			m.queued = []string{text}
+			m.steer = &steerState{Phase: steerSent, Sends: []steerQueuedSend{{Text: text}}}
+			for name, card := range map[string]string{"queue": m.renderQueue(), "steer": m.renderSteer()} {
+				body := strings.Split(ansi.Strip(card), "\n")[1]
+				if want := " │ " + ansi.Truncate(text, width-3, "…"); body != want {
+					t.Errorf("%s must use the available terminal width: got %q, want %q", name, body, want)
+				}
+			}
+		})
+	}
+}
+
+func TestPendingPromptInlineEditHints(t *testing.T) {
+	for _, chord := range []string{"up", "ctrl+b"} {
+		t.Run(chord, func(t *testing.T) {
+			m, _ := newQueueModel(t)
+			m.width = 80
+			m.keys = applyKeyOverrides(m.keys, map[string][]string{"EditBack": {chord}})
+			m.queued = []string{"follow-up"}
+			m.steer = &steerState{Phase: steerPending, Sends: []steerQueuedSend{{Text: "follow-up"}}}
+			editHint := m.helpKeyMarkings().editBack + " edit"
+			cards := map[string]string{"queue": m.renderQueue(), "sending steer": m.renderSteer()}
+			m.steer.Phase = steerSent
+			cards["accepted steer"] = m.renderSteer()
+			for name, card := range cards {
+				hints := editHint
+				if name == "accepted steer" {
+					hints += " · esc cancel"
+				}
+				if want := m.deps.Theme.Style("muted").Render(" · " + hints); !strings.Contains(card, want) {
+					t.Errorf("%s must use the tool-call hint styling %q: %q", name, want, card)
+				}
+				heading := strings.Split(ansi.Strip(card), "\n")[0]
+				if !strings.HasSuffix(heading, " · "+hints) || strings.Contains(heading, "  ") {
+					t.Errorf("%s edit hint must follow the status inline: %q", name, heading)
 				}
 			}
 		})
@@ -114,7 +161,7 @@ func TestPendingPromptsHideUnavailableEditHints(t *testing.T) {
 
 func TestPendingPromptPreviewBoundedAndSafe(t *testing.T) {
 	m, _ := newQueueModel(t)
-	head := strings.Repeat("h", queuePreviewBound)
+	head := strings.Repeat("h", 4*max(0, m.widthOr()-3))
 	for _, steer := range []bool{false, true} {
 		render := func(text string) string {
 			if steer {

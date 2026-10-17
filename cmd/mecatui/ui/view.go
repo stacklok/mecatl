@@ -528,14 +528,6 @@ const footerGapPad = 2
 // queuePreviewLimit bounds visible pending preview rows; overflow shows a count.
 const queuePreviewLimit = 3
 
-// queuePreviewWidth caps the queued prompt preview's display width.
-const queuePreviewWidth = 60
-
-// queuePreviewBound caps how many leading RUNES of each queued prompt feed the
-// per-frame line splitting, whitespace cleanup and truncation. Expanded pastes
-// can be large, so preview rendering must not scan the full payload.
-const queuePreviewBound = 4 * queuePreviewWidth
-
 // runePrefix returns the first n runes of s without scanning past them (no
 // full-string RuneCountInString) — the O(1)-in-payload slice renderQueue's
 // preview is built from.
@@ -586,6 +578,9 @@ func (m Model) renderSteer() string {
 	switch m.steer.Phase {
 	case steerPending:
 		status = th.Style("muted").Render("steer: sending…")
+		if strings.TrimSpace(m.prompt.Value()) == "" {
+			hints = hk.editBack + " edit"
+		}
 	case steerSent:
 		status = th.Style("muted").Render("steer queued")
 		hints = hk.cancel + " cancel"
@@ -612,19 +607,22 @@ func (m Model) renderPendingPrompt(status string, texts []string, hints string) 
 	width := m.widthOr()
 	heading := " " + th.Style("transcriptUserMarker").Render(theme.TranscriptUserGlyph) +
 		th.Style("transcriptUserHeading").Render(" you") + th.Style("muted").Render(" · ") + status
-	heading = ansi.Truncate(heading, width, "…")
-	if hints != "" && ansi.StringWidth(heading)+2+ansi.StringWidth(hints) <= width {
-		heading += strings.Repeat(" ", width-ansi.StringWidth(heading)-ansi.StringWidth(hints)) + th.Style("muted").Render(hints)
+	if hints != "" {
+		heading += th.Style("muted").Render(" · " + hints)
 	}
+	heading = ansi.Truncate(heading, width, "…")
+	// Bound work by the available width, not the size of expanded pastes.
+	bodyWidth := max(0, width-3)
+	previewBound := 4 * bodyWidth
 	var previewLines []string
 	for _, text := range texts {
-		previewLines = append(previewLines, strings.Split(runePrefix(text, queuePreviewBound), "\n")...)
+		previewLines = append(previewLines, strings.Split(runePrefix(text, previewBound), "\n")...)
 	}
 	lines := []string{heading}
 	for _, text := range previewLines[:min(len(previewLines), queuePreviewLimit)] {
 		preview := terminaltext.SanitizeSingleLine(oneLine(text))
 		line := " " + th.Style("transcriptUserRail").Render("│") + " " +
-			th.Style("transcriptUserText").Render(ansi.Truncate(preview, min(queuePreviewWidth, max(0, width-3)), "…"))
+			th.Style("transcriptUserText").Render(ansi.Truncate(preview, bodyWidth, "…"))
 		lines = append(lines, ansi.Truncate(line, width, ""))
 	}
 	if rest := len(previewLines) - queuePreviewLimit; rest > 0 {

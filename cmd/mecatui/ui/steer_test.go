@@ -685,7 +685,7 @@ func TestSteer_TUIQueuedUntilLanded(t *testing.T) {
 	// Pre-echo: the card is pending and the transcript does NOT yet carry the steer
 	// (the card preview collapses multi-word text onto one line, so the in-context
 	// occurrence check keys off the flat preview string, not the raw text).
-	cardPreview := truncate(oneLine("check b.go too"), queuePreviewWidth)
+	cardPreview := "check b.go too"
 	if got := stripANSIstr(m.renderSteer()); !strings.Contains(got, "sending") {
 		t.Fatalf("before the echo the card shows the pending state, got:\n%s", got)
 	}
