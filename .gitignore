@@ -22,7 +22,8 @@ coverage.*
 # Retired generated documentation index; do not re-add without an explicit decision.
 /llms.txt
 
-# Disposable ToolHive Kind fixture kubeconfig
+# Disposable Kind fixture kubeconfigs
+/deploy/mecak8s-kind/kconfig.yaml
 /deploy/mecak8s-vmcp/kconfig.yaml
 
 # Task cache (root and per-Taskfile-include, e.g. website/.task/)
