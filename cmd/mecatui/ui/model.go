@@ -1000,7 +1000,7 @@ type Model struct {
 	// bracketed paste over the staging thresholds (pasteNeedsStaging) inserts only
 	// the marker, so the textarea buffer — which the bubbles textarea re-wraps per
 	// rendered frame — never holds the huge payload (issue #45). submitPrompt and
-	// enqueuePrompt expand surviving markers in place (expandPastePlaceholders);
+	// deliverDefaultPrompt expand surviving markers in place (expandPastePlaceholders);
 	// a deleted marker's content is silently dropped at submit. nextPasteN is its
 	// own monotonic counter (separate numbering from nextMediaN, never reused).
 	stagedPastes map[string]string

@@ -2962,7 +2962,7 @@ func (m Model) pasteGateOpen() bool {
 //	    and steer state intact;
 //	(3) any bound Newline chord (shift+enter, ctrl+j, ctrl+enter, alt+enter by
 //	    default) → insert a newline;
-//	(4) enter (Submit) → run a bare local built-in, or enqueuePrompt for model-facing
+//	(4) enter (Submit) → run a bare local built-in, or deliverDefaultPrompt for model-facing
 //	    input (which steers when supported);
 //	(5) pgup/pgdn → scroll the viewport;
 //	(6) anything else → feed the textarea (+ palette resync via afterInputEdit).
@@ -3007,7 +3007,7 @@ func (m Model) onRunningKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if mm, cmd, handled := m.dispatchBareBuiltin(m.prompt.Value()); handled {
 			return mm, cmd
 		}
-		return m.enqueuePrompt()
+		return m.deliverDefaultPrompt()
 	case key.Matches(msg, m.keys.ScrollU), key.Matches(msg, m.keys.ScrollD),
 		key.Matches(msg, m.keys.ScrollTop), key.Matches(msg, m.keys.ScrollBottom):
 		return m.onScrollKey(msg)
@@ -3036,9 +3036,9 @@ func (m Model) onRunningCancel() (tea.Model, tea.Cmd) {
 	}
 }
 
-// enqueuePrompt follows the pending delivery kind, or the capability default
+// deliverDefaultPrompt follows the pending delivery kind, or the capability default
 // when nothing is pending. Explicit delivery commands bypass this selection.
-func (m Model) enqueuePrompt() (tea.Model, tea.Cmd) {
+func (m Model) deliverDefaultPrompt() (tea.Model, tea.Cmd) {
 	text := strings.TrimSpace(m.prompt.Value())
 	if text == "" && len(m.stagedMedia) == 0 && len(m.stagedPastes) == 0 && len(m.pendingPromptMedia.Parts) == 0 {
 		return m, nil
@@ -3199,7 +3199,7 @@ func (m Model) wantsEditBack(msg tea.KeyPressMsg) bool {
 	return len(m.queued) > 0
 }
 
-// editBackQueue is the inverse of enqueuePrompt: it pulls the whole staged queue
+// editBackQueue is the inverse of queuePrompt: it pulls the whole staged queue
 // back into the textarea (merged by queueMergeSep) so the user can revise it, and
 // CLEARS the queue + any pause. It is non-destructive — bound to ↑ on an EMPTY input
 // line with a non-empty queue (see onRunningKey / onIdleKey), distinct from Escape:
@@ -3673,7 +3673,7 @@ func (m Model) submitPromptText(text string) (tea.Model, tea.Cmd) {
 	// chance to drain at this run's clean completion, so it is no longer "paused".
 	m.queuePaused = ""
 	// The textarea stays FOCUSED while running so the user can type a follow-up and
-	// enqueue it (see enqueuePrompt / onRunningKey).
+	// enqueue it (see deliverDefaultPrompt / onRunningKey).
 	m.phase = phaseRunning
 	m.statusMsg = "running…"
 	m.refreshView()
