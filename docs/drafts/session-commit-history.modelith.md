@@ -77,16 +77,33 @@ A trusted registered interpreter for namespaced, versioned session records and d
 - **extension-slot-authority** — An `Extension` controls only its own `SteerSlot`; notification submission grants neither user-slot authority nor permission to answer asks or bypass execution gates.
 - **small-retrievable-hints** — An `Extension` steer is a size-capped hint pointing to authorized tools for full canonical results; replacement covers outstanding work without deleting `Operation` outcomes.
 
-### `HookInvocation`
+### `HeldResult`
 
-One logical hook execution anchored to a durable session action, model turn, or tool call. Its stable identity covers the hook registration, phase, and occurrence, with reconstructible definition, input, parameters, and permitted output or failure evidence. Physical attempts can repeat under the same identity and are not ordinary tool-execution retries.
+Process-local tool output awaiting an exact authorized release decision. Its pending ask and safe processing evidence can be durable while the unreleased bytes and payload-bearing evidence remain exclusively in memory.
+
+**Relationships**
+
+- `PermissionAsk` — 1:0..1
 
 **Invariants**
 
-- **hook-at-least-once** — `HookInvocation` execution is at least once under authorized admission and recovery; missing completion permits repeated execution with the same logical identity and possible prior external effects, while committed completion is reused.
+- **held-bytes-memory-only** — Unreleased `HeldResult` bytes never enter durable history, checkpoints, hook traces, provider replay, or diagnostic and client projections; only approved content can enter normal retained history after required processing.
+- **lost-hold-closes-ask** — Process loss makes a `HeldResult` unavailable and recovery closes its release ask with an explicit synthetic withheld/unavailable result; intact storage does not recover its bytes or authorize tool reexecution.
+- **canceled-release-client-choice** — A release decision may remain actionable after cancellation while its `HeldResult` survives; client presentation is optional, and release commits output without resuming the canceled run.
+- **new-run-expires-held-release** — Starting a new `Run` discards unreleased `HeldResult` bytes and expires their release decisions, fences late answers, and prevents old result processing from creating a new actionable release ask; denial also discards held bytes.
+
+### `HookInvocation`
+
+One logical hook execution anchored to a durable session action, model turn, or tool call. Its stable identity covers the hook registration, phase, and occurrence, with captured definition, input, parameters, and output or failure evidence where retention permits. Physical attempts can repeat under the same identity when the invocation is reconstructible; they are not ordinary tool-execution retries.
+
+**Invariants**
+
+- **hook-at-least-once** — `HookInvocation` execution is at least once under authorized admission and recovery; missing completion permits repeated execution only when the same invocation remains reconstructible, using the same logical identity despite possible prior effects; committed completion is reused.
 - **stable-hook-retry-identity** — Retries of a `HookInvocation` reconstruct the same definition, input, and parameters and retain its identity; changed invocations receive distinct identities, and current configuration or ephemeral ordering cannot redefine an old invocation.
 - **hook-output-before-dependent-execution** — Required completed `HookInvocation` evidence commits before dependent model or ordinary tool execution; transformations may batch with logical input or authorized intent without a separate write for every hook phase.
 - **hook-retry-not-tool-retry** — Repeating a `HookInvocation` does not authorize repeating an uncertain ordinary tool, bypassing an approval, or starting work without current `OwnershipClaim` authority.
+- **sensitive-hook-evidence-memory-only** — Unreleased sensitive input, output, and payload-bearing `HookInvocation` evidence remain memory-only; lost inputs cannot be reconstructed through traces or provider replay, guessed for retry, or recreated by rerunning the tool.
+- **canceled-result-pipeline** — Available tool output follows the normal bounded post-tool `HookInvocation` and disclosure pipeline under a settlement lifetime distinct from canceled execution; cancellation introduces neither a hook-criticality classification nor new guardrail approval authority and preserves existing processing-failure semantics.
 
 ### `LogicalModelInput`
 
@@ -133,7 +150,7 @@ The renewable backend-authoritative right of one replica to execute and append f
 
 ### `PermissionAsk`
 
-A durable request for an authorized decision gating work in an exact `Run`. Multiple clients can see and answer the same ask without reserving an exclusive responder; its committed resolution is session state.
+A durable request for an exact authorized decision controlling execution or disclosure associated with a `Run`. Multiple clients can answer the same ask without an exclusive responder; release decisions can outlive run cancellation only while their process-local held output remains valid.
 
 **Relationships**
 
@@ -142,7 +159,7 @@ A durable request for an authorized decision gating work in an exact `Run`. Mult
 **Invariants**
 
 - **first-committed-approval-wins** — The first valid authorized committed `PermissionAsk` resolution wins; later conflicting answers receive the authoritative already-resolved outcome and cannot reverse it.
-- **durable-ask-is-not-execution** — A pending `PermissionAsk` can survive unloading and ownership release; resolving it rehydrates the exact ask through the authorized activation boundary.
+- **durable-ask-is-not-execution** — A pending execution `PermissionAsk` can survive unloading and ownership release, and resolution rehydrates its exact continuation; a durable release ask cannot restore lost memory-only output or activate a canceled run.
 
 ### `ProviderReplay`
 
@@ -175,6 +192,9 @@ A sequence of model turns within a `Session`, continued through requested tool c
 - **disconnect-not-cancel** — A `Client` disconnect does not cancel the `Run` or transfer control rights.
 - **intent-before-dispatch** — A `Run` commits the assistant tool request and each call's effective authorized intent after trusted rewrites, including required `HookInvocation` evidence, before tool dispatch, and commits the canonical result before dependent model continuation.
 - **no-uncertain-tool-retry** — Recovery distinguishes requested-not-dispatched tools from intent-with-unknown-outcome tools and never automatically reruns an uncertain ordinary tool; absent intent excludes tool dispatch but does not prove pre-intent hooks had no effects.
+- **cancellation-ack-is-not-completion** — Cancellation acknowledgement identifies acceptance and signaling, not stopped execution; bounded terminal settlement distinguishes established outcomes from external effects that remain unknown or may still be running.
+- **canceled-run-no-continuation** — Bounded result processing may finish after `Run` cancellation, but cannot submit another model request or dispatch dependent work; permitted committed results become available to a later explicitly started run.
+- **bounded-terminal-admission** — A new `Run` waits for bounded execution shutdown and result settlement of its predecessor, but not for optional output-release approval; a deadline does not turn unresolved external execution into proven termination.
 
 ### `Session`
 
@@ -188,6 +208,7 @@ The durable conversation and unit of interaction. A `Session` survives individua
 - `PermissionAsk` — 1:n — owned
 - `Operation` — 1:n — owned
 - `HookInvocation` — 1:n — owned
+- `ToolResultSettlement` — 1:n — owned
 - `OwnershipClaim` — n:0..1 — An active delegation tree shares its root claim. Separately owned peer sessions have separate claims.
 - `Client` — n:n
 - `ClientProjection` — 1:n
@@ -197,6 +218,10 @@ The durable conversation and unit of interaction. A `Session` survives individua
 - **one-active-run** — A `Session` admits at most one active `Run`, regardless of the producer requesting it.
 - **shared-control** — Multiple authorized `Client` callers may operate on one `Session`; each action is independently authorized and serialized, without an exclusive controller.
 - **deletion-gate** — Logical deletion denies `Session` reads and activation, fences writes, and prevents identity reuse, independently of physical purge timing.
+- **session-current-cancellation** — Ordinary cancellation resolves the active `Run` at the ordered `Session` admission boundary without requiring a client refresh; explicitly run-qualified controls remain exact and never retarget a successor.
+- **cancellation-closes-all-sources** — User cancellation promptly closes execution admission, cancels every pending user and `Extension` steer, and signals active descendants and extensions; late notifications cannot restart canceled work, while committed outcomes remain history.
+- **cancellation-orders-promotion** — A follow-up `Run` admitted before session-current cancellation is its target; cancellation ordered first prevents pending input from promoting, while a new explicit submission ordered afterward can request eligible execution.
+- **ordered-batched-gates** — Batching preserves per-session order and every durable execution gate; delay and size bounds are tunable, and acceptance does not require cross-session atomic transactions or allow one stalled session to block unrelated sessions.
 
 ### `SteerRevision`
 
@@ -207,6 +232,8 @@ An identified committed version of a `SteerSlot`'s pending content and dispositi
 - **commit-before-steer-delivery** — `SteerRevision` admission is committed before acknowledgement, and model-input insertion and exact-revision consumption commit before the model receives it.
 - **replacement-survives-consumption** — Consuming an older `SteerRevision` cannot clear a newer concurrently admitted replacement in the same slot.
 - **provenance-is-not-privilege** — The server distinguishes user from named extension, tool, or harness `SteerRevision` provenance; non-user content remains appropriately fenced data, not system or permission authority.
+- **normal-unqualified-promotion** — Accepted unconsumed unqualified `SteerRevision` input on normal completion continues execution or admits one follow-up `Run`; explicit run-qualified input never silently promotes.
+- **failed-interrupted-steer-recovery** — Failure, shutdown, or ownership loss preserves unconsumed `SteerRevision` input for an explicit follow-up-or-retract decision, while user cancellation cancels undelivered input from all sources instead of promoting it.
 
 ### `SteerSlot`
 
@@ -220,9 +247,25 @@ One source's replaceable pending input within a `Session`. There is one shared u
 
 **Invariants**
 
-- **source-slot-isolation** — Updating or retracting one `SteerSlot` cannot change another; all authorized interactive clients share the same user slot.
+- **source-slot-isolation** — Source-specific update or retraction of one `SteerSlot` cannot change another; all authorized interactive clients share the same user slot, while session cancellation closes pending slots across all sources.
 - **revision-checked-edit** — Replacement and retraction name the expected `SteerSlot` revision, and stale edits conflict rather than overwrite a concurrent update.
 - **all-pending-together** — At the next eligible model-input boundary, every pending `SteerSlot` is delivered together in deterministic order, without interrupting an in-flight request or bypassing an approval.
+
+### `ToolResultSettlement`
+
+Processing of an already-produced tool result under its original call identity. Execution evidence, hook-processing evidence, and disclosure disposition are separate facts; cancellation of the originating `Run` does not itself erase output or approve its disclosure.
+
+**Relationships**
+
+- `Run` — n:1
+- `HookInvocation` — 1:n
+- `HeldResult` — 1:0..1 — owned
+
+**Invariants**
+
+- **independent-result-dispositions** — A pre-dispatch hook failure does not assert tool execution, a post-execution processing failure does not erase known execution, and missing output or denied disclosure does not establish tool failure or absence of external effects.
+- **settle-without-new-authority** — The `ToolResultSettlement` finishes normal checks and commits permitted canonical results without continuing a canceled `Run`; processing failure or timeout cannot bypass required disclosure checks, and no new autonomous result-release approver is implied.
+- **no-result-recreation** — Lost or withheld output is represented under its original call identity with an explicit safe disposition, preserving call/result pairing without automatically rerunning the tool.
 
 ## Relationships
 
@@ -233,6 +276,7 @@ erDiagram
     CommittedHistory {}
     ContinuationCheckpoint {}
     Extension {}
+    HeldResult {}
     HookInvocation {}
     LogicalModelInput {}
     Operation {}
@@ -243,12 +287,14 @@ erDiagram
     Session {}
     SteerRevision {}
     SteerSlot {}
+    ToolResultSettlement {}
     Client ||..o{ ClientProjection : ""
     ClientProjection }o..|| CommittedHistory : ""
     CommittedHistory ||..o{ ContinuationCheckpoint : ""
     CommittedHistory ||--o{ ProviderReplay : ""
     Extension ||..o{ Operation : ""
     Extension |o..o{ SteerSlot : ""
+    HeldResult ||..o| PermissionAsk : ""
     LogicalModelInput }o..o{ HookInvocation : ""
     Operation }o..|| Run : ""
     PermissionAsk }o..|| Run : ""
@@ -260,10 +306,14 @@ erDiagram
     Session ||--o{ PermissionAsk : ""
     Session ||--o{ Operation : ""
     Session ||--o{ HookInvocation : ""
+    Session ||--o{ ToolResultSettlement : ""
     Session }o..o| OwnershipClaim : ""
     Session }o..o{ Client : ""
     Session ||..o{ ClientProjection : ""
     SteerSlot ||--o{ SteerRevision : ""
+    ToolResultSettlement }o..|| Run : ""
+    ToolResultSettlement ||..o{ HookInvocation : ""
+    ToolResultSettlement ||--o| HeldResult : ""
 ```
 
 ## Scenarios
@@ -319,7 +369,7 @@ erDiagram
 
 **Invariants touched**
 
-- **source-slot-isolation** — Updating or retracting one `SteerSlot` cannot change another; all authorized interactive clients share the same user slot.
+- **source-slot-isolation** — Source-specific update or retraction of one `SteerSlot` cannot change another; all authorized interactive clients share the same user slot, while session cancellation closes pending slots across all sources.
 - **revision-checked-edit** — Replacement and retraction name the expected `SteerSlot` revision, and stale edits conflict rather than overwrite a concurrent update.
 - **reflect-pending-controls** — Authorized `ClientProjection` reloads and committed updates reflect shared pending steer content, revision, and disposition, plus pending asks and their resolutions.
 - **commit-before-steer-delivery** — `SteerRevision` admission is committed before acknowledgement, and model-input insertion and exact-revision consumption commit before the model receives it.
@@ -335,14 +385,17 @@ erDiagram
 2. The active `Run` commits all pending `SteerRevision` input together in deterministic order at its next safe input boundary.
 3. The model receives server-stamped provenance distinguishing user, extension, tool, and harness sources without granting non-user content instruction authority.
 4. An `Extension` replacement committed after the delivery decision remains pending; consumption of its older revision cannot clear it.
+5. On normal completion an accepted unqualified revision continues execution or promotes once; failure or interruption leaves it pending for explicit recovery instead.
 
 **Invariants touched**
 
 - **all-pending-together** — At the next eligible model-input boundary, every pending `SteerSlot` is delivered together in deterministic order, without interrupting an in-flight request or bypassing an approval.
-- **source-slot-isolation** — Updating or retracting one `SteerSlot` cannot change another; all authorized interactive clients share the same user slot.
+- **source-slot-isolation** — Source-specific update or retraction of one `SteerSlot` cannot change another; all authorized interactive clients share the same user slot, while session cancellation closes pending slots across all sources.
 - **provenance-is-not-privilege** — The server distinguishes user from named extension, tool, or harness `SteerRevision` provenance; non-user content remains appropriately fenced data, not system or permission authority.
 - **replacement-survives-consumption** — Consuming an older `SteerRevision` cannot clear a newer concurrently admitted replacement in the same slot.
 - **commit-before-steer-delivery** — `SteerRevision` admission is committed before acknowledgement, and model-input insertion and exact-revision consumption commit before the model receives it.
+- **normal-unqualified-promotion** — Accepted unconsumed unqualified `SteerRevision` input on normal completion continues execution or admits one follow-up `Run`; explicit run-qualified input never silently promotes.
+- **failed-interrupted-steer-recovery** — Failure, shutdown, or ownership loss preserves unconsumed `SteerRevision` input for an explicit follow-up-or-retract decision, while user cancellation cancels undelivered input from all sources instead of promoting it.
 
 ### Several operation results coalesce into one hint
 
@@ -361,7 +414,7 @@ erDiagram
 - **outcome-not-notification** — Coalescing an `Extension` steer or losing a run-admission race cannot erase a committed `Operation` outcome.
 - **operation-history-authority** — Continuation-relevant `Operation` state and canonical admitted results are reconstructible from committed extension records, not an independent mutable plugin snapshot.
 - **extension-slot-authority** — An `Extension` controls only its own `SteerSlot`; notification submission grants neither user-slot authority nor permission to answer asks or bypass execution gates.
-- **source-slot-isolation** — Updating or retracting one `SteerSlot` cannot change another; all authorized interactive clients share the same user slot.
+- **source-slot-isolation** — Source-specific update or retraction of one `SteerSlot` cannot change another; all authorized interactive clients share the same user slot, while session cancellation closes pending slots across all sources.
 - **one-active-run** — A `Session` admits at most one active `Run`, regardless of the producer requesting it.
 
 ### Conflicting approval answers
@@ -373,14 +426,14 @@ erDiagram
 1. Two authorized `Client` callers observe the same pending `PermissionAsk` through their `ClientProjection` views.
 2. One valid answer commits first; a conflicting later answer receives the authoritative already-resolved decision.
 3. Both clients see the committed resolution; unsubmitted response text stays local.
-4. The ask may have been unloaded while waiting, so the authorized resolution first rehydrates it under the tree claim.
+4. The execution ask may have been unloaded while waiting, so its authorized resolution first rehydrates the reconstructible continuation under the tree claim; a release ask instead requires its surviving memory-only held bytes.
 
 **Invariants touched**
 
 - **first-committed-approval-wins** — The first valid authorized committed `PermissionAsk` resolution wins; later conflicting answers receive the authoritative already-resolved outcome and cannot reverse it.
 - **reflect-pending-controls** — Authorized `ClientProjection` reloads and committed updates reflect shared pending steer content, revision, and disposition, plus pending asks and their resolutions.
 - **drafts-stay-local** — Unsubmitted composer text and approval responses remain `Client` local; submitted pending controls belong to server state.
-- **durable-ask-is-not-execution** — A pending `PermissionAsk` can survive unloading and ownership release; resolving it rehydrates the exact ask through the authorized activation boundary.
+- **durable-ask-is-not-execution** — A pending execution `PermissionAsk` can survive unloading and ownership release, and resolution rehydrates its exact continuation; a durable release ask cannot restore lost memory-only output or activate a canceled run.
 
 ### Fenced takeover with uncertain external work
 
@@ -417,7 +470,7 @@ erDiagram
 
 - **complete-logical-input** — `LogicalModelInput` preserves complete admitted effective values and transformation provenance, subject to capture policy; request-local changes cannot silently escape `CommittedHistory`.
 - **logical-input-before-model** — Dependent model execution uses committed `LogicalModelInput`; any permitted provisional request during ownership uncertainty uses already committed input without new uncommitted transformations.
-- **hook-at-least-once** — `HookInvocation` execution is at least once under authorized admission and recovery; missing completion permits repeated execution with the same logical identity and possible prior external effects, while committed completion is reused.
+- **hook-at-least-once** — `HookInvocation` execution is at least once under authorized admission and recovery; missing completion permits repeated execution only when the same invocation remains reconstructible, using the same logical identity despite possible prior effects; committed completion is reused.
 - **stable-hook-retry-identity** — Retries of a `HookInvocation` reconstruct the same definition, input, and parameters and retain its identity; changed invocations receive distinct identities, and current configuration or ephemeral ordering cannot redefine an old invocation.
 - **hook-output-before-dependent-execution** — Required completed `HookInvocation` evidence commits before dependent model or ordinary tool execution; transformations may batch with logical input or authorized intent without a separate write for every hook phase.
 - **hook-retry-not-tool-retry** — Repeating a `HookInvocation` does not authorize repeating an uncertain ordinary tool, bypassing an approval, or starting work without current `OwnershipClaim` authority.
@@ -442,6 +495,55 @@ erDiagram
 - **replay-immutable-compatible** — Accepted `ProviderReplay` owns immutable payloads and producer/version provenance; restart, forks, compaction, and provider changes require compatible LLM-boundary interpretation rather than mutable aliases or silent reuse of incompatible continuation-critical metadata.
 - **replay-not-public-authority** — A `ClientProjection` cannot reconstruct uncaptured private `ProviderReplay` or grant access to it, and provider keys cannot be reinterpreted as canonical engine call identity.
 - **complete-logical-input** — `LogicalModelInput` preserves complete admitted effective values and transformation provenance, subject to capture policy; request-local changes cannot silently escape `CommittedHistory`.
+
+### Cancellation settles available output without restarting execution
+
+**Actors:** Client, Extension
+
+**Steps**
+
+1. A stale `Client` cancels the `Session` after normal steer promotion has admitted a follow-up `Run`; the ordered cancellation targets that follow-up without a client reload.
+2. Execution admission closes immediately, all pending source slots are canceled, and active descendants and extensions receive cancellation while committed `Operation` outcomes remain retained.
+3. The acknowledgement reports signaling rather than completed shutdown; bounded settlement reports any external execution that cannot be proven stopped as unresolved.
+4. A returned tool output enters `ToolResultSettlement` and normal bounded `HookInvocation` processing with existing disclosure semantics, without a new model request or dependent tool dispatch.
+5. Unreleased `HeldResult` bytes stay memory-only while a release `PermissionAsk` remains optionally visible through the client; release records approved output for a later explicitly started run.
+6. A new run waits for bounded settlement rather than optional release; if unreleased bytes remain, its admission discards them, expires the ask, and rejects a late answer.
+7. Batching preserves the session's durable gates and does not turn cancellation signaling into a claim that external effects were undone.
+
+**Invariants touched**
+
+- **session-current-cancellation** — Ordinary cancellation resolves the active `Run` at the ordered `Session` admission boundary without requiring a client refresh; explicitly run-qualified controls remain exact and never retarget a successor.
+- **cancellation-closes-all-sources** — User cancellation promptly closes execution admission, cancels every pending user and `Extension` steer, and signals active descendants and extensions; late notifications cannot restart canceled work, while committed outcomes remain history.
+- **cancellation-orders-promotion** — A follow-up `Run` admitted before session-current cancellation is its target; cancellation ordered first prevents pending input from promoting, while a new explicit submission ordered afterward can request eligible execution.
+- **cancellation-ack-is-not-completion** — Cancellation acknowledgement identifies acceptance and signaling, not stopped execution; bounded terminal settlement distinguishes established outcomes from external effects that remain unknown or may still be running.
+- **canceled-run-no-continuation** — Bounded result processing may finish after `Run` cancellation, but cannot submit another model request or dispatch dependent work; permitted committed results become available to a later explicitly started run.
+- **bounded-terminal-admission** — A new `Run` waits for bounded execution shutdown and result settlement of its predecessor, but not for optional output-release approval; a deadline does not turn unresolved external execution into proven termination.
+- **canceled-result-pipeline** — Available tool output follows the normal bounded post-tool `HookInvocation` and disclosure pipeline under a settlement lifetime distinct from canceled execution; cancellation introduces neither a hook-criticality classification nor new guardrail approval authority and preserves existing processing-failure semantics.
+- **settle-without-new-authority** — The `ToolResultSettlement` finishes normal checks and commits permitted canonical results without continuing a canceled `Run`; processing failure or timeout cannot bypass required disclosure checks, and no new autonomous result-release approver is implied.
+- **independent-result-dispositions** — A pre-dispatch hook failure does not assert tool execution, a post-execution processing failure does not erase known execution, and missing output or denied disclosure does not establish tool failure or absence of external effects.
+- **held-bytes-memory-only** — Unreleased `HeldResult` bytes never enter durable history, checkpoints, hook traces, provider replay, or diagnostic and client projections; only approved content can enter normal retained history after required processing.
+- **canceled-release-client-choice** — A release decision may remain actionable after cancellation while its `HeldResult` survives; client presentation is optional, and release commits output without resuming the canceled run.
+- **new-run-expires-held-release** — Starting a new `Run` discards unreleased `HeldResult` bytes and expires their release decisions, fences late answers, and prevents old result processing from creating a new actionable release ask; denial also discards held bytes.
+- **ordered-batched-gates** — Batching preserves per-session order and every durable execution gate; delay and size bounds are tunable, and acceptance does not require cross-session atomic transactions or allow one stalled session to block unrelated sessions.
+
+### Process loss cannot recreate withheld output
+
+**Steps**
+
+1. A tool executes and produces output that required review places in a memory-only `HeldResult` linked to its `ToolResultSettlement` and exact release ask.
+2. The `HookInvocation` processing retains safe failure and disposition evidence without persisting sensitive input or output through traces.
+3. The process stops while storage remains intact; recovery finds the pending ask but no held bytes.
+4. Recovery closes the ask with an explicit unavailable result under the original call identity, distinguishes known tool execution from lost processing output, and never retries the tool or guesses the hook input.
+
+**Invariants touched**
+
+- **held-bytes-memory-only** — Unreleased `HeldResult` bytes never enter durable history, checkpoints, hook traces, provider replay, or diagnostic and client projections; only approved content can enter normal retained history after required processing.
+- **lost-hold-closes-ask** — Process loss makes a `HeldResult` unavailable and recovery closes its release ask with an explicit synthetic withheld/unavailable result; intact storage does not recover its bytes or authorize tool reexecution.
+- **no-result-recreation** — Lost or withheld output is represented under its original call identity with an explicit safe disposition, preserving call/result pairing without automatically rerunning the tool.
+- **independent-result-dispositions** — A pre-dispatch hook failure does not assert tool execution, a post-execution processing failure does not erase known execution, and missing output or denied disclosure does not establish tool failure or absence of external effects.
+- **sensitive-hook-evidence-memory-only** — Unreleased sensitive input, output, and payload-bearing `HookInvocation` evidence remain memory-only; lost inputs cannot be reconstructed through traces or provider replay, guessed for retry, or recreated by rerunning the tool.
+- **hook-at-least-once** — `HookInvocation` execution is at least once under authorized admission and recovery; missing completion permits repeated execution only when the same invocation remains reconstructible, using the same logical identity despite possible prior effects; committed completion is reused.
+- **durable-ask-is-not-execution** — A pending execution `PermissionAsk` can survive unloading and ownership release, and resolution rehydrates its exact continuation; a durable release ask cannot restore lost memory-only output or activate a canceled run.
 
 ### Readers do not pin ownership or bypass deletion
 

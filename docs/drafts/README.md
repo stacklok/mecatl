@@ -16,5 +16,6 @@ rely on them for how Mecatl works.
 | [contextual-guardrails-capacity.md](contextual-guardrails-capacity.md) | Juan Antonio Osorio | Work record of capacity calibration evidence for contextual guardrails. | **2026-11-06** |
 | [kubernetes-execution-and-filesystems.md](kubernetes-execution-and-filesystems.md) | Juan Antonio Osorio | Proposal for live shared files and shell access across separate Kubernetes Pods. | **2026-11-06** |
 | [session-commit-history.md](session-commit-history.md) | Joe Beda | Design discussion for authoritative committed session history, recovery, and shared client interaction. | **2026-11-06** |
-| [session-commit-history.modelith.md](session-commit-history.modelith.md) | Joe Beda | Rendered companion domain model for the session-history design, with [YAML source](session-commit-history.modelith.yaml). | **2026-11-06** |
+| [session-commit-history.modelith.md](session-commit-history.modelith.md) | Joe Beda | Session-history and execution domain model, with [YAML source](session-commit-history.modelith.yaml). | **2026-11-06** |
+| [session-command-protocol.modelith.md](session-command-protocol.modelith.md) | Joe Beda | Catalog and API-command domain model importing the session concepts, with [YAML source](session-command-protocol.modelith.yaml). | **2026-11-06** |
 | [session-commit-history-prior-art.md](session-commit-history-prior-art.md) | Joe Beda | Prior-art survey of persistence, recovery, and extension data, with source evidence and design recommendations. | **2026-11-06** |

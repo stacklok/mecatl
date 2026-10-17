@@ -1,8 +1,8 @@
 # Session-history prior art
 
 **Status:** Research companion and recommendations for discussion, not an approved design contract.
-**Scope:** Persistence, client reload, recovery, and extension-owned session data in four agent harnesses and two adjacent runtimes.
-**Research date:** October 11, 2026.
+**Scope:** Persistence, client reload, recovery, extension-owned session data, and supplemental API-command and cancellation comparisons.
+**Initial survey date:** October 11, 2026. Supplemental comparisons identify their source revisions separately.
 
 The most useful references address different parts of the [committed-session-history proposal](session-commit-history.md).
 OpenCode supplies a transactional projection and replay example; OpenHands V1 supplies a concrete reconnect protocol; Codex separates canonical history from query indexes behind a storage interface; Pi gives extensions explicit durable records within session history.
@@ -244,6 +244,30 @@ It does not adopt Codex's incremental completed-item acceptance, partial-failure
 
 **Lesson:** adopt an explicit storage contract and materialization watermark, while separately specifying append acceptance, durability, and live-notification behavior.
 
+### Cancellation and result settlement
+
+**Supplemental source trace at `16e578dd1ddaf4f5db9cd1f3dbfea0958fd74339`:** Codex distinguishes interruption of a turn from settlement of its tool calls, but does not guarantee that already-produced output finishes post-tool processing.
+The [dispatch cancellation race](https://github.com/openai/codex/blob/16e578dd1ddaf4f5db9cd1f3dbfea0958fd74339/codex-rs/core/src/tools/parallel.rs#L258-L317) aborts unfinished dispatch and can synthesize an aborted result.
+Once dispatch reaches its terminal-outcome boundary it waits for completion instead; that boundary is later than the handler merely returning output.
+[Post-tool processing](https://github.com/openai/codex/blob/16e578dd1ddaf4f5db9cd1f3dbfea0958fd74339/codex-rs/core/src/tools/registry.rs#L783-L889) remains cancellation-sensitive.
+An [integration test](https://github.com/openai/codex/blob/16e578dd1ddaf4f5db9cd1f3dbfea0958fd74339/codex-rs/core/tests/suite/dynamic_tool_cancellation.rs#L54-L170) interrupts a call while its post-hook is blocked and expects an aborted lifecycle outcome.
+
+The canceled [sampling path drains tool results into history before returning](https://github.com/openai/codex/blob/16e578dd1ddaf4f5db9cd1f3dbfea0958fd74339/codex-rs/core/src/session/turn.rs#L3280-L3300), rather than continuing that inference from the drained result.
+A [follow-up-turn test](https://github.com/openai/codex/blob/16e578dd1ddaf4f5db9cd1f3dbfea0958fd74339/codex-rs/core/tests/suite/abort_tasks.rs#L271-L350) checks the original shell call and synthetic aborted output in the next request.
+This settlement is bounded best effort: [turn interruption](https://github.com/openai/codex/blob/16e578dd1ddaf4f5db9cd1f3dbfea0958fd74339/codex-rs/core/src/tasks/mod.rs#L944-L1014) allows a short graceful interval before force-aborting.
+Independent pending-work scheduling can start other eligible work; this is not evidence of a global explicit-user-start-only policy.
+
+Tool cancellation is also implementation-specific.
+A [unified-exec test](https://github.com/openai/codex/blob/16e578dd1ddaf4f5db9cd1f3dbfea0958fd74339/codex-rs/core/tests/suite/unified_exec.rs#L3010-L3093) expects a resumable process to survive turn interruption until separate cleanup.
+The [one-shot path](https://github.com/openai/codex/blob/16e578dd1ddaf4f5db9cd1f3dbfea0958fd74339/codex-rs/core/src/unified_exec/oneshot.rs#L41-L97) instead terminates its process handle and discards the execution result on cancellation.
+Streamed output does not establish what reached canonical model history or completed disclosure checks.
+Tests were inspected, not executed.
+
+**Design divergence:** Mecatl chooses bounded completion of the normal result-processing and disclosure pipeline for already-produced output after cancellation, without resuming the canceled agent.
+The inspected Codex path does not establish that stronger guarantee.
+Nor do Codex hook records establish Mecatl's memory-only pre-release confidentiality contract: their purposes and persistence paths differ.
+This choice changes result lifecycle handling, not guardrail verdict semantics or approval authority.
+
 ## Pi
 
 **Documented at the pinned revision:** the [session format](https://github.com/earendil-works/pi/blob/04566631c2b51fb688486bc1f040f60d1518c126/packages/coding-agent/docs/session-format.md) stores a versioned JSONL tree with entry IDs and parent IDs.
@@ -366,11 +390,51 @@ Compatible interpreter code is required to give persisted values their continuat
 **Lesson:** distinguish state reconstruction from an execution-resume policy.
 A checkpoint and a reducer describe state, but do not by themselves prove an external action safe to repeat or provide a complete retained display transcript.
 
+## API command identity and asynchronous work
+
+These references address the API command layer, not a requirement imposed by append-only session history.
+They support separating an immutable submission decision from the current state or completion of the work it affects.
+They do not establish exactly-once external tool effects.
+
+### Google long-running operations and Temporal
+
+**Documented:** Google's [AIP-155 request identification](https://google.aip.dev/155) describes client request IDs for duplicate recognition; [AIP-151](https://google.aip.dev/151) describes independently identified long-running work and typed progress/result contracts.
+The [operations protobuf at `886464f687986b8b38392d83957a5a2ead4dcf71`](https://github.com/googleapis/googleapis/blob/886464f687986b8b38392d83957a5a2ead4dcf71/google/longrunning/operations.proto#L55-L155) separates the initiating request from an operation's name and terminal response/error.
+`CancelOperation` requests cancellation; its acknowledgement does not prove that the work stopped.
+`DeleteOperation` forgets the operation result rather than canceling the work.
+[AIP-194](https://google.aip.dev/194) treats automatic retry as a separate method-safety decision, not an automatic consequence of using gRPC.
+The AIP pages are documentation references rather than pinned implementation experiments.
+
+**Source-traced:** Temporal's [start request and response at `168d38fbe1c84c06e0a5fba2b0af1a27c812e2ef`](https://github.com/temporalio/api/blob/168d38fbe1c84c06e0a5fba2b0af1a27c812e2ef/temporal/api/workflowservice/v1/request_response.proto#L148-L248) separate the request ID, workflow identity, and returned run identity.
+Its [cancellation contract](https://github.com/temporalio/api/blob/168d38fbe1c84c06e0a5fba2b0af1a27c812e2ef/temporal/api/workflowservice/v1/service.proto#L446-L465) records a cancellation request rather than promising terminal cancellation.
+[Update requests and responses](https://github.com/temporalio/api/blob/168d38fbe1c84c06e0a5fba2b0af1a27c812e2ef/temporal/api/workflowservice/v1/request_response.proto#L1839-L1885) support waiting to a lifecycle stage and returning a reference before the outcome exists.
+These are useful identity and observation patterns, not a reason to import Temporal's workflow orchestration model.
+
+The GCE operations-collection experience discussed during design highlights the cost of independently tracking every mutation's workflow, particularly interacting mutations and operation enumeration.
+Kubernetes-style reconciliation avoids some of that bookkeeping, but current resource state alone cannot reliably answer whether a particular earlier command completed or was superseded.
+The proposal therefore keeps compact command receipts and existing domain lifecycle facts, with common observation conventions rather than a universal enumerable operations collection.
+Synchronous mutations are the default; asynchronous work must justify its lifecycle.
+Exact protobuf adoption remains an interface decision.
+
+### Bounded repeatable requests
+
+**Documented in the OASIS Committee Specification/Public Review Draft 01:** [Repeatable Requests, sections 3.1.2 and 5](https://docs.oasis-open.org/odata/repeatable-requests/v1.0/csprd01/repeatable-requests-v1.0-csprd01.html) pairs a client-generated request ID with the unchanged original creation time.
+The time identifies requests outside the server's remembered interval; those requests fail without execution, including when their individual receipts are gone.
+An opaque ID alone cannot distinguish a new request from an old duplicate after eviction.
+This is HTTP-oriented prior art whose identity/expiry principle can inform a gRPC command envelope; it does not prescribe Mecatl's wire format.
+
+Mecatl adopts the token-plus-time principle with optional bounded opaque tokens rather than requiring UUID syntax.
+It adds independent session/catalog capacities and a durable creation-time cutoff that can shorten the one-hour maximum horizon.
+Cutoff advancement rejects every timestamp tie, survives ownership changes, and cannot reopen an evicted interval after clock rollback.
+Client timestamps require explicit skew validation, and callers must preserve the entire identity and command on retry.
+Changing the timestamp or token is a new submission, not recovery of an ambiguous old outcome.
+This protocol cooperates with clients; request identity is neither authorization nor protection against an authorized caller deliberately issuing another command.
+
 ## Suggestions for the current proposal
 
 The [consolidated proposal](session-commit-history.md#architectural-narrative) incorporates the clarifications below as discussion-design requirements, not an approved or implemented contract.
 The per-project sections remain the evidence; this section explains how the lessons apply to Mecatl.
-Concrete interfaces, staging, and recovery details remain open, and the first cutover does not expand into autonomous recovery, execution migration, or a general plugin platform.
+Concrete interfaces and remaining recovery details remain open; short-PR foundation staging is settled, and the first cutover does not expand into autonomous recovery, execution migration, or a general plugin platform.
 
 ### Make the storage contract executable
 
@@ -436,7 +500,8 @@ Hook transformation evidence retains input, parameters, output or failure, and r
 Required evidence commits before dependent model execution or tool dispatch; tool intent describes the effective authorized invocation after trusted rewrites rather than only the earlier model request.
 
 The [hook contract](session-commit-history.md#hook-execution-and-recovery) uses at-least-once execution with stable harness-supplied logical invocation IDs, which can derive from durable action/tool/turn anchors, phase, registration identity, and occurrence.
-Committed completion is reused; authorized recovery can repeat an invocation with missing completion under the same identity, allowing external integrations to deduplicate effects.
+Committed completion is reused; authorized recovery can repeat an invocation with missing completion under the same identity only when its exact permitted inputs remain reconstructible, allowing external integrations to deduplicate effects.
+Unreleased sensitive result inputs and payload-bearing hook evidence stay memory-only; process loss makes those invocations unavailable rather than authorizing retention or tool reexecution.
 This exception does not authorize rerunning an uncertain ordinary tool.
 Completed transformations may batch with the effective request or authorized intent; logical records do not imply one physical write per hook stage.
 Pre-intent hooks can have effects even when the tool was never dispatched.
@@ -466,5 +531,6 @@ The survey does not claim exhaustive coverage of every extension API or deployme
 ## Related information
 
 - [Design proposal](session-commit-history.md).
-- [Companion domain model](session-commit-history.modelith.md).
+- [Session-history domain model](session-commit-history.modelith.md).
+- [Catalog and command-protocol domain model](session-command-protocol.modelith.md).
 - [Draft index](README.md).

@@ -1,13 +1,16 @@
 # Proposal: committed session history and responsive client reload
 
 **Status:** Discussion draft, not an approved contract or description of shipped behavior.
-**Scope:** Session persistence, streaming, recovery, and client projections.
+**Scope:** Session history and execution, shared-client controls, catalog lifecycle, and the API command protocol.
 
-The [companion domain model](session-commit-history.modelith.md) names the concepts, relationships, invariants, and scenarios used in this discussion.
-Its [YAML source](session-commit-history.modelith.yaml) is validated and rendered with Modelith.
-This proposal explains the rationale, open questions, and cutover scope.
-The companion model describes domain semantics, not implementation status.
-Neither document authorizes implementation.
+Two companion domain models separate the responsibilities:
+
+- [Session history and shared interaction](session-commit-history.modelith.md), with its [YAML source](session-commit-history.modelith.yaml), covers execution, reconstruction, and disclosure.
+- [Session catalogs and command protocol](session-command-protocol.modelith.md), with its [YAML source](session-command-protocol.modelith.yaml), imports the session concepts and covers catalog ownership, bounded retry protection, and common work observation.
+
+Both models are validated and rendered with Modelith.
+This proposal owns rationale, delivery scope, and unresolved decisions; the models contain domain semantics rather than delivery status.
+Neither the proposal nor the models authorize production-code implementation.
 
 Today, a mutable `SessionStore` snapshot supplies continuation, an optional separate `EventLog` records activity, and live streams have no common durable cursor.
 The proposal replaces that split with one committed authority from which private continuation and authorized client views derive.
@@ -83,10 +86,20 @@ A crashed active run is settled as interrupted, not automatically resumed; autho
 More automatic continuation, plugin lifecycle policy, and richer recovery can follow without weakening those honest states.
 The first cutover targets trustworthy reload and explicit recovery, not seamless execution through every upgrade or crash.
 Historical forks, same-session rewind, networked extensions, and large-artifact spillover also remain later work under the contracts below.
+The initial catalog arrangement is one catalog per user within a configured storage/service authority, with exactly one storage provider per catalog.
+Multiple catalogs per user, shared/team catalogs, and catalog search remain later capabilities; no multi-storage catalog is proposed.
+This work introduces no new guardrail decision semantics, hook-criticality taxonomy, or autonomous result-release approver.
 
 **Breaking rollout:** the new storage and client protocol do not migrate legacy sessions.
 The initial service rollout is teardown and upgrade, not mixed-version rolling deployment.
-How development stages or coexists with the current runtime before that clean cutover remains unresolved; this proposal does not choose a long-lived branch or side packages.
+
+**Development staging:** build infrastructure in short PRs, using new packages alongside existing ones where that keeps the current runtime unchanged.
+Defer binding those foundations into execution until explicit integration work.
+An engine-selection flag chooses the old or new runtime for a server instance, including an embedded server started by a client.
+It is not a per-session hot switch: old sessions do not work in the new runtime, and new sessions do not work in the old runtime.
+Separate namespaces and fail-closed version checks prevent dual ownership or accidental fallback.
+Development coexistence does not add legacy migration, dual-writing, or mixed-version runtime compatibility.
+Concrete package boundaries, flag spelling, interfaces, and implementation tasks remain to be specified.
 
 ## Detailed contracts
 
@@ -128,7 +141,22 @@ A *provisional observation* is live information that has not established a commi
 Clients may display it promptly, but must reconcile or discard it when committed state becomes available.
 The [vocabulary reference](#vocabulary-reference) collects these terms and the distinctions used throughout the proposal.
 
-#### Responsibilities
+#### Design layers and responsibilities
+
+The proposal now includes API command and catalog contracts in addition to session-storage redesign.
+They are related obligations, not one persistence abstraction:
+
+| Layer | Responsibility | Authoritative facts |
+| --- | --- | --- |
+| API command protocol | Authorization, optional retry identity, bounded receipts, and consistent synchronous/asynchronous responses and work observation. | A request's committed admission decision, distinct from the work it targets. |
+| Session catalog | Identified ownership/authorization scope, bounded discovery, and session creation, publication, and deletion. | Strict catalog lifecycle decisions; listing and possible search indexes are derived. |
+| Session execution | Run admission, shared controls, tool/hook processing, extensions, cancellation, and required execution gates. | Ordered session decisions and established outcomes. |
+| History and storage | Atomic durable acceptance, history reads, ownership fencing, and reconstruction support under declared backend guarantees. | Accepted session history and catalog decisions; checkpoints and indexes accelerate them. |
+
+API retry protection is opt-in and lives above storage.
+Its receipt must nevertheless commit atomically with the mutation decision it protects; a transport-local deduplication cache cannot survive ownership changes.
+Internal transition identities remain required independently of whether a caller supplies a retry token.
+A common async observation contract does not create a universal operations collection or a separately orchestrated job for every mutation.
 
 The design retains the codebase's broad separation between domain behavior, persistence adapters, host composition, and client presentation.
 The table distinguishes those existing boundaries from changed responsibilities and new mechanisms; it does not describe the proposed commit system as already implemented.
@@ -236,7 +264,7 @@ It preserves logical values rather than raw HTTP requests, transport framing, to
 An exact historical raw transport-request guarantee is outside scope; complete effective logical inputs are a settled requirement.
 Normal secret scrubbing, disclosure policy, and result-withholding or destruction rules still apply.
 A hook trace must never stash denied or held result bytes that the applicable policy withholds or destroys.
-Retain only permitted evidence of that disposition; disclosure and recovery handling for held bytes still need an interface contract.
+Retain safe evidence of that disposition; the [memory-only held-result contract](#memory-only-held-results) excludes unreleased payloads from durable capture.
 
 Transformation evidence distinguishes original and effective logical values and records reconstructible hook input, parameters, output or failure, and meaningful provenance.
 Stable hook identity, version, and configuration are retained when relevant to interpreting that evidence.
@@ -425,9 +453,10 @@ A last-reported loaded state can outlive a crashed pod; the claim and its expiry
 
 Ownership follows active work, not client connection count.
 With no executing `Run` or session-scoped background `Operation`, the host may unload the tree and release the claim, perhaps after a bounded idle period.
-A `PermissionAsk` is a durable request for an authorized decision gating work in an exact `Run`.
-A pending ask does not require an engine or lease held in RAM for hours.
-On a later authorized verdict, the host acquires a claim and rehydrates that exact ask.
+A `PermissionAsk` is a durable request for an exact authorized decision controlling execution or disclosure associated with a run.
+A pending execution ask with reconstructible continuation does not require an engine or lease held in RAM for hours; on an authorized verdict, the host acquires a claim and rehydrates that exact continuation.
+A result-release ask instead depends on live memory-only bytes.
+Unloading or owner movement cannot reconstruct those bytes from durable ask metadata; if the hold is lost, close the ask as unavailable without tool reexecution.
 Independent runnable background work keeps the root claim active while another member waits for approval.
 Read-only clients can remain attached to committed history without pinning the owner.
 
@@ -454,35 +483,84 @@ Each state transition has a stable identity recorded in history.
 A mutation first acquires the tree's claim and loads committed state; the owner serializes admission and resolves repeated action identities from that state.
 The backend atomically checks the expected head and writer epoch on append, so a stale writer cannot commit.
 After an ambiguous append, the owner checks history for its identity before retrying.
-A derived lookup cache is optional, not a separate authoritative index of every client ID.
-Repeating an accepted transition with the same identity and content returns its original decision while its receipt is available; conflicting reuse is rejected.
+A rebuildable lookup index can accelerate internal transition resolution without becoming a separate authority.
+Repeating an accepted internal transition with the same identity and content resolves to its committed decision; conflicting reuse is rejected.
 These checks make commit retries safe without pretending that an external tool executes exactly once.
+The optional, bounded API receipt protocol below is a separate contract for client submissions, not a replacement for internal append identity.
 
 Per-session learned permission grants are also derived from committed private approval decisions and their originating tool facts on load, not from an optional activity log.
 An inherited approval fact on a fork does not become an active rule unless the fork's explicit inheritance decision creates one under current authority.
 
-#### Retry identity and receipts
+#### API command identity, receipts, and work observation
 
-Client mutations need stable action identity across retries.
-A prompt or steer can carry a bounded, opaque client-minted ID; approvals and cancellation may use their exact ask or run identity when that is sufficient.
-Bind the identity to the authorized session, operation, and decision rather than mistaking it for a server-assigned commit position or subscription cursor.
-The owning replica reloads enough committed decisions to resolve a retry after takeover; a cache may accelerate this but cannot authorize new work.
+Synchronous committed mutations are the default.
+Use asynchronous completion only when actual independently progressing work justifies it, as with a large fork copy.
+Returning before work ends requires a durable way to track that work, not a new generic job for every command.
 
-Retain a steer's deduplication decision for its targeted `Run`'s entire lifetime, however long the run lasts.
-After the run ends, a late retry naming that `expected_run_id` returns an available receipt or fails stale.
-It never promotes the same text into a second run.
-This does not require a whole-session receipt map for every action.
+An `APIRequest` can opt into retry protection with a client-generated opaque token and its original creation timestamp.
+Both are present or both absent; a partial pair is invalid.
+A token is nonempty, at most 128 bytes, and compared exactly without normalization or prescribed UUID syntax.
+Tokens share one namespace across mutation types and concurrent clients within the affected session; catalog mutations use the catalog's separate scope.
+Each retry preserves the token, timestamp, and complete command, including method, target, parameters, and content.
+Conflicting reuse is rejected, and every attempt is authorized independently: a token grants neither access nor control authority.
 
-Session creation is a special case because there is no destination session to load.
-Fresh creates and forks carry a client creation ID; a durable create-or-return decision resolves it to the same destination or rejects conflicting content.
-The storage interface for session enumeration and listing also owns this logical creation/receipt capability.
-Listing alone cannot enforce uniqueness against two concurrent replicas.
+Without the pair, an accepted mutation still follows normal durable admission, but has no general retry receipt or replay guarantee.
+After an ambiguous response the caller reconciles state rather than blindly resending.
+Exact-ask resolution and expected-revision checks retain their own semantics independently of retry protection.
+This protocol defines safe application retries; it does not assume that gRPC or reconnect logic automatically replays mutations.
 
-The tool's invocation identity and its intent/result commit identities remain distinct.
+A compact `RequestReceipt` records the admission decision, command fingerprint, original resolved target, and necessary durable result or work references.
+It commits atomically with the decision it protects, without a separate receipt commit gate.
+It is not a copy of the full response or transcript and never retains unreleased tool bytes or payload-bearing hook evidence.
+A valid retry returns that original decision; retrying session-current cancellation cannot resolve against a newly started run.
+Later replacement, consumption, or cancellation of a steer does not rewrite the fact that its submission was accepted.
+Accepted input and actual model consumption remain distinct facts.
+
+##### Bounded retry scopes
+
+Each session retains at most 256 receipts and accepts retry identities at most one hour old.
+Capacity pressure can shorten this horizon; one hour is a maximum, not a guaranteed retry window.
+Each `SessionCatalog` has a separate 256-receipt scope and cutoff for creation, fork admission, and deletion.
+Catalog capacity belongs to the catalog rather than an individual caller, so another catalog's traffic cannot evict its receipts.
+A busy client can shorten the horizon for other clients in the same scope; clients need not coordinate a sequence.
+
+Each scope has a durable, nondecreasing creation-time rejection cutoff.
+Receipt eviction is ordered by request creation time, not LRU access, and advances that cutoff atomically with affected mutation and receipt decisions.
+Reject all identities at or before the cutoff, including every timestamp tie and never-seen delayed requests.
+A missing receipt behind the cutoff is expired, never a fresh mutation.
+The cutoff is monotonic; client timestamps and network arrival order need not be.
+Validate the age and a bounded future-clock allowance before admission so a client cannot unboundedly extend retention or advance the cutoff with a future timestamp.
+The exact skew allowance and time representation remain interface decisions.
+
+A new owner reconstructs the cutoff and every still-admissible receipt before accepting mutations.
+Clock rollback, restart, and retention changes must not reopen a discarded interval.
+Historical records can retain request evidence after active retry lookup expires, but neither a checkpoint nor a request lookup needs an unbounded receipt map or an arbitrary full-history scan.
+Expiry is explicit and does not establish whether an earlier request executed; callers reconcile rather than automatically minting a replacement identity.
+Work and its observation handle can outlive the initiating receipt.
+
+Creation has no destination history yet, and deletion must remain retryable when that history is inaccessible.
+Their receipt and cutoff decisions therefore belong to the catalog's lifecycle authority, with the same atomicity and bounded-window rules.
+A protected creation retry returns the same destination while eligible; a deletion retry never recreates a session.
+Minimal deletion tombstones have a separate identity-safety purpose and do not expire merely because a receipt does.
+
+##### Common observation without universal operations
+
+Request identity and work identity remain conceptually separate.
+A synchronous mutation returns its typed committed decision.
+Genuinely asynchronous work additionally returns a `WorkReference` usable through common status, wait, and subscription conventions, regardless of whether the caller supplied a retry token.
+Generic clients can distinguish pending and terminal state, typed progress and outcomes, structured errors, and expired or unavailable references without knowing each work type's implementation.
+Authorization applies to every observation.
+Exact method names, protobuf types, and waiting behavior remain interface work.
+
+The observation contract projects existing authoritative lifecycles: run state, extension operation state, or catalog creation state.
+Create a separate operation only when existing resource state cannot express genuinely independent work.
+There is no mandatory enumerable operations collection or universal operation state machine coordinating all mutations.
+Cancellation illustrates the distinction: its receipt establishes acceptance and signaling against a resolved run; observing that run establishes terminal settlement, not necessarily proven cessation of external effects.
+
+The tool's invocation identity and its intent/result commit identities remain distinct from API request identity, work references, positions, cursors, and writer epochs.
+An external tool may support its own idempotency key, but local request deduplication does not make external effects exactly once.
 Checking or retrying a storage commit never reruns the tool.
-An external tool may support its own idempotency key, but the session protocol cannot assume every side effect does.
-Exact ID formats, receipt lifetime, and conflict responses belong in the interface contract.
-Provisional streaming is a separate application path with no durability claim.
+The [API prior-art comparison](session-commit-history-prior-art.md#api-command-identity-and-asynchronous-work) explains the useful Google, Temporal, and repeatable-request patterns and their limits.
 
 #### Checkpoints, replay, and missing history
 
@@ -529,8 +607,16 @@ A generation marks a history boundary; it does not replace commit ordering or au
 
 #### Session catalog
 
-The host's session catalog supports bounded, paged, authorized listing and exact creation/status lookup without activating sessions.
-A catalog is the listing and lifecycle index, not a transcript or another continuation authority.
+A `SessionCatalog` is a stably identified ownership and authorization scope for session listing and lifecycle decisions.
+Each session belongs to one catalog, and each catalog uses exactly one configured `StorageProvider`; several catalogs can use the same provider.
+Catalog identity survives connection, replica, and display-name changes.
+The initial arrangement is one catalog per user within a storage/service authority, not a global registry spanning installations.
+Multiple catalogs and shared membership are extension points; federation across storage providers is not part of this design.
+
+The host exposes bounded, paged, authorized listing and exact creation/status lookup without activating sessions.
+A catalog is not a transcript or another continuation authority.
+Its strict creation, publication, deletion, receipt, and cutoff decisions are distinct from derived listing metadata.
+Its separate bounded retry budget prevents another catalog's traffic from evicting receipts or advancing its cutoff; this is isolation of retry state, not complete shared-resource DoS protection.
 The host projects display-safe entries from existing trusted `SessionKind` and kind-specific `SessionRelationship` values.
 The storage adapter provides the listing and lifecycle-decision capabilities backing that API.
 Scheduled fires show their schedule relation and fire-session identity.
@@ -538,6 +624,7 @@ Main sessions, delegated children, and other kinds are not all human-initiated.
 Do not add a second generic origin field now; future external triggers and schedule-group queries can extend the catalog later.
 
 The host's catalog/reconciliation path maintains derived display metadata, which may lag a committed change.
+A future search index would be another authorized derived view within that catalog, not a second lifecycle authority or a reason to add multi-storage catalogs.
 Each projection identifies the position it reflects, and missed updates converge through replay or reconciliation.
 `CommittedHistory`, not a stale list entry, answers authoritative session reads.
 
@@ -570,9 +657,10 @@ An adapter may optimize the initial full-prefix copy only if retention and reada
 ##### Asynchronous creation
 
 At admission, the host pins source position C and captures its metadata and fork policy under a short source-side boundary.
-The adapter's durable creation decision reserves a new session ID; the host returns promptly with that ID and **creating** status rather than holding the request open for the entire copy.
-The entry is visible in authorized session listings, and exact creation-ID/status lookup reports `creating`, `ready`, or `failed` (or a non-disclosing `deleted` for an exact lookup after deletion).
-Retrying the same ID returns the same creation decision.
+The adapter's durable catalog creation decision reserves a new session ID; the host returns promptly with that ID, a common work reference, and **creating** status rather than holding the request open for the entire copy.
+The entry is visible in authorized session listings, and exact destination/status lookup reports `creating`, `ready`, or `failed` (or a non-disclosing `deleted` after deletion).
+An optional retry token and original timestamp resolve to the same admitted destination while their catalog receipt remains eligible; an expired request is rejected, not executed as a second creation.
+The destination/work identity remains usable independently of receipt expiry.
 
 The copy is server-owned work after admission, not tied to the initiating client's connection; a disconnect cannot silently cancel it.
 While immutable history through C is copied, the source may continue new runs.
@@ -594,7 +682,8 @@ A fork whose final decision won first is independent, even if its ready status a
 
 ##### Recovering an orphaned creation
 
-A fork request has a stable client creation identity and an idempotently recoverable result.
+A fork has a durable destination/creation identity independent of the optional client retry token.
+Its admitted work and terminal status remain recoverable even after the API receipt expires.
 A crashed creator may leave the catalog entry **creating** temporarily.
 A slower host reconciler makes every ready publication conditional on the destination still being `creating`, even if the source-side fork decision already won.
 Destination deletion wins over every later publication or cleanup retry; a completed source-side decision is not permission to resurrect a deleted destination.
@@ -603,7 +692,9 @@ Otherwise the reconciler completes publication for a finalized fork.
 For an incomplete attempt, it waits until the creator can no longer finish before marking it **failed**.
 It must distinguish a slow live copy from a dead one and never publish partial history.
 
-Retrying the same creation ID after a terminal failure returns that failure; a new attempt needs a new ID.
+Exact destination/work lookup after terminal failure reports that failure.
+An eligible protected API retry returns its original admission decision and destination reference; an expired identity fails explicitly.
+A new copy attempt requires a fresh submission rather than replaying the failed work.
 A later reconciler could finish abandoned copies instead, but must preserve the same stable outcome contract.
 Cleanup of incomplete staging is separate from its visible creation outcome.
 The exact fencing, status, and cleanup mechanism belongs in the interface contract.
@@ -791,7 +882,7 @@ A user can submit on one client and inspect, modify, or retract the pending stee
 
 Updates and retractions name the expected slot revision.
 A stale client receives a conflict rather than overwriting another client's edit.
-Conflict payloads and receipt lifetimes remain interface questions.
+Conflict payloads remain interface questions; retry receipts follow the bounded optional command protocol above.
 
 Unsent composer text, focus, filters, and other presentation state stay client-local.
 Draft persistence and synchronization are outside this design.
@@ -805,7 +896,7 @@ The first valid, authorized **committed** resolution of an exact ask wins.
 Later conflicting answers receive the authoritative already-resolved decision.
 They cannot reverse authorization that may already have allowed execution.
 
-A retry of the winning action resolves through its existing action identity.
+A retry-protected winning action returns its retained receipt while eligible; expired retries fail explicitly, and exact-ask resolution prevents a later answer from reversing the committed decision.
 Unsubmitted responses stay client-local, and a connection reserves no exclusive responder role.
 
 #### One client timeline
@@ -1039,7 +1130,8 @@ Read-only inspection never triggers the request.
 
 Pending steers and uncertain tools need explicit post-crash recovery decisions before new dependent work.
 No-client automatic agent continuation is deferred.
-A durably awaiting exact `PermissionAsk` remains resolvable by explicit verdict rather than becoming an interrupted run.
+A durable pending execution `PermissionAsk` remains resolvable by explicit verdict rather than becoming an interrupted run.
+A result-release ask is different: its unreleased bytes are memory-only, so process loss closes it as unavailable under the original call identity without rerunning the tool.
 
 The host's generic orphan-settlement worker covers every session kind, including scheduled fires and delegated children.
 It neither restarts them nor knows schedule retry policy.
@@ -1069,7 +1161,7 @@ In the first cutover, an interrupted run leaves unconsumed steers pending for ex
 The authorized caller chooses a new follow-up run with the input or retracts it.
 The server neither silently promotes nor discards accepted text, nor requires resubmission.
 A later same-run resume could consume it at the resumed run's eligible boundary.
-Stable identities prevent retried steer and recovery commands from inserting input twice.
+Stable internal action and revision identities prevent recovery from inserting the same accepted input twice; optional API retries have the separate bounded receipt guarantee above.
 This durability differs from today's restart-lost in-memory inbox.
 
 ##### Terminal-race disposition
@@ -1086,29 +1178,36 @@ If it ends first, the server commits an explicit disposition:
 The server may reject a steer before accepting it.
 After acknowledging durable acceptance, it cannot return responsibility to the client merely by echoing text in a terminal response.
 Order the recipient-run or pending-state decision at the committed session head and make it replayable by message identity.
-Retries never create a second follow-up.
+A retry-protected submission cannot create a second follow-up while eligible; expiration rejects the old request rather than promoting it as fresh input.
 
 ##### User cancellation and failed runs
 
-Explicit user cancellation of the targeted `Run` also cancels its pending, undelivered user steer.
-Commit both dispositions together so a crash cannot leave input that starts a run contrary to cancellation.
-A steer already inserted into committed conversation cannot be cancelled retroactively.
+The ordinary Cancel action is session-scoped: the owner resolves the active run when it orders the command, without requiring a client reload or a fresh run ID.
+A follow-up admitted before that boundary is the cancellation target; if cancellation wins first, pending steers cannot promote it.
+Explicitly run-qualified cancellation remains exact and never retargets a successor.
+For a retry-protected cancellation, the receipt preserves the originally resolved target rather than looking up whichever run is current on retry.
 
-Run cancellation's effect on independent extension slots and future background work remains open.
-Retracting the user slot alone never affects them.
-A terminal response may include discarded input as a convenience, but that note is neither guaranteed delivery nor the cancellation record.
+On observing cancellation, promptly close local execution admission and signal active work, descendants, and extensions.
+Local interruption must not wait for a storage write or ordinary batching delay; confirmed acceptance and cancellation disposition still require durable commitment.
+Cancel pending, undelivered steers from every source, and fence late extension notifications from restarting the canceled work.
+Commit those dispositions together so a crash cannot revive pending input contrary to accepted cancellation.
+Extensions receive the signal and stop admission/scheduling; recorded operation outcomes remain history, not runnable hints.
+A steer already inserted into committed conversation cannot be canceled retroactively.
+An authorized fresh submission ordered after cancellation may request new execution once bounded settlement allows admission.
+This first-cutover contract adds no independent cross-run background work to cancel.
 
-Internal shutdown or lease-loss cancellation is not user intent.
-Preserve pending steers for fenced crash recovery.
-Without accepted user cancellation, a crash leaves them pending for the first-phase explicit follow-up-or-cancel decision; later same-run resume could consume them.
+Cancellation acknowledgement means accepted and signaled, not that every process or external effect has stopped.
+Expose canceling separately from terminal settlement through the common work-observation contract.
+Finish bounded execution shutdown and [result settlement](#result-settlement-after-cancellation) before admitting a new run, but do not wait for optional result-release approval.
+At the deadline, record unresolved external activity honestly; cancellation neither proves rollback nor makes an uncertain ordinary tool safe to repeat.
+The client should surface unresolved activity before later work can conflict with it.
+Exact deadlines remain interface/operational choices.
 
-A cancellation naming an old run cannot cancel a follow-up already created by terminal-race promotion.
-The broader multi-client cancellation targeting contract remains open below.
-
-If a run commits a failed terminal outcome before consuming a steer, keep the input pending rather than promoting it automatically.
-The caller can inspect the failure and choose a follow-up with that input or cancel it.
-A failed run is not implicitly resumed.
-The disposition survives reconnect without requiring resubmission.
+Internal shutdown or lease loss is not user cancellation.
+Preserve unconsumed input for fenced crash recovery and explicit follow-up-or-retract decisions.
+If a run commits a failed terminal outcome before consuming a steer, also preserve the input rather than promoting it automatically.
+The caller can inspect the failure and choose a follow-up or retract it without resubmitting the accepted text.
+Retracting one source slot alone still does not cancel other slots or execution.
 
 No-client autonomous takeover and continuation remain later capabilities.
 An unobserved interrupted run waits for authorized client activation or recovery in the first cutover.
@@ -1120,9 +1219,10 @@ The owning host rechecks caller authority, tree identity, and current epoch; ing
 Forward at most one hop, without loops or exposing private pod addresses.
 
 On handoff or a stale owner hint, refresh ownership.
-An ambiguous mutation retains its request identity so a retry resolves against the original decision.
-If ownership or routing cannot be established, return retryable unavailability rather than invented success.
-The client keeps its committed cursor and queued request across reconnect.
+An ambiguous retry-protected mutation retains its token and original timestamp so an eligible retry resolves against the original decision.
+An expired identity fails explicitly; an unprotected mutation requires state reconciliation rather than automatic replay.
+If ownership or routing cannot be established, return unavailability rather than invented success; replay safety depends on the command contract, not the transport status alone.
+The client keeps its committed cursor and any eligible protected request across reconnect.
 
 Affinity can reduce forwarding but is not required for correctness.
 Any authorized replica can serve durable snapshots and committed catch-up reads from shared history.
@@ -1150,16 +1250,17 @@ Drain is a committed pause, not the end of a `Run`.
 The owning host marks the whole tree draining and admits no new model or tool calls in any member.
 It coordinates engine and extension handlers so each member finishes active calls, commits outcomes and continuation, then parks at a turn boundary.
 
-A pending `PermissionAsk` is already a parkable continuation.
+A pending execution `PermissionAsk` with reconstructible continuation is already parkable.
 Its exact ask and decision state survive handoff without waiting for the human.
+A release ask backed by memory-only bytes is not portable merely because its metadata committed; the later handoff protocol must explicitly settle or invalidate that hold before claiming a complete parked continuation.
 The parent retains its delegation call and child links as pending; parking a child is not a tool result.
 Delegated tools must support coordinated pause rather than tying logical call lifetime to one pod.
 
 During drain, an approval may commit against its exact ask and decision identity, but cannot start dependent work on the draining owner.
-The successor consumes the decision on resume; same-identity retries return the original decision.
+The successor consumes the decision on resume; API retries use the same optional identity and remain subject to the bounded receipt/cutoff contract.
 
 After closing approval admission for final handoff, the owner returns a typed reconnect response without accepting new verdicts.
-The client keeps its request identity and queued verdict, reconnects through any entry replica, and retries.
+The client keeps any eligible retry identity and queued verdict, reconnects through an entry replica, and retries only under the protected command contract; unprotected or expired requests require reconciliation.
 The entry forwards to the successor after acquisition; bounded retries may report temporary unavailability until then.
 Resolve ambiguous acceptance from history before claiming success or asking for a new verdict.
 
@@ -1212,7 +1313,8 @@ This does not promise exactly-once external effects.
 
 The ID may be derived from a durable session/tool-call or other action/turn anchor, the phase, stable registration identity, and occurrence within that anchored action.
 The anchor may already exist in a committed tool request or admitted input; a separate durable hook-start transition is not required.
-Before a side-effecting invocation, its anchored definition and inputs must be reconstructible for a retry, using immutable references where appropriate.
+Before a side-effecting invocation that is to be recoverably retried, its anchored definition and inputs must be reconstructible, using immutable references where retention permits.
+Sensitive unreleased result inputs are an explicit exception to durable capture: they remain memory-only, and process loss ends the ability to retry that invocation rather than justifying persistence.
 If recovery cannot establish the same definition, input, and parameters, it must not reuse that identity for a guessed invocation.
 Do not derive identity from an ephemeral execution index or the current configuration.
 Retries of the same logical input and parameters keep the same ID; a changed invocation has a new ID.
@@ -1220,19 +1322,53 @@ The exact encoding and definition of occurrence remain interface questions.
 
 Retain the reconstructible invocation definition, input, and parameters, plus completed output or failure and meaningful transformation provenance, subject to scrubbing and withholding policy.
 During recovery, reuse a committed completed output rather than invoking the hook again.
-Missing completion evidence permits an authorized retry with the same logical ID, even though prior external effects may exist.
+Missing completion evidence permits an authorized retry with the same logical ID only while the same definition, input, and parameters remain reconstructible, even though prior external effects may exist.
 Cancellation and recovery policy still control admission; missing evidence does not create an autonomous retry loop or first-cutover automatic run resume.
 Hook retry is explicitly not permission to reexecute an uncertain ordinary tool.
 
 Logical records and physical storage transactions are different boundaries.
 Completed transformations may batch with the effective authorized tool intent or logical model request, but that commit must succeed before dependent tool dispatch or model execution.
-An incomplete attempt can leave no committed output, requiring the hook to repeat with its stable ID on an authorized retry.
+An incomplete attempt can leave no committed output; an authorized retry repeats the hook with its stable ID only if its exact permitted inputs remain available.
 The contract requires neither one write per hook or phase, nor separately persisted started/completed transitions for every attempt, nor a mandatory attempt-ID field.
 
 Side-effecting hooks can run before the tool-intent gate.
 No-intent evidence therefore establishes that the **tool** was not dispatched, not that hooks caused no effects.
 The intent records the effective authorized call after trusted rewrites, not the model's original request.
-Detailed tool-hook failure stages and their recovery state machine remain open, including how withheld or held results constrain recovery; this proposal does not invent that protocol.
+Execution evidence, hook-processing evidence, and disclosure disposition are separate facts.
+A pre-dispatch hook failure does not prove that its own effects were absent; a post-execution hook failure must not erase an established tool outcome or make the tool appear safe to rerun.
+The exact stage encoding and recovery transition APIs remain interface work.
+
+##### Result settlement after cancellation
+
+Cancellation stops new agent execution, but already-produced output still follows the normal post-tool hook and disclosure pipeline under a separate, bounded settlement context.
+Hooks are trusted integrations expected to contain or process agent actions; this design does not add required/optional hook classifications or infer intent from arbitrary hook code.
+Existing processing and guardrail failure semantics remain in force, and required disclosure checks cannot be bypassed by cancellation, error, or timeout.
+Do not introduce a new autonomous result-release reviewer or extend the child-permission reviewer to approve held results.
+
+Permitted canonical results commit under their original call identities and become available to a later explicitly started run.
+Settlement never sends another model request or dispatches dependent work in the canceled run.
+A release decision can remain actionable while its in-memory result survives, but clients choose whether to present post-cancel review controls; the server does not require a new interrupting prompt.
+Starting a new run discards unreleased bytes, expires their release decisions, and fences late responses from every client.
+Late processing from the old run cannot create a new actionable release ask after that boundary.
+
+This deliberately differs from the inspected Codex cancellation path: Codex can interrupt post-tool processing and substitute an aborted result before dispatch reaches its terminal-outcome boundary.
+The [pinned cancellation comparison](session-commit-history-prior-art.md#cancellation-and-result-settlement) records that evidence; bounded completion here is a chosen contract, not behavior established by that prior art.
+
+##### Memory-only held results
+
+Potentially sensitive unreleased output and its payload-bearing hook inputs, outputs, and traces remain in process memory.
+The primary disclosure boundary is the agent; client feeds, diagnostics, audit, checkpoints, provider replay, and retry receipts must not become alternate persistence or disclosure paths.
+Retain safe identity, failure, processing, and disposition evidence without retaining the held payload.
+Approved content can enter ordinary retained history only after the normal processing and exact release requirements are satisfied.
+There is no durable quarantine store or new retention-policy matrix in the first cutover.
+
+Denial discards held bytes without undoing execution or automatically repeating the tool.
+Process loss makes the held result unavailable even when local files or remote storage remain intact.
+Recovery closes its release ask and commits a synthetic withheld/unavailable result under the original call identity, retaining whatever execution evidence is established.
+Unavailable output is not proof of tool failure, no effects, or safe retry.
+Do not recover the bytes through hook traces or recreate them by reexecuting the tool.
+A pending execution approval whose continuation is durably reconstructible remains a different case.
+
 
 #### Tool calls and uncertain outcomes
 
@@ -1250,7 +1386,7 @@ The durable evidence distinguishes three states:
 | --- | --- |
 | Requested call, no committed intent | The protocol did not dispatch it. |
 | Committed intent, no committed result | The call might have started. |
-| Actionable durable ask | Approval is still pending; do not close the call as not-started. |
+| Actionable durable execution ask | Approval is still pending; do not close the call as not-started. A release ask additionally requires its live memory-only payload and is closed unavailable if that payload was lost. |
 
 After fencing the former writer and checking for a committed result, the host's recovery path closes an orphaned requested call with a harness-authored result, using extension handlers where its semantics require them:
 
@@ -1276,9 +1412,9 @@ The server exposes only authorized projections of accepted facts; clients may di
 | Action | Required before proceeding | What can be provisional |
 | --- | --- | --- |
 | Start a run or send its next model request | Commit the accepted input, run identity, complete effective logical model input including required transformation evidence, and the continuation state the request uses. A later request also waits for the preceding turn's committed outcome. The narrow renewal-uncertainty exception uses only already committed input. | Stream the current model response without persisting each token. |
-| Present an approval | Commit the pending ask and exact private continuation state before treating the approval as actionable. | Render an unconfirmed request as waiting, not as an exercisable grant. |
+| Present an approval | Commit the pending ask and exact permitted continuation before treating approval as actionable. A result-release ask additionally requires its live memory-only payload; its durable metadata cannot restore the bytes after process loss. | Render an unconfirmed request as waiting, not as an exercisable grant. |
 | Dispatch each tool call, including a delegated agent | Commit the completed assistant turn with its requested calls, then commit that call's effective authorized intent after trusted rewrites, identity, and required transformation evidence before its dispatch. If its intent write fails, do not dispatch it. | Show that the call is being prepared; progress and result previews after dispatch may be provisional. |
-| Continue after a tool returns | Commit its canonical result before feeding it back to the model or claiming a final outcome to the client. If storage cannot establish that result, stop dependent work until recovery commits a known result or a distinct unknown-outcome result for the same call. | Show a clearly provisional preview while the result commit is pending. |
+| Continue after a tool returns | Commit its permitted canonical result before feeding it to the model or claiming a confirmed outcome. Withheld bytes stay memory-only and cannot appear in previews. If result commitment is unresolved, stop dependent work until recovery establishes a known, withheld/unavailable, or unknown outcome for the same call. | Show only a disclosure-approved provisional preview while its result commit is pending. |
 | Use compacted history or changed session controls | Commit the replacement conversation or control decision before using it for another model request or presenting it as confirmed. | Show that the operation is pending. |
 
 A failed result write after dispatch cannot undo a tool's external side effect.
@@ -1342,9 +1478,9 @@ No atomic purge across child stores is required.
 The adapter declares retention and purge timing, which may be stricter.
 
 Catalog and history reads expose no deleted-session title, prompt, source hint, or descriptive metadata.
-Only a minimal, non-enumerable creation-ID/session-ID tombstone may remain to reject late creation retries and identity reuse.
-Exact creation-ID lookup reports deleted without substantive data.
-Creation IDs are bounded opaque values, not user-authored labels.
+Only minimal, non-enumerable creation/destination and session identity tombstones may remain to prevent resurrection and identity reuse.
+Exact identity lookup reports deleted without substantive data; eligible protected request retries use the catalog's bounded receipt contract.
+Server-assigned creation/session identities are distinct from optional client retry tokens, and receipt expiry cannot remove the deletion gate.
 
 A tombstone does not prove physical purge.
 Retained bytes remain inaccessible through the logical API until the adapter's declared purge.
@@ -1353,41 +1489,69 @@ A future explicit detach could preserve a child before root deletion; it is outs
 Forks are independent peer sessions with lineage, not source-owned children.
 Deleting a source neither disables nor deletes its existing forks or other separately created peers.
 
-#### Storage costs and later buffering
+#### Commit budget and batching
 
 `CommittedHistory` costs more than a best-effort activity log.
-Storage failure must stop claims of durability, while already-started external work may remain uncertain.
-Checkpoints, storage growth, and access control must work for long sessions without exposing private records or allowing a cursor to skip required history.
-Forks, child sessions, and multiple server replicas also need ownership and lineage rules.
-Subpackages should follow these contracts once defined; relocating the TUI model by itself would not resolve the persistence gap.
+Track logical records, atomic commit gates, and physical backend writes separately: several records can share a commit, and one accepted append can require several physical writes.
+The following budget makes the ordinary tool-call path explicit without fixing an adapter's storage layout.
 
-An adapter may eventually batch or buffer writes while preserving these acknowledgement and ordering guarantees.
-The initial design assumes no such relaxation: acknowledging an in-memory buffer as "persisted" would mislead a client after a crash.
-Any later buffering proposal must define its durable boundary, backpressure, failure handling, and cross-replica recovery separately.
+| Stage | Durable boundary | Commit-gate budget |
+| --- | --- | --- |
+| Accept a completed model response | Requested calls, identities, and required provider replay. | One per response, shared across its calls. |
+| Prepare a recoverably retryable side-effecting hook | Reconstructible definition and permitted inputs, unless already durably anchored. | Zero if captured; otherwise an additional gate. Sensitive unreleased result inputs stay memory-only instead. |
+| Admit dispatch | Effective authorized intent and completed pre-dispatch transformation evidence. | One per call before dispatch. |
+| Execute the tool | No separate tool-start record is mandatory. | Zero. |
+| Settle an ordinary result | Permitted canonical outcome and processing evidence. | One per call before dependent continuation. |
+| Hold for release instead | Pending ask and safe disposition/recovery evidence, excluding held bytes. | One pending-ask gate, then one resolution/result gate; one more than ordinary settlement. |
+
+Without additional approval or hook-input gates, a response requesting N tools therefore has a baseline of `1 + 2N` commit gates before eligible grouping.
+Pre-execution approval adds a pending-ask gate; its decision can share the effective intent commit where ordering permits.
+Completed hook phases do not each require a write.
+Optional API receipts and capacity-driven cutoff changes share their protected decision's commit rather than adding another gate.
+Run admission, ownership renewal, cancellation, checkpoints, and large-payload storage have separate costs; this is not a whole-run physical-write estimate.
+Lost memory-only holds settle unavailable and never cause a tool rerun to recover output.
+
+An engine-side commit coordinator owns tunable maximum batching delay and batch-size bounds, outside individual agent loops and above storage acceptance.
+Use per-session ordered queues with shared scheduling; preserve each session's head, claim, and execution gates.
+Do not require a timer or goroutine per session, cross-session atomic transactions, or one stalled session to block unrelated sessions.
+A storage adapter can aggregate physical writes across ready sessions where supported, but does not introduce a second independent application batching policy or acknowledge a volatile queue as durable.
+Waiting briefly to reduce write load is an accepted tradeoff; queueing cannot postpone acceptance indefinitely under continuous traffic.
+Cancellation signaling bypasses the ordinary coalescing delay, while its confirmed decision still requires acceptance.
+
+Grouping may combine transitions that are already ready; it cannot cross an execution dependency by running a tool or model before its required earlier commit.
+Measure append count, committed bytes, and acceptance latency through ordinary calls, rewrites, approvals, failures, and crash intervals before fixing batch defaults or interfaces.
+Storage failure stops claims of durability, while already-started external work can remain uncertain.
+Checkpoints, storage growth, and access control must support long compacted sessions without unbounded active receipt indexes, exposing private records, or skipping required history.
 
 This borrows ActiveGraph's [commit-before-projection rule](https://docs.activegraph.ai/concepts/events/index.md) and [stale-writer rejection](https://docs.activegraph.ai/guides/operating-in-production/index.md), not its graph ontology or runtime.
-This draft and its companion model retain the unresolved design questions while the discussion continues.
+The companion models express the domain rules; package allocation, wire types, and the remaining choices below still require interface review.
 
 ## Questions to resolve before interface review
 
-1. The detailed shared-control contract: exact-run cancellation targeting for multiple clients, cancellation's interaction with extension slots and later background work, and the disposition of an accepted exact-run steer when its run ends before consumption.
-   Shared attachment, prompt conflict, per-source coalescing, all-together delivery, and first-committed approval resolution are settled directions above.
-   Ordering algorithm, provenance encoding, slot-revision conflict responses, and notification byte caps remain interface details.
+1. The remaining shared-control details: disposition of accepted exact-run input that misses its target, deterministic slot ordering, provenance encoding, revision-conflict responses, and notification byte caps.
+   Session-current cancellation, exact-target opt-in controls, all-source cancellation propagation, normal unqualified steer promotion, and failure/crash explicit recovery are settled above.
+   Later independent cross-run work still needs its own lifecycle contract.
 2. The exact #2114 display-fidelity matrix, #2079 reasoning representation, and per-field/aggregate budgets for retained client and delegation detail.
    Which client-safe items must commit before progress and which rare cross-history gaps are explicitly surfaced?
 3. Exact namespace/marker and legacy collision detection, backend-neutral claim and append interfaces, local torn-record diagnosis, and client API versions, history pages, authorization-view invalidation, and live cursors.
-4. Action-identity format, scope, receipt lifetime, conflict/stale responses, and the catalog's atomic creation, deletion, and conditional fork decisions.
+4. Concrete command/receipt/work-reference types, fingerprint/canonical comparison rules, timestamp precision and clock-skew allowance, conflict/expired responses, and atomic catalog creation, deletion, and conditional fork decisions.
+   Optional opaque tokens, paired timestamps, one-hour maximum age, independent 256-receipt scopes, and durable creation-time cutoffs are settled; verify ties, delayed arrivals, clock rollback, recovery, and retention-change behavior.
+   Catalog identity, user-to-catalog mapping, authorization, and same-provider lifecycle primitives still need interface contracts, not a multi-storage abstraction.
 5. Storage layout and scale: checkpoint/replay bounds, large content reads, catalog pagination and reconciliation, and provider-specific durability declarations.
    A run boundary alone does not bound history size.
+   Batching topology is settled; actual delay/size settings, queue/backpressure behavior, and measured physical-write costs remain open.
 6. Extension registration and version compatibility, mandatory versus display-only state, and the exact generic operation/child-link contract.
-   Later work may add active-tree handoff, autonomous run resume, historical forks, same-session rewind, and networked extensions; their hooks must not be mistaken for first-cutover behavior.
-7. Concrete logical-request and transformation record APIs, stable hook invocation ID/occurrence formats, hook definition/version/configuration capture, and the tool-hook failure state machine.
-   Complete effective logical model inputs and at-least-once hook execution are settled; exact historical raw transport requests are outside scope.
-   How disclosure, result withholding, destruction, and held-byte recovery interact remains open, without retaining denied bytes in hook traces.
-   Provider replay codecs, ordered item envelopes, occurrence-specific canonical-call bindings, and compatibility/fork/compaction/provider-switch contracts remain interface work; reserving richer representation does not authorize incremental response acceptance or new retry behavior.
+   Cancellation propagates to extensions and closes all pending source slots; bounded shutdown and result-settlement deadlines remain to be specified.
+   Later active-tree handoff, autonomous run resume, historical forks, same-session rewind, and networked extensions must not be mistaken for first-cutover behavior.
+7. Concrete logical-request and transformation record APIs, stable hook invocation ID/occurrence formats, definition/version/configuration capture, and detailed tool-hook failure-stage encoding.
+   Complete effective logical inputs, reconstructible at-least-once hook retries, memory-only unreleased payloads, lost-hold settlement, and bounded normal result processing after cancellation are settled.
+   Preserve existing guardrail decision/failure semantics; the cancellation/result-lifecycle changes introduce no new approval authority or hook-criticality policy.
+   Exact historical raw transport requests remain outside scope.
+   Provider replay codecs, ordered item envelopes, occurrence-specific call bindings, and compatibility/fork/compaction/provider-switch contracts remain interface work; richer representation does not authorize incremental acceptance or new retry behavior.
 8. Compatibility/dependency summary versions and artifact references, bounded causal reference scopes/remapping, and concrete conformance/fault-injection contracts across adapters.
-9. Development staging or coexistence with current paths versus a clean runtime cutover.
-   The first-cutover storage break and absence of legacy migration remain fixed; no long-lived branch or side-package strategy is selected here.
+
+Development staging is settled: short infrastructure PRs, adjacent packages where useful, and later explicit runtime selection/integration without storage compatibility or migration.
+Closing the remaining decisions and reviewing interfaces precede an implementation breakdown.
 
 ## Vocabulary reference
 
@@ -1419,13 +1583,18 @@ These names describe domain concepts, not finalized API types or wire encodings.
 | `SteerSlot` / `SteerRevision` | Replaceable pending input for one source / an identified committed version of its content and disposition. Revision-specific consumption cannot erase a newer replacement. |
 | Safe model-input boundary | Before a next model request, when the engine can incorporate pending input without interrupting a request or bypassing approvals and outcome commits. |
 | `PermissionAsk` | A durable exact-run decision request. Its projected display is distinct from private authorization and continuation material. |
-| Catalog / tombstone | The authorized listing/lifecycle index / a minimal retained identity marker enforcing irreversible logical deletion and preventing ID reuse. Neither is transcript authority. |
+| `SessionCatalog` / `StorageProvider` | An identified authorization/listing/lifecycle scope / the single configured storage authority backing it. Catalog lifecycle decisions are strict; listing and possible search indexes are derived. |
+| `APIRequest` / `RequestReceipt` | An externally submitted mutation / its compact committed retry decision when an optional token/timestamp pair is supplied. Neither is the work's lifecycle or a copy of its payload. |
+| `RetryScope` / rejection cutoff | A session's or catalog's bounded receipt domain / its durable nondecreasing creation-time boundary. Expired identities are rejected, not reexecuted. |
+| `WorkReference` | A common authorized observation handle projecting an existing run, extension operation, or creation lifecycle, not a universal jobs collection. |
+| `ToolResultSettlement` / `HeldResult` | Normal processing of produced output / memory-only bytes awaiting exact release. Execution, processing, and disclosure dispositions remain distinct. |
+| Tombstone | A minimal retained identity marker enforcing irreversible logical deletion and preventing ID reuse, independent of receipt expiry. |
 | Fork / lineage | A new independent session initialized from an eligible source prefix / the source identity and pinned position it records. Neither transfers source execution or child access. |
 
 ## Related information
 
-- [Companion domain model](session-commit-history.modelith.md)
-- [Model source](session-commit-history.modelith.yaml)
+- [Session-history domain model](session-commit-history.modelith.md) and [YAML source](session-commit-history.modelith.yaml)
+- [Catalog and command-protocol domain model](session-command-protocol.modelith.md) and [YAML source](session-command-protocol.modelith.yaml)
 - [Prior-art survey and design recommendations](session-commit-history-prior-art.md)
 - [Implemented persistence and reliability](../architecture/observability.md)
 - [Implemented API surface](../architecture/api-surface.md)
