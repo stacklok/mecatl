@@ -70,7 +70,12 @@ caches on the surface. The parent owns modal lifetime, placement, frame-scoped
 pointer mapping, and effects that change root-owned state. A surface that needs a
 root-owned effect emits a narrow intent; it does not require the parent to inspect
 its concrete type. Correlate asynchronous results with the surface instance and
-its active request, then discard results the open surface does not own.
+its active request, then discard results the open surface does not own. Request
+correlation must also cover read/write ordering: a snapshot started before a
+mutation cannot replace its confirmed result. Closing a view does not undo an
+operation already submitted to the server. When an intent replaces a surface,
+tear down the outgoing instance and stop its common close/refocus processing
+before it can affect the replacement.
 
 The `ui` package is large, so keep its internal components narrow and their
 contracts explicit. Prefer a shared contract when all comparable components use
@@ -130,6 +135,15 @@ using keyboard, pointer, or both as appropriate to the widget. The saved-memory
 browser shows list/detail ownership; Sessions shows a surface that fills the
 conversation region while keeping the header, prompt, and footer.
 
+Choose fill placement for multi-level management browsers whose inventories and
+history benefit from the conversation region; use centered cards for focused
+pickers and inspectors. Keep the placement consistent through a browser's local
+views. Back returns one level and preserves the parent's selected identity and
+window. If configuration or warnings would crowd history out of the viewport,
+keep a concise status summary beside the history and put complete details in a
+separate scrollable view. Selection keys and wheel input operate only on the
+visible browsing region.
+
 List and inspector cards cap their outer width at 128 cells, permission cards at
 132, and inline tool cards at 100, or the available width if smaller. These are
 ceilings, not target sizes. Small finite pickers should prefer a content-sized
@@ -142,7 +156,9 @@ fixed geometry offer. Measure all items when choosing a content-sized width,
 not just the visible rows. Recalculate for terminal resize; wrap or clip content
 when the offer is smaller than its preferred size. Budget wrapped chrome before
 allocating viewport rows, fall back to close-only when no body row fits, and
-check narrow terminals as well as a wide golden.
+check narrow terminals as well as a wide golden. A compact fallback must consume
+input without activating hidden actions; preserve browsing state so a larger
+geometry offer can restore it.
 
 An open modal or transient handles its keys before the prompt, and a wheel event
 over a modal must not scroll the hidden conversation. Every surface needs a
