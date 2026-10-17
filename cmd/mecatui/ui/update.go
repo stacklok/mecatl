@@ -4728,7 +4728,7 @@ func snapshotSelection(m *Model) {
 		// gesture behaviour; a later replacement will still clear them rather than
 		// claiming logical survival.
 		m.sel.anchorPoint, m.sel.headPoint = selectionPoint{}, selectionPoint{}
-		m.sel.snapshot = selectedText(base, m.sel)
+		m.sel.snapshot = selectedConversationText(frame, base, m.sel)
 		m.sel.copied = m.sel.snapshot
 	}
 	m.conversationView.replaceProjection(&m.vp, styleSelection(base, m.sel, m.deps.Theme.Style("selection")))
@@ -4892,7 +4892,7 @@ func (m *Model) refreshView() {
 	// A selection survives only when both logical endpoint contexts resolve and the
 	// resulting ANSI-free copied text remains byte-identical. Reading anchors may
 	// fall back; selections deliberately may not.
-	if m.sel.active && ((m.sel.anchorPoint.blockID == 0 && selectedText(content, m.sel) != m.sel.snapshot) ||
+	if m.sel.active && ((m.sel.anchorPoint.blockID == 0 && selectedConversationText(frame, content, m.sel) != m.sel.snapshot) ||
 		(m.sel.anchorPoint.blockID != 0 && !m.sel.resolveLogical(frame))) {
 		*m = m.clearSelection()
 	}

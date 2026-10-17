@@ -56,7 +56,7 @@ func TestModalFrameLifecycleSharedAcrossPlacements(t *testing.T) {
 			}
 			m.conv.appendAssistant(strings.Repeat("underlying conversation\n\n", 100))
 			m.refreshView()
-			m.vp.SetYOffset(9)
+			m.vp.SetYOffset(8) // anchor to a paragraph gap
 			m.conversationView.observe(m.vp)
 			conversationOffset := m.vp.YOffset()
 			if conversationOffset == 0 {

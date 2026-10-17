@@ -52,6 +52,7 @@ func assertTranscriptTheme(t *testing.T, m *Model) {
 		th.Style("transcriptHarnessHeading").Render(" system"),
 		th.Style("transcriptLLMMarker").Render(theme.TranscriptLLMGlyph),
 		th.Style("transcriptLLMHeading").Render(" mecatl"),
+		th.Style("transcriptLLMRail").Render("│"),
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("transcript lacks styled token %q", want)

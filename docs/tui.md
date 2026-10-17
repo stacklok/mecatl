@@ -191,9 +191,10 @@ Use theme-owned semantic styles so a surface works in light and dark themes.
 Transcript actor glyph constants are separate from
 `transcript{LLM,Tool,User,Harness}{Marker,Rail,Text}` styles. Marker styles own
 only the actor symbol; body and label text, reasoning, statistics, and outcome
-indicators have independent styles. Rail roles and `transcriptRunRail` are defined
-without adding connected transcript rails. Markdown keeps its dedicated palette
-and syntax styles.
+indicators have independent styles. User prompts and LLM responses use their
+actor's rail style beside the body; rails stay within each message block.
+`transcriptRunRail` remains separate. Markdown keeps its dedicated palette and
+syntax styles.
 
 Built-in Aztec and Solar have separate dark/light transcript recipes. Custom
 themes derive transcript defaults from existing palette slots, including when

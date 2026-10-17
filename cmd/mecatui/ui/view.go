@@ -508,7 +508,7 @@ func (m Model) idleFooterLeft() string {
 // whole segment is muted so it reads as chrome, not an alert.
 func (m Model) selectionStatus() string {
 	muted := m.deps.Theme.Style("muted")
-	txt := selectedText(m.vp.GetContent(), m.sel)
+	txt := selectedConversationText(m.conversationView.frame, m.vp.GetContent(), m.sel)
 	chars := len([]rune(txt))
 	startL, _, endL, _ := m.sel.normalize()
 	lines := endL - startL + 1
