@@ -1,11 +1,13 @@
 package anthropic
 
-import "testing"
+import (
+	"bytes"
+	"testing"
 
-// FuzzUnpackReasoning asserts unpackReasoning never panics and always fails soft
-// over arbitrary input (a corrupted/forged Message.Reasoning blob from a stored
-// session must never crash the adapter).
-func FuzzUnpackReasoning(f *testing.F) {
+	"github.com/stacklok/mecatl/engine/session"
+)
+
+func FuzzUnpackReplay(f *testing.F) {
 	f.Add("")
 	f.Add("{}")
 	f.Add(`{"v":1,"blocks":[{"t":"thinking","x":"a","s":"b"}]}`)
@@ -13,11 +15,15 @@ func FuzzUnpackReasoning(f *testing.F) {
 	f.Add("not json at all")
 	f.Add(`{"v":1,"blocks":null}`)
 	f.Fuzz(func(t *testing.T, blob string) {
-		blocks := unpackReasoning(blob)
-		// Re-packing what we unpacked must round-trip (idempotence of the valid subset).
+		blocks, err := unpackReplay(&session.ProviderReplay{Format: anthropicReplayFormat, Version: anthropicReplayVersion, Data: []byte(blob)})
+		if err != nil && len(blocks) != 0 {
+			t.Fatal("invalid replay returned partial blocks")
+		}
 		if len(blocks) > 0 {
-			if got := unpackReasoning(packReasoning(blocks)); len(got) != len(blocks) {
-				t.Fatalf("re-pack/unpack changed block count: %d -> %d", len(blocks), len(got))
+			packed := packReplay(blocks)
+			repacked := packReplay(replayBlocks(t, packed))
+			if !bytes.Equal(packed.Data, repacked.Data) {
+				t.Fatal("re-pack/unpack changed replay bytes")
 			}
 		}
 	})

@@ -9,14 +9,13 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
-	"github.com/stacklok/mecatl/engine/session"
 )
 
 func effortReq() port.LLMRequest {
 	return port.LLMRequest{
 		Model:    "gpt-5.2",
 		System:   prompt.Layered{StablePrefix: "You are a coding agent."},
-		Messages: []session.Message{session.NewUserMessage("hi")},
+		Messages: []port.LLMMessage{userMessage("hi")},
 	}
 }
 

@@ -1,86 +1,89 @@
 package anthropic
 
 import (
+	"bytes"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 )
 
-// TestReasoningRoundTrip is the load-bearing correctness assertion: an ordered
-// list of thinking + redacted blocks packs into the opaque string and unpacks
-// byte-identically, preserving ORDER and signatures.
-func TestReasoningRoundTrip(t *testing.T) {
+func TestReplayRoundTrip(t *testing.T) {
 	in := []reasoningBlock{
-		{Kind: reasoningKindThinking, Thinking: "first thought", Signature: "SIG-1=="},
+		{Kind: reasoningKindThinking, Thinking: "first thought\n<&雪>", Signature: "SIG-1=="},
 		{Kind: reasoningKindRedacted, Data: "REDACTED=="},
-		{Kind: reasoningKindThinking, Thinking: "", Signature: "SIG-OMITTED=="}, // omitted-display: empty text, signature carries it
+		{Kind: reasoningKindThinking, Thinking: "", Signature: "SIG-OMITTED=="},
 	}
-	packed := packReasoning(in)
-	if packed == "" {
-		t.Fatal("packReasoning produced empty string for a non-empty list")
+	packed := packReplay(in)
+	if packed == nil || packed.Format != "anthropic.messages" || packed.Version != 1 {
+		t.Fatal("wrong replay namespace/version")
 	}
-	out := unpackReasoning(packed)
+	out := replayBlocks(t, packed)
 	if !reflect.DeepEqual(in, out) {
-		t.Fatalf("round-trip mismatch:\n in: %+v\nout: %+v", in, out)
+		t.Fatal("ordered thinking, signatures or redacted data changed")
+	}
+	if !bytes.Equal(packed.Data, packReplay(out).Data) {
+		t.Fatal("serialized replay bytes changed")
 	}
 }
 
-func TestReasoningEmptyIsNoOp(t *testing.T) {
-	if got := packReasoning(nil); got != "" {
-		t.Errorf("packReasoning(nil) = %q, want empty", got)
-	}
-	if got := unpackReasoning(""); got != nil {
-		t.Errorf("unpackReasoning(\"\") = %+v, want nil", got)
+func TestReplayEmptyIsNoOp(t *testing.T) {
+	if packReplay(nil) != nil || replayBlocks(t, nil) != nil {
+		t.Fatal("empty replay must be a no-op")
 	}
 }
 
-func TestReasoningOrderPreserved(t *testing.T) {
-	in := []reasoningBlock{
-		{Kind: reasoningKindThinking, Thinking: "A", Signature: "a"},
-		{Kind: reasoningKindThinking, Thinking: "B", Signature: "b"},
-		{Kind: reasoningKindThinking, Thinking: "C", Signature: "c"},
-	}
-	out := unpackReasoning(packReasoning(in))
-	for i := range in {
-		if out[i].Thinking != in[i].Thinking {
-			t.Fatalf("block[%d] reordered: got %q want %q", i, out[i].Thinking, in[i].Thinking)
-		}
+func TestReplayCompatibilityAndMalformedSafety(t *testing.T) {
+	const canary = "PRIVATE-REPLAY-CANARY"
+	for _, tc := range []struct {
+		name    string
+		replay  *session.ProviderReplay
+		wantErr bool
+	}{
+		{"other namespace", &session.ProviderReplay{Format: "openai.responses", Version: 1, Data: []byte(canary)}, false},
+		{"other version", &session.ProviderReplay{Format: anthropicReplayFormat, Version: 2, Data: []byte(canary)}, false},
+		{"bad JSON", &session.ProviderReplay{Format: anthropicReplayFormat, Version: 1, Data: []byte(canary)}, true},
+		{"invalid UTF8", &session.ProviderReplay{Format: anthropicReplayFormat, Version: 1, Data: []byte{'\xff'}}, true},
+		{"null", &session.ProviderReplay{Format: anthropicReplayFormat, Version: 1, Data: []byte(`null`)}, true},
+		{"missing schema", &session.ProviderReplay{Format: anthropicReplayFormat, Version: 1, Data: []byte(`{}`)}, true},
+		{"wrong schema", &session.ProviderReplay{Format: anthropicReplayFormat, Version: 1, Data: []byte(`{"v":2,"blocks":[]}`)}, true},
+		{"bad block type", &session.ProviderReplay{Format: anthropicReplayFormat, Version: 1, Data: []byte(`{"v":1,"blocks":[{"t":"PRIVATE-REPLAY-CANARY"}]}`)}, true},
+		{"missing signature", &session.ProviderReplay{Format: anthropicReplayFormat, Version: 1, Data: []byte(`{"v":1,"blocks":[{"t":"thinking","x":"PRIVATE-REPLAY-CANARY"}]}`)}, true},
+		{"missing redacted data", &session.ProviderReplay{Format: anthropicReplayFormat, Version: 1, Data: []byte(`{"v":1,"blocks":[{"t":"redacted"}]}`)}, true},
+		{"mixed fields", &session.ProviderReplay{Format: anthropicReplayFormat, Version: 1, Data: []byte(`{"v":1,"blocks":[{"t":"redacted","d":"PRIVATE-REPLAY-CANARY","s":"sig"}]}`)}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			blocks, err := unpackReplay(tc.replay)
+			if (err != nil) != tc.wantErr || len(blocks) != 0 {
+				t.Fatal("unexpected replay decoding result")
+			}
+			p := testProvider()
+			params, buildErr := p.buildParams(port.LLMRequest{Model: "claude-sonnet-4-6", Messages: []port.LLMMessage{
+				assistantMessage("safe text", tc.replay, []port.LLMToolCall{toolCall("toolu_safe", "Read", nil)}),
+			}})
+			if (buildErr != nil) != tc.wantErr {
+				t.Fatal("request did not honor replay compatibility/error")
+			}
+			if buildErr != nil {
+				if len(params.Messages) != 0 || strings.Contains(fmt.Sprintf("%+v", buildErr), canary) {
+					t.Fatal("malformed replay leaked private data or partial request")
+				}
+			} else if len(params.Messages[0].Content) != 2 || params.Messages[0].Content[0].OfText.Text != "safe text" {
+				t.Fatal("incompatible replay affected ordinary text/tool history")
+			}
+		})
 	}
 }
 
-// TestReasoningEnvelopeRoundTripsSignature is the focused tripwire for the ONE
-// field Anthropic validates server-side: the thinking-block SIGNATURE. Extended
-// thinking requires every replayed thinking block to carry the signature the API
-// issued; if pack/unpack ever dropped or blanked it, the next turn's replay would
-// be rejected (or the model would re-stall), a silent reasoning-continuity break.
-// It is deliberately narrower than TestReasoningRoundTrip's whole-struct DeepEqual
-// so a regression names the signature directly. Verification corpus: the standing
-// "replays summary not the real blob" concern was disproven; this pins the
-// opposite — the real signature round-trips intact.
-func TestReasoningEnvelopeRoundTripsSignature(t *testing.T) {
-	const sig = "ANTHROPIC-THINKING-SIGNATURE=="
-	in := []reasoningBlock{
-		{Kind: reasoningKindThinking, Thinking: "reasoning text the summary path would NOT carry", Signature: sig},
-	}
-	out := unpackReasoning(packReasoning(in))
-	if len(out) != 1 {
-		t.Fatalf("round-trip produced %d blocks, want 1", len(out))
-	}
-	if out[0].Signature != sig {
-		t.Fatalf("signature dropped/altered across pack→unpack: got %q want %q", out[0].Signature, sig)
-	}
-}
-
-func TestUnpackReasoningFailSoft(t *testing.T) {
-	cases := []string{
-		"not json",
-		"{}",
-		`{"v":99,"blocks":[{"t":"thinking","x":"a"}]}`, // wrong version
-		`{"v":1,"blocks":[{"t":"unknown"}]}`,           // unknown kind dropped
-		`{"v":1,"blocks":[]}`,
-	}
-	for _, c := range cases {
-		if got := unpackReasoning(c); got != nil {
-			t.Errorf("unpackReasoning(%q) = %+v, want nil (fail-soft)", c, got)
-		}
+// The migration owner can wrap valid old Message.Reasoning bytes unchanged.
+func TestLegacyReplayEncoding(t *testing.T) {
+	const legacy = `{"v":1,"blocks":[{"t":"thinking","x":"thought","s":"SIG=="},{"t":"redacted","d":"DATA=="}]}`
+	replay := &session.ProviderReplay{Format: "anthropic.messages", Version: 1, Data: []byte(legacy)}
+	want := []reasoningBlock{{Kind: reasoningKindThinking, Thinking: "thought", Signature: "SIG=="}, {Kind: reasoningKindRedacted, Data: "DATA=="}}
+	if !reflect.DeepEqual(replayBlocks(t, replay), want) || !bytes.Equal(packReplay(want).Data, replay.Data) {
+		t.Fatal("legacy serialized envelope cannot be wrapped byte-exactly")
 	}
 }

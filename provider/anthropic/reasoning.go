@@ -1,38 +1,31 @@
 package anthropic
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"errors"
+	"unicode/utf8"
 
-// reasoningEnvelopeVersion is the schema version of the packed reasoning blob.
-// It lets the envelope evolve without misreading an older blob round-tripped
-// from a stored session.
+	"github.com/stacklok/mecatl/engine/session"
+)
+
+const anthropicReplayFormat = "anthropic.messages"
+const anthropicReplayVersion uint32 = 1
 const reasoningEnvelopeVersion = 1
 
-// reasoning block discriminators.
 const (
 	reasoningKindThinking = "thinking"
 	reasoningKindRedacted = "redacted"
 )
 
-// reasoningEnvelope is the JSON shape packed INTO the opaque
-// session.Message.Reasoning string. Anthropic's reasoning-replay unit is a LIST
-// of thinking blocks ({thinking,signature}) plus possibly redacted_thinking
-// blocks ({data}); a single opaque string cannot hold a list directly, so the
-// adapter serializes the ordered list as this envelope. The domain value object
-// stays a bare string — only this adapter knows the blob is a JSON list.
-//
-// Order in Blocks is the SSE index order = the model's original emission order;
-// the unpacker reconstructs blocks in that order, BEFORE the tool_use blocks, so
-// the §extended-thinking sequence rule (consecutive thinking blocks must match
-// the original outputs, unrearranged) is preserved by construction.
+// reasoningEnvelope retains the existing signed/redacted block serialization.
+// Blocks are ordered before text and tool_use on replay; this does not expand
+// today's fidelity into an ordered sequence of all provider content blocks.
+// Legacy Message.Reasoning bytes with v=1 can be wrapped directly as Data.
 type reasoningEnvelope struct {
 	V      int              `json:"v"`
 	Blocks []reasoningBlock `json:"blocks"`
 }
 
-// reasoningBlock is one entry in the envelope. For a thinking block, Kind is
-// "thinking" and Thinking+Signature carry the (possibly empty) thinking text and
-// its opaque signature. For a redacted block, Kind is "redacted" and Data
-// carries the opaque redacted_thinking payload.
 type reasoningBlock struct {
 	Kind      string `json:"t"`
 	Thinking  string `json:"x,omitempty"`
@@ -40,53 +33,68 @@ type reasoningBlock struct {
 	Data      string `json:"d,omitempty"`
 }
 
-// packReasoning serializes the ordered list of reasoning blocks into the opaque
-// envelope string stored on session.Message.Reasoning. An empty list packs to
-// "" (replay no-op, exactly like the openai empty-blob case) so a turn with no
-// thinking stores no reasoning. The marshal cannot fail for these scalar fields.
-func packReasoning(blocks []reasoningBlock) string {
+func packReplay(blocks []reasoningBlock) *session.ProviderReplay {
 	if len(blocks) == 0 {
-		return ""
+		return nil
 	}
-	b, err := json.Marshal(reasoningEnvelope{V: reasoningEnvelopeVersion, Blocks: blocks})
-	if err != nil {
-		// Defensive: scalar string fields never fail to marshal. Fail soft to a
-		// replay no-op rather than panic.
-		return ""
-	}
-	return string(b)
+	// Only scalar strings are encoded, so Marshal cannot fail.
+	data, _ := json.Marshal(reasoningEnvelope{V: reasoningEnvelopeVersion, Blocks: blocks})
+	return &session.ProviderReplay{Format: anthropicReplayFormat, Version: anthropicReplayVersion, Data: data}
 }
 
-// unpackReasoning parses the opaque envelope string back into the ordered list
-// of reasoning blocks. It is FAIL-SOFT: an empty string yields no blocks (replay
-// no-op), and a malformed/unknown-version blob also yields no blocks rather than
-// an error — the turn still replays, just without thinking. (When thinking is
-// active and a tool_use is present, an empty result means the assistant turn
-// carries no thinking blocks, which the caller must already tolerate for the
-// no-thinking case.) It never panics on arbitrary input (fuzzed).
-func unpackReasoning(blob string) []reasoningBlock {
-	if blob == "" {
+// Legacy carriers retain the old fail-soft policy; new compatible envelopes fail
+// closed when malformed. Incompatible namespaces are never inspected.
+func unpackReplay(replay *session.ProviderReplay) ([]reasoningBlock, error) {
+	if replay != nil && replay.Format == "mecatl.legacy-message" && replay.Version == 1 {
+		return unpackLegacyReplay(replay.Data), nil
+	}
+	if replay == nil || replay.Format != anthropicReplayFormat || replay.Version != anthropicReplayVersion {
+		return nil, nil
+	}
+	return unpackCurrentReplay(replay.Data)
+}
+
+func unpackLegacyReplay(data []byte) []reasoningBlock {
+	var legacy struct {
+		Reasoning string `json:"reasoning"`
+	}
+	if !utf8.Valid(data) || json.Unmarshal(data, &legacy) != nil || !utf8.ValidString(legacy.Reasoning) {
 		return nil
 	}
 	var env reasoningEnvelope
-	if err := json.Unmarshal([]byte(blob), &env); err != nil {
+	if json.Unmarshal([]byte(legacy.Reasoning), &env) != nil || env.V != reasoningEnvelopeVersion {
 		return nil
 	}
-	if env.V != reasoningEnvelopeVersion {
-		return nil
-	}
-	// Keep only well-formed blocks; drop anything with an unknown discriminator.
-	out := make([]reasoningBlock, 0, len(env.Blocks))
-	for _, blk := range env.Blocks {
-		switch blk.Kind {
-		case reasoningKindThinking, reasoningKindRedacted:
-			out = append(out, blk)
-		default:
-			// skip unknown kinds (forward-compatible)
+	var blocks []reasoningBlock
+	for _, block := range env.Blocks {
+		if block.Kind == reasoningKindThinking || block.Kind == reasoningKindRedacted {
+			blocks = append(blocks, block)
 		}
 	}
-	if len(out) == 0 {
-		return nil
+	return blocks
+}
+
+func unpackCurrentReplay(data []byte) ([]reasoningBlock, error) {
+	if !utf8.Valid(data) {
+		return nil, errors.New("anthropic: malformed Messages replay envelope")
 	}
-	return out
+	var env *reasoningEnvelope
+	if err := json.Unmarshal(data, &env); err != nil || env == nil || env.V != reasoningEnvelopeVersion {
+		return nil, errors.New("anthropic: malformed Messages replay envelope")
+	}
+	for _, block := range env.Blocks {
+		switch block.Kind {
+		case reasoningKindThinking:
+			if block.Signature == "" || block.Data != "" {
+				return nil, errors.New("anthropic: invalid thinking replay block")
+			}
+		case reasoningKindRedacted:
+			if block.Data == "" || block.Thinking != "" || block.Signature != "" {
+				return nil, errors.New("anthropic: invalid redacted replay block")
+			}
+		default:
+			return nil, errors.New("anthropic: unknown Messages replay block")
+		}
+	}
+	return env.Blocks, nil
 }

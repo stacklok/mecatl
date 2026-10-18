@@ -8,7 +8,6 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
-	"github.com/stacklok/mecatl/engine/session"
 )
 
 // cacheReq builds a small but non-trivial conversation (a leading turn-0
@@ -18,10 +17,10 @@ func cacheReq(model string) port.LLMRequest {
 	return port.LLMRequest{
 		Model:  model,
 		System: prompt.Layered{StablePrefix: "You are a coding agent.", VolatileSuffix: "cwd: /repo"},
-		Messages: []session.Message{
-			session.NewUserMessage("Project instructions (AGENTS.md):\nfollow the layering rules"),
-			session.NewUserMessage("Please summarise the architecture."),
-			session.NewAssistantMessage("Sure, looking now.", "", nil),
+		Messages: []port.LLMMessage{
+			userMessage("Project instructions (AGENTS.md):\nfollow the layering rules"),
+			userMessage("Please summarise the architecture."),
+			assistantMessage("Sure, looking now.", "", nil),
 		},
 	}
 }
@@ -177,11 +176,11 @@ func TestCacheSemanticsCutoverIsOneList(t *testing.T) {
 func TestPromptCacheKeyStableAcrossTurns(t *testing.T) {
 	p := New(WithAPIKey("sk-test"))
 	prefix := "You are a coding agent."
-	turn1 := []session.Message{session.NewUserMessage("Please summarise the architecture.")}
-	turn2 := []session.Message{
-		session.NewUserMessage("Please summarise the architecture."),
-		session.NewAssistantMessage("Looking now.", "", nil),
-		session.NewToolMessage(session.NewToolResult("call_1", "package a")),
+	turn1 := []port.LLMMessage{userMessage("Please summarise the architecture.")}
+	turn2 := []port.LLMMessage{
+		userMessage("Please summarise the architecture."),
+		assistantMessage("Looking now.", "", nil),
+		toolMessage(toolResult("call_1", "package a")),
 	}
 	key1 := p.promptCacheKey(prefix, turn1)
 	key2 := p.promptCacheKey(prefix, turn2)
@@ -193,8 +192,8 @@ func TestPromptCacheKeyStableAcrossTurns(t *testing.T) {
 func TestPromptCacheKeyDiffersPerConversation(t *testing.T) {
 	p := New(WithAPIKey("sk-test"))
 	prefix := "You are a coding agent."
-	keyA := p.promptCacheKey(prefix, []session.Message{session.NewUserMessage("Task A: summarise the architecture.")})
-	keyB := p.promptCacheKey(prefix, []session.Message{session.NewUserMessage("Task B: fix the flaky test.")})
+	keyA := p.promptCacheKey(prefix, []port.LLMMessage{userMessage("Task A: summarise the architecture.")})
+	keyB := p.promptCacheKey(prefix, []port.LLMMessage{userMessage("Task B: fix the flaky test.")})
 	if keyA == keyB {
 		t.Errorf("two different conversations must not share a prompt_cache_key: %q", keyA)
 	}
@@ -204,13 +203,13 @@ func TestPromptCacheKeySkipsTurn0Fragments(t *testing.T) {
 	p := New(WithAPIKey("sk-test"))
 	prefix := "You are a coding agent."
 	genuine := "Please summarise the architecture."
-	withFragmentA := []session.Message{
-		session.NewUserMessage("Project instructions (AGENTS.md):\nfragment body A"),
-		session.NewUserMessage(genuine),
+	withFragmentA := []port.LLMMessage{
+		userMessage("Project instructions (AGENTS.md):\nfragment body A"),
+		userMessage(genuine),
 	}
-	withFragmentB := []session.Message{
-		session.NewUserMessage("Project instructions (AGENTS.md):\na COMPLETELY different fragment body"),
-		session.NewUserMessage(genuine),
+	withFragmentB := []port.LLMMessage{
+		userMessage("Project instructions (AGENTS.md):\na COMPLETELY different fragment body"),
+		userMessage(genuine),
 	}
 	keyA := p.promptCacheKey(prefix, withFragmentA)
 	keyB := p.promptCacheKey(prefix, withFragmentB)
@@ -221,7 +220,7 @@ func TestPromptCacheKeySkipsTurn0Fragments(t *testing.T) {
 
 func TestPromptCacheKeyMemoUnderAlternatingPrefixes(t *testing.T) {
 	p := New(WithAPIKey("sk-test"))
-	msgs := []session.Message{session.NewUserMessage("Please summarise the architecture.")}
+	msgs := []port.LLMMessage{userMessage("Please summarise the architecture.")}
 	prefixA := "You are a coding agent. Variant A."
 	prefixB := "You are a coding agent. Variant B."
 	keyA1 := p.promptCacheKey(prefixA, msgs)
@@ -248,7 +247,7 @@ func TestPromptCacheKeyMemoUnderAlternatingPrefixes(t *testing.T) {
 func BenchmarkPromptCacheKey(b *testing.B) {
 	p := New(WithAPIKey("sk-test"))
 	prefix := strings.Repeat("You are a careful coding agent. Follow the repository's layering rules. ", 200)
-	msgs := []session.Message{session.NewUserMessage("Please summarise the architecture.")}
+	msgs := []port.LLMMessage{userMessage("Please summarise the architecture.")}
 	var sink string
 	b.ReportAllocs()
 	for b.Loop() {

@@ -55,7 +55,7 @@ type blockState struct {
 // events: the per-index block accumulators, the running usage (input tokens
 // arrive in message_start, output tokens in message_delta), the final
 // stop_reason, the ordered reasoning blocks assembled across the turn (packed
-// into ONE ChunkReasoningItem at message_stop), a single-visible-text-part
+// into ONE ChunkReplay at message_stop), a single-visible-text-part
 // guard, and a done guard.
 type streamState struct {
 	blocks map[int64]*blockState
@@ -73,7 +73,7 @@ type streamState struct {
 	stopReason      sdk.StopReason
 
 	// reasoning is the ordered list of thinking/redacted blocks assembled across
-	// the turn; packed into one ChunkReasoningItem at message_stop so the port's
+	// the turn; packed into one ChunkReplay at message_stop so the port's
 	// "one opaque blob per message" contract holds even with interleaved thinking.
 	reasoning []reasoningBlock
 
@@ -116,11 +116,11 @@ func (s *streamState) block(index int64) *blockState {
 //   - content_block_stop (tool_use)          -> ChunkToolCall (assembled)
 //   - content_block_stop (thinking/redacted) -> append to reasoning list
 //   - message_delta                          -> record stop_reason + output tokens
-//   - message_stop                           -> ChunkReasoningItem (packed)? +
+//   - message_stop                           -> ChunkReplay (packed)? +
 //     ChunkUsage + ChunkDone
 //
 // The reasoning DISPLAY deltas (ChunkReasoning) and the reasoning REPLAY blob
-// (ChunkReasoningItem) are deliberately distinct and MUST NOT be conflated: the
+// (ChunkReplay) are deliberately distinct and MUST NOT be conflated: the
 // deltas are human-readable prose; the replay blob is the packed
 // {thinking,signature}+redacted envelope sent back verbatim (request.go).
 func translate(event sdk.MessageStreamEventUnion, st *streamState) ([]port.Chunk, error) {
@@ -293,8 +293,8 @@ func translateBlockStop(event sdk.MessageStreamEventUnion, st *streamState) ([]p
 			// An argument-less tool call is a valid empty object.
 			args = "{}"
 		}
-		call := session.ToolCall{
-			ID:   session.ToolCallID(b.toolID),
+		call := port.LLMToolCall{
+			ID:   session.ProviderCallID(b.toolID),
 			Name: b.toolName,
 			Args: json.RawMessage(args),
 		}
@@ -318,7 +318,7 @@ func translateBlockStop(event sdk.MessageStreamEventUnion, st *streamState) ([]p
 }
 
 // translateMessageStop emits the turn's terminal chunks: the packed reasoning
-// replay blob (one ChunkReasoningItem carrying the ordered envelope, when the
+// replay blob (one ChunkReplay carrying the ordered envelope, when the
 // turn produced any thinking/redacted blocks), then ChunkUsage, then ChunkDone.
 func translateMessageStop(st *streamState) ([]port.Chunk, error) {
 	if st.done {
@@ -326,8 +326,8 @@ func translateMessageStop(st *streamState) ([]port.Chunk, error) {
 	}
 	st.done = true
 	var chunks []port.Chunk
-	if packed := packReasoning(st.reasoning); packed != "" {
-		chunks = append(chunks, port.Chunk{Kind: port.ChunkReasoningItem, Text: packed})
+	if replay := packReplay(st.reasoning); replay != nil {
+		chunks = append(chunks, port.Chunk{Kind: port.ChunkReplay, Replay: replay, ReplayIsOutput: true})
 	}
 	// Anthropic reports input_tokens EXCLUDING cache reads/writes; we fold them
 	// in so InputTokens is the full prompt and CacheReadTokens ⊂ InputTokens,
