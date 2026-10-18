@@ -1024,9 +1024,11 @@ If provisional output differs from the committed result, the client reconciles t
 ##### Reconnecting after owner changes
 
 An ownership change ends the old live stream, including one forwarded through a non-owner.
-There is no transparent cross-replica stream migration.
+The transport connection itself does not migrate between replicas.
 Reconnect through any entry replica from the last committed position, reloading a snapshot if that cursor is invalid.
 Reconcile or discard provisional output.
+For successful planned handoff between compatible replicas, client reconnection, catch-up, and eligible command reconciliation happen automatically; the user need not reload, resubmit the prompt, or manually resume the run.
+This is user-visible continuity, not a promise of an uninterrupted connection or zero pause.
 
 A clean handoff may report a typed reconnect outcome; a crash may only break the transport.
 Neither proves the `Run` stopped.
@@ -1207,6 +1209,12 @@ An owner-aware gateway could later avoid forwarding; it is not required here.
 
 #### Compatible-replica active-tree handoff (later phase)
 
+Planned upgrades and other maintenance should be able to replace a replica without requiring users to restart or manually resume their work.
+A successful graceful handoff preserves the same run, delegation tree, committed conversation, and pending execution-approval identities; a replica change alone must not cause repeated work or another prompt for an already-accepted verdict.
+Clients reconnect and catch up automatically while a server-side successor discovers and resumes runnable work without waiting for a client to open the session.
+A brief pause or connection replacement is compatible with this user-transparent behavior.
+This contract applies to compatible replicas and a complete parked continuation, not arbitrary process loss, an unresolved external call, or the incompatible initial cutover.
+
 The first cutover does not promise turn-boundary pause or seamless cross-replica continuation of an active delegation tree.
 That capability is not implemented today.
 It must still preserve or explicitly replace these existing guarantees:
@@ -1254,6 +1262,7 @@ Approval admission closes before the marker so recorded positions cannot omit an
 
 A crash before the marker leaves an incomplete drain for fenced recovery.
 A crash after the marker but before release leaves a complete handoff for takeover after claim expiry.
+That marker establishes a safe parked continuation; it does not promise uninterrupted delivery or eliminate the wait for ownership expiry.
 The handoff is durably discoverable by healthy replicas without a client opening the session.
 
 ##### Later autonomous takeover

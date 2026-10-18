@@ -60,8 +60,10 @@ Large individual results/media require bounded content reads or explicit size fa
 
 A result commits, but notification is lost.
 Authoritative rescan/catch-up finds it; notification failure does not erase the result or justify redispatch.
-Owner change ends the old provisional stream, including forwarding streams; there is no transparent cross-replica migration.
+Owner change ends the old provisional stream, including forwarding streams; the transport connection itself does not migrate between replicas.
 Reconnect from the last committed cursor, reload if invalid, and discard/reconcile provisional text.
+For a successful [planned handoff](session-commit-history.md#compatible-replica-active-tree-handoff-later-phase), the client handles reconnection and catch-up automatically so the user can remain in the same conversation without manual reload or resume.
+That user-visible continuity does not require a gap-free network connection or zero pause.
 A transport break alone establishes neither run termination nor durable survival of the last visible tokens.
 
 ## Cross-history gap and resource lifetime

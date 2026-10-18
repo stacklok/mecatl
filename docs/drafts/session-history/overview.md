@@ -1,11 +1,12 @@
-# Overview: one history, honest recovery
+# Overview: durable sessions beyond one replica
 
 **Status:** Design draft, not shipped behavior.
 This page explains the destination and scope; the [reading map](README.md) offers six independent review topics.
 
 ## The problem and the change
 
-The goal is a session that authorized clients can reliably reload and share, with an explicit account of what survived a failure.
+The goal is a session whose lifetime is independent of any one server replica or client connection.
+Authorized clients can reliably reload and share it, failures leave an explicit account of what survived, and planned replica replacement can eventually preserve ongoing work without user intervention.
 A reconnecting client should recover the retained conversation and activity, then follow new changes without missing the interval between loading and subscribing.
 Work belongs to the server-owned session rather than the client connection that started it.
 
@@ -29,6 +30,17 @@ Required facts must commit **before** dependent model requests, tool dispatch, a
 This is durable orchestration inside Mecatl, not adoption or recreation of a general-purpose workflow platform.
 It does not make external execution atomic with a storage append.
 
+These retained facts also identify **safe pause points for planned handoff** between compatible replicas during upgrades or other maintenance.
+The owner stops admitting work, lets active calls finish, and commits the outcomes and continuation needed to park the whole active delegation tree.
+A successor acquires fenced ownership, verifies that committed handoff, and continues the same run without repeating completed work.
+A commit gate alone does not prove the tree is safe to move; no model or external tool call can remain in flight, and memory-only release holds need explicit settlement or invalidation.
+
+**A successful planned handoff should be transparent to users.**
+No new prompt, manual resume, or repeated accepted approval is required because a replica changed.
+The client can reconnect and catch up automatically behind the scenes; transparent continuation permits a brief pause, not necessarily an unbroken network connection.
+This [later capability](execution-and-recovery.md#planned-maintenance-pause-hand-off-continue) requires coordinated parking and server-side successor discovery in addition to portable history.
+
+A crash can happen outside those safe points.
 Consider a tool that changes a file, followed by a process crash before its result commits.
 Recovery cannot infer that the change failed, or automatically repeat it to fill the missing result.
 It reconstructs the evidence and can report an unknown outcome.

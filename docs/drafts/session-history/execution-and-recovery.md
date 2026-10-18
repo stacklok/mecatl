@@ -74,6 +74,30 @@ The [named phases](session-commit-history-contracts.md#named-phases) explain wor
 The ordinary baseline for a response requesting N tools is `1 + 2N` gates before eligible grouping, excluding extra asks, hook anchors, and the next logical-input gate.
 This is not a physical-write count; the [budget](session-commit-history.md#commit-budget-and-batching) separates those costs.
 
+## Planned maintenance: pause, hand off, continue
+
+The same retained evidence supports deliberate handoff, not just recovery after failure.
+For a compatible-replica upgrade or other maintenance, the owner can stop admitting work and seek a safe pause point for the root session and every active descendant.
+A commit gate is not automatically such a point: the whole tree must be parked, with no model or external tool call in flight and all required outcomes and continuation committed.
+An execution approval wait with reconstructible continuation is also parkable; memory-only release holds must first be explicitly settled or invalidated.
+
+```text
+replica A drains the tree to a safe pause point
+[C complete handoff marker naming every parked continuation]
+A unloads local state and releases ownership
+replica B acquires fenced ownership and verifies the parked tree
+B continues the same run and pending delegated work
+```
+
+For example, A finishes a tool call, commits its permitted result and the rest of the tree's parked state, then hands off before the next model request.
+B reconstructs that continuation and proceeds without rerunning the tool.
+A parked child remains pending delegation, not a fabricated completed result.
+
+A successful planned handoff is intended to be transparent to users: no new prompt, manual resume, replacement run, or repeated approval is required because the replica changed.
+A brief pause or automatic client reconnect is compatible with that goal; a server-side successor must discover runnable work without waiting for a client.
+This is [later runtime capability](session-commit-history.md#compatible-replica-active-tree-handoff-later-phase), separate from first-cutover explicit crash recovery and the initial incompatible upgrade.
+If drain cannot publish a complete handoff before shutdown, use crash recovery rather than claim transparent continuation.
+
 ## Failure: knowledge is not the outside world
 
 A tool changes a file and the process dies before outcome evidence commits.
