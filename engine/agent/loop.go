@@ -1563,11 +1563,11 @@ func (p *PreparedRun) Abort() PreparedRunTransition {
 	}
 }
 
-// PrepareAuthorizationContinuation prepares an already durably claimed
-// external-authorization continuation without executing it. The caller must
-// register Run before Start. It may present another authorization because its
-// sole production caller has already authenticated the owner at the Service
-// boundary.
+// PrepareAuthorizationContinuation validates an already durably claimed
+// external-authorization continuation before preparing, but not executing, it.
+// The caller must register Run before Start. It may present another authorization
+// because its sole production caller has already authenticated the owner at the
+// Service boundary.
 func (e *Engine) PrepareAuthorizationContinuation(ctx context.Context, sess *session.Session, env tool.Environment, pending session.PendingAuthorization, resolution session.AuthorizationResolution) (*PreparedRun, error) {
 	if !resolution.Valid() {
 		return nil, errors.New("agent: authorization continuation requires a terminal resolution")
@@ -2083,6 +2083,8 @@ func recordTurnAssistant(sess *session.Session, asst session.Message, stop sessi
 }
 
 // dispatchTurn owns the dispatch-to-record tail and reports whether the run ended.
+// Tool effects and history recording precede best-effort saves; this sequence does
+// not provide durable-save-before-effects or cross-crash exactly-once execution.
 func (e *Engine) dispatchTurn(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, calls []session.ToolCall, lastText string, total session.Usage) bool {
 	results, park, cancelled := e.dispatch(ctx, r, sess, env, turnIdx, calls)
 	if cancelled {
@@ -2968,6 +2970,9 @@ type turnStreamState struct {
 	stop        session.StopReason
 }
 
+// foldTurnChunk accumulates tentative provider output and emits only streaming
+// display events. It copies provider-owned arguments and replay so later provider
+// mutation cannot alter the input to acceptAssistant.
 func (e *Engine) foldTurnChunk(r *Run, turnIdx int, state *turnStreamState, lat *turnLatency, chunk port.Chunk) {
 	switch chunk.Kind {
 	case port.ChunkText:
@@ -3010,6 +3015,10 @@ func (e *Engine) foldTurnChunk(r *Run, turnIdx int, state *turnStreamState, lat 
 	}
 }
 
+// acceptAssistant is the model-turn acceptance boundary. It validates the whole
+// provider batch before minting canonical invocation IDs and constructing their
+// occurrence bindings; RecordAssistant later commits the message to session history.
+// Provider cancellation/error stops retain display content, not calls or replay.
 func (state *turnStreamState) acceptAssistant() (session.Message, error) {
 	msg := session.NewAssistantMessage(state.text, nil)
 	msg.ProviderPhase = state.phase

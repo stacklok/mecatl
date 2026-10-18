@@ -239,6 +239,10 @@ func (s *Session) ValidateAuthorizationState() error {
 	}
 }
 
+// validatePendingAuthorization proves that the protected call and deferred siblings
+// describe the unanswered suffix of the trailing assistant turn. Earlier siblings
+// must already have results, so resumption cannot skip or repeat accepted work.
+//
 //nolint:gocyclo // Validation intentionally follows the history pairing state machine.
 func validatePendingAuthorization(messages []Message, pending PendingAuthorization) error {
 	if !validAuthorizationID(pending.Authorization.ID) {
@@ -346,10 +350,15 @@ func validatePendingAuthorization(messages []Message, pending PendingAuthorizati
 	return nil
 }
 
+// sameAuthorizationCallIdentity intentionally compares only the canonical occurrence
+// and tool name. Earlier gates may have replaced the retained effective arguments.
 func sameAuthorizationCallIdentity(original, effective ToolCall) bool {
 	return original.ID == effective.ID && original.Name == effective.Name
 }
 
+// sameDeferredAuthorizationCall compares a parked sibling's identity and arguments;
+// the caller also checks its position in the trailing suffix. Unlike the protected
+// call, a deferred sibling has not passed gates that may change its arguments.
 func sameDeferredAuthorizationCall(original, pending ToolCall) bool {
 	return sameAuthorizationCallIdentity(original, pending) && equivalentAuthorizationArgs(original.Args, pending.Args)
 }

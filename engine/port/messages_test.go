@@ -1,9 +1,12 @@
 package port_test
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
+	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/sessnap"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -100,6 +103,73 @@ func TestProjectMessagesReplayFreeCanonical(t *testing.T) {
 	}
 	if first[0].ToolCalls[0].ItemID != "" || first[0].Replay != nil {
 		t.Fatal("replay-free projection invented private item state")
+	}
+}
+
+// This guards prompt-cache reuse across session reloads with common providers.
+// Live probes through our proxy to Anthropic and OpenAI showed that argument
+// whitespace/escaping changes retained cache hits, but JSON key reordering did not.
+// Do not weaken this to semantic JSON equality (e.g. decoded-map comparison):
+// it would hide order changes that can invalidate the cached prefix after reload.
+func TestProjectMessagesSnapshotRoundTripPreservesPairingAndArgumentOrder(t *testing.T) {
+	for _, replayFree := range []bool{false, true} {
+		for _, tc := range []struct{ name, args string }{
+			{"compact", `{"z":"first","a":"last"}`},
+			{"whitespace", `{ "z": 1, "a": { "y": 2, "b": 3 } }`},
+			{"escaping", `{"z":"<tag>&","a":"line\n雪"}`},
+			{"string whitespace", `{"z":"keep  spaces","a":"{}"}`},
+		} {
+			name := "stored/" + tc.name
+			if replayFree {
+				name = "replay-free/" + tc.name
+			}
+			t.Run(name, func(t *testing.T) {
+				history := append([]session.Message{session.NewUserMessage("go")}, canonicalHistory()[:4]...)
+				history = append(history, session.Message{Role: session.RoleUser, Text: "resume", UserPromptProvenance: session.UserPromptProvenancePrincipal})
+				for i := range history {
+					for j := range history[i].ToolCalls {
+						history[i].ToolCalls[j].Args = json.RawMessage(tc.args)
+					}
+					if replayFree {
+						history[i].Replay = nil
+					}
+				}
+				s := session.New("projection", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, session.Limits{}, time.Unix(0, 0))
+				if err := s.SeedHistory(history); err != nil {
+					t.Fatal(err)
+				}
+				want, err := port.ProjectMessages(s.Conversation.Messages)
+				if err != nil {
+					t.Fatal(err)
+				}
+				wire, err := sessnap.Marshal(s)
+				if err != nil {
+					t.Fatal(err)
+				}
+				restored, err := sessnap.Unmarshal(wire)
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, err := port.ProjectMessages(restored.Conversation.Messages)
+				if err != nil {
+					t.Fatal(err)
+				}
+				// Snapshot JSON can compact and escape raw arguments. Keep key order
+				// observable: decoding into maps would hide cache-relevant changes.
+				for i := range want {
+					for j := range want[i].ToolCalls {
+						args, err := json.Marshal(want[i].ToolCalls[j].Args)
+						if err != nil {
+							t.Fatal(err)
+						}
+						want[i].ToolCalls[j].Args = args
+					}
+				}
+				if !reflect.DeepEqual(got, want) {
+					t.Fatalf("snapshot changed projection beyond argument JSON encoding:\n got: %#v\nwant: %#v", got, want)
+				}
+			})
+		}
 	}
 }
 

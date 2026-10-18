@@ -28,8 +28,9 @@ type occurrence struct {
 }
 
 // ProjectRecord prepares one reader/cursor record for public mapping without
-// trying to pair it against another source or a partial cursor page. Normal
-// canonical payloads remain normal. Archives are independent closed sources.
+// trying to pair it against another source or a partial cursor page. Unproven
+// legacy records become historical content rather than canonical activity links.
+// Normal canonical payloads remain normal. Archives are independent closed sources.
 func ProjectRecord(e session.Event, inc session.IncarnationID, ordinal int) (session.Event, error) {
 	p := e.LegacyIdentity()
 	if p == nil {

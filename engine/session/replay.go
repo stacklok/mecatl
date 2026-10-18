@@ -3,7 +3,8 @@ package session
 import "fmt"
 
 // ProviderCallID is the provider's exact tool-call/result pairing token, not an
-// executable invocation identity. A provider may reuse it on later turns.
+// executable invocation identity. Occurrence bindings retain it for outbound
+// projection even when a provider reuses the token on later turns.
 type ProviderCallID string
 
 // ProviderItemID is a provider's exact output-item identity, distinct from its
@@ -19,6 +20,8 @@ type ProviderReplay struct {
 }
 
 // ToolCallBinding binds one canonical invocation occurrence to provider tokens.
+// It preserves exact provider replay without conflating separate executions that
+// happen to share a provider pairing token.
 type ToolCallBinding struct {
 	CallID    ToolCallID
 	PairingID ProviderCallID

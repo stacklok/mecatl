@@ -8,6 +8,8 @@ import (
 )
 
 // LLMToolCall is a provider-facing call, not an executable domain invocation.
+// The agent converts it into a session.ToolCall with a new canonical ID only after
+// validating the complete provider batch.
 type LLMToolCall struct {
 	ID     session.ProviderCallID
 	Name   string
@@ -36,7 +38,11 @@ type LLMMessage struct {
 	Replay               *session.ProviderReplay
 }
 
-// ProjectMessages projects canonical history only; it is not a legacy identity
+// ProjectMessages builds independently owned LLM request history from canonical
+// session messages, restoring each call/result's provider pairing token. Both live
+// and reloaded sessions use this boundary when constructing their next request.
+//
+// It projects canonical history only; it is not a legacy identity
 // migration. The caller must supply canonical IDs even when Replay is nil.
 // Nil carriers explicitly denote replay-free canonical history, for which stable
 // provider pairing tokens are synthesized at this boundary. Present carriers

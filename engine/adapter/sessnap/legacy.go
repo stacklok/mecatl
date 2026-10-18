@@ -175,6 +175,8 @@ func (s *Snapshot) decodeLegacy(messages, pending, authorization []byte) error {
 
 const legacySnapshotNamespace = "sessnap/legacy-v1"
 
+// legacySourceInvocationID derives a stable canonical ID from immutable source
+// coordinates, so repeated loads preserve references before a migrated snapshot saves.
 func legacySourceInvocationID(inc session.IncarnationID, namespace string, ordinal, slot int) session.ToolCallID {
 	h := sha256.New()
 	for _, part := range []string{"mecatl.tool-call/legacy-v1", string(inc), namespace, strconv.Itoa(ordinal), strconv.Itoa(slot)} {
@@ -346,6 +348,9 @@ type legacySource struct {
 	lastAssistant int
 }
 
+// indexLegacySource proves call/result pairings within one complete legacy source.
+// It marks duplicate or concurrently outstanding provider keys unsafe, while allowing
+// a key to be reused after its earlier occurrence has been answered.
 func indexLegacySource(old []legacyMessageDTO, inc session.IncarnationID, namespace string) (*legacySource, error) {
 	x := &legacySource{
 		old: old, calls: make([][]*legacyOccurrence, len(old)), results: make([]*legacyOccurrence, len(old)),
@@ -454,6 +459,9 @@ func (x *legacySource) resolve(key string) *legacyOccurrence {
 	return occurrences[0]
 }
 
+// migratePendingAsk restores an executable ask only when its unresolved trailing
+// occurrence and all earlier result ordering are proven by the complete source.
+// Ambiguous legacy data is retained through a migration hold instead.
 func (x *legacySource) migratePendingAsk(s *Snapshot) bool {
 	p := s.legacyPending
 	if p == nil || s.legacyAuthorization != nil {
@@ -522,6 +530,8 @@ func (x *legacySource) migratePendingAuthorization(s *Snapshot) (bool, error) {
 	return false, nil
 }
 
+// holdLegacyContinuation preserves unresolved legacy continuation bytes for
+// inspection and round-tripping while clearing every runnable pending authority.
 func (s *Snapshot) holdLegacyContinuation() error {
 	payload := legacyHoldPayload{Version: 1, State: s.State, Pending: s.legacyPendingBytes, Authorization: s.legacyAuthorizationBytes,
 		Stop: s.StopReason, RetryDisposition: s.RetryDisposition, StreamProgress: s.StreamProgress,

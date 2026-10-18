@@ -602,10 +602,10 @@ func (s *Session) BeginTurn() error {
 	return nil
 }
 
-// RecordAssistant appends the assistant message produced by a model call to the
-// conversation with independently owned message and carrier storage. Canonical
-// history and replay bindings are validated before any mutation. It is legal
-// only while running.
+// RecordAssistant is the aggregate acceptance seam between a completed model turn
+// and the session's in-memory canonical history. It appends independently owned
+// message and carrier storage only after validating canonical history and replay
+// bindings; it is legal only while running and does not itself persist the session.
 func (s *Session) RecordAssistant(m Message) error {
 	if s.State != StateRunning {
 		return fmt.Errorf("%w: RecordAssistant from %q", ErrIllegalTransition, s.State)
@@ -620,10 +620,10 @@ func (s *Session) RecordAssistant(m Message) error {
 	return nil
 }
 
-// RecordToolResults appends tool-result messages to the conversation and updates
-// the tool-call and consecutive-failure counters. It is legal only while
-// running. The entire batch must answer distinct outstanding canonical calls
-// before history or counters change; unanswered siblings may remain pending.
+// RecordToolResults appends a validated result batch and then updates the
+// tool-call and consecutive-failure counters. It is legal only while running.
+// The entire batch must answer distinct outstanding canonical calls before history
+// or counters change; unanswered siblings may remain pending.
 // Any successful result resets the consecutive-failure run; each error extends it.
 func (s *Session) RecordToolResults(results []ToolResult) error {
 	if s.State != StateRunning {

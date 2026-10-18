@@ -744,6 +744,8 @@ func (e *Engine) driveFromAwaiting(ctx context.Context, r *Run, sess *session.Se
 	e.runLoop(ctx, r, sess, env, session.Usage{}, "", false)
 }
 
+// pendingApprovalTarget verifies that an approval names the session's current ask
+// and resolves its one retained canonical occurrence before any resume path uses it.
 func pendingApprovalTarget(sess *session.Session, askID string) (session.PendingAsk, int, int, error) {
 	ask, ok := sess.PendingAsk()
 	if !ok {

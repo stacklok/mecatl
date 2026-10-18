@@ -151,7 +151,9 @@ func ValidateToolPairing(msgs []Message) error {
 	return nil
 }
 
-// validateToolHistory allows outstanding calls while a turn is being dispatched.
+// validateToolHistory checks the canonical history prefix before aggregate mutation.
+// It permits outstanding calls while a turn is being dispatched, returning those
+// calls so strict completed-history validation can reject any that remain unanswered.
 func validateToolHistory(msgs []Message) (map[ToolCallID]struct{}, error) {
 	open := make(map[ToolCallID]struct{})
 	seen := make(map[ToolCallID]struct{})

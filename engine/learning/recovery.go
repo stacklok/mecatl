@@ -11,7 +11,8 @@ import (
 )
 
 // ReflectionInput returns the verified source bindings behind a display projection.
-// Serialized or modified display DTOs cannot establish evidence authority.
+// It compares the projection to a fresh canonical projection so serialized or
+// modified display DTOs cannot establish evidence authority.
 func (p Projection) ReflectionInput() (Input, error) {
 	if p.verifiedInput == nil {
 		return Input{}, ErrInvalidEvidence

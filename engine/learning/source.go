@@ -186,7 +186,8 @@ func legacyEvent(event session.Event) (session.Event, []string, error) {
 }
 
 // RematerializeEvidence verifies a stored manifest against retained ORIGINAL
-// sources. It neither rewrites the manifest nor recovers missing/pruned content.
+// sources, rebuilding the verified input used by reflection and citations.
+// It neither rewrites the manifest nor recovers missing/pruned content.
 // For a sparse event read, eventOrdinals supplies the actual original event-only
 // iterator ordinals. Omit it only for a complete source sequence.
 func RematerializeEvidence(trajectory Trajectory, events []session.Event, incarnation session.IncarnationID, manifest MaterializationManifest, eventOrdinals ...[]int) (Input, error) {
@@ -434,8 +435,10 @@ func evidencePreviewMessages(messages []session.Message, incarnation session.Inc
 	return preview
 }
 
-// CanonicalEvidenceCitation exposes a link only for the exact verified occurrence.
-// Callers must not copy a stored EvidenceRef.ToolCallID into a public DTO.
+// CanonicalEvidenceCitation exposes a canonical link only when the selected
+// evidence proves the exact occurrence; verified content alone does not establish
+// that invocation relationship. Callers must not copy a stored EvidenceRef.ToolCallID
+// into a public DTO.
 func CanonicalEvidenceCitation(in Input, ref EvidenceRef) (EvidenceCitation, error) {
 	preview, err := EvidencePreview(in, ref)
 	if err != nil {

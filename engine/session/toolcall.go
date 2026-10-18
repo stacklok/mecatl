@@ -9,7 +9,8 @@ import (
 )
 
 // ToolCallID is the canonical, globally unique engine invocation identity.
-// Historical provider tokens must be migrated before executable lookup.
+// It keys execution, results, and resumptions after acceptance; historical provider
+// tokens must be migrated before executable lookup.
 type ToolCallID string
 
 // NewToolCallID mints an opaque engine invocation identity with crypto/rand.

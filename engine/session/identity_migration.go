@@ -40,8 +40,10 @@ func (p *LegacyMessageIdentity) clone() *LegacyMessageIdentity {
 	return &out
 }
 
-// IdentityMigrationHold is private codec-owned continuation data. Payload is
-// opaque to the aggregate and must never be projected, logged, or executed.
+// IdentityMigrationHold is private codec-owned continuation data, installed when
+// legacy evidence cannot prove which invocation may resume. Inspection remains
+// available, but Payload is opaque to the aggregate and must never be projected,
+// logged, or executed.
 type IdentityMigrationHold struct {
 	Reason  string
 	Payload []byte

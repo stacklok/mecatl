@@ -162,14 +162,14 @@ var (
 	ErrPrivateStateRequired = errors.New("eventsource: private state required")
 )
 
-// Fold reconstructs a *session.Session by folding the durable event stream back
-// into the aggregate, supplemented by the creation metadata in meta. It is the
-// reference implementation of an event-sourced port.SessionStore.Load.
+// Fold reconstructs a *session.Session from the complete durable event stream and
+// creation metadata. It is the reference implementation of an event-sourced
+// port.SessionStore.Load.
 //
 // The returned Session has its Conversation, Counters, cumulative Usage, lifecycle
 // State, recorded stop reason, and trailing pending ask reconstructed from the
-// stream. See the package doc for the replay-fidelity limitation (Reasoning /
-// ProviderPhase / ReasoningItemID / ItemID are not event-carried).
+// stream. This rebuilds canonical activity, not exact provider replay: ordinary
+// execution events carry neither the private replay envelope nor provider bindings.
 //
 // It returns ErrStream (wrapping the per-item error) if the iterator yields an
 // error, ErrReconstruct if the reconstructed history or authorization lifecycle is
