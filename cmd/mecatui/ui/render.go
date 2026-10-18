@@ -780,6 +780,11 @@ func (r *renderer) renderReasoningSnapshot(p scrollback.AssistantCardSnapshot, e
 // the rail/padding and the text style's own horizontal frame. Unknown/tiny widths
 // render unwrapped, matching the markdown path.
 func (r *renderer) wrapStyled(s string, st lipgloss.Style) string {
+	// Expand tabs before measuring, not later in Render where they can widen
+	// an already-wrapped line beyond the assistant rail's content budget.
+	if tabWidth := st.GetTabWidth(); tabWidth >= 0 {
+		s = strings.ReplaceAll(s, "\t", strings.Repeat(" ", tabWidth))
+	}
 	frame := st.GetHorizontalFrameSize()
 	cw := r.contentWidth() - assistantBodyHang
 	if cw <= frame+1 {

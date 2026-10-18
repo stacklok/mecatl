@@ -211,6 +211,18 @@ is off and a fallback when a terminal lacks enhanced keys, color, or graphics.
 Display text goes through `cmd/mecatui/internal/terminaltext` sanitizing; never interpolate
 untrusted server text into terminal control sequences.
 
+Expand literal tabs to spaces before measuring, wrapping, or clipping display text.
+Sanitizing preserves tabs, and ANSI width and wrapping helpers do not account for
+Lip Gloss's later tab expansion (four spaces by default). Expanding tabs only in
+`Style.Render` can widen an already-wrapped line; a surrounding rail or card can
+then pad every row to that oversized width. Match the style's `GetTabWidth()`
+setting, or use the owning renderer's explicit tab policy, before layout.
+
+Wrap against the content budget after subtracting outer indentation, rails,
+borders, and padding. Verify widths on the fully styled and framed rows passed to
+the viewport, including tabbed text and terminal resizes. Measuring only the raw
+text misses expansion and framing added later in the render path.
+
 ## Verification
 
 Keep tests offline. Test event-to-message mapping at the client boundary,
