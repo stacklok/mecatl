@@ -546,7 +546,7 @@ func TestSynthesisAfterRecoveredLeadReplaysPairedHistory(t *testing.T) {
 	rec := newPromptRecorder()
 
 	var mu sync.Mutex
-	var requests [][]session.Message
+	var requests [][]port.LLMMessage
 	allow := permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil)
 	factory := func(spec agent.MemberSpec, _ string) agent.MemberBuild {
 		cat := tool.NewCatalog()
@@ -558,7 +558,7 @@ func TestSynthesisAfterRecoveredLeadReplaysPairedHistory(t *testing.T) {
 			mockllm.WithRequestObserver(func(req port.LLMRequest) {
 				rec.record(name, req)
 				mu.Lock()
-				requests = append(requests, append([]session.Message(nil), req.Messages...))
+				requests = append(requests, append([]port.LLMMessage(nil), req.Messages...))
 				mu.Unlock()
 			}),
 		},
@@ -597,7 +597,7 @@ func TestSynthesisAfterRecoveredLeadReplaysPairedHistory(t *testing.T) {
 	}
 
 	mu.Lock()
-	reqs := append([][]session.Message(nil), requests...)
+	reqs := append([][]port.LLMMessage(nil), requests...)
 	mu.Unlock()
 	if len(reqs) < 3 {
 		t.Fatalf("want at least 3 provider requests (2 working turns + synthesis), got %d", len(reqs))
@@ -615,9 +615,7 @@ func TestSynthesisAfterRecoveredLeadReplaysPairedHistory(t *testing.T) {
 	if toolCalls == 0 || toolResults == 0 {
 		t.Fatalf("the replayed synthesis history must actually CONTAIN a tool_use/tool_result pair, else the pairing check is vacuous (calls=%d results=%d)", toolCalls, toolResults)
 	}
-	if err := session.ValidateToolPairing(synth); err != nil {
-		t.Fatalf("a recovered lead replays an unpaired history (a provider 400): %v", err)
-	}
+	assertLLMToolPairing(t, synth)
 }
 
 // TestSynthesisSkippedWhenLeadCannotReturnToIdle is the INVERSE of the test above and the
@@ -886,7 +884,7 @@ func (p *budgetLeadProvider) Stream(ctx context.Context, req port.LLMRequest) (i
 		if ctx.Err() != nil {
 			return
 		}
-		tc := session.NewToolCall("rf", "RecordFinding", []byte(`{"finding":"partial progress"}`))
+		tc := port.LLMToolCall{ID: "rf", Name: "RecordFinding", Args: []byte(`{"finding":"partial progress"}`)}
 		if !yield(port.Chunk{Kind: port.ChunkToolCall, ToolCall: &tc}, nil) {
 			return
 		}

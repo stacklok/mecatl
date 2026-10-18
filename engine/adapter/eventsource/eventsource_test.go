@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"iter"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/eventcodec"
 	"github.com/stacklok/mecatl/engine/adapter/eventsource"
 	"github.com/stacklok/mecatl/engine/adapter/sessnap"
 	"github.com/stacklok/mecatl/engine/governance"
@@ -50,6 +52,83 @@ func TestFoldRestoresExecutionCapabilityFacts(t *testing.T) {
 	folded.ExecutionCapabilities.Files = false
 	if !m.ExecutionCapabilities.Files {
 		t.Fatal("fold aliased source metadata")
+	}
+}
+
+func TestFoldLegacyUnprovenApprovalHoldsMetadataAcrossSnapshot(t *testing.T) {
+	m := meta()
+	m.Incarnation = session.LegacyIncarnationID(m.ID, m.CreatedAt.UnixNano(), m.Owner)
+	m.AgentDefinitionName = "reviewer"
+	m.Authority = &session.Authority{
+		CapabilitySet: governance.CapabilitySet{Tools: []string{"Read"}},
+		Provenance:    "agent-def:reviewer",
+		Ceiling:       &governance.CapabilitySet{Tools: []string{"Read"}},
+	}
+	m.WorkspaceEnrollmentBrokerKeys = []string{"broker-read"}
+	m.WorkspaceEnrollmentBrokerKeysPresent = true
+
+	rawEvents := []string{
+		`{"Type":"tool.call","ToolCall":{"ID":"provider-call","Name":"Read","Args":{"path":"first.txt"}}}`,
+		`{"Type":"tool.call","ToolCall":{"ID":"provider-call","Name":"Read","Args":{"path":"second.txt"}}}`,
+		`{"Type":"permission.ask","Ask":{"AskID":"ask-legacy","Tool":"Read","Call":"provider-call","Args":{"path":"second.txt"},"Reason":"approve"}}`,
+	}
+	events := make([]session.Event, len(rawEvents))
+	for i, raw := range rawEvents {
+		var err error
+		events[i], err = eventcodec.Unmarshal([]byte(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	projection, err := eventcodec.Project(events, m.Incarnation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projection.PendingHold) == 0 {
+		t.Fatal("ambiguous legacy approval did not produce a hold")
+	}
+
+	folded, err := eventsource.Fold(m, seq(events))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHeldMetadata := func(s *session.Session) {
+		t.Helper()
+		if s.State != session.StateAwaiting {
+			t.Fatalf("State = %v, want awaiting", s.State)
+		}
+		if !errors.Is(s.CheckIdentityReady(), session.ErrMigrationHeld) {
+			t.Fatal("unproven legacy approval is executable")
+		}
+		if _, ok := s.PendingAsk(); ok {
+			t.Fatal("held legacy approval restored as executable")
+		}
+		if s.AgentDefinitionName != m.AgentDefinitionName {
+			t.Fatalf("AgentDefinitionName = %q, want %q", s.AgentDefinitionName, m.AgentDefinitionName)
+		}
+		authority, bound := s.BoundAuthority()
+		if !bound || !reflect.DeepEqual(authority, *m.Authority) {
+			t.Fatalf("authority = %+v, bound = %v, want %+v", authority, bound, *m.Authority)
+		}
+		keys, present := s.WorkspaceEnrollmentBrokerKeys()
+		if !present || !reflect.DeepEqual(keys, m.WorkspaceEnrollmentBrokerKeys) {
+			t.Fatalf("broker keys = %q, present = %v", keys, present)
+		}
+	}
+	assertHeldMetadata(folded)
+	wantHold := folded.IdentityHoldSnapshot()
+
+	raw, err := sessnap.Marshal(folded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := sessnap.Unmarshal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHeldMetadata(restored)
+	if !reflect.DeepEqual(restored.IdentityHoldSnapshot(), wantHold) {
+		t.Fatalf("identity hold = %+v, want %+v", restored.IdentityHoldSnapshot(), wantHold)
 	}
 }
 
@@ -177,13 +256,13 @@ func TestFoldParityForCompleteErrorStop(t *testing.T) {
 	if err := live.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
-	if err := live.RecordAssistant(session.NewAssistantMessage("prior complete", "", nil)); err != nil {
+	if err := live.RecordAssistant(session.NewAssistantMessage("prior complete", nil)); err != nil {
 		t.Fatal(err)
 	}
 	if err := live.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
-	if err := live.RecordAssistant(session.NewAssistantMessage("clean error terminal", "", nil)); err != nil {
+	if err := live.RecordAssistant(session.NewAssistantMessage("clean error terminal", nil)); err != nil {
 		t.Fatal(err)
 	}
 	if err := live.Stop(session.StopError); err != nil {
@@ -212,7 +291,7 @@ func TestFoldParityForIteratorError(t *testing.T) {
 	if err := live.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
-	if err := live.RecordAssistant(session.NewAssistantMessage("prior complete", "", nil)); err != nil {
+	if err := live.RecordAssistant(session.NewAssistantMessage("prior complete", nil)); err != nil {
 		t.Fatal(err)
 	}
 	if err := live.BeginTurn(); err != nil {
@@ -293,7 +372,7 @@ func TestFoldFailedStepRetrySnapshotParity(t *testing.T) {
 		if err := s.BeginTurn(); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.RecordAssistant(session.NewAssistantMessage("prior completed turn", "", nil)); err != nil {
+		if err := s.RecordAssistant(session.NewAssistantMessage("prior completed turn", nil)); err != nil {
 			t.Fatal(err)
 		}
 		if err := s.BeginTurn(); err != nil {
@@ -403,7 +482,7 @@ func TestFoldStructuralConversation(t *testing.T) {
 		t.Fatalf("usage = %+v, want {15,5}", s.UsageFor(session.UsageKindMain))
 	}
 	// Reasoning is never event-carried — the contract limitation.
-	if msgs[0].Reasoning != "" || msgs[0].ProviderPhase != "" {
+	if msgs[0].Replay != nil || msgs[0].ProviderPhase != "" {
 		t.Fatalf("reconstructed assistant carries Reasoning/ProviderPhase it cannot have: %+v", msgs[0])
 	}
 }
@@ -447,8 +526,8 @@ func TestFoldMultiRunUsageIsCumulative(t *testing.T) {
 func TestFoldRecoversCompactionArchiveHead(t *testing.T) {
 	head := []session.Message{
 		session.NewUserMessage("original task"),
-		session.NewAssistantMessage("old turn 1", "", nil),
-		session.NewAssistantMessage("old turn 2", "", nil),
+		session.NewAssistantMessage("old turn 1", nil),
+		session.NewAssistantMessage("old turn 2", nil),
 	}
 	evs := []session.Event{
 		{Type: session.EvTurnStart, Turn: 0},
@@ -482,7 +561,7 @@ func TestFoldRecoversCompactionArchiveHead(t *testing.T) {
 // ask restored.
 func TestFoldUnansweredAskIsAwaiting(t *testing.T) {
 	call := toolCall("c1", "Shell", `{"command":"ls"}`)
-	ask := session.PendingAsk{AskID: "s1:0:c1:r0", Tool: "Shell", Reason: "needs approval"}
+	ask := session.PendingAsk{AskID: "s1:0:c1:r0", Tool: "Shell", Call: call.ID, Reason: "needs approval"}
 	evs := []session.Event{
 		{Type: session.EvTurnStart, Turn: 0},
 		{Type: session.EvMessageDelta, Turn: 0, Text: "running a command"},
@@ -848,5 +927,47 @@ func TestFoldMultiRunFailureMetadataIsLastRun(t *testing.T) {
 	want := session.RetryMetadata{Disposition: session.RetryDispositionRetryable, Progress: session.StreamProgressPrecommit}
 	if got := s.FailureMetadata(); got != want {
 		t.Fatalf("FailureMetadata = %+v, want %+v", got, want)
+	}
+}
+
+// This fixture is frozen at the provider-key baseline and decoded through the
+// real discriminator before any source-aware pairing is attempted.
+func TestLegacyEventFixtureDecodesAndFoldsCompletedReuse(t *testing.T) {
+	raw, err := os.ReadFile("testdata/legacy-events.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var records []json.RawMessage
+	if err := json.Unmarshal(raw, &records); err != nil {
+		t.Fatal(err)
+	}
+	events := make([]session.Event, len(records))
+	for i, record := range records {
+		events[i], err = eventcodec.Unmarshal(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// This frozen, complete array supplies its original source ordinals.
+		identity := events[i].LegacyIdentity()
+		identity.Ordinal = i
+		events[i] = events[i].WithLegacyIdentity(*identity)
+	}
+	if len(events) != 14 || events[2].Type != session.EvHistorical || events[2].ToolCall != nil || events[7].Hook != nil || events[8].Ask != nil || events[10].Authorization != nil {
+		t.Fatalf("old references decoded as executable canonical IDs: %+v", events)
+	}
+	if events[12].PlanContinuationFailure == nil || events[13].ModelRetry == nil {
+		t.Fatal("non-invocation payloads lost")
+	}
+	folded, err := eventsource.Fold(meta(), seq(events[:7]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages := folded.Conversation.Messages
+	if len(messages) != 5 {
+		t.Fatalf("messages: %+v", messages)
+	}
+	first, second := messages[1].ToolCalls[0].ID, messages[3].ToolCalls[0].ID
+	if first == second || first == "provider-call-reused" || second == "provider-call-reused" || messages[2].ToolResult.CallID != first || messages[4].ToolResult.CallID != second {
+		t.Fatalf("completed reused occurrences did not migrate distinctly: %+v", messages)
 	}
 }

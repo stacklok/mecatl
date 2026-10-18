@@ -98,12 +98,13 @@ type SignalProjection struct {
 // Projection is the canonical model-facing representation of Input. Existing
 // facts are comparison-only and intentionally carry no evidence handles.
 type Projection struct {
-	SessionID session.SessionID   `json:"session_id"`
-	Stop      session.StopReason  `json:"stop,omitempty"`
-	Messages  []MessageProjection `json:"messages"`
-	Events    []EventProjection   `json:"events,omitempty"`
-	Signals   []SignalProjection  `json:"signals,omitempty"`
-	Existing  []ExistingFact      `json:"existing,omitempty"`
+	SessionID     session.SessionID   `json:"session_id"`
+	Stop          session.StopReason  `json:"stop,omitempty"`
+	Messages      []MessageProjection `json:"messages"`
+	Events        []EventProjection   `json:"events,omitempty"`
+	Signals       []SignalProjection  `json:"signals,omitempty"`
+	Existing      []ExistingFact      `json:"existing,omitempty"`
+	verifiedInput *Input
 }
 
 // ProjectInput builds the canonical bounded projection used both for evidence
@@ -113,12 +114,13 @@ func ProjectInput(in Input) (Projection, error) {
 		return Projection{}, err
 	}
 	out := Projection{
-		SessionID: session.SessionID(safeProjectionText("", string(in.Trajectory.SessionID))),
-		Stop:      in.Trajectory.Stop,
-		Messages:  make([]MessageProjection, len(in.Trajectory.Messages)),
-		Events:    make([]EventProjection, len(in.Events)),
-		Signals:   projectSignals(in.Signals),
-		Existing:  projectExisting(in.Existing),
+		SessionID:     session.SessionID(safeProjectionText("", string(in.Trajectory.SessionID))),
+		Stop:          in.Trajectory.Stop,
+		Messages:      make([]MessageProjection, len(in.Trajectory.Messages)),
+		Events:        make([]EventProjection, len(in.Events)),
+		Signals:       projectSignals(in.Signals),
+		Existing:      projectExisting(in.Existing),
+		verifiedInput: &in,
 	}
 	for i, message := range in.Trajectory.Messages {
 		item := projectMessage(message)
@@ -138,6 +140,9 @@ func ProjectInput(in Input) (Projection, error) {
 		item.Evidence = evidenceProjection(ref)
 		out.Events[i] = item
 	}
+	if in.Protocol == ReflectionEvidenceV2 || in.Manifest != nil && in.Manifest.Protocol == ReflectionEvidenceV2 {
+		return redactEvidenceProjection(out, in.legacyIdentifiers)
+	}
 	return out, nil
 }
 
@@ -150,14 +155,14 @@ func MessageEvidenceRef(in Input, ordinal int, callID session.ToolCallID) (Evide
 	if callID != "" && !messageHasCall(message, callID) {
 		return EvidenceRef{}, fmt.Errorf("%w: message %d does not contain call %q", ErrInvalidEvidence, ordinal, callID)
 	}
-	ref := EvidenceRef{SessionID: in.Trajectory.SessionID, Locator: EvidenceMessage, Ordinal: ordinal, ToolCallID: callID}
+	ref := EvidenceRef{Protocol: in.Protocol, SessionID: in.Trajectory.SessionID, Locator: EvidenceMessage, Ordinal: ordinal, ToolCallID: callID}
 	ref.Digest = digestCanonical(projectMessage(message))
-	if in.Manifest != nil && in.Manifest.Protocol == ReflectionEvidenceV1 {
+	if in.Manifest != nil && ManifestProtocolSupported(in.Manifest.Protocol, in.Manifest.Source.Domain) {
 		entryIndex, entry, ok := manifestEntryForHandle(in.Manifest, "m:"+strconv.Itoa(ordinal))
 		if !ok || entry.OriginalMessage == nil {
 			return EvidenceRef{}, fmt.Errorf("%w: selected message %d is absent from manifest", ErrInvalidEvidence, ordinal)
 		}
-		ref.Protocol = ReflectionEvidenceV1
+		ref.Protocol = in.Manifest.Protocol
 		ref.ManifestIndex = entryIndex
 		original := *entry.OriginalMessage
 		ref.OriginalMessage = &original
@@ -177,14 +182,14 @@ func EventEvidenceRef(in Input, ordinal int, callID session.ToolCallID) (Evidenc
 		return EvidenceRef{}, fmt.Errorf("%w: event %d does not contain call %q", ErrInvalidEvidence, ordinal, callID)
 	}
 	seq := event.Seq
-	ref := EvidenceRef{SessionID: in.Trajectory.SessionID, Locator: EvidenceEvent, Ordinal: ordinal, EventSeq: &seq, ToolCallID: callID}
+	ref := EvidenceRef{Protocol: in.Protocol, SessionID: in.Trajectory.SessionID, Locator: EvidenceEvent, Ordinal: ordinal, EventSeq: &seq, ToolCallID: callID}
 	ref.Digest = digestCanonical(projectEvent(event))
-	if in.Manifest != nil && in.Manifest.Protocol == ReflectionEvidenceV1 {
+	if in.Manifest != nil && ManifestProtocolSupported(in.Manifest.Protocol, in.Manifest.Source.Domain) {
 		entryIndex, entry, ok := manifestEntryForHandle(in.Manifest, "e:"+strconv.Itoa(ordinal))
 		if !ok || entry.EventSequence == nil {
 			return EvidenceRef{}, fmt.Errorf("%w: selected event %d is absent from manifest", ErrInvalidEvidence, ordinal)
 		}
-		ref.Protocol = ReflectionEvidenceV1
+		ref.Protocol = in.Manifest.Protocol
 		ref.ManifestIndex = entryIndex
 		ref.AggregateDigest = in.Manifest.Digest
 		ref.Digest = entry.Digest
@@ -235,6 +240,11 @@ func ResolveEvidenceHandle(in Input, handle string) (EvidenceRef, error) {
 
 // ResolveEvidence validates a content-addressed handle against the exact Input.
 func ResolveEvidence(in Input, ref EvidenceRef) error {
+	switch ref.ResolvedProtocol() {
+	case ReflectionEvidenceLegacyV0, ReflectionEvidenceV1, ReflectionEvidenceV2:
+	default:
+		return fmt.Errorf("%w: unsupported evidence protocol", ErrInvalidEvidence)
+	}
 	if ref.SessionID != in.Trajectory.SessionID || ref.Digest == "" {
 		return fmt.Errorf("%w: source session or digest mismatch", ErrInvalidEvidence)
 	}
@@ -272,17 +282,54 @@ func EvidencePreview(in Input, ref EvidenceRef) (string, error) {
 	var value any
 	switch ref.Locator {
 	case EvidenceMessage:
-		value = projectMessage(in.Trajectory.Messages[ref.Ordinal])
+		item := projectMessage(in.Trajectory.Messages[ref.Ordinal])
+		if ref.ResolvedProtocol() != ReflectionEvidenceV2 {
+			for i := range item.ToolCalls {
+				item.ToolCalls[i].ID = ""
+			}
+			if item.ToolResult != nil {
+				item.ToolResult.CallID = ""
+			}
+		}
+		value = item
 	case EvidenceEvent:
-		value = projectEvent(in.Events[ref.Ordinal])
+		item := projectEvent(in.Events[ref.Ordinal])
+		if ref.ResolvedProtocol() != ReflectionEvidenceV2 {
+			if item.ToolCall != nil {
+				item.ToolCall.ID = ""
+			}
+			if item.ToolResult != nil {
+				item.ToolResult.CallID = ""
+			}
+		}
+		value = item
 	default:
 		return "", fmt.Errorf("%w: unknown locator %q", ErrInvalidEvidence, ref.Locator)
 	}
-	raw, err := json.Marshal(value)
+	identifiers := append([]string(nil), in.legacyIdentifiers...)
+	if ref.ResolvedProtocol() != ReflectionEvidenceV2 {
+		for _, m := range in.Trajectory.Messages {
+			for _, c := range m.ToolCalls {
+				identifiers = append(identifiers, string(c.ID))
+			}
+			if m.ToolResult != nil {
+				identifiers = append(identifiers, string(m.ToolResult.CallID))
+			}
+		}
+		for _, e := range in.Events {
+			if e.ToolCall != nil {
+				identifiers = append(identifiers, string(e.ToolCall.ID))
+			}
+			if e.ToolResult != nil {
+				identifiers = append(identifiers, string(e.ToolResult.CallID))
+			}
+		}
+	}
+	preview, err := publicEvidenceJSON(value, identifiers)
 	if err != nil {
 		return "", fmt.Errorf("%w: preview encoding failed", ErrInvalidEvidence)
 	}
-	return truncateUTF8(string(raw), maxEvidencePreviewBytes), nil
+	return preview, nil
 }
 
 func canonicalMessages(messages []session.Message) []session.Message {

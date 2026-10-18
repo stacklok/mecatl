@@ -63,7 +63,7 @@ func TestPreparedAuthorizationContinuationGatesExecutionAndStartsOnce(t *testing
 	if err := sess.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{call})); err != nil {
+	if err := sess.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{call})); err != nil {
 		t.Fatal(err)
 	}
 	if err := sess.PauseForAuthorization(session.PendingAuthorization{Authorization: authorization, Call: call}); err != nil {
@@ -123,7 +123,7 @@ func TestPreparedAuthorizationContinuationAbortWinsWithoutExecution(t *testing.T
 	if err := sess.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{call})); err != nil {
+	if err := sess.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{call})); err != nil {
 		t.Fatal(err)
 	}
 	authorization := session.ExternalAuthorization{ID: "authorization", DisplayName: "Calendar", Binding: "binding", ExpiresAt: time.Now().Add(time.Hour)}
@@ -159,7 +159,7 @@ func TestPreparedAfterAuthorizationGatesLoop(t *testing.T) {
 	}
 	authorization := session.ExternalAuthorization{ID: "authorization", DisplayName: "Calendar", Binding: "binding", ExpiresAt: time.Now().Add(time.Hour)}
 	call := session.NewToolCall("call", "protected", nil)
-	if err := sess.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{call})); err != nil {
+	if err := sess.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{call})); err != nil {
 		t.Fatal(err)
 	}
 	if err := sess.PauseForAuthorization(session.PendingAuthorization{Authorization: authorization, Call: call}); err != nil {
@@ -215,7 +215,7 @@ func TestPreparedAfterAuthorizationCanParkLaterProtectedCall(t *testing.T) {
 	if err := sess.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{first})); err != nil {
+	if err := sess.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{first})); err != nil {
 		t.Fatal(err)
 	}
 	authorization := session.ExternalAuthorization{ID: "authorization", DisplayName: "Calendar", Binding: "binding", ExpiresAt: time.Now().Add(time.Hour)}
@@ -328,7 +328,7 @@ func TestPreparedAuthorizationContinuationCanParkSecondProtectedCall(t *testing.
 	if err := sess.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{call})); err != nil {
+	if err := sess.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{call})); err != nil {
 		t.Fatal(err)
 	}
 	if err := sess.PauseForAuthorization(session.PendingAuthorization{Authorization: first.authorization, Call: call}); err != nil {

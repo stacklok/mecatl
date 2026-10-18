@@ -66,7 +66,7 @@ func TestRouteToolResultPartsCapabilityGated(t *testing.T) {
 
 	// text-only: image + audio + legacy-media dropped; text, resource-link (incl.
 	// the audience-tagged one), embedded-resource (text + blob), structured kept.
-	got := RouteToolResultParts(session.ToolResult{Parts: allParts}, textOnly)
+	got := RouteToolResultParts(allParts, textOnly)
 	want := []session.Content{
 		allParts[0], // text
 		allParts[3], // resource-link (audience-tagged — survives)
@@ -82,7 +82,7 @@ func TestRouteToolResultPartsCapabilityGated(t *testing.T) {
 	}
 
 	// image-capable: image kept, audio still dropped.
-	got = RouteToolResultParts(session.ToolResult{Parts: allParts}, imageCap)
+	got = RouteToolResultParts(allParts, imageCap)
 	if !contains(got, img) {
 		t.Fatalf("image block dropped for an image-capable provider")
 	}
@@ -94,7 +94,7 @@ func TestRouteToolResultPartsCapabilityGated(t *testing.T) {
 	}
 
 	// audio-capable (no image): audio kept, image dropped.
-	got = RouteToolResultParts(session.ToolResult{Parts: allParts}, audioCap)
+	got = RouteToolResultParts(allParts, audioCap)
 	if contains(got, img) {
 		t.Fatalf("image block kept for an image-incapable provider")
 	}
@@ -103,7 +103,7 @@ func TestRouteToolResultPartsCapabilityGated(t *testing.T) {
 	}
 
 	// full: both media blocks survive (legacy media still dropped).
-	got = RouteToolResultParts(session.ToolResult{Parts: allParts}, full)
+	got = RouteToolResultParts(allParts, full)
 	if !contains(got, img) || !contains(got, audio) {
 		t.Fatalf("media blocks dropped for a fully-capable provider")
 	}
@@ -133,7 +133,7 @@ func TestRouteToolResultPartsReadOnlyProjection(t *testing.T) {
 	origContent := tr.Content
 	origCallID := tr.CallID
 
-	got := RouteToolResultParts(tr, ProviderCapabilities{}) // text-only drops the image
+	got := RouteToolResultParts(tr.Parts, ProviderCapabilities{}) // text-only drops the image
 
 	// The recorded ToolResult is untouched.
 	if !reflect.DeepEqual(tr.Parts, origParts) {
@@ -162,20 +162,20 @@ func TestRouteToolResultPartsReadOnlyProjection(t *testing.T) {
 // TestRouteToolResultPartsNilEmptyDegrades asserts nil/empty Parts returns nil
 // (the caller degrades to the model-facing Content string).
 func TestRouteToolResultPartsNilEmptyDegrades(t *testing.T) {
-	if got := RouteToolResultParts(session.ToolResult{}, ProviderCapabilities{Image: true}); got != nil {
+	if got := RouteToolResultParts(nil, ProviderCapabilities{Image: true}); got != nil {
 		t.Fatalf("nil Parts returned non-nil: %v", got)
 	}
-	if got := RouteToolResultParts(session.ToolResult{Parts: nil}, ProviderCapabilities{Image: true}); got != nil {
+	if got := RouteToolResultParts(nil, ProviderCapabilities{Image: true}); got != nil {
 		t.Fatalf("nil Parts field returned non-nil: %v", got)
 	}
-	if got := RouteToolResultParts(session.ToolResult{Parts: []session.Content{}}, ProviderCapabilities{Image: true}); got != nil {
+	if got := RouteToolResultParts([]session.Content{}, ProviderCapabilities{Image: true}); got != nil {
 		t.Fatalf("empty Parts returned non-nil: %v", got)
 	}
 	// A result whose only block is dropped (image under a text-only provider) also
 	// degrades to nil so the caller falls back to Content.
 	img, _ := session.NewImageContent("image/png", []byte{1})
 	img.BlockKind = session.BlockImage
-	if got := RouteToolResultParts(session.ToolResult{Content: "fallback", Parts: []session.Content{img}}, ProviderCapabilities{}); got != nil {
+	if got := RouteToolResultParts([]session.Content{img}, ProviderCapabilities{}); got != nil {
 		t.Fatalf("all-dropped projection returned non-nil (must degrade to Content): %v", got)
 	}
 }
@@ -193,7 +193,7 @@ func TestRouteToolResultPartsAudienceNeverSuppresses(t *testing.T) {
 		{Audio: true},
 		{Image: true, Audio: true, EmbeddedContext: true},
 	} {
-		got := RouteToolResultParts(session.ToolResult{Parts: []session.Content{restricted}}, caps)
+		got := RouteToolResultParts([]session.Content{restricted}, caps)
 		if len(got) != 1 || !reflect.DeepEqual(got[0], restricted) {
 			t.Fatalf("caps=%v: audience-restricted block was filtered (got %v); audience must never suppress", caps, got)
 		}
@@ -208,7 +208,7 @@ func TestRouteToolResultPartsUnknownBlockKindDropped(t *testing.T) {
 	unknown := session.Content{BlockKind: session.BlockKind("future_kind_xyz"), Text: "mystery"}
 	known := session.NewTextBlock("hello")
 
-	got := RouteToolResultParts(session.ToolResult{Parts: []session.Content{known, unknown}}, ProviderCapabilities{Image: true, Audio: true})
+	got := RouteToolResultParts([]session.Content{known, unknown}, ProviderCapabilities{Image: true, Audio: true})
 	if contains(got, unknown) {
 		t.Fatalf("unknown BlockKind was not dropped: %v", got)
 	}
@@ -231,7 +231,7 @@ func TestRouteToolResultPartsEmptyTextDropped(t *testing.T) {
 		Content: "fallback",
 		Parts:   []session.Content{session.NewTextBlock("")},
 	}
-	if got := RouteToolResultParts(emptyOnly, ProviderCapabilities{Image: true, Audio: true}); got != nil {
+	if got := RouteToolResultParts(emptyOnly.Parts, ProviderCapabilities{Image: true, Audio: true}); got != nil {
 		t.Fatalf("sole empty-text block not dropped (would put an empty text block on the wire): %v", got)
 	}
 
@@ -243,7 +243,7 @@ func TestRouteToolResultPartsEmptyTextDropped(t *testing.T) {
 		session.NewStructuredContentBlock(""),
 		nonEmpty,
 	}}
-	got := RouteToolResultParts(mixed, ProviderCapabilities{})
+	got := RouteToolResultParts(mixed.Parts, ProviderCapabilities{})
 	if len(got) != 1 || !reflect.DeepEqual(got[0], nonEmpty) {
 		t.Fatalf("mixed empty/non-empty projection = %v, want only the non-empty block", got)
 	}

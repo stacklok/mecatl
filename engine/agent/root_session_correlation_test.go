@@ -144,7 +144,7 @@ func TestRootSessionProviderCorrelation_Scenario1_ResumeUsesCurrentCausalRoot(t 
 	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}
 	env := tool.MustEnvironment(ref, memfs.NewWorkspace("/ws"), memledger.New(), nil)
 
-	runParent := func(id session.SessionID, llm port.LLMProvider) {
+	runParent := func(id session.SessionID, llm port.LLMProvider) []session.Event {
 		t.Helper()
 		catalog := tool.NewCatalog()
 		catalog.MustRegister(subagent)
@@ -153,15 +153,14 @@ func TestRootSessionProviderCorrelation_Scenario1_ResumeUsesCurrentCausalRoot(t 
 			Policy: permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
 		})
 		parent := session.New(id, session.ModeDefault, ref, session.Limits{}, time.Unix(1, 0))
-		for range eng.Run(context.Background(), parent, env, agent.RunRequest{Text: "delegate"}).Events() {
-		}
+		return drain(eng.Run(context.Background(), parent, env, agent.RunRequest{Text: "delegate"}))
 	}
 
-	runParent("first-main", mockllm.New(
+	firstEvents := runParent("first-main", mockllm.New(
 		mockllm.ToolCallTurn(session.NewToolCall("first-call", "Subagent", []byte(`{"prompt":"first"}`))),
 		mockllm.TextTurn("done"),
 	))
-	childID := session.SessionID("subagent-first-main-first-call")
+	childID := session.SessionID(eventSubagentID(t, firstEvents, 0))
 	before, err := store.Load(context.Background(), childID)
 	if err != nil {
 		t.Fatal(err)
@@ -169,7 +168,7 @@ func TestRootSessionProviderCorrelation_Scenario1_ResumeUsesCurrentCausalRoot(t 
 	originalRelationship := before.Relationship
 
 	runParent("current-main", mockllm.New(
-		mockllm.ToolCallTurn(session.NewToolCall("resume-call", "Subagent", []byte(`{"resume":"subagent-first-main-first-call","prompt":"continue"}`))),
+		mockllm.ToolCallTurn(session.NewToolCall("resume-call", "Subagent", []byte(resumeArgs(string(childID), "continue")))),
 		mockllm.TextTurn("done"),
 	))
 	after, err := store.Load(context.Background(), childID)
@@ -223,10 +222,15 @@ func TestRootSessionProviderCorrelation_Scenario1_EveryChildFamilyInheritsRoot(t
 		}},
 		{"subagent-background", agent.SubagentSessionPrefix, root, func(t *testing.T, llm port.LLMProvider) {
 			// The status wait parks the parent until the detached child finishes.
-			delegated(t, []session.ToolCall{
-				session.NewToolCall("bg", "Subagent", []byte(`{"prompt":"inspect","background":true}`)),
-				session.NewToolCall("wait", "SubagentStatus", []byte(`{"agent_id":"subagent-s1-bg","wait_ms":30000}`)),
-			}, agent.NewSubagentTool(childEngineWith(llm, tool.NewCatalog())), agent.NewSubagentStatusTool())
+			eng := newEngine(agent.Deps{
+				LLM: newScriptedLLM(
+					mockllm.ToolCallTurn(session.NewToolCall("bg", "Subagent", []byte(`{"prompt":"inspect","background":true}`))),
+					handleTurn(t, "bg", toolCall("wait", "SubagentStatus", `{"wait_ms":30000}`), "agent_id"),
+					mockllm.TextTurn("parent done"),
+				),
+				Catalog: catalogWith(t, agent.NewSubagentTool(childEngineWith(llm, tool.NewCatalog())), agent.NewSubagentStatusTool()),
+			})
+			drainWithTimeout(t, eng.Run(rooted, newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"}))
 		}},
 		{"parallel-branch", agent.ParallelSessionPrefix, root, func(t *testing.T, llm port.LLMProvider) {
 			delegated(t, []session.ToolCall{session.NewToolCall("par", "Parallel", []byte(`{"tasks":["one","two"]}`))},

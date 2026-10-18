@@ -161,9 +161,9 @@ func TestBackgroundSubagentTimeoutAdvertisesResume(t *testing.T) {
 	task := agent.NewSubagentTool(childEngineWith(childLLM, catalogWith(t, block)),
 		agent.WithSubagentStore(memstore.New()))
 
-	parentLLM := mockllm.New(
+	parentLLM := newScriptedLLM(
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"x","background":true,"timeout_ms":120}`)),
-		mockllm.ToolCallTurn(toolCall("p2", "SubagentStatus", `{"agent_id":"subagent-s1-p1","wait_ms":30000}`)),
+		handleTurn(t, "p1", toolCall("p2", "SubagentStatus", `{"wait_ms":30000}`), "agent_id"),
 		mockllm.TextTurn("parent done"),
 	)
 	cat := catalogWith(t, task, agent.NewSubagentStatusTool())
@@ -171,7 +171,7 @@ func TestBackgroundSubagentTimeoutAdvertisesResume(t *testing.T) {
 	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs := drainObserving(t, r, nil)
 
-	collected := resultByCallID(evs)["p2"]
+	collected := resultByCallID(evs)[eventCallID(t, evs, "SubagentStatus", 0)]
 	if collected == nil {
 		t.Fatalf("the background child's result must be collectible via SubagentStatus")
 	}
@@ -253,7 +253,7 @@ func TestTimedOutSubagentIsPersistedDespiteTheExpiredContext(t *testing.T) {
 	if n := store.deniedCount(); n != 0 {
 		t.Fatalf("the timed-out child's snapshot was refused %d time(s) because the save ran on the EXPIRED ctx — the advertised resume is a dead end on a ctx-honouring store", n)
 	}
-	if _, err := store.Load(context.Background(), "subagent-s1-p1"); err != nil {
+	if _, err := store.Load(context.Background(), session.SessionID(extractAgentID(t, results[0].Content))); err != nil {
 		t.Fatalf("the timed-out child must be loadable for the resume the terminal advertises: %v", err)
 	}
 }

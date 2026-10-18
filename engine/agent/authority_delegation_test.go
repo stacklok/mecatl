@@ -114,7 +114,7 @@ func TestWritableResumeRefusesPersistedReadOnlyAuthorityBeforeDrive(t *testing.T
 	if err := seed.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
-	if err := seed.RecordAssistant(session.NewAssistantMessage("done", "", nil)); err != nil {
+	if err := seed.RecordAssistant(session.NewAssistantMessage("done", nil)); err != nil {
 		t.Fatal(err)
 	}
 	if err := seed.Complete(); err != nil {

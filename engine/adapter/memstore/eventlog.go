@@ -82,6 +82,8 @@ func (l *EventLog) appendRecord(id session.SessionID, rec port.LogRecord) port.C
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	lg := l.ensureLocked(id)
+	rec.Event = rec.Event.WithLegacySource("memstore/"+lg.generation, string(port.EncodeCursor(id, lg.generation, strconv.Itoa(len(lg.records)+1))))
+	rec.Event = session.CloneEventIdentity(rec.Event)
 	lg.records = append(lg.records, rec)
 	close(lg.changed)
 	lg.changed = make(chan struct{})
@@ -109,7 +111,7 @@ func (l *EventLog) Read(_ context.Context, id session.SessionID) iter.Seq2[sessi
 			if rec.Kind != port.LogRecordEvent {
 				continue
 			}
-			if !yield(rec.Event, nil) {
+			if !yield(session.CloneEventIdentity(rec.Event), nil) {
 				return
 			}
 		}
@@ -143,6 +145,7 @@ func (l *EventLog) ReadAfter(ctx context.Context, id session.SessionID, after po
 				next++
 				rec.Cursor = port.EncodeCursor(id, gen, strconv.Itoa(next))
 				rec.Live = live
+				rec.Event = session.CloneEventIdentity(rec.Event)
 				if !yield(rec, nil) {
 					return
 				}

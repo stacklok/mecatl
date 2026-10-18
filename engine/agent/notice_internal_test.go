@@ -8,6 +8,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -32,6 +33,7 @@ type noticeRunHolder struct {
 // the entry exists, then joins it; ctx-bounded throughout.
 type awaitChildrenDoneTool struct {
 	holder *noticeRunHolder
+	want   int
 	ids    []string
 }
 
@@ -45,6 +47,20 @@ func (a *awaitChildrenDoneTool) Execute(ctx context.Context, in session.ToolCall
 	case <-a.holder.ready:
 	case <-ctx.Done():
 		return session.NewToolResult(in.ID, "cancelled"), nil
+	}
+	for {
+		statuses := a.holder.run.children.statusSnapshot()
+		if len(statuses) == a.want {
+			for _, status := range statuses {
+				a.ids = append(a.ids, status.id)
+			}
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return session.NewToolResult(in.ID, "cancelled"), nil
+		case <-time.After(time.Millisecond):
+		}
 	}
 	for _, id := range a.ids {
 		var ch <-chan struct{}
@@ -85,7 +101,7 @@ func TestBackgroundNoticeBatchesTwoFinishedChildren(t *testing.T) {
 	task := NewSubagentTool(childEngine)
 
 	holder := &noticeRunHolder{ready: make(chan struct{})}
-	await := &awaitChildrenDoneTool{holder: holder, ids: []string{"subagent-notice-batch-p1", "subagent-notice-batch-p2"}}
+	await := &awaitChildrenDoneTool{holder: holder, want: 2}
 
 	mkCall := func(id, args string) session.ToolCall {
 		return session.NewToolCall(session.ToolCallID(id), "Subagent", json.RawMessage(args))
@@ -126,8 +142,7 @@ func TestBackgroundNoticeBatchesTwoFinishedChildren(t *testing.T) {
 		}
 	}
 
-	want := "[harness note: 2 background subagent(s) finished: subagent-notice-batch-p1 (end_turn), subagent-notice-batch-p2 (end_turn). " +
-		"Collect each result with SubagentStatus before relying on it.]"
+	want := fmt.Sprintf("[harness note: 2 background subagent(s) finished: %s (end_turn), %s (end_turn). Collect each result with SubagentStatus before relying on it.]", await.ids[0], await.ids[1])
 	var notices []string
 	for _, m := range sess.Conversation.Messages {
 		if m.Role == session.RoleUser && len(m.Text) > 0 && m.Text[0] == '[' {
@@ -142,7 +157,7 @@ func TestBackgroundNoticeBatchesTwoFinishedChildren(t *testing.T) {
 	}
 	// The never-collected results are still sitting in the (now sealed) registry —
 	// collectible up to the run's end, simply dropped with it.
-	for _, id := range []string{"subagent-notice-batch-p1", "subagent-notice-batch-p2"} {
+	for _, id := range await.ids {
 		if res, _, outcome := r.children.collect(id); outcome != collectOK || res == nil {
 			t.Fatalf("child %s result must have remained uncollected (still stored), got outcome %v", id, outcome)
 		}

@@ -120,7 +120,20 @@ func (e *Engine) dispatch(ctx context.Context, r *Run, sess *session.Session, en
 		if !readBatchable(t, known, c) {
 			res, park, cancelled := e.runOne(ctx, r, sess, env, turnIdx, c, t, known, enqueue)
 			if cancelled {
-				return completedDispatchResults(calls[:i], results), nil, true
+				if res.CallID == c.ID {
+					results[c.ID] = res
+				} else {
+					res = session.NewToolError(c.ID, withheldResultText+": dispatch was cancelled before completion")
+					e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
+					results[c.ID] = res
+				}
+				for _, remaining := range calls[i+1:] {
+					e.openCard(r, turnIdx, remaining)
+					result := session.NewToolError(remaining.ID, withheldResultText+": dispatch was cancelled before execution")
+					e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(result)})
+					results[remaining.ID] = result
+				}
+				return completedDispatchResults(calls, results), nil, true
 			}
 			if park != nil {
 				park.deferred = append([]session.ToolCall(nil), calls[i+1:]...)
@@ -621,6 +634,10 @@ const resumeAbortedSiblingMessage = "tool call aborted: the run was resumed at a
 // dispatched (their verdicts were lost with the dead process) — they are closed out,
 // not re-run. No call on the trailing assistant message is dispatched twice.
 func (e *Engine) driveFromAwaiting(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, askID string, verdict session.ApprovalVerdict) {
+	if err := sess.CheckIdentityReady(); err != nil {
+		e.rejectRunEntry(r, sess, err)
+		return
+	}
 	// Step 0: the run-open signal, exactly like drive's Step 0a, so telemetry
 	// adapters open a span/counter for the resumed run.
 	e.emit(r, session.Event{Type: session.EvSessionInit})
@@ -629,26 +646,9 @@ func (e *Engine) driveFromAwaiting(ctx context.Context, r *Run, sess *session.Se
 	// askID we were asked to resume; a mismatch ends the run as StopError (never a
 	// silent clean complete) so a stale/duplicate Approve cannot drive an unexpected
 	// session to a clean terminal or execute the wrong call.
-	ask, ok := sess.PendingAsk()
-	if !ok {
-		e.terminate(ctx, r, sess, session.StopError, "", session.Usage{},
-			fmt.Errorf("%w: not in StateAwaiting", ErrNotAwaiting), false)
-		return
-	}
-	if ask.AskID != askID {
-		e.terminate(ctx, r, sess, session.StopError, "", session.Usage{},
-			fmt.Errorf("%w: pending ask %q does not match requested %q", ErrNotAwaiting, ask.AskID, askID), false)
-		return
-	}
-
-	// Locate the trailing assistant message (it carries the pending tool call plus
-	// any unanswered siblings) and the pending call within it. The pending call's
-	// args come from the trailing assistant message (the verbatim call the model
-	// emitted), NOT from the ask (which clamps/redacts for surfacing).
-	lastAssistant, pendingIdx, ok := locatePendingCall(sess.Conversation.Messages, ask)
-	if !ok {
-		e.terminate(ctx, r, sess, session.StopError, "", session.Usage{},
-			fmt.Errorf("%w: pending tool call not found on the trailing assistant message", ErrNotAwaiting), false)
+	ask, lastAssistant, pendingIdx, err := pendingApprovalTarget(sess, askID)
+	if err != nil {
+		e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, err, false)
 		return
 	}
 	msgs := sess.Conversation.Messages
@@ -664,20 +664,15 @@ func (e *Engine) driveFromAwaiting(ctx context.Context, r *Run, sess *session.Se
 		return
 	}
 
-	answered := make(map[session.ToolCallID]struct{})
-	for _, m := range msgs[lastAssistant+1:] {
-		if m.Role == session.RoleTool && m.ToolResult != nil {
-			answered[m.ToolResult.CallID] = struct{}{}
-		}
-	}
+	answered := answeredToolCalls(msgs[lastAssistant+1:])
 
 	// Step 3: resolve the pending call EXACTLY ONCE through the verdict. A cancelled
 	// ctx mid-resolution (cancelled=true) ends the run as cancelled, executing nothing
 	// further.
 	pendingResult, park, cancelled := e.resolvePendingCall(ctx, r, sess, env, turnIdx, calls[pendingIdx], ask, verdict)
-	if cancelled {
-		e.terminate(ctx, r, sess, session.StopCancelled, "", session.Usage{}, nil, false)
-		return
+	if cancelled && pendingResult.CallID != calls[pendingIdx].ID {
+		pendingResult = session.NewToolError(calls[pendingIdx].ID, withheldResultText+": dispatch was cancelled before completion")
+		e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(pendingResult)})
 	}
 	if park != nil {
 		var completed []session.ToolResult
@@ -737,6 +732,10 @@ func (e *Engine) driveFromAwaiting(ctx context.Context, r *Run, sess *session.Se
 		return
 	}
 	e.save(ctx, r, sess)
+	if cancelled {
+		e.terminate(ctx, r, sess, session.StopCancelled, "", session.Usage{}, nil, false)
+		return
+	}
 
 	// Step 5: continue the SHARED loop. total seeds zero (the verdict resolution
 	// recorded no model usage; the budget brake reads the persisted cumulative
@@ -745,64 +744,61 @@ func (e *Engine) driveFromAwaiting(ctx context.Context, r *Run, sess *session.Se
 	e.runLoop(ctx, r, sess, env, session.Usage{}, "", false)
 }
 
-// pendingCallID picks the tool call id the pending ask refers to. The ask does not
-// carry the call id directly, but on a well-formed awaiting turn the trailing
-// assistant message's calls and the ask agree on Tool; when exactly one call
-// matches the ask's Tool that call's id is authoritative. With multiple same-named
-// calls the caller falls back to the Tool match (first wins) — a benign ambiguity:
-// the multi-tool gate test parks on a UNIQUELY-named middle call, the real shape.
-func pendingCallID(ask session.PendingAsk, calls []session.ToolCall) string {
-	var match string
-	n := 0
-	for _, c := range calls {
-		if c.Name == ask.Tool {
-			match = string(c.ID)
-			n++
-		}
+func pendingApprovalTarget(sess *session.Session, askID string) (session.PendingAsk, int, int, error) {
+	ask, ok := sess.PendingAsk()
+	if !ok {
+		return ask, -1, -1, fmt.Errorf("%w: not in StateAwaiting", ErrNotAwaiting)
 	}
-	if n == 1 {
-		return match
+	if ask.AskID != askID {
+		return ask, -1, -1, fmt.Errorf("%w: pending ask %q does not match requested %q", ErrNotAwaiting, ask.AskID, askID)
 	}
-	return ""
+	// Execute retained model arguments, never the ask's clamped/redacted projection.
+	lastAssistant, pendingIdx, ok := locatePendingCall(sess.Conversation.Messages, ask)
+	if !ok {
+		return ask, -1, -1, fmt.Errorf("%w: pending tool call not found on the trailing assistant message", ErrNotAwaiting)
+	}
+	return ask, lastAssistant, pendingIdx, nil
 }
 
-// locatePendingCall finds the trailing assistant message and the index of the
-// pending tool call within it for the awaiting re-entry. It returns the trailing
-// assistant message index, the pending call's index in that message's ToolCalls, and
-// ok=false when there is no trailing assistant message or no call matching the ask.
-// It prefers the call-id heuristic (a single same-named call is authoritative) and
-// falls back to the first Tool match (a benign ambiguity for multiple same-named
-// calls; the gate test parks on a uniquely-named call, the real shape).
-func locatePendingCall(msgs []session.Message, ask session.PendingAsk) (lastAssistant, pendingIdx int, ok bool) {
-	lastAssistant = -1
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Role == session.RoleAssistant {
-			lastAssistant = i
-			break
+func answeredToolCalls(msgs []session.Message) map[session.ToolCallID]struct{} {
+	answered := make(map[session.ToolCallID]struct{})
+	for _, m := range msgs {
+		if m.Role == session.RoleTool && m.ToolResult != nil {
+			answered[m.ToolResult.CallID] = struct{}{}
 		}
 	}
-	if lastAssistant < 0 {
+	return answered
+}
+
+// locatePendingCall resolves only the exact outstanding canonical occurrence on
+// the trailing assistant turn. Approval arguments are a display projection;
+// execution always uses the retained call, never the projection.
+func locatePendingCall(msgs []session.Message, ask session.PendingAsk) (lastAssistant, pendingIdx int, ok bool) {
+	if ask.Call == "" {
+		return -1, -1, false
+	}
+	lastAssistant = -1
+	pendingIdx = -1
+	matches := 0
+	for i, m := range msgs {
+		if m.Role == session.RoleAssistant {
+			lastAssistant = i
+		}
+		for j, c := range m.ToolCalls {
+			if c.ID == ask.Call {
+				matches++
+				pendingIdx = j
+			}
+		}
+		if m.ToolResult != nil && m.ToolResult.CallID == ask.Call {
+			return -1, -1, false
+		}
+	}
+	if matches != 1 || lastAssistant < 0 || pendingIdx < 0 {
 		return -1, -1, false
 	}
 	calls := msgs[lastAssistant].ToolCalls
-	pendingIdx = -1
-	if id := pendingCallID(ask, calls); id != "" {
-		for i, c := range calls {
-			if string(c.ID) == id {
-				pendingIdx = i
-				break
-			}
-		}
-	}
-	if pendingIdx < 0 {
-		for i, c := range calls {
-			if c.Name == ask.Tool {
-				pendingIdx = i
-				break
-			}
-		}
-	}
-	if pendingIdx < 0 {
+	if pendingIdx >= len(calls) || calls[pendingIdx].ID != ask.Call || calls[pendingIdx].Name != ask.Tool {
 		return -1, -1, false
 	}
 	return lastAssistant, pendingIdx, true
@@ -1079,6 +1075,9 @@ func (e *Engine) runOne(ctx context.Context, r *Run, sess *session.Session, env 
 // postPreToolUse owns the authorization gate after ordinary permission and
 // PreToolUse have admitted the exact effective call.
 func (e *Engine) postPreToolUse(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, c session.ToolCall, t tool.Tool, auth *permissionAuthorization, enqueue time.Time) (session.ToolResult, *dispatchPark, bool) {
+	if ctx.Err() != nil {
+		return session.ToolResult{}, nil, true
+	}
 	if auth == nil || !auth.authorityStillValid(sess, c, env) {
 		res := session.NewToolError(c.ID, "tool was not executed: authority binding changed after admission")
 		e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
@@ -1446,11 +1445,11 @@ type preHookResult struct {
 // rewrite cannot carry a call past a deny or a configured ask. Unchanged args are
 // not re-evaluated. Callers MUST execute the returned call, not the input call.
 func (e *Engine) preHook(ctx context.Context, r *Run, sess *session.Session, turnIdx int, c session.ToolCall) (preHookResult, error) {
-	if e.deps.Hooks == nil {
-		return preHookResult{effective: c}, nil
-	}
 	if ctx.Err() != nil {
 		return preHookResult{effective: c}, ctx.Err()
+	}
+	if e.deps.Hooks == nil {
+		return preHookResult{effective: c}, nil
 	}
 	ev := governance.HookEvent{
 		Phase:     governance.PhasePreToolUse,
@@ -2086,6 +2085,8 @@ func (e *Engine) timeExecute(ctx context.Context, r *Run, sess *session.Session,
 	}
 	if err != nil {
 		res = session.NewToolError(c.ID, fmt.Sprintf("tool %q failed: %v", c.Name, err))
+	} else if res.CallID != c.ID {
+		res = session.NewToolError(c.ID, "tool returned a result for a different canonical call")
 	}
 	var dur time.Duration
 	if e.deps.Clock != nil {
@@ -2565,6 +2566,7 @@ type toolResultPublisher struct {
 	inline    [8]session.ToolCallID
 	inlineLen int
 	available map[session.ToolCallID]struct{}
+	final     map[session.ToolCallID]struct{}
 }
 
 // emit publishes a generic event to the run and its optional sink.
@@ -2574,11 +2576,21 @@ func (e *Engine) emit(r *Run, ev session.Event) {
 }
 
 // publishToolResult serializes availability and canonical publication per run.
-// An early read-batch result may differ from a later cancellation replacement.
+// An early read-batch result may differ from a later cancellation replacement,
+// but each canonical call publishes at most one availability and one final result.
 func (e *Engine) publishToolResult(r *Run, ev session.Event) {
 	r.results.mu.Lock()
 	defer r.results.mu.Unlock()
 	id := ev.ToolResult.CallID
+	if _, finalized := r.results.final[id]; finalized {
+		return
+	}
+	if ev.Type == session.EvToolResult {
+		if r.results.final == nil {
+			r.results.final = make(map[session.ToolCallID]struct{})
+		}
+		r.results.final[id] = struct{}{}
+	}
 	_, published := r.results.available[id]
 	published = published || slices.Contains(r.results.inline[:r.results.inlineLen], id)
 	if ev.Type == session.EvToolResultAvailable && published {

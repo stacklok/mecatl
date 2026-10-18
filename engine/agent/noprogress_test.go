@@ -90,7 +90,7 @@ func TestNoProgressTurnNudgesThenProgresses(t *testing.T) {
 // replayed in the next request (decision D-4(a)). Script: ReasoningOnlyTurn → TextTurn.
 func TestNoProgressReasoningOnlyPreservesBlob(t *testing.T) {
 	const blob = "REASONING_REPLAY_BLOB"
-	var secondReqMsgs []session.Message
+	var secondReqMsgs []port.LLMMessage
 	var nth int
 	obs := func(req port.LLMRequest) {
 		nth++
@@ -116,7 +116,7 @@ func TestNoProgressReasoningOnlyPreservesBlob(t *testing.T) {
 	// request's replayed history (proving it was recorded and replays).
 	var sawBlob bool
 	for _, m := range secondReqMsgs {
-		if m.Role == session.RoleAssistant && m.Reasoning == blob {
+		if m.Role == session.RoleAssistant && m.Replay != nil && string(m.Replay.Data) == blob {
 			sawBlob = true
 		}
 	}
@@ -471,7 +471,7 @@ func TestUnknownToolEmitsCardBeforeResult(t *testing.T) {
 				cardIdx = i
 			}
 		case session.EvToolResult:
-			if ev.ToolResult != nil && ev.ToolResult.CallID == "c1" {
+			if ev.ToolResult != nil && ev.ToolResult.CallID == boundCallID(t, sess, "c1") {
 				resultIdx = i
 			}
 		}
@@ -493,6 +493,15 @@ func TestUnknownToolEmitsCardBeforeResult(t *testing.T) {
 
 // indexOfUserMessage returns the index of the first RoleUser message containing sub, or
 // -1 if none. Used to assert the gentle nudge precedes the extractive one in history.
+func indexOfLLMUserMessage(msgs []port.LLMMessage, sub string) int {
+	for i, m := range msgs {
+		if m.Role == session.RoleUser && strings.Contains(m.Text, sub) {
+			return i
+		}
+	}
+	return -1
+}
+
 func indexOfUserMessage(msgs []session.Message, sub string) int {
 	for i, m := range msgs {
 		if m.Role == session.RoleUser && strings.Contains(m.Text, sub) {
@@ -552,7 +561,7 @@ func TestGraduatedNudgeGentleThenExtractive(t *testing.T) {
 // message (proving it was injected and got one more turn). FAILS on the pre-change code:
 // the 3rd request would carry the gentle text again, never the extractive text.
 func TestGraduatedNudgeRescue(t *testing.T) {
-	var thirdReqMsgs []session.Message
+	var thirdReqMsgs []port.LLMMessage
 	var nth int
 	obs := func(req port.LLMRequest) {
 		nth++
@@ -582,7 +591,7 @@ func TestGraduatedNudgeRescue(t *testing.T) {
 		t.Fatalf("extractive nudge messages = %d, want 1", n)
 	}
 	// The extractive nudge must be a RoleUser message in the 3rd request's history.
-	if idx := indexOfUserMessage(thirdReqMsgs, "Stop investigating now"); idx < 0 {
+	if idx := indexOfLLMUserMessage(thirdReqMsgs, "Stop investigating now"); idx < 0 {
 		t.Fatalf("extractive nudge not found as a user message in the 3rd request; msgs=%+v", thirdReqMsgs)
 	}
 	res := lastResult(t, evs)

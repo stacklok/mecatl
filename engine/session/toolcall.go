@@ -1,26 +1,32 @@
 package session
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 
 	"github.com/stacklok/mecatl/engine/governance"
 )
 
-// ToolCallID uniquely identifies a tool invocation within a session. It is
-// produced by the LLM and used to pair a ToolCall with its ToolResult.
+// ToolCallID is the canonical, globally unique engine invocation identity.
+// Historical provider tokens must be migrated before executable lookup.
 type ToolCallID string
 
-// ToolCall is an immutable value object: a request from the model to invoke a
-// named tool with tool-specific arguments. It is produced by the LLM provider
-// and consumed by both the Tooling and Governance contexts. Construct it with
-// NewToolCall; it carries no mutating methods.
+// NewToolCallID mints an opaque engine invocation identity with crypto/rand.
+func NewToolCallID() ToolCallID {
+	return ToolCallID("call_" + rand.Text())
+}
+
+// ToolCall is an immutable value object: an accepted request from the model to
+// invoke a named tool with tool-specific arguments. The loop converts provider
+// DTOs to canonical calls before Tooling and Governance consume them. Construct
+// it with NewToolCall; it carries no mutating methods.
 //
 // JSON tags use capitalized keys (json:"ID", json:"Name", json:"Args") to
 // preserve the wire format that predates JSON tagging — old snapshots serialized
 // these fields as "ID", "Name", "Args" by Go's default reflection rule, so the
-// tags below preserve exact backward compatibility. ItemID uses a lowercase tag
-// following the ProviderPhase precedent (additive, omitempty).
+// tags below preserve the key spelling. Schema discrimination determines identity
+// semantics; provider item identity lives only in private replay bindings.
 type ToolCall struct {
 	// ID pairs this call with its ToolResult.
 	ID ToolCallID `json:"ID"`
@@ -29,15 +35,6 @@ type ToolCall struct {
 	// Args is the raw, tool-specific argument payload, validated against the
 	// tool's JSON schema by the Tool itself.
 	Args json.RawMessage `json:"Args"`
-	// ItemID is the provider-assigned item-level unique identifier for this
-	// function_call output item (e.g. the "id" field in the OpenAI Responses
-	// API, distinct from ID which carries "call_id"). Carried opaquely — same
-	// discipline as Message.Reasoning and Message.ProviderPhase — so the adapter
-	// can round-trip it for store:false stateless multi-turn replay. Empty string
-	// means "no item id" and the field is wire-omitted on replay. The STRUCTURE
-	// is provider-neutral; the CONTENTS are provider-private — do NOT interpret
-	// or validate this value in domain code.
-	ItemID string `json:"item_id,omitempty"`
 }
 
 // NewToolCall constructs a ToolCall value object.

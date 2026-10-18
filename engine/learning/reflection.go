@@ -125,8 +125,10 @@ const (
 )
 
 // EvidenceRef is a content-addressed evidence citation. Legacy-v0 keeps Ordinal's
-// selected-input meaning. V1 keeps selected-local ManifestIndex separate
-// from durable original coordinates.
+// selected-input meaning. V1 and V2 keep selected-local ManifestIndex separate
+// from durable original coordinates; V2 uses canonical invocation identities.
+// Provider-era references are private verification data. Public callers use a
+// verified EvidenceCitation with an optional proven canonical ToolCallID.
 type EvidenceRef struct {
 	Protocol        EvidenceProtocol   `json:"protocol,omitempty"`
 	SessionID       session.SessionID  `json:"session_id"`
@@ -184,11 +186,15 @@ type ExistingFact struct {
 // with NewInput so transcript, event, signal, and existing-fact storage does not
 // alias caller-owned values.
 type Input struct {
-	Trajectory Trajectory               `json:"trajectory"`
-	Events     []EvidenceEventData      `json:"events,omitempty"`
-	Signals    []Signal                 `json:"signals,omitempty"`
-	Existing   []ExistingFact           `json:"existing,omitempty"`
-	Manifest   *MaterializationManifest `json:"manifest,omitempty"`
+	Protocol          EvidenceProtocol         `json:"protocol,omitempty"`
+	Trajectory        Trajectory               `json:"trajectory"`
+	Events            []EvidenceEventData      `json:"events,omitempty"`
+	Signals           []Signal                 `json:"signals,omitempty"`
+	Existing          []ExistingFact           `json:"existing,omitempty"`
+	Manifest          *MaterializationManifest `json:"manifest,omitempty"`
+	previewMessages   []session.Message
+	previewEvents     []session.Event
+	legacyIdentifiers []string
 }
 
 // NewInput constructs an owned reflection input from existing session data.
@@ -200,10 +206,12 @@ func NewInput(trajectory Trajectory, events []session.Event, signals []Signal, e
 	ownedTrajectory.Counters = trajectory.Counters
 	ownedTrajectory.Current = trajectory.Current
 	return Input{
-		Trajectory: ownedTrajectory,
-		Events:     projectSessionEvents(events),
-		Signals:    cloneSignals(signals),
-		Existing:   append([]ExistingFact(nil), existing...),
+		Protocol:          ReflectionEvidenceV2,
+		Trajectory:        ownedTrajectory,
+		Events:            projectSessionEvents(events),
+		Signals:           cloneSignals(signals),
+		Existing:          append([]ExistingFact(nil), existing...),
+		legacyIdentifiers: legacySourceIdentifiers(trajectory.Messages, events),
 	}
 }
 

@@ -19,25 +19,14 @@
 // provider-replayable (ValidateToolPairing passes). It derives cumulative Usage,
 // the lifecycle State/stop, the Counters, and a trailing pending ask.
 //
-// It is byte-identical-REPLAY-faithful, however, ONLY for providers that do not use
-// the opaque assistant-message replay fields — because those fields NEVER cross the
-// event stream:
-//
-//   - Message.Reasoning      (the provider reasoning REPLAY blob)
-//   - Message.ProviderPhase  (the OpenAI Responses phase marker)
-//   - Message.ReasoningItemID (the provider reasoning-item id)
-//   - ToolCall.ItemID        (the provider item id)
-//
-// reach the conversation ONLY via Session.RecordAssistant in the loop, never via an
-// emitted Event. (EvReasoningDelta carries a human-readable reasoning SUMMARY, which
-// the loop deliberately never places on Message.Reasoning — so a fold MUST NOT either.)
-// A reconstructed Session is therefore a faithful structural conversation, and a
-// byte-identical replay only for providers that leave those four fields empty (e.g.
-// mockllm, a plain chat model). For OpenAI/Anthropic reasoning models the snapshot
-// (which carries them) is the byte-identical path, which is why mecatl's own resume
-// uses the snapshot; the fold is for event-log-SoR hosts that accept (or themselves
-// carry, in a richer event schema) this contract boundary. This is a DOCUMENTED
-// CONTRACT LIMITATION (engine/COMPATIBILITY.md), not a bug.
+// Ordinary execution events do not carry Message.Replay or ProviderPhase, so a
+// pure fold cannot reconstruct original provider tokens, payloads, or phases.
+// It produces replay-free canonical history, which ProjectMessages can project
+// with synthesized pairing tokens; this is not byte-identical original replay.
+// EvReasoningDelta is a readable summary and must never become private replay.
+// Internal compaction archives retain private replay for archived history, but
+// they do not supply missing replay for the active post-compaction history.
+// Mecatl's own resume loads the coherent private snapshot.
 //
 // CREATION METADATA is supplied via SessionMeta: id, mode, limits, exact
 // EnvironmentRef, display-only placement metadata, profile, provider/model selector,
@@ -68,6 +57,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/eventcodec"
 	"github.com/stacklok/mecatl/engine/adapter/sessnap"
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -186,11 +176,25 @@ var (
 // inconsistent, and ErrPrivateStateRequired if a well-formed authorization lifecycle
 // remains open after the final event. It never panics.
 func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Session, error) {
-	f := &folder{}
+	var collected []session.Event
 	for ev, err := range events {
 		if err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrStream, err)
 		}
+		collected = append(collected, ev)
+	}
+	if meta.Incarnation == "" {
+		meta.Incarnation = session.LegacyIncarnationID(meta.ID, meta.CreatedAt.UnixNano(), meta.Owner)
+	}
+	projection, err := eventcodec.Project(collected, meta.Incarnation)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
+	}
+	if projection.OpenAuthorization {
+		return nil, ErrPrivateStateRequired
+	}
+	f := &folder{}
+	for _, ev := range projection.Events {
 		f.consume(ev)
 		if f.reconstructErr != nil {
 			return nil, fmt.Errorf("%w: %v", ErrReconstruct, f.reconstructErr)
@@ -201,52 +205,20 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	}
 	f.finalizeOpenTurn()
 
-	if !meta.EnvironmentRef.Valid() {
-		return nil, fmt.Errorf("%w: missing or invalid environment ref", ErrReconstruct)
+	s, err := restoreMetadata(meta)
+	if err != nil {
+		return nil, err
 	}
-	s := session.New(meta.ID, meta.Mode, meta.EnvironmentRef, meta.Limits, meta.CreatedAt)
-	if err := s.RestoreSessionMetadata(meta.Kind, meta.Relationship); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
-	}
-	// AgentDefinitionName restores BEFORE authority: BindAuthority (reached via
-	// restoreAuthority below) rejects a bind that claims this label without a
-	// Ceiling (ADR 0353) — it can only see the label if it is set first, exactly
-	// as the real create path already sequences it.
-	s.AgentDefinitionName = meta.AgentDefinitionName
-	s.AgentCreateIntent = meta.AgentCreateIntent
-	if err := restoreAuthority(s, meta.Authority); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
-	}
-	if err := s.RestoreWorkspaceEnrollmentBrokerKeys(meta.WorkspaceEnrollmentBrokerKeys, meta.WorkspaceEnrollmentBrokerKeysPresent); err != nil {
-		return nil, fmt.Errorf("%w: restore workspace enrollment broker keys: %w", ErrReconstruct, err)
-	}
-	if err := s.RestoreLabels(meta.Owner, session.Authority{}); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
-	}
-	if err := s.RestoreIncarnation(meta.Incarnation); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
-	}
-	// Inert creation labels — opaque to the domain, restored by direct assignment
-	// exactly as sessnap.Restore does. Title-specific metadata restores atomically
-	// through RestoreTitleMetadata below.
-	s.Placement = meta.Placement
-	if meta.ExecutionCapabilities != nil {
-		facts := *meta.ExecutionCapabilities
-		s.ExecutionCapabilities = &facts
-	}
-	s.Profile = meta.Profile
-	s.ExecutionTemplateID = meta.ExecutionTemplateID
-	s.ExecutionTemplateRevision = meta.ExecutionTemplateRevision
-	s.ProviderID = meta.ProviderID
-	s.ModelID = meta.ModelID
-	s.ReasoningEffort = meta.ReasoningEffort
-	s.ExternalBinding = meta.ExternalBinding
-	s.DebugMCPServers = append([]string(nil), meta.DebugMCPServers...)
-	s.DebugMCPTools = append([]string(nil), meta.DebugMCPTools...)
-	s.DebugTargetFingerprint = meta.DebugTargetFingerprint
-	s.RestoreTitleMetadata(meta.Title, meta.TitleProvenance, meta.TitleRevision, meta.TitleGeneration, meta.TitleSourcePrompts, meta.TitleAttempts)
-	if meta.LatestContextOccupancy != nil {
-		s.RecordLatestContextOccupancy(*meta.LatestContextOccupancy)
+	if len(projection.PendingHold) != 0 {
+		if err := s.SeedHistory(f.messages); err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
+		}
+		if err := s.RestoreIdentityMigrationHold(session.StateAwaiting, session.IdentityMigrationHold{Reason: "legacy-continuation-unproven", Payload: projection.PendingHold}); err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
+		}
+		s.Counters = f.finalCounters()
+		s.RestoreTokenUsage(foldedTokenUsage(meta.TokenUsage, f.usage))
+		return s, nil
 	}
 	if f.pending != nil {
 		// AWAITING: the live session at pause time holds the assistant message WITH its
@@ -286,6 +258,55 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	// session the opener's EvUserPrompt was emitted before the compaction, so the
 	// title survives compaction here (better than the snapshot lazy fallback).
 	s.SetTitle(f.firstGenuineText)
+	return s, nil
+}
+
+func restoreMetadata(meta SessionMeta) (*session.Session, error) {
+	if !meta.EnvironmentRef.Valid() {
+		return nil, fmt.Errorf("%w: missing or invalid environment ref", ErrReconstruct)
+	}
+	s := session.New(meta.ID, meta.Mode, meta.EnvironmentRef, meta.Limits, meta.CreatedAt)
+	if err := s.RestoreSessionMetadata(meta.Kind, meta.Relationship); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
+	}
+	// AgentDefinitionName restores before authority: BindAuthority rejects a bind
+	// that claims this label without its required ceiling.
+	s.AgentDefinitionName = meta.AgentDefinitionName
+	s.AgentCreateIntent = meta.AgentCreateIntent
+	if err := restoreAuthority(s, meta.Authority); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
+	}
+	if err := s.RestoreWorkspaceEnrollmentBrokerKeys(meta.WorkspaceEnrollmentBrokerKeys, meta.WorkspaceEnrollmentBrokerKeysPresent); err != nil {
+		return nil, fmt.Errorf("%w: restore workspace enrollment broker keys: %w", ErrReconstruct, err)
+	}
+	if err := s.RestoreLabels(meta.Owner, session.Authority{}); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
+	}
+	if err := s.RestoreIncarnation(meta.Incarnation); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
+	}
+	// Inert creation labels — opaque to the domain, restored by direct assignment
+	// exactly as sessnap.Restore does. Title-specific metadata restores atomically
+	// through RestoreTitleMetadata below.
+	s.Placement = meta.Placement
+	if meta.ExecutionCapabilities != nil {
+		facts := *meta.ExecutionCapabilities
+		s.ExecutionCapabilities = &facts
+	}
+	s.Profile = meta.Profile
+	s.ExecutionTemplateID = meta.ExecutionTemplateID
+	s.ExecutionTemplateRevision = meta.ExecutionTemplateRevision
+	s.ProviderID = meta.ProviderID
+	s.ModelID = meta.ModelID
+	s.ReasoningEffort = meta.ReasoningEffort
+	s.ExternalBinding = meta.ExternalBinding
+	s.DebugMCPServers = append([]string(nil), meta.DebugMCPServers...)
+	s.DebugMCPTools = append([]string(nil), meta.DebugMCPTools...)
+	s.DebugTargetFingerprint = meta.DebugTargetFingerprint
+	s.RestoreTitleMetadata(meta.Title, meta.TitleProvenance, meta.TitleRevision, meta.TitleGeneration, meta.TitleSourcePrompts, meta.TitleAttempts)
+	if meta.LatestContextOccupancy != nil {
+		s.RecordLatestContextOccupancy(*meta.LatestContextOccupancy)
+	}
 	return s, nil
 }
 
@@ -343,12 +364,15 @@ func (f *folder) reconstructAwaiting(s *session.Session, meta SessionMeta) (*ses
 	s.Counters = f.finalCounters()
 	// RecordAssistant tolerates a dangling tool call (no pairing validation) — exactly
 	// the live history at pause time.
-	if err := s.RecordAssistant(session.NewAssistantMessage(f.curText, "", f.curCalls)); err != nil {
+	if err := s.RecordAssistant(session.NewAssistantMessage(f.curText, f.curCalls)); err != nil {
 		return nil, fmt.Errorf("%w: awaiting assistant: %w", ErrReconstruct, err)
 	}
 	s.RestoreTokenUsage(foldedTokenUsage(meta.TokenUsage, f.usage))
 	if err := s.PauseForApproval(*f.pending); err != nil {
 		return nil, fmt.Errorf("%w: awaiting pause: %w", ErrReconstruct, err)
+	}
+	if err := s.ValidateIdentityPersistence(); err != nil {
+		return nil, fmt.Errorf("%w: awaiting identity: %w", ErrReconstruct, err)
 	}
 	// Seed the session Title from the first genuine user prompt captured during the
 	// fold (same set-once seam as the non-awaiting path above).
@@ -434,6 +458,8 @@ type folder struct {
 // consume folds one event into the accumulator.
 func (f *folder) consume(ev session.Event) {
 	switch ev.Type {
+	case session.EvHistorical:
+		f.consumeHistorical(ev)
 	case session.EvAuthorizationRequired:
 		f.requireAuthorization(ev.Authorization)
 	case session.EvAuthorizationResolved:
@@ -508,6 +534,26 @@ func (f *folder) consume(ev session.Event) {
 		// no_progress, hook, the delegation families) carry no conversation or lifecycle
 		// state a fold needs — ignore them.
 	}
+}
+
+func (f *folder) consumeHistorical(ev session.Event) {
+	if ev.Historical == nil {
+		return
+	}
+	if ev.Historical.Kind == string(session.EvApproval) || ev.Historical.Kind == string(session.EvPermissionRetract) {
+		f.pending = nil
+	}
+	if ev.Historical.Kind == string(session.EvToolCall) || ev.Historical.Kind == string(session.EvToolResult) {
+		f.flushTurn()
+	}
+	// Historical display is not model history, especially for redacted
+	// delegation previews which must stay outside the parent's context.
+	m := session.NewAssistantMessage("", nil)
+	m.Historical = ev.Historical
+	if p := ev.LegacyIdentity(); p != nil {
+		m.Legacy = &session.LegacyMessageIdentity{Incarnation: p.Incarnation, Namespace: p.Namespace, Ordinal: p.Ordinal, Unsupported: p.Payload}
+	}
+	f.messages = append(f.messages, m)
 }
 
 func (f *folder) requireAuthorization(p *session.AuthorizationPayload) {
@@ -672,10 +718,9 @@ func (f *folder) flushTurn() {
 	if !f.curOpen {
 		return
 	}
-	// Reasoning is deliberately empty: the reasoning REPLAY blob is not event-carried
-	// (see the package doc), and the EvReasoningDelta summary must never be placed on
-	// Message.Reasoning (loop.go forbids it).
-	f.messages = append(f.messages, session.NewAssistantMessage(f.curText, "", f.curCalls))
+	// Replay is absent: ordinary execution events carry no private payload or
+	// occurrence bindings. Readable reasoning summaries cannot reconstruct them.
+	f.messages = append(f.messages, session.NewAssistantMessage(f.curText, f.curCalls))
 	f.curOpen = false
 	f.curText = ""
 	f.curCalls = nil

@@ -212,7 +212,7 @@ func (p ThresholdPolicy) Decide(ctx context.Context, req AdmissionRequest) (Admi
 			return AdmissionDecision{}, err
 		}
 	}
-	signals := detectSignalsScoped(trajectory, nil, req.Signals, nil, DetectionScope{Current: span})
+	signals := detectSignalsScoped(ReflectionEvidenceV2, trajectory, nil, req.Signals, nil, DetectionScope{Current: span})
 	if err := ctx.Err(); err != nil {
 		return AdmissionDecision{}, err
 	}
@@ -321,7 +321,7 @@ func (AlwaysPolicy) Decide(ctx context.Context, req AdmissionRequest) (Admission
 			return AdmissionDecision{}, err
 		}
 	}
-	signals := detectSignalsScoped(tr, nil, req.Signals, nil, DetectionScope{Current: tr.Current})
+	signals := detectSignalsScoped(ReflectionEvidenceV2, tr, nil, req.Signals, nil, DetectionScope{Current: tr.Current})
 	if err := ctx.Err(); err != nil {
 		return AdmissionDecision{}, err
 	}

@@ -212,6 +212,9 @@ func runEffectiveShellCommand(t *testing.T, call session.ToolCall, runner tool.C
 	sess := session.New(session.SessionID("effective-"+string(call.ID)), session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, session.Limits{MaxTurns: 2}, time.Now())
 	var result session.ToolResult
 	for event := range engine.Run(context.Background(), sess, shellEnvRunner(runner), RunRequest{Text: "run"}).Events() {
+		if event.Type == session.EvToolCall && event.ToolCall != nil {
+			call.ID = event.ToolCall.ID
+		}
 		if event.Type == session.EvToolResult && event.ToolResult != nil && event.ToolResult.CallID == call.ID {
 			result = *event.ToolResult
 		}

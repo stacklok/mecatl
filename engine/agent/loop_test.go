@@ -111,6 +111,69 @@ func toolCall(id, name string, args string) session.ToolCall {
 	return session.NewToolCall(session.ToolCallID(id), name, json.RawMessage(args))
 }
 
+// assertLLMToolPairing checks provider pairing occurrences, including completed
+// key reuse, without treating provider tokens as executable domain identities.
+func assertLLMToolPairing(t *testing.T, msgs []port.LLMMessage) {
+	t.Helper()
+	open := make(map[session.ProviderCallID]bool)
+	for _, m := range msgs {
+		for _, call := range m.ToolCalls {
+			if call.ID == "" || open[call.ID] {
+				t.Fatalf("empty or duplicate outstanding provider call %q", call.ID)
+			}
+			open[call.ID] = true
+		}
+		if result := m.ToolResult; result != nil {
+			if !open[result.CallID] {
+				t.Fatalf("orphaned provider result %q", result.CallID)
+			}
+			delete(open, result.CallID)
+		}
+	}
+	if len(open) != 0 {
+		t.Fatalf("unanswered provider calls: %v", open)
+	}
+}
+
+// boundCallID resolves one accepted occurrence from its stored replay binding.
+// It fails on reuse/ambiguity rather than guessing a first or last occurrence.
+func boundCallID(t *testing.T, sess *session.Session, pairing session.ProviderCallID) session.ToolCallID {
+	t.Helper()
+	var id session.ToolCallID
+	for _, message := range sess.Conversation.Messages {
+		if message.Replay == nil {
+			continue
+		}
+		for _, binding := range message.Replay.Bindings {
+			if binding.PairingID == pairing {
+				if id != "" {
+					t.Fatalf("ambiguous provider occurrence %q", pairing)
+				}
+				id = binding.CallID
+			}
+		}
+	}
+	if id == "" {
+		t.Fatalf("no accepted occurrence for provider token %q", pairing)
+	}
+	return id
+}
+
+// eventCallID discovers accepted canonical identity from the actual call event.
+func eventCallID(t *testing.T, events []session.Event, name string, occurrence int) session.ToolCallID {
+	t.Helper()
+	for _, ev := range events {
+		if ev.Type == session.EvToolCall && ev.ToolCall != nil && ev.ToolCall.Name == name {
+			if occurrence == 0 {
+				return ev.ToolCall.ID
+			}
+			occurrence--
+		}
+	}
+	t.Fatalf("no accepted %s call occurrence %d", name, occurrence)
+	return ""
+}
+
 func newSession(t *testing.T, limits session.Limits) *session.Session {
 	t.Helper()
 	return session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, limits, time.Unix(0, 0))
@@ -327,15 +390,15 @@ func TestNilDiagnosticsRunsWithoutPanic(t *testing.T) {
 // TestReasoningAndTurnEnd asserts the Tier B additive events and the
 // display/replay reasoning split: a ChunkReasoning (human-readable summary)
 // produces a reasoning.delta DISPLAY event but is NOT what gets stored for
-// replay, while a ChunkReasoningItem (the opaque encrypted_content blob) is what
-// lands on Message.Reasoning to be replayed verbatim. Each successful turn also
+// replay, while ChunkReplay carries the opaque provider payload into
+// Message.Replay for exact subsequent replay. Each successful turn also
 // emits a turn.end carrying that turn's usage and a non-zero elapsed duration
 // (from the injected fakeClock).
 func TestReasoningAndTurnEnd(t *testing.T) {
 	llm := mockllm.New(
 		mockllm.ChunksTurn(
 			mockllm.ReasoningChunk("let me think about it"),
-			mockllm.ReasoningItemChunk("ENCRYPTED_REPLAY_BLOB"),
+			mockllm.ReplayChunk("ENCRYPTED_REPLAY_BLOB"),
 			mockllm.TextChunk("here is the answer"),
 			mockllm.UsageChunk(session.Usage{InputTokens: 12, OutputTokens: 4}),
 			mockllm.DoneChunk(session.StopEndTurn),
@@ -375,8 +438,8 @@ func TestReasoningAndTurnEnd(t *testing.T) {
 	if asst == nil {
 		t.Fatalf("no assistant message recorded")
 	}
-	if asst.Reasoning != "ENCRYPTED_REPLAY_BLOB" {
-		t.Fatalf("Message.Reasoning = %q, want the encrypted replay blob (not the display summary)", asst.Reasoning)
+	if asst.Replay == nil || asst.Replay.Provider == nil || string(asst.Replay.Provider.Data) != "ENCRYPTED_REPLAY_BLOB" {
+		t.Fatalf("Message.Replay = %+v, want the opaque replay blob (not the display summary)", asst.Replay)
 	}
 
 	// The reasoning.delta must precede the message.delta of the same turn (it is
@@ -443,7 +506,7 @@ func TestReasoningAndTurnEnd(t *testing.T) {
 // branches on or validates the value, so a novel phase must arrive verbatim on the
 // recorded message. It also carries NO user-perceived token: there is no dedicated
 // phase event, so the loop's event stream is unchanged (parallel to
-// ChunkReasoningItem).
+// ChunkReplay).
 func TestPhaseThreadedOntoAssistantMessage(t *testing.T) {
 	const phase = "some_future_phase_v2"
 	llm := mockllm.New(
@@ -478,23 +541,14 @@ func TestPhaseThreadedOntoAssistantMessage(t *testing.T) {
 	}
 }
 
-// TestReasoningItemIDThreadedOntoAssistantMessage proves the loop THREADS the
-// OpenAI Responses reasoning-item id (a ChunkReasoningItem.ReasoningItemID) onto
-// the recorded assistant Message.ReasoningItemID — LAST-non-empty-wins, like the
-// phase marker, but DISTINCT from the additive reasoning blob. It drives one turn
-// streaming three reasoning-item chunks: "rs_1", then "rs_2", then NO id
-// (ReasoningItemChunk leaves the field ""). Two distinct non-empty ids is the
-// discriminator: if the loop were first-wins instead, this would still see
-// "rs_1" pass; only last-non-empty-wins produces "rs_2". Asserts: (1) the
-// recorded Message.ReasoningItemID is "rs_2" (last non-empty, not first, and not
-// clobbered by the trailing empty-id chunk), and (2) Message.Reasoning ==
-// "b1b2b3" (the blob is additive across all three chunks).
-func TestReasoningItemIDThreadedOntoAssistantMessage(t *testing.T) {
+// TestReplayEnvelopeThreadedOntoAssistantMessage proves the engine preserves a
+// complete adapter-owned item envelope byte-for-byte, without moving private
+// item IDs or blobs into the legacy domain fields.
+func TestReplayEnvelopeThreadedOntoAssistantMessage(t *testing.T) {
+	const envelope = `{"items":[{"id":"rs_1","blob":"b1"},{"id":"rs_2","blob":"b2"},{"blob":"b3"}]}`
 	llm := mockllm.New(
 		mockllm.ChunksTurn(
-			mockllm.ReasoningItemChunkWithID("b1", "rs_1"),
-			mockllm.ReasoningItemChunkWithID("b2", "rs_2"),
-			mockllm.ReasoningItemChunk("b3"),
+			port.Chunk{Kind: port.ChunkReplay, Replay: &session.ProviderReplay{Format: "test-items", Version: 2, Data: []byte(envelope)}, ReplayIsOutput: true},
 			mockllm.UsageChunk(session.Usage{InputTokens: 12, OutputTokens: 4}),
 			mockllm.DoneChunk(session.StopEndTurn),
 		),
@@ -514,11 +568,8 @@ func TestReasoningItemIDThreadedOntoAssistantMessage(t *testing.T) {
 	if asst == nil {
 		t.Fatalf("no assistant message recorded")
 	}
-	if asst.ReasoningItemID != "rs_2" {
-		t.Fatalf("Message.ReasoningItemID = %q, want the last non-empty id %q (last-wins, not first-wins, and the trailing empty chunk must not clobber it)", asst.ReasoningItemID, "rs_2")
-	}
-	if asst.Reasoning != "b1b2b3" {
-		t.Fatalf("Message.Reasoning = %q, want %q (the blob is additive across chunks)", asst.Reasoning, "b1b2b3")
+	if asst.Replay == nil || asst.Replay.Provider == nil || asst.Replay.Provider.Format != "test-items" || asst.Replay.Provider.Version != 2 || string(asst.Replay.Provider.Data) != envelope {
+		t.Fatalf("Message.Replay = %+v, want exact adapter-owned envelope", asst.Replay)
 	}
 }
 
@@ -675,20 +726,22 @@ func TestPermissionDeny(t *testing.T) {
 	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	var denyResult *session.ToolResult
+	var callID session.ToolCallID
 	// Track the order of the c1 events: the card (EvToolCall) must open BEFORE the
 	// synthesized deny result, so the failed update lands on an already-open card.
 	i, cardIdx, denyIdx := 0, -1, -1
 	for ev := range r.Events() {
 		switch ev.Type {
 		case session.EvToolCall:
-			if ev.ToolCall != nil && ev.ToolCall.ID == "c1" && cardIdx == -1 {
+			if ev.ToolCall != nil && ev.ToolCall.Name == "Write" && cardIdx == -1 {
+				callID = ev.ToolCall.ID
 				cardIdx = i
 			}
 		case session.EvPermissionAsk:
 			r.Approve(ev.Ask.AskID, session.VerdictDeny)
 		case session.EvToolResult:
 			denyResult = ev.ToolResult
-			if ev.ToolResult != nil && ev.ToolResult.CallID == "c1" && denyIdx == -1 {
+			if ev.ToolResult != nil && ev.ToolResult.CallID == callID && denyIdx == -1 {
 				denyIdx = i
 			}
 		}
@@ -828,7 +881,7 @@ func TestCancelMidToolThenResumeSucceeds(t *testing.T) {
 	// prompt in the replayed history.
 	var synthIdx, secondPromptIdx = -1, -1
 	for i, m := range sess.Conversation.Messages {
-		if m.Role == session.RoleTool && m.ToolResult != nil && m.ToolResult.CallID == "c1" && m.ToolResult.IsError {
+		if m.Role == session.RoleTool && m.ToolResult != nil && m.ToolResult.CallID == boundCallID(t, sess, "c1") && m.ToolResult.IsError {
 			synthIdx = i
 		}
 		if m.Role == session.RoleUser && m.Text == "second prompt" {
@@ -899,7 +952,7 @@ func TestCancelAwaitingApprovalThenResumeSucceeds(t *testing.T) {
 	for _, m := range sess.Conversation.Messages {
 		if m.Role == session.RoleAssistant {
 			for _, c := range m.ToolCalls {
-				if c.ID == "c1" {
+				if c.ID == boundCallID(t, sess, "c1") {
 					orphanBefore = true
 				}
 			}
@@ -936,7 +989,7 @@ func TestCancelAwaitingApprovalThenResumeSucceeds(t *testing.T) {
 	// user prompt in the replayed history.
 	var synthIdx, secondPromptIdx = -1, -1
 	for i, m := range sess.Conversation.Messages {
-		if m.Role == session.RoleTool && m.ToolResult != nil && m.ToolResult.CallID == "c1" && m.ToolResult.IsError {
+		if m.Role == session.RoleTool && m.ToolResult != nil && m.ToolResult.CallID == boundCallID(t, sess, "c1") && m.ToolResult.IsError {
 			synthIdx = i
 		}
 		if m.Role == session.RoleUser && m.Text == "second prompt" {

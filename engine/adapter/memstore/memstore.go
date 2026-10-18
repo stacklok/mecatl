@@ -207,7 +207,7 @@ func (st *Store) PageSessionMetadata(_ context.Context, request port.SessionMeta
 			ID: id, ModifiedAt: st.savedAt[id], State: snap.State,
 			Turns: snap.Counters.Turns, ModelID: snap.ModelID, CreatedAt: snap.CreatedAt,
 			Title: snap.Title, TitleProvenance: snap.TitleProvenance, EnvironmentRef: snap.EnvironmentRef,
-			Kind: kind, Relationship: snap.Relationship, Owner: snap.Owner,
+			Kind: kind, Relationship: session.CloneSessionRelationship(snap.Relationship), Owner: snap.Owner,
 			Activity:       st.activities[id],
 			EstimatedBytes: st.estimatedBytes[id],
 		})
@@ -235,6 +235,9 @@ func estimateSnapshotBytes(snap sessnap.Snapshot) int64 {
 	}
 
 	rel := snap.Relationship
+	if rel.Legacy != nil {
+		size += int64(48 + len(rel.Legacy.ProviderCallID))
+	}
 	size += int64(len(rel.ScheduleName) + len(rel.OriginSessionID) + len(rel.OriginIncarnation) + len(rel.ParentSessionID) + len(rel.ParentIncarnation) +
 		len(rel.CallID) + len(rel.TeamID) + len(rel.MemberName) + len(rel.DebugTargetID) + len(rel.DebugTargetIncarnation))
 	if rel.BranchIndex != nil {
@@ -252,11 +255,40 @@ func estimateSnapshotBytes(snap sessnap.Snapshot) int64 {
 		size += int64(96 * len(snap.TokenUsage))
 	}
 
+	if snap.IdentityHold != nil {
+		size += int64(64 + len(snap.IdentityHold.Reason) + encodedBytesLen(len(snap.IdentityHold.Payload)))
+	}
+	size += estimateMessagesBytes(snap)
+	return size
+}
+
+func estimateMessagesBytes(snap sessnap.Snapshot) int64 {
+	var size int64
 	for _, message := range snap.Messages {
-		size += int64(96 + len(message.Role) + len(message.Text) + len(message.Reasoning) +
-			len(message.ProviderPhase) + len(message.ReasoningItemID))
+		if h := message.Historical; h != nil {
+			size += int64(96 + len(h.RecordID) + len(h.Kind) + len(h.Text))
+			for _, part := range h.Parts {
+				size += estimateContentBytes(part)
+			}
+		}
+		if legacy := message.Legacy; legacy != nil {
+			size += int64(128 + len(legacy.Incarnation) + len(legacy.Namespace) + len(legacy.ResultProviderID) + encodedBytesLen(len(legacy.Unsupported)))
+			for _, call := range legacy.Calls {
+				size += int64(64 + len(call.CallID) + len(call.ProviderID) + len(call.ItemID))
+			}
+		}
+		if replay := message.Replay; replay != nil {
+			size += 32
+			for _, binding := range replay.Bindings {
+				size += int64(48 + len(binding.CallID) + len(binding.PairingID) + len(binding.ItemID))
+			}
+			if replay.Provider != nil {
+				size += int64(48 + len(replay.Provider.Format) + encodedBytesLen(len(replay.Provider.Data)))
+			}
+		}
+		size += int64(96 + len(message.Role) + len(message.Text) + len(message.ProviderPhase))
 		for _, call := range message.ToolCalls {
-			size += int64(64 + len(call.ID) + len(call.Name) + len(call.Args) + len(call.ItemID))
+			size += int64(64 + len(call.ID) + len(call.Name) + len(call.Args))
 		}
 		if message.ToolResult != nil {
 			result := message.ToolResult
@@ -291,7 +323,7 @@ func lineageSnapshotRecord(id session.SessionID, snap sessnap.Snapshot, state po
 	if kind == "" {
 		kind = session.SessionKindUnknown
 	}
-	return port.SessionLineageRecord{ID: id, Kind: kind, Relationship: snap.Relationship, OwnerScope: session.PrincipalScopeHash(snap.Owner), Incarnation: string(session.PersistedIncarnationID(snap.Incarnation, id, snap.CreatedAt.UnixNano(), snap.Owner)), State: state, DeletedAt: deletedAt}
+	return port.SessionLineageRecord{ID: id, Kind: kind, Relationship: session.CloneSessionRelationship(snap.Relationship), OwnerScope: session.PrincipalScopeHash(snap.Owner), Incarnation: string(session.PersistedIncarnationID(snap.Incarnation, id, snap.CreatedAt.UnixNano(), snap.Owner)), State: state, DeletedAt: deletedAt}
 }
 
 func sameLineageIncarnation(snap sessnap.Snapshot, current *session.Session) bool {
@@ -423,7 +455,7 @@ func (st *Store) DeleteSessionIfUnchanged(_ context.Context, expected port.Sessi
 	}
 	current := port.SessionDiscoveryMeta{
 		ID: expected.ID, ModifiedAt: st.savedAt[expected.ID], State: snap.State,
-		Kind: kind, Relationship: snap.Relationship, Owner: snap.Owner,
+		Kind: kind, Relationship: session.CloneSessionRelationship(snap.Relationship), Owner: snap.Owner,
 	}
 	if !port.SessionDiscoveryMetaEqual(current, expected) {
 		return false, nil

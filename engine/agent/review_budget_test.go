@@ -69,7 +69,7 @@ func TestObservedTerminalFailureSurvivesReviewDeadline(t *testing.T) {
 				catalog := tool.NewCatalog()
 				catalog.MustRegister(revisionActionTool{executions: &executions})
 				reviewer := &lateAcceptReviewer{job: job, delay: 91 * time.Second, err: terminalReviewFailure(ReviewFailureEvidenceFailure)}
-				var working []session.Message
+				var working []port.LLMMessage
 				provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { working = append(working, req.Messages...) })}, mockllm.ToolCallTurn(session.NewToolCall("call", "Act", []byte(`{}`))), mockllm.TextTurn("done"))
 				engine := NewEngine(Deps{LLM: provider, Catalog: catalog, Policy: terminalFailurePolicy{job: job}, ToolReviewer: reviewer})
 				env := memEnv("/ws")
@@ -100,27 +100,34 @@ func TestObservedTerminalFailureSurvivesReviewDeadline(t *testing.T) {
 	}
 }
 
-func assertInboundDeadlineWithheld(t *testing.T, events []session.Event, history, working []session.Message) {
+func assertInboundDeadlineWithheld(t *testing.T, events []session.Event, history []session.Message, working []port.LLMMessage) {
 	t.Helper()
-	var streamed []session.Message
-	for _, ev := range events {
-		if ev.ToolResult != nil {
-			streamed = append(streamed, session.Message{ToolResult: ev.ToolResult})
+	check := func(name string, isError bool, content string) {
+		if !isError || !strings.Contains(content, withheldResultText) {
+			t.Errorf("%s exposed original result instead of withholding it: %q", name, content)
 		}
 	}
-	for name, messages := range map[string][]session.Message{"events": streamed, "history": history, "working model": working} {
-		found := false
-		for _, message := range messages {
-			if result := message.ToolResult; result != nil {
-				found = true
-				if !result.IsError || !strings.Contains(result.Content, withheldResultText) {
-					t.Errorf("%s exposed original result instead of withholding it: %+v", name, result)
-				}
-			}
+	foundEvents, foundHistory, foundWorking := false, false, false
+	for _, ev := range events {
+		if result := ev.ToolResult; result != nil {
+			foundEvents = true
+			check("events", result.IsError, result.Content)
 		}
-		if !found {
-			t.Errorf("%s has no synthetic withheld result", name)
+	}
+	for _, message := range history {
+		if result := message.ToolResult; result != nil {
+			foundHistory = true
+			check("history", result.IsError, result.Content)
 		}
+	}
+	for _, message := range working {
+		if result := message.ToolResult; result != nil {
+			foundWorking = true
+			check("working model", result.IsError, result.Content)
+		}
+	}
+	if !foundEvents || !foundHistory || !foundWorking {
+		t.Errorf("missing synthetic withheld result: events=%v history=%v working=%v", foundEvents, foundHistory, foundWorking)
 	}
 }
 
@@ -138,7 +145,7 @@ func TestReviewPreparationAndCheckerShareDeadline(t *testing.T) {
 					catalog.MustRegister(revisionActionTool{executions: &executions})
 					reviewer := &lateAcceptReviewer{delay: 41 * time.Second, job: job, enforce: enforce}
 					preparer := &deadlineEvidencePreparer{delay: 50 * time.Second}
-					var working []session.Message
+					var working []port.LLMMessage
 					provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { working = append(working, req.Messages...) })}, mockllm.ToolCallTurn(session.NewToolCall("call", "Act", []byte(`{}`))), mockllm.TextTurn("done"))
 					engine := NewEngine(Deps{LLM: provider, Catalog: catalog, Policy: terminalFailurePolicy{job: job}, ToolReviewer: reviewer, ReviewEvidencePreparer: preparer})
 					env := memEnv("/ws")

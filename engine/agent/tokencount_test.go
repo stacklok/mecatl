@@ -43,7 +43,7 @@ func TestHeuristicTokenCounterMessagesOverhead(t *testing.T) {
 	msgs := []session.Message{
 		session.NewSystemMessage(""),
 		session.NewUserMessage(""),
-		session.NewAssistantMessage("", "", []session.ToolCall{
+		session.NewAssistantMessage("", []session.ToolCall{
 			session.NewToolCall("c1", "Read", json.RawMessage(`{}`)),
 		}),
 		session.NewToolMessage(session.NewToolResult("c1", "")),
@@ -117,17 +117,19 @@ func TestCountMessagesToolResultPartsUsesLargerRepresentation(t *testing.T) {
 func TestHeuristicCounterCountsReplayIdentifiersAndBase64Projection(t *testing.T) {
 	c := agent.HeuristicTokenCounter{CharsPerToken: 1}
 	call := session.NewToolCall("call-identifier", "T", json.RawMessage(`{}`))
-	call.ItemID = "provider-item"
-	assistant := session.NewAssistantMessage("", "reasoning", []session.ToolCall{call})
+	assistant := session.NewAssistantMessage("", []session.ToolCall{call})
 	assistant.ProviderPhase = "commentary"
-	assistant.ReasoningItemID = "reasoning-item"
+	assistant.Replay = &session.MessageReplay{
+		Bindings: []session.ToolCallBinding{{CallID: call.ID, PairingID: "provider-call", ItemID: "provider-item"}},
+		Provider: &session.ProviderReplay{Format: "test", Version: 1, Data: []byte("reasoning-item")},
+	}
 	result := session.NewToolResultWithParts(call.ID, "", []session.Content{{Kind: session.MediaImage, MIMEType: "image/png", Data: []byte{1, 2, 3, 4}}})
 	withFields := c.CountMessages([]session.Message{assistant, session.NewToolMessage(result)})
 
-	call.ID, call.ItemID = "", ""
-	assistant = session.NewAssistantMessage("", "reasoning", []session.ToolCall{call})
+	call.ID = ""
+	assistant = session.NewAssistantMessage("", []session.ToolCall{call})
 	withoutFields := c.CountMessages([]session.Message{assistant, session.NewToolMessage(session.NewToolResultWithParts("", "", []session.Content{{Kind: session.MediaImage, MIMEType: "image/png", Data: []byte{1, 2, 3, 4}}}))})
-	wantDelta := len("call-identifier")*2 + len("provider-item") + len("commentary") + len("reasoning-item")
+	wantDelta := len("call-identifier")*2 + len("provider-call") + len("provider-item") + len("commentary") + len("test") + len("reasoning-item")
 	if got := withFields - withoutFields; got != wantDelta {
 		t.Fatalf("replay identifier delta = %d, want %d", got, wantDelta)
 	}

@@ -21,8 +21,8 @@ type noopReadTool struct{}
 
 func (noopReadTool) Spec() tool.ToolSpec { return tool.ToolSpec{Name: "Noop", Description: "no-op"} }
 func (noopReadTool) ReadOnly() bool      { return true }
-func (noopReadTool) Execute(_ context.Context, _ session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
-	return session.NewToolResult("ok", "ok"), nil
+func (noopReadTool) Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
+	return session.NewToolResult(call.ID, "ok"), nil
 }
 
 // multiTurnMarkerEngine builds a branch child engine that runs MORE THAN ONE turn: turn 1

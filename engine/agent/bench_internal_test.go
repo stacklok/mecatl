@@ -52,7 +52,7 @@ func BenchmarkBuildRequest(b *testing.B) {
 	// RecordAssistant is legal.
 	_ = sess.RecordUserPrompt("explore the repo", nil)
 	_ = sess.BeginTurn()
-	_ = sess.RecordAssistant(session.NewAssistantMessage("on it", "", nil))
+	_ = sess.RecordAssistant(session.NewAssistantMessage("on it", nil))
 	_ = sess.RecordUserPrompt("now summarise", nil)
 
 	// A zero-value Run carries an empty RunRequest (no per-run ExtraTools) — the legacy
@@ -64,7 +64,10 @@ func BenchmarkBuildRequest(b *testing.B) {
 	env := testEnvironment(ws, nil)
 	b.ReportAllocs()
 	for b.Loop() {
-		sinkRequest = e.buildRequest(ctx, r, sess, env)
+		sinkRequest, sinkErr = e.buildRequest(ctx, r, sess, env)
+		if sinkErr != nil {
+			b.Fatal(sinkErr)
+		}
 	}
 }
 
@@ -116,7 +119,7 @@ func benchCompactionConversation() *session.Conversation {
 	for i := 0; i < 29; i++ {
 		id := session.ToolCallID(fmt.Sprintf("c%02d", i))
 		call := session.NewToolCall(id, "Read", []byte(fmt.Sprintf(`{"file_path":"pkg/file%02d.go"}`, i)))
-		conv.Append(session.NewAssistantMessage(fmt.Sprintf("reading file %02d", i), "", []session.ToolCall{call}))
+		conv.Append(session.NewAssistantMessage(fmt.Sprintf("reading file %02d", i), []session.ToolCall{call}))
 		// A sizeable body so truncateToolBody / strip / collapse have real work.
 		body := strings.Repeat("package x; var _ = 1 // line of file content\n", 20)
 		conv.Append(session.NewToolMessage(session.NewToolResult(id, body)))

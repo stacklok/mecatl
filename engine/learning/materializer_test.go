@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -77,7 +78,7 @@ func TestMaterializerComponentDiscoveryIsSinglePass(t *testing.T) {
 			id := session.ToolCallID(fmt.Sprintf("call-%d-%d", component, call))
 			calls[call] = session.NewToolCall(id, "Read", nil)
 		}
-		messages = append(messages, session.NewAssistantMessage("", "", calls))
+		messages = append(messages, session.NewAssistantMessage("", calls))
 		for call := callsPerComponent - 1; call >= 0; call-- {
 			id := session.ToolCallID(fmt.Sprintf("call-%d-%d", component, call))
 			messages = append(messages, session.NewToolMessage(session.NewToolResult(id, "safe")))
@@ -164,7 +165,7 @@ func TestMaterializerEventCoordinatesAreSessionUnique(t *testing.T) {
 
 func TestScalableReflectionEvidence_Scenario2_ManifestDeterministicAcrossReloadAndRetry(t *testing.T) {
 	req := learning.MaterializationRequest{
-		Trajectory: sourceTrajectory(session.NewUserMessage("remember that Go files use gofmt"), session.NewAssistantMessage("Done.", "private reasoning", nil)),
+		Trajectory: sourceTrajectory(session.NewUserMessage("remember that Go files use gofmt"), assistantWithReplay("Done.", "private reasoning", nil)),
 		Events:     []session.Event{{Type: session.EvResult, Seq: 44, Turn: 2, Result: &session.ResultPayload{Stop: session.StopEndTurn}}},
 		Explicit:   true,
 	}
@@ -178,7 +179,7 @@ func TestScalableReflectionEvidence_Scenario2_ManifestDeterministicAcrossReloadA
 		t.Fatal(err)
 	}
 	second := materialize(t, reloaded)
-	if first.Manifest.Protocol != learning.ReflectionEvidenceV1 || first.Manifest.Source.Domain != learning.ReflectionEvidenceSourceV1 || first.Manifest.Source.Value != "session-source" {
+	if first.Manifest.Protocol != learning.ReflectionEvidenceV2 || first.Manifest.Source.Domain != learning.ReflectionEvidenceSourceV1 || first.Manifest.Source.Value != "session-source" {
 		t.Fatalf("identity boundary = %#v", first.Manifest)
 	}
 	if !bytes.Equal(first.Canonical, second.Canonical) || first.Manifest.Digest != second.Manifest.Digest || len(first.Manifest.Entries) != 3 {
@@ -194,9 +195,9 @@ func TestMaterializerClosedRankingTiersTieBreakAndSourceOrder(t *testing.T) {
 		session.NewUserMessage("old ordinary context"),
 		session.NewUserMessage("remember that alpha is preferred"),
 		session.NewUserMessage("No, recover with the focused test"),
-		session.NewAssistantMessage("recent answer", "", nil),
+		session.NewAssistantMessage("recent answer", nil),
 		session.NewUserMessage("mandatory current request"),
-		session.NewAssistantMessage("mandatory response", "", nil),
+		session.NewAssistantMessage("mandatory response", nil),
 	}
 	got := materialize(t, learning.MaterializationRequest{
 		Trajectory: sourceTrajectory(messages...),
@@ -222,10 +223,10 @@ func TestScalableReflectionEvidence_Scenario3_ConnectedToolTurnComponentsAreAtom
 	got := materialize(t, learning.MaterializationRequest{
 		Trajectory: sourceTrajectory(
 			session.NewUserMessage("remember this workflow"),
-			session.NewAssistantMessage("checking", "", []session.ToolCall{callA, callB}),
+			session.NewAssistantMessage("checking", []session.ToolCall{callA, callB}),
 			session.NewToolMessage(session.NewToolResult("a", "one")),
 			session.NewToolMessage(session.NewToolResult("b", "two")),
-			session.NewAssistantMessage("done", "", nil),
+			session.NewAssistantMessage("done", nil),
 		),
 		Mandatory: learning.MessageSpan{Start: 1, End: 2},
 		Limits:    learning.MaterializationLimits{MaxMessages: 4, MaxBytes: 1 << 20}, Explicit: true,
@@ -244,7 +245,7 @@ func TestScalableReflectionEvidence_Scenario3_ConnectedToolTurnComponentsAreAtom
 
 	dangling := materialize(t, learning.MaterializationRequest{Trajectory: sourceTrajectory(
 		session.NewUserMessage("remember paired history only"),
-		session.NewAssistantMessage("unfinished", "", []session.ToolCall{session.NewToolCall("missing", "Read", nil)}),
+		session.NewAssistantMessage("unfinished", []session.ToolCall{session.NewToolCall("missing", "Read", nil)}),
 	), Explicit: true})
 	if err := session.ValidateToolPairing(dangling.Input.Trajectory.Messages); err != nil || len(dangling.Input.Trajectory.Messages) != 1 {
 		t.Fatalf("dangling component was partially selected: messages=%#v err=%v", dangling.Input.Trajectory.Messages, err)
@@ -254,7 +255,7 @@ func TestScalableReflectionEvidence_Scenario3_ConnectedToolTurnComponentsAreAtom
 func TestMaterializerOversizedComponentOmittedAndMandatoryClosureAbstains(t *testing.T) {
 	call := session.NewToolCall("big", "Read", nil)
 	req := learning.MaterializationRequest{
-		Trajectory: sourceTrajectory(session.NewUserMessage("remember this"), session.NewAssistantMessage("", "", []session.ToolCall{call}), session.NewToolMessage(session.NewToolResult("big", strings.Repeat("x", 16000)))),
+		Trajectory: sourceTrajectory(session.NewUserMessage("remember this"), session.NewAssistantMessage("", []session.ToolCall{call}), session.NewToolMessage(session.NewToolResult("big", strings.Repeat("x", 16000)))),
 		Mandatory:  learning.MessageSpan{Start: 1, End: 2}, Limits: learning.MaterializationLimits{MaxMessages: 8, MaxBytes: 1024}, Explicit: true,
 	}
 	got := materialize(t, req)
@@ -302,10 +303,55 @@ func TestMaterializerLegacyEvidenceOrdinalCompatibilityIsVersioned(t *testing.T)
 	}
 }
 
+// These were captured from the shipped v0 and v1 evidence representations. Their
+// source coordinates and digests are frozen testdata rather than values recomputed
+// by a materializer during the test.
+func TestFrozenLegacyEvidenceFixturesVerify(t *testing.T) {
+	var v0 struct {
+		Input learning.Input       `json:"input"`
+		Ref   learning.EvidenceRef `json:"ref"`
+	}
+	v0Bytes, err := os.ReadFile("testdata/legacy-evidence-v0.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(v0Bytes, &v0); err != nil {
+		t.Fatalf("decode v0 fixture: %v", err)
+	}
+	if v0.Ref.ResolvedProtocol() != learning.ReflectionEvidenceLegacyV0 {
+		t.Fatalf("v0 protocol = %q", v0.Ref.ResolvedProtocol())
+	}
+	if err := learning.ResolveEvidence(v0.Input, v0.Ref); err != nil {
+		t.Fatalf("verify frozen v0 evidence: %v", err)
+	}
+
+	var v1 learning.Input
+	v1Bytes, err := os.ReadFile("testdata/legacy-evidence-v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(v1Bytes, &v1); err != nil {
+		t.Fatalf("decode v1 fixture: %v", err)
+	}
+	if err := learning.ValidateInput(v1); err != nil {
+		t.Fatalf("validate frozen v1 evidence input: %v", err)
+	}
+	ref, err := learning.ResolveEvidenceHandle(v1, "m:1")
+	if err != nil {
+		t.Fatalf("resolve frozen v1 coordinate: %v", err)
+	}
+	if ref.OriginalMessage == nil || *ref.OriginalMessage != 1 || ref.ManifestIndex != 1 || ref.Digest != v1.Manifest.Entries[1].Digest || ref.AggregateDigest != v1.Manifest.Digest {
+		t.Fatalf("frozen v1 coordinates or digests changed: %#v", ref)
+	}
+	if err := learning.ResolveEvidence(v1, ref); err != nil {
+		t.Fatalf("verify frozen v1 evidence: %v", err)
+	}
+}
+
 func TestScalableReflectionEvidence_Scenario6_SafeFieldProjectionMatrix(t *testing.T) {
 	secret := "ghp_0123456789abcdefghijklmnop"
 	call := session.NewToolCall("call", "Read", json.RawMessage(`{"token":"`+secret+`"}`))
-	msg := session.NewAssistantMessage("safe assistant", "reasoning-secret", []session.ToolCall{call})
+	msg := assistantWithReplay("safe assistant", "reasoning-secret", []session.ToolCall{call})
 	msg.Parts = []session.Content{{BlockKind: session.BlockText, Text: "public text", MIMEType: "text/plain"}, {Data: []byte("binary-secret"), URL: "https://private.invalid/path"}}
 	got := materialize(t, learning.MaterializationRequest{Trajectory: sourceTrajectory(session.NewUserMessage("remember safe user text"), msg, session.NewToolMessage(session.ToolResult{CallID: "call", Content: "safe result", IsError: true})), Events: []session.Event{{Type: session.EvSubagentTool, Seq: 1, Text: "child-secret"}, {Type: session.EvResult, Seq: 2, Turn: 1, Actor: &session.Principal{Subject: "actor-secret"}, Result: &session.ResultPayload{Stop: session.StopEndTurn}}}, Explicit: true})
 	text := string(got.Canonical)
@@ -330,7 +376,7 @@ func TestMaterializerOmissionAndHostileTextProjectionAreCanonical(t *testing.T) 
 }
 
 func TestScalableReflectionEvidence_Scenario6_UnsafeOnlyInputDoesNoQueueOrProviderWork(t *testing.T) {
-	got := materialize(t, learning.MaterializationRequest{Trajectory: sourceTrajectory(session.NewAssistantMessage("", "provider-only", nil)), Events: []session.Event{{Type: session.EvTeamMember, Seq: 9, Text: "child-output"}}, Explicit: true})
+	got := materialize(t, learning.MaterializationRequest{Trajectory: sourceTrajectory(assistantWithReplay("", "provider-only", nil)), Events: []session.Event{{Type: session.EvTeamMember, Seq: 9, Text: "child-output"}}, Explicit: true})
 	if got.Disposition != learning.MaterializationAbstained || got.Reason != learning.MaterializationNoEligibleEvidence || len(got.Canonical) != 0 || len(got.Manifest.Entries) != 0 {
 		t.Fatalf("unsafe-only input escaped pre-work abstention: %#v", got)
 	}

@@ -10,6 +10,15 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
+func assistantWithReplay(text, private string, calls []session.ToolCall) session.Message {
+	m := session.NewAssistantMessage(text, calls)
+	m.Replay = &session.MessageReplay{Provider: &session.ProviderReplay{Format: "test-private", Version: 1, Data: []byte(private)}}
+	for _, call := range calls {
+		m.Replay.Bindings = append(m.Replay.Bindings, session.ToolCallBinding{CallID: call.ID, PairingID: session.ProviderCallID(call.ID)})
+	}
+	return m
+}
+
 func TestMode(t *testing.T) {
 	if got := learning.Mode(0); got != learning.Off || got.String() != "off" {
 		t.Fatalf("zero mode = %v (%q), want off", got, got.String())
@@ -35,7 +44,7 @@ func TestMode(t *testing.T) {
 
 func TestNewTrajectoryDeeplyOwnsMessages(t *testing.T) {
 	source := []session.Message{
-		session.NewAssistantMessage("assistant", "reasoning", []session.ToolCall{
+		assistantWithReplay("assistant", "reasoning", []session.ToolCall{
 			session.NewToolCall("call", "Tool", json.RawMessage(`{"key":"value"}`)),
 		}),
 		session.NewUserMessageWithParts("user", []session.Content{{Data: []byte("user-data"), Audience: []string{"user-audience"}}}),
@@ -44,6 +53,8 @@ func TestNewTrajectoryDeeplyOwnsMessages(t *testing.T) {
 	expected := learning.NewTrajectory("expected", "/ws", session.StopEndTurn, session.Usage{}, source).Messages
 	trajectory := learning.NewTrajectory("s", "/ws", session.StopEndTurn, session.Usage{}, source)
 
+	trajectory.Messages[0].Replay.Provider.Data[0] = 'X'
+	trajectory.Messages[0].Replay.Bindings[0].PairingID = "changed"
 	trajectory.Messages[0].ToolCalls[0].Args[2] = 'X'
 	trajectory.Messages[0].ToolCalls = append(trajectory.Messages[0].ToolCalls, session.ToolCall{})
 	trajectory.Messages[1].Parts[0].Data[0] = 'X'

@@ -174,26 +174,22 @@ outside the reconstructed conversation.)
 
 ### Replay-fidelity limitation (the one honest boundary)
 
-The conversation a fold rebuilds is complete **except** for the provider-private opaque
-replay fields. Three fields reach the conversation **only** via
-`Session.RecordAssistant` in the agent loop and are **never emitted on the event
-stream**:
+The structural conversation a fold rebuilds lacks active `Message.Replay`
+(occurrence-specific provider pairing/item bindings and opaque adapter payloads)
+and `Message.ProviderPhase` display metadata. Ordinary execution events do not
+carry these values. `EvReasoningDelta` carries a readable summary and cannot
+substitute for signed or encrypted provider replay.
 
-- `Message.Reasoning` — the provider reasoning REPLAY blob (OpenAI encrypted reasoning
-  content, Anthropic `(thinking, signature)`);
-- `Message.ProviderPhase` — the OpenAI Responses phase marker;
-- `ToolCall.ItemID` — the provider-assigned item id.
+`port.ProjectMessages` can construct provider-facing DTOs from replay-free canonical
+history using synthesized pairing tokens, but a successful structural fold does not
+prove byte-identical replay of the original request. Internal compaction archives
+retain private replay for archived history; they cannot recover missing active replay
+from later execution events. Public archive projections omit private replay.
 
-(The `EvReasoningDelta` event carries a human-readable reasoning *summary*, which the
-loop deliberately never places on `Message.Reasoning` — so a fold must not either.)
-Consequently a session reconstructed by folding mecatl's own event stream is
-**byte-identical-replay faithful ONLY for providers that do not use those fields**: it
-replays byte-identically for plain-chat providers (e.g. the mock provider) but **not**
-for a reasoning provider, whose `Reasoning`/`ProviderPhase`/`ItemID` would be empty where
-the snapshot would carry them. This is why mecatl's **own** resume uses the snapshot
-(which carries those fields); the fold is for event-log-SoR hosts that accept this
-boundary or carry those fields in their **own** richer event schema. This is a documented
-contract limitation, not a bug.
+Mecatl's own resume loads the coherent private snapshot. A custom event-sourced host
+must accept this replay boundary or retain equivalent private state in its own
+storage. An open external-authorization continuation likewise requires private
+snapshot state; public events do not confer continuation authority.
 
 ## See also
 

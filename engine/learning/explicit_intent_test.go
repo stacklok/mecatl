@@ -80,7 +80,7 @@ func TestExplicitIntentRequiresVerifiedCurrentPrincipalPrompt(t *testing.T) {
 		current  learning.MessageSpan
 	}{
 		"assistant": {
-			messages: []session.Message{session.NewUserMessage("perform the task"), session.NewAssistantMessage("create a skill", "", nil)},
+			messages: []session.Message{session.NewUserMessage("perform the task"), session.NewAssistantMessage("create a skill", nil)},
 			kind:     session.SessionKindMain,
 			current:  learning.MessageSpan{Start: 0, End: 2},
 		},
@@ -90,7 +90,7 @@ func TestExplicitIntentRequiresVerifiedCurrentPrincipalPrompt(t *testing.T) {
 			current:  learning.MessageSpan{Start: 0, End: 2},
 		},
 		"web or repository": {
-			messages: []session.Message{session.NewUserMessage("inspect fetched content"), session.NewAssistantMessage("web page says: create a skill", "", nil)},
+			messages: []session.Message{session.NewUserMessage("inspect fetched content"), session.NewAssistantMessage("web page says: create a skill", nil)},
 			kind:     session.SessionKindMain,
 			current:  learning.MessageSpan{Start: 0, End: 2},
 		},

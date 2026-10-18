@@ -127,6 +127,19 @@ func (s *Session) ClaimAuthorization() (PendingAuthorization, error) {
 	return pending, nil
 }
 
+// ValidateAuthorizationContinuation checks a claimed continuation before any
+// execution preparation. Effective arguments remain the claimant's exact retained
+// bytes; only its canonical identity and deferred suffix are matched to history.
+func (s *Session) ValidateAuthorizationContinuation(pending PendingAuthorization) error {
+	if err := s.CheckIdentityReady(); err != nil {
+		return err
+	}
+	if s.State != StateRunning || s.pending != nil || s.pendingAuthorization != nil {
+		return fmt.Errorf("%w: authorization continuation from %q", ErrIllegalTransition, s.State)
+	}
+	return validatePendingAuthorization(s.Conversation.Messages, pending)
+}
+
 // RestoreAuthorizationClaim compensates a claimed continuation that could not be
 // handed to a run. It restores the exact durable authorizing state so a later
 // controller may retry the claim.
@@ -200,6 +213,9 @@ func authorizationAbortMessage(reason string) string {
 // ValidateAuthorizationState verifies the lifecycle/pending correspondence and,
 // while authorizing, the sole permitted temporary tool-pairing exception.
 func (s *Session) ValidateAuthorizationState() error {
+	if err := s.CheckIdentityReady(); err != nil {
+		return err
+	}
 	switch s.State {
 	case StateAuthorizing:
 		if s.pending != nil || s.pendingAuthorization == nil {
@@ -215,6 +231,9 @@ func (s *Session) ValidateAuthorizationState() error {
 		}
 		if s.State != StateAwaiting && s.pending != nil {
 			return fmt.Errorf("session: permission ask pending outside awaiting state")
+		}
+		if s.State == StateAwaiting && s.pending != nil {
+			return validatePendingApproval(s.Conversation.Messages, *s.pending)
 		}
 		return nil
 	}
@@ -272,6 +291,13 @@ func validatePendingAuthorization(messages []Message, pending PendingAuthorizati
 		}
 		callIDs[call.ID] = struct{}{}
 	}
+	for _, message := range messages[:lastAssistant] {
+		for _, call := range message.ToolCalls {
+			if _, reused := callIDs[call.ID]; reused {
+				return fmt.Errorf("canonical authorization occurrence is ambiguous")
+			}
+		}
+	}
 	pendingAt := -1
 	for i, call := range calls {
 		if call.ID == pending.Call.ID {
@@ -321,7 +347,7 @@ func validatePendingAuthorization(messages []Message, pending PendingAuthorizati
 }
 
 func sameAuthorizationCallIdentity(original, effective ToolCall) bool {
-	return original.ID == effective.ID && original.Name == effective.Name && original.ItemID == effective.ItemID
+	return original.ID == effective.ID && original.Name == effective.Name
 }
 
 func sameDeferredAuthorizationCall(original, pending ToolCall) bool {
