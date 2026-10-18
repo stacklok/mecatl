@@ -162,7 +162,7 @@ func TestRegistryOpenAIBearerTokenFileResponsesWiring(t *testing.T) {
 
 	for _, token := range []string{"first-registry-token", "second-registry-token"} {
 		write(token)
-		seq, err := entry.provider.Stream(t.Context(), port.LLMRequest{Model: "model", Messages: []session.Message{session.NewUserMessage("hi")}})
+		seq, err := entry.provider.Stream(t.Context(), port.LLMRequest{Model: "model", Messages: []port.LLMMessage{{Role: session.RoleUser, Text: "hi"}}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -215,7 +215,7 @@ func TestRegistryOpenAIBearerCredentialFailureIsTerminalAndRedacted(t *testing.T
 	}
 	entry, _ := reg.Lookup(providerOpenAI)
 	for range 2 {
-		seq, err := entry.provider.Stream(t.Context(), port.LLMRequest{Model: "model", Messages: []session.Message{session.NewUserMessage("hi")}})
+		seq, err := entry.provider.Stream(t.Context(), port.LLMRequest{Model: "model", Messages: []port.LLMMessage{{Role: session.RoleUser, Text: "hi"}}})
 		streamErr := err
 		if err == nil {
 			for _, err := range seq {
@@ -676,7 +676,7 @@ func TestOpenCodeEntrySendsRequiredSessionHeader(t *testing.T) {
 
 	entry := newOpenCodeEntry(Config{LLMMaxAttempts: 1}, providerOpenCode, "test", srv.URL+"/v1")
 	seq, err := entry.provider.Stream(port.WithSessionID(context.Background(), sessionID), port.LLMRequest{
-		Model: "m", Messages: []session.Message{session.NewUserMessage("hi")},
+		Model: "m", Messages: []port.LLMMessage{{Role: session.RoleUser, Text: "hi"}},
 	})
 	if err != nil {
 		t.Fatalf("Stream: %v", err)
@@ -714,7 +714,7 @@ func streamOnce(t *testing.T, p port.LLMProvider) {
 	t.Helper()
 	seq, err := p.Stream(context.Background(), port.LLMRequest{
 		Model:    "m",
-		Messages: []session.Message{session.NewUserMessage("hi")},
+		Messages: []port.LLMMessage{{Role: session.RoleUser, Text: "hi"}},
 	})
 	if err != nil {
 		// A failure to even start the request (e.g. unroutable base URL) is a wiring

@@ -33,6 +33,24 @@ Authenticated clients can inspect the deployment before creating a session:
   sanitized diagnostic display endpoints. They do not return configuration or
   connection instructions.
 
+### Invocation identity and compatibility
+
+API major 2 guarantees canonical engine invocation IDs across calls, results,
+hooks, and delegation references. Treat these IDs as opaque. Provider pairing
+keys are private, and a later provider-key reuse denotes a different invocation.
+Ask IDs, authorization IDs, and run IDs remain separate control identifiers;
+use the exact control target rather than treating a tool-row ID as authority.
+
+Handle replayed delivery idempotently. The same historical invocation can appear
+in copied history or an archive with its original ID. An unattached
+`HistoricalRecord` preserves readable content/media without a guessed tool or
+parent link. Citation availability is independent of tool-call attachment.
+
+For a coordinated server, client, and storage rollout, follow
+[Upgrade to API major 2](/operating/session-storage-operations.md#upgrade-to-api-major-2).
+Discovery stays on the existing routes; gate on the reported major rather than
+the `v1` route/package spelling or a software version.
+
 ### Use the TypeScript SDK
 
 `@stacklok-oss/mecatl-sdk` provides typed clients for both transports. Node.js

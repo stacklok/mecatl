@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -530,7 +531,7 @@ func TestMCPSourceReconciliation_Scenario2_RuntimeConsistencyMatrix(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := latestToolResult(member, "team-call"); !strings.Contains(got, "team-old:work") {
+	if got := latestToolResult(t, member, "team-call"); !strings.Contains(got, "team-old:work") {
 		t.Fatalf("direct RunTeam member did not use its pinned runtime: %q", got)
 	}
 	memberAuthority, ok := member.BoundAuthority()
@@ -550,7 +551,7 @@ func TestMCPSourceReconciliation_Scenario2_RuntimeConsistencyMatrix(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := latestToolResult(newMember, "team-call-new"); !strings.Contains(got, "team-new:work") {
+	if got := latestToolResult(t, newMember, "team-call-new"); !strings.Contains(got, "team-new:work") {
 		t.Fatalf("post-publication direct RunTeam member did not use the active runtime: %q", got)
 	}
 	teamRuntimes.close()
@@ -974,7 +975,6 @@ func newMCPContractDriftServer(t *testing.T) string {
 func TestMCPSourceReconciliation_Scenario3_DelegationAndResumeNameSemantics(t *testing.T) {
 	const (
 		name        = "mcp__svc__echo"
-		childID     = "subagent-parent-p1"
 		unavailable = "tool is currently unavailable; do not retry unless the catalog changes"
 	)
 	ctx := context.Background()
@@ -984,12 +984,14 @@ func TestMCPSourceReconciliation_Scenario3_DelegationAndResumeNameSemantics(t *t
 	if !runtimes.publish(nil, old) {
 		t.Fatal("publish old runtime")
 	}
+	var childID session.SessionID
+	resumeChunk := mockllm.ToolCallChunk(session.NewToolCall("p2", "Subagent", nil))
 	provider := mockllm.New(
 		mockllm.ToolCallTurn(session.NewToolCall("p1", "Subagent", []byte(`{"prompt":"use the referenced service","agent":"ref-task"}`))),
 		mockllm.ToolCallTurn(session.NewToolCall("child-old", name, []byte(`{"text":"old"}`))),
 		mockllm.TextTurn("old child done"),
 		mockllm.TextTurn("parent old done"),
-		mockllm.ToolCallTurn(session.NewToolCall("p2", "Subagent", []byte(`{"resume":"`+childID+`","prompt":"retry the same service"}`))),
+		mockllm.ChunksTurn(resumeChunk, mockllm.DoneChunk(session.StopEndTurn)),
 		mockllm.ToolCallTurn(session.NewToolCall("child-resume", name, []byte(`{"text":"resume"}`))),
 		mockllm.TextTurn("resumed child done"),
 		mockllm.TextTurn("parent resume done"),
@@ -1019,6 +1021,9 @@ func TestMCPSourceReconciliation_Scenario3_DelegationAndResumeNameSemantics(t *t
 		t.Helper()
 		run := result.Engine.Run(pinned, parent, memEnvironment("/ws"), agent.RunRequest{Text: "delegate"})
 		for ev := range run.Events() {
+			if ev.Type == session.EvSubagentStart && ev.Subagent != nil {
+				childID = session.SessionID(ev.Subagent.ChildID)
+			}
 			if ev.Type == session.EvPermissionAsk {
 				run.Approve(ev.Ask.AskID, session.VerdictAllowOnce)
 			}
@@ -1046,7 +1051,7 @@ func TestMCPSourceReconciliation_Scenario3_DelegationAndResumeNameSemantics(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := latestToolResult(child, "child-old"); !strings.Contains(got, "pinned-old") {
+	if got := latestToolResult(t, child, "child-old"); !strings.Contains(got, "pinned-old") {
 		t.Fatalf("pre-publication child did not inherit old runtime: %q", got)
 	}
 	if old.isClosed() {
@@ -1070,12 +1075,16 @@ func TestMCPSourceReconciliation_Scenario3_DelegationAndResumeNameSemantics(t *t
 		t.Fatal(err)
 	}
 	defer newEngine.Close()
+	resumeChunk.ToolCall.Args, err = json.Marshal(map[string]string{"resume": string(childID), "prompt": "retry the same service"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	drive(newCtx, newEngine)
 	resumed, err := store.Load(ctx, childID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := latestToolResult(resumed, "child-resume"); got != unavailable {
+	if got := latestToolResult(t, resumed, "child-resume"); got != unavailable {
 		t.Fatalf("resumed granted child call = %q, want %q", got, unavailable)
 	}
 	if got := mcpRuntimeRevision(newCtx); got != 2 {
@@ -1085,10 +1094,12 @@ func TestMCPSourceReconciliation_Scenario3_DelegationAndResumeNameSemantics(t *t
 	runtimes.close()
 }
 
-func latestToolResult(sess *session.Session, callID string) string {
+func latestToolResult(t *testing.T, sess *session.Session, pairing string) string {
+	t.Helper()
+	callID := boundCallID(t, sess, session.ProviderCallID(pairing))
 	for i := len(sess.Conversation.Messages) - 1; i >= 0; i-- {
 		result := sess.Conversation.Messages[i].ToolResult
-		if result != nil && result.CallID == session.ToolCallID(callID) {
+		if result != nil && result.CallID == callID {
 			return result.Content
 		}
 	}

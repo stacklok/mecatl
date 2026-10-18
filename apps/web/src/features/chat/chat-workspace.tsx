@@ -141,9 +141,12 @@ import { takeNextQueuedMessage, useQueuedMessages } from "./chat-queue";
 import { consumeChatSeed } from "./chat-seed";
 import { SessionExecutionStatus, SessionUsageControls } from "./chat-session-controls";
 import {
+  appendToolCall,
+  applyToolResult,
   type ChatMessage,
   enqueueApproval,
   failureFromResult,
+  historicalMessage,
   payloadImages,
   payloadRecord,
   payloadText,
@@ -337,21 +340,10 @@ function hasUnsettledDelegation(fleet: DelegationFleet, runId: string): boolean 
   );
 }
 
-/**
- * The open tool panel's call as the transcript has it now, so the panel
- * follows the call from running to its output. A call is its run and id
- * (with its name and arguments, which never change, to tell apart a reused
- * id in a recorded transcript); the opened snapshot stays when the row is gone.
- */
-function liveTool(messages: ChatMessage[], opened: ToolActivity): ToolActivity {
-  const matches = messages.flatMap((message) =>
-    (message.tools ?? []).filter(
-      (tool) => tool.id === opened.id && (tool.runId ?? "") === (opened.runId ?? ""),
-    ),
-  );
+/** Follow only the canonical invocation; retain the opened snapshot if it disappears. */
+export function liveTool(messages: ChatMessage[], opened: ToolActivity): ToolActivity {
   return (
-    matches.find((tool) => tool.name === opened.name && tool.args === opened.args) ??
-    matches[0] ??
+    messages.flatMap((message) => message.tools ?? []).find((tool) => tool.id === opened.id) ??
     opened
   );
 }
@@ -2122,27 +2114,27 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             ...message,
             reasoning: (message.reasoning ?? "") + event.text,
           }));
+        } else if (event.kind === "historical") {
+          const message = historicalMessage(event.payload);
+          if (message)
+            setMessages((current) =>
+              current.some((row) => row.historical?.recordId === message.historical?.recordId)
+                ? current
+                : [...current, message],
+            );
         } else if (event.kind === "tool.call") {
           const tool = toolCall(event.payload);
-          if (tool) {
-            ensureAssistant(activeAssistantId);
-            updateAssistant(activeAssistantId, (message) => ({
-              ...message,
-              tools: [...(message.tools ?? []), { ...tool, runId: event.runId || undefined }],
-            }));
-          }
+          const assistantId = activeAssistantId;
+          if (tool)
+            setMessages((current) =>
+              appendToolCall(current, assistantId, {
+                ...tool,
+                runId: event.runId || undefined,
+              }),
+            );
         } else if (event.kind === "tool.result") {
           const result = toolResult(event.payload);
-          if (result) {
-            updateAssistant(activeAssistantId, (message) => ({
-              ...message,
-              tools: message.tools?.map((tool) =>
-                tool.id === result.callId
-                  ? { ...tool, isError: result.isError, output: result.content }
-                  : tool,
-              ),
-            }));
-          }
+          if (result) setMessages((current) => applyToolResult(current, result));
         } else if (
           event.kind === "authorization.required" ||
           event.kind === "authorization.resolved"
@@ -2151,8 +2143,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           onAuthorizationStatus?.(event.kind, event.payload);
           sawAuthorizationStatus = true;
           if (authorizationSessionId) {
+            const assistantId = activeAssistantId;
             setMessages((current) =>
-              recordAuthorizationEvent(current, event, authorizationSessionId, activeAssistantId),
+              recordAuthorizationEvent(current, event, authorizationSessionId, assistantId),
             );
             if (event.kind === "authorization.resolved") {
               const payload = payloadRecord(event.payload);

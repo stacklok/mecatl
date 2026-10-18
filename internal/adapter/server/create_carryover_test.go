@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -50,10 +51,9 @@ func carryoverFactory(reply string, seen *atomic.Value) server.SessionEngineFact
 func persistBlobsSource(t *testing.T, store *memstore.Store, id session.SessionID, providerID string) {
 	t.Helper()
 	persistBlobsSourceCalls(t, store, id, providerID, []session.ToolCall{{
-		ID:     session.ToolCallID("c1"),
-		Name:   "Read",
-		Args:   json.RawMessage(`{"path":"f.go"}`),
-		ItemID: "fc_item_1",
+		ID:   session.ToolCallID("c1"),
+		Name: "Read",
+		Args: json.RawMessage(`{"path":"f.go"}`),
 	}})
 }
 
@@ -67,14 +67,13 @@ func persistBlobsSourceCalls(t *testing.T, store *memstore.Store, id session.Ses
 	if err := sess.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn: %v", err)
 	}
-	if err := sess.RecordAssistant(session.Message{
-		Role:            session.RoleAssistant,
-		Text:            "reading f.go",
-		Reasoning:       "ENCRYPTED-REASONING-BLOB",
-		ReasoningItemID: "rs_src_item_1",
-		ProviderPhase:   "commentary",
-		ToolCalls:       calls,
-	}); err != nil {
+	message := session.NewAssistantMessage("reading f.go", calls)
+	message.ProviderPhase = "commentary"
+	message.Replay = &session.MessageReplay{Provider: &session.ProviderReplay{Format: "fixture", Version: 1, Data: []byte("ENCRYPTED-REASONING-BLOB:rs_src_item_1")}}
+	for i, call := range calls {
+		message.Replay.Bindings = append(message.Replay.Bindings, session.ToolCallBinding{CallID: call.ID, PairingID: session.ProviderCallID("provider_" + string(call.ID)), ItemID: session.ProviderItemID(fmt.Sprintf("fc_item_%d", i+1))})
+	}
+	if err := sess.RecordAssistant(message); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
 	results := make([]session.ToolResult, 0, len(calls))
@@ -92,77 +91,43 @@ func persistBlobsSourceCalls(t *testing.T, store *memstore.Store, id session.Ses
 	}
 }
 
-// TestOpenAICodexCarryoverReplayIDs pins the complete current Responses replay-ID
-// classification. Same-provider Codex preserves its opaque state; every
-// cross-provider Responses destination synthesizes stable collision-safe IDs;
-// non-Responses destinations retain the ordinary stripped empty-ID form.
-func TestOpenAICodexCarryoverReplayIDs(t *testing.T) {
+// TestProviderCarryoverState is provider-agnostic in the host: same-provider
+// history keeps replay; every cross-provider destination receives replay-free
+// canonical history. Target adapters own pairing/item reconstruction.
+func TestProviderCarryoverState(t *testing.T) {
 	ctx := context.Background()
 	svc, store := newMCPServiceStore(t, "reply", carryoverFactory("reply", nil))
 
-	assert := func(t *testing.T, srcProvider, dstProvider string, sameProvider, synthesize bool) {
+	assert := func(t *testing.T, srcProvider, dstProvider string, sameProvider bool) {
 		t.Helper()
 		srcID := session.SessionID("src-" + strings.ReplaceAll(srcProvider+"-"+dstProvider, "/", "-"))
 		persistBlobsSourceCalls(t, store, srcID, srcProvider, []session.ToolCall{
-			{ID: "c1", Name: "Read", Args: json.RawMessage(`{"path":"f.go"}`), ItemID: "fc_item_1"},
-			{ID: "c2", Name: "Grep", Args: json.RawMessage(`{"pattern":"needle"}`), ItemID: "fc_item_2"},
+			{ID: "c1", Name: "Read", Args: json.RawMessage(`{"path":"f.go"}`)},
+			{ID: "c2", Name: "Grep", Args: json.RawMessage(`{"pattern":"needle"}`)},
 		})
 		created, err := svc.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{}, server.ProviderSelector{ProviderID: dstProvider, ModelID: "gpt-5"}, server.ProfileDefault, server.WithSourceSession(srcID))
 		if err != nil {
-			t.Fatalf("carryover %s -> %s: %v", srcProvider, dstProvider, err)
+			t.Fatal(err)
 		}
 		got, err := store.Load(ctx, created.ID)
 		if err != nil {
-			t.Fatalf("Load carryover: %v", err)
+			t.Fatal(err)
 		}
-		assistantCount, toolCallCount := 0, 0
-		seenIDs := map[string]bool{}
-		for _, message := range got.Conversation.Messages {
-			if message.Role != session.RoleAssistant {
-				continue
-			}
-			assistantCount++
-			toolCallCount += len(message.ToolCalls)
-			if sameProvider {
-				if message.Reasoning != "ENCRYPTED-REASONING-BLOB" || message.ProviderPhase != "commentary" {
-					t.Fatalf("same-provider Codex lost replay blobs: %+v", message)
-				}
-			} else if message.Reasoning != "" || message.ProviderPhase != "" {
-				t.Fatalf("cross-provider carryover kept private replay blobs: %+v", message)
-			}
-			for i, call := range message.ToolCalls {
-				switch {
-				case sameProvider:
-					want := fmt.Sprintf("fc_item_%d", i+1)
-					if call.ItemID != want {
-						t.Fatalf("same-provider item %d = %q, want %q", i, call.ItemID, want)
-					}
-				case synthesize:
-					want := fmt.Sprintf("carryover_item_%d", i)
-					if call.ItemID != want || strings.HasPrefix(call.ItemID, "fc_") {
-						t.Fatalf("cross-provider synthetic item id = %q, want stable %q", call.ItemID, want)
-					}
-					if seenIDs[call.ItemID] {
-						t.Fatalf("duplicate synthetic item id %q", call.ItemID)
-					}
-					seenIDs[call.ItemID] = true
-				default:
-					if call.ItemID != "" {
-						t.Fatalf("non-Responses destination %q retained/synthesized item id %q", dstProvider, call.ItemID)
-					}
-				}
-			}
+		src, err := store.Load(ctx, srcID)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if assistantCount != 1 || toolCallCount != 2 {
-			t.Fatalf("assistant/tool-call count = %d/%d, want 1/2", assistantCount, toolCallCount)
+		want := session.ForkSnapshot(src.Conversation)
+		if !sameProvider {
+			want = session.StripProviderState(want)
 		}
-		if synthesize && len(seenIDs) != 2 {
-			t.Fatalf("synthetic item id count = %d, want 2", len(seenIDs))
+		if !reflect.DeepEqual(got.Conversation.Messages, want) {
+			t.Fatal("server changed canonical history or synthesized provider state")
 		}
 	}
 
 	t.Run("same Codex provider", func(t *testing.T) {
-		assert(t, "openai-codex", "openai-codex", true, false)
+		assert(t, "openai-codex", "openai-codex", true)
 	})
 	for _, tc := range []struct {
 		name, source, destination string
@@ -174,12 +139,12 @@ func TestOpenAICodexCarryoverReplayIDs(t *testing.T) {
 		{name: "ToolHive Responses", source: "anthropic", destination: "toolhive"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert(t, tc.source, tc.destination, false, true)
+			assert(t, tc.source, tc.destination, false)
 		})
 	}
 	for _, destination := range []string{"opencode", "anthropic", "mock"} {
 		t.Run("non-Responses "+destination, func(t *testing.T) {
-			assert(t, "openai", destination, false, false)
+			assert(t, "openai", destination, false)
 		})
 	}
 }
@@ -255,11 +220,8 @@ func TestCarryoverSeedsHistory(t *testing.T) {
 				t.Fatalf("msg %d: ToolResult.IsError = %v, want source's %v", i, nm.ToolResult.IsError, sm.ToolResult.IsError)
 			}
 		}
-		if nm.Reasoning != sm.Reasoning {
-			t.Fatalf("msg %d: Reasoning = %q, want source's %q (same-provider must carry verbatim)", i, nm.Reasoning, sm.Reasoning)
-		}
-		if nm.ReasoningItemID != sm.ReasoningItemID {
-			t.Fatalf("msg %d: ReasoningItemID = %q, want source's %q (same-provider must carry verbatim)", i, nm.ReasoningItemID, sm.ReasoningItemID)
+		if !reflect.DeepEqual(nm.Replay, sm.Replay) {
+			t.Fatalf("msg %d: same-provider replay changed", i)
 		}
 		if nm.ProviderPhase != sm.ProviderPhase {
 			t.Fatalf("msg %d: ProviderPhase = %q, want source's %q (same-provider must carry verbatim)", i, nm.ProviderPhase, sm.ProviderPhase)
@@ -272,29 +234,23 @@ func TestCarryoverSeedsHistory(t *testing.T) {
 			if nc.ID != sc.ID || nc.Name != sc.Name || string(nc.Args) != string(sc.Args) {
 				t.Fatalf("msg %d call %d: tool-call identity/args drifted", i, j)
 			}
-			if nc.ItemID != sc.ItemID {
-				t.Fatalf("msg %d call %d: ItemID = %q, want source's %q (same-provider must carry verbatim)", i, j, nc.ItemID, sc.ItemID)
-			}
 		}
 	}
 	// Specifically pin the assistant turn carried its blobs.
-	var sawReasoning, sawReasoningItemID, sawPhase, sawItemID bool
+	var sawReplay, sawPhase, sawItemID bool
 	for _, m := range newSnap.Conversation.Messages {
-		if m.Role == session.RoleAssistant && m.Reasoning == "ENCRYPTED-REASONING-BLOB" {
-			sawReasoning = true
-		}
-		if m.Role == session.RoleAssistant && m.ReasoningItemID == "rs_src_item_1" {
-			sawReasoningItemID = true
+		if m.Replay != nil && m.Replay.Provider != nil && string(m.Replay.Provider.Data) == "ENCRYPTED-REASONING-BLOB:rs_src_item_1" {
+			sawReplay = true
 		}
 		if m.Role == session.RoleAssistant && m.ProviderPhase == "commentary" {
 			sawPhase = true
 		}
-		if m.Role == session.RoleAssistant && len(m.ToolCalls) > 0 && m.ToolCalls[0].ItemID == "fc_item_1" {
+		if m.Replay != nil && len(m.Replay.Bindings) > 0 && m.Replay.Bindings[0].ItemID == "fc_item_1" {
 			sawItemID = true
 		}
 	}
-	if !sawReasoning || !sawReasoningItemID || !sawPhase || !sawItemID {
-		t.Fatalf("same-provider carryover lost a blob (reasoning=%v reasoningItemID=%v phase=%v itemID=%v)", sawReasoning, sawReasoningItemID, sawPhase, sawItemID)
+	if !sawReplay || !sawPhase || !sawItemID {
+		t.Fatal("same-provider carryover lost replay/phase/item binding")
 	}
 
 	// Seeded history is tool-pairing-valid (no orphaned tool result → no provider 400).
@@ -421,11 +377,8 @@ func TestCarryoverCrossProviderStripsBlobs(t *testing.T) {
 				t.Fatalf("msg %d: ToolResult.IsError = %v, want source's %v (stripping preserves tool results)", i, nm.ToolResult.IsError, sm.ToolResult.IsError)
 			}
 		}
-		if nm.Reasoning != "" {
-			t.Fatalf("msg %d: Reasoning = %q, want cleared (cross-provider must strip)", i, nm.Reasoning)
-		}
-		if nm.ReasoningItemID != "" {
-			t.Fatalf("msg %d: ReasoningItemID = %q, want cleared (cross-provider must strip)", i, nm.ReasoningItemID)
+		if nm.Replay != nil {
+			t.Fatalf("msg %d: cross-provider replay retained", i)
 		}
 		if nm.ProviderPhase != "" {
 			t.Fatalf("msg %d: ProviderPhase = %q, want cleared (cross-provider must strip)", i, nm.ProviderPhase)
@@ -438,15 +391,12 @@ func TestCarryoverCrossProviderStripsBlobs(t *testing.T) {
 			if nc.ID != sc.ID || nc.Name != sc.Name || string(nc.Args) != string(sc.Args) {
 				t.Fatalf("msg %d call %d: tool-call identity/args drifted (stripping preserves ID/Name/Args)", i, j)
 			}
-			if nc.ItemID != "" {
-				t.Fatalf("msg %d call %d: ItemID = %q, want cleared (cross-provider must strip)", i, j, nc.ItemID)
-			}
 		}
 	}
 
 	// The assistant turn specifically: the blobs the source carried are gone, but
 	// the text and the tool call (ID/Name/Args) survived.
-	var sawAssistantText, sawToolCall, sawReasoning, sawReasoningItemID, sawPhase, sawItemID bool
+	var sawAssistantText, sawToolCall, sawReplay, sawPhase bool
 	for _, m := range newSnap.Conversation.Messages {
 		if m.Role == session.RoleAssistant {
 			if m.Text == "reading f.go" {
@@ -455,27 +405,19 @@ func TestCarryoverCrossProviderStripsBlobs(t *testing.T) {
 			if len(m.ToolCalls) > 0 && m.ToolCalls[0].ID == "c1" {
 				sawToolCall = true
 			}
-			if m.Reasoning != "" {
-				sawReasoning = true
-			}
-			if m.ReasoningItemID != "" {
-				sawReasoningItemID = true
+			if m.Replay != nil {
+				sawReplay = true
 			}
 			if m.ProviderPhase != "" {
 				sawPhase = true
-			}
-			for _, c := range m.ToolCalls {
-				if c.ItemID != "" {
-					sawItemID = true
-				}
 			}
 		}
 	}
 	if !sawAssistantText || !sawToolCall {
 		t.Fatalf("stripped history lost provider-neutral content (assistantText=%v toolCall=%v)", sawAssistantText, sawToolCall)
 	}
-	if sawReasoning || sawReasoningItemID || sawPhase || sawItemID {
-		t.Fatalf("stripped history kept a provider-private blob (reasoning=%v reasoningItemID=%v phase=%v itemID=%v)", sawReasoning, sawReasoningItemID, sawPhase, sawItemID)
+	if sawReplay || sawPhase {
+		t.Fatalf("stripped history kept provider state (replay=%v phase=%v)", sawReplay, sawPhase)
 	}
 
 	// Seeded history is tool-pairing-valid (the strip preserves pairing —
@@ -500,18 +442,10 @@ func TestCarryoverCrossProviderStripsBlobs(t *testing.T) {
 	}
 }
 
-// TestCarryoverCrossProviderToOpenAISynthesizesItemIDs: a source on a
-// non-OpenAI provider with blob-carrying tool calls, carried over onto a NEW
-// session resolving to OpenAI. Every carried ToolCall now has a NON-empty,
-// unique ItemID with the "carryover_item_" prefix (NOT "fc_" — cannot collide
-// with the provider's auto-assigned sequential ids). The IDs are deterministic:
-// carrying the SAME source twice yields the SAME ItemIDs. Text/roles/tool-call
-// IDs/Args/tool results are preserved, and the seeded history is
-// tool-pairing-valid. This pins the fix for the cross-provider replay
-// correctness finding: on the second post-carryover turn, the provider
-// auto-assigns sequential fc_N that collide with the current response's items
-// → "Duplicate item found with id fc_N" HTTP 400 (observed on Azure GPT-5.x).
-func TestCarryoverCrossProviderToOpenAISynthesizesItemIDs(t *testing.T) {
+// TestCarryoverCrossProviderToOpenAIDoesNotSynthesizeProviderState verifies that
+// the host seeds provider-neutral canonical history and does not choose target
+// item IDs. Adapter lifecycle tests own two-turn target replay and auxiliary calls.
+func TestCarryoverCrossProviderToOpenAIDoesNotSynthesizeProviderState(t *testing.T) {
 	ctx := context.Background()
 
 	const newReply = "OPENAI-REPLY"
@@ -565,12 +499,9 @@ func TestCarryoverCrossProviderToOpenAISynthesizesItemIDs(t *testing.T) {
 				t.Fatalf("msg %d: ToolResult drifted", i)
 			}
 		}
-		// Reasoning/ProviderPhase/ReasoningItemID are STRIPPED (cross-provider).
-		if nm.Reasoning != "" {
-			t.Fatalf("msg %d: Reasoning = %q, want cleared", i, nm.Reasoning)
-		}
-		if nm.ReasoningItemID != "" {
-			t.Fatalf("msg %d: ReasoningItemID = %q, want cleared", i, nm.ReasoningItemID)
+		// Display phase and all active provider replay are stripped.
+		if nm.Replay != nil {
+			t.Fatalf("msg %d: cross-provider replay retained", i)
 		}
 		if nm.ProviderPhase != "" {
 			t.Fatalf("msg %d: ProviderPhase = %q, want cleared", i, nm.ProviderPhase)
@@ -583,31 +514,11 @@ func TestCarryoverCrossProviderToOpenAISynthesizesItemIDs(t *testing.T) {
 			if nc.ID != sc.ID || nc.Name != sc.Name || string(nc.Args) != string(sc.Args) {
 				t.Fatalf("msg %d call %d: tool-call identity/args drifted", i, j)
 			}
-			// ITEM-ID SYNTHESISED: non-empty, unique, carryover_ prefix, NOT fc_.
-			if nc.ItemID == "" {
-				t.Fatalf("msg %d call %d: ItemID is empty — want a synthesised id (cross-provider to openai must synthesise)", i, j)
-			}
-			if !strings.HasPrefix(nc.ItemID, "carryover_item_") {
-				t.Fatalf("msg %d call %d: ItemID = %q, want carryover_item_ prefix", i, j, nc.ItemID)
-			}
-			if strings.HasPrefix(nc.ItemID, "fc_") {
-				t.Fatalf("msg %d call %d: ItemID = %q, must NOT use fc_ prefix (collision risk)", i, j, nc.ItemID)
-			}
 		}
 	}
 
-	// Uniqueness: every ItemID across the entire history is distinct.
-	seenIDs := make(map[string]int) // id → msg index
-	for i, m := range newSnap.Conversation.Messages {
-		for _, c := range m.ToolCalls {
-			if prevIdx, dup := seenIDs[c.ItemID]; dup {
-				t.Fatalf("msg %d call %s: duplicate ItemID %q (first seen at msg %d)", i, c.ID, c.ItemID, prevIdx)
-			}
-			seenIDs[c.ItemID] = i
-		}
-	}
-	if len(seenIDs) == 0 {
-		t.Fatalf("no tool calls to synthesise ItemIDs for — source fixture missing tool calls")
+	if !reflect.DeepEqual(newSnap.Conversation.Messages, session.StripProviderState(srcSnap.Conversation.Messages)) {
+		t.Fatal("host synthesized provider state or changed canonical history")
 	}
 
 	// Seeded history is tool-pairing-valid.
@@ -625,14 +536,8 @@ func TestCarryoverCrossProviderToOpenAISynthesizesItemIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load second session: %v", err)
 	}
-	for i, m := range newSnap.Conversation.Messages {
-		m2 := snap2.Conversation.Messages[i]
-		for j, c := range m.ToolCalls {
-			c2 := m2.ToolCalls[j]
-			if c.ItemID != c2.ItemID {
-				t.Fatalf("msg %d call %d: ItemID = %q, second carryover = %q — NOT deterministic", i, j, c.ItemID, c2.ItemID)
-			}
-		}
+	if !reflect.DeepEqual(newSnap.Conversation.Messages, snap2.Conversation.Messages) {
+		t.Fatal("repeated carryover changed canonical history")
 	}
 
 	// The seeded session runs a turn to completion (history replays with
@@ -759,7 +664,7 @@ func TestCarryoverRejectsAwaitingSource(t *testing.T) {
 		t.Fatalf("BeginTurn: %v", err)
 	}
 	call := session.NewToolCall("ask-c1", "Write", json.RawMessage(`{"path":"f.go"}`))
-	if err := loaded.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{call})); err != nil {
+	if err := loaded.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{call})); err != nil {
 		t.Fatalf("RecordAssistant: %v", err)
 	}
 	if err := loaded.PauseForApproval(session.PendingAsk{AskID: "a1", Tool: "Write", Call: call.ID}); err != nil {

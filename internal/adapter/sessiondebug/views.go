@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/eventcodec"
 	"github.com/stacklok/mecatl/engine/adapter/eventsource"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -389,6 +390,41 @@ type lifetimeEvidence struct {
 	Error             string        `json:"error,omitempty"`
 }
 
+func recordLifetimeEvent(out *lifetimeEvidence, ev session.Event, legacyOpen bool) bool {
+	switch ev.Type {
+	case session.EvTurnEnd:
+		if ev.TurnEnd != nil {
+			out.Turns++
+			out.Usage = out.Usage.Add(ev.TurnEnd.Usage)
+		}
+	case session.EvHistorical:
+		if ev.Historical != nil {
+			switch session.EventType(ev.Historical.Kind) {
+			case session.EvToolCall:
+				out.ToolCalls++
+			case session.EvToolResult:
+				out.ToolResults++
+				if failed := historicalToolError(ev); failed != nil && *failed {
+					out.ToolFailures++
+				}
+			}
+		}
+	case session.EvToolCall:
+		out.ToolCalls++
+	case session.EvToolResult:
+		out.ToolResults++
+		if ev.ToolResult != nil && ev.ToolResult.IsError {
+			out.ToolFailures++
+		}
+	case session.EvResult:
+		if ev.RunID == "" && legacyOpen {
+			out.Runs++
+			return false
+		}
+	}
+	return legacyOpen
+}
+
 func (t *inspectTool) lifetimeView(ctx context.Context, id session.SessionID) lifetimeEvidence {
 	out := lifetimeEvidence{Available: t.log != nil}
 	if t.log == nil {
@@ -415,25 +451,7 @@ func (t *inspectTool) lifetimeView(ctx context.Context, id session.SessionID) li
 		} else if ev.Schedule == nil {
 			legacyOpen = true
 		}
-		switch ev.Type {
-		case session.EvTurnEnd:
-			if ev.TurnEnd != nil {
-				out.Turns++
-				out.Usage = out.Usage.Add(ev.TurnEnd.Usage)
-			}
-		case session.EvToolCall:
-			out.ToolCalls++
-		case session.EvToolResult:
-			out.ToolResults++
-			if ev.ToolResult != nil && ev.ToolResult.IsError {
-				out.ToolFailures++
-			}
-		case session.EvResult:
-			if ev.RunID == "" && legacyOpen {
-				out.Runs++
-				legacyOpen = false
-			}
-		}
+		legacyOpen = recordLifetimeEvent(&out, ev, legacyOpen)
 	}
 	if legacyOpen {
 		out.Runs++
@@ -472,6 +490,11 @@ func (t *inspectTool) historyView(ctx context.Context, s *session.Session, scope
 	errText := ""
 	if t.log != nil {
 		events, err := readEvents(ctx, t.log, s.ID, maxPerformanceScan)
+		if err == nil {
+			var projected eventcodec.Projection
+			projected, err = eventcodec.Project(events, s.Incarnation())
+			events = projected.Events
+		}
 		if err != nil {
 			complete = false
 			errText = errLogReadFailed
@@ -544,16 +567,31 @@ func transcriptFromMessages(messages []session.Message, offset, limit int) trans
 
 func readEvents(ctx context.Context, log port.EventLog, id session.SessionID, scanLimit int) ([]session.Event, error) {
 	out := []session.Event{}
+	remaining := 16 << 20
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	for ev, err := range log.Read(ctx, id) {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return out, ctxErr
+		}
 		if err != nil {
 			return out, err
 		}
 		if len(out) == scanLimit {
 			return out, errors.New("event scan bound reached")
 		}
+		encoded, err := eventcodec.Marshal(ev)
+		if err != nil {
+			return out, err
+		}
+		if len(encoded) > remaining {
+			return out, errors.New("event scan byte bound reached")
+		}
+		remaining -= len(encoded)
 		out = append(out, ev)
 	}
-	return out, nil
+	return out, ctx.Err()
 }
 func seqEvents(events []session.Event) iter.Seq2[session.Event, error] {
 	return func(yield func(session.Event, error) bool) {

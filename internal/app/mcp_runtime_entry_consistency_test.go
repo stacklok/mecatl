@@ -267,7 +267,7 @@ func TestMCPRuntimeConsistency_FailedStepRetryPinsOperationEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result := latestToolResult(got, "retry-old"); !strings.Contains(result, "old:retry") {
+	if result := latestToolResult(t, got, "retry-old"); !strings.Contains(result, "old:retry") {
 		t.Fatalf("retry tool result = %q, want old runtime", result)
 	}
 	next, err := svc.StartRun(h.ctx, sess.ID, "next operation")
@@ -276,7 +276,7 @@ func TestMCPRuntimeConsistency_FailedStepRetryPinsOperationEntry(t *testing.T) {
 	}
 	drainEntryRun(t, svc, sess.ID, next)
 	got, _ = h.store.Load(h.ctx, sess.ID)
-	if result := latestToolResult(got, "retry-new"); !strings.Contains(result, "new:next") {
+	if result := latestToolResult(t, got, "retry-new"); !strings.Contains(result, "new:next") {
 		t.Fatalf("next tool result = %q, want new runtime", result)
 	}
 }
@@ -337,7 +337,7 @@ func TestMCPRuntimeConsistency_RestoredAwaitingApprovalPinsOperationEntry(t *tes
 	}
 	drainEntryRun(t, svc2, sess.ID, run2)
 	got, _ := h.store.Load(h.ctx, sess.ID)
-	if result := latestToolResult(got, "await-old"); !strings.Contains(result, "old:approved") {
+	if result := latestToolResult(t, got, "await-old"); !strings.Contains(result, "old:approved") {
 		t.Fatalf("restored approval result = %q, want old runtime", result)
 	}
 	next, err := svc2.StartRun(h.ctx, sess.ID, "next operation")
@@ -346,7 +346,7 @@ func TestMCPRuntimeConsistency_RestoredAwaitingApprovalPinsOperationEntry(t *tes
 	}
 	drainEntryRun(t, svc2, sess.ID, next)
 	got, _ = h.store.Load(h.ctx, sess.ID)
-	if result := latestToolResult(got, "await-new"); !strings.Contains(result, "new:next") {
+	if result := latestToolResult(t, got, "await-new"); !strings.Contains(result, "new:next") {
 		t.Fatalf("next approval-path result = %q, want new runtime", result)
 	}
 }
@@ -409,7 +409,7 @@ func TestMCPRuntimeConsistency_ParallelToolInheritsRootOperationPin(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result := latestToolResult(got, "parallel-new"); !strings.Contains(result, "new:parallel") {
+	if result := latestToolResult(t, got, "parallel-new"); !strings.Contains(result, "new:parallel") {
 		t.Fatalf("operation after Parallel result = %q, want new runtime", result)
 	}
 }
@@ -472,7 +472,7 @@ func TestMCPRuntimeConsistency_InLoopTeamToolInheritsRootOperationPin(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result := latestToolResult(got, "team-new"); !strings.Contains(result, "new:team") {
+	if result := latestToolResult(t, got, "team-new"); !strings.Contains(result, "new:team") {
 		t.Fatalf("operation after in-loop Team result = %q, want new runtime", result)
 	}
 }

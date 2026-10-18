@@ -1,6 +1,7 @@
 package acp
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -37,6 +38,68 @@ func TestProjectUpdateReasoningDelta(t *testing.T) {
 	}
 	if cu.Content.Text != "thinking" {
 		t.Errorf("text = %q", cu.Content.Text)
+	}
+}
+
+func TestProjectHistoricalUpdatesPreserveTextAndSafeMedia(t *testing.T) {
+	h := session.HistoricalRecord{
+		Text: "historical top text",
+		Parts: []session.Content{
+			session.NewTextBlock("retained text part"),
+			{Kind: session.MediaImage, MIMEType: "image/png", Data: []byte("image")},
+			{Kind: session.MediaAudio, MIMEType: "audio/wav", Data: []byte("audio")},
+		},
+	}
+	updates := projectUpdates(session.Event{Type: session.EvHistorical, Historical: &h})
+	if len(updates) != 4 {
+		t.Fatalf("updates = %d, want top text, text part, image, and audio: %+v", len(updates), updates)
+	}
+	for i, want := range []string{"historical top text", "retained text part"} {
+		text := updates[i].(chunkUpdate)
+		if text.Content.Type != "text" || text.Content.Text != want {
+			t.Fatalf("text update %d = %+v", i, text)
+		}
+	}
+	for i, want := range []struct {
+		kind string
+		mime string
+		data string
+	}{
+		{kind: "image", mime: "image/png", data: "image"},
+		{kind: "audio", mime: "audio/wav", data: "audio"},
+	} {
+		block := updates[i+2].(chunkUpdate).Content
+		if block.Type != want.kind || block.MimeType != want.mime || block.URI != "" {
+			t.Errorf("media[%d] = %+v, want %s %s without URI", i, block, want.kind, want.mime)
+		}
+		data, err := base64.StdEncoding.DecodeString(block.Data)
+		if err != nil || string(data) != want.data {
+			t.Errorf("media[%d] data = %q, err=%v, want %q", i, data, err, want.data)
+		}
+	}
+
+	for _, update := range updates {
+		if update.(chunkUpdate).Content.Text == "Historical attachment unavailable" {
+			t.Fatal("available historical record was labelled unavailable")
+		}
+	}
+
+	h.AttachmentUnavailable = true
+	updates = projectUpdates(session.Event{Type: session.EvHistorical, Historical: &h})
+	if got := updates[0].(chunkUpdate).Content.Text; got != "Historical attachment unavailable" {
+		t.Fatalf("unavailable attachment notice = %q", got)
+	}
+}
+
+func TestProjectHistoricalUpdatesDoNotReplayMediaURLs(t *testing.T) {
+	h := session.HistoricalRecord{Parts: []session.Content{{Kind: session.MediaImage, MIMEType: "image/png", URL: "https://example.com/image.png"}}}
+	updates := projectUpdates(session.Event{Type: session.EvHistorical, Historical: &h})
+	if len(updates) != 1 {
+		t.Fatalf("updates = %+v, want one fallback", updates)
+	}
+	block := updates[0].(chunkUpdate).Content
+	if block.Type != "text" || block.URI != "" || !strings.Contains(block.Text, "Historical image attachment unavailable") {
+		t.Fatalf("URL fallback = %+v", block)
 	}
 }
 
@@ -612,12 +675,12 @@ func TestApprovalFor(t *testing.T) {
 }
 
 func TestPermissionRequestFor(t *testing.T) {
-	ask := session.PendingAsk{AskID: "ask-1", Tool: "Shell", Args: json.RawMessage(`{"cmd":"ls"}`), Reason: "mutating"}
+	ask := session.PendingAsk{AskID: "ask-1", Call: "call-1", Tool: "Shell", Args: json.RawMessage(`{"cmd":"ls"}`), Reason: "mutating"}
 	req := permissionRequestFor("sess-1", ask)
 	if req.SessionID != "sess-1" {
 		t.Errorf("sessionId = %q", req.SessionID)
 	}
-	if req.ToolCall.ToolCallID != "ask-1" || req.ToolCall.Title != "Shell" || req.ToolCall.Kind != "execute" {
+	if req.ToolCall.ToolCallID != "call-1" || req.ToolCall.Title != "Shell" || req.ToolCall.Kind != "execute" {
 		t.Errorf("toolCall = %+v", req.ToolCall)
 	}
 	if len(req.Options) != 4 {

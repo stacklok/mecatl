@@ -75,7 +75,12 @@ leading tool results as their last step, so the tail never opens on an orphan. E
 then checks its output with `session.ValidateToolPairing` and, on failure, returns
 the original history with `agent.ErrCompactionWouldOrphan`. The shared admission
 step checks the candidate again, and `Session.ReplaceHistory` refuses an unpaired
-slice as the final backstop.
+slice as the final backstop. Candidates own copied history and replay storage;
+provider projection is validated before committing. Retained history and its replay
+bindings change together, preserving canonical IDs on surviving invocations.
+Active replay for removed messages leaves the active history, while internal
+compaction archives retain private replay. The public archive mapper omits that
+private payload; retention still bounds whether an archived source is available.
 
 ## Manual compaction
 

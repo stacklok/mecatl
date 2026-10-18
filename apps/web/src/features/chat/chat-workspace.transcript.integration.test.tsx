@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // @vitest-environment happy-dom
 
-import type { RunStreamEvent } from "@mecatl-studio/contracts";
+import type { RunStreamEvent, SessionTranscriptResponse } from "@mecatl-studio/contracts";
 import { client } from "@mecatl-studio/contracts/client";
+import { getSessionTranscriptOptions } from "@mecatl-studio/contracts/query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createMemoryHistory,
@@ -61,6 +62,7 @@ function heldStream() {
   return {
     response: new Response(body, { headers: { "Content-Type": "text/event-stream" } }),
     send: (value: RunStreamEvent) => writer.enqueue(frame(value)),
+    close: () => writer.close(),
   };
 }
 
@@ -102,6 +104,8 @@ const session = {
 };
 
 class ActivityFixture {
+  sessionState = "running";
+  transcriptMessages: SessionTranscriptResponse["messages"] = [];
   readonly requests: { method: string; pathname: string; search: string }[] = [];
   readonly responses = new Map<string, Response[]>();
 
@@ -116,10 +120,10 @@ class ActivityFixture {
       return json({ models: [], modelsSupported: true });
     }
     if (request.method === "GET" && pathname === "/api/v1/sessions") {
-      return json({ complete: true, items: [session] });
+      return json({ complete: true, items: [{ ...session, state: this.sessionState }] });
     }
     if (request.method === "GET" && pathname === "/api/v1/sessions/chat-a/transcript") {
-      return json({ complete: true, messages: [], sessionId: "chat-a" });
+      return json({ complete: true, messages: this.transcriptMessages, sessionId: "chat-a" });
     }
     if (request.method === "GET" && pathname === "/api/v1/sessions/chat-a") {
       return json({
@@ -180,6 +184,7 @@ async function mountWorkspace(bff: ActivityFixture) {
     await router.load();
   });
   await screen.findByRole("textbox", { name: "Message Mecatl" });
+  return queryClient;
 }
 
 afterEach(() => {
@@ -192,6 +197,160 @@ afterEach(() => {
 });
 
 describe("mounted transcript streaming", () => {
+  it("folds repeated deliveries once and follows the exact canonical detail with identical tool args", async () => {
+    window.localStorage.setItem("studio.profile.show-tool-calls", "visible");
+    const bff = new ActivityFixture();
+    const activity = heldStream();
+    bff.responses.set("", [activity.response]);
+    await mountWorkspace(bff);
+    await act(async () => {
+      activity.send(runEvent("user_prompt", 1, "Read twice"));
+      activity.send(runEvent("tool.call", 2, "", { id: "engine-first", name: "Read", args: "{}" }));
+      activity.send(
+        runEvent("tool.result", 3, "", {
+          callId: "engine-first",
+          content: "first output",
+          isError: false,
+        }),
+      );
+      activity.send(
+        runEvent("tool.call", 4, "", { id: "engine-second", name: "Read", args: "{}" }),
+      );
+      activity.send(
+        runEvent("tool.call", 4, "", { id: "engine-second", name: "Read", args: "{}" }),
+      );
+      activity.send(
+        runEvent("tool.call", 5, "", { id: "engine-second", name: "Read", args: "{}" }),
+      );
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /2 tools/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Open Read details, running" }));
+    const panel = screen.getByRole("complementary", { name: /Read/ });
+    await act(async () => {
+      activity.send(
+        runEvent("tool.result", 6, "", {
+          callId: "engine-second",
+          content: "second output",
+          isError: false,
+        }),
+      );
+      activity.send(
+        runEvent("historical", 7, "", {
+          recordId: "local-old-edge",
+          kind: "subagent.start",
+          text: "Old child output",
+          attachmentUnavailable: true,
+          parts: [],
+        }),
+      );
+    });
+    expect(await screen.findByText("Old child output")).toBeTruthy();
+    expect(panel.textContent).toContain("second output");
+    expect(panel.textContent).not.toContain("first output");
+    expect(screen.getAllByTestId("tool-result-summary").map((node) => node.textContent)).toEqual([
+      "first output",
+      "second output",
+    ]);
+    expect(screen.getByLabelText("Historical activity").querySelector("button")).toBeNull();
+  });
+  it.each([
+    {
+      liveText: "First.Second par",
+      savedSecond: "Second complete.",
+      savedFinal: "",
+      expectedText: "First.Second complete.",
+    },
+    {
+      first: "",
+      liveText: "Final.",
+      savedSecond: "",
+      savedFinal: "Final.",
+      expectedText: "Final.",
+    },
+    {
+      liveText: "First.Second.Final.",
+      savedSecond: "Second.",
+      savedFinal: "Final.",
+      expectedText: "First.Second.Final.",
+    },
+  ])(
+    "refreshes split saved rows and readable text without duplicating live content: $liveText",
+    async ({ first = "First.", liveText, savedSecond, savedFinal, expectedText }) => {
+      window.localStorage.setItem("studio.profile.show-tool-calls", "visible");
+      const bff = new ActivityFixture();
+      const activity = heldStream();
+      bff.responses.set("", [activity.response]);
+      const queryClient = await mountWorkspace(bff);
+      await act(async () => {
+        activity.send(runEvent("tool.call", 1, "", { id: "engine-a", name: "Read", args: "{}" }));
+        activity.send(
+          runEvent("tool.result", 2, "", {
+            callId: "engine-a",
+            content: "A output",
+            isError: false,
+          }),
+        );
+        activity.send(runEvent("tool.call", 3, "", { id: "engine-b", name: "Read", args: "{}" }));
+        activity.send(runEvent("message.delta", 4, first));
+        activity.send(runEvent("message.delta", 5, liveText.slice(first.length)));
+      });
+      fireEvent.click(await screen.findByRole("button", { name: /2 tools/ }));
+      fireEvent.click(screen.getByRole("button", { name: "Open Read details, running" }));
+      const panel = screen.getByRole("complementary", { name: /^Read/ });
+      bff.transcriptMessages = [
+        {
+          role: "assistant",
+          text: first,
+          images: [],
+          toolCalls: [{ id: "engine-a", name: "Read", args: "{}" }],
+        },
+        {
+          role: "assistant",
+          text: savedSecond,
+          images: [],
+          toolCalls: [{ id: "engine-b", name: "Read", args: "{}" }],
+        },
+        {
+          role: "tool",
+          text: "",
+          images: [],
+          toolCalls: [],
+          toolResult: { callId: "engine-b", content: "B saved output", isError: false },
+        },
+      ];
+      if (savedFinal)
+        bff.transcriptMessages.push({
+          role: "assistant",
+          text: savedFinal,
+          images: [],
+          toolCalls: [],
+        });
+      bff.sessionState = "idle";
+      await act(async () => {
+        activity.send(runEvent("result", 6, "", { stop: "end_turn" }));
+        activity.close();
+      });
+      for (let repeat = 0; repeat < 2; repeat += 1) {
+        await act(async () => {
+          await queryClient.invalidateQueries({
+            queryKey: getSessionTranscriptOptions({ path: { sessionId: "chat-a" } }).queryKey,
+          });
+        });
+        await waitFor(() => expect(panel.textContent).toContain("B saved output"));
+        expect(screen.getAllByText(expectedText)).toHaveLength(1);
+        if (expectedText !== "Final.")
+          expect(screen.queryByText("Final.", { exact: true })).toBeNull();
+        if (liveText !== expectedText)
+          expect(screen.queryByText(liveText, { exact: true })).toBeNull();
+        expect(screen.getByRole("complementary", { name: /^Read/ })).toBe(panel);
+        expect(screen.getAllByRole("button", { name: /Open Read details/ })).toHaveLength(2);
+        expect(
+          screen.getAllByTestId("tool-result-summary").map((node) => node.textContent),
+        ).toEqual(["A output", "B saved output"]);
+      }
+    },
+  );
+
   it("keeps the chosen canvas panel mounted through a live delivery", async () => {
     const bff = new ActivityFixture();
     const activity = heldStream();

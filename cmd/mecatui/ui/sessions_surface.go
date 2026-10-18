@@ -278,10 +278,17 @@ func (s *sessionsState) applyReplayEvent(msg tea.Msg) {
 func (s *sessionsState) applyReplayEventSecondary(msg tea.Msg) {
 	c := &s.transcript
 	switch msg := msg.(type) {
+	case client.HistoricalRecord:
+		c.addHistorical(msg)
 	case client.ApprovalMsg:
 		c.addNotice(approvalNotice(msg))
 	case client.CompactionArchiveMsg:
 		c.addNotice(compactionArchiveNotice(msg))
+		for _, message := range msg.Replaced {
+			if message.Historical != nil {
+				c.addHistorical(*message.Historical)
+			}
+		}
 	case client.ModelRetryMsg, client.CompactionMsg, client.NoProgressMsg:
 		c.addNotice(noticeLine(msg))
 	case client.ProviderRouteMsg:
@@ -1187,6 +1194,10 @@ func (e *sessionTranscriptError) Error() string { return e.text }
 func conversationFromTranscript(messages []client.ConversationMessage) conversation {
 	var out conversation
 	for _, message := range messages {
+		if message.Historical != nil {
+			out.addHistorical(*message.Historical)
+			continue
+		}
 		switch message.Role {
 		case "user":
 			if media := mediaDescriptors(message.Parts); len(media) > 0 {

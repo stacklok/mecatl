@@ -198,12 +198,12 @@ export const renameSessionResponseSchema = z.object({
 
 export const transcriptToolCallSchema = z.object({
   args: z.string(),
-  id: z.string(),
+  id: z.string().min(1),
   name: z.string(),
 });
 
 export const transcriptToolResultSchema = z.object({
-  callId: z.string(),
+  callId: z.string().min(1),
   content: z.string(),
   isError: z.boolean(),
 });
@@ -280,7 +280,26 @@ export const deliveryNoteSchema = z.object({
   stop: z.string().optional(),
 });
 
+/** Source-local display identity; never an invocation or control target. */
+export const historicalRecordSchema = z.object({
+  recordId: z.string().min(1),
+  kind: z.string(),
+  text: z.string(),
+  attachmentUnavailable: z.boolean(),
+  parts: z.array(
+    z.object({
+      kind: z.number().int(),
+      text: z.string(),
+      mimeType: z.string(),
+      data: z.object({ encoding: z.literal("base64"), data: z.string().refine(isPaddedBase64) }),
+      url: z.string(),
+    }),
+  ),
+});
+
 export const transcriptMessageSchema = z.object({
+  historical: historicalRecordSchema.optional(),
+  providerPhase: z.string().optional(),
   delivery: deliveryNoteSchema.optional(),
   images: z.array(transcriptImageSchema),
   role: z.string(),

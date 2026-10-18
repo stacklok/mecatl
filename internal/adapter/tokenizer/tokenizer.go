@@ -39,7 +39,7 @@ const (
 const perMessageOverhead = 4
 
 // perToolCallOverhead is the framing-token cost attributed to each tool-call
-// envelope. IDs, names, arguments, and provider item IDs are encoded separately.
+// envelope. Canonical IDs, names, and arguments are encoded separately.
 const perToolCallOverhead = 4
 
 // perContentPartOverhead covers the provider's typed-block envelope and discriminator.
@@ -90,22 +90,27 @@ func (c *Counter) Count(text string) int {
 }
 
 // CountMessages returns the tiktoken token count of a conversation slice, summing
-// each message's encoded text/reasoning/tool bodies plus the per-message and
+// each message's encoded text/replay/tool bodies plus the per-message and
 // per-tool-call framing overhead.
 func (c *Counter) CountMessages(msgs []session.Message) int {
 	total := 0
 	for _, m := range msgs {
 		total += perMessageOverhead
 		total += c.Count(m.Text)
-		total += c.Count(m.Reasoning)
+		if m.Replay != nil {
+			for _, binding := range m.Replay.Bindings {
+				total += c.Count(string(binding.PairingID)) + c.Count(string(binding.ItemID))
+			}
+			if replay := m.Replay.Provider; replay != nil {
+				total += c.Count(replay.Format) + c.Count(string(replay.Data))
+			}
+		}
 		total += c.Count(m.ProviderPhase)
-		total += c.Count(m.ReasoningItemID)
 		for _, call := range m.ToolCalls {
 			total += perToolCallOverhead
 			total += c.Count(string(call.ID))
 			total += c.Count(call.Name)
 			total += c.Count(string(call.Args))
-			total += c.Count(call.ItemID)
 		}
 		if m.ToolResult != nil {
 			total += c.Count(string(m.ToolResult.CallID))

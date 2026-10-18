@@ -11,6 +11,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/stacklok/mecatl/engine/adapter/eventcodec"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -154,7 +155,7 @@ func (t *inspectTool) Execute(ctx context.Context, call session.ToolCall, _ tool
 	case "transcript":
 		value = transcriptView(target, args.Offset, args.Limit)
 	case "activity":
-		value = t.activityView(ctx, target.ID, args.Offset, args.Limit)
+		value = t.activityView(ctx, target, args.Offset, args.Limit)
 	case "performance":
 		value = t.performanceView(ctx, target.ID)
 	case "network":
@@ -274,17 +275,20 @@ type transcriptRowOmission struct {
 }
 
 type transcriptMessage struct {
-	Index            int                   `json:"index"`
-	Role             session.Role          `json:"role"`
-	Text             string                `json:"text,omitempty"`
-	TextTruncated    bool                  `json:"text_truncated,omitempty"`
-	TextRepaired     bool                  `json:"text_repaired,omitempty"`
-	TextBytes        int                   `json:"text_original_bytes,omitempty"`
-	Parts            []transcriptPart      `json:"parts,omitempty"`
-	PartsOmitted     int                   `json:"parts_omitted,omitempty"`
-	ToolCalls        []transcriptToolCall  `json:"tool_calls,omitempty"`
-	ToolCallsOmitted int                   `json:"tool_calls_omitted,omitempty"`
-	ToolResult       *transcriptToolResult `json:"tool_result,omitempty"`
+	Index                 int                   `json:"index"`
+	Role                  session.Role          `json:"role"`
+	Text                  string                `json:"text,omitempty"`
+	TextTruncated         bool                  `json:"text_truncated,omitempty"`
+	TextRepaired          bool                  `json:"text_repaired,omitempty"`
+	TextBytes             int                   `json:"text_original_bytes,omitempty"`
+	Parts                 []transcriptPart      `json:"parts,omitempty"`
+	PartsOmitted          int                   `json:"parts_omitted,omitempty"`
+	ToolCalls             []transcriptToolCall  `json:"tool_calls,omitempty"`
+	ToolCallsOmitted      int                   `json:"tool_calls_omitted,omitempty"`
+	HistoricalRecordID    string                `json:"historical_record_id,omitempty"`
+	HistoricalKind        string                `json:"historical_kind,omitempty"`
+	AttachmentUnavailable bool                  `json:"attachment_unavailable,omitempty"`
+	ToolResult            *transcriptToolResult `json:"tool_result,omitempty"`
 }
 
 type transcriptToolCall struct {
@@ -403,8 +407,18 @@ func messageRepaired(row transcriptMessage) bool {
 }
 
 func projectMessage(index int, m session.Message) (transcriptMessage, bool) {
+	historical := session.HistoricalMessage(m)
+	if historical != nil {
+		m.Text, m.Parts = historical.Text, historical.Parts
+		m.ToolCalls, m.ToolResult = nil, nil
+	}
 	text, textTruncated, textRepaired, textBytes := projectText(m.Text, maxProjectedText)
 	row := transcriptMessage{Index: index, Role: m.Role, Text: text, TextTruncated: textTruncated, TextRepaired: textRepaired, TextBytes: textBytes}
+	if historical != nil {
+		row.HistoricalRecordID = safeLine(historical.RecordID)
+		row.HistoricalKind = safeLine(historical.Kind)
+		row.AttachmentUnavailable = historical.AttachmentUnavailable
+	}
 	complete := !textTruncated && !textRepaired
 	row.Parts, row.PartsOmitted, complete = projectParts(m.Parts, complete)
 	for i, c := range m.ToolCalls {
@@ -525,40 +539,60 @@ type activityEvidence struct {
 }
 
 type activityRow struct {
-	Index        int                `json:"index"`
-	Type         session.EventType  `json:"type"`
-	Seq          int64              `json:"seq"`
-	Turn         int                `json:"turn"`
-	Text         string             `json:"text,omitempty"`
-	TextRepaired bool               `json:"text_repaired,omitempty"`
-	Tool         string             `json:"tool,omitempty"`
-	ToolRepaired bool               `json:"tool_repaired,omitempty"`
-	ToolError    *bool              `json:"tool_error,omitempty"`
-	Stop         session.StopReason `json:"stop,omitempty"`
-	Usage        *session.Usage     `json:"usage,omitempty"`
-	Duration     int64              `json:"duration_ms,omitempty"`
-	TTFT         int64              `json:"ttft_ms,omitempty"`
+	HistoricalRecordID    string             `json:"historical_record_id,omitempty"`
+	HistoricalKind        string             `json:"historical_kind,omitempty"`
+	AttachmentUnavailable bool               `json:"attachment_unavailable,omitempty"`
+	Parts                 []transcriptPart   `json:"parts,omitempty"`
+	PartsOmitted          int                `json:"parts_omitted,omitempty"`
+	TextTruncated         bool               `json:"text_truncated,omitempty"`
+	Index                 int                `json:"index"`
+	Type                  session.EventType  `json:"type"`
+	Seq                   int64              `json:"seq"`
+	Turn                  int                `json:"turn"`
+	Text                  string             `json:"text,omitempty"`
+	TextRepaired          bool               `json:"text_repaired,omitempty"`
+	Tool                  string             `json:"tool,omitempty"`
+	ToolRepaired          bool               `json:"tool_repaired,omitempty"`
+	ToolError             *bool              `json:"tool_error,omitempty"`
+	Stop                  session.StopReason `json:"stop,omitempty"`
+	Usage                 *session.Usage     `json:"usage,omitempty"`
+	Duration              int64              `json:"duration_ms,omitempty"`
+	TTFT                  int64              `json:"ttft_ms,omitempty"`
 }
 
-func (t *inspectTool) activityView(ctx context.Context, target session.SessionID, offset, requested int) activityEvidence {
+func (t *inspectTool) activityView(ctx context.Context, target *session.Session, offset, requested int) activityEvidence {
 	limit := boundedLimit(requested, maxActivityRows)
 	out := activityEvidence{View: "activity", Available: t.log != nil, Authoritative: false, Complete: false, Offset: offset, Limit: limit, Rows: []activityRow{}}
 	if t.log == nil {
 		out.Error = errLogNotConfigured
 		return out
 	}
-	seen := 0
-	for ev, err := range t.log.Read(ctx, target) {
+	seen, scanned := 0, 0
+	for ev, err := range t.log.Read(ctx, target.ID) {
+		if err == nil {
+			err = ctx.Err()
+		}
 		if err != nil {
-			out.Error = safeLine(err.Error())
+			out.Error = errLogReadFailed
 			return out
 		}
+		if scanned == maxPerformanceScan {
+			out.Error = "event scan bound reached"
+			return out
+		}
+		ordinal := scanned
+		scanned++
 		if highVolume(ev.Type) {
 			continue
 		}
 		if seen < offset {
 			seen++
 			continue
+		}
+		ev, err = eventcodec.ProjectRecord(ev, target.Incarnation(), ordinal)
+		if err != nil {
+			out.Error = errLogReadFailed
+			return out
 		}
 		row := normalizeActivity(seen, ev)
 		seen++
@@ -585,9 +619,35 @@ func highVolume(t session.EventType) bool {
 	return t == session.EvMessageDelta || t == session.EvReasoningDelta || t == session.EvToolProgress
 }
 
+// Only the error fact is read from private legacy data; it establishes no link.
+func historicalToolError(ev session.Event) *bool {
+	if ev.Historical == nil || ev.Historical.Kind != string(session.EvToolResult) {
+		return nil
+	}
+	p := ev.LegacyIdentity()
+	if p == nil {
+		return nil
+	}
+	var old struct {
+		ToolResult *struct{ IsError bool }
+	}
+	if json.Unmarshal(p.Payload, &old) != nil || old.ToolResult == nil {
+		return nil
+	}
+	return &old.ToolResult.IsError
+}
+
 func normalizeActivity(index int, ev session.Event) activityRow {
 	text := session.ToValidUTF8(ev.Text)
 	row := activityRow{Index: index, Type: ev.Type, Seq: ev.Seq, Turn: ev.Turn, Text: text, TextRepaired: text != ev.Text}
+	if h := ev.Historical; h != nil {
+		row.HistoricalRecordID = safeLine(h.RecordID)
+		row.HistoricalKind = safeLine(h.Kind)
+		row.AttachmentUnavailable = h.AttachmentUnavailable
+		row.Text, row.TextTruncated, row.TextRepaired, _ = projectText(h.Text, maxProjectedText)
+		row.Parts, row.PartsOmitted, _ = projectParts(h.Parts, true)
+		row.ToolError = historicalToolError(ev)
+	}
 	if ev.ToolCall != nil {
 		row.Tool, row.ToolRepaired = safeLineRepair(ev.ToolCall.Name)
 	}
@@ -643,8 +703,11 @@ func (t *inspectTool) performanceView(ctx context.Context, target session.Sessio
 	}
 	out.ScanComplete = true
 	for ev, err := range t.log.Read(ctx, target) {
+		if err == nil {
+			err = ctx.Err()
+		}
 		if err != nil {
-			out.Error = safeLine(err.Error())
+			out.Error = errLogReadFailed
 			out.ScanComplete = false
 			return out
 		}
@@ -665,6 +728,10 @@ func (t *inspectTool) performanceView(ctx context.Context, target session.Sessio
 				} else {
 					out.Truncated = true
 				}
+			}
+		case session.EvHistorical:
+			if failed := historicalToolError(ev); failed != nil && *failed {
+				out.Totals.ToolFailures++
 			}
 		case session.EvModelRetry:
 			out.Totals.Retries++

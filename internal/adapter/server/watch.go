@@ -315,6 +315,14 @@ func (s *Service) WatchSessionEvents(ctx context.Context, id session.SessionID, 
 		go pumpWatch(pumpCtx, log, id, after, runID, reg, out, term)
 
 		for env := range out {
+			if env.Event != nil {
+				projected, err := s.projectWatchEvent(ctx, id, *env.Event)
+				if err != nil {
+					yield(WatchEnvelope{}, err)
+					return
+				}
+				env.Event = &projected
+			}
 			if !yield(env, nil) {
 				return
 			}

@@ -3,6 +3,7 @@ package acp_test
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -22,6 +23,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
+	"github.com/stacklok/mecatl/engine/adapter/sessnap"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
@@ -347,7 +349,7 @@ func TestEndToEndPromptWithPermission(t *testing.T) {
 		// Turn 1: a text delta + a Write tool call (Write asks for permission).
 		mockllm.ChunksTurn(
 			port.Chunk{Kind: port.ChunkText, Text: "Working on it"},
-			port.Chunk{Kind: port.ChunkToolCall, ToolCall: callP("c1", "Write", `{"path":"a.txt"}`)},
+			mockllm.ToolCallChunk(*callP("c1", "Write", `{"path":"a.txt"}`)),
 			port.Chunk{Kind: port.ChunkDone, Stop: session.StopEndTurn},
 		),
 		// Turn 2: after the tool result, a final message and end the turn.
@@ -419,6 +421,7 @@ func TestEndToEndPromptWithPermission(t *testing.T) {
 	}()
 
 	// 4) Answer the request_permission with allow_once.
+	var permissionCallID string
 	select {
 	case req := <-e.reqs:
 		if req.Method != "session/request_permission" {
@@ -436,9 +439,10 @@ func TestEndToEndPromptWithPermission(t *testing.T) {
 		if err := json.Unmarshal(req.Params, &rp); err != nil {
 			t.Fatalf("request_permission params: %v", err)
 		}
-		if rp.ToolCall.Title != "Write" || len(rp.Options) != 4 {
+		if rp.ToolCall.Title != "Write" || len(rp.Options) != 4 || rp.ToolCall.ToolCallID == "" {
 			t.Fatalf("unexpected request_permission: %+v", rp)
 		}
+		permissionCallID = rp.ToolCall.ToolCallID
 		e.respond(req.ID, map[string]any{"outcome": map[string]any{"outcome": "selected", "optionId": "allow_once"}})
 	case <-time.After(5 * time.Second):
 		t.Fatal("no request_permission arrived")
@@ -470,8 +474,19 @@ func TestEndToEndPromptWithPermission(t *testing.T) {
 	// (Write), and a tool_call_update completed.
 	updates := drainUpdates(e.notes)
 	assertHasUpdate(t, updates, "agent_message_chunk", "")
-	assertHasUpdate(t, updates, "tool_call", "Write")
-	assertHasToolStatus(t, updates, "tool_call_update", "completed")
+	var streamedCallID string
+	completed := false
+	for _, update := range updates {
+		if update["sessionUpdate"] == "tool_call" && update["title"] == "Write" {
+			streamedCallID, _ = update["toolCallId"].(string)
+		}
+		if update["sessionUpdate"] == "tool_call_update" && update["toolCallId"] == permissionCallID && update["status"] == "completed" {
+			completed = true
+		}
+	}
+	if streamedCallID == "" || streamedCallID != permissionCallID || !completed {
+		t.Fatalf("permission/call/result IDs must be the same canonical invocation: permission=%q streamed=%q completed=%v updates=%v", permissionCallID, streamedCallID, completed, updates)
+	}
 
 	// Clean shutdown: closing the editor's writer ends the agent read loop.
 	_ = editorToAgentW.Close()
@@ -506,8 +521,12 @@ func TestACPToolAvailabilityRelay(t *testing.T) {
 
 	updates := drainUpdates(e.notes)
 	settled := 0
+	var callID any
 	for _, update := range updates {
-		if update["sessionUpdate"] == "tool_call_update" && update["toolCallId"] == "c-availability" {
+		if update["sessionUpdate"] == "tool_call" {
+			callID = update["toolCallId"]
+		}
+		if update["sessionUpdate"] == "tool_call_update" && update["toolCallId"] == callID && callID != nil && callID != "c-availability" {
 			settled++
 			if update["status"] != "completed" {
 				t.Fatalf("availability settlement status = %v, want completed", update["status"])
@@ -550,16 +569,6 @@ func assertHasUpdate(t *testing.T, updates []map[string]any, kind, title string)
 		}
 	}
 	t.Fatalf("missing %s update (title %q) in %v", kind, title, updates)
-}
-
-func assertHasToolStatus(t *testing.T, updates []map[string]any, kind, status string) {
-	t.Helper()
-	for _, u := range updates {
-		if u["sessionUpdate"] == kind && u["status"] == status {
-			return
-		}
-	}
-	t.Fatalf("missing %s update with status %q in %v", kind, status, updates)
 }
 
 func TestACPProtectedAuthorizationFailsWithoutParkingAndSessionContinues(t *testing.T) {
@@ -1554,14 +1563,16 @@ func TestSessionLoadReplaysTranscript(t *testing.T) {
 	assertHasUpdate(t, updates, "agent_message_chunk", "")
 	// A tool_call card for c1 and a completed tool_call_update for c1.
 	callIdx, updateIdx := -1, -1
+	var replayCallID any
 	for i, u := range updates {
 		switch u["sessionUpdate"] {
 		case "tool_call":
-			if u["toolCallId"] == "c1" && callIdx < 0 {
+			if u["toolCallId"] != "" && u["toolCallId"] != "c1" && callIdx < 0 {
 				callIdx = i
+				replayCallID = u["toolCallId"]
 			}
 		case "tool_call_update":
-			if u["toolCallId"] == "c1" && u["status"] == "completed" && updateIdx < 0 {
+			if u["toolCallId"] == replayCallID && u["status"] == "completed" && updateIdx < 0 {
 				updateIdx = i
 			}
 		}
@@ -1577,7 +1588,96 @@ func TestSessionLoadReplaysTranscript(t *testing.T) {
 	}
 }
 
-// TestSessionLoadDisabledWithoutStore asserts that when resume is disabled (no
+func TestSessionLoadReplaysFrozenLegacyOrphanTextAndMediaWithoutAttachmentClaims(t *testing.T) {
+	const legacyOrphanSnapshot = `{
+		"id":"legacy-orphan-media", "state":"completed", "mode":"default",
+		"limits":{}, "counters":{"Turns":1}, "stop_reason":"end_turn",
+		"created_at":"2025-01-02T03:04:05Z",
+		"messages":[
+			{"role":"assistant", "text":"current assistant text"},
+			{"role":"tool", "tool_result":{"CallID":"missing-provider-call", "Content":"historical top text", "Parts":[
+				{"BlockKind":"text", "Text":"retained text-only part"},
+				{"BlockKind":"image", "Kind":"image", "MIMEType":"image/png", "Data":"bGVnYWN5LWltYWdl"},
+				{"BlockKind":"audio", "Kind":"audio", "MIMEType":"audio/wav", "Data":"bGVnYWN5LWF1ZGlv"}
+			]}}
+		],
+		"environment_ref":{"Kind":"local", "ID":"acp-test-placement", "Revision":"v1"}
+	}`
+	store := memstore.New()
+	svc := newServiceCfg(t, mockllm.New(), allowRules(), func(c *server.Config) { c.Store = store })
+	s, err := sessnap.Unmarshal([]byte(legacyOrphanSnapshot))
+	if err != nil {
+		t.Fatalf("decode frozen legacy orphan fixture: %v", err)
+	}
+	if len(s.Conversation.Messages) != 2 || s.Conversation.Messages[1].Legacy == nil || len(s.Conversation.Messages[1].Legacy.Unsupported) == 0 {
+		t.Fatalf("legacy orphan fixture was not retained as unsupported history: %+v", s.Conversation.Messages)
+	}
+	if err := store.Save(context.Background(), s); err != nil {
+		t.Fatalf("persist migrated legacy orphan fixture: %v", err)
+	}
+
+	e, cleanup := startAgent(t, svc, acp.WithResume(true))
+	defer cleanup()
+	_ = e.call("session/load", map[string]any{"sessionId": string(s.ID), "cwd": testCWD(t), "mcpServers": []any{}})
+	updates := drainUpdates(e.notes)
+	select {
+	case request := <-e.reqs:
+		t.Fatalf("session/load sent fabricated permission request: %s", request.Method)
+	default:
+	}
+
+	var topText, historicalTopText, retainedText, unavailable bool
+	media := map[string]map[string]any{}
+	for _, update := range updates {
+		if update["sessionUpdate"] != "agent_message_chunk" {
+			t.Fatalf("historical replay fabricated non-chunk update: %v", update)
+		}
+		content, _ := update["content"].(map[string]any)
+		switch content["type"] {
+		case "text":
+			switch content["text"] {
+			case "current assistant text":
+				topText = true
+			case "historical top text":
+				historicalTopText = true
+			case "retained text-only part":
+				retainedText = true
+			case "Historical attachment unavailable":
+				unavailable = true
+			}
+		case "image", "audio":
+			media[content["type"].(string)] = content
+		}
+	}
+	if !topText || !historicalTopText || !retainedText || !unavailable {
+		t.Fatalf("missing retained text/status: top=%v historicalTop=%v retained=%v unavailable=%v updates=%v", topText, historicalTopText, retainedText, unavailable, updates)
+	}
+	wantMedia := map[string]struct {
+		mime string
+		data []byte
+	}{
+		"image": {mime: "image/png", data: []byte("legacy-image")},
+		"audio": {mime: "audio/wav", data: []byte("legacy-audio")},
+	}
+	for kind, want := range wantMedia {
+		content := media[kind]
+		if content == nil || content["mimeType"] != want.mime {
+			t.Fatalf("historical %s MIME = %v, want %q", kind, content, want.mime)
+		}
+		if _, hasURI := content["uri"]; hasURI {
+			t.Fatalf("historical %s unexpectedly contains URI: %v", kind, content)
+		}
+		encoded, ok := content["data"].(string)
+		if !ok {
+			t.Fatalf("historical %s data = %T, want base64 string", kind, content["data"])
+		}
+		data, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil || string(data) != string(want.data) {
+			t.Fatalf("historical %s data = %q, err=%v, want %q", kind, data, err, want.data)
+		}
+	}
+}
+
 // durable store), initialize advertises loadSession:false and session/load
 // returns a method error.
 func TestSessionLoadDisabledWithoutStore(t *testing.T) {

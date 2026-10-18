@@ -38,13 +38,17 @@ func runListDirEscape(t *testing.T, built *Built, id session.SessionID, verdict 
 		t.Fatalf("StartRun: %v", err)
 	}
 	var out listDirEscapeOutcome
+	var callID session.ToolCallID
 	for ev := range run.Events() {
+		if ev.ToolCall != nil && ev.ToolCall.Name == "ListDir" {
+			callID = ev.ToolCall.ID
+		}
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
 			ask := *ev.Ask
 			out.ask = &ask
 			run.Approve(ev.Ask.AskID, verdict)
 		}
-		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "list-escape" {
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == callID {
 			result := *ev.ToolResult
 			out.result = &result
 		}
@@ -225,8 +229,12 @@ func TestListDirExternalAuthorityDenialStillWins(t *testing.T) {
 		t.Fatalf("StartRun: %v", err)
 	}
 	var result *session.ToolResult
+	var callID session.ToolCallID
 	for ev := range run.Events() {
-		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "list-escape" {
+		if ev.ToolCall != nil && ev.ToolCall.Name == "ListDir" {
+			callID = ev.ToolCall.ID
+		}
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == callID {
 			got := *ev.ToolResult
 			result = &got
 		}

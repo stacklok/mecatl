@@ -5,8 +5,9 @@ import type {
   SessionTranscriptResponse,
   SessionUsageResponse,
 } from "@mecatl-studio/contracts";
+import { historicalRecordSchema } from "@mecatl-studio/contracts";
 import type { ApprovalRequest } from "./approval-panel";
-import type { AuthorizationHandoff } from "./authorization-review";
+import { type AuthorizationHandoff, recordAuthorizationEvent } from "./authorization-review";
 import type { ChatImage } from "./local-file-preview";
 import type { ToolActivity } from "./tool-activity";
 import { formatTurnStat } from "./turn-stats";
@@ -22,8 +23,10 @@ export interface ChatMessage {
   content: string;
   delivery?: SessionTranscriptResponse["messages"][number]["delivery"];
   failure?: { detail: string; message: string; permanent: boolean };
+  historical?: SessionTranscriptResponse["messages"][number]["historical"];
   id: string;
   images?: ChatImage[];
+  providerPhase?: string;
   /** Zero-based index in an authoritative transcript, including non-rendered tool results. */
   recordedOrdinal?: number;
   reasoning?: string;
@@ -64,14 +67,9 @@ export function retractApproval(
   );
 }
 
-/** Same-run call correlation is solely for placement, never for verdict authority. */
+/** Canonical call correlation is solely for placement, never for verdict authority. */
 export function approvalMatchesToolCall(approval: ApprovalRequest, tool: ToolActivity): boolean {
-  return Boolean(
-    approval.callId &&
-      approval.callId === tool.id &&
-      approval.controlTarget?.runId &&
-      approval.controlTarget.runId === tool.runId,
-  );
+  return Boolean(approval.callId && approval.callId === tool.id);
 }
 
 /** Whether a pending ask is placed beside one of this message's tool rows. */
@@ -143,6 +141,8 @@ function stringValue(value: unknown): string {
 export function messagesFromTranscript(
   entries: Array<{
     delivery?: SessionTranscriptResponse["messages"][number]["delivery"];
+    historical?: ChatMessage["historical"];
+    providerPhase?: string;
     images?: ChatImage[];
     role: string;
     text: string;
@@ -153,6 +153,11 @@ export function messagesFromTranscript(
   const messages: ChatMessage[] = [];
 
   for (const [index, entry] of entries.entries()) {
+    if (entry.historical) {
+      const message = historicalMessage(entry.historical);
+      if (message) messages.push({ ...message, recordedOrdinal: index });
+      continue;
+    }
     if (entry.toolResult) {
       const result = entry.toolResult;
       for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
@@ -180,6 +185,7 @@ export function messagesFromTranscript(
     messages.push({
       content: entry.text,
       delivery: entry.delivery,
+      ...(entry.providerPhase ? { providerPhase: entry.providerPhase } : {}),
       id: `transcript-${index}`,
       recordedOrdinal: index,
       images: entry.images?.length
@@ -195,6 +201,57 @@ export function messagesFromTranscript(
   return messages;
 }
 
+export function historicalMessage(payload: unknown): ChatMessage | undefined {
+  const parsed = historicalRecordSchema.safeParse(payload);
+  if (!parsed.success) return undefined;
+  const historical = parsed.data;
+  return {
+    content: [
+      ...new Set([
+        historical.text,
+        ...historical.parts.filter((part) => part.kind === 0).map((part) => part.text),
+      ]),
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    historical,
+    id: `historical-${historical.recordId}`,
+    images: payloadImages(historical),
+    role: "notice",
+  };
+}
+
+export function appendToolCall(
+  messages: ChatMessage[],
+  assistantId: string,
+  tool: ToolActivity,
+): ChatMessage[] {
+  if (messages.some((message) => message.tools?.some((current) => current.id === tool.id)))
+    return messages;
+  return updateOrAppendMessage(messages, assistantId, (message) => ({
+    ...message,
+    tools: [...(message.tools ?? []), tool],
+  }));
+}
+
+export function applyToolResult(
+  messages: ChatMessage[],
+  result: { callId: string; content: string; isError: boolean },
+): ChatMessage[] {
+  return messages.map((message) =>
+    message.tools?.some((tool) => tool.id === result.callId)
+      ? {
+          ...message,
+          tools: message.tools.map((tool) =>
+            tool.id === result.callId
+              ? { ...tool, isError: result.isError, output: result.content }
+              : tool,
+          ),
+        }
+      : message,
+  );
+}
+
 export function payloadText(payload: unknown): string {
   if (typeof payload !== "object" || payload === null || !("text" in payload)) {
     return "";
@@ -208,7 +265,12 @@ export function payloadImages(payload: unknown): ChatImage[] {
 
   return value.parts.flatMap((part, index) => {
     const record = payloadRecord(part);
-    if (record?.kind !== 1 || typeof record.mimeType !== "string") return [];
+    if (
+      record?.kind !== 1 ||
+      typeof record.mimeType !== "string" ||
+      !/^image\/[a-z0-9][a-z0-9!#$&^_.+-]*$/iu.test(record.mimeType)
+    )
+      return [];
     const encoded = payloadRecord(record.data);
     const data =
       encoded?.encoding === "base64" && typeof encoded.data === "string" ? encoded.data : undefined;
@@ -283,6 +345,7 @@ export interface RunDeliveryState {
   approvals: ApprovalRequest[];
   failure?: RunFailure;
   liveUsage?: SessionUsageResponse;
+  latestSequences?: Record<string, string>;
   messages: ChatMessage[];
   runId?: string;
   settledAskKeys: string[];
@@ -351,6 +414,12 @@ export function applyRunDelivery(
 
   const event = delivery.event;
   let next = state;
+  // Session-scoped authorization status uses the durable cursor, not seq 0.
+  if (event.runId && /^\d+$/u.test(event.seq)) {
+    const previous = state.latestSequences?.[event.runId];
+    if (typeof previous === "string" && BigInt(event.seq) <= BigInt(previous)) return state;
+    next = { ...next, latestSequences: { ...next.latestSequences, [event.runId]: event.seq } };
+  }
   if (event.runId && startsNewRun(state.runId, event.runId)) {
     next = {
       ...next,
@@ -401,35 +470,42 @@ export function applyRunDelivery(
       })),
     };
   }
+  if (event.kind === "historical") {
+    const message = historicalMessage(event.payload);
+    if (
+      !message ||
+      next.messages.some((current) => current.historical?.recordId === message.historical?.recordId)
+    )
+      return next;
+    return { ...next, messages: [...next.messages, message] };
+  }
+  if (event.kind === "authorization.required" || event.kind === "authorization.resolved") {
+    return options.sessionId
+      ? {
+          ...next,
+          messages: recordAuthorizationEvent(
+            next.messages,
+            event,
+            options.sessionId,
+            next.activeAssistantId,
+          ),
+        }
+      : next;
+  }
   if (event.kind === "tool.call") {
     const tool = toolCall(event.payload);
     if (!tool) return next;
     return {
       ...next,
-      messages: updateOrAppendMessage(next.messages, next.activeAssistantId, (message) => ({
-        ...message,
-        tools: [...(message.tools ?? []), { ...tool, runId: event.runId || undefined }],
-      })),
+      messages: appendToolCall(next.messages, next.activeAssistantId, {
+        ...tool,
+        runId: event.runId || undefined,
+      }),
     };
   }
   if (event.kind === "tool.result") {
     const result = toolResult(event.payload);
-    if (!result) return next;
-    return {
-      ...next,
-      messages: next.messages.map((message) =>
-        message.id === next.activeAssistantId
-          ? {
-              ...message,
-              tools: message.tools?.map((tool) =>
-                tool.id === result.callId
-                  ? { ...tool, isError: result.isError, output: result.content }
-                  : tool,
-              ),
-            }
-          : message,
-      ),
-    };
+    return result ? { ...next, messages: applyToolResult(next.messages, result) } : next;
   }
   if (event.kind === "permission.ask") {
     const approval = permissionAsk(event.payload);

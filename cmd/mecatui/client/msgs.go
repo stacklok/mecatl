@@ -914,26 +914,26 @@ type CompactionArchiveMsg struct {
 	Replaced []ConversationMessage
 }
 
-// ConversationMessage is the proto-free mirror of mecatlv1.ConversationMessage:
-// one immutable entry in the model-visible conversation history. It mirrors the
-// session.Message value object — Role + Text + the assistant's ToolCalls + an
-// optional tool-role ToolResult + the opaque provider replay blobs (Reasoning /
-// ProviderPhase / ReasoningItemID) + the user-role media Parts. The
-// ToolCalls/ToolResult fields use the dedicated ConvToolCall/ConvToolResult
-// structs below (NOT the event-msg types ToolCallMsg/ToolResultMsg — those are
-// EVENTS, not message PARTS: a tool.call event is a transient status line, a
-// ConvToolCall is the persisted assistant message part; overloading them would
-// conflate the two lifecycles). If the Phase-3 ui only renders Role+Text, the
-// extra fields are unused-but-cheap.
+// ConversationMessage is a proto-free human-display projection shared by
+// transcripts and compaction archives. Invocation references are canonical IDs;
+// Historical records carry standalone content without invocation authority.
 type ConversationMessage struct {
-	Role            string
-	Text            string
-	ToolCalls       []ConvToolCall
-	ToolResult      *ConvToolResult
-	Reasoning       string
-	ProviderPhase   string
-	ReasoningItemID string
-	Parts           []ContentBlock
+	Role          string
+	Text          string
+	ToolCalls     []ConvToolCall
+	ToolResult    *ConvToolResult
+	ProviderPhase string
+	Parts         []ContentBlock
+	Historical    *HistoricalRecord
+}
+
+// HistoricalRecord is standalone display content, not a tool or control target.
+type HistoricalRecord struct {
+	RecordID              string
+	Kind                  string
+	Text                  string
+	Parts                 []ContentBlock
+	AttachmentUnavailable bool
 }
 
 // ConvToolCall is the proto-free mirror of one assistant-message tool invocation
@@ -1316,6 +1316,11 @@ func sessionTitleMsg(title *mecatlv1.SessionTitle) SessionTitleMsg {
 // the caller falls through to the delegation switch.
 func advisoryEventToMsg(ev *mecatlv1.Event) tea.Msg {
 	switch ev.GetType() {
+	case "historical":
+		if h := historicalFromProto(ev.GetHistorical()); h != nil {
+			return *h
+		}
+		return nil
 	case "control.refused":
 		refused := ev.GetControlRefused()
 		return ControlRefusedMsg{AskID: refused.GetAskId(), Category: refused.GetCategory(), RunID: ev.GetRunId(), Text: ev.GetText()}
@@ -1520,6 +1525,16 @@ func compactionArchiveMsg(c *mecatlv1.CompactionArchive) CompactionArchiveMsg {
 	}
 }
 
+func historicalFromProto(h *mecatlv1.HistoricalRecord) *HistoricalRecord {
+	if h == nil {
+		return nil
+	}
+	return &HistoricalRecord{
+		RecordID: h.GetRecordId(), Kind: h.GetKind(), Text: h.GetText(),
+		Parts: contentPartsFromProto(h.GetParts()), AttachmentUnavailable: h.GetAttachmentUnavailable(),
+	}
+}
+
 // conversationMessagesFromProto maps a proto ConversationMessage slice (the
 // pre-compaction history carried by a CompactionArchive) to the plain
 // ConversationMessage values the ui renders. Nil-safe via the generated
@@ -1531,12 +1546,15 @@ func conversationMessagesFromProto(in []*mecatlv1.ConversationMessage) []Convers
 	out := make([]ConversationMessage, 0, len(in))
 	for _, m := range in {
 		msg := ConversationMessage{
-			Role:            m.GetRole(),
-			Text:            m.GetText(),
-			Reasoning:       m.GetReasoning(),
-			ProviderPhase:   m.GetProviderPhase(),
-			ReasoningItemID: m.GetReasoningItemId(),
-			Parts:           contentPartsFromProto(m.GetParts()),
+			Role:          m.GetRole(),
+			Text:          m.GetText(),
+			ProviderPhase: m.GetProviderPhase(),
+			Parts:         contentPartsFromProto(m.GetParts()),
+			Historical:    historicalFromProto(m.GetHistorical()),
+		}
+		if msg.Historical != nil {
+			out = append(out, msg)
+			continue
 		}
 		for _, tc := range m.GetToolCalls() {
 			msg.ToolCalls = append(msg.ToolCalls, ConvToolCall{

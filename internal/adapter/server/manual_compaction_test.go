@@ -145,7 +145,7 @@ func compactFixture(t *testing.T, state session.State) (*compactTrackingStore, *
 	}
 	if err := sess.SeedHistory([]session.Message{
 		session.NewUserMessage("a long original user instruction"),
-		session.NewAssistantMessage("a long original assistant response", "", nil),
+		session.NewAssistantMessage("a long original assistant response", nil),
 	}); err != nil {
 		t.Fatalf("SeedHistory: %v", err)
 	}
@@ -158,7 +158,10 @@ func compactFixture(t *testing.T, state session.State) (*compactTrackingStore, *
 		if err := sess.BeginTurn(); err != nil {
 			t.Fatal(err)
 		}
-		if err := sess.PauseForApproval(session.PendingAsk{AskID: "ask"}); err != nil {
+		if err := sess.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{session.NewToolCall("pending-call", "Write", nil)})); err != nil {
+			t.Fatal(err)
+		}
+		if err := sess.PauseForApproval(session.PendingAsk{AskID: "ask", Tool: "Write", Call: "pending-call"}); err != nil {
 			t.Fatal(err)
 		}
 	case session.StateCompleted:
@@ -528,7 +531,10 @@ func TestCompactSessionReloadsAuthoritativeStateAfterLeaseAcquire(t *testing.T) 
 				t.Fatal(err)
 			}
 			if state == session.StateAwaiting {
-				if err := fresh.PauseForApproval(session.PendingAsk{AskID: "ask"}); err != nil {
+				if err := fresh.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{session.NewToolCall("pending-call", "Write", nil)})); err != nil {
+					t.Fatal(err)
+				}
+				if err := fresh.PauseForApproval(session.PendingAsk{AskID: "ask", Tool: "Write", Call: "pending-call"}); err != nil {
 					t.Fatal(err)
 				}
 			}

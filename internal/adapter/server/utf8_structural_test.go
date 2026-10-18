@@ -100,6 +100,8 @@ var harnessTokenFields = map[string]bool{
 	// producer/task/classifier prose.
 	".Subagent.RoutingReason": true, ".Team.Roster[].RoutingReason": true, ".Parallel.RoutingReason": true,
 	// MIME is an IANA machine token, byte-exact by contract (see RepairToolResult).
+	".Historical.Parts[].MIMEType":                              true,
+	".CompactionArchive.Replaced[].Historical.Parts[].MIMEType": true,
 	".ToolResult.Parts[].MIMEType":                              true,
 	".UserPrompt.Parts[].MIMEType":                              true,
 	".Steer.Parts[].MIMEType":                                   true,
@@ -131,6 +133,10 @@ func TestToProtoStructuralUTF8Guard(t *testing.T) {
 	}
 
 	var bad []string
+	walk(toProto(ev).ProtoReflect(), "Event", &bad)
+	// A standalone historical projection suppresses normal payloads; exercise
+	// both branches so adding it does not weaken the structural normal-event guard.
+	ev.Historical = nil
 	walk(toProto(ev).ProtoReflect(), "Event", &bad)
 	if len(bad) > 0 {
 		sort.Strings(bad)

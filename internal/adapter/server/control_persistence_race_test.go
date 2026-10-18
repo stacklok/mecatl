@@ -64,7 +64,10 @@ func awaitingControlSession(t *testing.T, id session.SessionID) *session.Session
 	if err := sess.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.PauseForApproval(session.PendingAsk{AskID: "ask-1", Tool: "Write", Origin: session.ApprovalOriginPermission}); err != nil {
+	if err := sess.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{session.NewToolCall("call-control", "Write", nil)})); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.PauseForApproval(session.PendingAsk{AskID: "ask-1", Tool: "Write", Call: "call-control", Origin: session.ApprovalOriginPermission}); err != nil {
 		t.Fatal(err)
 	}
 	return sess

@@ -151,7 +151,7 @@ func TestMCPSourceReconciliation_Scenario4_RealBuildPublicationAndExplicitGrant(
 func assertMCPRefreshToolResult(t *testing.T, sess *session.Session, callID, contains string) {
 	t.Helper()
 	for _, msg := range sess.Conversation.Messages {
-		if msg.ToolResult != nil && msg.ToolResult.CallID == session.ToolCallID(callID) {
+		if msg.ToolResult != nil && msg.ToolResult.CallID == boundCallID(t, sess, session.ProviderCallID(callID)) {
 			if !strings.Contains(msg.ToolResult.Content, contains) {
 				t.Fatalf("tool result %q = %q, want substring %q", callID, msg.ToolResult.Content, contains)
 			}

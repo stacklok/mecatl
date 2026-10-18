@@ -40,8 +40,12 @@ func newProposalManifestFixture(t *testing.T) *proposalManifestFixture {
 	}
 	messages := []session.Message{
 		session.NewUserMessage("Remember concise output."),
-		session.NewAssistantMessage("I will inspect it.", "private reasoning", []session.ToolCall{session.NewToolCall("call-1", "Read", []byte(`{"token":"ghp_0123456789abcdefghijklmnop"}`))}),
+		session.NewAssistantMessage("I will inspect it.", []session.ToolCall{session.NewToolCall("call-1", "Read", []byte(`{"token":"ghp_0123456789abcdefghijklmnop"}`))}),
 		session.NewToolMessage(session.NewToolResult("call-1", strings.Repeat("safe result ", 180))),
+	}
+	messages[1].Replay = &session.MessageReplay{
+		Bindings: []session.ToolCallBinding{{CallID: "call-1", PairingID: "private-pairing"}},
+		Provider: &session.ProviderReplay{Format: "private", Version: 1, Data: []byte("private reasoning")},
 	}
 	trajectory := learning.NewTrajectory("manifest-source", "", session.StopEndTurn, session.Usage{}, messages)
 	events := []session.Event{{Type: session.EvResult, Seq: 7, Turn: 1, Result: &session.ResultPayload{Stop: session.StopEndTurn}}}
@@ -112,7 +116,7 @@ func TestProposalVerificationBuildsSelectedEvidenceOnly(t *testing.T) {
 	runtime.GC()
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
-	selected, eventSequences, err := selectManifestSource(messages, entries)
+	selected, eventSequences, err := selectManifestSource(messages, entries, learning.ReflectionEvidenceV2, "")
 	runtime.ReadMemStats(&after)
 	runtime.KeepAlive(messages)
 	if err != nil {

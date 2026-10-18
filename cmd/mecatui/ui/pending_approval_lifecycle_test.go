@@ -275,9 +275,9 @@ func TestPendingApprovalRecoveryReconcilesSnapshotToolCalls(t *testing.T) {
 		t.Fatalf("reconciled tools = %+v", tools)
 	}
 
-	// Once the recovered occurrence is consumed, a later legitimate reuse is a new card.
+	// Once the recovered occurrence is consumed, a later invocation has a new canonical ID.
 	next, _ = m.Update(pendingApprovalWatchMsg{generation: generation, event: client.PendingApprovalEvent{
-		Kind: client.PendingApprovalEventOther, Message: client.ToolCallMsg{ID: "call-1", Name: "Read", Args: `{"path":"later"}`},
+		Kind: client.PendingApprovalEventOther, Message: client.ToolCallMsg{ID: "call-3", Name: "Read", Args: `{"path":"later"}`},
 	}})
 	m = next.(Model)
 	tools = tools[:0]

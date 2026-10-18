@@ -104,7 +104,7 @@ func (g *sessionTitleGenerator) Generate(ctx context.Context, sources []string) 
 	}
 	request := port.LLMRequest{
 		System:   prompt.Layered{StablePrefix: titleGeneratorSystemPrompt},
-		Messages: []session.Message{session.NewUserMessage(titleGeneratorInput(sources))},
+		Messages: []port.LLMMessage{{Role: session.RoleUser, Text: titleGeneratorInput(sources)}},
 		Model:    g.model,
 	}
 	callCtx, cancel := context.WithTimeout(ctx, titleGenerationTimeout)
@@ -130,7 +130,7 @@ func (g *sessionTitleGenerator) Generate(ctx context.Context, sources []string) 
 				return titleGeneratorFailureResult(usage, titleFailureInvalidOutput, titleStageParsing, "server: title output exceeds limit")
 			}
 			output.WriteString(chunk.Text)
-		case port.ChunkReasoning, port.ChunkReasoningItem, port.ChunkPhase, port.ChunkProviderRoute:
+		case port.ChunkReasoning, port.ChunkReplay, port.ChunkPhase, port.ChunkProviderRoute:
 			// Title generation is text-only: opaque reasoning and route metadata do
 			// not contribute to the strict JSON output.
 		case port.ChunkUsage:

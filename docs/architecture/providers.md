@@ -21,14 +21,25 @@ Two invariants hold every adapter in place:
   engine, or the wire API.
 - **Replay is stateless.** Mecatl owns the conversation. Every request resends the
   full history; the Responses adapter sends `Store: false` and no previous response
-  ID. Opaque reasoning that a provider needs back (encrypted reasoning items,
-  Anthropic thinking signatures) travels in the opaque `session.Message.Reasoning`
-  string, packed by the adapter as an ordered envelope and replayed untouched.
-  Because the session log holds everything, a session can be persisted, resumed,
-  forked, or rebuilt from events without provider-side state.
+  ID. Adapter-owned replay envelopes preserve encrypted reasoning items and
+  Anthropic thinking signatures in `Message.Replay`, alongside occurrence-specific
+  bindings. The loop projects domain history into `port.LLMMessage`, `LLMToolCall`,
+  and `LLMToolResult`; adapters receive provider pairing/item tokens, not executable
+  invocation IDs. Snapshots preserve private replay; a pure event fold reconstructs
+  structure but cannot recover missing active provider replay.
 
-Reasoning blobs mean something only to the provider that issued them, so a session's
-provider is fixed for its lifetime; switching provider means a new session.
+Only the issuing adapter interprets its replay format and version. Responses keeps
+ciphertext with its matching item ID, reasoning/call ordering, and exact replay phase;
+Anthropic keeps ordered signed/redacted thinking. This preserves the supported replay
+behavior, not a complete ordered Responses output-item transcript: text remains
+flattened with last-phase display metadata. `ChunkReplay` transports the private
+payload separately from readable `ChunkReasoning` summaries. The carrier can hold
+ordered provider items without requiring one domain message per item.
+
+A session's provider is fixed for its lifetime. A cross-provider fork strips
+incompatible replay, retains historical canonical identities, and constructs target
+pairing tokens at the LLM boundary. Provider/model-dependent collaborators are
+rebuilt through factories rather than cloned and swapped.
 
 Adapters fail closed on ambiguous streams: a Responses stream that ends without a
 terminal event is an error, not an end of turn. If the provider rejects replayed

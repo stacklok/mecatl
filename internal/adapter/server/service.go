@@ -21,6 +21,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/engine/adapter/eventcodec"
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/nofs"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -4371,10 +4372,10 @@ func (s *Service) CompactSession(ctx context.Context, id session.SessionID, call
 	result, compactErr := eng.CompactSession(compactCtx, sess)
 	usageChanged := sess.UsageFor(session.UsageKindCompaction) != beforeUsage
 	if compactErr != nil || !result.Changed {
+		if !leaseHeld() {
+			return agent.ManualCompactionResult{}, fmt.Errorf("%w: session lease was lost during compaction", ErrSessionLeasedElsewhere)
+		}
 		if usageChanged {
-			if !leaseHeld() {
-				return agent.ManualCompactionResult{}, fmt.Errorf("%w: session lease was lost during compaction", ErrSessionLeasedElsewhere)
-			}
 			if saveErr := s.saveSession(compactCtx, sess); saveErr != nil {
 				return agent.ManualCompactionResult{}, fmt.Errorf("%w: persist compaction usage: %v", ErrInternal, saveErr)
 			}
@@ -4745,6 +4746,9 @@ func (s *Service) managementSession(ctx context.Context, id session.SessionID, c
 		}
 		return nil, false, fmt.Errorf("%w: %q", ErrNotFound, id)
 	}
+	if err := sess.CheckIdentityReady(); err != nil {
+		return nil, false, fmt.Errorf("%w: %w", ErrFailedPrecondition, err)
+	}
 	// Session IDs are opaque handles. Repairing malformed persisted bytes would
 	// silently change the identity returned by RenameSession's wire response.
 	if !utf8.ValidString(string(sess.ID)) {
@@ -4867,13 +4871,12 @@ func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode sessio
 		}
 	}
 
+	if err := sess.CheckIdentityReady(); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrFailedPrecondition, err)
+	}
 	if sess.AgentDefinitionName != "" {
-		// ADR 0353 (AC3.3): an agent-bound session's mode is fixed for its entire
-		// lifetime (the bound def's own permissionMode ceiling was already resolved
-		// and clamped at create time) — rejected outright, never merely clamped,
-		// so the session's mode can never diverge from what its engine was built
-		// for. Runtime publication can still trigger a rebuild; that path must
-		// refuse a result contradicting the session's fixed configuration.
+		// An agent-bound session's mode is fixed for its entire lifetime: the bound
+		// definition's permission-mode ceiling was resolved and clamped at creation.
 		return nil, fmt.Errorf("%w: mode is fixed for an agent-bound session %q", ErrInvalidArgument, id)
 	}
 	if err := sess.SetMode(mode); err != nil {
@@ -5058,13 +5061,14 @@ func (s *Service) LoadSession(ctx context.Context, id session.SessionID) (*sessi
 //
 //   - SAME provider → the snapshot is returned VERBATIM
 //     (session.ForkSnapshot(src.Conversation)). The provider-private replay
-//     blobs (Message.Reasoning, Message.ProviderPhase, each ToolCall.ItemID)
-//     replay intact, so the prompt-cache prefix stays warm.
+//     carrier (Message.Replay) and public phase replay intact, so the
+//     prompt-cache prefix stays warm.
 //   - DIFFERENT provider → the snapshot is STRIPPED to a provider-neutral copy
 //     via session.StripProviderState(session.ForkSnapshot(src.Conversation)),
-//     clearing Reasoning/ProviderPhase/ItemID while preserving text/roles/
-//     tool-call IDs/Args/tool results. Both the OpenAI and Anthropic adapters
-//     treat an EMPTY blob as "no blob" and omit it on the wire, so a stripped
+//     clearing Replay/ProviderPhase while preserving canonical invocation IDs,
+//     original Legacy verification coordinates, text/roles/Args/tool results.
+//     Target pairing and item identity are reconstructed at the LLM/adapter seam,
+//     so a stripped
 //     history replays safely to ANY provider; the new session's
 //     thinking/reasoning config is derived from the NEW model, not the history.
 //
@@ -5114,59 +5118,7 @@ func (s *Service) providerCarryoverSnapshot(src *session.Session, newProviderID 
 	if srcProv == newProv {
 		return snap
 	}
-	stripped := session.StripProviderState(snap)
-	if usesResponsesReplayIDs(newProv) {
-		return synthesizeOpenAIItemIDs(stripped)
-	}
-	return stripped
-}
-
-// usesResponsesReplayIDs reports whether a resolved provider replays through
-// the stateless OpenAI Responses adapter and therefore requires stable item IDs
-// on cross-provider carryover. Keep this classification in one server-layer
-// seam: provider IDs are composition-owned strings here, while the server has
-// no adapter type to inspect.
-func usesResponsesReplayIDs(providerID string) bool {
-	switch providerID {
-	case "openai", "openrouter", "openai-codex", "toolhive":
-		return true
-	default:
-		return false
-	}
-}
-
-// synthesizeOpenAIItemIDs synthesises a stable, unique ItemID for every ToolCall
-// in the carried history whose ItemID is empty after cross-provider stripping.
-// The OpenAI adapter uses ItemID (the provider's "id", e.g. "fc_1") to
-// de-duplicate replayed function_call items in store:false stateless replay
-// (request.go:353-359). After StripProviderState clears every ItemID, the provider
-// auto-assigns sequential fc_N values — which on the second post-carryover turn
-// collide with the current response's items → "Duplicate item found with id fc_N"
-// HTTP 400. Stable positional ids ("carryover_item_N") keep a retried/re-created
-// session deterministic and cannot collide with the provider's fc_ prefix.
-//
-// A history with no tool calls is returned unchanged. The input slice is
-// shallow-copied (the backing array is fresh) so the caller's messages are never
-// mutated.
-func synthesizeOpenAIItemIDs(messages []session.Message) []session.Message {
-	if len(messages) == 0 {
-		return messages
-	}
-	out := make([]session.Message, len(messages))
-	n := 0
-	for i, m := range messages {
-		if len(m.ToolCalls) > 0 {
-			calls := make([]session.ToolCall, len(m.ToolCalls))
-			for j, c := range m.ToolCalls {
-				c.ItemID = fmt.Sprintf("carryover_item_%d", n)
-				n++
-				calls[j] = c
-			}
-			m.ToolCalls = calls
-		}
-		out[i] = m
-	}
-	return out
+	return session.StripProviderState(snap)
 }
 
 // maybeReplayApprovals repopulates the learned-rule store from the durable
@@ -5179,6 +5131,9 @@ func synthesizeOpenAIItemIDs(messages []session.Message) []session.Message {
 // the correlation walks). Holding the loaded session — not re-loading — keeps the
 // correlation reading the SAME history the run will use.
 func (s *Service) maybeReplayApprovals(ctx context.Context, sess *session.Session) {
+	if sess.CheckIdentityReady() != nil {
+		return
+	}
 	if s.cfg.ReplayApprovals == nil {
 		return
 	}
@@ -5249,11 +5204,17 @@ func (s *Service) loadAndReopen(ctx context.Context, id session.SessionID) (*ses
 }
 
 func (s *Service) loadSessionContext(ctx context.Context, id session.SessionID, activate bool) (*session.Session, error) {
-	// Ownership is checked before caller-selected coordination, then revalidated
-	// under runEntryMu before and after acquiring the mutation lease.
-	if _, err := s.GetSession(ctx, id); err != nil {
+	// Held sessions are ownership-checked inspection only: do not recover, replay
+	// approvals, prepare environments, or activate command sources.
+	loaded, err := s.GetSession(ctx, id)
+	if err != nil {
 		return nil, err
 	}
+	if loaded.CheckIdentityReady() != nil {
+		return loaded, nil
+	}
+	// Ownership is checked before caller-selected coordination, then revalidated
+	// under runEntryMu before and after acquiring the mutation lease.
 	unlock := s.runEntryMu.lock(id)
 	defer unlock()
 	if _, err := s.GetSession(ctx, id); err != nil {
@@ -5267,6 +5228,9 @@ func (s *Service) loadSessionContext(ctx context.Context, id session.SessionID, 
 	sess, err := s.GetSession(ctx, id)
 	if err != nil {
 		return nil, err
+	}
+	if sess.CheckIdentityReady() != nil {
+		return sess, nil
 	}
 	// Persisted workspace authority is enforced at the top of reopenLoadedSession.
 	sess, err = s.reopenLoadedSession(ctx, sess)
@@ -5294,6 +5258,9 @@ func (s *Service) loadSessionContext(ctx context.Context, id session.SessionID, 
 // validatePersistedWorkspace keeps the run-entry call sites explicit while
 // placement reattachment validates the exact persisted EnvironmentRef.
 func (*Service) validatePersistedWorkspace(sess *session.Session) error {
+	if err := sess.CheckIdentityReady(); err != nil {
+		return fmt.Errorf("%w: %w", ErrFailedPrecondition, err)
+	}
 	if !sess.EnvironmentRef.Valid() {
 		return fmt.Errorf("%w: persisted session %q has no exact placement", ErrFailedPrecondition, sess.ID)
 	}
@@ -5344,6 +5311,9 @@ func (*Service) validateEnvironmentOverride(sess *session.Session, env, authoriz
 // reject before its purpose gate and run-registry cleanup) and resumeFromAwaiting
 // (which rejects terminal states and so bypasses this funnel entirely).
 func (s *Service) reopenLoadedSession(ctx context.Context, sess *session.Session) (*session.Session, error) {
+	if err := sess.CheckIdentityReady(); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrFailedPrecondition, err)
+	}
 	if err := s.validatePersistedWorkspace(sess); err != nil {
 		return nil, err
 	}
@@ -6169,6 +6139,12 @@ func validRunAskVerdict(verdict session.ApprovalVerdict) bool {
 // the first rejects cheap mismatches, while the second is the authoritative
 // decision after distributed ownership has been acquired.
 func (s *Service) validatePersistedRunAsk(sess *session.Session, expectedRunID string, resolution agent.ApprovalResolution, scoped bool) error {
+	if err := sess.CheckIdentityReady(); err != nil {
+		return fmt.Errorf("%w: %w", ErrFailedPrecondition, err)
+	}
+	if err := sess.ValidateAuthorizationState(); err != nil {
+		return fmt.Errorf("%w: invalid pending continuation", ErrFailedPrecondition)
+	}
 	if err := checkExpectedRun(expectedRunID, sess.RunID()); err != nil {
 		return err
 	}
@@ -6856,6 +6832,9 @@ func admitRunPurpose(sess *session.Session, purpose runPurpose) error {
 //     engine. ModeNeedsEngine is nil (no plan slot) ⇒ this never fires and the session
 //     keeps the shared engine.
 func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Session) (*agent.Engine, tool.Environment, string, error) { //nolint:gocyclo // the per-session engine/environment resolution is inherently branched
+	if err := sess.CheckIdentityReady(); err != nil {
+		return nil, tool.Environment{}, "", fmt.Errorf("%w: %w", ErrFailedPrecondition, err)
+	}
 	id := sess.ID
 	attribution := s.resolvedModelFor(sess)
 	sess.SetUsageAttribution(attribution.ProviderID, attribution.ModelID)
@@ -7758,6 +7737,9 @@ func (s *Service) validateAwaitingResume(sess *session.Session, resolution agent
 	pending, ok := sess.PendingAsk()
 	if !ok || pending.AskID != resolution.AskID {
 		return fmt.Errorf("%w: ask is unknown, stale, or already resolved", agent.ErrApprovalNotPending)
+	}
+	if err := sess.ValidateAuthorizationState(); err != nil {
+		return fmt.Errorf("%w: invalid pending continuation", ErrFailedPrecondition)
 	}
 	return agent.ValidateApprovalResolution(pending, resolution)
 }
@@ -10687,7 +10669,43 @@ func (s *Service) StreamSessionEvents(ctx context.Context, id session.SessionID)
 			return nil, err
 		}
 	}
-	return s.cfg.EventLog.Read(ctx, id), nil
+	return func(yield func(session.Event, error) bool) {
+		if err := ctx.Err(); err != nil {
+			yield(session.Event{}, err)
+			return
+		}
+		var inc session.IncarnationID
+		ordinal := 0
+		for ev, err := range s.cfg.EventLog.Read(ctx, id) {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				yield(session.Event{}, ctxErr)
+				return
+			}
+			if err != nil {
+				yield(session.Event{}, err)
+				return
+			}
+			if ev.LegacyIdentity() != nil {
+				if inc == "" {
+					inc, err = s.eventSourceIncarnation(ctx, id, []session.Event{ev})
+					if err != nil {
+						yield(session.Event{}, err)
+						return
+					}
+				}
+				// Streaming prefixes cannot prove legacy invocation attachments.
+				ev, err = eventcodec.ProjectRecord(ev, inc, ordinal)
+				if err != nil {
+					yield(session.Event{}, fmt.Errorf("%w: historical activity unavailable", ErrInternal))
+					return
+				}
+			}
+			ordinal++
+			if !yield(ev, nil) {
+				return
+			}
+		}
+	}, nil
 }
 
 // ListSessions returns the stored-session inventory — the picker metadata a

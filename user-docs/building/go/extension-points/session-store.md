@@ -197,6 +197,22 @@ malformed or expired cursors. A backend follow-capacity error currently crosses
 the server wrapper as gRPC `Internal`; its local sentinel classification does
 not survive the transport.
 
+### Preserve identity and replay encodings
+
+Snapshot and event writers use `sessnap-json/2` and `eventlog-json/2`; current
+typed readers accept `/1` and `/2` with consistent inner identity schemas.
+Opaque drivers preserve the format tag and payload bytes exactly. Decoding
+wrappers restore typed values and emit the newest encoding, so an upgraded
+wrapper is not compatible with an old harness reader. The `session-store/1`
+capability marker does not negotiate these formats, and event drivers have no
+startup format handshake.
+
+Store private message replay, occurrence bindings, and held legacy continuation
+data with the aggregate. Keep opaque provider bytes and unknown private replay
+versions intact; never expose them through public transcript projections. Use
+the coordinated [API-major-2 upgrade procedure](/operating/session-storage-operations.md#upgrade-to-api-major-2)
+for decoding drivers and local stores.
+
 ### Serve a backend
 
 Register the wrappers with the generated driver package. The import path remains

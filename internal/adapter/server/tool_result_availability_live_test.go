@@ -176,12 +176,16 @@ func TestToolResultLiveOnlyProjection(t *testing.T) {
 			}
 			available, canonical := 0, 0
 			var availableResult, canonicalResult *mecatlv1.ToolResult
+			var callID string
 			for _, ev := range live {
+				if ev.GetToolCall() != nil {
+					callID = ev.GetToolCall().GetId()
+				}
 				if ev.GetType() != string(session.EvToolResultAvailable) && ev.GetType() != string(session.EvToolResult) {
 					continue
 				}
 				r := ev.GetToolResult()
-				if r.GetCallId() != "c1" || r.GetContent() != "visible result" || r.GetIsError() || r.GetStructuredContent() != `{"ok":true}` || len(r.GetBlocks()) != 3 || r.GetBlocks()[2].GetKind() != mecatlv1.ContentBlock_KIND_IMAGE || string(r.GetBlocks()[2].GetData()) != string([]byte{1, 2, 3}) {
+				if callID == "" || callID == "c1" || r.GetCallId() != callID || r.GetContent() != "visible result" || r.GetIsError() || r.GetStructuredContent() != `{"ok":true}` || len(r.GetBlocks()) != 3 || r.GetBlocks()[2].GetKind() != mecatlv1.ContentBlock_KIND_IMAGE || string(r.GetBlocks()[2].GetData()) != string([]byte{1, 2, 3}) {
 					t.Fatalf("%s projection: %+v", ev.GetType(), r)
 				}
 				if ev.GetType() == string(session.EvToolResultAvailable) {

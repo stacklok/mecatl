@@ -55,13 +55,17 @@ forbid(principal, action, resource) when { resource.path like "` + filepath.ToSl
 		}
 	}
 	built.Service.FinishRun(sess.ID, run)
+	loaded, err := built.Service.GetSession(ctx, sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, id := range []string{"blocked-read", "blocked-write"} {
-		result := results[id]
+		result := results[string(boundCallID(t, loaded, session.ProviderCallID(id)))]
 		if result == nil || !result.IsError || !strings.Contains(result.Content, "denied by authority") {
 			t.Errorf("%s = %+v, want authority denial", id, result)
 		}
 	}
-	if result := results["allowed-read"]; result == nil || result.IsError || !strings.Contains(result.Content, "allowed-neighbor") {
+	if result := results[string(boundCallID(t, loaded, "allowed-read"))]; result == nil || result.IsError || !strings.Contains(result.Content, "allowed-neighbor") {
 		t.Errorf("allowed neighbor = %+v", result)
 	}
 	if data, err := os.ReadFile(f.target); err != nil || string(data) != f.content {

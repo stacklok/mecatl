@@ -365,7 +365,7 @@ func newLifecycleFixtureConfigured(t *testing.T, status session.AuthorizationSta
 	if err := sess.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{call, deferred})); err != nil {
+	if err := sess.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{call, deferred})); err != nil {
 		t.Fatal(err)
 	}
 	if err := sess.PauseForAuthorization(pending); err != nil {

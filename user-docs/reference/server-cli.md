@@ -573,8 +573,7 @@ Flags:
         base URL of an HTTP JSON search endpoint. Overrides configured environment-
         based search providers. The API key is read from WEBSEARCH_API_KEY.
   --workspace string
-        default session workspace root (default
-        "<WORKSPACE>")
+        default session workspace root (default "<WORKSPACE>")
   --yolo
         DEPRECATED: use --permission-mode yolo. Alias for --posture=yolo. Allows tools
         server-wide and lets child command substitutions run automatically. Deny rules

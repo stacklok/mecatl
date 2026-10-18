@@ -83,7 +83,7 @@ func TestProviderModelDiscovery_Scenario3_ServiceRunEntryPaths(t *testing.T) {
 				if name == "cancelled" || name == "failed" || name == "orphaned-running" || name == "restart-approval" {
 					calls = []session.ToolCall{session.NewToolCall("pending-call", "Write", []byte(`{}`))}
 				}
-				if err := seed.RecordAssistant(session.NewAssistantMessage("genuine assistant history", "", calls)); err != nil {
+				if err := seed.RecordAssistant(session.NewAssistantMessage("genuine assistant history", calls)); err != nil {
 					t.Fatal(err)
 				}
 				var transition error

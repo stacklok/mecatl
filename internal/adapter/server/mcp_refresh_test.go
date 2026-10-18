@@ -320,7 +320,10 @@ func TestMCPSourceReconciliation_Scenario4_ServiceRefreshMutationMatrix(t *testi
 				if err := s.BeginTurn(); err != nil {
 					return err
 				}
-				return s.PauseForApproval(session.PendingAsk{AskID: "ask"})
+				if err := s.RecordAssistant(session.NewAssistantMessage("", []session.ToolCall{session.NewToolCall("pending-call", "Write", nil)})); err != nil {
+					return err
+				}
+				return s.PauseForApproval(session.PendingAsk{AskID: "ask", Tool: "Write", Call: "pending-call"})
 			}},
 			{"failed", func(s *session.Session) error {
 				if err := s.BeginTurn(); err != nil {

@@ -37,12 +37,22 @@ func replayApprovals(log port.EventLog, policy port.PermissionPolicy, diag port.
 		diag = port.NopDiagnostics{}
 	}
 	return func(ctx context.Context, sess *session.Session) {
+		if sess.CheckIdentityReady() != nil {
+			return
+		}
 		// Index the loaded conversation's tool calls by id once, so each verdict's
 		// correlation is an O(1) map lookup rather than an O(messages) walk.
+		// Message legacy provenance does not invalidate a new canonical approval.
 		byID := make(map[session.ToolCallID]session.ToolCall)
+		counts := make(map[session.ToolCallID]int)
 		for _, m := range sess.Conversation.Messages {
 			for _, c := range m.ToolCalls {
-				byID[c.ID] = c
+				counts[c.ID]++
+				if counts[c.ID] == 1 && c.ID != "" {
+					byID[c.ID] = c
+				} else {
+					delete(byID, c.ID)
+				}
 			}
 		}
 		for ev, err := range log.Read(ctx, sess.ID) {
@@ -58,14 +68,15 @@ func replayApprovals(log port.EventLog, policy port.PermissionPolicy, diag port.
 			// be replayed — only allow-always learns a durable per-session rule; a
 			// one-time grant or a denial that survived a restart as a learned allow
 			// would be a silent re-grant of a permission the user never gave.
-			if ev.Type != session.EvApproval || ev.Approval == nil || !ev.Approval.AllowAlways || ev.Approval.Origin != session.ApprovalOriginPermission {
+			// Legacy event coordinates do not prove a snapshot occurrence link.
+			if ev.LegacyIdentity() != nil || ev.Type != session.EvApproval || ev.Approval == nil || !ev.Approval.AllowAlways || ev.Approval.Verdict != session.VerdictStringAllowAlways || ev.Approval.Origin != session.ApprovalOriginPermission {
 				continue
 			}
 			if ev.Approval.Call == "" {
 				continue
 			}
 			call, ok := byID[ev.Approval.Call]
-			if !ok {
+			if !ok || call.Name != ev.Approval.Tool {
 				// The call this verdict gated is no longer in the loaded history (e.g.
 				// dropped by a later compaction). Nothing to re-derive from; the rule
 				// is simply not restored — fail-safe toward re-asking, never a silent

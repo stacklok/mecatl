@@ -122,6 +122,20 @@ ID, and body-only learned skills published per caller and project through
 or skill assets. A project's settings can lower learning autonomy or require `evaluated`
 activation; they can never raise either.
 
+### Evidence identity and retained sources
+
+New evidence uses `reflection-evidence/v2` with canonical invocation identity.
+Legacy-v0 and v1 keep their original representation, digest inputs, source
+coordinates, and stored proposal/attempt identities. Verification reconstructs a
+private coordinate-bound legacy view; those identifiers never enter executable
+lookup or public previews. Migrating a session does not rewrite old evidence hashes.
+
+A verified citation's availability is independent of its invocation attachment.
+The public citation can remain available without `tool_call_id` when a canonical
+link cannot be proven. Source retention still bounds verification: a manifest or
+digest cannot replace missing/pruned source material. Identity migration adds no
+indefinite evidence archive.
+
 ### Failure modes
 
 - Missing, unauthorized, mismatched, or compacted-away evidence ends the attempt as

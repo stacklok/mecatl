@@ -253,6 +253,12 @@ func (s *Service) loadMatchingAuthorization(ctx context.Context, id session.Sess
 	if err != nil {
 		return nil, session.PendingAuthorization{}, errAuthorizationSessionUnavailable
 	}
+	if err := sess.CheckIdentityReady(); err != nil {
+		return nil, session.PendingAuthorization{}, fmt.Errorf("%w: %w", ErrFailedPrecondition, err)
+	}
+	if err := sess.ValidateAuthorizationState(); err != nil {
+		return nil, session.PendingAuthorization{}, errAuthorizationUnclaimable
+	}
 	pending, ok := sess.PendingAuthorization()
 	if !ok || control.SessionID != id || pending.Authorization.ID != control.AuthorizationID {
 		s.cfg.Diagnostics.Log(ctx, port.LevelDebug, "MCP authorization: control does not match session's pending authorization",
@@ -317,6 +323,9 @@ func reconcileAuthorizationCancellation(ctx context.Context, attachment brokerco
 // authorizationAttachment returns a committed exact-binding attachment while
 // holding brokerMu until release. Callers must release before engine rebuilding.
 func (s *Service) authorizationAttachment(ctx context.Context, sess *session.Session) (brokercontract.Attachment, func(), error) {
+	if err := sess.ValidateAuthorizationState(); err != nil {
+		return nil, func() {}, err
+	}
 	unlock := s.brokerMu.lock(sess.ID)
 	local, err := s.openBrokerAttachment(ctx, sess.ID, sess.ExternalBinding, true)
 	if err != nil {
@@ -353,6 +362,9 @@ func (s *Service) settleRefusedModeGrantLocked(ctx context.Context, sess *sessio
 }
 
 func (s *Service) continueGrantedAuthorizationLocked(ctx context.Context, sess *session.Session) (MCPAuthorizationResult, error) {
+	if err := sess.ValidateAuthorizationState(); err != nil {
+		return MCPAuthorizationResult{}, err
+	}
 	s.cfg.Diagnostics.Log(ctx, port.LevelDebug, "MCP authorization: granted, starting continuation", "session", string(sess.ID), "state", string(sess.State))
 	resolution, err := session.NewAuthorizationResolution(session.AuthorizationGranted)
 	if err != nil {
@@ -632,6 +644,9 @@ func (s *Service) resolveAuthorizationWithoutContinuationLocked(ctx context.Cont
 // resolveAuthorizationWithFailureLocked retains the authorization status while
 // allowing a closed local continuation failure to replace only the primary result.
 func (s *Service) resolveAuthorizationWithFailureLocked(ctx context.Context, sess *session.Session, pending session.PendingAuthorization, status session.AuthorizationStatus, primaryFailure string, allowContinuation bool) (MCPAuthorizationResult, error) {
+	if err := sess.ValidateAuthorizationState(); err != nil {
+		return MCPAuthorizationResult{}, err
+	}
 	s.cfg.Diagnostics.Log(ctx, port.LevelDebug, "MCP authorization: resolving to terminal status",
 		"session", string(sess.ID), "authorization", pending.Authorization.ID, "status", string(status), "state", string(sess.State))
 	if allowContinuation && s.admitStoredMode(sess) != nil {
@@ -1151,6 +1166,9 @@ func (s *Service) interruptRestoredAuthorizationLocked(ctx context.Context, sess
 		return nil, false, ErrNotFound
 	}
 	sess = loaded
+	if err := sess.ValidateAuthorizationState(); err != nil {
+		return nil, false, err
+	}
 	if sess.State != session.StateAuthorizing {
 		return sess, false, nil
 	}
@@ -1262,6 +1280,9 @@ func (s *Service) settleAuthorizationLocked(ctx context.Context, id session.Sess
 		}
 		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "load external authorization for settlement failed",
 			"session", string(id), "err", err.Error())
+		return err
+	}
+	if err := sess.ValidateAuthorizationState(); err != nil {
 		return err
 	}
 	if sess.State != session.StateAuthorizing {

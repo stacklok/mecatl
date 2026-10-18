@@ -159,7 +159,7 @@ func TestMCPTypedResultsPositiveE2E(t *testing.T) {
 		}
 	}
 	for _, id := range []string{"p1", "p2", "p3", "p4", "p5"} {
-		if _, ok := results[id]; !ok {
+		if _, ok := results[string(boundCallID(t, sess, session.ProviderCallID(id)))]; !ok {
 			t.Fatalf("missing EvToolResult for %s; got %v", id, keysOfResults(results))
 		}
 	}
@@ -180,7 +180,7 @@ func TestMCPTypedResultsPositiveE2E(t *testing.T) {
 	// URI+Name handle (Title/Description are NOT in .Content — the F-INJ axis, here
 	// benign) and nothing is base64-dumped.
 	t.Run("resource_link_typed_block", func(t *testing.T) {
-		r := results["p1"]
+		r := results[string(boundCallID(t, sess, "p1"))]
 		if r.IsError {
 			t.Fatalf("unexpected error result: %q", r.Content)
 		}
@@ -196,7 +196,7 @@ func TestMCPTypedResultsPositiveE2E(t *testing.T) {
 	// image: typed BlockImage carries the raw bytes; the model string is the
 	// bounded "[image content: image/png]" summary — the PNG is NEVER base64-dumped.
 	t.Run("image_typed_block_no_base64_dump", func(t *testing.T) {
-		r := results["p2"]
+		r := results[string(boundCallID(t, sess, "p2"))]
 		if r.IsError {
 			t.Fatalf("unexpected error result: %q", r.Content)
 		}
@@ -214,7 +214,7 @@ func TestMCPTypedResultsPositiveE2E(t *testing.T) {
 
 	// embedded text: verbatim in both the model string and a typed block.
 	t.Run("embedded_text_typed_block", func(t *testing.T) {
-		r := results["p3"]
+		r := results[string(boundCallID(t, sess, "p3"))]
 		if r.IsError {
 			t.Fatalf("unexpected error result: %q", r.Content)
 		}
@@ -230,7 +230,7 @@ func TestMCPTypedResultsPositiveE2E(t *testing.T) {
 	// structured (under-cap): NOT fail-closed — delivered as a typed block whose
 	// Text is the valid JSON payload, plus the SHOULD text mirror in .Content.
 	t.Run("structured_undercap_delivered", func(t *testing.T) {
-		r := results["p4"]
+		r := results[string(boundCallID(t, sess, "p4"))]
 		if r.IsError {
 			t.Fatalf("under-cap structured result must NOT fail-closed; got error: %q", r.Content)
 		}
@@ -253,7 +253,7 @@ func TestMCPTypedResultsPositiveE2E(t *testing.T) {
 	// reached the remote tool intact and came back — proving argsFor passes
 	// structured arguments (not just flat strings) faithfully.
 	t.Run("structured_input_roundtrips", func(t *testing.T) {
-		r := results["p5"]
+		r := results[string(boundCallID(t, sess, "p5"))]
 		if r.IsError {
 			t.Fatalf("echo_args must not error: %q", r.Content)
 		}

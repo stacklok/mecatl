@@ -13,6 +13,7 @@ import type {
   SessionUsageResponse,
   StartRunRequest,
 } from "@mecatl-studio/contracts";
+import { historicalRecordSchema } from "@mecatl-studio/contracts";
 import {
   type Client,
   type Event,
@@ -548,6 +549,10 @@ export function createMecatlChatService(
                 },
               ];
             }),
+            ...(message.historical
+              ? { historical: historicalRecordSchema.parse(jsonSafe(message.historical)) }
+              : {}),
+            ...(message.providerPhase ? { providerPhase: message.providerPhase } : {}),
             role: message.role,
             text: note?.text ?? message.text,
             toolCalls: message.toolCalls.map((call) => ({

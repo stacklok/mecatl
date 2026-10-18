@@ -117,7 +117,7 @@ func TestServerProviderRecovery_Scenario1_TentativeAssemblyAndDiscardedUsageExac
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			usage := session.Usage{InputTokens: 7, OutputTokens: 3}
-			tentative := []port.Chunk{{Kind: port.ChunkText, Text: " \n"}, {Kind: port.ChunkReasoning, Text: "hidden"}, {Kind: port.ChunkToolCall, ToolCall: &session.ToolCall{ID: "hidden", Name: "Write"}}, {Kind: port.ChunkUsage, Usage: &usage}}
+			tentative := []port.Chunk{{Kind: port.ChunkText, Text: " \n"}, {Kind: port.ChunkReasoning, Text: "hidden"}, {Kind: port.ChunkToolCall, ToolCall: &port.LLMToolCall{ID: "hidden", Name: "Write"}}, {Kind: port.ChunkUsage, Usage: &usage}}
 			second := step{chunks: textTurn("ok")}
 			if outcome == "exhaustion" {
 				second = step{chunks: tentative, midErr: apiErr(503)}

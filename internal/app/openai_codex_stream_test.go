@@ -73,7 +73,7 @@ func newCodexFixtureProvider(t *testing.T, transport http.RoundTripper, maxAttem
 	return entry.provider
 }
 
-func collectCodexChunks(ctx context.Context, t *testing.T, provider port.LLMProvider, messages []session.Message) ([]port.Chunk, error) {
+func collectCodexChunks(ctx context.Context, t *testing.T, provider port.LLMProvider, messages []port.LLMMessage) ([]port.Chunk, error) {
 	t.Helper()
 	seq, err := provider.Stream(ctx, port.LLMRequest{Model: "gpt-5", Messages: messages})
 	if err != nil {
@@ -106,25 +106,25 @@ func TestOpenAICodexResponsesFixtures(t *testing.T) {
 	tests := []struct {
 		name     string
 		body     []byte
-		messages []session.Message
+		messages []port.LLMMessage
 		assert   func(*testing.T, []port.Chunk, *codexCapturedRequest)
 	}{
 		{
 			name:     "text phase usage and done",
 			body:     readCodexFixture(t, "..", "..", "provider", "openai", "testdata", "subscription_compatibility_text.sse"),
-			messages: []session.Message{session.NewUserMessage("hello")},
+			messages: []port.LLMMessage{{Role: session.RoleUser, Text: "hello"}},
 			assert: func(t *testing.T, chunks []port.Chunk, _ *codexCapturedRequest) {
-				assertCodexChunkKinds(t, chunks, port.ChunkText, port.ChunkPhase, port.ChunkUsage, port.ChunkDone)
+				assertCodexChunkKinds(t, chunks, port.ChunkText, port.ChunkPhase, port.ChunkUsage, port.ChunkReplay, port.ChunkDone)
 				if chunks[0].Text != "TEXT_SYNTHETIC" || chunks[1].Text != "final_answer" {
 					t.Fatalf("text/phase = %q/%q, want TEXT_SYNTHETIC/final_answer", chunks[0].Text, chunks[1].Text)
 				}
-				assertCodexUsageAndDone(t, chunks[2], chunks[3], 1, 1, 0, 0)
+				assertCodexUsageAndDone(t, chunks[2], chunks[4], 1, 1, 0, 0)
 			},
 		},
 		{
 			name:     "tool call",
 			body:     readCodexFixture(t, "..", "..", "provider", "openai", "testdata", "subscription_compatibility_tool_call.sse"),
-			messages: []session.Message{session.NewUserMessage("call the tool")},
+			messages: []port.LLMMessage{{Role: session.RoleUser, Text: "call the tool"}},
 			assert: func(t *testing.T, chunks []port.Chunk, _ *codexCapturedRequest) {
 				assertCodexChunkKinds(t, chunks, port.ChunkUsage, port.ChunkToolCall, port.ChunkDone)
 				if got := chunks[1].ToolCall; got == nil || got.ID != "call_synthetic" || got.ItemID != "function_synthetic" || got.Name != "compatibility_probe" || string(got.Args) != `{"value":"OK"}` {
@@ -136,50 +136,49 @@ func TestOpenAICodexResponsesFixtures(t *testing.T) {
 		{
 			name: "tool result continuation",
 			body: readCodexFixture(t, "..", "..", "provider", "openai", "testdata", "subscription_compatibility_tool_continuation.sse"),
-			messages: []session.Message{
-				session.NewUserMessage("call the tool"),
-				func() session.Message {
-					call := session.NewToolCall("call_synthetic", "compatibility_probe", json.RawMessage(`{"value":"OK"}`))
-					call.ItemID = "function_synthetic"
-					return session.NewAssistantMessage("", "", []session.ToolCall{call})
-				}(),
-				session.NewToolMessage(session.NewToolResult("call_synthetic", `{"value":"OK"}`)),
+			messages: []port.LLMMessage{
+				{Role: session.RoleUser, Text: "call the tool"},
+				{Role: session.RoleAssistant, ToolCalls: []port.LLMToolCall{{ID: "call_synthetic", ItemID: "function_synthetic", Name: "compatibility_probe", Args: json.RawMessage(`{"value":"OK"}`)}}},
+				{Role: session.RoleTool, ToolResult: &port.LLMToolResult{CallID: "call_synthetic", Content: `{"value":"OK"}`}},
 			},
 			assert: func(t *testing.T, chunks []port.Chunk, request *codexCapturedRequest) {
-				assertCodexChunkKinds(t, chunks, port.ChunkText, port.ChunkPhase, port.ChunkUsage, port.ChunkDone)
+				assertCodexChunkKinds(t, chunks, port.ChunkText, port.ChunkPhase, port.ChunkUsage, port.ChunkReplay, port.ChunkDone)
 				if chunks[0].Text != "TOOL_RESULT_SYNTHETIC" || chunks[1].Text != "final_answer" {
 					t.Fatalf("continuation text/phase = %q/%q, want TOOL_RESULT_SYNTHETIC/final_answer", chunks[0].Text, chunks[1].Text)
 				}
-				assertCodexUsageAndDone(t, chunks[2], chunks[3], 1, 1, 0, 0)
+				assertCodexUsageAndDone(t, chunks[2], chunks[4], 1, 1, 0, 0)
 				assertCodexToolReplay(t, request.body)
 			},
 		},
 		{
 			name:     "opaque encrypted reasoning",
 			body:     readCodexFixture(t, "..", "..", "provider", "openai", "testdata", "reasoning_turn.sse"),
-			messages: []session.Message{session.NewUserMessage("reason")},
+			messages: []port.LLMMessage{{Role: session.RoleUser, Text: "reason"}},
 			assert: func(t *testing.T, chunks []port.Chunk, _ *codexCapturedRequest) {
-				assertCodexChunkKinds(t, chunks, port.ChunkReasoning, port.ChunkReasoning, port.ChunkText, port.ChunkReasoningItem, port.ChunkUsage, port.ChunkDone)
+				assertCodexChunkKinds(t, chunks, port.ChunkReasoning, port.ChunkReasoning, port.ChunkText, port.ChunkUsage, port.ChunkReplay, port.ChunkDone)
 				wantText := []string{"Let me think", " about this.", "Answer."}
 				for i, want := range wantText {
 					if chunks[i].Text != want {
 						t.Fatalf("reasoning fixture chunk %d text = %q, want %q", i, chunks[i].Text, want)
 					}
 				}
+				replay := chunks[4].Replay
+				if replay == nil || replay.Format != "openai.responses" || replay.Version != 1 {
+					t.Fatal("missing versioned Responses replay")
+				}
 				var envelope struct {
-					Version int `json:"v"`
-					Items   []struct {
+					Items []struct {
 						ID   string `json:"i"`
 						Blob string `json:"e"`
-					} `json:"items"`
+					} `json:"reasoning"`
 				}
-				if err := json.Unmarshal([]byte(chunks[3].Text), &envelope); err != nil {
+				if err := json.Unmarshal(replay.Data, &envelope); err != nil {
 					t.Fatalf("decode reasoning envelope: %v", err)
 				}
-				if envelope.Version != 1 || len(envelope.Items) != 1 || envelope.Items[0].ID != "rs_1" || envelope.Items[0].Blob != "ENCRYPTED_BLOB" {
-					t.Fatalf("reasoning envelope = %+v, want v1 rs_1/ENCRYPTED_BLOB", envelope)
+				if len(envelope.Items) != 1 || envelope.Items[0].ID != "rs_1" || envelope.Items[0].Blob != "ENCRYPTED_BLOB" {
+					t.Fatalf("reasoning envelope = %+v, want rs_1/ENCRYPTED_BLOB", envelope)
 				}
-				assertCodexUsageAndDone(t, chunks[4], chunks[5], 100, 50, 80, 40)
+				assertCodexUsageAndDone(t, chunks[3], chunks[5], 100, 50, 80, 40)
 			},
 		},
 	}
@@ -212,7 +211,7 @@ func TestOpenAICodexResponsesFixtures(t *testing.T) {
 			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: bodyReader, Request: req}, nil
 		})
 		provider := newCodexFixtureProvider(t, transport, 1)
-		seq, err := provider.Stream(ctx, port.LLMRequest{Model: "gpt-5", Messages: []session.Message{session.NewUserMessage("cancel")}})
+		seq, err := provider.Stream(ctx, port.LLMRequest{Model: "gpt-5", Messages: []port.LLMMessage{{Role: session.RoleUser, Text: "cancel"}}})
 		if err != nil {
 			t.Fatalf("Stream: %v", err)
 		}
@@ -413,7 +412,7 @@ func TestOpenAICodexRetryCounts(t *testing.T) {
 				status: tc.status,
 				body:   []byte(`{"error":{"message":"synthetic failure","type":"synthetic","code":"synthetic"}}`),
 			}
-			_, err := collectCodexChunks(context.Background(), t, newCodexFixtureProvider(t, transport, tc.maxAttempts), []session.Message{session.NewUserMessage("retry")})
+			_, err := collectCodexChunks(context.Background(), t, newCodexFixtureProvider(t, transport, tc.maxAttempts), []port.LLMMessage{{Role: session.RoleUser, Text: "retry"}})
 			if err == nil {
 				t.Fatal("stream unexpectedly succeeded")
 			}

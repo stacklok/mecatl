@@ -173,6 +173,8 @@ const knowledge: KnowledgeService = {
       ...proposal(id, "v1", "staged"),
       evidence: [
         {
+          attachmentUnavailable: true,
+          protocol: "v1",
           availability: "available",
           available: true,
           digest: "sha256:abc",
@@ -181,7 +183,6 @@ const knowledge: KnowledgeService = {
           ordinal: 3,
           preview: "Please keep answers short.",
           sessionId: "session-1",
-          toolCallId: "",
         },
       ],
     };

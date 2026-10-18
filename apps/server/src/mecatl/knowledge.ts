@@ -467,6 +467,7 @@ function learningProposalFromSdk(proposal: LearningProposal | undefined): Learni
  */
 function learningEvidenceFromSdk(evidence: LearningEvidenceRef): LearningEvidenceResponse {
   return {
+    attachmentUnavailable: evidence.attachmentUnavailable,
     availability: evidence.availability,
     available: evidence.available,
     digest: evidence.digest,
@@ -474,8 +475,9 @@ function learningEvidenceFromSdk(evidence: LearningEvidenceRef): LearningEvidenc
     locator: evidence.locator,
     ordinal: evidence.ordinal,
     preview: evidence.preview,
+    protocol: evidence.protocol,
     sessionId: evidence.sessionId,
-    toolCallId: evidence.toolCallId,
+    ...(evidence.toolCallId ? { toolCallId: evidence.toolCallId } : {}),
   };
 }
 
