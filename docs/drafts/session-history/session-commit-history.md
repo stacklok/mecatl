@@ -114,7 +114,7 @@ The separate `EventLog` holds activity and pre-compaction archives, but recordin
 
 Client streams expose selected live events, including updates that may never reach the log.
 There is no shared position that joins a snapshot to a subscription.
-See the [persistence architecture](../architecture/observability.md).
+See the [persistence architecture](../../architecture/observability.md).
 
 As a result, a newly connected client can recover the model-visible transcript but lose meaningful activity, such as delegation views.
 Starting a live feed before reading the snapshot requires buffering and reconciliation.
@@ -176,8 +176,8 @@ The table distinguishes those existing boundaries from changed responsibilities 
 | Clients | `cmd/mecatui/client` receives server-produced transcripts and events; the TUI maintains local display state and submits controls. | Retain local rendering and control submission; consume complete authorized history and committed updates joined by position, reconcile provisional output, and reflect shared pending controls. |
 
 Today, persistence has several callers rather than one application coordinator.
-The engine's [`save`](../../engine/agent/loop.go) writes snapshots best-effort, and [`SubagentTool.persistChild`](../../engine/agent/subagent.go) has its own child-save path.
-Server [`RunEventRecorder`](../../internal/adapter/server/event_recorder.go) records activity separately.
+The engine's [`save`](../../../engine/agent/loop.go) writes snapshots best-effort, and [`SubagentTool.persistChild`](../../../engine/agent/subagent.go) has its own child-save path.
+Server [`RunEventRecorder`](../../../internal/adapter/server/event_recorder.go) records activity separately.
 All of these writers must enter the required commit boundary in the redesign; the table does not move every write into the host or make the engine depend on concrete storage adapters.
 
 Here, *host* or *server* means the application layer that wires the core engine to adapters and exposes the API.
@@ -200,7 +200,7 @@ The host/coordinator arranges checkpoint construction and any persistence throug
 A checkpoint is optional acceleration, not another authority.
 
 A `ClientProjection` is the server-produced, authorized display view of committed session facts.
-Server-produced display views already exist: [`SessionTranscript`](../../cmd/mecatui/client/transcript.go) represents the authoritative snapshot-derived conversation alongside separately classified optional activity replay.
+Server-produced display views already exist: [`SessionTranscript`](../../../cmd/mecatui/client/transcript.go) represents the authoritative snapshot-derived conversation alongside separately classified optional activity replay.
 The redesign changes the completeness and subscription contract by deriving retained display items from committed history and joining loads to updates with a committed position; it does not newly move rendering or all projection work to the server.
 The host applies access and disclosure rules, using approved extension projections for tool-specific detail, and sends projected snapshots, history items, and committed updates to clients.
 The name describes a read contract; it does not require a separately persisted projection object.
@@ -623,7 +623,7 @@ Older history remains retained.
 Run boundaries alone do not bound size.
 A single run can contain many turns and large tool results, while compaction can happen within a run and metadata changes can happen outside one.
 Run snapshots therefore need bounded detail pages or references, and session-level facts still need their own home.
-The existing [API surface](../architecture/api-surface.md) distinguishes run-scoped controls from session-scoped reads; neither run identity nor session identity is a substitute for the session-wide commit position.
+The existing [API surface](../../architecture/api-surface.md) distinguishes run-scoped controls from session-scoped reads; neither run identity nor session identity is a substitute for the session-wide commit position.
 
 A compaction generation could later label which model-continuation checkpoint is current and which retained display history predates it.
 A future client could defer loading older generations, reporting what remains available without claiming its partial view is the entire transcript.
@@ -846,7 +846,7 @@ Every action is authorized independently, and the owner orders conflicting actio
 Reading history grants neither control rights nor execution activation.
 
 Disconnecting a client does not transfer control or cancel the run.
-This differs from the current prompt-started `Converse` stream described in the [API surface](../architecture/api-surface.md), whose relay cancels on disconnect.
+This differs from the current prompt-started `Converse` stream described in the [API surface](../../architecture/api-surface.md), whose relay cancels on disconnect.
 
 Every producer shares run admission, including user prompts and future extension-triggered work.
 Only one eligible `Run` starts.
@@ -1638,6 +1638,6 @@ These names describe domain concepts, not finalized API types or wire encodings.
 - [Session-history domain model](session-commit-history.modelith.md) and [YAML source](session-commit-history.modelith.yaml)
 - [Catalog and command-protocol domain model](session-command-protocol.modelith.md) and [YAML source](session-command-protocol.modelith.yaml)
 - [Prior-art survey and design recommendations](session-commit-history-prior-art.md)
-- [Implemented persistence and reliability](../architecture/observability.md)
-- [Implemented API surface](../architecture/api-surface.md)
-- [Draft index](README.md)
+- [Implemented persistence and reliability](../../architecture/observability.md)
+- [Implemented API surface](../../architecture/api-surface.md)
+- [Draft index](../README.md)

@@ -571,4 +571,4 @@ The survey does not claim exhaustive coverage of every extension API or deployme
 - [Design proposal](session-commit-history.md).
 - [Session-history domain model](session-commit-history.modelith.md).
 - [Catalog and command-protocol domain model](session-command-protocol.modelith.md).
-- [Draft index](README.md).
+- [Draft index](../README.md).

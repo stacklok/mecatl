@@ -313,4 +313,4 @@ The next design step is to map the contract's terminology and lifecycle rules to
 - [Committed-session-history proposal](session-commit-history.md)
 - [Contract vocabulary, lifecycle, and acceptance boundaries](session-commit-history-contracts.md)
 - [Harness storage, client reload, and extension prior art](session-commit-history-prior-art.md)
-- [Draft index](README.md)
+- [Draft index](../README.md)
