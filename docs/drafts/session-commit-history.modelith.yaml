@@ -292,6 +292,8 @@ entities:
         statement: Every `ClientProjection` page, subscription, and detail read rechecks authority; private continuation material is not exposed by possession of a cursor.
       - id: reflect-pending-controls
         statement: Authorized `ClientProjection` reloads and committed updates reflect shared pending steer content, revision, and disposition, plus pending asks and their resolutions.
+      - id: file-change-evidence
+        statement: Historical file-change `ClientProjection` distinguishes tool-reported effects from requested or unconfirmed mutations; a target path alone proves no successful change, and retained facts are not an exhaustive external-change inventory or current workspace diff.
 
   Extension:
     definition: >
@@ -319,13 +321,17 @@ entities:
 
   Operation:
     definition: >
-      Session-scoped work with durable identity distinct from its originating
+      Session-scoped work with durable identity distinct from any originating
       tool call and `Run`. An `Operation` records lifecycle and canonical
       results through its `Extension`; its identity can span run boundaries.
+      An entry point without a parent tool call still has a session owner.
     relationships:
       - entity: Run
-        cardinality: "n:1"
-        note: The originating run is correlation, not the operation's lifetime boundary.
+        cardinality: "n:0..1"
+        note: An originating run, when present, is correlation rather than the operation's lifetime boundary.
+      - entity: ExecutionEnvironment
+        cardinality: "n:n"
+        note: An operation can reference several branch environments, each owning its workspace and artifact lifetime.
     invariants:
       - id: operation-history-authority
         statement: Continuation-relevant `Operation` state and canonical admitted results are reconstructible from committed extension records, not an independent mutable plugin snapshot.
@@ -333,13 +339,28 @@ entities:
         statement: Coalescing an `Extension` steer or losing a run-admission race cannot erase a committed `Operation` outcome.
       - id: active-operation-claim
         statement: Active `Operation` execution and writes remain under the root `OwnershipClaim`, even without a foreground `Run`.
+      - id: operation-session-owner
+        statement: Every `Operation`, including team coordination admitted through a direct API, has one owning `Session`; absent parent call correlation does not imply session-independent work or justify inventing a parent tool call.
+
+  ExecutionEnvironment:
+    definition: >
+      The execution context whose lifecycle governs workspace and artifact
+      availability, preservation, and cleanup. Retained operation references
+      describe its known dispositions without owning or extending that lifetime.
+    invariants:
+      - id: environment-owns-artifact-lifetime
+        statement: An `ExecutionEnvironment` owns workspace and artifact lifetime under its lifecycle contract; retained `Operation` selection facts and references cannot guarantee continued resource availability.
+      - id: artifact-loss-not-history-loss
+        statement: Unavailable `ExecutionEnvironment` artifacts are reported explicitly without erasing retained history, claiming external cleanup succeeded, or authorizing recreation of work.
 
   SteerSlot:
     definition: >
       One source's replaceable pending input within a `Session`. There is one
-      shared user slot and one slot per registered `Extension`; slots use the
-      same update, retraction, and consumption semantics without an instruction
-      queue or extension-defined subkeys.
+      shared user slot and one slot per registered `Extension`; slots share one
+      submission/update contract with an optional exact run constraint rather
+      than separate source-specific steer types. Retraction changes pending
+      input; consumption is the engine's delivery transition.
+      Slots are not an instruction queue and have no extension-defined subkeys.
     relationships:
       - entity: SteerRevision
         cardinality: "1:n"
@@ -354,6 +375,8 @@ entities:
         statement: Source-specific update or retraction of one `SteerSlot` cannot change another; all authorized interactive clients share the same user slot, while session cancellation closes pending slots across all sources.
       - id: revision-checked-edit
         statement: Replacement and retraction name the expected `SteerSlot` revision, and stale edits conflict rather than overwrite a concurrent update.
+      - id: source-independent-run-constraint
+        statement: A `Client` or `Extension` uses the same `SteerSlot` operation with an optional exact `Run` constraint; source identity selects the slot, not targeting or promotion semantics, and constrained input is admitted and consumed only for its named run.
       - id: all-pending-together
         statement: At the next eligible model-input boundary, every pending `SteerSlot` is delivered together in deterministic order, without interrupting an in-flight request or bypassing an approval.
 
@@ -374,8 +397,10 @@ entities:
         statement: The server distinguishes user from named extension, tool, or harness `SteerRevision` provenance; non-user content remains appropriately fenced data, not system or permission authority.
       - id: normal-unqualified-promotion
         statement: Accepted unconsumed unqualified `SteerRevision` input on normal completion continues execution or admits one follow-up `Run`; explicit run-qualified input never silently promotes.
+      - id: missed-constrained-steer
+        statement: If its exact target `Run` completes normally before consuming an accepted `SteerRevision`, the owner commits not-delivered because the target ended, retains accepted text as history, and clears runnable pending input without promotion.
       - id: failed-interrupted-steer-recovery
-        statement: Failure, shutdown, or ownership loss preserves unconsumed `SteerRevision` input for an explicit follow-up-or-retract decision, while user cancellation cancels undelivered input from all sources instead of promoting it.
+        statement: Failure, shutdown, or ownership loss preserves unconsumed `SteerRevision` input for an explicit follow-up-or-retract decision without silently relaxing its run constraint, while user cancellation cancels undelivered input from all sources instead of promoting it.
 
   PermissionAsk:
     definition: >
@@ -437,6 +462,23 @@ scenarios:
       - If idle, the unqualified steer requests eligible `Run` admission; a concurrent prompt may win without erasing the committed outcomes or pending hint.
       - An active `Run` receives the hint at its next safe boundary and calls an authorized tool for full results; unrelated extension and user slots remain unchanged.
     invariants_touched: [small-retrievable-hints, outcome-not-notification, operation-history-authority, extension-slot-authority, source-slot-isolation, one-active-run]
+
+  - name: One steer operation preserves source and run constraints
+    actors: [Client, Extension]
+    steps:
+      - A `Client` submits one `SteerRevision` with an exact `Run` constraint through the same slot operation used for unconstrained session input.
+      - The named run completes normally before consuming it, so the owner commits a not-delivered disposition, retains the accepted text in `CommittedHistory`, and clears runnable pending input.
+      - An `Extension` independently chooses whether its own revision is run-constrained; its source identity grants no different targeting semantics.
+      - An unconstrained revision can admit one normal follow-up, while failure recovery of constrained input requires an explicit decision rather than silently retargeting it.
+    invariants_touched: [source-independent-run-constraint, missed-constrained-steer, normal-unqualified-promotion, failed-interrupted-steer-recovery, exact-run-no-promotion, source-slot-isolation]
+
+  - name: Session-owned work outlives an artifact reference
+    steps:
+      - Team coordination admitted through a direct API has a `Session` owner without inventing a parent tool call; tool-admitted `Operation` work keeps its actual call and run correlation.
+      - A parallel `Operation` records a winner and an artifact reference whose availability belongs to its `ExecutionEnvironment` lifecycle.
+      - The environment retires the workspace, and later authorized inspection reports unavailable while retaining the historical selection and result.
+      - A `ClientProjection` separately distinguishes a tool-reported file effect from a merely requested or uncertain edit without presenting either as the current workspace diff.
+    invariants_touched: [operation-session-owner, operation-history-authority, environment-owns-artifact-lifetime, artifact-loss-not-history-loss, file-change-evidence]
 
   - name: Conflicting approval answers
     actors: [Client]

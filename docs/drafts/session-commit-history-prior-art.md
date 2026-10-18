@@ -7,12 +7,14 @@
 The most useful references address different parts of the [committed-session-history proposal](session-commit-history.md).
 OpenCode supplies a transactional projection and replay example; OpenHands V1 supplies a concrete reconnect protocol; Codex separates canonical history from query indexes behind a storage interface; Pi gives extensions explicit durable records within session history.
 ActiveGraph and LangGraph illuminate provenance and execution replay, respectively, without serving as interchangeable harness designs.
+The [durable-execution and recovery survey](session-commit-history-durable-execution-prior-art.md) complements this artifact with recovery literature, workflow runtimes, and durable-agent integrations; it distinguishes retry policy from crash re-execution and tests whether an established execution model fits.
 
 ## Evidence and scope
 
 This survey distinguishes **documented** behavior, **source-traced** behavior, and **tested** behavior.
 Source-traced means the cited implementation was inspected, including relevant upstream tests where noted; it does not mean those tests were executed or failure behavior was reproduced.
-No runtime experiments have been performed for this survey.
+No runtime experiments were performed by this survey's source-review pass.
+The [supplemental cache investigation](#provider-cache-stability-across-session-reload) separately attributes operator-supplied live results and states their evidence limits.
 An unverified capability is an open question, not evidence that a project lacks it.
 
 The source traces use these revisions:
@@ -429,6 +431,42 @@ Cutoff advancement rejects every timestamp tie, survives ownership changes, and 
 Client timestamps require explicit skew validation, and callers must preserve the entire identity and command on retry.
 Changing the timestamp or token is a new submission, not recovery of an ambiguous old outcome.
 This protocol cooperates with clients; request identity is neither authorization nor protection against an authorized caller deliberately issuing another command.
+
+## Provider-cache stability across session reload
+
+**Supplemental evidence, October 18, 2026:** An operator-supplied investigation reports 42 successful synthetic requests through configured Sprout proxy routes using Claude Sonnet 5 (`claude-sonnet-5`) and GPT-5.6 Terra (`gpt-5.6-terra`).
+This session inspected the local report at `/home/jbeda/src/mecatl-2/.scratch/cache-live/report.txt`; it did not rerun the live probes or the other checkout's tests.
+The local path is evidence provenance, not a portable reproduction artifact or a dependency of the contract.
+
+Warm/repeat controls and cache breakpoints after the changed argument location established reuse beyond that location, rather than merely a hit on the unchanged earlier prefix.
+The reported results cover the complete proxy/model paths:
+
+| Request change | Both tested routes |
+| --- | --- |
+| Outer HTTP JSON formatting | Full cache hit. |
+| Whitespace between tool-argument JSON tokens | Full cache hit. |
+| JSON HTML escaping introduced by snapshot serialization | Full cache hit after reload. |
+| Tool-argument object-key reordering | Cache miss on the changed request; hit on identical repetition. |
+| Argument value change | Cache miss on the changed request; hit on identical repetition. |
+
+Returning to the original request also hit.
+Neither raw transport byte equality nor arbitrary decoded-JSON semantic equality describes the observed cache behavior.
+The investigation did not isolate normalization in Sprout from normalization upstream and does not establish identical behavior on other models, routes, TTLs, or cache configurations.
+
+The actual reload experiment followed canonical session state through `ProjectMessages` and a real provider adapter, then through `sessnap.Marshal`/`Unmarshal`, `ProjectMessages`, and a newly constructed adapter.
+Captured before/after request bodies were then sent through the proxy with matched controls.
+Anthropic bodies remained byte-identical in the tested cases.
+OpenAI argument strings changed through JSON compaction/HTML escaping but retained key order and still hit after reload.
+The suspected whitespace/escaping cache regression was not reproduced; no production serialization fix was made.
+
+The investigation reports adding `TestProjectMessagesSnapshotRoundTripPreservesPairingAndArgumentOrder` in `engine/port/messages_test.go` in the other checkout.
+It exercises actual snapshot restoration with stored/replay-free history, nested keys, string whitespace, and escaping, comparing projections without weakening the assertion to decoded-map equality.
+Focused normal/race and engine-standalone tests reportedly passed there; this is not a claim that the test is present or was run on this design branch.
+Live probe scripts spend provider credits, use credentials only in-process without logging them, and are not offline CI tests.
+
+**Design implication:** Preserve nested argument key order, string content, historical IDs, provider pairing/item bindings, and ordered replay across storage and reconstruction.
+The [cache-stability contract](session-commit-history.md#cache-stable-reconstruction-across-reload) distinguishes stable input reconstruction from provider cache availability.
+System-prompt rebuilding, tool definitions/order, model settings, cache-key configuration, breakpoint placement, TTL, and routing need separate checks; the live investigation did not establish their reload stability.
 
 ## Suggestions for the current proposal
 

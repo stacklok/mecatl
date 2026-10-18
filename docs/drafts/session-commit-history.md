@@ -18,6 +18,9 @@ Live observations remain responsive and explicitly provisional; they do not beco
 
 Read the architectural narrative and delivery boundary for the destination and scope.
 The [detailed contracts](#detailed-contracts) retain the lookup material for persistence, clients, execution safety, and cutover.
+The [contract-design companion](session-commit-history-contracts.md) starts with the execution/recovery model and a model-tool-model walkthrough, then defines lifecycle gates, failure evidence, observable reload requirements, and acceptance cases before concrete interfaces.
+Its [tool-call lifecycle](session-commit-history-contracts.md#tool-call-lifecycle-and-commit-gates) names candidate phases, distinguishes provisional progress from required commit gates, and describes coordinated cancellation transitions.
+The [durable-execution and recovery survey](session-commit-history-durable-execution-prior-art.md) grounds those boundaries in established recovery models and compares workflow runtimes and durable-agent integrations without selecting a dependency.
 
 ## Architectural narrative
 
@@ -159,6 +162,9 @@ Internal transition identities remain required independently of whether a caller
 A common async observation contract does not create a universal operations collection or a separately orchestrated job for every mutation.
 
 The design retains the codebase's broad separation between domain behavior, persistence adapters, host composition, and client presentation.
+Established durable-execution systems are references for semantics and failure handling, not required runtime dependencies.
+The design uses narrowly scoped coordination within Mecatl rather than adopting or recreating a general-purpose workflow platform.
+Dependencies must justify their deployment and maintenance cost, preserve straightforward open-source distribution and licensing, and fit the harness contracts without forcing different execution semantics.
 The table distinguishes those existing boundaries from changed responsibilities and new mechanisms; it does not describe the proposed commit system as already implemented.
 
 | Component | Existing code and responsibility | Responsibility in this design |
@@ -275,6 +281,23 @@ High fidelity is the default and the first cutover does not trim history.
 Future filtering or downsampling needs explicit retention semantics identifying what can no longer be reconstructed and how affected reads, forks, and cursors behave.
 This is not permission to admit unbounded payloads: current large-payload bounds and the [payload admission contract](#payload-admission-and-external-artifacts) still apply.
 
+#### Cache-stable reconstruction across reload
+
+For unchanged history, effective configuration, and a compatible provider codec, session reload must preserve the cache-relevant representation of historical input.
+Semantic equality of decoded JSON objects is insufficient: object-key order in serialized tool arguments can affect provider-prefix reuse.
+This is a reconstruction requirement, not a promise that a provider cache entry exists or will hit.
+
+- Preserve tool-argument object-key order, including nested objects. Do not decode retained arguments into unordered maps and re-encode them merely to normalize JSON.
+- Preserve whitespace inside string values exactly; it is content, not JSON formatting.
+- Preserve historical message and call/result order, text, provider pairing tokens, provider item IDs, and opaque replay payloads under the relevant provider contract.
+- Restore retained canonical IDs and provider bindings rather than minting replacements on load. Where replay-free history requires fallback pairing tokens, derive them deterministically from retained identities and occurrence context.
+- Check rebuilt system prompts, tool definitions and their order, model settings, cache-key configuration, and cache-breakpoint placement separately. Reload must not introduce incidental changes; deliberate configuration, context, or provider changes are not equivalent-input reloads.
+
+Logical-input fidelity does not impose raw HTTP byte equality, and successful JSON parsing does not establish cache equivalence.
+Compaction of whitespace between JSON tokens and equivalent HTML escaping were tolerated on the two [tested proxy/model routes](session-commit-history-prior-art.md#provider-cache-stability-across-session-reload); that evidence does not authorize arbitrary normalization or establish the same tolerance for other routes.
+Cache TTL, eviction, provider routing, model selection, and legitimate prefix changes can still prevent a hit even when reconstruction is stable.
+Caching requirements never justify retaining credentials or unreleased result bytes, or bypassing authorization or disclosure checks.
+
 #### Versioned provider replay and richer response items
 
 The storage contract must retain a private, versioned `ProviderReplay` representation alongside canonical conversation facts without making it another authority.
@@ -337,7 +360,9 @@ Tests compare full replay with checkpoint-plus-suffix reconstruction and reject 
 `Subagent`, `Parallel`, and `Team` specialize a generic long-running tool invocation with optional child-session links.
 Their rosters, joins, rounds, tasks, findings, and progress need not become permanent core storage concepts.
 
-An `Operation` has a durable session-scoped identity linked to its initiating tool call and `Run`.
+An `Operation` has a durable session-scoped identity, with initiating tool-call and run correlation where its entry point supplies them.
+Every Team has a session owner, including the direct Team API; the contract must not invent an absent parent tool call to establish that ownership.
+Session-independent teams are a separate feature.
 The call may commit an immediate started-result; later operation progress and completion retain their own identities.
 This lets the envelope represent work that spans runs without implying that today's run-scoped background children do so.
 
@@ -844,9 +869,11 @@ Updating one slot never changes another.
 An `Extension` uses the same authorized session-action semantics as a client but controls only its own slot.
 Submitting a steer grants no implicit permission to answer asks or bypass execution gates.
 
-An unqualified steer requests eligible execution: pending input for an active or awaiting `Run`, or a new run when idle.
-An exact-run steer targets only the named run and never promotes to another.
-This preserves the existing distinction between `Service.Steer` promotion and strict `SteerRun` controls.
+One steer operation updates a source slot with an optional exact-run constraint; it does not introduce separate steer entities or source-specific APIs.
+Without that constraint, input requests eligible execution: pending input for an active or awaiting `Run`, or a new run when idle under common admission rules.
+With the constraint, admission and consumption target only the named run and never silently promote to another.
+Source and targeting are independent: clients and extensions use the same operation, and either supplies a run constraint only when its input depends on that run.
+The existing `Service.Steer` and `SteerRun` distinction motivates these behaviors, but their current method split is not prescribed for the new API.
 Admission and the terminal race must not lose accepted input; recovery and cancellation dispositions are described below.
 
 ##### Delivery and provenance
@@ -923,7 +950,12 @@ A new client process must recover durable, client-visible session facts:
 - Conversation and completed human-visible reasoning summaries, separate from provider-private replay material.
 - Tool calls and committed outcomes.
 - Delegation inventories and bounded activity.
-- Changed-file facts, confirmed metadata, and reported usage.
+- Tool-reported changed-file evidence, confirmed metadata, and reported usage.
+
+Changed-file history distinguishes reported effects from requested-but-unconfirmed edits.
+An Edit/Write target alone is intent, not a successful change; Shell/external modifications are not exhaustively inferred, and current workspace/Git diff is a separate read.
+Execution environments own artifact/workspace lifetime under their own lifecycle contracts.
+Retained selection facts or artifact handles do not extend that lifetime; expired or unavailable resources remain explicit without erasing history or authorizing recreation.
 
 Large details use bounded reads under the same privacy and authorization rules.
 [Issue #2114](https://github.com/stacklok/mecatl/issues/2114) inventories each item and names exceptions; a best-effort feed must not decide what survives.
@@ -1171,7 +1203,7 @@ An active `Run` may consume an accepted steer if it continues.
 If it ends first, the server commits an explicit disposition:
 
 - For an unqualified steer on normal completion, promote pending input to one follow-up run rather than asking for resubmission.
-- An exact-run steer never authorizes promotion; its unconsumed terminal disposition remains to be decided.
+- For input with an exact-run constraint whose target completes normally before consumption, commit **not delivered: target ended**, retain the accepted text as history, and clear runnable pending input without promotion.
 - An interrupted first-phase run leaves input pending for explicit recovery.
 - A future same-run crash-parked run is not terminal and cannot authorize promotion.
 
@@ -1523,13 +1555,22 @@ Measure append count, committed bytes, and acceptance latency through ordinary c
 Storage failure stops claims of durability, while already-started external work can remain uncertain.
 Checkpoints, storage growth, and access control must support long compacted sessions without unbounded active receipt indexes, exposing private records, or skipping required history.
 
+**Possible future storage direction:** Start with a conventional backend and bounded batching, then measure write load and acceptance latency before adding another storage layer.
+A future adapter could acknowledge history appends after replication to memory on several machines, for example three replicas, and flush them to disk asynchronously.
+This would require an explicit durability contract covering correlated loss of volatile copies, ordered acceptance, ownership fencing, and safe recovery/failover; replication alone does not supply those guarantees.
+It could reduce synchronous disk-flush cost without removing execution commit gates, but is not part of the current implementation direction.
+It would not permit replication or persistence of unreleased result payloads.
+
 This borrows ActiveGraph's [commit-before-projection rule](https://docs.activegraph.ai/concepts/events/index.md) and [stale-writer rejection](https://docs.activegraph.ai/guides/operating-in-production/index.md), not its graph ontology or runtime.
 The companion models express the domain rules; package allocation, wire types, and the remaining choices below still require interface review.
 
-## Questions to resolve before interface review
+## Remaining contract and interface decisions
 
-1. The remaining shared-control details: disposition of accepted exact-run input that misses its target, deterministic slot ordering, provenance encoding, revision-conflict responses, and notification byte caps.
-   Session-current cancellation, exact-target opt-in controls, all-source cancellation propagation, normal unqualified steer promotion, and failure/crash explicit recovery are settled above.
+The [contract-design companion](session-commit-history-contracts.md) turns agreed behavior into a fidelity matrix, worked lifecycle sequences, failure evidence, and acceptance cases before fixing interfaces.
+The questions below include contract mechanics and measured operational choices, not a requirement for another broad architecture round.
+
+1. The remaining shared-control details: deterministic slot ordering, provenance encoding, revision-conflict responses, and notification byte caps.
+   One steer operation with an optional exact-run constraint, undelivered disposition on normal target completion, session-current cancellation, all-source cancellation propagation, normal unconstrained promotion, and failure/crash explicit recovery are settled above.
    Later independent cross-run work still needs its own lifecycle contract.
 2. The exact #2114 display-fidelity matrix, #2079 reasoning representation, and per-field/aggregate budgets for retained client and delegation detail.
    Which client-safe items must commit before progress and which rare cross-history gaps are explicitly surfaced?
@@ -1593,6 +1634,7 @@ These names describe domain concepts, not finalized API types or wire encodings.
 
 ## Related information
 
+- [Contract-design sequences and acceptance matrix](session-commit-history-contracts.md)
 - [Session-history domain model](session-commit-history.modelith.md) and [YAML source](session-commit-history.modelith.yaml)
 - [Catalog and command-protocol domain model](session-command-protocol.modelith.md) and [YAML source](session-command-protocol.modelith.yaml)
 - [Prior-art survey and design recommendations](session-commit-history-prior-art.md)
