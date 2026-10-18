@@ -1,79 +1,41 @@
-# Proposal: committed session history and responsive client reload
+# Session-history detailed architecture reference
 
-**Status:** Discussion draft, not an approved contract or description of shipped behavior.
-**Scope:** Session history and execution, shared-client controls, catalog lifecycle, and the API command protocol.
+**Status:** Discussion draft, not an approved interface or description of shipped behavior.
+**Scope:** Specialized architecture contracts, exhaustive lifecycle detail, delivery boundaries, and costs.
 
-Two companion domain models separate the responsibilities:
+Start with the [overview](overview.md), then choose a [bounded review packet](README.md).
+This reference is for lookup, not a required end-to-end reading path.
+Its detailed sections own specialized requirements; packets own the review explanations and relocated worked sequences, and link here rather than creating a parallel specification.
+The [contract reference](session-commit-history-contracts.md) retains exhaustive lifecycle phases, gates, failure/reload matrices, and acceptance cases.
 
-- [Session history and shared interaction](session-commit-history.modelith.md), with its [YAML source](session-commit-history.modelith.yaml), covers execution, reconstruction, and disclosure.
-- [Session catalogs and command protocol](session-command-protocol.modelith.md), with its [YAML source](session-command-protocol.modelith.yaml), imports the session concepts and covers catalog ownership, bounded retry protection, and common work observation.
-
-Both models are validated and rendered with Modelith.
-This proposal owns rationale, delivery scope, and unresolved decisions; the models contain domain semantics rather than delivery status.
-Neither the proposal nor the models authorize production-code implementation.
-
-Today, a mutable `SessionStore` snapshot supplies continuation, an optional separate `EventLog` records activity, and live streams have no common durable cursor.
-The proposal replaces that split with one committed authority from which private continuation and authorized client views derive.
-Live observations remain responsive and explicitly provisional; they do not become durable facts merely because a client saw them.
-
-Read the architectural narrative and delivery boundary for the destination and scope.
-The [detailed contracts](#detailed-contracts) retain the lookup material for persistence, clients, execution safety, and cutover.
-The [contract-design companion](session-commit-history-contracts.md) starts with the execution/recovery model and a model-tool-model walkthrough, then defines lifecycle gates, failure evidence, observable reload requirements, and acceptance cases before concrete interfaces.
-Its [tool-call lifecycle](session-commit-history-contracts.md#tool-call-lifecycle-and-commit-gates) names candidate phases, distinguishes provisional progress from required commit gates, and describes coordinated cancellation transitions.
-The [durable-execution and recovery survey](session-commit-history-durable-execution-prior-art.md) grounds those boundaries in established recovery models and compares workflow runtimes and durable-agent integrations without selecting a dependency.
+The unchanged [history/execution model](session-commit-history.modelith.md) ([YAML](session-commit-history.modelith.yaml)) and [catalog/command model](session-command-protocol.modelith.md) ([YAML](session-command-protocol.modelith.yaml)) express domain semantics, not delivery status or final API types.
+Neither these drafts nor the models authorize production implementation.
+The [durable-execution survey](session-commit-history-durable-execution-prior-art.md) supplies foundations and runtime comparisons, not a selected dependency.
 
 ## Architectural narrative
 
+The narrative now lives in the [overview](overview.md).
+These small sections preserve existing incoming anchors.
+
 ### One durable authority
 
-A client should be able to leave a session, return later, and see a trustworthy view of what the server knows.
-The model should resume from the same committed session state.
-One ordered `CommittedHistory` retains session facts independently of any one client connection or server process.
-Private continuation and public display derive from the same authority, so they cannot disagree merely because an optional activity log missed a write.
-A reconnecting client can recover the complete authorized history, including records from before compaction, and then follow committed changes without a silent gap.
-Compaction changes model context, not retained history.
-The private history preserves complete logical model inputs and canonical outcomes, subject to admission, disclosure, secret scrubbing, and explicit withholding or destruction rules.
-Versioned provider-owned replay preserves richer ordered response items without assuming a one-to-one mapping to canonical assistant messages.
-Checkpoints and display projections accelerate or authorize reads; neither is another authority.
+See [the proposed change](overview.md#the-problem-and-the-change) and [storage/observation](storage-and-observation.md).
 
 ### Execution follows committed decisions
 
-Required commits establish permission to advance execution, rather than logging what already happened best-effort.
-Accepted input and effective logical model requests commit before dependent model execution; effective authorized tool intent commits before dispatch, and canonical results commit before dependent continuation.
-These qualities depend on storage availability and its declared durability guarantee.
-Execution stops at required commit gates when the server cannot establish committed state; provisional streaming and already-started external effects are not promises of durable progress.
-During a live run, the client should still see tokens and tool activity promptly rather than waiting for every storage operation.
-These goals need two honest kinds of information: *provisional* observations, which make a live session responsive, and *committed* facts, which survive reconnect and server restart.
-A provisional observation must not silently turn into a claim about durable state.
-Recovery reports what the evidence establishes: work that never started, a committed outcome, or an unknown outcome.
-It does not automatically repeat an uncertain ordinary tool action to make the history look complete.
-Hook execution is at least once, with stable logical invocation identities and reuse of committed outputs; this does not authorize retrying an uncertain ordinary tool.
+See [execution and recovery](execution-and-recovery.md).
 
 ### Clients share server-owned work
 
-Multiple clients can operate on the same server-owned run.
-Submitted steers and approval decisions are reflected across clients, allowing a user to continue an interaction elsewhere without giving one connection exclusive control.
-Disconnecting a client neither cancels the run nor transfers server ownership.
-Committed snapshots, history pages, and subscriptions share a durable position, while provisional output has only correlation and reconciliation semantics.
-Observation remains read-only, and every control action requires its own authorization.
-Unsent drafts and presentation state remain client-local.
+See [commands and lifecycle](commands-and-lifecycle.md).
 
 ### Registered extensions share the contracts
 
-Registered extensions can add tool-specific state and display detail while sharing the same ordering, authorization, and recovery constraints.
-The first cutover exercises that path with `Subagent`, `Parallel`, and `Team`, not an unused plugin abstraction.
-Storage preserves versioned facts, registered reducers reconstruct private state from retained history, and approved projections expose only authorized display detail.
-Missing continuation-critical handlers fail closed; optional display detail can be explicitly unavailable.
-Long-running operation identity leaves room for later cross-run work without admitting that execution in the first cutover.
+See [extension reconstruction evidence](session-commit-history-contracts.md#built-in-extension-reconstruction-boundary) and [core records/extensions](#core-records-and-extensions).
 
 ### Ownership eventually moves with the tree
 
-The destination includes graceful transfer of an active delegation tree between compatible replicas, not just persistence that allows a new process to reload.
-A single fenced root ownership claim governs the parent and active descendants.
-A future draining owner parks every member and extension, commits a complete handoff marker, unloads the tree, and releases ownership.
-A compatible successor verifies the named committed positions before resuming any member.
-Portable history is necessary but insufficient: coordinated parking, ownership transfer, and durable successor discovery are separate lifecycle obligations.
-Autonomous takeover and background work spanning runs extend that destination beyond client-triggered reload.
+See the [later handoff contract](#compatible-replica-active-tree-handoff-later-phase).
 
 ## Delivery boundary
 
@@ -123,26 +85,9 @@ Starting it afterward can miss changes in between.
 
 ### Proposed model
 
-A `Session` is the durable conversation and unit of interaction.
-A `Run` drives a sequence of model turns within that session; a turn is one model request and its response.
-When a response requests tool calls, the engine executes the calls and supplies their results to a subsequent model turn.
-In the normal course, the model ends the run by returning a terminal response rather than requesting more tools.
-Cancellation, failure, limits, and interruption can also end a run.
-Admission and server ownership describe how a run starts and who drives it, not what constitutes a run.
-*Admission* is the authorized decision to accept input or work against current committed state, not merely receipt of a network request.
-A session outlives both individual runs and client connections.
-A `Client` is an API consumer authorized to observe or act on that session.
-A *delegation tree* consists of a root session and its active delegated descendants.
-
-Each `Session` has one authoritative, ordered `CommittedHistory` of state changes.
-A committed record is a private, versioned fact accepted by the storage adapter under its declared durability guarantee.
-Records include the information needed to rebuild continuation state, including facts that must never be sent to clients.
-Conversation, usage, and other durable session facts derive from these records.
-A *reducer* applies records in order to reconstruct state; registered extension reducers supply the rules for tool-specific state.
-
-A *provisional observation* is live information that has not established a committed fact, such as streamed model text or a tool-progress preview.
-Clients may display it promptly, but must reconcile or discard it when committed state becomes available.
-The [vocabulary reference](#vocabulary-reference) collects these terms and the distinctions used throughout the proposal.
+Foundational terms now live in the [shared vocabulary](vocabulary.md).
+A reducer applies retained records in order; a delegation tree is a root session with active delegated descendants.
+The detailed responsibility and derived-view contracts follow.
 
 #### Design layers and responsibilities
 
@@ -1566,71 +1511,22 @@ The companion models express the domain rules; package allocation, wire types, a
 
 ## Remaining contract and interface decisions
 
-The [contract-design companion](session-commit-history-contracts.md) turns agreed behavior into a fidelity matrix, worked lifecycle sequences, failure evidence, and acceptance cases before fixing interfaces.
-The questions below include contract mechanics and measured operational choices, not a requirement for another broad architecture round.
+Open decisions now live with their bounded review topics, not in a second architecture backlog:
 
-1. The remaining shared-control details: deterministic slot ordering, provenance encoding, revision-conflict responses, and notification byte caps.
-   One steer operation with an optional exact-run constraint, undelivered disposition on normal target completion, session-current cancellation, all-source cancellation propagation, normal unconstrained promotion, and failure/crash explicit recovery are settled above.
-   Later independent cross-run work still needs its own lifecycle contract.
-2. The exact #2114 display-fidelity matrix, #2079 reasoning representation, and per-field/aggregate budgets for retained client and delegation detail.
-   Which client-safe items must commit before progress and which rare cross-history gaps are explicitly surfaced?
-3. Exact namespace/marker and legacy collision detection, backend-neutral claim and append interfaces, local torn-record diagnosis, and client API versions, history pages, authorization-view invalidation, and live cursors.
-4. Concrete command/receipt/work-reference types, fingerprint/canonical comparison rules, timestamp precision and clock-skew allowance, conflict/expired responses, and atomic catalog creation, deletion, and conditional fork decisions.
-   Optional opaque tokens, paired timestamps, one-hour maximum age, independent 256-receipt scopes, and durable creation-time cutoffs are settled; verify ties, delayed arrivals, clock rollback, recovery, and retention-change behavior.
-   Catalog identity, user-to-catalog mapping, authorization, and same-provider lifecycle primitives still need interface contracts, not a multi-storage abstraction.
-5. Storage layout and scale: checkpoint/replay bounds, large content reads, catalog pagination and reconciliation, and provider-specific durability declarations.
-   A run boundary alone does not bound history size.
-   Batching topology is settled; actual delay/size settings, queue/backpressure behavior, and measured physical-write costs remain open.
-6. Extension registration and version compatibility, mandatory versus display-only state, and the exact generic operation/child-link contract.
-   Cancellation propagates to extensions and closes all pending source slots; bounded shutdown and result-settlement deadlines remain to be specified.
-   Later active-tree handoff, autonomous run resume, historical forks, same-session rewind, and networked extensions must not be mistaken for first-cutover behavior.
-7. Concrete logical-request and transformation record APIs, stable hook invocation ID/occurrence formats, definition/version/configuration capture, and detailed tool-hook failure-stage encoding.
-   Complete effective logical inputs, reconstructible at-least-once hook retries, memory-only unreleased payloads, lost-hold settlement, and bounded normal result processing after cancellation are settled.
-   Preserve existing guardrail decision/failure semantics; the cancellation/result-lifecycle changes introduce no new approval authority or hook-criticality policy.
-   Exact historical raw transport requests remain outside scope.
-   Provider replay codecs, ordered item envelopes, occurrence-specific call bindings, and compatibility/fork/compaction/provider-switch contracts remain interface work; richer representation does not authorize incremental acceptance or new retry behavior.
-8. Compatibility/dependency summary versions and artifact references, bounded causal reference scopes/remapping, and concrete conformance/fault-injection contracts across adapters.
+- [Execution representation, assembly, batching, and conformance](execution-and-recovery.md#open-decisions-and-detail).
+- [Result lifetimes, settlement bounds, and predecessor/successor atomic bundling](cancellation-and-results.md#open-decisions-and-detail).
+- [Authorization binding, hook identity, and safe evidence](authorization-and-hooks.md#open-decisions-and-detail).
+- [Logical input and provider codecs/bindings](model-continuation.md#open-decisions-and-detail).
+- [Shared controls, receipts, catalog/fork decisions, and work observation](commands-and-lifecycle.md#open-decisions-and-detail).
+- [Storage/read interfaces, projection budgets, extension compatibility, and cutover encodings](storage-and-observation.md#open-decisions-and-detail).
 
-Development staging is settled: short infrastructure PRs, adjacent packages where useful, and later explicit runtime selection/integration without storage compatibility or migration.
-Closing the remaining decisions and reviewing interfaces precede an implementation breakdown.
+Development staging remains specified in the [delivery boundary](#delivery-boundary).
+Closing open decisions and reviewing interfaces precede an implementation breakdown.
 
 ## Vocabulary reference
 
-This reference keeps the prose consistent with the companion domain model and distinguishes terms that can otherwise look interchangeable.
-Definitions also appear where the detailed design first needs them.
-These names describe domain concepts, not finalized API types or wire encodings.
-
-| Term | Meaning and distinction |
-| --- | --- |
-| `Session` / `Run` | A durable conversation / a sequence of model turns continued through requested tool calls and their results, normally ending with the model's terminal response. Neither identity is a session-wide history position. |
-| `CommittedHistory` / committed record | The private ordered authority / one accepted transition within it. Public event items are projections, not private records. |
-| Record identity | Identifies a particular recorded transition for correlation or commit-retry resolution; distinct from its order in history. |
-| Committed position / head | A boundary in ordered session history / the latest such boundary. C denotes the position selected for a load. |
-| Subscription cursor / page token | Where to resume committed changes / where to continue pages of one pinned authorized view. Neither grants access. |
-| History incarnation / writer epoch | Distinguishes histories / distinguishes ownership acquisitions within the ownership domain. Neither substitutes for record order or an unexpired claim. |
-| `OwnershipClaim` / owning replica | The backend-authoritative owner, epoch, and expiry / the host process holding that right. A client attachment is not ownership. |
-| Admission | An authorized, ordered decision to accept input or work against current committed state; network receipt alone is insufficient. |
-| Provisional observation | Live information without a confirmed committed fact. Correlation permits later reconciliation, not durable replay. |
-| `ContinuationCheckpoint` | Private derived continuation materialized through P. The host may persist it through the adapter; loading at C replays (P, C]. |
-| `ClientProjection` / client display state | Server-produced authorized facts / the client's local rendering of those facts. A projection need not be a separately persisted object. |
-| Snapshot | A state view at a position. Specify projected API snapshot, private checkpoint, or storage-layout snapshot rather than implying one common object. |
-| `Extension` / `Operation` | A trusted versioned record/state interpreter / session-scoped work with an identity distinct from its initiating tool call and run. |
-| Continuation-critical | A type whose interpretation is required to reconstruct state or continue safely, unlike optional display-only detail. |
-| Request / intent / result | The model's requested tool call / the effective authorized call after trusted rewrites committed as its dispatch gate / its established or explicit recovery outcome. An intent is not proof of completion; no intent excludes tool dispatch, not pre-intent hook effects. |
-| `LogicalModelInput` | The complete reconstructible effective model request, including prompt, messages/media, declarations, selection/parameters, and relevant private continuation, not raw transport bytes. |
-| `ProviderReplay` | Versioned, provider-owned private ordered output items and occurrence-specific bindings retained with canonical history; payload meaning belongs to the LLM boundary, not executable tool objects or display projections. |
-| `ToolCallID` / provider keys | Globally unique engine call identity / provider pairing or item identifiers scoped by their producing occurrence; provider keys may repeat and never substitute for engine identity. |
-| `HookInvocation` / hook invocation identity | One anchored logical hook execution / its stable harness-supplied identity, reused on retries with the same definition/input/parameters and distinct from ordinary tool execution or a physical attempt. |
-| `SteerSlot` / `SteerRevision` | Replaceable pending input for one source / an identified committed version of its content and disposition. Revision-specific consumption cannot erase a newer replacement. |
-| Safe model-input boundary | Before a next model request, when the engine can incorporate pending input without interrupting a request or bypassing approvals and outcome commits. |
-| `PermissionAsk` | A durable exact-run decision request. Its projected display is distinct from private authorization and continuation material. |
-| `SessionCatalog` / `StorageProvider` | An identified authorization/listing/lifecycle scope / the single configured storage authority backing it. Catalog lifecycle decisions are strict; listing and possible search indexes are derived. |
-| `APIRequest` / `RequestReceipt` | An externally submitted mutation / its compact committed retry decision when an optional token/timestamp pair is supplied. Neither is the work's lifecycle or a copy of its payload. |
-| `RetryScope` / rejection cutoff | A session's or catalog's bounded receipt domain / its durable nondecreasing creation-time boundary. Expired identities are rejected, not reexecuted. |
-| `WorkReference` | A common authorized observation handle projecting an existing run, extension operation, or creation lifecycle, not a universal jobs collection. |
-| `ToolResultSettlement` / `HeldResult` | Normal processing of produced output / memory-only bytes awaiting exact release. Execution, processing, and disclosure dispositions remain distinct. |
-| Tombstone | A minimal retained identity marker enforcing irreversible logical deletion and preventing ID reuse, independent of receipt expiry. |
-| Fork / lineage | A new independent session initialized from an eligible source prefix / the source identity and pinned position it records. Neither transfers source execution or child access. |
+See the small [shared vocabulary](vocabulary.md) for foundational distinctions.
+Specialized terms are introduced at their detailed sections and in the [history](session-commit-history.modelith.md) and [command](session-command-protocol.modelith.md) entity references rather than repeated in another glossary.
 
 ## Related information
 

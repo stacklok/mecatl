@@ -1,133 +1,48 @@
-# Session-history contracts: execution, recovery, and observable behavior
+# Session-history contract reference
 
-**Status:** Contract-design working draft, not finalized interfaces or shipped behavior.
-**Scope:** Execution and recovery model, lifecycle and persistence boundaries, observable reload behavior, and the contracts to be derived from them.
+**Status:** Design draft, not finalized interfaces or shipped behavior.
+**Scope:** Exhaustive lifecycle phases, commit gates, cancellation transitions, reload/failure matrices, extension evidence, and acceptance cases.
 
-Read the [execution and recovery model](#execution-and-recovery-model) first, then use the lifecycle tables, worked sequences, and acceptance cases as contract references.
-The [proposal](session-commit-history.md) owns architecture and delivery scope; the [history/execution model](session-commit-history.modelith.md) and [catalog/command model](session-command-protocol.modelith.md) own domain definitions.
-This document specifies required behavior before finalizing interfaces or implementation tasks.
-Items labeled **candidate** and the [open contract mechanics](#open-contract-mechanics) remain subject to review; this reorganization does not settle their representations.
+Start with the [overview](overview.md), then choose one [review packet](README.md).
+This is lookup material, not the recommended end-to-end reading path.
+The [architecture reference](session-commit-history.md) owns specialized contracts; the unchanged [history/execution model](session-commit-history.modelith.md) and [catalog/command model](session-command-protocol.modelith.md) express domain semantics.
+Packets summarize those requirements and own the relocated explanations/worked sequences, not a second competing specification.
+Candidate names do not prescribe interfaces or one record per phase.
+
+| Review packet | Detailed reference here |
+| --- | --- |
+| [Execution and recovery](execution-and-recovery.md) | [Phases and gates](#tool-call-lifecycle-and-commit-gates), [failure evidence](#failure-evidence-and-dependent-work-gates) |
+| [Cancellation and results](cancellation-and-results.md) | [Cancellation transitions](#coordinated-state-machine-with-cancellation) |
+| [Authorization and hooks](authorization-and-hooks.md) | [Ask, hook-anchor, and intent gates](#required-commit-gates-by-phase) |
+| [Model continuation](model-continuation.md) | [Input gates](#required-commit-gates-by-phase), [cache conformance](#acceptance-scenarios) |
+| [Commands and lifecycle](commands-and-lifecycle.md) | [Owning scopes](#owning-scopes), [control/retry acceptance](#acceptance-scenarios) |
+| [Storage and observation](storage-and-observation.md) | [Reload matrix](#observable-reload-matrix), [extension evidence](#built-in-extension-reconstruction-boundary) |
 
 ## Execution and recovery model
 
-Mecatl coordinates model requests, tool calls, hooks, and client controls using an authoritative committed history.
-The established pattern is **durable orchestration**: retain the decisions and outcomes needed to reconstruct coordination state after failure, and require durable prerequisites before allowing dependent execution.
-State transitions define what is allowed; committed history records what was accepted.
-This design applies that pattern through narrow coordination inside Mecatl, without requiring or recreating a general-purpose workflow platform.
-
-The central distinction is between **reconstructing what the harness knows** and **performing work in the outside world**.
-After a restart, replay applies retained facts to rebuild state and client views.
-It does not call the model, run a tool, or invoke a hook merely to reproduce an earlier result.
-Checkpoints accelerate that reconstruction; they are derived from committed history rather than a second authority.
-An interrupted run requires explicit recovery, not automatic continuation inferred from the reconstructed state.
-
-A requested action and an established outcome are different facts.
-For example, retaining an LLM's request for a tool does not authorize execution, retaining authorized intent does not prove execution, and retaining a result does not prove the next model request consumed it.
-The contract must preserve those distinctions when a process fails between steps.
+The execution/recovery explanation and ordinary model-tool-model path now live in [execution and recovery](execution-and-recovery.md).
+This section retains incoming anchors; the tables below remain the exhaustive contract reference.
 
 ### One model turn and its tool call
 
-The ordinary path below shows one tool call between two model requests.
-`[C ...]` means the system must establish that the listed facts are committed before crossing the following execution boundary.
-It does not mean every bracket needs a separate storage write.
-
-In the diagram, **COMMIT GATE** nodes are amber hexagons with thick borders; work steps are gray rounded boxes.
-The shape and explicit label distinguish gates even without color.
-
-```mermaid
-flowchart TD
-    assembleInput("Assemble complete effective model input")
-    inputCommit{{"COMMIT GATE<br/>Logical model input"}}
-    invokeModel("Check admission and invoke model")
-    responseCommit{{"COMMIT GATE<br/>Completed response, requested call,<br/>and required private replay/bindings"}}
-    prepareAction("Validate and authorize action;<br/>run pre-tool hooks and review rewrites")
-    intentCommit{{"COMMIT GATE<br/>Exact effective authorized intent<br/>and required preparation evidence"}}
-    invokeTool("Check admission and invoke tool")
-    processOutput("Hold raw output privately;<br/>run post-tool hooks and disclosure checks")
-    resultCommit{{"COMMIT GATE<br/>Permitted canonical result<br/>and safe evidence"}}
-    assembleNext("Assemble complete next model input,<br/>including accepted result")
-    nextInputCommit{{"COMMIT GATE<br/>Next logical model input"}}
-    invokeNext("Check admission and invoke model")
-
-    assembleInput --> inputCommit --> invokeModel --> responseCommit
-    responseCommit --> prepareAction --> intentCommit --> invokeTool
-    invokeTool --> processOutput --> resultCommit --> assembleNext
-    assembleNext --> nextInputCommit --> invokeNext
-
-    classDef gate fill:#fff3bf,stroke:#8a4b00,stroke-width:3px,color:#201000,font-weight:bold
-    classDef work fill:#f1f5f9,stroke:#64748b,color:#0f172a
-    class inputCommit,responseCommit,intentCommit,resultCommit,nextInputCommit gate
-    class assembleInput,invokeModel,prepareAction,invokeTool,processOutput,assembleNext,invokeNext work
-```
-
-An **execution admission** is the final eligibility decision immediately before invocation; it still checks cancellation, ownership, and the relevant authorization contract after intent is committed.
-Invoking the tool is also called **dispatch**; neither admission nor invocation means the tool completed.
-Hooks and approvals can add commit gates when exact inputs or decisions must first be retained; the [required commit gates by phase](#required-commit-gates-by-phase) table specifies them.
-The [named phases](#named-phases) distinguish the work between these committed facts.
-
-The ordering follows established log-based recovery principles: durably admit nondeterministic observations before dependent execution uses them, and retain the causal state needed before allowing external effects.
-It does not make a tool invocation atomic with the history append.
-The [recovery literature and runtime comparisons](session-commit-history-durable-execution-prior-art.md) explain the foundations and their limits.
+See the [ordinary path](execution-and-recovery.md#ordinary-path-one-model-turn-and-its-tool-call).
 
 ### Recovery preserves knowledge, not the outside world
 
-Consider a tool that changes a file and then returns a result.
-If the process dies after the file changes but before outcome evidence commits, recovery cannot infer from the missing result that the change failed.
-It also cannot assume the current file proves exactly what that invocation did.
-The safe recovery state can be an unknown outcome, not another automatic attempt.
-
-| Accepted evidence at recovery | What can be established |
-| --- | --- |
-| Requested call without effective intent | The tool was not invoked by the protocol. Pre-intent hooks can still have effects, and a reconstructible execution ask can remain pending. |
-| Effective intent without an established outcome | The tool might not have started, might still be running, or might have completed. Never automatically rerun an uncertain ordinary tool. |
-| Safe evidence of returned output, but lost unreleased bytes | Preserve the established execution evidence and settle output unavailable; do not recreate the bytes through tool re-execution. |
-| Canonical result | Reconstruct that result and its permitted projections without invoking the tool again. |
-
-Retried storage appends, reconstructed state, and repeated external execution are separate operations.
-A lost storage response can leave an append's acceptance uncertain; resolve its identity before relying on it or retrying it.
-Neither storage uncertainty nor missing effect evidence permits dependent execution to cross its required gate.
-The [failure-evidence reference](#failure-evidence-and-dependent-work-gates) covers the individual boundaries, including interrupted model requests and hooks.
+See [failure evidence explained](execution-and-recovery.md#failure-knowledge-is-not-the-outside-world) and the [exhaustive matrix](#failure-evidence-and-dependent-work-gates).
 
 #### Persistence failure without generic rollback
 
-A storage outage reduces execution availability: dependent work pauses until its prerequisite acceptance is established.
-Already-started work can finish into bounded in-memory buffers, and permitted provisional progress can remain visible, but neither is a confirmed durable outcome.
-Ownership loss stops the current engine; a successor reconstructs accepted history rather than repairing it from the former owner's memory.
-
-The contract requires no generic tentative aggregate, rollback layer, or universal prepare/accept/apply mechanism.
-For an individual transition, committing before changing authoritative in-memory state can be sufficient.
-Speculative execution with reversible effects would need an enhanced tool contract, including concurrent external-edit hazards; it is outside this design even for file edits.
+See [settled execution rules](execution-and-recovery.md#settled-rules-and-why).
 
 ### Cancellation coordinates separate lifecycles
 
-A run's execution lifecycle and a call's result disposition can finish at different times.
-Cancellation closes new execution admission and promptly signals admitted work, descendants, and extensions.
-A confirmed acknowledgement waits for the cancellation decision to commit; it means accepted/signaled, not proven external cessation or rollback.
-Already-produced output still follows the normal bounded processing and disclosure pipeline.
-
-For example, cancellation can leave a terminal run with one result awaiting release approval.
-The exact ask and safe evidence are durable; the unreleased payload remains only in memory.
-Approving release later commits that call's canonical result without reopening the run or requesting another model response in it.
-Process loss instead closes the ask unavailable; successor-run admission invalidates remaining holds and late decisions.
-This is a valid combination of lifecycle states, not a reason to rewrite a previously final result.
-
-The [cancellation transition table](#coordinated-state-machine-with-cancellation) defines guards and winning races.
-Concrete record types and whether predecessor result closure shares the successor-admission commit remain open representation questions.
+See [cancellation and results](cancellation-and-results.md), including the still-open predecessor-closure/admission bundling question.
 
 ## Contract vocabulary and ownership
 
-A **storage adapter** is the implementation that reads and appends the authoritative session history in a particular storage backend.
-A **commit** occurs when that storage adapter accepts an append to the authoritative history, enforcing the expected history head, current ownership, and its declared durability contract.
-An event emission, aggregate mutation, buffered write, or successful inner transaction does not establish commitment.
-
-A **commit gate**, also called a **durability barrier** here, is an execution boundary where a specified step must wait until the system establishes that its prerequisite history facts are committed.
-It constrains dependent execution, rather than naming the storage checks required to accept the append.
-Steps include tool and model invocation, applicable hooks, and publication of confirmed results or actionable asks; ordinary internal computation does not automatically require a commit.
-If acceptance fails or remains uncertain, the dependent step cannot proceed; independent work remains subject to its own gates.
-
-Facts can be coalesced into one commit as long as establishing them does not require crossing a commit gate between them.
-For example, independent ready tool results can share a commit, while a tool's intent and result cannot: the tool must execute between those boundaries.
-Completed pre-tool hook evidence can share the intent commit when all required facts are ready.
+Use the [shared vocabulary](vocabulary.md) for commit, phase, gate, admission, and provisional observation.
+Specialized ownership scopes and responsibility boundaries remain below.
 
 ### Owning scopes
 
@@ -279,154 +194,44 @@ The product requirements are tracked in [#2114](https://github.com/stacklok/meca
 
 ## Worked execution sequences
 
+The sequences now belong to the bounded packets; these headings preserve incoming links.
+
 ### Ordinary tool call and trusted rewrite
 
-```text
-[C completed model response + requested calls + required replay/bindings]
-ordinary authorization
-[C permitted hook definition/input anchor, if not already reconstructible]
-PreToolUse
-if arguments changed: authorize effective arguments
-existing contextual action review and final authorization checks
-[C effective authorized intent + completed pre-dispatch evidence]
-dispatch under existing read-parallel/mutate-serial discipline
-raw return held privately in memory
-PostToolUse -> UTF-8 repair -> inbound review
-[C permitted canonical result + safe processing/execution evidence]
-eligible next model request, with its own committed logical input
-```
-
-The durable requested call and effective authorized intent are different facts.
-A side-effecting hook can affect an integration before tool intent commits; absent intent proves no tool dispatch, not absence of hook effects.
-Hook inputs must remain exactly reconstructible for a same-identity retry where retention permits.
-Sensitive unreleased result inputs remain memory-only; losing them ends that retry opportunity.
-The sequence preserves existing permission rechecks after rewrites and existing hook/guardrail failure semantics.
-It does not make a post-hook block retroactively undo a tool or introduce a new result-release approver.
+See [authorization sequence](authorization-and-hooks.md#ordinary-tool-call-and-trusted-rewrite).
 
 ### Exact effective arguments across policy, execution, and history
 
-Preserve the shared argument semantics merged on `origin/main` in [PR #2265, commit `dbec473f9`](https://github.com/stacklok/mecatl/pull/2265).
-`governance.CheckToolArgs` rejects ambiguous duplicate or case-variant keys before policy, hooks, approval, or execution can interpret them differently.
-`governance.DecodeToolArgs` and `session.ParseArgs` share decoding rules, and built-in permission patterns select the operands the tool actually uses rather than an ignored decoy field.
-This applies to fresh calls, hook-rewritten calls, and calls resumed after approval.
-See the [dispatch gate](https://github.com/stacklok/mecatl/blob/dbec473f9fde003fe0bd8fbb4e04fa7b222fa1e2/engine/agent/dispatch.go#L1206-L1224) and [shared execution decode](https://github.com/stacklok/mecatl/blob/dbec473f9fde003fe0bd8fbb4e04fa7b222fa1e2/engine/session/toolcall.go#L51-L71).
-
-That change guarantees consistent interpretation; it does not introduce a single persisted decoded-argument snapshot or eliminate authorization checks on approval resumption.
-The history contract records the exact effective authorized call at its intent boundary and execution consumes those same values.
-Later inspection/reconstruction uses the retained effective values and permitted provenance, not today's hook configuration, schema interpretation, defaults, or resource extraction to invent what ran.
-A trusted rewrite produces a different effective action that must be validated and authorized before its own dispatch intent is accepted.
-C9 checks whether that exact action remains eligible; it never silently substitutes newly evaluated arguments after the intent commit.
+See [exact argument semantics](authorization-and-hooks.md#settled-rules-and-why).
 
 ### Cache-stable history reconstruction
 
-The [cache-stability contract](session-commit-history.md#cache-stable-reconstruction-across-reload) applies when history and effective request configuration are unchanged across reload.
-Accepted logical input and provider replay must retain the representation needed to reconstruct the same cache-relevant historical prefix, including nested tool-argument key order, string content, canonical identities, and occurrence-specific provider bindings.
-Do not substitute decoded-map equality for an order-sensitive comparison.
-The guarantee is stable reconstruction, not a cache hit or raw HTTP byte equality across all providers.
-
-Compare the real storage round trip and actual provider request construction with fresh adapters, not just a serializer or hand-built request object.
-Check full replay and checkpoint-plus-suffix reconstruction; retain stored-replay and replay-free cases, including deterministic fallback pairing tokens.
-A provider-specific comparison can allow established formatting/escaping equivalences while still detecting key reordering, string-content changes, and identity/order drift.
-The [supplemental live evidence](session-commit-history-prior-art.md#provider-cache-stability-across-session-reload) establishes tolerances only for the tested Sprout/model paths; it does not verify prompt/tool/configuration stability or justify paid live requests in offline tests.
+See [cache-stable reconstruction check](model-continuation.md#cache-stable-reconstruction-check).
 
 ### Dispatch eligibility and authorization freshness
 
-Intent acceptance is necessary for tool dispatch, but is not an irrevocable instruction to execute.
-At dispatch admission, check local cancellation, current ownership, exact effective intent binding, and known authority invalidation.
-Preserve the existing contextual-review linearization rule: principal changes observed before admission can invalidate a decision, while changes after admission do not retroactively revoke an already in-flight action.
-See [`admitPrincipalRevisions`](https://github.com/stacklok/mecatl/blob/e17d8394d/engine/agent/actionreview.go#L179-L195).
-Cancellation still signals admitted work under the tool's interruption contract; it does not roll back effects.
-Bind the authorization decision to the effective action and arguments, environment, and relevant principal/policy context.
-Respect each authorization integration's existing freshness, expiry, version, and invalidation contract rather than assuming evaluation is cheap.
-Do not dispatch using an expired or known-invalid decision; refresh remotely when that provider contract requires it.
-
-This does not mandate a second full provider evaluation after every commit, a universal authorization cache, or instantaneous discovery of external policy changes.
-An integration using a remote policy service can have substantial latency, cost, and failure dependencies; repeated evaluation alone cannot eliminate the interval between authorization and execution.
-Rechecking authorization must not repeat side-effecting hooks merely to refresh the decision.
-Concrete decision-binding and provider-freshness representations remain interface work.
-
-The result-to-model gate is separate from tool dispatch.
-It preserves the normal disclosure pipeline and its existing failure semantics; storage latency does not automatically rerun every completed hook or require another blanket external authorization call.
-Cancellation and known invalidation still prevent ineligible advancement under the relevant contract.
+See [authority/admission race](authorization-and-hooks.md#race-authority-changes-after-intent-acceptance).
 
 ### Execution approval at its actual phase
 
-```text
-authorization or existing review behavior requires an exact ask
-[C pending ask + permitted reconstructible continuation]
-ask becomes actionable to authorized clients
-exact authorized verdict
-[C approval decision; bundle with later facts only when already ready]
-continue from the recorded phase without repeating committed hook work
-[C effective authorized intent, if not included above]
-dispatch
-```
-
-An ordinary permission ask can precede `PreToolUse`; rewritten arguments can require another authorization decision.
-A hook-originated ask must retain its origin and continuation point rather than accidentally repeating the hook that caused it.
-First valid committed resolution wins across clients.
-An execution approval can survive unloading when its exact continuation is reconstructible.
-It never overrides cancellation or the remaining authorization/dispatch checks.
+See [execution approval sequence](authorization-and-hooks.md#execution-approval-at-its-actual-phase).
 
 ### Result-release approval and process loss
 
-```text
-tool already executed; normal result pipeline requires release approval
-exact output remains in a bounded process-local hold
-[C pending release ask + safe evidence, excluding payload-bearing content]
-exact release verdict or deny
-[C approved canonical result OR synthetic withheld result + resolution]
-```
-
-Denial destroys held bytes without undoing tool effects.
-A crash or lost hold instead causes recovery to close the ask and commit an explicit withheld/unavailable result under the original call identity.
-An intact filesystem does not restore memory-only output.
-Never recover the bytes through hook traces, checkpoints, provider replay, diagnostics, receipts, or tool reexecution.
-Recording that output is unavailable does not claim that execution failed.
+See [release and process loss](cancellation-and-results.md#release-and-process-loss).
 
 ### Cancellation with produced output
 
-```text
-order session-current cancel and resolve its actual target
-promptly close local execution admission and signal descendants/extensions
-[C cancellation + pending-source cancellations + optional receipt]
-finish normal bounded result processing for output already available
-[C permitted outcomes or explicit safe unresolved dispositions]
-report terminal run settlement without another model request
-```
-
-The ordinary cancellation action does not require a reload to discover a newer active run.
-A protected retry returns its original resolved target; an explicitly run-qualified control never retargets a successor.
-Local signaling does not wait for the ordinary batching delay or a durable write; confirmed acknowledgement still requires accepted cancellation.
-An acknowledgement means accepted/signaled, not proven process termination or rolled-back effects.
-
-Optional result-release decisions can remain after run cancellation while their memory-only holds survive.
-Clients choose whether to show release UI; the server does not require a new interrupting prompt.
-New run admission waits for bounded shutdown/result settlement, not an optional release decision.
-At that admission boundary, discard remaining holds, expire their asks, and fence late release answers and old processing.
-Approved settled output can enter a later explicitly started run; the canceled run never resumes inference.
-The run's execution lifecycle can be terminal while a particular call separately awaits output release.
-Do not fabricate a final withheld result solely to make the run terminal and then rewrite that result on release.
-Release or denial commits the call's canonical result without reopening the run.
-Before a new run's model request, every required call/result pairing is complete: admission closes unresolved holds with an explicit withheld result, discards their bytes, and invalidates late answers.
-Concrete record and aggregate representations of these independent lifecycles remain interface work.
+See [ordinary cancellation settlement](cancellation-and-results.md#ordinary-settlement-with-produced-output) and [successor race](cancellation-and-results.md#race-release-versus-a-successor-run).
 
 ### Concurrent read results
 
-For model calls `[A, B]`, B may finish and pass disclosure checks while A is still running or held.
-Execution readiness, durable result acceptance, client publication, and model-message assembly are separate concerns.
-
-B's established permitted result becomes eligible for acceptance without waiting solely for A's request position, retaining both call identity and original model-call position.
-Readiness does not require an immediate physical write: the coordinator can combine A and B if both are ready within the bounded batching window, or flush B when its delay/size bound requires.
-Do not let unresolved A postpone B indefinitely; B becomes confirmed to clients only after acceptance, with any disclosure-approved earlier preview remaining provisional.
-Reconstruct the model-facing bundle in the required canonical/provider order and do not continue inference while required outcomes or approvals are unresolved.
-Existing read-parallel/mutate-serial dispatch barriers remain unchanged; readiness-driven durable result acceptance is not speculative execution.
+See [concurrent-result race](execution-and-recovery.md#race-concurrent-read-results).
 
 ### One steer operation with an optional run constraint
 
-Source identity selects a slot, not delivery lifetime.
-Clients share the user slot; each registered extension controls only its own slot.
-The same operation accepts or replaces a revision with an optional exact-run constraint and the same expected-revision checks.
+See the [shared-input sequence](commands-and-lifecycle.md#ordinary-shared-input-sequence) for explanation.
+This table retains the full targeting/disposition comparison; [source slots](session-commit-history.md#source-scoped-steers) and [durable recovery](session-commit-history.md#durable-steer-recovery) specify its detailed rules.
 
 | Situation | Unconstrained session input | Input constrained to run R |
 | --- | --- | --- |
@@ -436,9 +241,8 @@ The same operation accepts or replaces a revision with an optional exact-run con
 | Explicit user cancellation | Cancel pending revisions from every source and signal active extensions/descendants. | Same cancellation rule; no promotion. |
 | Failure, shutdown, or owner loss | Preserve accepted unconsumed input for explicit recovery. | Preserve evidence for an explicit recovery decision without silently relaxing its run constraint. |
 
-Exact wire fields and recovery commands are not fixed here.
 Explicitly carrying input into a new run is a new authorized decision, not pretending the old run consumed it.
-Cancellation still fences late extension notifications; this design adds no independent cross-run execution.
+Exact wire fields and recovery commands remain open; this adds no independent cross-run execution.
 
 ## Failure evidence and dependent-work gates
 
@@ -510,18 +314,16 @@ No implementation tests are added by this document.
 
 ## Open contract mechanics
 
-The following are design questions, not permission to weaken agreed behavior:
+Open decisions are grouped by review topic rather than maintained as a second backlog:
 
-1. **Transition representation:** concrete record and aggregate APIs for enforcing commit gates, pausing on ambiguous acceptance, and keeping confirmed projections honest; no generic rollback layer or universal prepare/accept/apply scheme is required.
-2. **Authorization binding:** exact effective-action/principal/environment representation and preservation of existing argument-decoding, execution-admission, and provider-freshness contracts without blanket remote rechecks.
-3. **Result settlement representation:** concrete records for independently terminal execution and pending disclosure, with complete pairing before later model input and serialized release/new-run invalidation.
-4. **Concurrent result assembly:** readiness-driven acceptance through bounded batching is settled; define canonical/provider ordering and correlation across independently accepted results without changing dispatch barriers.
-5. **Hook occurrence/evidence:** registration identity/version/configuration, stable invocation-ID delivery, and a safe evidence allowlist that cannot quote withheld input through arbitrary messages or errors.
-6. **Lifetimes and bounds:** settlement/deadline ownership, late-completion fencing, batching/backpressure settings, retained detail budgets, and environment/artifact lifecycle references.
-7. **Projection details:** reasoning representation, notice/delivery categories, inherited/new usage presentation, and explicit truncation/absence/gap states.
-8. **API/storage representations:** request comparison, clock precision/skew, catalog ownership mapping, claim/append/read primitives, typed work observation, cursor validity, and creation/deletion/fork ordering.
+- [Execution representation, assembly, and batching](execution-and-recovery.md#open-decisions-and-detail).
+- [Independent result lifetimes, deadlines, and predecessor/successor atomic bundling](cancellation-and-results.md#open-decisions-and-detail).
+- [Authorization binding and safe hook evidence](authorization-and-hooks.md#open-decisions-and-detail).
+- [Logical-input and provider replay interfaces](model-continuation.md#open-decisions-and-detail).
+- [Command, control, and catalog interfaces](commands-and-lifecycle.md#open-decisions-and-detail).
+- [Storage, projection, extension, and compatibility interfaces](storage-and-observation.md#open-decisions-and-detail).
 
-These questions should be closed with worked sequences and conformance cases before finalizing interfaces or writing an implementation breakdown.
+Close these with worked sequences and conformance cases before finalizing interfaces or an implementation breakdown.
 
 ## Related information
 
