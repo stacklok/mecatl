@@ -14,6 +14,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/stacklok/mecatl/engine/adapter/eventcodec"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -111,7 +112,7 @@ return {redis.call('GET', KEYS[2]), id}
 // It carries the same durability obligation as Append — a nil error means the
 // record is on stable storage — and the same at-most-once, no-retry contract.
 func (st *Store) AppendEvent(ctx context.Context, id session.SessionID, ev session.Event) (port.Cursor, error) {
-	evJSON, err := json.Marshal(ev)
+	evJSON, err := eventcodec.Marshal(ev)
 	if err != nil {
 		return "", fmt.Errorf("redisstore: marshal event: %w", err)
 	}
@@ -401,6 +402,7 @@ func (st *Store) readStreamAfter(
 				continue // an entry occupying a position but carrying no record
 			}
 			rec.Cursor = port.EncodeCursor(id, basis.generation, msg.ID)
+			rec.Event = rec.Event.WithLegacySource("redisstore/"+basis.generation, string(rec.Cursor))
 			rec.Live = live
 			if !yield(rec, nil) {
 				return
@@ -529,8 +531,8 @@ func decodeEventLogRecord(raw []byte) (rec port.LogRecord, ok bool, err error) {
 	case EventLogGapFormat:
 		return port.LogRecord{Kind: port.LogRecordGap, GapReason: envelope.R}, true, nil
 	case EventLogFormat:
-		var ev session.Event
-		if err := json.Unmarshal(envelope.Ev, &ev); err != nil {
+		ev, err := eventcodec.Unmarshal(envelope.Ev)
+		if err != nil {
 			return port.LogRecord{}, false, fmt.Errorf("redisstore: decode event: %w", err)
 		}
 		return port.LogRecord{Kind: port.LogRecordEvent, Event: ev}, true, nil

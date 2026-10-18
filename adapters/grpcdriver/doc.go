@@ -25,11 +25,18 @@
 //
 // Session snapshots cross the wire as an OPAQUE, format-tagged envelope: the
 // payload is exactly engine/adapter/sessnap's encoding and the format tag is
-// SnapshotFormat ("sessnap-json/1"). The driver stores and returns the
-// envelope verbatim and never decodes it. Snapshot schema evolution lives in
-// sessnap (additive JSON fields); the envelope's format tag changes ONLY if
-// the encoding itself is replaced. Load rejects an unknown format with an
-// infrastructure error — never ErrNotFound.
+// SnapshotFormat ("sessnap-json/2"). Opaque drivers store and return bytes and
+// tag verbatim, without interpreting provider-private replay. Decoding wrappers
+// accept /1 and /2 but return /2; the local identity schema must match the tag.
+// Unknown or contradictory versions are infrastructure errors, never not-found.
+//
+// Drain active writers and upgrade decoding snapshot AND independently configured
+// event drivers before the harness/client. Old decoding wrappers reject /2 writes
+// before backend mutation. Upgraded decoding wrappers are unsupported with old
+// readers; mixed writers and rollback after new writes are unsupported. The opaque
+// session-store/1 capability marker is unchanged and does not negotiate formats;
+// event drivers have no handshake. Redis's private outer tag stays /1, so it does
+// not protect old local readers from schema-2 inner events.
 //
 // # Resilience posture
 //

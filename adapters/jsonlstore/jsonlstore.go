@@ -41,6 +41,7 @@ import (
 
 	"github.com/gofrs/flock"
 
+	"github.com/stacklok/mecatl/engine/adapter/eventcodec"
 	"github.com/stacklok/mecatl/engine/adapter/sessnap"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -739,17 +740,10 @@ const (
 	eventsFileSuffix  = ".events.jsonl"
 )
 
-// EventLogFormat is the per-record format tag written on every event-log line.
-// It versions the on-disk encoding so the language-neutral driver wire (3c) and
-// any future format change can be distinguished; Read rejects an unknown tag as
-// an infra error (a forward-incompatible log must fail loud, not silently skip).
-//
-// It is EXPORTED so the gRPC driver wire (`adapters/grpcdriver.EventLogFormat`)
-// can be pinned EQUAL to it by a test: the wire payload is exactly this record's
-// "ev" bytes (json.Marshal of a session.Event), so the two tags MUST agree or a
-// log written by one path is unreadable by the other (the one-codec claim). The
-// unexported alias keeps the in-file call sites terse.
-const EventLogFormat = "eventlog-json/1"
+// EventLogFormat is the newest identity-aware event record encoding. Both /1
+// and /2 are readable; the outer version must agree with the local schema.
+// The gRPC envelope uses the same codec and format.
+const EventLogFormat = eventcodec.Format
 
 // eventLogFormat is the in-file alias of EventLogFormat (keeps the existing call
 // sites terse; the two are the one constant).
@@ -765,11 +759,10 @@ const eventLogFormat = EventLogFormat
 // The event is stored as already-redacted JSON (the relay is the redaction
 // boundary); the tag lets Read validate the encoding version.
 //
-// G and R are omitempty so an EVENT record marshals byte-for-byte as it did
-// before cursors existed. That is not cosmetic: logs written by the previous
-// version must stay readable, and logs written by this one must stay readable by
-// anything that only understands the event tag except for the two new record
-// kinds it is required to reject loudly.
+// G and R are omitempty, keeping generation and gap metadata out of event
+// records. Current event records use identity-aware eventcodec JSON and /2;
+// readers also accept shipped /1 records with no identity discriminator.
+// This is read compatibility, not a promise that old binaries can read new logs.
 type eventLogRecord struct {
 	V  string          `json:"v"`
 	Ev json.RawMessage `json:"ev,omitempty"`
@@ -967,12 +960,14 @@ func (st *Store) Read(ctx context.Context, id session.SessionID) iter.Seq2[sessi
 		var (
 			f            *os.File
 			completeSize int64
+			generation   string
 		)
 		err := st.withSnapshotFamilyLock(ctx, st.resolver.currentSnapshotPath(id), func() error {
-			if _, _, err := st.eventLogGenerationLocked(id); err != nil {
+			var err error
+			generation, _, err = st.eventLogGenerationLocked(id)
+			if err != nil {
 				return err
 			}
-			var err error
 			f, completeSize, err = st.openEventFileLocked(id)
 			return err
 		})
@@ -985,8 +980,10 @@ func (st *Store) Read(ctx context.Context, id session.SessionID) iter.Seq2[sessi
 		}
 		defer func() { _ = f.Close() }()
 
+		var offset int64
 		sc := newEventScanner(io.NewSectionReader(f, 0, completeSize))
 		for sc.Scan() {
+			offset += int64(len(sc.Bytes())) + 1
 			if st.readOnly && ctx.Err() != nil {
 				yield(session.Event{}, ctx.Err())
 				return
@@ -998,7 +995,7 @@ func (st *Store) Read(ctx context.Context, id session.SessionID) iter.Seq2[sessi
 				return
 			}
 			switch rec.V {
-			case eventLogFormat:
+			case eventLogFormat, "eventlog-json/1":
 			case eventLogGenerationTag, eventLogGapTag:
 				// Not events. port.EventLog.Read's shipped contract is that it
 				// returns EVENTS, so the generation header and gap markers are
@@ -1010,12 +1007,12 @@ func (st *Store) Read(ctx context.Context, id session.SessionID) iter.Seq2[sessi
 				yield(session.Event{}, fmt.Errorf("jsonlstore: unknown event-log format %q (want %q)", rec.V, eventLogFormat))
 				return
 			}
-			var ev session.Event
-			if err := json.Unmarshal(rec.Ev, &ev); err != nil {
+			ev, err := eventcodec.UnmarshalFormat(rec.Ev, rec.V)
+			if err != nil {
 				yield(session.Event{}, fmt.Errorf("jsonlstore: decode event: %w", err))
 				return
 			}
-			if !yield(ev, nil) {
+			if !yield(ev.WithLegacySource("jsonlstore/"+generation, string(port.EncodeCursor(id, generation, strconv.FormatInt(offset, 10)))), nil) {
 				return
 			}
 		}

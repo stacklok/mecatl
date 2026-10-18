@@ -5,13 +5,12 @@
 // the single store the server relay binds when the operator selects a Redis
 // backend (a transport alternative to the local jsonlstore).
 //
-// It REUSES the existing storage formats — it is a TRANSPORT, not a format:
-//   - snapshots are encoded with engine/adapter/sessnap (sessnap-json/1), shared
-//     with jsonlstore and the gRPC driver; and
-//   - the event-log record is the same {"v":<tag>,"ev":<json>} envelope shape as
-//     jsonlstore, with its own format tag (redisstore-eventlog/1) so a
-//     forward-incompatible log fails loud on Read (an unknown tag is an error);
-//     a gap marker is a sibling tag on that same shape, never an event.
+// Snapshots use engine/adapter/sessnap's identity-schema-2 encoding, shared
+// with jsonlstore and the gRPC driver. Identity-schema-2 eventcodec JSON travels
+// inside the unchanged redisstore-eventlog/1 outer tag. Unknown outer tags fail
+// on Read, but this tag does not stop old local readers from ignoring the inner
+// identity schema; coordinated upgrades must exclude old readers and writers.
+// A gap marker is a sibling tag on the same envelope shape, never an event.
 //
 // No client-side mutex is needed: Redis serializes commands single-threaded and
 // HSET/HGET/XADD are atomic, so the in-process sync.Mutex that jsonlstore
@@ -92,9 +91,9 @@ func keyPrefixExists(ctx context.Context, client redis.UniversalClient, prefix s
 // distinguish not-found from an infra failure via errors.Is.
 var ErrNotFound = fmt.Errorf("redisstore: session not found: %w", port.ErrSessionNotFound)
 
-// EventLogFormat is the per-record format tag written on every event-log
-// record. It versions the on-disk encoding so Read can reject an unknown tag as
-// an infra error (a forward-incompatible log must fail loud, not silently skip).
+// EventLogFormat versions Redis's private record envelope, not the inner event
+// identity schema. The shared event codec writes schema 2 and reads legacy data.
+// Old local readers are unsafe after schema-2 writes: drain and upgrade them first.
 const EventLogFormat = "redisstore-eventlog/1"
 
 // eventLogRecord is one event-log entry: a format tag plus the verbatim
@@ -639,8 +638,13 @@ func (st *Store) Read(ctx context.Context, id session.SessionID) iter.Seq2[sessi
 			yield(session.Event{}, err)
 			return
 		}
+		generation, err := client.Get(ctx, eventsGenerationKey(id)).Result()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			yield(session.Event{}, err)
+			return
+		}
 		for _, raw := range raws {
-			rec, ok, err := decodeEventLogRecord(raw)
+			rec, ok, err := decodeStreamMessage(raw)
 			if err != nil {
 				yield(session.Event{}, err)
 				return
@@ -648,7 +652,8 @@ func (st *Store) Read(ctx context.Context, id session.SessionID) iter.Seq2[sessi
 			if !ok || rec.Kind != port.LogRecordEvent {
 				continue // a gap or a record carrying no event
 			}
-			if !yield(rec.Event, nil) {
+			position := string(port.EncodeCursor(id, generation, raw.ID))
+			if !yield(rec.Event.WithLegacySource("redisstore/"+generation, position), nil) {
 				return
 			}
 		}
@@ -656,7 +661,7 @@ func (st *Store) Read(ctx context.Context, id session.SessionID) iter.Seq2[sessi
 }
 
 // rawEventRecords returns the current STREAM's raw envelopes in append order.
-func rawEventRecords(ctx context.Context, client redis.UniversalClient, id session.SessionID) ([][]byte, error) {
+func rawEventRecords(ctx context.Context, client redis.UniversalClient, id session.SessionID) ([]redis.XMessage, error) {
 	key := eventsKey(id)
 	kind, err := client.Type(ctx, key).Result()
 	if err != nil {
@@ -671,19 +676,7 @@ func rawEventRecords(ctx context.Context, client redis.UniversalClient, id sessi
 	if err != nil {
 		return nil, fmt.Errorf("redisstore: read events %q: %w", id, err)
 	}
-	out := make([][]byte, 0, len(msgs))
-	for _, msg := range msgs {
-		raw, present := msg.Values[recordField]
-		if !present {
-			continue
-		}
-		text, isString := raw.(string)
-		if !isString {
-			return nil, fmt.Errorf("redisstore: event entry %s field %q has type %T, want string", msg.ID, recordField, raw)
-		}
-		out = append(out, []byte(text))
-	}
-	return out, nil
+	return msgs, nil
 }
 
 // toolCallRecord is the structured record written by ToolCall. It mirrors the
