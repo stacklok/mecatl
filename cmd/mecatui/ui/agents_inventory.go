@@ -268,6 +268,7 @@ func renderAgentsInvTextLines(style lipgloss.Style, text string, width int) []st
 	if width <= 0 {
 		return nil
 	}
+	text = terminaltext.ExpandStyleTabs(text, style)
 	plain := strings.Split(ansi.Hardwrap(text, width, true), "\n")
 	lines := make([]string, 0, len(plain))
 	for _, line := range plain {

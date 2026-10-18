@@ -69,6 +69,7 @@ func (s *soulState) Render(width, height int) (string, []ClickableRegion) {
 	}
 	th := s.deps.theme
 	text := func(style lipgloss.Style, value string) []string {
+		value = terminaltext.ExpandStyleTabs(value, style)
 		var rows []string
 		for _, line := range strings.Split(value, "\n") {
 			for _, part := range strings.Split(ansi.Wrap(line, width, ""), "\n") {

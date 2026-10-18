@@ -35,6 +35,7 @@ func SanitizePlain(s string) string {
 }
 
 func wrapStyled(text string, style lipgloss.Style, width int) string {
+	text = terminaltext.ExpandStyleTabs(text, style)
 	frame := style.GetHorizontalFrameSize()
 	if width > frame+1 {
 		text = ansi.Wrap(terminaltext.NormalizeWidth(text), width-frame, "")
@@ -43,6 +44,8 @@ func wrapStyled(text string, style lipgloss.Style, width int) string {
 }
 
 func wrapPrefixed(prefix, body string, style lipgloss.Style, width int) string {
+	prefix = terminaltext.ExpandStyleTabs(prefix, style)
+	body = terminaltext.ExpandStyleTabs(body, style)
 	pw := lipgloss.Width(prefix)
 	if width <= pw+1 {
 		return style.Render(prefix + body)

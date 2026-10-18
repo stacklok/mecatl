@@ -215,8 +215,13 @@ Expand literal tabs to spaces before measuring, wrapping, or clipping display te
 Sanitizing preserves tabs, and ANSI width and wrapping helpers do not account for
 Lip Gloss's later tab expansion (four spaces by default). Expanding tabs only in
 `Style.Render` can widen an already-wrapped line; a surrounding rail or card can
-then pad every row to that oversized width. Match the style's `GetTabWidth()`
-setting, or use the owning renderer's explicit tab policy, before layout.
+then pad every row to that oversized width. Use `terminaltext.ExpandStyleTabs`
+for content that will receive a Lip Gloss style, or `terminaltext.ExpandTabs`
+with the owning renderer's explicit tab width. These helpers live in
+`cmd/mecatui/internal/terminaltext/tabs.go`, separate from sanitization and
+Markdown processing. The style helper resolves the implicit default as well as
+explicit tab settings; the raw `GetTabWidth()` getter does not distinguish an
+unset value from an explicit zero.
 
 Wrap against the content budget after subtracting outer indentation, rails,
 borders, and padding. Verify widths on the fully styled and framed rows passed to

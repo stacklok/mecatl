@@ -780,11 +780,7 @@ func (r *renderer) renderReasoningSnapshot(p scrollback.AssistantCardSnapshot, e
 // the rail/padding and the text style's own horizontal frame. Unknown/tiny widths
 // render unwrapped, matching the markdown path.
 func (r *renderer) wrapStyled(s string, st lipgloss.Style) string {
-	// Expand tabs before measuring, not later in Render where they can widen
-	// an already-wrapped line beyond the assistant rail's content budget.
-	if tabWidth := st.GetTabWidth(); tabWidth >= 0 {
-		s = strings.ReplaceAll(s, "\t", strings.Repeat(" ", tabWidth))
-	}
+	s = terminaltext.ExpandStyleTabs(s, st)
 	frame := st.GetHorizontalFrameSize()
 	cw := r.contentWidth() - assistantBodyHang
 	if cw <= frame+1 {
@@ -870,13 +866,9 @@ func renderDelegationToolCardText(style lipgloss.Style, text string, bodyWidth i
 // literal tabs before wrapping so ansi.Hardwrap and Lip Gloss measure identical text.
 const toolCardTabWidth = 4
 
-func normalizeToolCardTabs(text string) string {
-	return strings.ReplaceAll(text, "\t", strings.Repeat(" ", toolCardTabWidth))
-}
-
 // wrapToolCardText constrains raw card text before it is styled or framed.
 func wrapToolCardText(text string, bodyWidth int) string {
-	text = normalizeToolCardTabs(text)
+	text = terminaltext.ExpandTabs(text, toolCardTabWidth)
 	if text == "" || bodyWidth <= 0 {
 		return text
 	}
@@ -945,7 +937,7 @@ func renderDynamicCardChromeLine(style lipgloss.Style, prefix, raw string, width
 // prefix's alignment without letting either the prefix or style padding consume a
 // second layout pass.
 func wrapDelegationRow(prefix, text string, bodyWidth int) []string {
-	text = strings.TrimRightFunc(terminaltext.Sanitize(normalizeToolCardTabs(text)), unicode.IsSpace)
+	text = strings.TrimRightFunc(terminaltext.Sanitize(terminaltext.ExpandTabs(text, toolCardTabWidth)), unicode.IsSpace)
 	if bodyWidth <= 0 {
 		return []string{prefix + text}
 	}
@@ -979,7 +971,7 @@ func renderDelegationRows(style lipgloss.Style, prefix, text string, bodyWidth i
 // joins the card. It deliberately operates per region, never on the assembled card:
 // card.Render must only frame already fitting rows.
 func wrapToolCardRegion(region string, bodyWidth int) string {
-	region = normalizeToolCardTabs(region)
+	region = terminaltext.ExpandTabs(region, toolCardTabWidth)
 	if region == "" || bodyWidth <= 0 {
 		return region
 	}
@@ -1659,7 +1651,7 @@ func (r *renderer) truncateResultDisplayLines(lines []toolResultLine, bodyWidth,
 func wrapResultDisplayLines(lines []toolResultLine, bodyWidth int) []toolResultLine {
 	wrapped := make([]toolResultLine, 0, len(lines))
 	for _, line := range lines {
-		text := normalizeToolCardTabs(line.text)
+		text := terminaltext.ExpandTabs(line.text, toolCardTabWidth)
 		if strings.TrimSpace(text) == "" {
 			// Preserve an intentional blank source line as one display row, without
 			// retaining width-exceeding padding that could wrap into more rows.
