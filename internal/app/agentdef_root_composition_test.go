@@ -193,7 +193,7 @@ func TestAgentDefRootPlacementPostureAndPolicy(t *testing.T) {
 				), mockllm.TextTurn("done")}
 			}
 			llm := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { requests = append(requests, req) })}, turns...)
-			cfg := Config{Workspace: project, Shell: "/bin/sh", TrustProject: true, NoSoul: true, Posture: PostureAuto, PermissionConfigs: []string{settings}, PermissionsConventional: true, AgentsDirs: []string{dir}, MockProvider: llm}
+			cfg := Config{Workspace: project, Shell: "/bin/sh", TrustProject: true, NoSoul: true, Posture: PostureYolo, GuardrailsDisabled: true, PermissionConfigs: []string{settings}, PermissionsConventional: true, AgentsDirs: []string{dir}, MockProvider: llm}
 			profile := server.ProfileDefault
 			if posture == "no-fs" {
 				profile = server.ProfileNoFS
@@ -214,7 +214,9 @@ func TestAgentDefRootPlacementPostureAndPolicy(t *testing.T) {
 			}
 			defer built.Close()
 			ctx := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "test", Subject: "owner", GrantType: session.GrantTypeUser})
-			sess, err := built.Service.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, profile, server.WithAgentDefinitionName("root"))
+			// Allow-all is session-scoped: the session runs in yolo, where configured
+			// Deny and Ask still apply and an unlisted Shell call executes.
+			sess, err := built.Service.CreateSessionWithProfile(ctx, session.ModeYolo, session.Limits{}, server.ProviderSelector{}, profile, server.WithAgentDefinitionName("root"))
 			if err != nil {
 				t.Fatal(err)
 			}
