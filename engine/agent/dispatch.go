@@ -2058,7 +2058,7 @@ func (e *Engine) timeExecute(ctx context.Context, r *Run, sess *session.Session,
 		ev.Turn = turnIdx
 		r.children.safeEmit(ev)
 	}
-	if sess != nil {
+	if _, reads := t.(sessionModeReader); reads && sess != nil {
 		// Read at execution, like parentCaps' parentMode, so a schedule created
 		// after a mid-session mode change records the mode it was created under.
 		ctx = withSessionMode(ctx, sess.Mode)

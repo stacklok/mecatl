@@ -137,6 +137,10 @@ type ScheduleTool struct {
 	mgr port.ScheduleManager
 }
 
+// readsSessionMode marks the tool as a sessionModeReader: a mutating create
+// records the executing session's mode.
+func (*ScheduleTool) readsSessionMode() {}
+
 // NewScheduleTool constructs the mutating Schedule tool over the injected
 // port.ScheduleManager. mgr must be non-nil; NewScheduleTool panics otherwise
 // (a composition-root programming error — the tool has nothing to drive without
@@ -270,6 +274,10 @@ type planAwareScheduleTool struct {
 // gate is a per-call deny, not a hidden verb (removing the mutating create from
 // the SCHEMA would make the model guess why its create was refused).
 func (t *planAwareScheduleTool) Spec() tool.ToolSpec { return t.base.Spec() }
+
+// readsSessionMode forwards the base's sessionModeReader marker, so a create
+// passed through to the base still sees the executing session's mode.
+func (*planAwareScheduleTool) readsSessionMode() {}
 
 // ReadOnly reports true so the plan-mode catalog projection advertises the tool
 // (see NewPlanAwareScheduleTool for the soundness argument).
