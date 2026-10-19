@@ -62,6 +62,12 @@ or gRPC `FAILED_PRECONDITION`. Lease renewal defaults to one-third of
 Session affinity is optional. A client that reaches a pod without the lease
 receives 409 and retries another replica or waits for the current run.
 
+One replica at a time fires [scheduled tasks](/features/sessions/scheduled-tasks.md).
+The replicas elect it through a Kubernetes Lease, and a standby takes over when
+it exits or its lease expires. Set `scheduler.enabled: false` to stop automatic
+firing. Schedules remain manageable through the API, but nothing fires them,
+including manual fires.
+
 For two or more replicas, the PodDisruptionBudget defaults to
 `maxUnavailable: 1`, so voluntary disruptions remove at most one replica as the
 Deployment scales. Set `podDisruptionBudget.maxUnavailable` to a non-negative

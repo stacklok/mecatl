@@ -366,6 +366,7 @@
       }
     },
     "skills": {"type": "object", "additionalProperties": false, "required": ["autoDiscover"], "properties": {"autoDiscover": {"type": "boolean"}}},
+    "scheduler": {"type": "object", "additionalProperties": false, "required": ["enabled"], "properties": {"enabled": {"type": "boolean"}}},
     "resources": {"type": "object"},
     "topologySpreadConstraints": {
       "type": "array",

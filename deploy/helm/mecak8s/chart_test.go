@@ -1942,6 +1942,28 @@ func TestMecak8sHelmChart_SkillsAutoDiscover(t *testing.T) {
 	}
 }
 
+func TestMecak8sHelmChart_SchedulerEnabled(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		set  []string
+		want bool
+	}{
+		{name: "default", want: false},
+		{name: "disabled", set: []string{"--set", "scheduler.enabled=false"}, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rendered, err := helm(t, append(productionArgs(), tc.set...)...)
+			if err != nil {
+				t.Fatalf("render scheduler values: %v", err)
+			}
+			container := deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0]
+			if got := slices.Contains(container.Args, "--no-scheduler"); got != tc.want {
+				t.Fatalf("--no-scheduler rendered = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestMecak8sHelmChart_XDGConfigMapMount(t *testing.T) {
 	rendered, err := helm(t, "template", "production", ".", "-f", "ci/config-mount-values.yaml")
 	if err != nil {
@@ -2081,6 +2103,8 @@ func TestMecak8sHelmChart_NewValuesAreSchemaValidated(t *testing.T) {
 		{name: "extraArgs scalar", set: "extraArgs=--no-user-model"},
 		{name: "skills auto-discover string", set: "skills.autoDiscover=not-a-bool"},
 		{name: "unknown skills setting", set: "skills.unknown=true"},
+		{name: "scheduler enabled string", set: "scheduler.enabled=not-a-bool"},
+		{name: "unknown scheduler setting", set: "scheduler.unknown=true"},
 		{name: "removed skillsConventional setting", set: "skillsConventional=true"},
 		{name: "volume mount missing path", set: "extraVolumeMounts[0].name=mecatl-config"},
 		{name: "volume name wrong type", set: "extraVolumes[0].name=true"},

@@ -205,6 +205,9 @@ spec:
             {{- if .Values.skills.autoDiscover }}
             - --skills-conventional=true
             {{- end }}
+            {{- if not .Values.scheduler.enabled }}
+            - --no-scheduler
+            {{- end }}
             {{- range $server := .Values.mcp.servers }}
             {{- if and (ne $server.auth.mode "oauth") (not (and $mcpOAuth (eq $server.auth.mode "none"))) }}
             - {{ printf "--mcp-server=%s=%s" $server.name $server.url | quote }}

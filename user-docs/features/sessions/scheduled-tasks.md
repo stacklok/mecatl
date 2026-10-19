@@ -160,14 +160,15 @@ never guessed to be owned.
 ## Automatic firing
 
 The automatic tick loop runs by default when the configured store supports
-`ScheduleStore`. Use `--no-scheduler` to disable automatic polling while keeping
-manual create, list, inspect, and fire operations available.
+`ScheduleStore`. Use `--no-scheduler` to disable firing while keeping create,
+list, inspect, pause, resume, and delete operations available. Manual fires
+also stop and report `scheduler_not_running`.
 
 Important operator settings include:
 
 |Flag|Default|Purpose|
 |-|-|-|
-|`--no-scheduler`|`false`|Disable automatic polling; manual management remains available.|
+|`--no-scheduler`|`false`|Disable firing; schedule management remains available.|
 |`--scheduler-tick-interval`|`30s`|Poll interval for due schedules.|
 |`--scheduler-min-interval`|`1m`|Minimum recurring cadence; `0` disables the floor.|
 |`--scheduler-max-concurrent-fires`|`4`|Maximum admitted fires, including manual fires and teardown.|
