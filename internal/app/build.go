@@ -3931,6 +3931,14 @@ func buildSessionLease(cfg Config, store port.SessionStore) (port.SessionLease, 
 		cfg.diag().Log(context.Background(), port.LevelInfo, "session lease: store-provided", "owner", owner)
 		return lease, owner, noop, nil
 	}
+	if !localStorageMaintenanceSingleWriter(store) {
+		// Only the process-private store is single-writer without a lease. Any
+		// other store may be shared by replicas, and with no lease nothing stops
+		// two of them writing the same session (saves overwrite whole snapshots).
+		cfg.diag().Log(context.Background(), port.LevelWarn,
+			"session lease: none for a store other processes may share; replicas sharing it are not excluded from the same session. Configure --session-lease-k8s-namespace, --session-lease-url, or --session-lease-dir for multi-replica use",
+			"store", fmt.Sprintf("%T", store))
+	}
 	return nil, "", noop, nil
 }
 

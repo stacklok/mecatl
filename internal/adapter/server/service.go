@@ -974,7 +974,7 @@ type Config struct {
 	// posture. The loop NEVER imports port.SessionLease;
 	// the renewer and the held-lease registry live entirely on Service (the same
 	// storage-agnostic discipline as EventLog). A backend that reports
-	// ErrLeaseUnsupported is stickily disabled (one INFO, then the no-lease path).
+	// ErrLeaseUnsupported is stickily disabled (one WARN, then the no-lease path).
 	SessionLease port.SessionLease
 
 	// MutationCapability is the process-local admission gate shared by Service
@@ -8945,7 +8945,7 @@ func (s *Service) acquireLeaseCore(ctx context.Context, id session.SessionID, by
 		s.mu.Unlock()
 		s.cfg.MutationCapability.Disable()
 		if firstTime {
-			s.cfg.Diagnostics.Log(ctx, port.LevelInfo, "session leasing unsupported by backend; disabling (running without cross-process exclusion)",
+			s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "session leasing unsupported by backend; disabling (running without cross-process exclusion)",
 				"owner", s.cfg.LeaseOwner)
 		}
 		return nil

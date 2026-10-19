@@ -178,7 +178,7 @@ func (r *sessionLiveness) disableLeasing(ctx context.Context) {
 		stop()
 	}
 	if first {
-		r.diag.Log(ctx, port.LevelInfo, "child session leasing unsupported by backend; disabling (running without cross-process exclusion)",
+		r.diag.Log(ctx, port.LevelWarn, "child session leasing unsupported by backend; disabling (running without cross-process exclusion)",
 			"owner", r.owner)
 	}
 }

@@ -344,7 +344,8 @@ All three server roots share `app.Build` and `server.Service`; they differ aroun
 Prometheus and OpenTelemetry, and administrative subcommands. It defaults to interactive
 approval and the strict posture. Session store and event log are each in memory, local,
 or a remote driver. A local store directory always gets a file-lock session lease;
-otherwise leasing is off unless the operator selects a lease backend.
+otherwise leasing is off unless the operator selects a lease backend, and startup warns
+when that leaves a store other processes may share without one.
 `mecated config validate` checks operator settings offline with the runtime parser. See
 [run mecated](../../user-docs/operating/mecated.md).
 
