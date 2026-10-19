@@ -1,7 +1,7 @@
 # Cancellation and results
 
 **Review question:** How can execution stop while produced output still awaits settlement or release?
-This draft separates a run's execution lifecycle from each call's execution evidence, processing, and disclosure disposition.
+This draft separates a run's execution lifecycle from each tool call's execution evidence, processing, and disclosure disposition.
 It does not change guardrail decision or failure semantics.
 
 ## Imported assumptions
@@ -21,7 +21,7 @@ Cancellation has three distinct boundaries:
 
 Acknowledgement means accepted/signaled, not proven external cessation or rollback.
 The deadline does not turn an unknown external effect into failure or safe retry.
-If cancellation wins admission, no new tool/model request starts; if admission wins first, cancellation signals that admitted work instead of retroactively preventing it.
+If cancellation wins admission, no new model request or tool call starts; if admission wins first, cancellation signals that admitted work instead of retroactively preventing it.
 
 Already-produced output follows the normal bounded post-tool hook, UTF-8 repair, inbound-review, and release pipeline under a settlement context separate from canceled execution.
 Cancellation, timeout, or processing error cannot bypass required disclosure checks.
@@ -33,7 +33,7 @@ A **held result** is process-local output awaiting an exact release decision.
 Its ask and safe evidence can be durable; its unreleased bytes and payload-bearing hook inputs, outputs, and traces cannot.
 History, checkpoints, provider replay, diagnostics, audit, receipts, and client feeds are not alternative retention paths.
 A terminal run can still await release; do not fabricate a final withheld result merely to terminate the run and later replace it.
-Each call gets one canonical result, and each ask one winning disposition.
+Each tool call gets one canonical tool result, and each ask one winning disposition.
 
 ## Ordinary settlement with produced output
 
@@ -64,7 +64,7 @@ exact release verdict or deny
 Release can commit after run termination without reopening the run.
 Clients choose whether to show post-cancel release controls; the server requires no new interrupting prompt.
 Denial discards bytes without undoing effects.
-Process loss instead closes the ask and commits an explicit unavailable/withheld result under the original call identity.
+Process loss instead closes the ask and commits an explicit unavailable/withheld result under the original tool-call identity.
 Intact files or durable ask metadata cannot restore the hold.
 Never recreate bytes through traces or tool reexecution; unavailable output does not prove execution failed.
 An execution ask with durably reconstructible continuation is a different case and can survive unloading.
@@ -76,7 +76,7 @@ At successor admission, invalidate remaining holds, expire their asks, discard b
 Old processing cannot create a new actionable release ask after that boundary.
 If release won while its hold was valid, retain that canonical result.
 If invalidation won, reject stale advancement and retain the explicit withheld disposition.
-Before successor model input, every required predecessor call/result pairing must be complete.
+Before successor model input, every required predecessor tool-call/result pairing must be complete.
 A protected retry can return its old decision without applying it again.
 
 ## Open decisions and detail

@@ -31,9 +31,9 @@ This is durable orchestration inside Mecatl, not adoption or recreation of a gen
 It does not make external execution atomic with a storage append.
 
 These retained facts also identify **safe pause points for planned handoff** between compatible replicas during upgrades or other maintenance.
-The owner stops admitting work, lets active calls finish, and commits the outcomes and continuation needed to park the whole active delegation tree.
+The owner stops admitting work, lets active model requests and tool calls finish, and commits the outcomes and continuation needed to park the whole active delegation tree.
 A successor acquires fenced ownership, verifies that committed handoff, and continues the same run without repeating completed work.
-A commit gate alone does not prove the tree is safe to move; no model or external tool call can remain in flight, and memory-only release holds need explicit settlement or invalidation.
+A commit gate alone does not prove the tree is safe to move; no model request or external tool call can remain in flight, and memory-only release holds need explicit settlement or invalidation.
 
 **A successful planned handoff should be transparent to users.**
 No new prompt, manual resume, or repeated accepted approval is required because a replica changed.
@@ -74,7 +74,7 @@ Cancellation promptly closes execution admission and signals active work.
 Its committed acknowledgement means accepted/signaled, not rollback or proven external cessation.
 Bounded terminal settlement is separate again: a terminal run can still have a result awaiting release.
 A later release never resumes the canceled run.
-Successor admission invalidates remaining holds and late answers, and required predecessor call/result pairing must finish before successor model input.
+Successor admission invalidates remaining holds and late answers, and required predecessor tool-call/result pairing must finish before successor model input.
 **Open:** Whether predecessor closure and successor admission share one atomic commit [remains undecided](cancellation-and-results.md#open-decisions-and-detail).
 
 ## First cutover versus later destination

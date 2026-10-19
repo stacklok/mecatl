@@ -54,7 +54,7 @@ It records an acceptable outcome before dependent execution consumes that outcom
 Recovery reuses accepted outcomes; it does not ask models, tools, or hooks to reproduce them merely to rebuild state.
 
 ```text
-Accepted model response and requested calls
+Accepted model response and requested tool calls
     -> prepare and authorize effective action
     -> accept exact effective intent
     -> admit and invoke tool

@@ -58,7 +58,7 @@ Large individual results/media require bounded content reads or explicit size fa
 
 ## Failure: lost notification or owner stream
 
-A result commits, but notification is lost.
+A tool result commits, but notification is lost.
 Authoritative rescan/catch-up finds it; notification failure does not erase the result or justify redispatch.
 Owner change ends the old provisional stream, including forwarding streams; the transport connection itself does not migrate between replicas.
 Reconnect from the last committed cursor, reload if invalid, and discard/reconcile provisional text.

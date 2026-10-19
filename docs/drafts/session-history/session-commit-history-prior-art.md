@@ -255,7 +255,7 @@ Once dispatch reaches its terminal-outcome boundary it waits for completion inst
 An [integration test](https://github.com/openai/codex/blob/16e578dd1ddaf4f5db9cd1f3dbfea0958fd74339/codex-rs/core/tests/suite/dynamic_tool_cancellation.rs#L54-L170) interrupts a call while its post-hook is blocked and expects an aborted lifecycle outcome.
 
 The canceled [sampling path drains tool results into history before returning](https://github.com/openai/codex/blob/16e578dd1ddaf4f5db9cd1f3dbfea0958fd74339/codex-rs/core/src/session/turn.rs#L3280-L3300), rather than continuing that inference from the drained result.
-A [follow-up-turn test](https://github.com/openai/codex/blob/16e578dd1ddaf4f5db9cd1f3dbfea0958fd74339/codex-rs/core/tests/suite/abort_tasks.rs#L271-L350) checks the original shell call and synthetic aborted output in the next request.
+A [follow-up-turn test](https://github.com/openai/codex/blob/16e578dd1ddaf4f5db9cd1f3dbfea0958fd74339/codex-rs/core/tests/suite/abort_tasks.rs#L271-L350) checks the original shell call and synthetic aborted output in the next model request.
 This settlement is bounded best effort: [turn interruption](https://github.com/openai/codex/blob/16e578dd1ddaf4f5db9cd1f3dbfea0958fd74339/codex-rs/core/src/tasks/mod.rs#L944-L1014) allows a short graceful interval before force-aborting.
 Independent pending-work scheduling can start other eligible work; this is not evidence of a global explicit-user-start-only policy.
 
@@ -368,7 +368,7 @@ Application-defined state channels and reducers determine what is retained.
 Storage drivers and serializers are replaceable; a separate store holds cross-thread data.
 
 Durability is configurable: `sync` saves before the next step, `async` overlaps persistence with execution, and `exit` saves on execution exit.
-Time-travel replay executes nodes after the selected checkpoint, including LLM/API requests and interrupts.
+Time-travel replay executes nodes after the selected checkpoint, including model requests, external API invocations, and interrupts.
 Pending writes let successful sibling tasks avoid rerunning during failure recovery.
 
 **Source-traced:** a [CheckpointTuple](https://github.com/langchain-ai/langgraph/blob/799c2f04fd3a56186e24e9fb8bbf3568e543cfbe/libs/checkpoint/langgraph/checkpoint/base/__init__.py#L93-L147) combines channel state/version tracking with pending task writes.
@@ -535,13 +535,13 @@ The proposal requires [complete logical input capture](session-commit-history.md
 Retained values or immutable references must reconstruct that input without current templates or configuration.
 Raw HTTP bodies, transport framing, credentials, and token-stream fragments are outside that guarantee.
 Hook transformation evidence retains input, parameters, output or failure, and relevant identity/version/configuration, under scrubbing and withholding or destruction policy.
-Required evidence commits before dependent model execution or tool dispatch; tool intent describes the effective authorized invocation after trusted rewrites rather than only the earlier model request.
+Required evidence commits before dependent model execution or tool dispatch; tool intent describes the effective authorized invocation after trusted rewrites rather than only the earlier model-requested tool call.
 
 The [hook contract](session-commit-history.md#hook-execution-and-recovery) uses at-least-once execution with stable harness-supplied logical invocation IDs, which can derive from durable action/tool/turn anchors, phase, registration identity, and occurrence.
 Committed completion is reused; authorized recovery can repeat an invocation with missing completion under the same identity only when its exact permitted inputs remain reconstructible, allowing external integrations to deduplicate effects.
 Unreleased sensitive result inputs and payload-bearing hook evidence stay memory-only; process loss makes those invocations unavailable rather than authorizing retention or tool reexecution.
 This exception does not authorize rerunning an uncertain ordinary tool.
-Completed transformations may batch with the effective request or authorized intent; logical records do not imply one physical write per hook stage.
+Completed transformations may batch with the effective logical model input or authorized tool intent; logical records do not imply one physical write per hook stage.
 Pre-intent hooks can have effects even when the tool was never dispatched.
 Concrete ID formats and the hook failure/recovery state machine remain open.
 
@@ -552,7 +552,7 @@ This strengthens the proposal's existing correlations without adding a graph dom
 
 ### Turn recovery gates into fault-injection scenarios
 
-The proposal distinguishes request, intent, result, and unknown outcomes, and does not authorize automatic uncertain ordinary-tool retry.
+The proposal distinguishes tool request, intent, result, and unknown outcomes, and does not authorize automatic uncertain ordinary-tool retry.
 Add a failure matrix around those transitions: intent append rejected, intent accepted but acknowledgement lost, effect occurred but result append failed, and result committed but projection/notification failed.
 Assert no dispatch before authorized intent, no dependent model continuation before accepted result, and no side-effecting behavior during ordinary history reconstruction.
 A synthetic failure is not evidence that an external effect failed.

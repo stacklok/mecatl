@@ -50,7 +50,7 @@ Deleting a root disables delegated children by default, not independent existing
 
 Genuinely asynchronous work exposes common authorized status/wait/subscription through existing run, extension-operation, or catalog-creation lifecycles.
 No universal operations collection or mandatory job per mutation is added.
-Every Team is session-owned even through direct API entry; originating run/call correlation is optional, not invented to establish ownership.
+Every Team is session-owned even through direct API entry; originating run/tool-call correlation is optional, not invented to establish ownership.
 Cross-run background execution remains later work.
 
 ## Ordinary shared-input sequence

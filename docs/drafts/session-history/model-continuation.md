@@ -15,13 +15,13 @@ This draft covers logical input fidelity and private provider continuation, not 
 A **logical model input** is the complete effective request: effective system instructions, ordered messages/media, tool declarations, model selection and behavior-affecting parameters, and relevant private provider continuation.
 Retain values or immutable prior-record references that reconstruct it without current prompt templates, hook configuration, or mutable external content.
 Request-only transformations cannot escape capture merely because stored conversation did not change.
-Canonical outputs, calls/results, reported usage, and permitted transformation provenance have their respective acceptance boundaries.
+Canonical model outputs, tool calls/results, reported usage, and permitted transformation provenance have their respective acceptance boundaries.
 High fidelity is the default, with no first-cutover history trimming and no relaxation of payload admission bounds.
 This preserves logical values, not raw HTTP framing, token chunks, or credentials.
 
 For unchanged history/effective configuration and a compatible provider codec, reload preserves the cache-relevant historical representation.
 Decoded JSON semantic equality is insufficient.
-Preserve nested tool-argument key order, whitespace inside strings, historical message/call/result ordering, canonical identities, provider pairing tokens, item IDs, and opaque replay payloads.
+Preserve nested tool-argument key order, whitespace inside strings, historical message/tool-call/result ordering, canonical identities, provider pairing tokens, item IDs, and opaque replay payloads.
 Restore retained bindings instead of minting replacements; replay-free fallback pairing tokens are deterministic from retained identity and occurrence context.
 Separately check rebuilt prompts, tool declaration order, model settings, cache-key configuration, and breakpoint placement.
 Deliberate configuration/provider/context changes are not equivalent-input reloads.
@@ -34,8 +34,8 @@ One canonical assistant message need not equal one provider message or reasoning
 Preserve item boundaries, ordering, immutable payload ownership, and producer/version provenance rather than last-wins fields.
 Core does not interpret opaque signed/encrypted payloads; accepted values stay byte-exact under capture policy.
 
-Engine-owned globally unique call IDs, provider pairing keys, and provider item IDs are distinct namespaces.
-Bindings include producing session and request/turn occurrence so repeated provider keys cannot alias another call/result.
+Engine-owned globally unique tool-call IDs, provider pairing keys, and provider item IDs are distinct namespaces.
+Bindings include producing session and model-request/turn occurrence so repeated provider keys cannot alias another tool call/result.
 Required replay and canonical outputs share a consistent acceptance boundary; partial or mismatched replay cannot authorize execution.
 Restart, compaction, forks, and provider switches require compatible LLM-boundary interpretation and transformations.
 Unsupported continuation-critical state fails explicitly, not by silently dropping metadata.
@@ -59,8 +59,8 @@ Capture fidelity cannot override withholding or destruction policy, and retrying
 ## Collision and ordering example
 
 A provider completes one turn with separate message, reasoning, and function-call items, then reuses a pairing key in another completed turn.
-Retained ordered items preserve the separate boundaries; occurrence-specific bindings connect each to its own canonical call identity.
-Reconstructing by a global provider-key map would alias calls and is invalid.
+Retained ordered items preserve the separate boundaries; occurrence-specific tool-call bindings connect function-call items to their own canonical tool-call identities.
+Reconstructing by a global provider-key map would alias tool calls and is invalid.
 An incompatible provider switch must report unsupported continuation rather than reinterpret the keys as engine IDs.
 These semantics reserve richer replay capacity; they do not authorize incremental output-item acceptance, partial-response retry, or WebSocket continuation.
 

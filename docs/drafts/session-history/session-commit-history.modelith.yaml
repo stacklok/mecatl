@@ -135,7 +135,7 @@ entities:
       - id: disconnect-not-cancel
         statement: A `Client` disconnect does not cancel the `Run` or transfer control rights.
       - id: intent-before-dispatch
-        statement: A `Run` commits the assistant tool request and each call's effective authorized intent after trusted rewrites, including required `HookInvocation` evidence, before tool dispatch, and commits the canonical result before dependent model continuation.
+        statement: A `Run` commits the completed assistant response and its requested tool calls, and each tool call's effective authorized intent after trusted rewrites, including required `HookInvocation` evidence, before tool dispatch, and commits the canonical tool result before dependent model continuation.
       - id: no-uncertain-tool-retry
         statement: Recovery distinguishes requested-not-dispatched tools from intent-with-unknown-outcome tools and never automatically reruns an uncertain ordinary tool; absent intent excludes tool dispatch but does not prove pre-intent hooks had no effects.
       - id: cancellation-ack-is-not-completion
@@ -169,8 +169,8 @@ entities:
   ProviderReplay:
     definition: >
       A private versioned provider-owned representation of ordered output items
-      and occurrence-specific bindings to canonical conversation, calls, and
-      results in `CommittedHistory`. It preserves item boundaries and opaque
+      and occurrence-specific bindings to canonical conversation, tool calls, and
+      tool results in `CommittedHistory`. It preserves item boundaries and opaque
       payloads without assuming one canonical assistant message equals one
       provider message or reasoning item. The LLM boundary owns interpretation
       and compatibility; public projections and executable tool objects do not.
@@ -183,16 +183,16 @@ entities:
         statement: Accepted `ProviderReplay` preserves ordered item boundaries and opaque signed or encrypted payloads byte-exact under capture policy; core cannot flatten or interpret their private meaning.
       - id: replay-binding-occurrence
         statement: >
-          `ProviderReplay` binds globally unique engine-owned canonical call
+          `ProviderReplay` binds globally unique engine-owned canonical tool-call
           identities to distinct provider pairing-key and item-ID namespaces
-          within the producing session and request/turn occurrence; repeated
-          provider keys cannot alias calls or results from another occurrence.
+          within the producing session and model-request/turn occurrence; repeated
+          provider keys cannot alias tool calls or results from another occurrence.
       - id: replay-consistent-acceptance
-        statement: Canonical accepted outputs, calls, and results and their required `ProviderReplay` payloads and bindings share a consistent acceptance boundary; missing or mismatched replay state cannot authorize tool dispatch or dependent continuation.
+        statement: Accepted canonical model outputs, tool calls, and tool results, together with their required `ProviderReplay` payloads and bindings, share a consistent acceptance boundary; missing or mismatched replay state cannot authorize tool dispatch or dependent continuation.
       - id: replay-immutable-compatible
         statement: Accepted `ProviderReplay` owns immutable payloads and producer/version provenance; restart, forks, compaction, and provider changes require compatible LLM-boundary interpretation rather than mutable aliases or silent reuse of incompatible continuation-critical metadata.
       - id: replay-not-public-authority
-        statement: A `ClientProjection` cannot reconstruct uncaptured private `ProviderReplay` or grant access to it, and provider keys cannot be reinterpreted as canonical engine call identity.
+        statement: A `ClientProjection` cannot reconstruct uncaptured private `ProviderReplay` or grant access to it, and provider keys cannot be reinterpreted as canonical engine tool-call identity.
 
   HookInvocation:
     definition: >
@@ -491,9 +491,9 @@ scenarios:
 
   - name: Fenced takeover with uncertain external work
     steps:
-      - A `Run` commits a tool request and per-call intent, then the replica loses its `OwnershipClaim` before recording the result.
+      - A `Run` commits the completed assistant response and its requested tool calls and per-tool-call effective authorized intent, then the replica loses its `OwnershipClaim` before recording the result.
       - Expiry permits fenced acquisition with a new epoch but does not prove the external action stopped.
-      - A stale append fails; recovery distinguishes no-intent requests from intent-with-unknown-outcome calls and does not rerun the uncertain tool.
+      - A stale append fails; recovery distinguishes no-intent tool requests from intent-with-unknown-outcome tool calls and does not rerun the uncertain tool.
       - Active `Operation` obligations remain under the root claim, and a missing continuation-critical `Extension` blocks dependent execution rather than claiming quiescence.
     invariants_touched: [fenced-append, expiry-is-not-quiescence, intent-before-dispatch, no-uncertain-tool-retry, active-operation-claim, critical-extension-fails-closed, trusted-extension-registration]
 
@@ -511,8 +511,8 @@ scenarios:
   - name: Ordered private replay with repeated provider keys
     steps:
       - A provider completes a turn with separate message, reasoning, and function-call items in order; the engine assigns a canonical globally unique tool-call identity.
-      - The owner consistently accepts canonical conversation facts with `ProviderReplay` retaining item boundaries, per-item metadata, opaque payloads, and occurrence-specific call bindings.
-      - Another completed turn reuses a provider pairing key, but its distinct producing occurrence prevents aliasing the earlier call or result.
+      - The owner consistently accepts canonical conversation facts with `ProviderReplay` retaining item boundaries, per-item metadata, opaque payloads, and occurrence-specific tool-call bindings.
+      - Another completed turn reuses a provider pairing key, but its distinct producing occurrence prevents aliasing the earlier tool call or result.
       - Restart reconstructs compatible `LogicalModelInput` through the LLM boundary while `ClientProjection` displays only authorized canonical facts.
       - A fork or provider change preserves provenance and requires compatible bindings and private interpretation; unsupported continuation-critical replay blocks dependent execution without reinterpreting provider keys as engine identity.
     invariants_touched: [provider-replay-ordered-opaque, replay-binding-occurrence, replay-consistent-acceptance, replay-immutable-compatible, replay-not-public-authority, complete-logical-input]

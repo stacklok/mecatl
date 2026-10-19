@@ -194,7 +194,7 @@ A storage adapter may partition records across files, tables, or runs, but expos
 Storage errors and ambiguous commits remain explicit caller outcomes; the coordinator resolves ambiguity against history before reporting confirmation.
 
 Records cover session creation and controls, run boundaries, completed model turns, tool intents and outcomes, and compaction replacements.
-A tool *request* records the model's requested call; an *intent* records the effective authorized call after trusted rewrites and readiness to dispatch it; a *result* records its established outcome or an explicit recovery outcome.
+A tool *request* records the model-requested tool call; an *intent* records the effective authorized tool call after trusted rewrites and readiness to dispatch it; a *result* records its established outcome or an explicit recovery outcome.
 These are distinct transitions, with dispatch gated by intent and dependent model continuation gated by result.
 Records include private continuation material where needed; record types are distinct from public event types.
 Every writer, including title generation, approvals, compaction, and scheduler work, uses this boundary.
@@ -234,7 +234,7 @@ This is a reconstruction requirement, not a promise that a provider cache entry 
 
 - Preserve tool-argument object-key order, including nested objects. Do not decode retained arguments into unordered maps and re-encode them merely to normalize JSON.
 - Preserve whitespace inside string values exactly; it is content, not JSON formatting.
-- Preserve historical message and call/result order, text, provider pairing tokens, provider item IDs, and opaque replay payloads under the relevant provider contract.
+- Preserve historical message and tool-call/result order, text, provider pairing tokens, provider item IDs, and opaque replay payloads under the relevant provider contract.
 - Restore retained canonical IDs and provider bindings rather than minting replacements on load. Where replay-free history requires fallback pairing tokens, derive them deterministically from retained identities and occurrence context.
 - Check rebuilt system prompts, tool definitions and their order, model settings, cache-key configuration, and cache-breakpoint placement separately. Reload must not introduce incidental changes; deliberate configuration, context, or provider changes are not equivalent-input reloads.
 
@@ -252,9 +252,9 @@ Item order, content boundaries, and occurrence-specific metadata must survive ca
 The LLM boundary owns the representation, codecs, and compatibility decisions; storage preserves accepted opaque payloads and core does not interpret signed or encrypted contents.
 
 Canonical `ToolCallID` is globally unique and engine-owned.
-Provider pairing keys, output-item IDs, and engine call identity are separate namespaces, even when a provider supplies similar-looking strings.
+Provider pairing keys, output-item IDs, and engine tool-call identity are separate namespaces, even when a provider supplies similar-looking strings.
 Provider metadata stays behind the LLM boundary rather than being added to executable domain `ToolCall` or `ToolResult` objects.
-Bindings identify the producing session, request/turn occurrence, and relevant provider item so repeated provider keys in completed turns cannot alias another call or result.
+Bindings identify the producing session, model-request/turn occurrence, and relevant provider item so repeated provider keys in completed turns cannot alias another tool call or result.
 Canonical identity must never be recovered by treating an old provider-ID key as an engine ID.
 
 For example, an OpenAI Responses replay representation can preserve separate assistant message items and their phases, reasoning-item IDs bound to their exact encrypted payloads, and function-call item IDs distinct from both provider `call_id` and engine `ToolCallID`.
@@ -262,7 +262,7 @@ These are illustrative adapter-owned details, not a fixed core schema or an exha
 A text-only client projection or event fold cannot reconstruct private metadata that was never captured.
 
 Canonical accepted output, replay bindings, and any required replay payload share a consistent acceptance boundary.
-Do not accept a canonical call with missing or mismatched required replay state, or dispatch from a partially accepted replay bundle.
+Do not accept a canonical tool call with missing or mismatched required replay state, or dispatch from a partially accepted replay bundle.
 Retain producer/version provenance and immutable ownership of payloads and bindings; no mutable aliases can change accepted history.
 Restart, compaction, forks, and provider switches must preserve the relevant occurrence bindings and apply LLM-boundary compatibility and fork-transformation rules.
 Unsupported or incompatible continuation-critical state fails explicitly; core cannot guess, silently drop required metadata, or replay it through an incompatible adapter.
@@ -710,7 +710,7 @@ Exact options and reporting of omitted grants remain interface questions.
 
 A rewind commits a new branch selection within the same `Session`.
 It neither creates another session nor deletes later commits.
-Eligible continuation points are **clean run boundaries** after fully settled runs, including failed or user-cancelled runs with valid call/result pairing.
+Eligible continuation points are **clean run boundaries** after fully settled runs, including failed or user-cancelled runs with valid tool-call/result pairing.
 An arbitrary message or mid-run steer is not eligible.
 The current delegation tree must also be settled, with no pending approval or live child work to strand.
 The client offers only eligible boundaries.
@@ -1073,11 +1073,11 @@ This coordination stays server-side, without a Kubernetes dependency in engine c
 ##### Renewal uncertainty and limited speculation
 
 A failed or timed-out claim renewal is uncertainty, not permission to start another tool.
-Started calls may settle, but only an epoch-checked commit confirms their outcomes.
+Started model requests and tool calls may settle, but only an epoch-checked commit confirms their outcomes.
 
 One narrow exception permits a next LLM request whose complete logical input and continuation were committed while ownership was valid.
 It reads that already committed request without adding new uncommitted transformations or hook outputs.
-Its streamed output stays provisional until the result commits under a valid epoch and expected head.
+Its streamed output stays provisional until the model response commits under a valid epoch and expected head.
 Before that commit, it cannot trigger a tool, a second model request, or confirmed usage.
 Discard the response if takeover wins.
 This exception may duplicate provider cost; it is not a generally read-only operation.
@@ -1110,7 +1110,7 @@ Read-only inspection never triggers the request.
 Pending steers and uncertain tools need explicit post-crash recovery decisions before new dependent work.
 No-client automatic agent continuation is deferred.
 A durable pending execution `PermissionAsk` remains resolvable by explicit verdict rather than becoming an interrupted run.
-A result-release ask is different: its unreleased bytes are memory-only, so process loss closes it as unavailable under the original call identity without rerunning the tool.
+A result-release ask is different: its unreleased bytes are memory-only, so process loss closes it as unavailable under the original tool-call identity without rerunning the tool.
 
 The host's generic orphan-settlement worker covers every session kind, including scheduled fires and delegated children.
 It neither restarts them nor knows schedule retry policy.
@@ -1232,8 +1232,8 @@ A portable history is necessary for this contract, but tool/extension parking, f
 ##### Parking the tree and closing approval admission
 
 Drain is a committed pause, not the end of a `Run`.
-The owning host marks the whole tree draining and admits no new model or tool calls in any member.
-It coordinates engine and extension handlers so each member finishes active calls, commits outcomes and continuation, then parks at a turn boundary.
+The owning host marks the whole tree draining and admits no new model requests or tool calls in any member.
+It coordinates engine and extension handlers so each member finishes active model requests and tool calls, commits outcomes and continuation, then parks at a turn boundary.
 
 A pending execution `PermissionAsk` with reconstructible continuation is already parkable.
 Its exact ask and decision state survive handoff without waiting for the human.
@@ -1251,7 +1251,7 @@ Resolve ambiguous acceptance from history before claiming success or asking for 
 
 ##### Publishing a complete handoff
 
-The owner commits a root marker only after every descendant is parked and no LLM or external tool call is in flight.
+The owner commits a root marker only after every descendant is parked and no LLM request or external tool call is in flight.
 The marker contains the parent's parked continuation and names each descendant's exact committed parked position.
 The owner then unloads local tree state and releases its exact `OwnershipClaim`.
 
@@ -1284,7 +1284,7 @@ Exact marker encoding and recovery checks remain later interface questions.
 ##### Shutdown deadlines
 
 Drain is per root `Session` and tree; a slow tree does not delay other complete handoffs.
-At the deadline, cancel and join remaining in-flight calls where possible.
+At the deadline, cancel and join remaining in-flight model requests and tool calls where possible.
 If a tree cannot establish all outcomes and commit its marker before shutdown, do not release it as a graceful handoff.
 Its claim expires, and a successor uses crash-style recovery with unknown external outcomes.
 Other completed trees keep their graceful markers and immediate releases.
@@ -1319,7 +1319,7 @@ The contract requires neither one write per hook or phase, nor separately persis
 
 Side-effecting hooks can run before the tool-intent gate.
 No-intent evidence therefore establishes that the **tool** was not dispatched, not that hooks caused no effects.
-The intent records the effective authorized call after trusted rewrites, not the model's original request.
+The intent records the effective authorized tool call after trusted rewrites, not the model's originally requested tool call.
 Execution evidence, hook-processing evidence, and disclosure disposition are separate facts.
 A pre-dispatch hook failure does not prove that its own effects were absent; a post-execution hook failure must not erase an established tool outcome or make the tool appear safe to rerun.
 The exact stage encoding and recovery transition APIs remain interface work.
@@ -1350,7 +1350,7 @@ There is no durable quarantine store or new retention-policy matrix in the first
 
 Denial discards held bytes without undoing execution or automatically repeating the tool.
 Process loss makes the held result unavailable even when local files or remote storage remain intact.
-Recovery closes its release ask and commits a synthetic withheld/unavailable result under the original call identity, retaining whatever execution evidence is established.
+Recovery closes its release ask and commits a synthetic withheld/unavailable result under the original tool-call identity, retaining whatever execution evidence is established.
 Unavailable output is not proof of tool failure, no effects, or safe retry.
 Do not recover the bytes through hook traces or recreate them by reexecuting the tool.
 A pending execution approval whose continuation is durably reconstructible remains a different case.
@@ -1365,7 +1365,7 @@ The model's batch is not a storage or execution transaction.
 Permitted independent calls may overlap under the existing read-parallel/mutate-serial discipline.
 
 The server's client-safe projection may show an admitted call in flight.
-The engine submits each established result for commit under its original call identity before dependent continuation.
+The engine submits each established result for commit under its original tool-call identity before dependent continuation.
 The durable evidence distinguishes three states:
 
 | Evidence | What the server can establish |
@@ -1374,12 +1374,12 @@ The durable evidence distinguishes three states:
 | Committed intent, no committed result | The call might have started. |
 | Actionable durable execution ask | Approval is still pending; do not close the call as not-started. A release ask additionally requires its live memory-only payload and is closed unavailable if that payload was lost. |
 
-After fencing the former writer and checking for a committed result, the host's recovery path closes an orphaned requested call with a harness-authored result, using extension handlers where its semantics require them:
+After fencing the former writer and checking for a committed result, the host's recovery path closes an orphaned requested tool call with a harness-authored tool result, using extension handlers where its semantics require them:
 
 - **Not-started** if no intent was committed: the dispatch gate prevented tool execution, though pre-intent hooks may have had effects.
 - **Unknown-outcome** if intent committed but the outcome cannot be established: the tool may have had effects and may still be running.
 
-Both retain the original call identity and complete model-visible call/result pairing.
+Both retain the original tool-call identity and complete model-visible tool-call/result pairing.
 Unknown outcome asserts neither failure nor absence of effects.
 Recovery never automatically retries the tool.
 The agent can then verify external state, retry an idempotent operation, or ask for help, under normal permissions and tool boundaries.
@@ -1399,7 +1399,7 @@ The server exposes only authorized projections of accepted facts; clients may di
 | --- | --- | --- |
 | Start a run or send its next model request | Commit the accepted input, run identity, complete effective logical model input including required transformation evidence, and the continuation state the request uses. A later request also waits for the preceding turn's committed outcome. The narrow renewal-uncertainty exception uses only already committed input. | Stream the current model response without persisting each token. |
 | Present an approval | Commit the pending ask and exact permitted continuation before treating approval as actionable. A result-release ask additionally requires its live memory-only payload; its durable metadata cannot restore the bytes after process loss. | Render an unconfirmed request as waiting, not as an exercisable grant. |
-| Dispatch each tool call, including a delegated agent | Commit the completed assistant turn with its requested calls, then commit that call's effective authorized intent after trusted rewrites, identity, and required transformation evidence before its dispatch. If its intent write fails, do not dispatch it. | Show that the call is being prepared; progress and result previews after dispatch may be provisional. |
+| Dispatch each tool call, including a delegated agent | Commit the completed assistant turn with its requested tool calls, then commit that tool call's effective authorized intent after trusted rewrites, identity, and required transformation evidence before its dispatch. If its intent write fails, do not dispatch it. | Show that the call is being prepared; progress and result previews after dispatch may be provisional. |
 | Continue after a tool returns | Commit its permitted canonical result before feeding it to the model or claiming a confirmed outcome. Withheld bytes stay memory-only and cannot appear in previews. If result commitment is unresolved, stop dependent work until recovery establishes a known, withheld/unavailable, or unknown outcome for the same call. | Show only a disclosure-approved provisional preview while its result commit is pending. |
 | Use compacted history or changed session controls | Commit the replacement conversation or control decision before using it for another model request or presenting it as confirmed. | Show that the operation is pending. |
 
@@ -1483,7 +1483,7 @@ The following budget makes the ordinary tool-call path explicit without fixing a
 
 | Stage | Durable boundary | Commit-gate budget |
 | --- | --- | --- |
-| Accept a completed model response | Requested calls, identities, and required provider replay. | One per response, shared across its calls. |
+| Accept a completed model response | Requested tool calls, tool-call identities, and required provider replay. | One per model response, shared across its tool calls. |
 | Prepare a recoverably retryable side-effecting hook | Reconstructible definition and permitted inputs, unless already durably anchored. | Zero if captured; otherwise an additional gate. Sensitive unreleased result inputs stay memory-only instead. |
 | Admit dispatch | Effective authorized intent and completed pre-dispatch transformation evidence. | One per call before dispatch. |
 | Execute the tool | No separate tool-start record is mandatory. | Zero. |

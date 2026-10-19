@@ -62,7 +62,7 @@ These are domain ownership scopes, distinct from the replica currently authorize
 | Boundary | Responsibility | Must not imply |
 | --- | --- | --- |
 | API command admission | Authorize the caller, validate optional retry identity and targeting, and return the committed decision or an explicit uncertain/rejected outcome. | Request identity is permission, work identity, or proof of completion. |
-| Engine/domain execution | Preserve original/effective values, authorization and call/result pairing; prepare semantic transitions and enforce acceptance gates. | Publishing live output makes it durable, or a tool error proves no external effects. |
+| Engine/domain execution | Preserve original/effective values, authorization and tool-call/result pairing; prepare semantic transitions and enforce acceptance gates. | Publishing live output makes it durable, or a tool error proves no external effects. |
 | Session coordinator | Order transitions and controls, coordinate bounded batching and recovery, and distinguish prompt cancellation signaling from committed acceptance. | A process-local mutex fences another replica. |
 | Storage acceptance | Atomically enforce append preconditions, accept immutable facts, assign positions, and support bounded reads and ambiguity resolution. | Storage executes or authorizes tools, interprets provider replay, or independently decides batching policy. |
 | Projection and observation | Project authorized committed facts and explicitly provisional observations; expose common work-tracking conventions over existing run, extension-operation, and catalog-creation lifecycles. | Display completeness gives access to private continuation or proves external resources remain available; common work observation adds a universal operations collection. |
@@ -70,7 +70,7 @@ These are domain ownership scopes, distinct from the replica currently authorize
 
 ## Tool-call lifecycle and commit gates
 
-The tool-call lifecycle covers the model's requested call, execution or nonexecution, and canonical result settlement.
+The tool-call lifecycle covers the model-requested tool call, execution or nonexecution, and canonical tool result settlement.
 On the ordinary continuation path, that result then enters a later model request; cancellation can end execution without any later model consumption.
 A **phase** names work or waiting in that lifecycle; entering a phase in memory does not itself commit anything.
 Labels such as **request accepted**, **intent accepted**, **result accepted**, and **input accepted** mean the corresponding facts have been committed to authoritative history.
@@ -97,18 +97,18 @@ Result release is the disclosure decision after required processing; it requires
 
 | Phase | Work and exit condition |
 | --- | --- |
-| **Request capture** | Accept the completed model response, requested calls, and required replay/bindings together. Committing the request establishes call identity and original call position; streamed fragments alone do not. |
+| **Request capture** | Accept the completed model response, requested tool calls, and required replay/bindings together. Committing these facts establishes tool-call identity and original tool-call position in that model response; streamed fragments alone do not. |
 | **Action preparation** | Validate the requested arguments, authorize, run applicable pre-tool hooks, authorize rewrites, and resolve required execution asks. Committing the intent retains the exact effective authorized action and permitted preparation evidence. |
 | **Tool execution** | Check dispatch eligibility against that accepted intent, then admit and invoke the tool under existing dispatch barriers. The live **execution admitted** boundary is distinct from intent acceptance. A return establishes available execution evidence and output, not disclosure permission or durable result acceptance. |
 | **Result processing** | Hold raw output privately in memory and apply normal post-tool hooks, UTF-8 repair, and inbound review under existing failure semantics. Preserve established execution evidence independently of processing success. |
 | **Result release** | Determine whether processed content can be disclosed, must be withheld, or awaits an exact release decision. Unreleased payloads remain memory-only. Denial or lost output yields an explicit synthetic result without claiming the tool did not execute. |
-| **Result acceptance** | Commit the permitted canonical result or explicit recovery outcome under the original call identity, with safe evidence and any corresponding ask resolution. Committing the canonical result completes that call's canonical pairing. |
+| **Result acceptance** | Commit the permitted canonical result or explicit recovery outcome under the original tool-call identity, with safe evidence and any corresponding ask resolution. Committing the canonical result completes that call's canonical pairing. |
 | **Model-input assembly** | Assemble all required accepted results in canonical/provider order, with effective instructions, eligible input, transformations, and replay. Commit the complete logical input before dependent model execution. |
 | **Model continuation** | Recheck eligibility to advance the run and submit the accepted logical input to the model. Submission is distinct from input acceptance and does not by itself prove provider consumption or a completed response. |
 
 Execution approval suspends action preparation at its recorded continuation point; result-release approval suspends result release after the tool has executed.
 They are different asks with different recovery consequences.
-Model-input assembly and continuation belong to the model turn and can cover several calls; they are not repeated model requests for each call.
+Model-input assembly and continuation belong to the model turn and can cover several tool calls; they are not repeated model requests for each tool call.
 A result accepted after cancellation can enter a later explicitly started run, but cannot cause continuation of the canceled run.
 
 ### Required commit gates by phase
@@ -123,12 +123,12 @@ Only disclosure-permitted content can appear in a provisional preview.
 
 | Phase | Commit gate | What must be accepted | What waits for confirmation | Recovery if confirmation or process is lost |
 | --- | --- | --- | --- | --- |
-| Request capture | Request accepted | Completed response, requested calls, required replay and occurrence bindings. | Dependent call preparation/execution. | Resolve ambiguous append identity first. Unaccepted response fragments grant no call authority. |
+| Request capture | Request accepted | Completed model response, requested tool calls, required replay and occurrence bindings. | Dependent tool-call preparation/execution. | Resolve ambiguous append identity first. Unaccepted model-response fragments grant no tool-call authority. |
 | Action preparation | Hook-input anchor accepted, if needed | Otherwise-unavailable reconstructible hook definition/input anchor. | Recoverably retryable hook invocation. | Reuse committed hook completion; retry an incomplete hook only with exact reconstructible inputs and authorized recovery. |
 | Action preparation | Execution ask accepted, if needed | Exact ask and permitted continuation. | Publication of an actionable execution ask. | Preserve a reconstructible execution ask rather than classifying it as ordinary not-started work. |
 | Action preparation | Execution verdict accepted, if needed | Exact authorized ask resolution and its recorded continuation point. | Resumption from that point, including hooks or dispatch preparation dependent on approval. | Reuse the accepted verdict without repeating committed hook work; cancellation and remaining eligibility checks still apply. Bundle with intent only when both are ready. |
 | Action preparation | Intent accepted | Exact effective authorized intent and completed required preparation evidence. | Tool dispatch, followed by live dispatch-eligibility checks. | With no accepted intent, the tool was not dispatched by the protocol. With intent but no established outcome, execution is uncertain; never automatically rerun the tool. Pre-intent hook effects remain possible. |
-| Result release | Release ask accepted, if needed | Exact release ask and safe correlation/processing evidence, excluding unreleased payloads. | Publication of an actionable release ask. | A lost memory-only hold closes unavailable under the original call identity; retained ask metadata cannot restore the bytes. |
+| Result release | Release ask accepted, if needed | Exact release ask and safe correlation/processing evidence, excluding unreleased payloads. | Publication of an actionable release ask. | A lost memory-only hold closes unavailable under the original tool-call identity; retained ask metadata cannot restore the bytes. |
 | Result acceptance | Result accepted | Permitted canonical result or explicit recovery outcome, safe evidence, and applicable ask resolution. | Confirmed result publication and use in dependent model input. | Resolve an ambiguous append before retrying acceptance. An accepted result survives notification loss and does not require redispatch. |
 | Model-input assembly | Input accepted | Complete effective logical input and required compatible replay. | Dependent model request. | Accepted input alone does not establish whether the provider received it. Preserve explicit interruption/recovery semantics rather than inferring safe automatic continuation. |
 
@@ -140,7 +140,7 @@ Readiness-driven batching can group independent ready results without waiting in
 
 ### Coordinated state machine with cancellation
 
-The **candidate state-machine structure** separates the run's execution lifecycle from each call's execution evidence, result disposition, and committed facts.
+The **candidate state-machine structure** separates the run's execution lifecycle from each tool call's execution evidence, result disposition, and committed facts.
 Cancellation is an event affecting those dimensions, not a single terminal tool-call state that erases them.
 For cancellation, the run moves from **open** to **stopping** to **terminal**; normal completion, failure, and owner-loss recovery are additional run transitions, not synonyms for cancellation.
 A live stopping transition can precede its durable cancellation acceptance because prompt local interruption must not wait for storage.
@@ -148,12 +148,12 @@ A live stopping transition can precede its durable cancellation acceptance becau
 | Event and guard | Run transition | Call/result transition and required acceptance |
 | --- | --- | --- |
 | Authorized cancellation targets an open run. | Close local admission and enter stopping; promptly signal active work, descendants, and extensions. Commit the resolved cancellation target and all pending-source cancellations before confirmed acknowledgement. | Calls not yet admitted cannot cross execution admission. Preserve accepted results and established execution evidence; signal admitted work without asserting rollback. |
-| Cancellation precedes execution admission, including during an execution ask or preparation. | Remain stopping. | Fence the continuation and settle not-started under the original call identity once non-admission is established. Close the outstanding execution ask; preserve any hook-effect uncertainty. |
+| Cancellation precedes execution admission, including during an execution ask or preparation. | Remain stopping. | Fence the continuation and settle not-started under the original tool-call identity once non-admission is established. Close the outstanding execution ask; preserve any hook-effect uncertainty. |
 | Execution admission precedes cancellation. | Remain stopping while bounded shutdown/settlement proceeds. | Tool effects can exist. A return follows normal bounded result processing; missing established outcome is recorded as unknown rather than failed or safe to retry. |
 | Produced output reaches a release ask while stopping. | No return to open. | Accept the exact ask and safe evidence; keep output memory-only. No further model inference or dependent dispatch is permitted. |
 | Bounded shutdown and active result processing finish, or their settlement deadline is reached. | Accept terminal run disposition with honest unresolved obligations. | An optional release ask can remain pending. Do not fabricate a canonical withheld result solely to mark the run terminal. A deadline does not establish external cessation or permit bypassing disclosure checks. |
 | Exact release or denial wins while its hold is live, including after run termination. | Run remains stopping or terminal; never reopens. | Accept canonical released/withheld result with the ask resolution. Complete pairing once; do not replace an already canonical result. |
-| Hold is lost through process loss. | Recovery uses accepted run evidence; loss is not a release decision. | Close the ask and accept an unavailable/withheld result under the original call identity. Do not reconstruct prohibited bytes or rerun the tool. |
+| Hold is lost through process loss. | Recovery uses accepted run evidence; loss is not a release decision. | Close the ask and accept an unavailable/withheld result under the original tool-call identity. Do not reconstruct prohibited bytes or rerun the tool. |
 | A successor run is admitted after bounded predecessor settlement. | Predecessor remains terminal; successor has a distinct identity. | At admission, invalidate outstanding holds, expire their asks, discard bytes, and fence late answers/processing, ordered against release decisions. Accept corresponding withheld results before successor model input. Atomic bundling of those result records with successor admission remains an open representation choice. |
 | A late release answer or processing completion arrives after invalidation or canonical result acceptance. | No reopening or retargeting. | Reject stale/conflicting advancement; retain the accepted disposition. A protected retry can return its original decision without applying it again. |
 
@@ -161,7 +161,7 @@ Dispatch admission and cancellation must be ordered so exactly one wins the admi
 The same ordering requirement applies to model-request admission: if cancellation wins, no new request is admitted; if request admission wins, cancellation signals that admitted request rather than retroactively preventing it.
 Accepted model input alone does not win model-request admission.
 A terminal run with a pending release ask is a valid state, as is a terminal run whose call result is accepted later.
-A successor model request with an unresolved required predecessor call/result pairing is invalid.
+A successor model request with an unresolved required predecessor tool-call/result pairing is invalid.
 Accepted history cannot establish two canonical results for the same call or two winning dispositions for the same ask.
 These guards constrain the concrete transition API; they do not mandate a generic tentative aggregate or rollback layer.
 
@@ -251,7 +251,7 @@ The labels below describe facts, not final enum names.
 
 | Last established boundary | Safe conclusion | Required response |
 | --- | --- | --- |
-| Model response acceptance unresolved | No accepted dispatch authority for its calls. | Resolve append identity or stop; no tool dispatch. |
+| Model response acceptance unresolved | No accepted dispatch authority for its tool calls. | Resolve append identity or stop; no tool dispatch. |
 | Requested call, no intent, no actionable execution ask | Tool not dispatched by the protocol; pre-intent hooks may have effects. | After fencing, settle not-started under the original identity. |
 | Durable execution ask | Exact execution decision is pending. | Preserve/rehydrate reconstructible continuation; do not close as ordinary not-started. |
 | Intent accepted, no established outcome | Tool might have started or still be running. | After fencing and evidence checks, settle unknown-outcome; never automatically rerun. |
@@ -263,7 +263,7 @@ The labels below describe facts, not final enum names.
 | Result accepted, notification lost | Committed outcome survives. | Catch up from authoritative history; no redispatch or duplicate usage. |
 | Cancellation deadline reached | Local settlement bound expired; external cessation may remain unknown. | Record unresolved obligations honestly and do not report proven termination. |
 
-The ordinary baseline remains one completed-response gate plus intent/result gates per call, or `1 + 2N` before eligible grouping.
+The ordinary baseline remains one completed-model-response gate plus intent/result gates per tool call, or `1 + 2N` before eligible grouping.
 Approval and otherwise-unavailable hook-input anchors can add gates; receipts share their protected mutation's commit.
 This is not a physical-write estimate.
 

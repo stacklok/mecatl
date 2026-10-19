@@ -6,7 +6,7 @@ It introduces no policy decisions or release authority.
 
 ## Imported assumptions
 
-[Execution gates](execution-and-recovery.md) distinguish a model's requested call, the effective authorized action retained as intent, and the final eligibility check before dispatch.
+[Execution gates](execution-and-recovery.md) distinguish a model-requested tool call, the effective authorized action retained as intent, and the final eligibility check before dispatch.
 [Model input capture](model-continuation.md) retains permitted evidence of transformations so historical inputs can be reconstructed without rerunning hooks.
 [Cancellation and settlement](cancellation-and-results.md) can close admission while normal processing of already-produced output continues separately.
 Every control attempt is independently authorized; [retry identity](commands-and-lifecycle.md) lets a caller recover a prior command decision, not acquire permission.
@@ -20,7 +20,7 @@ This applies to fresh calls, trusted rewrites, and approval resumption.
 It does not introduce one persisted decoded snapshot or remove resumption checks.
 See the pinned [dispatch gate](https://github.com/stacklok/mecatl/blob/dbec473f9fde003fe0bd8fbb4e04fa7b222fa1e2/engine/agent/dispatch.go#L1206-L1224) and [execution decode](https://github.com/stacklok/mecatl/blob/dbec473f9fde003fe0bd8fbb4e04fa7b222fa1e2/engine/session/toolcall.go#L51-L71).
 
-History retains the exact effective authorized call at the intent boundary, and execution consumes those values.
+History retains the exact effective authorized tool call at the intent boundary, and execution consumes those values.
 Inspection does not reconstruct what ran from today's hook configuration, schema interpretation, defaults, or resource extraction.
 A trusted rewrite is a different effective action and must be validated and authorized before its intent commits.
 Dispatch eligibility never silently substitutes newly evaluated arguments after commitment.
@@ -28,7 +28,7 @@ Dispatch eligibility never silently substitutes newly evaluated arguments after 
 ## Ordinary tool call and trusted rewrite
 
 ```text
-[C completed model response + requested calls + required replay/bindings]
+[C completed model response + requested tool calls + required replay/bindings]
 ordinary authorization
 [C permitted hook definition/input anchor, if not already reconstructible]
 PreToolUse
@@ -93,7 +93,7 @@ Committed completion is reused without reinvocation.
 Replay itself never retries hooks, and missing evidence creates no autonomous recovery loop or automatic first-cutover run resume.
 Unreleased sensitive inputs and payload-bearing evidence remain memory-only; losing them ends retry eligibility rather than justifying capture or guessed input.
 Hook retry never authorizes uncertain ordinary tool reexecution.
-Required completed evidence commits before dependent model/tool execution, possibly batched with logical input or intent; no write per hook phase is mandated.
+Required completed evidence commits before dependent model requests or tool execution, possibly batched with logical input or intent; no write per hook phase is mandated.
 
 ## Open decisions and detail
 

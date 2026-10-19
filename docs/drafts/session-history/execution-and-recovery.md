@@ -10,7 +10,7 @@ It is a design draft.
 [Storage acceptance](storage-and-observation.md) checks that an append extends the expected history head and comes from its current authorized owner, under declared backend guarantees.
 [Authorization and hooks](authorization-and-hooks.md) establish the exact action and arguments permitted for execution, including any trusted rewrites.
 [Model continuation](model-continuation.md) requires the effective instructions, messages, tools, settings, and private provider continuation to be reconstructible before invocation.
-Cancellation can close admission even after an intent commits; a call's output can still require processing or a release decision after the run ends, as [result settlement](cancellation-and-results.md) explains.
+Cancellation can close admission even after an intent commits; a tool call's output can still require processing or a release decision after the run ends, as [result settlement](cancellation-and-results.md) explains.
 
 ## Settled rules and why
 
@@ -47,7 +47,7 @@ flowchart TD
     assembleInput("Assemble complete effective model input")
     inputCommit{{"COMMIT GATE<br/>Logical model input"}}
     invokeModel("Check admission and invoke model")
-    responseCommit{{"COMMIT GATE<br/>Completed response, requested call,<br/>and required private replay/bindings"}}
+    responseCommit{{"COMMIT GATE<br/>Completed LLM response, requested tool call,<br/>and required private replay/bindings"}}
     prepareAction("Validate and authorize action;<br/>run pre-tool hooks and review rewrites")
     intentCommit{{"COMMIT GATE<br/>Exact effective authorized intent<br/>and required preparation evidence"}}
     invokeTool("Check admission and invoke tool")
@@ -78,7 +78,7 @@ This is not a physical-write count; the [budget](session-commit-history.md#commi
 
 The same retained evidence supports deliberate handoff, not just recovery after failure.
 For a compatible-replica upgrade or other maintenance, the owner can stop admitting work and seek a safe pause point for the root session and every active descendant.
-A commit gate is not automatically such a point: the whole tree must be parked, with no model or external tool call in flight and all required outcomes and continuation committed.
+A commit gate is not automatically such a point: the whole tree must be parked, with no model request or external tool call in flight and all required outcomes and continuation committed.
 An execution approval wait with reconstructible continuation is also parkable; memory-only release holds must first be explicitly settled or invalidated.
 
 ```text
@@ -116,9 +116,10 @@ Graceful compatible-replica tree handoff is [later work](session-commit-history.
 
 ## Race: concurrent read results
 
-For model calls `[A, B]`, B may finish and pass disclosure checks while A is still running or held.
-Execution readiness, durable result acceptance, client publication, and model-message assembly are separate concerns.
-B's permitted result becomes eligible for acceptance without waiting solely for A's request position, retaining call identity and original call position.
+A single LLM response requests two read-only tool calls, `[A, B]`.
+Tool call B may finish and pass disclosure checks while tool call A is still running or its output is held for release.
+Execution readiness, durable result acceptance, client publication, and assembly of the next LLM request are separate concerns.
+B's permitted result becomes eligible for acceptance without waiting solely for tool call A's position in the original LLM response, retaining B's tool-call identity and position in that response.
 The coordinator can combine both if ready within bounded delay/size limits, or flush B when its bounds require.
 A cannot postpone B indefinitely; B is confirmed only after acceptance.
 Model-facing assembly restores required canonical/provider order and waits for all required outcomes and approvals.
