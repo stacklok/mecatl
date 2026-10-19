@@ -62,9 +62,17 @@ caller, source session, and choice, keyed by a random per-process key. `ClearSes
 restart. Only the local provider offers discovery; the microVM provider rejects worktree
 selectors.
 
-Schedules persist a resolved ref plus scope, and every fire reattaches it. A schedule
-created without an origin session owns its placement: deleting it before the first claimed
-fire cleans the placement up, and afterwards keeps it for fire sessions that may resume.
+Schedules persist a resolved ref plus scope, and every fire reauthorizes it. Native
+Kubernetes fires reserve a distinct successor reference against the exact origin,
+then persist the fire session before committing that reference. An ambiguous commit
+retains the snapshot and reference without aborting; the fire closes its process-local
+engine and attachment even when publication returns an error. Independent remote
+workspace allocation fails before allocation; independent no-FS schedules remain
+supported. See [scheduled-task placement and limits](../../user-docs/features/sessions/scheduled-tasks.md#placement-and-deletion).
+
+Where independent placement is supported, a schedule created without an origin
+session owns its placement: deleting it before the first claimed fire cleans the
+placement up, and afterwards keeps it for fire sessions that may resume.
 
 Delegated children never choose a placement; they share or fork the parent's Environment.
 

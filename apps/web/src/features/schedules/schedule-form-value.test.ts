@@ -4,9 +4,14 @@ import { describe, expect, it } from "vitest";
 import {
   bodyFromValue,
   displayedValue,
+  type FormValue,
   isTriggerEditable,
+  oneShotDatePatch,
+  oneShotInputs,
+  oneShotTimePatch,
   phraseTriggerPatch,
   type Schedule,
+  scheduleFormProblem,
   TRIGGER_FIELDS,
   type TriggerPatch,
   triggerFromValue,
@@ -148,6 +153,7 @@ describe("schedule trigger lock", () => {
         cron: "0 10 * * *",
         oneShotAt: "2030-06-01T12:00",
         oneShotOriginal: "",
+        oneShotTime: "23:59",
         prompt: "Edited prompt",
         timezone: "UTC",
         triggerKind: trigger.kind === "cron" ? "once" : "cron",
@@ -171,10 +177,22 @@ describe("schedule trigger lock", () => {
     }
   });
 
-  it("leaves the retry fields of an existing one-shot schedule editable", () => {
-    const existing = schedule({ trigger: STORED_TRIGGERS[1] });
-    const value = { ...valueFromSchedule(existing), oneShotMaxRetries: "5", oneShotRetry: true };
-    expect(bodyFromValue(displayedValue(value, existing), existing)).toMatchObject({
+  it("round-trips hidden limits and retry policy unchanged", () => {
+    const cron = schedule({ maxFires: 7 });
+    expect(bodyFromValue(valueFromSchedule(cron), cron)).toMatchObject({
+      maxFires: 7,
+      oneShotMaxRetries: 0,
+      oneShotRetry: false,
+      trigger: cron.trigger,
+    });
+
+    const once = schedule({
+      oneShotMaxRetries: 5,
+      oneShotRetry: true,
+      trigger: STORED_TRIGGERS[1],
+    });
+    expect(bodyFromValue(valueFromSchedule(once), once)).toMatchObject({
+      maxFires: 0,
       oneShotMaxRetries: 5,
       oneShotRetry: true,
       trigger: STORED_TRIGGERS[1],
@@ -210,5 +228,84 @@ describe("schedule trigger lock", () => {
       triggerKind: "once",
     });
     expect(bodyFromValue(typed).trigger).toEqual({ at: new Date(at).toISOString(), kind: "once" });
+  });
+});
+
+describe("scheduleFormProblem", () => {
+  const ready = { ...valueFromSchedule(), name: "nightly", prompt: "Summarize" };
+
+  it("names the first missing field and clears once the form could be sent", () => {
+    expect(scheduleFormProblem(valueFromSchedule())).toBe("Name is required.");
+    expect(scheduleFormProblem({ ...ready, prompt: "  " })).toBe("Prompt is required.");
+    expect(scheduleFormProblem({ ...ready, cron: " " })).toBe("Cron expression is required.");
+    expect(scheduleFormProblem(ready)).toBeNull();
+  });
+
+  it("requires a valid one-shot run time", () => {
+    const once = { ...ready, triggerKind: "once" as const };
+    expect(scheduleFormProblem({ ...once, oneShotAt: "" })).toBe("Run time is required.");
+    expect(scheduleFormProblem({ ...once, oneShotAt: "2030-13-45T25:00" })).toBe(
+      "Run time is not a valid date.",
+    );
+    expect(scheduleFormProblem({ ...once, oneShotAt: "2030-01-02T15:30" })).toBeNull();
+  });
+
+  it("checks an existing schedule against its stored, locked trigger", () => {
+    const stored = schedule({ trigger: { at: "2030-01-02T08:00:00.000Z", kind: "once" } });
+    const value = { ...valueFromSchedule(stored), cron: "", oneShotAt: "" };
+    expect(scheduleFormProblem(displayedValue(value, stored), stored)).toBeNull();
+    expect(scheduleFormProblem({ ...value, name: "" }, stored)).toBe("Name is required.");
+  });
+});
+
+describe("one-shot date and time inputs", () => {
+  const blank = { ...valueFromSchedule(), triggerKind: "once" as const };
+  const apply = (value: FormValue, patch: TriggerPatch) => withTriggerPatch(value, patch);
+
+  it("runs a date at 9:00 only when no time was ever chosen", () => {
+    const dated = apply(blank, oneShotDatePatch(blank, "2030-01-02"));
+    expect(dated.oneShotAt).toBe("2030-01-02T09:00");
+    expect(oneShotInputs(dated)).toEqual({ date: "2030-01-02", time: "09:00" });
+  });
+
+  it("keeps a time chosen before the date and joins it to the date", () => {
+    const timed = apply(blank, oneShotTimePatch(blank, "15:30"));
+    expect(timed.oneShotAt).toBe("");
+    expect(oneShotInputs(timed)).toEqual({ date: "", time: "15:30" });
+    const dated = apply(timed, oneShotDatePatch(timed, "2030-01-02"));
+    expect(dated.oneShotAt).toBe("2030-01-02T15:30");
+  });
+
+  it("keeps the time when the date is cleared or changed", () => {
+    const dated = apply(blank, oneShotDatePatch(blank, "2030-01-02"));
+    const set = apply(dated, oneShotTimePatch(dated, "15:30"));
+    expect(set.oneShotAt).toBe("2030-01-02T15:30");
+    const cleared = apply(set, oneShotDatePatch(set, ""));
+    expect(cleared.oneShotAt).toBe("");
+    expect(oneShotInputs(cleared)).toEqual({ date: "", time: "15:30" });
+    expect(scheduleFormProblem({ ...cleared, name: "n", prompt: "p" })).toBe(
+      "Run time is required.",
+    );
+    const changed = apply(set, oneShotDatePatch(set, "2030-02-03"));
+    expect(changed.oneShotAt).toBe("2030-02-03T15:30");
+  });
+
+  it("ignores a transient empty time", () => {
+    expect(oneShotTimePatch({ ...blank, oneShotTime: "15:30" }, "")).toEqual({});
+  });
+
+  it("reads a stored one-shot's date and time", () => {
+    const stored = schedule({ trigger: { at: "2030-01-02T08:00:00.000Z", kind: "once" } });
+    const value = valueFromSchedule(stored);
+    expect(oneShotInputs(value)).toEqual({
+      date: value.oneShotAt.slice(0, 10),
+      time: value.oneShotAt.slice(11, 16),
+    });
+    expect(value.oneShotTime).not.toBe("");
+  });
+
+  it("sets the time from a one-shot phrase", () => {
+    const patch = phraseTriggerPatch("tomorrow at 8am", phraseNow).patch;
+    expect(patch).toMatchObject({ oneShotAt: "2026-09-17T08:00", oneShotTime: "08:00" });
   });
 });

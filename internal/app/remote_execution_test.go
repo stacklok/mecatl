@@ -44,6 +44,61 @@ func (p remoteFactoryPlacement) Reattach(_ context.Context, req server.Placement
 	return server.PlacementBinding{Environment: p.env, Ref: p.env.Ref()}, nil
 }
 
+func TestRemoteScheduleCatalogAndPromptThroughFactory(t *testing.T) {
+	fakeRulesEnv(t, t.TempDir(), t.TempDir())
+	ref := session.EnvironmentRef{Kind: "kubernetes", ID: "scheduled", Revision: "r1"}
+	owner := &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser}
+	placement := &scheduledNativeProvider{ref: ref, owner: owner, published: map[session.SessionID]bool{}, pending: map[session.SessionID]bool{}}
+	var captured port.LLMRequest
+	llm := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { captured = req })},
+		mockllm.ToolCallTurn(session.NewToolCall("create", "Schedule", []byte(`{"verb":"create","name":"borrow","prompt":"check","cron":"0 9 * * *"}`))),
+		mockllm.TextTurn("done"))
+	built, err := buildIsolated(t, t.Context(), Config{MockProvider: llm, StoreDir: t.TempDir(), PlacementProvider: placement, PlacementScope: "remote", RemoteExecution: true, OwnershipEnforced: true, NoSoul: true, SchedulerEnabled: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer built.Close()
+	ctx := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser})
+	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := built.Service.StartRun(ctx, sess.ID, "schedule")
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := false
+	for ev := range run.Events() {
+		if ev.ToolResult != nil && ev.ToolResult.CallID == "create" {
+			if ev.ToolResult.IsError {
+				t.Fatalf("in-chat schedule create failed: %s", ev.ToolResult.Content)
+			}
+			created = true
+		}
+	}
+	built.Service.FinishRun(sess.ID, run)
+	if !created {
+		t.Fatal("real factory did not dispatch model-facing Schedule create")
+	}
+	names := map[string]bool{}
+	for _, spec := range captured.Tools {
+		names[spec.Name] = true
+	}
+	for _, name := range []string{"Schedule", "ScheduleQuery"} {
+		if !names[name] {
+			t.Errorf("remote catalog omitted %s with backend", name)
+		}
+	}
+	for _, name := range []string{"Subagent", "Parallel", "Team", "SkillDraft"} {
+		if names[name] {
+			t.Errorf("remote catalog exposed %s", name)
+		}
+	}
+	if !strings.Contains(captured.System.StablePrefix, "in-chat schedules may borrow") || !strings.Contains(captured.System.StablePrefix, "independent scheduled workspace allocation is unsupported") || !strings.Contains(captured.System.StablePrefix, "fire fails if the workspace is busy") {
+		t.Fatalf("remote factory omitted schedule limitations: %q", captured.System.StablePrefix)
+	}
+}
+
 func TestRemoteExecutionPreflightNeverAllocates(t *testing.T) {
 	fakeRulesEnv(t, t.TempDir(), t.TempDir())
 	for _, validation := range []error{nil, server.ErrInvalidPlacementBinding, server.ErrPlacementUnavailable} {

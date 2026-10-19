@@ -236,12 +236,13 @@ type createSessionBody struct {
 	Mode   string    `json:"mode,omitempty"`
 	Limits *limitsIn `json:"limits,omitempty"`
 	// ProviderID / ModelID select a per-session provider+model.
-	// Empty both => the server default provider. ProviderID without
-	// ModelID => the provider's default model; ModelID without ProviderID is a
-	// client error (a bare model on the default provider is ambiguous).
-	ProviderID string          `json:"provider_id,omitempty"`
-	ModelID    string          `json:"model_id,omitempty"`
-	Execution  json.RawMessage `json:"execution,omitempty"`
+	// Empty both => the definition's base pair when bound, else the server default.
+	// ProviderID without ModelID => the provider's default model. ModelID without
+	// ProviderID requires an agent definition to supply the base provider.
+	ProviderID          string          `json:"provider_id,omitempty"`
+	ModelID             string          `json:"model_id,omitempty"`
+	Execution           json.RawMessage `json:"execution,omitempty"`
+	AgentDefinitionName string          `json:"agent_definition_name,omitempty"`
 	// ReasoningEffort sets the session's reasoning-effort tier,
 	// mirroring the proto field: "" / "auto" = unset (operator/provider default),
 	// else low/medium/high/xhigh/max. The server normalises + per-provider-clamps +
@@ -304,7 +305,8 @@ type limitsIn struct {
 }
 
 type createSessionResp struct {
-	SessionID string `json:"session_id"`
+	SessionID                   string `json:"session_id"`
+	ResolvedAgentDefinitionName string `json:"resolved_agent_definition_name,omitempty"`
 	// SessionCapabilities echoes the per-session resolved input capability (catalog
 	// ∩ adapter for THIS session's provider+model), so an HTTP client gates
 	// per-session @-attach UX on the same intersected value the gRPC client gets.
@@ -550,6 +552,9 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 	sel := ProviderSelector{ProviderID: body.ProviderID, ModelID: body.ModelID, ReasoningEffort: body.ReasoningEffort}
 	var opts []CreateSessionOption
 	opts = append(opts, WithExecutionSelection(execution))
+	if body.AgentDefinitionName != "" {
+		opts = append(opts, WithAgentDefinitionName(body.AgentDefinitionName))
+	}
 	if body.DebugTargetSessionID != "" {
 		opts = append(opts, WithDebugTarget(session.SessionID(body.DebugTargetSessionID)))
 	}
@@ -576,10 +581,11 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 	scaps := h.svc.sessionCapabilitiesFor(sess)
 	files, shell := executionSessionCapabilities(sess)
 	writeJSON(w, http.StatusCreated, createSessionResp{
-		SessionID:           string(sess.ID),
-		SessionCapabilities: &sessionCapabilitiesJSON{Image: scaps.Image, Audio: scaps.Audio, ExecutionFiles: files, BuiltInShell: shell},
-		ResolvedModel:       resolvedModelToJSON(h.svc.resolvedModelFor(sess)),
-		Placement:           placementMetadataToJSON(sess.Placement),
+		SessionID:                   string(sess.ID),
+		ResolvedAgentDefinitionName: sess.AgentDefinitionName,
+		SessionCapabilities:         &sessionCapabilitiesJSON{Image: scaps.Image, Audio: scaps.Audio, ExecutionFiles: files, BuiltInShell: shell},
+		ResolvedModel:               resolvedModelToJSON(h.svc.resolvedModelFor(sess)),
+		Placement:                   placementMetadataToJSON(sess.Placement),
 	})
 	responseDone(r.Context().Err())
 }

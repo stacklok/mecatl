@@ -100,6 +100,9 @@ an error listing accepted credentials and the `--mock` escape hatch.
 `CreateSession` takes an optional `provider_id`/`model_id` selector, which the server
 passes on as a neutral `server.ProviderSelector` for composition to resolve.
 
+The following table describes ordinary sessions without `agent_definition_name`.
+Wire `model_id` values are opaque literals, never alias-expanded.
+
 | Selector | Outcome |
 | --- | --- |
 | both empty | the shared engine on the deployment default |
@@ -107,6 +110,25 @@ passes on as a neutral `server.ProviderSelector` for composition to resolve.
 | provider only | per-session engine on that provider's default model |
 | provider and model | per-session engine bound to that pair; an uncatalogued model is passed through verbatim |
 | unknown or unavailable provider | invalid argument, never a silent fallback |
+
+With `agent_definition_name`, `resolveAgentDefRootProviderModel` resolves a root
+base pair from the definition over the deployment default. Definition model
+aliases retain their provider/model pairing; `SubagentModel` and automatic child
+routing do not participate. The five cases are:
+
+| Selector | Agent-bound root outcome |
+| --- | --- |
+| both empty | definition's base pair |
+| model without provider | base provider plus the request's literal model |
+| provider only | requested provider's own default model |
+| provider and model | explicit pair verbatim |
+| unavailable explicit definition provider, without a request provider override | invalid argument, including model-only requests |
+
+Unknown request providers also fail. An unknown or conflicting definition model
+alias warns and falls back atomically to the base fallback pair, preserving an
+explicit provider pin; it never rebases the alias's model onto another provider.
+The response reports the effective pair. This root resolver is separate from the
+child resolver's forgiving provider fallback described below.
 
 A per-session engine is built by `sessionEngineFactory` through
 `engineDepsForProvider`. That function re-derives everything that depends on the

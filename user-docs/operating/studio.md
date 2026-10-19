@@ -64,10 +64,12 @@ Studio exposes the shared capabilities described in the
 [feature guides](/features/index.md), and it hides or disables what the
 connected deployment does not enable:
 
-- **Chats**: sessions with streamed runs, image attachments, permission
-  approvals, steering, and model and reasoning-effort selection.
+- **Chats**: sessions with streamed runs, image and text-file attachments,
+  permission approvals, steering, and model and reasoning-effort selection.
 - **Scheduled**: [scheduled tasks](/features/sessions/scheduled-tasks.md) with a
-  cron builder and fire history, when the deployment enables scheduling.
+  cron builder and a **Run log** of past runs, when the deployment enables
+  scheduling. See [Manage schedules in Studio](/features/sessions/scheduled-tasks.md#manage-schedules-in-studio)
+  for what the dialog can and can't change.
 - **Skills**: configured and learned skills, learning proposals, and session
   reflection, when the deployment enables them.
 - **Settings**: personal browser preferences and memory decisions alongside
@@ -76,12 +78,13 @@ connected deployment does not enable:
 A global search palette and a keyboard-shortcuts reference page complete the
 set. Open `/workspace/shortcuts` directly or follow **Keyboard shortcuts** from
 **Settings > About**. The page lists the current browser bindings and features
-enabled by the connected deployment.
+enabled by the connected deployment. The Enter and Shift+Enter rows follow your
+**Messages while the agent works** preference in **Settings > Personalise**.
 
 ### Choose execution for a new chat
 
 Before sending the first prompt, open **Execution** in the chat composer (or
-**Chat options** on mobile). **Deployment default** uses your server's configured
+**Composer options** on a phone). **Deployment default** uses your server's configured
 workspace; **No files or built-in Shell** creates a file-less chat. If the server
 advertises template discovery, you can select an eligible template by its display
 name, ID, and pinned revision. The server checks your access again at creation;
@@ -114,6 +117,14 @@ the Skill tool, a banner explains that the agent loads no skills.
 Select a skill to see its description and slug. Agent-owned skills also show
 the owner and active version.
 
+The **Files** section lists the skill's files with their text, highlighted by
+file type, each in its own scrolling block. The first entry is the skill's
+instructions: the text after the frontmatter, not the raw `SKILL.md`, so
+frontmatter fields such as `allowed-tools` are not shown. An agent-owned skill
+has only that entry. Studio loads the first 32 files and says how many more the
+skill has. A file over 25,000 bytes, or one that is not text, stays in the list
+with a reason in place of its text.
+
 When the deployment enables learned skills, open the **Learned** view to see
 agent-drafted versions and their states. If you follow a direct link to this
 view when learned skills are disabled, Studio explains why it is unavailable.
@@ -127,15 +138,40 @@ Studio reports an error and refreshes the dialog with the current state.
 **Recent changes** shows the 20 most recent lifecycle events. The learned-skills
 list displays only the first 100 skills.
 
+### Review learning suggestions
+
+When the deployment enables learning proposals, open **Settings > Learning** to
+review what the agent suggests remembering. Filter the list by **Pending**,
+**Deferred**, **Approved**, or **Rejected**, and select **Load more** to reach
+suggestions past the first page. Select **Details** to see where a suggestion
+came from: a link to each source chat, whether the source is still available,
+and the excerpt the agent read.
+
+**Approve**, **Reject**, and **Undo approval** each ask for confirmation. If a
+suggestion changed since the page loaded, Studio refreshes the list and asks you
+to review it again. A deferred procedure can be approved as a learned-skill
+draft.
+
+When the deployment enables reflection, **Learn from a chat** asks the agent to
+re-read a finished chat and add any suggestions to the list. The deployment
+manages the learning mode and sensitivity; Studio does not change them.
+
 ### Client guidance
 
 Studio explains settings ownership in the settings pages: personal choices stay
 in the browser, while deployment-managed provider, model, posture, and storage
-facts are read-only. Appearance controls explain theme and palette choices.
+facts are read-only. **Settings > Personalise** holds appearance, chat, and
+notification preferences, and explains theme and palette choices.
+**Settings > Permissions** shows the deployment's safety level without a way to
+change it.
 Delegated-activity panels explain their observed history and incomplete replay.
-**About** identifies the Studio image, installed SDK, and connected daemon
-builds. Ask users for **Copy support summary** when diagnosing a deployment
-issue.
+If the deployment reports degraded session storage, a notice above the
+navigation says that some chats may be missing; **Settings > Storage** shows the
+details. **About** identifies the Studio image and installed SDK in one card and
+the connected daemon in another. In a published image, the SDK version ends with
+the Studio release it was built from, after a `+`, such as `0.5.0+v0.0.48`.
+Images built without a release tag show only the SDK package version. Ask users
+for **Copy support summary** when diagnosing a deployment issue.
 
 ## Install Studio in your browser
 
@@ -143,6 +179,19 @@ Open your Studio URL over HTTPS in a browser that offers app installation, then
 choose the browser's **Install app** command. On a local workstation, the
 loopback URL in the Compose setup also qualifies. Launch the installed Studio
 from your app list; it opens Chats at `/workspace/chat`.
+
+Where the browser supports sharing to installed apps, Studio appears as a share
+target. Shared text opens a new chat with the text in the composer, as a
+`?prompt=` link does, and never sends it. Studio receives only the shared text;
+a title or link that the sharing app sends separately is not included.
+
+The browser puts shared text in the page address, so its length is limited.
+Studio accepts an address and headers of up to 16 KB, which fits about 14,000
+characters of English text but only about 1,600 characters of Chinese or
+Japanese text. An ingress in front of Studio can set a lower limit; ingress-nginx,
+for example, refuses addresses over 8 KB by default. When shared text is too
+long, Studio shows a page that says so instead of a chat; copy the text and
+paste it into a new chat's message box.
 
 The installed window loads Studio from its origin and needs a connection to the
 BFF and Mecatl deployment for agent actions. A loaded window reports an
@@ -152,24 +201,43 @@ starting page.
 
 ## Use a chat
 
-Open **Chats**, choose an available model, reasoning effort, and permission
-mode, then write a message and select **Send**. You can also set tool access
-before starting a chat. In an existing chat, change the permission mode in the
-chat controls; choosing another model creates a fork of that chat. Press Enter
-to send or Shift+Enter for a new line. Enter used to confirm an input method
-candidate leaves the message in the composer.
+Open **Chats**, write a message, and select **Send**. The row under the composer
+holds the chat's settings: **Mode** (the permission mode), **Model** (the model
+and its reasoning effort), and, before a chat starts, **Execution** (see
+[Choose execution for a new chat](#choose-execution-for-a-new-chat)). On a phone,
+the same settings are under **Composer options**, the sliders button.
+In an existing chat, changing the mode applies in place; choosing another model
+or effort creates a fork of that chat. The row also shows how much of the
+model's context the chat uses, with **Compact** when the deployment allows it.
+The chat header shows the mode when it is **Accept edits** or **Plan**. Press
+Enter to send or Shift+Enter for a new line. Enter used to confirm an input
+method candidate leaves the message in the composer.
 
-Starter prompts fill the composer for you to review. A link with `?prompt=` also
+Studio keeps each chat's unsent text in this browser tab, so it is still there
+after a reload or when you come back from another chat. Attachments are not
+kept. **Clear draft**, the × beside **Send**, empties the composer.
+
+Starter prompts fill the composer for you to review. To hide them on a new chat,
+turn off **Starter prompts** in **Settings > Personalise**; the choice belongs to
+your account in this browser. A link with `?prompt=` also
 fills it without starting a run. If the link includes `send=1`, Studio shows the
 prompt, target chat, model, and permission mode before you select **Send
-prompt** or **Edit prompt**. For a new chat, it also shows tool access. Opening
-or reloading the link never sends it automatically. If you need to sign in
+prompt** or **Edit prompt**. It also shows **Execution**: the execution selected
+for a new chat, or whether files and the built-in Shell are available in an
+existing chat. Opening
+or reloading the link never sends it automatically, and the prompt does not
+replace your saved draft until you select **Edit prompt**. If you need to sign in
 first, keep the original tab open. Its prompt stays there while the popup or new
 tab completes sign-in.
 
-If the selected model supports images, use **Attach images** to add up to 16
-images to one message. Each image can be at most 10 MiB, with a combined limit
-of 20 MiB. Studio sends images only; other file types are not chat attachments.
+Use **Attach files**, or drop files on the composer, to add attachments. If the
+selected model supports images, you can add up to 16 images to one message. Each
+image can be at most 10 MiB, with a combined limit of 20 MiB. Text files of up
+to 256 KiB each, and 512 KiB together, are added to the message text, each
+between `--- attached file: <name> ---` and `--- end of <name> ---` lines. When
+an attached file has three or more dashes in a row, these lines use one more
+dash than the longest such run, so file text can't end its block early.
+Studio refuses binary and audio files.
 You can select the microphone button to dictate in a browser that supports
 speech recognition on a secure origin. Review or edit the recognized text before
 sending. If recognition is unavailable or microphone access fails, Studio
@@ -178,8 +246,13 @@ explains the failure and keeps the typed draft available.
 ### Follow and control a run
 
 The transcript streams messages with Markdown, code blocks, and tool activity.
-Saved inline images appear in the transcript; an external image URL appears as a
-link you can choose to open. You can scroll back to read earlier messages and
+With **Show Tools** on in **Chat options**, each turn's tool calls sit under an
+**Activity** line that counts them and any failures. Open it to see one row per
+call with its status, arguments, and result; a finished Edit or Write also shows
+its diff. **Expand details** opens these lines by default. Select a row to see
+the call's full input and output in the side panel. A pending request or
+authorization for a call keeps its line open. Saved inline images appear in the
+transcript; an external image URL appears as a link you can choose to open. You can scroll back to read earlier messages and
 use **Scroll to latest message** to resume following the stream. The status
 distinguishes sending, working, waiting for approval, and a recorded completed,
 stopped, canceled, or failed result. If a stream closes without a recorded
@@ -188,18 +261,51 @@ reconnect. A history gap does not claim that the run finished.
 
 While Mecatl is working, the composer can queue a text message for the next run
 or steer the active run. Your Interface preference chooses what Enter does;
-Shift+Enter selects the other action. You can edit or remove queued messages.
+Shift+Enter selects the other action. Queued messages wait above the composer.
+Each one's actions menu can edit or delete it, or steer it into the active run.
+A steered message leaves the queue only when the run accepts it, and the queue
+never sends it as the next run while the steer is on its way.
+Work the agent hands to subagents, parallel branches, or a team appears as
+cards under its turn, each with its observed state. Select a card, or a family
+count in the chat header, to open **Session activity** on that child.
 Use **Stop** to cancel the active run. If a run fails and offers **Retry**, that
 action retries the failed run without sending the prompt again. Image messages
-can be sent after the current run ends.
+and text-file attachments can be sent after the current run ends.
 
 ### Review tool calls and plans
 
 When a tool needs permission, review its name, reason, and arguments in the
 approval card. Edit and Write cards show a line diff with display limits when
-the arguments support one. Open **Raw arguments** to inspect the arguments,
-then choose **Allow once**, **Always allow**, or **Deny**. If the arguments are
-unavailable, only **Deny** is enabled.
+the arguments support one; commands show their text, with any timeout or
+temporary-storage scope, and other arguments show formatted JSON. Arguments
+that repeat a name, spell one in another case, or add one the tool doesn't
+define also show as formatted JSON, because the tool could read them
+differently from a diff or command view. In commands, formatted JSON, and raw
+arguments, invisible formatting characters show as badges with their code
+point: bidirectional controls and marks (U+061C, U+200E, U+200F, U+202A to
+U+202E, and U+2066 to U+2069), zero-width characters (U+200B to U+200D and
+U+FEFF), the word joiner and invisible operators (U+2060 to U+2064), and tag
+characters (U+E0000 to U+E007F). Copied text keeps the original characters.
+Select **Raw arguments** to see the
+exact arguments, then choose **Allow once**, **Always allow**, or **Deny**. If
+the arguments are unavailable, only **Deny** is enabled. In a chat, **Open in
+detail panel** shows the same request in the side panel with its complete diff,
+and you can decide there too.
+
+On the chat's active request, with focus in its card or detail panel, press Y or
+A to allow it once, W to always allow it, or N or D to deny it. The arrow keys
+move between the verdict buttons. A new request never takes focus, so a key you
+type as it arrives answers nothing: press Tab or click to move focus into its
+card first. These keys never act from outside the request's card or panel, while
+you type in the composer or another field, while a verdict is being sent, or
+when its outcome is uncertain.
+
+The card is red when a word in the tool name is delete, remove, drop, revoke,
+destroy, purge, rm, or rmdir, in any naming style, such as `delete_file` or
+`RemoveBranch`. Otherwise it's amber. For an MCP tool, named
+`mcp__<server>__<tool>`, only the tool part counts, so the server name doesn't
+turn every tool from that server red. The color comes from the tool name only,
+so review the arguments of every request.
 
 A **Plan review** card shows the proposed plan and any accompanying note. Choose
 **Approve & run**, **Auto-accept edits**, or **Iterate**. **Iterate** rejects the
@@ -208,27 +314,18 @@ plan review for these controls to be available. Otherwise, Studio explains why
 the review is read-only. If Studio cannot confirm a tool or plan decision,
 select **Refresh activity** before deciding again.
 
-Each press of Escape handles one action. An open dialog or menu closes first
-and returns focus to its trigger. Otherwise, Escape acts in this order:
-
-1. Clear a text selection.
-1. Deny a pending tool request or select **Iterate** for a plan review, when the
-   review controls are available.
-1. Close a side panel.
-1. Stop the active run.
-
-Escape stops at a pending review even when its controls are unavailable.
-
-If none of these actions applies and you have an unsent draft, press Escape,
-release it, then press it again within half a second to clear the draft. The
-visible hint shows the available action. Pressing Enter or Space on a focused
-approval button selects that decision without sending your draft. The
-**Keyboard shortcuts** page lists these bindings.
+Each press of Escape handles one action. A pending tool or plan review stops
+Escape from reaching anything below it, even when the review's controls are
+unavailable. To clear an unsent draft, press Escape, release it, then press it
+again within half a second. Pressing Enter or Space on a focused approval button
+selects that decision without sending your draft. The **Keyboard shortcuts**
+page lists the full Escape order and the other bindings.
 
 ### Review external authorization
 
-If a tool needs external authorization, select **Review authorization** in the
-chat. Select **Open authorization** to complete the external step in a new tab,
+If a tool needs external authorization, the chat shows **Waiting for
+authorization**. Select **Review authorization** on the tool call. Select
+**Open authorization** to complete the external step in a new tab,
 then return to Studio and select **Recheck**. The panel shows the observed
 status. **Cancel authorization** ends the pending handoff. Opening the external
 page alone does not grant access, and closing the review panel leaves the
@@ -241,9 +338,9 @@ status from the same handoff. A new pending status restores the actions; a
 resolved status updates the panel. If no later status appears, the outcome
 remains uncertain and the actions stay disabled.
 
-Folders, queued messages, and account preferences survive a reload for the same
-account. Studio clears them when you sign out or switch accounts. The device
-theme and palette remain.
+Folders, queued messages, unsent drafts, and account preferences survive a
+reload for the same account. Studio clears them when you sign out or switch
+accounts. The device theme and palette remain.
 
 ### Return to a chat
 
@@ -264,40 +361,63 @@ another client appear even when their live activity was missed.
 
 ### Navigate and branch a conversation
 
-In a long chat, use the numbered **Message minimap** beside the transcript to
-jump to a message. Its buttons work with a keyboard and remain available on a
-small screen. Select **Scroll to latest message** when you want to follow new
-messages again.
+In a long chat, use the **Message minimap** beside the transcript to jump to a
+message: point at or focus a mark to preview its message, then select it. Its
+marks work with a keyboard and remain available on a small screen. Select
+**Scroll to latest message** when you want to follow new messages again.
 
-Select **Reply in thread** under a saved message to open a separate chat in the
+Each message offers **Copy to clipboard** and a side-thread action beside its
+author. Select text in the transcript to **Add to chat**, which adds it to your
+draft, **Copy** it, or **Add to canvas**.
+
+Select **Reply in side thread** on a saved message to open a separate chat in the
 side panel. The thread copies the source chat's full history at the time you
 fork it, including messages after the one you selected. The selected message
 anchors the thread in the source transcript. Each occurrence has its own
 thread, even when two messages have the same text.
 
-Select an image or tool result in the transcript to inspect its preview in the
-same side panel. Select **Canvas** in the chat header to edit Markdown notes and
-switch between **Edit** and **Preview**. Canvas notes stay in this browser for
+Select an image or tool result in the transcript, or an attached file in the
+composer, to inspect its preview in the same side panel. A code file shows
+numbered lines. Select **Canvas** in the chat header to edit Markdown notes and
+switch between **Edit** and **Preview**; the canvas toolbar also has **Copy
+canvas** and **Clear canvas**, which asks before it deletes the notes, since
+clearing can't be undone. On a phone, an open chat has it under **Chat
+options > Open local canvas** instead. Canvas notes stay in this browser for
 your account and the selected chat. Opening or previewing them does not send
 their text to Mecatl.
+
+**Chat options > Copy** has **Select conversation**, which selects only the
+transcript, **Copy conversation**, which copies each message under its
+author's name, and **Copy session ID**. On a phone these appear in the menu
+itself.
 
 ### Inspect a session
 
 Open **Chat options > Inspect session** to see its kind, state, model, usage,
 and available placement details. **View transcript** shows the saved messages
-in order and identifies an incomplete transcript. **Inspect soul** shows the
-resolved soul for your connection; it is shared across the sessions on that
-connection. Studio explains when any inspection view is unavailable.
+in order, with a line for each turn's tool calls, and identifies an incomplete
+transcript. **Inspect soul** shows the resolved soul for your connection, with
+its source, trust, and size; it is shared across the sessions on that
+connection. Each view links to the others, and **Chat options** also opens
+**View transcript**, **Soul**, and **Switch worktree…** directly. Studio
+explains when any inspection view is unavailable.
 
-The session list has a separate **Inspect-only sessions** group. Opening one
-shows **Session details** and, when permitted, its saved transcript. It has no
-chat composer or run controls. **Copy session ID** appears when permitted.
+Each chat in the session list has an options menu: **Copy session ID**,
+**View transcript**, **Fork chat**, **Move to folder**, **Rename**, and
+**Delete**. A debug chat also offers **Copy debug target ID**. Viewing another
+chat's transcript or forking it from the list does not leave the open chat.
+
+The session list has a separate **Inspect-only sessions** group, which labels
+each session's kind and marks it **Read-only**. Opening one shows **Session
+details** and, when permitted, its saved transcript. It has no chat composer or
+run controls. **Copy session ID** appears when permitted.
 
 For a chat with eligible worktrees, select **Choose worktree**, choose a listed
 worktree, and confirm **Fork in selected worktree** or **Clear in selected
 worktree**. Studio opens the new session after the operation; the source chat
 keeps its placement. If the choice has become unavailable, Studio refreshes
-the list so you can choose again. **Debug with AI** first asks you to confirm
+the list so you can choose again. **Debug with AI** works on the open chat and
+first asks you to confirm
 that stored transcript and event evidence will be sent to the model in a separate
 diagnostic chat. The inspected session remains read-only to that debugger.
 
@@ -374,6 +494,76 @@ securityContext:
 
 Scale Studio horizontally without shared storage: every replica needs only the
 same `STUDIO_SESSION_SECRET`.
+
+### Install with Helm
+
+The `mecatl-studio` chart at `oci://ghcr.io/stacklok/mecatl/charts/mecatl-studio`
+deploys Studio with the settings above on Kubernetes 1.30 or later. Each chart
+version matches a Mecatl release after `v0.0.47` and pulls that release's Studio
+image. Choose a version from
+[GitHub releases](https://github.com/stacklok/mecatl/releases), then substitute
+its number without the leading `v` for `<CHART_VERSION>`.
+
+1. Create the session secret in the namespace Studio runs in:
+
+   ```sh
+   kubectl create namespace mecatl-studio
+   kubectl create secret generic mecatl-studio-session \
+     --namespace mecatl-studio \
+     --from-literal=STUDIO_SESSION_SECRET="$(openssl rand -base64 48)"
+   ```
+
+1. Install the chart and wait for the rollout:
+
+   ```sh
+   helm upgrade --install mecatl-studio \
+     oci://ghcr.io/stacklok/mecatl/charts/mecatl-studio \
+     --version <CHART_VERSION> \
+     --namespace mecatl-studio \
+     --set mecatl.baseURL=https://mecak8s.example.com \
+     --set publicURL=https://studio.example.com \
+     --set session.secretName=mecatl-studio-session
+   kubectl rollout status deployment/mecatl-studio --namespace mecatl-studio
+   ```
+
+A release named `mecatl-studio` keeps that name for its Deployment and Service;
+any other release name produces `<RELEASE>-mecatl-studio`. Set
+`fullnameOverride` for a fixed name.
+
+The chart is signed with keyless Cosign under the same release identity as the
+image:
+
+```sh
+cosign verify \
+  --certificate-identity https://github.com/stacklok/mecatl/.github/workflows/release.yml@refs/tags/v<CHART_VERSION> \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/stacklok/mecatl/charts/mecatl-studio:<CHART_VERSION>
+```
+
+The chart checks required settings and their combinations before anything
+reaches the cluster: it refuses to render without `mecatl.baseURL` or
+`publicURL`, with a static token but no `allowUnauthenticated`, or with an
+`extraEnv` entry that overrides a variable the chart sets. Checks that depend on
+Secret contents, such as the session secret's length, still fail at startup.
+
+To publish Studio through a Gateway API listener, set `httpRoute.enabled=true`
+and `httpRoute.parentRefs`. The route's host name defaults to the host of
+`publicURL`. The chart trusts one proxy hop in `X-Forwarded-For` by default, so
+set `networkPolicy.ingressFrom` to the gateway's namespace or pods; otherwise
+any pod that reaches Studio directly can choose the client address Studio
+rate-limits and audits. A `NodePort` or `LoadBalancer` Service requires
+`trustedProxyHops=0`.
+
+The chart's NetworkPolicy allows egress to DNS in `kube-system` and to TCP port
+443 and the ports in `mecatl.baseURL` and `mecatl.resourceURL`. Set
+`networkPolicy.dns` when your cluster resolves names elsewhere, such as NodeLocal
+DNSCache or OpenShift's `openshift-dns`. Add `networkPolicy.extraEgress` rules
+for an identity provider on a port other than 443, and when a Service or
+in-cluster gateway in front of Mecatl forwards to another port, because
+NetworkPolicy matches the destination pod's port.
+
+Run `helm show values oci://ghcr.io/stacklok/mecatl/charts/mecatl-studio` for
+every value.
 
 ### Sign in and recover
 

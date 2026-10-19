@@ -1,0 +1,262 @@
+suite: network exposure contracts
+templates:
+  - templates/networkpolicy.yaml
+  - templates/httproute.yaml
+  - templates/pdb.yaml
+release:
+  name: mecatl-studio
+set:
+  mecatl.baseURL: https://mecak8s.example.com
+  publicURL: https://studio.example.com:8443
+  session.secretName: studio-session
+tests:
+  - it: admits only Studio's port and only DNS and HTTPS egress by default
+    template: templates/networkpolicy.yaml
+    asserts:
+      - equal:
+          path: spec.ingress
+          value:
+            - ports:
+                - protocol: TCP
+                  port: 3100
+      - equal:
+          path: spec.egress[0]
+          value:
+            ports:
+              - protocol: UDP
+                port: 53
+              - protocol: TCP
+                port: 53
+            to:
+              - namespaceSelector:
+                  matchLabels:
+                    kubernetes.io/metadata.name: kube-system
+      - equal:
+          path: spec.egress[1]
+          value:
+            ports:
+              - protocol: TCP
+                port: 443
+      - lengthEqual:
+          path: spec.egress
+          count: 2
+      - equal:
+          path: spec.podSelector.matchLabels
+          value:
+            app.kubernetes.io/name: mecatl-studio
+            app.kubernetes.io/instance: mecatl-studio
+
+  - it: narrows ingress peers and appends egress rules
+    template: templates/networkpolicy.yaml
+    set:
+      networkPolicy.ingressFrom:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: envoy-gateway-system
+      networkPolicy.extraEgress:
+        - to:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: mecak8s
+          ports:
+            - protocol: TCP
+              port: 8080
+    asserts:
+      - equal:
+          path: spec.ingress[0].from
+          value:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: envoy-gateway-system
+      - equal:
+          path: spec.egress[2].ports[0].port
+          value: 8080
+
+  - it: opens the Mecatl address ports for an in-cluster target
+    template: templates/networkpolicy.yaml
+    set:
+      mecatl.baseURL: http://mecak8s.mecak8s.svc:8080
+      mecatl.resourceURL: https://mecak8s.example.com:8443/tenant
+    asserts:
+      - equal:
+          path: spec.egress[1].ports
+          value:
+            - protocol: TCP
+              port: 443
+            - protocol: TCP
+              port: 8080
+            - protocol: TCP
+              port: 8443
+
+  - it: opens port 80 for an http target without an explicit port
+    template: templates/networkpolicy.yaml
+    set:
+      mecatl.baseURL: http://mecak8s.mecak8s.svc
+    asserts:
+      - equal:
+          path: spec.egress[1].ports[1].port
+          value: 80
+
+  - it: reads ports from the URL authority, not its path
+    template: templates/networkpolicy.yaml
+    set:
+      mecatl.baseURL: http://mecak8s.mecak8s.svc:08080
+      mecatl.resourceURL: https://mecak8s.example.com/a:12/b
+    asserts:
+      - equal:
+          path: spec.egress[1].ports
+          value:
+            - protocol: TCP
+              port: 443
+            - protocol: TCP
+              port: 8080
+
+  - it: sends DNS to the configured resolvers
+    template: templates/networkpolicy.yaml
+    set:
+      networkPolicy.dns:
+        to:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: openshift-dns
+        ports:
+          - protocol: UDP
+            port: 5353
+    asserts:
+      - equal:
+          path: spec.egress[0]
+          value:
+            ports:
+              - protocol: UDP
+                port: 5353
+            to:
+              - namespaceSelector:
+                  matchLabels:
+                    kubernetes.io/metadata.name: openshift-dns
+
+  - it: omits the policy when disabled
+    template: templates/networkpolicy.yaml
+    set:
+      networkPolicy.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: omits the route by default
+    template: templates/httproute.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: routes the public host, without its port, to the Service without a request timeout
+    template: templates/httproute.yaml
+    set:
+      httpRoute.enabled: true
+      httpRoute.parentRefs:
+        - name: eg
+          namespace: envoy-gateway-system
+          sectionName: studio-https
+    asserts:
+      - equal:
+          path: spec.hostnames
+          value:
+            - studio.example.com
+      - equal:
+          path: spec.rules[0].backendRefs[0]
+          value:
+            kind: Service
+            name: mecatl-studio
+            port: 3100
+      - equal:
+          path: spec.parentRefs
+          value:
+            - name: eg
+              namespace: envoy-gateway-system
+              sectionName: studio-https
+      - equal:
+          path: spec.rules[0].matches
+          value:
+            - path:
+                type: PathPrefix
+                value: /
+      - equal:
+          path: spec.rules[0].timeouts.request
+          value: 0s
+
+  - it: lowercases the public host for the route
+    template: templates/httproute.yaml
+    set:
+      publicURL: https://Studio.Example.com
+      httpRoute.enabled: true
+      httpRoute.parentRefs:
+        - name: eg
+    asserts:
+      - equal:
+          path: spec.hostnames
+          value:
+            - studio.example.com
+
+  - it: matches every listener host when the public origin is an IP address
+    template: templates/httproute.yaml
+    set:
+      publicURL: https://203.0.113.10
+      httpRoute.enabled: true
+      httpRoute.parentRefs:
+        - name: eg
+    asserts:
+      - notExists:
+          path: spec.hostnames
+
+  - it: uses explicit route hostnames
+    template: templates/httproute.yaml
+    set:
+      httpRoute.enabled: true
+      httpRoute.parentRefs:
+        - name: eg
+      httpRoute.hostnames:
+        - "*.example.com"
+    asserts:
+      - equal:
+          path: spec.hostnames
+          value:
+            - "*.example.com"
+
+  - it: limits voluntary disruption for several replicas without blocking drains
+    template: templates/pdb.yaml
+    asserts:
+      - equal:
+          path: spec.maxUnavailable
+          value: 1
+      - equal:
+          path: spec.unhealthyPodEvictionPolicy
+          value: AlwaysAllow
+      - equal:
+          path: spec.selector.matchLabels
+          value:
+            app.kubernetes.io/name: mecatl-studio
+            app.kubernetes.io/instance: mecatl-studio
+
+  - it: accepts a percentage disruption limit
+    template: templates/pdb.yaml
+    set:
+      podDisruptionBudget.maxUnavailable: 50%
+    asserts:
+      - equal:
+          path: spec.maxUnavailable
+          value: 50%
+
+  - it: omits the budget when disabled
+    template: templates/pdb.yaml
+    set:
+      podDisruptionBudget.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: omits the budget for one replica
+    template: templates/pdb.yaml
+    set:
+      replicaCount: 1
+    asserts:
+      - hasDocuments:
+          count: 0

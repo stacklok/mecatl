@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/embed"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
@@ -99,6 +100,78 @@ func TestSessionContinuityUX_Scenario6_EmbeddedAndConnectE2E(t *testing.T) {
 						t.Fatalf("rows after adoption = %#v, want only %q", rows, id)
 					}
 				})
+			}
+		})
+	}
+}
+
+func TestStartupResumeHidesPersistedHarnessControlNotesE2E(t *testing.T) {
+	starters := []struct {
+		name  string
+		start func(*testing.T, app.Config) (string, func())
+	}{
+		{name: "embedded", start: startStartupResumeEmbedded},
+		{name: "connect", start: startStartupResumeConnect},
+	}
+	for _, tc := range starters {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+			defer cancel()
+			workspace, storeDir, userModelDir := t.TempDir(), t.TempDir(), t.TempDir()
+			cfg := app.Config{Workspace: workspace, StoreDir: storeDir, UserModelDir: userModelDir, Model: "mock-model", UseMock: true, Shell: "/bin/sh", Compaction: "heuristic", Tokenizer: "heuristic"}
+			seed, err := jsonlstore.New(storeDir)
+			if err != nil {
+				t.Fatalf("open seed store: %v", err)
+			}
+			sess := session.New("persisted-harness-control", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: workspace, Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
+			const backgroundCompletion = "[harness note: 1 background subagent(s) finished: subagent-job-123 (end_turn). Collect each result with SubagentStatus before relying on it.]"
+			if err := sess.SeedHistory([]session.Message{
+				{Role: session.RoleUser, Text: "retain this prompt", UserPromptProvenance: session.UserPromptProvenancePrincipal},
+				{Role: session.RoleUser, Text: session.NoProgressNudgeText, UserPromptProvenance: session.UserPromptProvenanceHarness},
+				{Role: session.RoleUser, Text: backgroundCompletion, UserPromptProvenance: session.UserPromptProvenanceHarness},
+				{Role: session.RoleUser, Text: "[harness note: background command(s) still running: build]", UserPromptProvenance: session.UserPromptProvenanceHarness},
+				{Role: session.RoleAssistant, Text: "retain this answer"},
+			}); err != nil {
+				t.Fatalf("seed history: %v", err)
+			}
+			if err := seed.Save(ctx, sess); err != nil {
+				t.Fatalf("save seed session: %v", err)
+			}
+
+			_, stop := tc.start(t, cfg)
+			stop()
+			target, stop := tc.start(t, cfg)
+			defer stop()
+			cl, err := client.Dial(client.DialConfig{Server: target})
+			if err != nil {
+				t.Fatalf("dial restarted server: %v", err)
+			}
+			defer func() { _ = cl.Close() }()
+			selection, err := resolveStartupResume(ctx, cl, string(sess.ID), false)
+			if err != nil {
+				t.Fatalf("resolve startup resume: %v", err)
+			}
+			if !selection.Transcript.Complete || len(selection.Transcript.Messages) != 2 ||
+				selection.Transcript.Messages[0].Text != "retain this prompt" || selection.Transcript.Messages[1].Text != "retain this answer" {
+				t.Fatalf("resumed transcript retained internal control notes or lost messages: %+v", selection.Transcript)
+			}
+			m := ui.New(ui.Deps{
+				Session: &sessionAdapter{cl: cl, mode: "default"}, Conv: cl, Transcript: cl,
+				Theme: theme.New("aztec", theme.AztecPalette()), Workspace: workspace, Mode: "default", Model: "mock-model",
+				Ctx: ctx, NoAltScreen: true, NoBanner: true, Resume: selection,
+			})
+			resized, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 35})
+			m = resized.(ui.Model)
+			content := m.View().Content
+			for _, want := range []string{"retain this prompt", "retain this", "answer"} {
+				if !strings.Contains(content, want) {
+					t.Fatalf("resumed UI omitted retained content %q:\n%s", want, content)
+				}
+			}
+			for _, hidden := range []string{"Please continue.", "subagent-job-123", "background command(s) still running: build"} {
+				if strings.Contains(content, hidden) {
+					t.Fatalf("resumed UI displayed harness control note %q:\n%s", hidden, content)
+				}
 			}
 		})
 	}

@@ -221,6 +221,14 @@ placeholders with a frozen per-session catalog. Failure exposes no partial
 catalog. Keep preregistered client secrets in `SecretKeyRef`; broker metadata
 and profiles remain non-secret ConfigMap data.
 
+:::caution[Snapshots without provenance need a fresh session]
+
+A session snapshot without workspace broker provenance cannot identify which
+broker tools its authority covered. Mecatl cannot infer or repair that provenance.
+Start a fresh session before using `/tools-connect`.
+
+:::
+
 :::caution[Broker mode is single-replica]
 
 Broker sessions and OAuth state are process-local. The chart requires

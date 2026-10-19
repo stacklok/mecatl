@@ -64,7 +64,7 @@ forward compatibility. `build_id` is not a semantic-version API.
 
 |Method & path|Body|Response|
 |-|-|-|
-|`POST /v1/sessions`|`{mode?, limits?, provider_id?, model_id?, execution?, mcp_servers?}`; `execution` omitted = server default, `{none:{}}` = no filesystem, `{template:{id,revision}}` = exact operator-approved revision|`201` `{session_id, placement, session_capabilities}` where placement is bounded display metadata; no path or exact private ref|
+|`POST /v1/sessions`|`{mode?, limits?, provider_id?, model_id?, reasoning_effort?, execution?, agent_definition_name?, debug_target_session_id?, debug_mcp_servers?, mcp_servers?}`; `execution` omitted = server default, `{none:{}}` = no filesystem, `{template:{id,revision}}` = exact operator-approved revision|`201` `{session_id, placement, session_capabilities, resolved_model, resolved_agent_definition_name?}` where placement is bounded display metadata; no path or exact private ref|
 |`GET /v1/execution-templates`|Authenticated, enabled catalog only|`200` `{items:[{template:{id,revision},name,description,display_token,extensions}],inventory_revision}`; at most 64 eligible rows|
 |`GET /v1/sessions`|No body|`200` `{sessions: [...]}` with path-free stored-session inventory|
 |`GET /v1/sessions/{id}`|No body|`200` authoritative session snapshot, including title/provenance, title-generation lifecycle, and canonical durable token usage when present|
@@ -87,6 +87,28 @@ forward compatibility. `build_id` is not a semantic-version API.
 |`POST /v1/sessions/{id}/controls/cancel-steer`|`{expected_run_id, message_id?}`|`200` `{outcome, run_id, message_id}`; `409 stale_run_control` when the run is no longer live|
 |`POST /v1/sessions/{id}/clear`|`{"worktree_selector":"..."}` optional|`201` `{session_id, placement}` — distinct empty-history successor; omitted selector inherits exact source placement|
 |`POST /v1/sessions/{id}/fork`|optional `{title, reasoning_effort, provider_id, model_id, worktree_selector}`|`201` `{session_id, placement}` — history-carrying successor; omitted selector inherits exact placement, supplied selector must be fresh and source-scoped; all overrides resolve atomically|
+
+### Agent-bound session creation
+
+`POST /v1/sessions` accepts optional `agent_definition_name` and echoes a bound
+name as `resolved_agent_definition_name`. Empty or omitted selects ordinary
+creation and omits the echo. `resolved_model` reports the effective provider/model
+pair, including when the definition supplies the base provider for a model-only
+request. Wire `model_id` is an opaque literal, not an alias selector.
+
+Clients **MUST** require `session_agent_definitions` in
+`GET /v1/compatibility` `features` and verify the response name before relying on
+binding. The feature reports build support regardless of configured definitions.
+Unknown definitions return `400`. Create bodies remain strict: unknown keys,
+including the ProtoJSON spelling `agentDefinitionName`, return `400`.
+
+The [agent-bound creation contract](grpc-api.md#agent-bound-session-creation)
+defines the five provider/model precedence cases, definition-only catalog,
+nonwidenable authority, tighten-only mode and limits, and no-filesystem
+attenuation for both transports. The same contract forbids client/debug MCP and
+debug targets, preserves binding through fork and clear, and refuses mode changes
+and restart/client-MCP execution resume. Authentication and ownership checks are
+unchanged; feature discovery is not authorization.
 
 ### Durable event replay
 

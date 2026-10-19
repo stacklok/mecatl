@@ -1,0 +1,150 @@
+# Mecatl Studio is the browser UI for a Mecatl deployment, usually mecak8s. It
+# connects to that deployment's gRPC listener and never holds a provider key.
+# Early access: these values can change between releases without a deprecation
+# period.
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Replicas share no storage; every replica needs only the same session secret.
+replicaCount: 2
+
+image:
+  repository: ghcr.io/stacklok/mecatl/studio
+  # Set at most one of tag or digest. Leaving both empty selects the chart's
+  # appVersion, the Studio release this chart was published with.
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+
+# Secret(s) of type kubernetes.io/dockerconfigjson for a private registry.
+imagePullSecrets: []
+
+mecatl:
+  # Required. The http:// or https:// address of the Mecatl gRPC listener Studio
+  # connects to (MECATL_BASE_URL), for example https://mecak8s.example.com. Use
+  # https:// unless the listener is inside the cluster.
+  baseURL: ""
+  # Canonical protected-resource identifier (MECATL_RESOURCE_URL). Set it only
+  # when the deployment publishes a resource other than baseURL.
+  resourceURL: ""
+  # Static bearer token (MECATL_AUTH_TOKEN) read from a same-namespace Secret.
+  # It disables browser login, so every browser acts as one principal; it
+  # therefore requires allowUnauthenticated.
+  authToken:
+    secretName: ""
+    secretKey: ""
+
+# Required. The browser-facing origin users open (STUDIO_PUBLIC_URL), for
+# example https://studio.example.com. Studio derives the OIDC callback
+# <publicURL>/api/v1/auth/callback from it and answers only that Host.
+publicURL: ""
+
+# Same-namespace Secret holding the cookie-sealing secret
+# (STUDIO_SESSION_SECRET, at least 32 bytes). Required unless
+# allowUnauthenticated is true.
+session:
+  secretName: ""
+  secretKey: STUDIO_SESSION_SECRET
+
+# Sets STUDIO_ALLOW_UNAUTHENTICATED=1 so Studio starts against a static-token or
+# no-authentication target. Use it only behind your own access control.
+allowUnauthenticated: false
+
+# Reverse-proxy hops to trust in X-Forwarded-For (STUDIO_TRUSTED_PROXY_HOPS);
+# Studio rate-limits and audits the address it finds there. 1 matches a single
+# ingress or gateway in front of the ClusterIP Service; narrow
+# networkPolicy.ingressFrom to that proxy, or any pod that reaches Studio
+# directly can choose its own address. Set 0 when clients reach Studio
+# directly. A NodePort or LoadBalancer Service requires 0. The image's own
+# default is 0.
+trustedProxyHops: 1
+
+# STUDIO_LOG_LEVEL: debug, info, warn, or error. Empty keeps Studio's info.
+logLevel: ""
+
+# Raw Kubernetes EnvVar entries appended to the container, for example
+# STUDIO_RATE_LIMIT_MAX or NODE_EXTRA_CA_CERTS. Rendering fails if a name
+# collides with a variable the chart or image owns, or is
+# NODE_TLS_REJECT_UNAUTHORIZED. Other names pass through unchecked.
+extraEnv: []
+
+podAnnotations: {}
+# Must not set the selector labels app.kubernetes.io/name or /instance.
+podLabels: {}
+
+# Seconds the pod keeps serving after termination starts while the gateway
+# removes it, within the termination grace period. Requires Kubernetes 1.30+.
+preStopSleepSeconds: 5
+terminationGracePeriodSeconds: 30
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# A constraint without a labelSelector selects this release's Studio pods.
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+
+serviceAccount:
+  create: true
+  # Defaults to the release's full name.
+  name: ""
+  annotations: {}
+
+service:
+  type: ClusterIP
+  port: 3100
+
+# Rendered only when replicaCount is greater than 1.
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+networkPolicy:
+  enabled: true
+  # NetworkPolicyPeer entries admitted to Studio's HTTP port, for example the
+  # gateway's namespace. Empty admits any peer, on that port only.
+  ingressFrom: []
+  # DNS servers Studio may query: NetworkPolicyPeer entries (empty allows any
+  # destination) and ports. The default admits every kube-system pod on port
+  # 53. With NodeLocal DNSCache, add an ipBlock for its link-local address, for
+  # example 169.254.20.10/32. OpenShift serves DNS from the openshift-dns
+  # namespace on port 5353.
+  dns:
+    to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: kube-system
+    ports:
+      - protocol: UDP
+        port: 53
+      - protocol: TCP
+        port: 53
+  # Egress also allows TCP to port 443 plus the ports of mecatl.baseURL and
+  # mecatl.resourceURL, to any destination. Append NetworkPolicyEgressRule
+  # entries for an identity provider on another port, and when a Service or
+  # in-cluster gateway forwards to a different target port: NetworkPolicy
+  # matches the destination pod's port.
+  extraEgress: []
+
+# Gateway API HTTPRoute for Studio.
+httpRoute:
+  enabled: false
+  # Required when enabled: Gateway listeners (ParentReference entries).
+  parentRefs: []
+  # Defaults to the host of publicURL.
+  hostnames: []
+  # Activity streams stay open for a whole run, so 0s disables the request
+  # timeout.
+  requestTimeout: 0s

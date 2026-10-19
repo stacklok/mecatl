@@ -31,7 +31,7 @@ func TestEditBackRunningPullsMergedQueue(t *testing.T) {
 
 	m = pressUp(t, m)
 
-	if got := m.prompt.Value(); got != "second"+queueMergeSep+"third" {
+	if got := m.prompt.Value(); got != "/queue second"+queueMergeSep+"third" {
 		t.Fatalf("edit-back must load the merged queue into the input, got %q", got)
 	}
 	if len(m.queued) != 0 {
@@ -103,7 +103,7 @@ func TestEditBackIdlePausedPullsMergedQueue(t *testing.T) {
 
 	m = pressUp(t, m)
 
-	if got := m.prompt.Value(); got != "second"+queueMergeSep+"third" {
+	if got := m.prompt.Value(); got != "/queue second"+queueMergeSep+"third" {
 		t.Fatalf("idle edit-back must load the merged queue, got %q", got)
 	}
 	if len(m.queued) != 0 || m.queuePaused != "" {

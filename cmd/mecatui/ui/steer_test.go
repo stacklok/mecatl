@@ -128,7 +128,7 @@ func TestSteer_MultimodalSendAndEditBack(t *testing.T) {
 	mm, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	m = mm.(Model)
 	runBatchLeaves(cmd)
-	if m.prompt.Value() != "inspect [Image #1]" || string(m.stagedMedia["[Image #1]"].data) != "pixels" {
+	if m.prompt.Value() != "/steer inspect [Image #1]" || string(m.stagedMedia["[Image #1]"].data) != "pixels" {
 		t.Fatalf("edit-back lost draft/media: %q %#v", m.prompt.Value(), m.stagedMedia)
 	}
 	if _, retained := m.stagedMedia["[Image #2]"]; retained {
@@ -211,7 +211,7 @@ func TestSteer_FailedAckRestoresCorrelatedAttachment(t *testing.T) {
 	runBatchLeaves(cmd)
 	mm, _ = m.Update(client.SteerOutcomeMsg{Outcome: client.SteerTooLate, Promoted: false, MessageID: "steer-0001"})
 	m = mm.(Model)
-	if m.steer != nil || m.prompt.Value() != "retry [Image #1]" || string(m.stagedMedia["[Image #1]"].data) != "owned-once" {
+	if m.steer != nil || m.prompt.Value() != "/steer retry [Image #1]" || string(m.stagedMedia["[Image #1]"].data) != "owned-once" {
 		t.Fatalf("failed send not restored exactly: steer=%#v draft=%q staged=%#v", m.steer, m.prompt.Value(), m.stagedMedia)
 	}
 	mm, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -364,7 +364,7 @@ func TestSteer_TUIRendersAuthoritativeState(t *testing.T) {
 		mm, _ := m.Update(client.SteerOutcomeMsg{Outcome: client.SteerTooLate, Text: "second", Promoted: false, MessageID: "steer-0001"})
 		m = mm.(Model)
 
-		if m.steer != nil || m.prompt.Value() != "second" {
+		if m.steer != nil || m.prompt.Value() != "/steer second" {
 			t.Fatalf("failed undelivered send was not restored for editing: steer=%+v draft=%q", m.steer, m.prompt.Value())
 		}
 		status := stripANSIstr(m.statusMsg)
@@ -387,7 +387,7 @@ func TestSteer_TUIRendersAuthoritativeState(t *testing.T) {
 		mm2, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 		m = mm2.(Model)
 		runBatchLeaves(cmd)
-		if got := m.prompt.Value(); got != "second" {
+		if got := m.prompt.Value(); got != "/steer second" {
 			t.Fatalf("↑ must pull the in-flight message into the textarea, got %q", got)
 		}
 		if got := steerCancelCount(conv.send); got != 1 {
@@ -522,7 +522,7 @@ func TestSteer_TUIEditCancelThenRecompose(t *testing.T) {
 	m = mm2.(Model)
 	runBatchLeaves(cmd)
 
-	wantDraft := "second" + queueMergeSep + "third"
+	wantDraft := "/steer second" + queueMergeSep + "third"
 	if got := m.prompt.Value(); got != wantDraft {
 		t.Fatalf("↑ must pull the whole not-yet-drained set into ONE editable blob, got %q, want %q", got, wantDraft)
 	}
@@ -590,7 +590,7 @@ func TestSteer_TUIEditBackNoDuplicate(t *testing.T) {
 	mm2, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	m = mm2.(Model)
 	runBatchLeaves(cmd)
-	if got := m.prompt.Value(); got != "first" {
+	if got := m.prompt.Value(); got != "/steer first" {
 		t.Fatalf("↑ must pull the in-flight steer back for editing, got %q", got)
 	}
 
@@ -685,7 +685,7 @@ func TestSteer_TUIQueuedUntilLanded(t *testing.T) {
 	// Pre-echo: the card is pending and the transcript does NOT yet carry the steer
 	// (the card preview collapses multi-word text onto one line, so the in-context
 	// occurrence check keys off the flat preview string, not the raw text).
-	cardPreview := truncate(oneLine("check b.go too"), queuePreviewWidth)
+	cardPreview := "check b.go too"
 	if got := stripANSIstr(m.renderSteer()); !strings.Contains(got, "sending") {
 		t.Fatalf("before the echo the card shows the pending state, got:\n%s", got)
 	}

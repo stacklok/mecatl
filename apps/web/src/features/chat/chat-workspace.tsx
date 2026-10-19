@@ -10,7 +10,6 @@ import {
   cancelAuthorization,
   cancelRun,
   recheckAuthorization,
-  resolvePlanAsk,
   resolveRunPermission,
   retrySession,
   startRun,
@@ -38,22 +37,25 @@ import { useNavigate } from "@tanstack/react-router";
 import {
   AlertCircle,
   ArrowDown,
-  Bot,
   Bug,
   Copy,
   Eraser,
-  ExternalLink,
+  FoldVertical,
+  GitBranch,
   GitFork,
+  Info,
+  KeyRound,
   ListTodo,
   ListTree,
-  MessageSquareText,
+  LoaderCircle,
   MoreHorizontal,
   NotebookPen,
   Pencil,
   RotateCcw,
+  ScrollText,
+  Sparkles,
   Square,
   Trash2,
-  User,
   Wrench,
 } from "lucide-react";
 import {
@@ -86,8 +88,13 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "../../components/ui/dropdown-menu";
 import { Input } from "../../components/ui/input";
@@ -98,17 +105,23 @@ import { errorMessage } from "../../lib/error-message";
 import { modelPreferenceId, useDisabledModels } from "../../lib/model-preferences";
 import {
   defaultAgentName,
+  useAgentAvatar,
   useAgentDisplayName,
   useEnterSendBehavior,
   useExpandDetails,
   useSessionListSide,
   useShowToolCalls,
   useStartOn,
+  useUserAvatar,
   useUserDisplayName,
 } from "../../lib/profile-preferences";
+import { useIsMobile } from "../../lib/use-mobile";
+import { cn } from "../../lib/utils";
 import { useAuthRecovery } from "../auth/auth-recovery-context";
+import { useSteerAvailable } from "../runtime/use-steer-available";
 import { useShortcut, useShortcutSuppression } from "../shortcuts/shortcut-provider";
-import { ApprovalPanel, type ApprovalRequest, type ApprovalVerdict } from "./approval-panel";
+import { ApprovalDetailContext } from "./approval-detail-context";
+import type { ApprovalRequest, ApprovalVerdict } from "./approval-panel";
 import {
   type AuthorizationHandoff,
   type AuthorizationOperation,
@@ -125,13 +138,11 @@ import { useChatEscape } from "./chat-escape";
 import { groupSessions, useChatFolders } from "./chat-folders";
 import { takeNextQueuedMessage, useQueuedMessages } from "./chat-queue";
 import { consumeChatSeed } from "./chat-seed";
-import { ChatSessionControls } from "./chat-session-controls";
+import { SessionExecutionStatus, SessionUsageControls } from "./chat-session-controls";
 import {
-  approvalKey,
   type ChatMessage,
   enqueueApproval,
   failureFromResult,
-  messageOwnsApproval,
   payloadImages,
   payloadRecord,
   payloadText,
@@ -140,6 +151,7 @@ import {
   type RunFailure,
   rawResultPayload,
   retractApproval,
+  settledAskKey,
   startsNewRun,
   stopReasonFromResult,
   toolCall,
@@ -153,7 +165,8 @@ import {
   restoreActivityOpenerFocus,
 } from "./content-preview-panel";
 import { ContinueLatestChip } from "./continue-latest-chip";
-import { DEBUG_OPENING_PROMPT, DEBUG_SESSION_CONSENT } from "./debug-session";
+import { DEBUG_OPENING_PROMPT } from "./debug-session";
+import { DebugSessionDialog, type DebugSessionTarget } from "./debug-session-dialog";
 import { DelegationCardRow, type DelegationFocus } from "./delegation-card";
 import {
   applyDelegationDelivery,
@@ -166,21 +179,13 @@ import { type DelegationAnchor, placeDelegationCards } from "./delegation-placem
 import { DraftGreeting } from "./draft-greeting";
 import { EscapeHintContext } from "./escape-hint-context";
 import { clearFailedRun, readFailedRun, saveFailedRun } from "./failed-run-storage";
-import { FailedTurnCard } from "./failed-turn-card";
+import { FleetStatusChip } from "./fleet-status-chip";
 import { pickLatestEligibleChat } from "./latest-chat";
 import { appendCanvasQuote, useLocalCanvas } from "./local-canvas";
-import {
-  type ChatImage,
-  chatImageDisplay,
-  type ImageAttachment,
-  imagePreview,
-} from "./local-file-preview";
-import { MarkdownMessage } from "./markdown-message";
+import { type ImageAttachment, imagePreview } from "./local-file-preview";
 import { MessageMinimap } from "./message-minimap";
-import { exactPlanControlAvailability, followPlanContinuationFromBff } from "./plan-continuation";
-import { PlanReviewCard, type PlanVerdict } from "./plan-review-card";
-import { QueuedMessageList } from "./queued-message-list";
-import { ReasoningDisclosure } from "./reasoning-disclosure";
+import { PermissionModeBadge } from "./permission-mode-badge";
+import { QueuedMessageStrip } from "./queued-message-strip";
 import {
   abortsOnSessionSwitch,
   acceptsDelivery,
@@ -198,7 +203,14 @@ import {
   type RunTarget,
   runStreamEnd,
 } from "./run-stream";
-import { isInspectOnlySession, isProvenChatSession, SessionInspection } from "./session-inspection";
+import { selectedTranscriptText } from "./selected-transcript-text";
+import { CopyDebugTargetMenuItem, CopySessionIdMenuItem } from "./session-copy-menu-items";
+import {
+  type InspectionView,
+  isInspectOnlySession,
+  isProvenChatSession,
+  SessionInspection,
+} from "./session-inspection";
 import { ChatsMenuButton, SessionSidebar } from "./session-sidebar";
 import {
   adoptSessionTitle,
@@ -211,8 +223,7 @@ import {
   SteerTrace,
   type SteerTraceEntry,
 } from "./steer-trace";
-import { hasVisibleStopReason, StopReasonChip } from "./stop-reason-chip";
-import { StreamingIndicator } from "./streaming-indicator";
+import { TextSelectionToolbar } from "./text-selection-toolbar";
 import {
   matchingThreadKeyForMessage,
   readThreadAssociations,
@@ -224,11 +235,15 @@ import {
   useThreadAssociations,
   useThreadSessionIds,
 } from "./thread-map";
-import { type ToolActivity, ToolActivityList } from "./tool-activity";
+import type { ToolActivity } from "./tool-activity";
+import { TranscriptMenuItems } from "./transcript-actions";
+import { selectElementContents } from "./transcript-text";
 import { formatTurnStat, usageMenuLines } from "./turn-stats";
 import { useChatMessages } from "./use-chat-messages";
 import { shouldRefreshTranscriptAfterInventory } from "./use-delivery-follow";
 import { useLatestChatAutoOpen } from "./use-latest-chat-auto-open";
+import { usePlanVerdictControl } from "./use-plan-verdict-control";
+import { VerdictLedger } from "./verdict-ledger";
 
 /** A pending destructive confirmation, rendered as one shared AlertDialog. */
 interface ConfirmPrompt {
@@ -321,6 +336,25 @@ function hasUnsettledDelegation(fleet: DelegationFleet, runId: string): boolean 
   );
 }
 
+/**
+ * The open tool panel's call as the transcript has it now, so the panel
+ * follows the call from running to its output. A call is its run and id
+ * (with its name and arguments, which never change, to tell apart a reused
+ * id in a recorded transcript); the opened snapshot stays when the row is gone.
+ */
+function liveTool(messages: ChatMessage[], opened: ToolActivity): ToolActivity {
+  const matches = messages.flatMap((message) =>
+    (message.tools ?? []).filter(
+      (tool) => tool.id === opened.id && (tool.runId ?? "") === (opened.runId ?? ""),
+    ),
+  );
+  return (
+    matches.find((tool) => tool.name === opened.name && tool.args === opened.args) ??
+    matches[0] ??
+    opened
+  );
+}
+
 function foldDelegationDelivery(fleet: DelegationFleet, delivery: RunStreamEvent): DelegationFleet {
   const next = applyDelegationDelivery(fleet, delivery);
   return delivery.type === "run.event" &&
@@ -367,12 +401,18 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const setMode = useMutation(setSessionModeMutation());
   const compactSession = useMutation(compactSessionMutation());
   const forkSession = useMutation(forkSessionMutation());
+  // A fork reads the row's model before it posts, so the mutation alone
+  // doesn't cover the whole fork: the ref gates a second start within the
+  // same render, and the state disables the fork entries meanwhile.
+  const forkInFlight = useRef(false);
+  const [forkStarting, setForkStarting] = useState(false);
   const clearSession = useMutation(clearSessionMutation());
   const [delegationFleet, setDelegationFleet] = useState(() =>
     createDelegationFleet(sessionId ?? ""),
   );
   const [delegationAnchors, setDelegationAnchors] = useState<Record<string, DelegationAnchor>>({});
   const [activityFocus, setActivityFocus] = useState<DelegationFocus>();
+  const [activityFamily, setActivityFamily] = useState<DelegationFocus["family"]>();
   const [activityFocusRequest, setActivityFocusRequest] = useState(0);
   const activityOpener = useRef<HTMLButtonElement>(null);
   const activityOpenerFocus = useRef<DelegationFocus>(undefined);
@@ -387,7 +427,6 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   );
   const [reattached, setReattached] = useState(false);
   const [reattachEpoch, setReattachEpoch] = useState(0);
-  const [planContinuationActive, setPlanContinuationActive] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarHidden, setSidebarHidden] = useState(false);
   const [contentPreview, setContentPreview] = useState<ContentPreview>();
@@ -397,13 +436,12 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const activityRefresh = useRef<
     { authorizationId: string; callId: string; cursor: string; sessionId: string } | undefined
   >(undefined);
-  const planReattach = useRef<{ cursor?: string; runId: string; sessionId: string } | undefined>(
-    undefined,
-  );
   const [, setAuthorizationUncertainEpoch] = useState(0);
   const [authorizationBusy, setAuthorizationBusy] = useState<string>();
-  const [inspectionOpen, setInspectionOpen] = useState(false);
+  const [inspection, setInspection] = useState<{ sessionId: string; view: InspectionView }>();
+  const [debugTarget, setDebugTarget] = useState<DebugSessionTarget>();
   const [selectionAction, setSelectionAction] = useState<SelectionAction>();
+  const [appendText, setAppendText] = useState<string>();
   const [confirmPrompt, setConfirmPrompt] = useState<ConfirmPrompt>();
   const [textPrompt, setTextPrompt] = useState<TextPrompt>();
   const [textPromptValue, setTextPromptValue] = useState("");
@@ -411,18 +449,26 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const [notice, setNotice] = useState<string>();
   const [runTarget, setRunTarget] = useState<RunTarget>();
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
-  const ordinaryVerdictsInFlight = useRef(new Set<string>());
-  const ordinaryVerdictsUncertain = useRef(new Set<string>());
+  const verdicts = useRef(new VerdictLedger());
+  const [verdictEpoch, setVerdictEpoch] = useState(0);
   const settledAskKeys = useRef(new Set<string>());
-  const [ordinaryVerdictEpoch, setOrdinaryVerdictEpoch] = useState(0);
   const [failedRun, setFailedRun] = useState<RunFailure>();
   const [draftConfiguration, setDraftConfiguration] = useState(defaultDraftConfiguration);
   const [composerDraftPresent, setComposerDraftPresent] = useState(false);
   const [clearDraftSignal, setClearDraftSignal] = useState(0);
+  const [focusComposerSignal, setFocusComposerSignal] = useState(0);
+  const [steeringQueuedId, setSteeringQueuedId] = useState<string>();
+  /** The queued message a steer is delivering; the queue drain skips it. */
+  const steeringQueuedRef = useRef<string | undefined>(undefined);
+  /** The chat a draft's send created, which the composer carries the send's text into. */
+  const [draftCreatedSessionId, setDraftCreatedSessionId] = useState<string>();
   const [escapeClearHint, setEscapeClearHint] = useState(false);
   const workspaceRoot = useRef<HTMLDivElement>(null);
   const chatOptionsTrigger = useRef<HTMLButtonElement>(null);
   const chatOptionsEscapeSession = useRef<string | undefined>(undefined);
+  // The phone header's chat options menu opens Canvas only once the menu has closed and
+  // returned focus to its trigger, so the panel takes focus and later returns it there.
+  const chatOptionsOpensCanvas = useRef(false);
   useEffect(() => {
     const clearPending = () => {
       chatOptionsEscapeSession.current = undefined;
@@ -451,11 +497,29 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const [steerTrace, setSteerTrace] = useState<SteerTraceEntry[]>([]);
   const [showSteerTrace, setShowSteerTrace] = useState(false);
   const [controlPending, setControlPending] = useState(false);
-  const planVerdictsInFlight = useRef(new Set<string>());
-  const planVerdictsUncertain = useRef(new Set<string>());
-  const [planVerdictEpoch, setPlanVerdictEpoch] = useState(0);
-  const planFollowController = useRef<AbortController | undefined>(undefined);
   const viewedSessionId = useRef(sessionId);
+  const plan = usePlanVerdictControl({
+    activeTarget: () => controlTarget(runTarget, sessionId),
+    controlPending,
+    features: runtime.data?.features,
+    isViewed: (id) => id === viewedSessionId.current,
+    ledger: verdicts.current,
+    onStarted: ({ runId, sessionId: startedSessionId }) => {
+      activeRun.current?.controller.abort();
+      activeRun.current = undefined;
+      setRunTarget({ runId, sessionId: startedSessionId });
+      setReattachEpoch((current) => current + 1);
+    },
+    onUncertain: () => setVerdictEpoch((value) => value + 1),
+    retract: (target) => {
+      settledAskKeys.current.add(settledAskKey(target.runId, target.askId));
+      if (viewedSessionId.current === target.sessionId)
+        setApprovals((current) => retractApproval(current, target.askId, target.runId));
+    },
+    setControlPending,
+    setError,
+    setNotice,
+  });
   const [titleCache, setTitleCache] = useState(() => new Map<string, SessionTitleRevision>());
   const awayTracker = useRef(new AwayNoticeTracker());
   const awayFacts = useRef<AwayFacts | undefined>(undefined);
@@ -464,8 +528,43 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const interruptedSettledSession = useRef<string | undefined>(undefined);
   const transcriptScroll = useRef<HTMLDivElement>(null);
   const minimapNavigation = useRef(false);
+  // Following tracks the content's height, not just new messages: a card that
+  // grows in place (a delegation card, an ask, a highlighted code block, an
+  // image) must not leave a reader who sits at the bottom behind it.
+  const followTranscriptBottom = useRef(true);
+  const transcriptContentObserver = useRef<ResizeObserver | null>(null);
+  const transcriptContent = useRef<HTMLDivElement | null>(null);
+  const observeTranscriptContent = useCallback((node: HTMLDivElement | null) => {
+    transcriptContent.current = node;
+    transcriptContentObserver.current?.disconnect();
+    transcriptContentObserver.current = null;
+    if (!node || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      const element = transcriptScroll.current;
+      if (!element || !followTranscriptBottom.current || minimapNavigation.current) return;
+      element.scrollTop = element.scrollHeight;
+    });
+    observer.observe(node);
+    transcriptContentObserver.current = observer;
+  }, []);
   const threadCreation = useRef(false);
   const [atTranscriptBottom, setAtTranscriptBottom] = useState(true);
+  followTranscriptBottom.current = atTranscriptBottom;
+  const expansionRecheck = useRef(0);
+  // An expansion suspends follow for the resize it causes; the 80 px rule then decides
+  // again, so a small one keeps following and a tall one leaves the reader in place.
+  // Two frames: the first runs before the expansion's layout and observer callback, the
+  // second after them. Waiting on the frame rather than on a resize also covers a click
+  // that grows nothing (a menu trigger), which would otherwise leave follow stuck off.
+  const recheckFollowAfterExpansion = useCallback(() => {
+    cancelAnimationFrame(expansionRecheck.current);
+    expansionRecheck.current = requestAnimationFrame(() => {
+      expansionRecheck.current = requestAnimationFrame(() => {
+        const element = transcriptScroll.current;
+        if (element) setAtTranscriptBottom(isNearTranscriptBottom(element));
+      });
+    });
+  }, []);
   const visibleDelegationFleet =
     delegationFleet.sessionId === (sessionId ?? "")
       ? delegationFleet
@@ -477,13 +576,18 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const chatFolders = useChatFolders();
   const agentName = useAgentDisplayName().value.trim() || defaultAgentName;
   const userName = useUserDisplayName().value.trim() || "You";
+  const agentAvatar = useAgentAvatar().value;
+  const userAvatar = useUserAvatar().value;
   const sessionListSide = useSessionListSide().value;
   const { setValue: setShowToolCalls, value: showToolCalls } = useShowToolCalls();
   const { setValue: setExpandDetails, value: expandDetails } = useExpandDetails();
   const disabledModels = useDisabledModels().disabled;
+  const steerAvailable = useSteerAvailable();
   const enterSendBehavior = useEnterSendBehavior().value;
+  const workingBehavior = steerAvailable ? enterSendBehavior : "queue";
   const queuedMessages = useQueuedMessages(provenChat ? (sessionId ?? "") : "");
   const canvas = useLocalCanvas(sessionId ?? "draft");
+  const isMobile = useIsMobile();
   const threadAssociations = useThreadAssociations(sessionId ?? "", transcript.data);
   const threadSessionIds = useThreadSessionIds();
   const titledSessionItems = useMemo(
@@ -545,17 +649,15 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
 
   useEffect(() => {
     viewedSessionId.current = sessionId;
-    planFollowController.current?.abort();
-    planFollowController.current = undefined;
+    plan.reset();
     activityRefresh.current = undefined;
-    planReattach.current = undefined;
-    setPlanContinuationActive(false);
     authorizationActivityCursor.current = undefined;
     activityFollowedSession.current = undefined;
     interruptedSettledSession.current = undefined;
     setDelegationFleet(createDelegationFleet(sessionId ?? ""));
     setDelegationAnchors({});
     setActivityFocus(undefined);
+    setActivityFamily(undefined);
     activityOpenerFocus.current = undefined;
     activityOpener.current = null;
     // A run belongs to one session: leaving it stops its stream here, so its
@@ -573,17 +675,16 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     setReturnNotice(undefined);
     awayTracker.current.clear();
     setApprovals([]);
-    ordinaryVerdictsInFlight.current.clear();
-    ordinaryVerdictsUncertain.current.clear();
-    planVerdictsInFlight.current.clear();
-    planVerdictsUncertain.current.clear();
+    verdicts.current.clear();
     settledAskKeys.current.clear();
+    setControlPending(false);
     setFailedRun(sessionId ? readFailedRun(sessionId) : undefined);
     setLiveUsage(undefined);
     setSteerTrace([]);
     setShowSteerTrace(false);
     setContentPreview(undefined);
-    setInspectionOpen(false);
+    setInspection(undefined);
+    setDebugTarget(undefined);
     setConfirmPrompt(undefined);
     setTextPrompt(undefined);
     setSelectionAction(undefined);
@@ -598,14 +699,14 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       // into a view that has already left its session.
       if (viewedSessionId.current === sessionId) viewedSessionId.current = undefined;
     };
-  }, [sessionId, setMessages]);
+  }, [sessionId, setMessages, plan.reset]);
 
   useEffect(
     () => () => {
       activeRun.current?.controller.abort();
-      planFollowController.current?.abort();
+      plan.abort();
     },
-    [],
+    [plan.abort],
   );
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: follow every streamed message update while the reader remains at the bottom
@@ -620,10 +721,20 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
 
   const selectedSession =
     titledSessionItems.find((session) => session.id === sessionId) ?? inventorySession;
+  const inspectionSession = inspection
+    ? (titledSessionItems.find((session) => session.id === inspection.sessionId) ??
+      (inspection.sessionId === sessionId ? selectedSession : undefined))
+    : undefined;
+  // Open only while it renders: a row that leaves the list closes its dialog,
+  // and must release the shortcuts and Escape with it.
+  const inspectionOpen = Boolean(inspection && inspectionSession);
+  function openInspection(targetId: string, view: InspectionView) {
+    setInspection({ sessionId: targetId, view });
+  }
   const inspectOnlySelected = Boolean(selectedSession && isInspectOnlySession(selectedSession));
   const inspectOnlyTarget = inspectOnlySelected ? sessionId : undefined;
   useEffect(() => {
-    if (inspectOnlyTarget) setInspectionOpen(true);
+    if (inspectOnlyTarget) setInspection({ sessionId: inspectOnlyTarget, view: "details" });
   }, [inspectOnlyTarget]);
   const chatStatus = deriveChatStatus({
     ...statusFacts,
@@ -799,7 +910,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                   authorization.authorizationId === contentPreview.authorization.authorizationId,
               ) ?? contentPreview.authorization,
         }
-      : contentPreview;
+      : contentPreview?.kind === "tool"
+        ? { ...contentPreview, tool: liveTool(messages, contentPreview.tool) }
+        : contentPreview;
   useEffect(() => {
     if (contentPreview && !panelWasOpen.current) {
       const focused = document.activeElement;
@@ -818,11 +931,13 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         image: model.image,
         label: model.displayName,
         providerId: model.providerId,
+        providerLabel: model.providerDisplayName,
+        reasoning: model.reasoning,
       })) ?? [];
   const watchable =
     Boolean(selectedSession && isProvenChatSession(selectedSession)) &&
     isActiveSessionState(selectedSession?.state);
-  const shouldWatch = watchable || planContinuationActive;
+  const shouldWatch = watchable || plan.continuationActive;
   const settledState = selectedSession?.state ?? sessionDetail.data?.state;
   const settled =
     settledState === "idle" ||
@@ -861,6 +976,14 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       }
     : undefined;
   const usageLines = displayedDetail ? usageMenuLines(displayedDetail.usage) : [];
+  // The live chat's Mode, Model, and Compact controls are blocked while a run
+  // is live or the chat is not a public chat, and while any of them is in flight.
+  const sessionControlsDisabled = isRunning || !selectedSession?.capabilities.publicChat;
+  const liveControlsDisabled =
+    sessionControlsDisabled ||
+    compactSession.isPending ||
+    forkSession.isPending ||
+    setMode.isPending;
   const seedModel = sessionId ? displayedDetail?.model : draftConfiguration.model;
   const seedModelId = seedModel?.id || (sessionId ? selectedSession?.modelId : undefined);
   const seedModelLabel = seedModelId
@@ -898,7 +1021,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: helpers and QueryClient are stable for this lifetime
   useEffect(() => {
     const refresh = activityRefresh.current;
-    const planRefresh = planReattach.current;
+    const planRefresh = plan.reattachRef.current;
     if (
       !sessionId ||
       (!shouldWatch && refresh?.sessionId !== sessionId && planRefresh?.sessionId !== sessionId) ||
@@ -914,7 +1037,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           ? refresh.cursor
           : undefined;
     activityRefresh.current = undefined;
-    planReattach.current = undefined;
+    plan.reattachRef.current = undefined;
     const uncertain = refresh
       ? authorizationUncertain.current.get(`${sessionId}\u0000${refresh.authorizationId}`)
       : undefined;
@@ -998,7 +1121,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             if (end.kind === "settled") end = { kind: "uncertain" };
           }
           activeRun.current = undefined;
-          if (planRefresh?.sessionId === sessionId) setPlanContinuationActive(false);
+          if (planRefresh?.sessionId === sessionId) plan.endContinuation();
           if (end.kind === "settled" || end.kind === "authorization") setRunTarget(undefined);
           setApprovals((current) => retainUncertainApprovals(current));
           setIsRunning(false);
@@ -1168,6 +1291,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     if (owner.controller.signal.aborted || activeRun.current !== owner) return undefined;
     owner.sessionId = created.id;
     viewedSessionId.current = created.id;
+    setDraftCreatedSessionId(created.id);
     await selectSession(created.id);
     return created.id;
   }
@@ -1185,8 +1309,55 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     await navigate({ search: { sessionId: undefined }, to: "/workspace/chat" });
   }
 
+  /** A list row's Fork chat: the open chat forks as before; another row forks with its own model. */
+  async function forkListedChat(row: SessionSummaryResponse) {
+    if (row.id === sessionId) {
+      await forkStandaloneChat();
+      return;
+    }
+    if (!row.capabilities.fork || row.debugTargetSessionId || forkInFlight.current) return;
+    forkInFlight.current = true;
+    setForkStarting(true);
+    setError(undefined);
+    setNotice("Forking this conversation…");
+    const viewedAtStart = viewedSessionId.current;
+    try {
+      const detail = await queryClient.fetchQuery(
+        getSessionDetailOptions({ path: { sessionId: row.id } }),
+      );
+      if (!detail.model) {
+        setError("This chat has no resolved model to carry into a fork.");
+        return;
+      }
+      const successor = await forkSession.mutateAsync({
+        body: {
+          model: { id: detail.model.id, providerId: detail.model.providerId },
+          reasoningEffort: detail.model.reasoningEffort,
+        },
+        path: { sessionId: row.id },
+      });
+      await queryClient.invalidateQueries({ queryKey: listSessionsQueryKey() });
+      // Someone who went to another chat while the fork ran is not pulled away; the fork is in the list.
+      if (viewedSessionId.current === viewedAtStart) await selectSession(successor.id);
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      forkInFlight.current = false;
+      setForkStarting(false);
+      setNotice(undefined);
+    }
+  }
+
   async function forkStandaloneChat() {
-    if (!sessionId || !selectedSession?.capabilities.fork || !displayedDetail?.model) return;
+    if (
+      !sessionId ||
+      !selectedSession?.capabilities.fork ||
+      !displayedDetail?.model ||
+      forkInFlight.current
+    )
+      return;
+    forkInFlight.current = true;
+    setForkStarting(true);
     setError(undefined);
     setNotice("Forking this conversation…");
     try {
@@ -1202,6 +1373,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
+      forkInFlight.current = false;
+      setForkStarting(false);
       setNotice(undefined);
     }
   }
@@ -1554,10 +1727,43 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     return true;
   }
 
+  /** Steers one queued message into the live run. It leaves the queue only once the steer is accepted. */
+  async function steerQueuedMessage(id: string) {
+    const item = queuedMessages.items.find((candidate) => candidate.id === id);
+    const target = controlTarget(runTarget, sessionId);
+    if (!item || !target || steeringQueuedId) return;
+    steeringQueuedRef.current = id;
+    setSteeringQueuedId(id);
+    setError(undefined);
+    setNotice(undefined);
+    let steered = false;
+    try {
+      await steerRun({
+        body: { text: item.text },
+        path: { runId: target.runId, sessionId: target.sessionId },
+        throwOnError: true,
+      });
+      queuedMessages.remove(id);
+      steered = true;
+      setNotice("Sent — steering the active run.");
+    } catch (caught) {
+      if (isStaleRunControl(caught))
+        setNotice("The run ended before steering. The message stays queued.");
+      else setError(errorMessage(caught));
+    } finally {
+      steeringQueuedRef.current = undefined;
+      setSteeringQueuedId(undefined);
+    }
+    // A run that ended during the steer skipped this message in its drain, and
+    // nothing else drains the queue until another run ends.
+    if (!steered && !activeRun.current) drainNextQueuedMessage(target.sessionId);
+  }
+
   function drainNextQueuedMessage(activeSessionId: string) {
     if (protectedRequestsPaused()) return;
     if (viewedSessionId.current !== activeSessionId) return;
-    const next = takeNextQueuedMessage(activeSessionId);
+    // A message being steered is already on its way; draining it too would deliver it twice.
+    const next = takeNextQueuedMessage(activeSessionId, steeringQueuedRef.current);
     if (next) void sendPrompt(next.text, [], activeSessionId);
   }
 
@@ -1972,7 +2178,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           }
         } else if (event.kind === "permission.ask") {
           const approval = permissionAsk(event.payload);
-          if (approval && !settledAskKeys.current.has(`${event.runId}\u0000${approval.askId}`)) {
+          if (approval && !settledAskKeys.current.has(settledAskKey(event.runId, approval.askId))) {
             const controlTarget =
               owner.sessionId && event.runId
                 ? { askId: approval.askId, runId: event.runId, sessionId: owner.sessionId }
@@ -1984,26 +2190,20 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         } else if (event.kind === "permission.retract") {
           const askId = permissionAskId(event.payload);
           if (askId) {
-            settledAskKeys.current.add(`${event.runId}\u0000${askId}`);
-            if (owner.sessionId) {
-              const key = approvalKey({ askId, runId: event.runId, sessionId: owner.sessionId });
-              ordinaryVerdictsUncertain.current.delete(key);
-              planVerdictsUncertain.current.delete(key);
-            }
-            setOrdinaryVerdictEpoch((value) => value + 1);
+            settledAskKeys.current.add(settledAskKey(event.runId, askId));
+            if (owner.sessionId)
+              verdicts.current.reset({ askId, runId: event.runId, sessionId: owner.sessionId });
+            setVerdictEpoch((value) => value + 1);
           }
           setApprovals((current) => retractApproval(current, askId, event.runId || undefined));
           if (owner.sessionId) awayTracker.current.record(owner.sessionId, "approval-resolved");
         } else if (event.kind === "approval") {
           const askId = permissionAskId(event.payload);
           if (askId) {
-            settledAskKeys.current.add(`${event.runId}\u0000${askId}`);
-            if (owner.sessionId) {
-              const key = approvalKey({ askId, runId: event.runId, sessionId: owner.sessionId });
-              ordinaryVerdictsUncertain.current.delete(key);
-              planVerdictsUncertain.current.delete(key);
-            }
-            setOrdinaryVerdictEpoch((value) => value + 1);
+            settledAskKeys.current.add(settledAskKey(event.runId, askId));
+            if (owner.sessionId)
+              verdicts.current.reset({ askId, runId: event.runId, sessionId: owner.sessionId });
+            setVerdictEpoch((value) => value + 1);
           }
           setApprovals((current) => retractApproval(current, askId, event.runId || undefined));
           if (owner.sessionId) awayTracker.current.record(owner.sessionId, "approval-resolved");
@@ -2278,21 +2478,18 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   function retainUncertainApprovals(current: ApprovalRequest[]): ApprovalRequest[] {
     return current.filter(
       (candidate) =>
-        candidate.controlTarget &&
-        (ordinaryVerdictsUncertain.current.has(approvalKey(candidate.controlTarget)) ||
-          planVerdictsUncertain.current.has(approvalKey(candidate.controlTarget))),
+        candidate.controlTarget && verdicts.current.phase(candidate.controlTarget) === "uncertain",
     );
   }
 
-  function ordinaryApprovalUncertain(candidate: ApprovalRequest): boolean {
-    void ordinaryVerdictEpoch;
+  function approvalUncertain(candidate: ApprovalRequest): boolean {
+    void verdictEpoch;
     return Boolean(
-      candidate.controlTarget &&
-        ordinaryVerdictsUncertain.current.has(approvalKey(candidate.controlTarget)),
+      candidate.controlTarget && verdicts.current.phase(candidate.controlTarget) === "uncertain",
     );
   }
 
-  function ordinaryApprovalDisabled(candidate: ApprovalRequest): boolean {
+  function approvalDisabled(candidate: ApprovalRequest): boolean {
     const target = candidate.controlTarget;
     const activeTarget = controlTarget(runTarget, sessionId);
     return Boolean(
@@ -2302,8 +2499,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         target.runId !== activeTarget?.runId ||
         target.sessionId !== viewedSessionId.current ||
         controlPending ||
-        ordinaryVerdictsInFlight.current.has(approvalKey(target)) ||
-        ordinaryVerdictsUncertain.current.has(approvalKey(target)),
+        verdicts.current.blocks(target),
     );
   }
 
@@ -2311,13 +2507,12 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     if (
       candidate.tool === "PresentPlan" ||
       (verdict !== "deny" && !candidate.args.trim()) ||
-      ordinaryApprovalDisabled(candidate)
+      approvalDisabled(candidate)
     )
       return;
     const target = candidate.controlTarget;
     if (!target) return;
-    const key = approvalKey(target);
-    ordinaryVerdictsInFlight.current.add(key);
+    if (!verdicts.current.begin(target)) return;
     setControlPending(true);
     try {
       await resolveRunPermission({
@@ -2325,128 +2520,19 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         path: { askId: target.askId, runId: target.runId, sessionId: target.sessionId },
         throwOnError: true,
       });
-      settledAskKeys.current.add(`${target.runId}\u0000${target.askId}`);
+      verdicts.current.acknowledge(target);
+      settledAskKeys.current.add(settledAskKey(target.runId, target.askId));
       if (viewedSessionId.current === target.sessionId) {
         setApprovals((current) => retractApproval(current, target.askId, target.runId));
         setNotice(`Permission ${verdict.replaceAll("_", " ")} recorded.`);
       }
     } catch (caught) {
-      ordinaryVerdictsUncertain.current.add(key);
-      setOrdinaryVerdictEpoch((value) => value + 1);
+      verdicts.current.markUncertain(target);
+      setVerdictEpoch((value) => value + 1);
       if (viewedSessionId.current === target.sessionId)
         setError(`Could not confirm this verdict: ${errorMessage(caught)}`);
     } finally {
-      ordinaryVerdictsInFlight.current.delete(key);
-      setControlPending(false);
-    }
-  }
-
-  function planUnavailableReason(candidate: ApprovalRequest): string | undefined {
-    const featureReason = exactPlanControlAvailability(runtime.data?.features).reason;
-    if (featureReason) return featureReason;
-    const activeTarget = controlTarget(runTarget, sessionId);
-    const target = candidate.controlTarget;
-    return !target ||
-      target.askId !== candidate.askId ||
-      target.sessionId !== activeTarget?.sessionId ||
-      target.runId !== activeTarget?.runId ||
-      target.sessionId !== viewedSessionId.current
-      ? "This plan ask is stale or its exact run is unavailable. Refresh activity."
-      : undefined;
-  }
-
-  function planApprovalDisabled(candidate: ApprovalRequest): boolean {
-    void planVerdictEpoch;
-    const target = candidate.controlTarget;
-    return Boolean(
-      !target ||
-        controlPending ||
-        planVerdictsInFlight.current.has(approvalKey(target)) ||
-        planVerdictsUncertain.current.has(approvalKey(target)),
-    );
-  }
-
-  function planApprovalUncertain(candidate: ApprovalRequest): boolean {
-    void planVerdictEpoch;
-    return Boolean(
-      candidate.controlTarget &&
-        planVerdictsUncertain.current.has(approvalKey(candidate.controlTarget)),
-    );
-  }
-
-  async function respondToPlan(candidate: ApprovalRequest, verdict: PlanVerdict) {
-    if (
-      candidate.tool !== "PresentPlan" ||
-      planUnavailableReason(candidate) ||
-      planApprovalDisabled(candidate)
-    ) {
-      setError("This plan ask is stale. Refresh activity before deciding.");
-      return;
-    }
-    const target = candidate.controlTarget;
-    if (!target) return;
-    const key = approvalKey(target);
-    planVerdictsInFlight.current.add(key);
-    const askId = target.askId;
-    setControlPending(true);
-    setError(undefined);
-    try {
-      await resolvePlanAsk({
-        body: { verdict },
-        path: { askId, runId: target.runId, sessionId: target.sessionId },
-        throwOnError: true,
-      });
-      settledAskKeys.current.add(`${target.runId}\u0000${askId}`);
-      if (viewedSessionId.current === target.sessionId) {
-        setApprovals((current) => retractApproval(current, askId, target.runId));
-      }
-      if (viewedSessionId.current !== target.sessionId) return;
-      if (verdict === "iterate") {
-        if (viewedSessionId.current === target.sessionId) setNotice("Plan iteration requested.");
-        return;
-      }
-      if (viewedSessionId.current === target.sessionId) {
-        setNotice("Plan approval accepted; checking whether execution started.");
-      }
-      const controller = new AbortController();
-      planFollowController.current = controller;
-      const evidence = await followPlanContinuationFromBff(
-        { askId, planRunId: target.runId, sessionId: target.sessionId },
-        controller.signal,
-      );
-      if (controller.signal.aborted || viewedSessionId.current !== target.sessionId) return;
-      if (evidence.kind === "started") {
-        // The verdict watcher establishes the new run and a durable replay
-        // checkpoint. Transfer this view's one reader to that run so its
-        // transcript and controls follow the same evidence.
-        planReattach.current = {
-          cursor: evidence.resumeFrom,
-          runId: evidence.runId,
-          sessionId: target.sessionId,
-        };
-        setPlanContinuationActive(true);
-        activeRun.current?.controller.abort();
-        activeRun.current = undefined;
-        setRunTarget({ runId: evidence.runId, sessionId: target.sessionId });
-        setReattachEpoch((current) => current + 1);
-      } else if (evidence.kind === "failed") {
-        setNotice(undefined);
-        setError("Plan approval was recorded, but execution could not start.");
-      } else {
-        setNotice(undefined);
-        setError(
-          "Plan approval was recorded, but could not confirm whether execution started. Refresh activity to check.",
-        );
-      }
-    } catch (caught) {
-      planVerdictsUncertain.current.add(key);
-      setPlanVerdictEpoch((value) => value + 1);
-      if (viewedSessionId.current === target.sessionId)
-        setError(`Could not confirm this verdict: ${errorMessage(caught)}`);
-    } finally {
-      planFollowController.current = undefined;
-      planVerdictsInFlight.current.delete(key);
-      setControlPending(false);
+      if (viewedSessionId.current === target.sessionId) setControlPending(false);
     }
   }
 
@@ -2525,8 +2611,13 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
 
   function captureTranscriptSelection(event: ReactPointerEvent<HTMLDivElement>) {
     const selection = window.getSelection();
-    const text = selection?.toString().trim() ?? "";
-    if (!selection || !text || selection.rangeCount === 0) {
+    // A plain click selects nothing: skip the layout work of reading the text.
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+      setSelectionAction(undefined);
+      return;
+    }
+    const text = selectedTranscriptText(selection, event.currentTarget);
+    if (!text) {
       setSelectionAction(undefined);
       return;
     }
@@ -2534,7 +2625,11 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     if (!event.currentTarget.contains(range.commonAncestorContainer)) return;
     const rect = range.getBoundingClientRect();
     setSelectionAction({
-      left: Math.min(window.innerWidth - 140, Math.max(12, rect.left + rect.width / 2)),
+      // The toolbar centres on this point; keep its three actions on screen.
+      left: Math.min(
+        window.innerWidth - SELECTION_TOOLBAR_HALF_WIDTH,
+        Math.max(SELECTION_TOOLBAR_HALF_WIDTH, rect.left + rect.width / 2),
+      ),
       text,
       top: Math.max(12, rect.top - 12),
     });
@@ -2560,7 +2655,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     if (selectedSession && isProvenChatSession(selectedSession)) void clearStandaloneChat();
   });
   useShortcut("chat.expandDetails", () => setExpandDetails(!expandDetails));
-  useShortcutSuppression(inspectionOpen || Boolean(confirmPrompt) || Boolean(textPrompt));
+  useShortcutSuppression(
+    inspectionOpen || Boolean(debugTarget) || Boolean(confirmPrompt) || Boolean(textPrompt),
+  );
   const escapeAsk =
     approvals.find((candidate) => {
       const target = candidate.controlTarget;
@@ -2568,11 +2665,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     }) ?? approvals.find((candidate) => candidate.controlTarget?.sessionId === sessionId);
   useChatEscape({
     active: true,
-    askAvailable: escapeAsk
-      ? escapeAsk.tool === "PresentPlan"
-        ? !planApprovalDisabled(escapeAsk)
-        : !ordinaryApprovalDisabled(escapeAsk)
-      : false,
+    askAvailable: escapeAsk ? !approvalDisabled(escapeAsk) : false,
     draft: composerDraftPresent,
     onClearDraft: () => setClearDraftSignal((value) => value + 1),
     onClosePanel: () => {
@@ -2595,13 +2688,13 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     },
     onHintChange: setEscapeClearHint,
     onIteratePlan: () => {
-      if (escapeAsk) void respondToPlan(escapeAsk, "iterate");
+      if (escapeAsk) void plan.respondToPlan(escapeAsk, "iterate");
     },
     onStopRun: () => void stopRun(),
     onUnavailablePlan: () =>
       setError(
         escapeAsk
-          ? (planUnavailableReason(escapeAsk) ??
+          ? (plan.planUnavailableReason(escapeAsk) ??
               "Exact plan verdict is unavailable. Refresh activity.")
           : "Exact plan verdict is unavailable.",
       ),
@@ -2619,15 +2712,72 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           !(node instanceof Element && node.closest('[data-chat-surface="thread"]')),
       );
     },
-    overlayOpen: inspectionOpen || Boolean(confirmPrompt) || Boolean(textPrompt),
+    overlayOpen:
+      inspectionOpen || Boolean(debugTarget) || Boolean(confirmPrompt) || Boolean(textPrompt),
     panelOpen: Boolean(contentPreview || sidebarOpen),
     pendingAsk: escapeAsk?.tool === "PresentPlan" ? "plan" : escapeAsk ? "ordinary" : "none",
-    planAvailable: escapeAsk?.tool === "PresentPlan" && !planUnavailableReason(escapeAsk),
+    planAvailable: escapeAsk?.tool === "PresentPlan" && !plan.planUnavailableReason(escapeAsk),
     runActive: isRunning && Boolean(controlTarget(runTarget, sessionId)),
   });
+  const openApprovalDetail = useCallback(
+    (approval: ApprovalRequest) =>
+      setContentPreview({
+        askId: approval.askId,
+        kind: "approval",
+        runId: approval.controlTarget?.runId ?? "",
+      }),
+    [],
+  );
+  const detailIndex =
+    contentPreview?.kind === "approval"
+      ? approvals.findIndex(
+          (candidate) =>
+            candidate.askId === contentPreview.askId &&
+            (candidate.controlTarget?.runId ?? "") === contentPreview.runId,
+        )
+      : -1;
+  const detailApproval = detailIndex >= 0 ? approvals[detailIndex] : undefined;
+  // Escape denies only the surface's active ask. A panel showing another ask
+  // handles Escape itself and only closes, so it never denies an ask it
+  // doesn't show.
+  const detailClosesOnEscape = detailApproval !== undefined && detailApproval !== escapeAsk;
+  // The detail panel shows a live ask only: once the ledger settles it (or the
+  // stream retracts it) the panel closes with its card. Focus that fell with the
+  // panel goes to the composer, never to a verdict button; focus the reader has
+  // already moved elsewhere stays put.
+  useEffect(() => {
+    if (contentPreview?.kind !== "approval" || detailApproval) return;
+    const focused = document.activeElement;
+    setContentPreview(undefined);
+    if (!focused || focused === document.body || focused.closest('[data-chat-surface="approval"]'))
+      setFocusComposerSignal((signal) => signal + 1);
+  }, [contentPreview, detailApproval]);
+
+  const copyItems = sessionId ? (
+    <>
+      <TranscriptMenuItems
+        agentName={agentName}
+        messages={messages}
+        onSelectTranscript={() => {
+          const content = transcriptContent.current;
+          if (content) selectElementContents(content);
+        }}
+        userName={userName}
+      />
+      {selectedSession ? (
+        <CopySessionIdMenuItem session={selectedSession} />
+      ) : (
+        <DropdownMenuItem onSelect={() => void copyToClipboard(sessionId, "Session ID")}>
+          <Copy aria-hidden="true" />
+          Copy session ID
+        </DropdownMenuItem>
+      )}
+      {selectedSession && <CopyDebugTargetMenuItem session={selectedSession} />}
+    </>
+  ) : null;
 
   return (
-    <div className="relative flex h-full min-w-0" ref={workspaceRoot}>
+    <div className="relative flex h-full min-w-0" data-chat-surface="workspace" ref={workspaceRoot}>
       <SessionSidebar
         collapsed={sidebarHidden}
         creating={createSession.isPending || isRunning}
@@ -2669,7 +2819,10 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             title: `Delete folder “${folder.name}”?`,
           });
         }}
+        forking={forkStarting || forkSession.isPending}
+        onFork={(row) => void forkListedChat(row)}
         onMoveToFolder={chatFolders.move}
+        onViewTranscript={(row) => openInspection(row.id, "transcript")}
         onRename={(session, title) => {
           void renameChat(session.id, title);
         }}
@@ -2691,7 +2844,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
 
       {sessionId && (!selectedSession || !isProvenChatSession(selectedSession)) ? (
         <section className="flex min-w-0 flex-1 flex-col bg-background">
-          <header className="flex h-16 shrink-0 items-center gap-3 border-b px-4 sm:px-6">
+          <header className="flex h-16 shrink-0 items-center gap-3 border-b px-4 min-[500px]:px-6">
             <ChatsMenuButton
               onClick={() => {
                 setSidebarHidden(false);
@@ -2706,19 +2859,22 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           {selectedSession && isInspectOnlySession(selectedSession) ? (
             <div className="m-auto flex flex-col items-center gap-3 p-6 text-center">
               <p className="text-sm text-muted-foreground">Inspect-only session · Read-only</p>
-              <Button onClick={() => setInspectionOpen(true)} variant="outline">
+              <Button
+                onClick={() => sessionId && openInspection(sessionId, "details")}
+                variant="outline"
+              >
                 Session details
               </Button>
             </div>
           ) : (
-            <p className="m-auto text-sm text-muted-foreground">
+            <p className="m-auto text-sm text-muted-foreground" role="status">
               {sessions.isPending ? "Checking session…" : "This session is unavailable as a chat."}
             </p>
           )}
         </section>
       ) : (
         <section className="relative flex min-w-0 flex-1 flex-col bg-background">
-          <header className="flex h-16 shrink-0 items-center gap-3 border-b px-4 sm:px-6">
+          <header className="@container/chat-header flex h-16 shrink-0 items-center gap-3 border-b px-3 max-[499px]:gap-2 min-[500px]:px-6">
             <ChatsMenuButton
               onClick={() => {
                 setSidebarHidden(false);
@@ -2730,6 +2886,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
               <h1 className="truncate text-sm font-semibold">
                 {selectedSession?.title ?? "New chat"}
               </h1>
+              {sessionId && <PermissionModeBadge mode={displayedDetail?.mode} />}
               {selectedSession?.debugTargetSessionId && (
                 <Badge
                   title="A read-only diagnostic chat; it never modifies its target."
@@ -2740,6 +2897,18 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                 </Badge>
               )}
             </div>
+            <FleetStatusChip
+              className="@max-[52rem]/chat-header:hidden"
+              fleet={sessionId ? visibleDelegationFleet : undefined}
+              onOpen={(family, opener) => {
+                activityOpener.current = opener;
+                activityOpenerFocus.current = undefined;
+                setActivityFocus(undefined);
+                setActivityFamily(family);
+                setActivityFocusRequest((value) => value + 1);
+                setContentPreview({ kind: "activity" });
+              }}
+            />
             <Button
               aria-label="Open session activity"
               disabled={!sessionId}
@@ -2747,6 +2916,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                 activityOpener.current = event.currentTarget;
                 activityOpenerFocus.current = undefined;
                 setActivityFocus(undefined);
+                setActivityFamily(undefined);
                 setActivityFocusRequest((value) => value + 1);
                 setContentPreview({ kind: "activity" });
               }}
@@ -2755,17 +2925,21 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
               variant="ghost"
             >
               <ListTodo aria-hidden="true" />
-              <span className="hidden sm:inline">Activity</span>
+              {/* 35.5rem is the header's content box at a 640px viewport (less the
+                  main margins and the header's padding), where the labels started. */}
+              <span className="hidden @min-[35.5rem]/chat-header:inline">Activity</span>
             </Button>
-            <Button
-              aria-label="Open local canvas"
-              onClick={() => setContentPreview({ kind: "canvas" })}
-              size="sm"
-              variant="ghost"
-            >
-              <NotebookPen aria-hidden="true" />
-              <span className="hidden sm:inline">Canvas</span>
-            </Button>
+            {!(isMobile && sessionId) && (
+              <Button
+                aria-label="Open local canvas"
+                onClick={() => setContentPreview({ kind: "canvas" })}
+                size="sm"
+                variant="ghost"
+              >
+                <NotebookPen aria-hidden="true" />
+                <span className="hidden @min-[35.5rem]/chat-header:inline">Canvas</span>
+              </Button>
+            )}
             {sessionId && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -2787,12 +2961,12 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                   onCloseAutoFocus={(event) => {
                     event.preventDefault();
                     chatOptionsTrigger.current?.focus();
+                    if (chatOptionsOpensCanvas.current) {
+                      chatOptionsOpensCanvas.current = false;
+                      setContentPreview({ kind: "canvas" });
+                    }
                   }}
                 >
-                  <DropdownMenuItem onSelect={() => setInspectionOpen(true)}>
-                    <ListTree aria-hidden="true" />
-                    Inspect session
-                  </DropdownMenuItem>
                   {usageLines.length > 0 && (
                     <div className="mb-1 border-b px-2 py-1.5">
                       <p className="text-xs font-medium text-muted-foreground">Token usage</p>
@@ -2816,12 +2990,25 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                     {showSteerTrace ? "Hide developer steer trace" : "Show developer steer trace"}
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onSelect={() => void copyToClipboard(sessionId, "Session ID")}>
-                    <Copy aria-hidden="true" />
-                    Copy session ID
+                  {displayedDetail?.capabilities.manualCompaction && (
+                    <DropdownMenuItem
+                      disabled={liveControlsDisabled}
+                      onSelect={() => void compactConversation()}
+                    >
+                      <FoldVertical aria-hidden="true" />
+                      Compact conversation
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem
+                    disabled={clearSession.isPending || !selectedSession?.capabilities.fork}
+                    onSelect={() => void clearStandaloneChat()}
+                  >
+                    <Eraser aria-hidden="true" />
+                    Clear conversation
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     disabled={
+                      forkStarting ||
                       forkSession.isPending ||
                       !displayedDetail?.model ||
                       !selectedSession?.capabilities.fork
@@ -2831,24 +3018,67 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                     <GitFork aria-hidden="true" />
                     Fork chat
                   </DropdownMenuItem>
-                  <DropdownMenuItem
-                    disabled={clearSession.isPending || !selectedSession?.capabilities.fork}
-                    onSelect={() => void clearStandaloneChat()}
-                  >
-                    <Eraser aria-hidden="true" />
-                    Clear conversation
+                  {isMobile && (
+                    <DropdownMenuItem
+                      onSelect={() => {
+                        chatOptionsOpensCanvas.current = true;
+                      }}
+                    >
+                      <NotebookPen aria-hidden="true" />
+                      Open local canvas
+                    </DropdownMenuItem>
+                  )}
+                  {runtime.data?.connection === "online" &&
+                    runtime.data.capabilities.worktrees &&
+                    selectedSession?.capabilities.fork &&
+                    selectedSession.capabilities.inspect && (
+                      <DropdownMenuItem onSelect={() => openInspection(sessionId, "worktrees")}>
+                        <GitBranch aria-hidden="true" />
+                        Switch worktree…
+                      </DropdownMenuItem>
+                    )}
+                  <DropdownMenuSeparator />
+                  {isMobile ? (
+                    // A submenu has no room beside the menu on a phone, so its items sit inline.
+                    <DropdownMenuGroup aria-label="Copy">
+                      <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">
+                        Copy
+                      </DropdownMenuLabel>
+                      {copyItems}
+                    </DropdownMenuGroup>
+                  ) : (
+                    <DropdownMenuSub>
+                      <DropdownMenuSubTrigger>
+                        <Copy aria-hidden="true" />
+                        Copy
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent className="w-52">{copyItems}</DropdownMenuSubContent>
+                    </DropdownMenuSub>
+                  )}
+                  {selectedSession?.capabilities.viewTranscript &&
+                    selectedSession.capabilities.inspect &&
+                    runtime.data?.connection === "online" && (
+                      <DropdownMenuItem onSelect={() => openInspection(sessionId, "transcript")}>
+                        <ScrollText aria-hidden="true" />
+                        View transcript
+                      </DropdownMenuItem>
+                    )}
+                  <DropdownMenuItem onSelect={() => openInspection(sessionId, "details")}>
+                    <Info aria-hidden="true" />
+                    Inspect session
                   </DropdownMenuItem>
+                  {runtime.data?.connection === "online" && runtime.data.capabilities.soul && (
+                    <DropdownMenuItem onSelect={() => openInspection(sessionId, "soul")}>
+                      <Sparkles aria-hidden="true" />
+                      Soul
+                    </DropdownMenuItem>
+                  )}
                   {runtime.data?.capabilities.sessionDebug && (
                     <DropdownMenuItem
                       disabled={createSession.isPending}
-                      onSelect={() => {
-                        setConfirmPrompt({
-                          confirmLabel: "Send evidence & debug",
-                          description: DEBUG_SESSION_CONSENT,
-                          onConfirm: () => void startDebugSession(sessionId),
-                          title: `Debug with AI: “${selectedSession?.title}”?`,
-                        });
-                      }}
+                      onSelect={() =>
+                        setDebugTarget({ id: sessionId, title: selectedSession?.title ?? "" })
+                      }
                     >
                       <Bug aria-hidden="true" />
                       Debug with AI
@@ -2907,8 +3137,26 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             {(isRunning ||
               (statusFacts.phase === "closed" && controlTarget(runTarget, sessionId))) && (
               <div className="flex items-center gap-2">
+                {/* Phones hide the pill's text, so the icon carries the state: a spinner
+                    while the agent works, a still amber key when the user must authorize. */}
+                {isRunning &&
+                  (statusFacts.authorizationPending ? (
+                    <KeyRound
+                      aria-hidden="true"
+                      className="size-4 shrink-0 text-warning min-[500px]:hidden"
+                      data-cue="authorization"
+                      data-slot="run-status-cue"
+                    />
+                  ) : (
+                    <LoaderCircle
+                      aria-hidden="true"
+                      className="size-4 shrink-0 animate-spin text-brand min-[500px]:hidden"
+                      data-cue="working"
+                      data-slot="run-status-cue"
+                    />
+                  ))}
                 {isRunning && (
-                  <Badge variant="success">
+                  <Badge className="max-[499px]:sr-only" variant="success">
                     {statusFacts.authorizationPending
                       ? "Waiting for authorization"
                       : reattached
@@ -2919,20 +3167,23 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                 {controlTarget(runTarget, sessionId) && (
                   <>
                     <Button
+                      className="max-[499px]:size-11 max-[499px]:px-0"
                       disabled={controlPending}
                       onClick={() => void stopRun()}
                       size="sm"
                       variant="outline"
                     >
                       <Square aria-hidden="true" className="fill-current" />
-                      Stop
+                      <span className="max-[499px]:sr-only">Stop</span>
                     </Button>
                     {!escapeAsk &&
                       !contentPreview &&
                       !sidebarOpen &&
                       isRunning &&
                       !controlPending && (
-                        <span className="text-xs text-muted-foreground">Esc to Stop</span>
+                        <span className="text-xs text-muted-foreground max-[499px]:hidden">
+                          Esc to Stop
+                        </span>
                       )}
                   </>
                 )}
@@ -2953,6 +3204,19 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                   minimapNavigation.current = false;
                 }
               }}
+              onClickCapture={(event) => {
+                // Expanding a disclosure grows the content in place: let it, rather than
+                // letting the observer drag the reader (and the toggle) down. The ref is
+                // cleared synchronously because the observer fires before the next render.
+                if (
+                  event.target instanceof Element &&
+                  event.target.closest('[aria-expanded="false"]')
+                ) {
+                  followTranscriptBottom.current = false;
+                  setAtTranscriptBottom(false);
+                  recheckFollowAfterExpansion();
+                }
+              }}
               onPointerDown={() => {
                 minimapNavigation.current = false;
               }}
@@ -2971,12 +3235,25 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
               }}
               ref={transcriptScroll}
             >
-              <div className="mx-auto flex min-h-full max-w-3xl flex-col py-8 pl-4 pr-12 sm:pl-6 sm:pr-12">
-                {showSteerTrace && <SteerTrace entries={steerTrace} />}
+              <div
+                className={cn(
+                  "mx-auto flex min-h-full max-w-3xl flex-col pt-2 pb-6 pl-4 min-[500px]:pl-6",
+                  // The right gutter keeps messages clear of the minimap; the empty state
+                  // has no minimap, so it centres like the prototype's.
+                  !(transcript.isPending && sessionId && !isRunning) &&
+                    messages.length === 0 &&
+                    approvals.length === 0
+                    ? "pr-4 min-[500px]:pr-6"
+                    : "pr-12",
+                )}
+                ref={observeTranscriptContent}
+              >
                 {transcript.isPending && sessionId && !isRunning ? (
-                  <p className="m-auto text-sm text-muted-foreground">Loading conversation…</p>
+                  <p className="m-auto text-sm text-muted-foreground" role="status">
+                    Loading conversation…
+                  </p>
                 ) : messages.length === 0 && approvals.length === 0 ? (
-                  <div className="m-auto flex flex-col items-center">
+                  <div className="m-auto flex w-full flex-col items-center">
                     <DraftGreeting
                       onPickSeed={(seed) => {
                         setSeedRequiresConfirmation(false);
@@ -2989,71 +3266,71 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                   </div>
                 ) : (
                   <EscapeHintContext.Provider value={escapeAsk}>
-                    <ChatTranscript
-                      agentName={agentName}
-                      approvalDisabled={(candidate) =>
-                        candidate.tool === "PresentPlan"
-                          ? planApprovalDisabled(candidate)
-                          : ordinaryApprovalDisabled(candidate)
-                      }
-                      approvalUncertain={(candidate) =>
-                        candidate.tool === "PresentPlan"
-                          ? planApprovalUncertain(candidate)
-                          : ordinaryApprovalUncertain(candidate)
-                      }
-                      approvals={approvals}
-                      delegationsByMessageId={delegationPlacement.byMessageId}
-                      legacyThreadSessionIdForMessage={(message) => {
-                        const key = matchingThreadKeyForMessage(
-                          message,
-                          transcript.data,
-                          threadAssociations,
-                        );
-                        return key
-                          ? threadAssociations.legacyCandidates[key]?.sessionId
-                          : undefined;
-                      }}
-                      messages={messages}
-                      onOpenActivity={(focus, opener) => {
-                        activityOpener.current = opener;
-                        activityOpenerFocus.current = focus;
-                        setActivityFocus(focus);
-                        setActivityFocusRequest((value) => value + 1);
-                        setContentPreview({ kind: "activity" });
-                      }}
-                      onOpenThread={(message) => void openSideThread(message)}
-                      onRelinkThread={(message) => void relinkOlderThread(message)}
-                      onReviewAuthorization={(authorization) =>
-                        setContentPreview({ authorization, kind: "authorization" })
-                      }
-                      onPreviewImage={(image) =>
-                        setContentPreview({ file: imagePreview(image, true), kind: "file" })
-                      }
-                      onPreviewTool={(tool) => setContentPreview({ kind: "tool", tool })}
-                      onRespondToApproval={(candidate, verdict) =>
-                        void respondToApproval(candidate, verdict)
-                      }
-                      onRespondToPlan={(candidate, verdict) =>
-                        void respondToPlan(candidate, verdict)
-                      }
-                      planUnavailableReason={planUnavailableReason}
-                      showToolCalls={showToolCalls}
-                      streamingMessageId={
-                        isRunning && messages.at(-1)?.role === "assistant"
-                          ? messages.at(-1)?.id
-                          : undefined
-                      }
-                      threadDisabled={forkSession.isPending}
-                      threadSessionIdForMessage={(message) => {
-                        const key = matchingThreadKeyForMessage(
-                          message,
-                          transcript.data,
-                          threadAssociations,
-                        );
-                        return key ? threadAssociations.byKey[key]?.sessionId : undefined;
-                      }}
-                      userName={userName}
-                    />
+                    <ApprovalDetailContext.Provider value={openApprovalDetail}>
+                      <ChatTranscript
+                        agentAvatar={agentAvatar}
+                        agentName={agentName}
+                        approvalDisabled={approvalDisabled}
+                        approvalUncertain={approvalUncertain}
+                        approvals={approvals}
+                        delegationsByMessageId={delegationPlacement.byMessageId}
+                        legacyThreadSessionIdForMessage={(message) => {
+                          const key = matchingThreadKeyForMessage(
+                            message,
+                            transcript.data,
+                            threadAssociations,
+                          );
+                          return key
+                            ? threadAssociations.legacyCandidates[key]?.sessionId
+                            : undefined;
+                        }}
+                        messages={messages}
+                        onCopyMessage={(message) =>
+                          void copyToClipboard(message.content, "Message")
+                        }
+                        onOpenActivity={(focus, opener) => {
+                          activityOpener.current = opener;
+                          activityOpenerFocus.current = focus;
+                          setActivityFocus(focus);
+                          setActivityFamily(undefined);
+                          setActivityFocusRequest((value) => value + 1);
+                          setContentPreview({ kind: "activity" });
+                        }}
+                        onOpenThread={(message) => void openSideThread(message)}
+                        onRelinkThread={(message) => void relinkOlderThread(message)}
+                        onReviewAuthorization={(authorization) =>
+                          setContentPreview({ authorization, kind: "authorization" })
+                        }
+                        onPreviewImage={(image) =>
+                          setContentPreview({ file: imagePreview(image, true), kind: "file" })
+                        }
+                        onPreviewTool={(tool) => setContentPreview({ kind: "tool", tool })}
+                        onRespondToApproval={(candidate, verdict) =>
+                          void respondToApproval(candidate, verdict)
+                        }
+                        onRespondToPlan={(candidate, verdict) =>
+                          void plan.respondToPlan(candidate, verdict)
+                        }
+                        planUnavailableReason={plan.planUnavailableReason}
+                        showToolCalls={showToolCalls}
+                        streamingMessageId={
+                          isRunning && messages.at(-1)?.role === "assistant"
+                            ? messages.at(-1)?.id
+                            : undefined
+                        }
+                        threadDisabled={forkSession.isPending}
+                        threadSessionIdForMessage={(message) => {
+                          const key = matchingThreadKeyForMessage(
+                            message,
+                            transcript.data,
+                            threadAssociations,
+                          );
+                          return key ? threadAssociations.byKey[key]?.sessionId : undefined;
+                        }}
+                        userAvatar={userAvatar}
+                        userName={userName}
+                      />
+                    </ApprovalDetailContext.Provider>
                   </EscapeHintContext.Provider>
                 )}
                 {delegationPlacement.unanchored.length > 0 && (
@@ -3063,6 +3340,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                       activityOpener.current = opener;
                       activityOpenerFocus.current = focus;
                       setActivityFocus(focus);
+                      setActivityFamily(undefined);
                       setActivityFocusRequest((value) => value + 1);
                       setContentPreview({ kind: "activity" });
                     }}
@@ -3071,6 +3349,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
               </div>
             </section>
             <MessageMinimap
+              agentName={agentName}
               approvals={approvals}
               delegationsByMessageId={delegationPlacement.byMessageId}
               key={sessionId ?? "draft"}
@@ -3085,6 +3364,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
               streamingMessageId={
                 isRunning && messages.at(-1)?.role === "assistant" ? messages.at(-1)?.id : undefined
               }
+              userName={userName}
             />
           </div>
 
@@ -3153,27 +3433,41 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
               retrying={isRunning}
             />
           )}
-          {sessionId && displayedDetail && (
-            <ChatSessionControls
-              compacting={compactSession.isPending}
-              detail={displayedDetail}
-              disabled={isRunning || !selectedSession?.capabilities.publicChat}
-              forking={forkSession.isPending}
-              modePending={setMode.isPending}
-              models={models}
-              onCompact={() => void compactConversation()}
-              onFork={(model, effort) => void forkConversation(model, effort)}
-              onModeChange={(mode) => void changeMode(mode)}
-              safetyLevel={runtime.data?.capabilities.posture}
-            />
-          )}
-          <QueuedMessageList
+          {showSteerTrace && <SteerTrace entries={steerTrace} />}
+          <QueuedMessageStrip
             items={queuedMessages.items}
             onDelete={queuedMessages.remove}
             onEdit={queuedMessages.update}
+            onSteer={
+              steerAvailable && isRunning && controlTarget(runTarget, sessionId)
+                ? (id) => void steerQueuedMessage(id)
+                : undefined
+            }
+            steeringId={steeringQueuedId}
           />
+          {!escapeAsk &&
+            !contentPreview &&
+            !sidebarOpen &&
+            !isRunning &&
+            composerDraftPresent &&
+            !escapeClearHint && (
+              <p className="mx-auto mb-1.5 w-full max-w-3xl px-5 text-xs text-muted-foreground min-[500px]:px-7">
+                Esc twice to clear draft
+              </p>
+            )}
+          {escapeClearHint && (
+            <p
+              className="mx-auto mb-1.5 w-full max-w-3xl px-5 text-xs text-muted-foreground min-[500px]:px-7"
+              role="status"
+            >
+              Press Escape again to clear the unsent draft.
+            </p>
+          )}
           <ChatComposer
+            appendText={appendText}
+            canForkModel={displayedDetail?.capabilities.modelSelection === true}
             clearDraftSignal={clearDraftSignal}
+            focusComposerSignal={focusComposerSignal}
             executionInventory={templates.data}
             executionStatus={
               !runtime.data
@@ -3190,23 +3484,49 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
               void templates.refetch();
             }}
             configuration={sessionId ? undefined : draftConfiguration}
+            createdChatKey={draftCreatedSessionId}
             disabled={
               createSession.isPending ||
               Boolean(sessionId && !selectedSession?.capabilities.publicChat)
             }
+            draftKey={sessionId ?? "new"}
             imageAttachmentsSupported={imageAttachmentsSupported}
+            liveControlsDisabled={liveControlsDisabled}
+            liveMode={sessionId ? displayedDetail?.mode : undefined}
+            liveModel={sessionId ? displayedDetail?.model : undefined}
             models={models}
             onConfigurationChange={setDraftConfiguration}
             onDraftChange={setComposerDraftPresent}
+            onForkModel={(model, effort) => void forkConversation(model, effort)}
+            onLiveModeChange={(mode) => void changeMode(mode)}
+            onPreviewFile={(file) => setContentPreview({ file, kind: "file" })}
             onPreviewImage={(image) =>
               setContentPreview({ file: imagePreview(image, false), kind: "file" })
             }
+            onAppendConsumed={() => setAppendText(undefined)}
             onSeedConsumed={() => {
               setSeedText(undefined);
               setSeedRequiresConfirmation(false);
             }}
             onSend={handleComposerSend}
-            safetyLevel={runtime.data?.capabilities.posture}
+            pillRowDetail={
+              sessionId && displayedDetail ? (
+                <SessionExecutionStatus detail={displayedDetail} variant="pills" />
+              ) : undefined
+            }
+            pillRowEnd={
+              sessionId && displayedDetail ? (
+                <SessionUsageControls
+                  compacting={compactSession.isPending}
+                  detail={displayedDetail}
+                  disabled={sessionControlsDisabled}
+                  forking={forkSession.isPending}
+                  modePending={setMode.isPending}
+                  onCompact={() => void compactConversation()}
+                  variant="pills"
+                />
+              ) : undefined
+            }
             seedCanConfirm={
               runtime.data?.connection === "online" &&
               !isRunning &&
@@ -3219,109 +3539,124 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             seedContext={seedContext}
             seedRequiresConfirmation={seedRequiresConfirmation}
             seedText={seedText}
+            sheetFooter={
+              sessionId && displayedDetail ? (
+                <SessionUsageControls
+                  compacting={compactSession.isPending}
+                  detail={displayedDetail}
+                  disabled={sessionControlsDisabled}
+                  forking={forkSession.isPending}
+                  modePending={setMode.isPending}
+                  onCompact={() => void compactConversation()}
+                  variant="sheet"
+                />
+              ) : undefined
+            }
             working={
               isRunning ||
               (statusFacts.phase === "closed" && Boolean(controlTarget(runTarget, sessionId)))
             }
-            workingBehavior={enterSendBehavior}
+            steerAvailable={steerAvailable}
+            workingBehavior={workingBehavior}
           />
-          {!escapeAsk &&
-            !contentPreview &&
-            !sidebarOpen &&
-            !isRunning &&
-            composerDraftPresent &&
-            !escapeClearHint && (
-              <p className="mx-auto mb-2 max-w-3xl px-4 text-xs text-muted-foreground">
-                Esc twice to clear draft
-              </p>
-            )}
-          {escapeClearHint && (
-            <p className="mx-auto mb-2 max-w-3xl px-4 text-xs text-muted-foreground" role="status">
-              Press Escape again to clear the unsent draft.
-            </p>
-          )}
         </section>
       )}
-      {selectedSession && inspectionOpen && (
+      {inspection && inspectionSession && (
         <SessionInspection
-          key={selectedSession.id}
-          onClose={() => setInspectionOpen(false)}
-          onDebug={(targetId) => {
-            if (targetId !== sessionId || !runtime.data?.capabilities.sessionDebug) return;
-            setConfirmPrompt({
-              confirmLabel: "Send evidence & debug",
-              description: DEBUG_SESSION_CONSENT,
-              onConfirm: () => void startDebugSession(targetId),
-              title: `Debug with AI: “${selectedSession.title}”?`,
-            });
-          }}
+          initialView={inspection.view}
+          key={`${inspectionSession.id}\u0000${inspection.view}`}
+          onClose={() => setInspection(undefined)}
+          onDebug={
+            inspectionSession.id === sessionId
+              ? (targetId) => {
+                  if (targetId !== sessionId || !runtime.data?.capabilities.sessionDebug) return;
+                  setDebugTarget({ id: targetId, title: inspectionSession.title });
+                }
+              : undefined
+          }
           onOpenSuccessor={(id) => void selectSession(id)}
           runtime={runtime.data}
-          session={selectedSession}
+          session={inspectionSession}
         />
       )}
+      <DebugSessionDialog
+        onConfirm={(target) => {
+          setDebugTarget(undefined);
+          if (target.id === sessionId) void startDebugSession(target.id);
+        }}
+        onOpenChange={(open) => !open && setDebugTarget(undefined)}
+        target={debugTarget}
+      />
       {displayedPreview && provenChat && (
-        <ContentPreviewPanel
-          escapeManagedExternally
-          escapeHint={!escapeAsk}
-          activity={{
-            fallbackOpener: sessionActivityControl.current,
-            fleet: visibleDelegationFleet,
-            focus: activityFocus,
-            focusRequest: activityFocusRequest,
-            onFocusChange: setActivityFocus,
-            opener: activityOpener.current,
-            openerFocus: activityOpenerFocus.current,
-          }}
-          authorizationDisabled={authorizationBusy !== undefined}
-          authorizationUncertain={
-            displayedPreview?.kind === "authorization" &&
-            authorizationUncertain.current.has(
-              `${displayedPreview.authorization.sessionId}\u0000${displayedPreview.authorization.authorizationId}`,
-            )
-          }
-          canvas={canvas.value}
-          onCanvasChange={canvas.setValue}
-          onAuthorizationOperation={operateAuthorization}
-          onRefreshAuthorizationActivity={refreshAuthorizationActivity}
-          onClose={() => {
-            setContentPreview(undefined);
-            const opener = panelOpener.current;
-            if (opener?.isConnected) opener.focus();
-          }}
-          preview={displayedPreview}
-        />
+        <EscapeHintContext.Provider value={escapeAsk}>
+          <ContentPreviewPanel
+            escapeManagedExternally={!detailClosesOnEscape}
+            escapeHint={!escapeAsk || detailClosesOnEscape}
+            approval={
+              detailApproval
+                ? {
+                    approval: detailApproval,
+                    disabled:
+                      detailApproval.tool === "PresentPlan" ||
+                      !detailApproval.controlTarget ||
+                      approvalDisabled(detailApproval),
+                    onRespond: (verdict) => void respondToApproval(detailApproval, verdict),
+                    position: detailIndex + 1,
+                    total: approvals.length,
+                    uncertain: approvalUncertain(detailApproval),
+                  }
+                : undefined
+            }
+            activity={{
+              fallbackOpener: sessionActivityControl.current,
+              fleet: visibleDelegationFleet,
+              family: activityFamily,
+              focus: activityFocus,
+              focusRequest: activityFocusRequest,
+              onFocusChange: setActivityFocus,
+              opener: activityOpener.current,
+              openerFocus: activityOpenerFocus.current,
+            }}
+            authorizationDisabled={authorizationBusy !== undefined}
+            authorizationUncertain={
+              displayedPreview?.kind === "authorization" &&
+              authorizationUncertain.current.has(
+                `${displayedPreview.authorization.sessionId}\u0000${displayedPreview.authorization.authorizationId}`,
+              )
+            }
+            canvas={canvas.value}
+            onCanvasChange={canvas.setValue}
+            onAuthorizationOperation={operateAuthorization}
+            onRefreshAuthorizationActivity={refreshAuthorizationActivity}
+            onClose={() => {
+              setContentPreview(undefined);
+              const opener = panelOpener.current;
+              if (opener?.isConnected) opener.focus();
+            }}
+            preview={displayedPreview}
+          />
+        </EscapeHintContext.Provider>
       )}
       {selectionAction && (
-        <div
-          className="fixed z-50 flex -translate-x-1/2 -translate-y-full gap-1 rounded-lg border bg-popover p-1 text-popover-foreground shadow-lg"
-          style={{ left: selectionAction.left, top: selectionAction.top }}
-        >
-          <Button
-            onClick={() => {
-              void copyToClipboard(selectionAction.text, "Selection");
-              setSelectionAction(undefined);
-            }}
-            size="sm"
-            variant="ghost"
-          >
-            <Copy aria-hidden="true" />
-            Copy
-          </Button>
-          <Button
-            onClick={() => {
-              canvas.setValue(appendCanvasQuote(canvas.value, selectionAction.text));
-              setContentPreview({ kind: "canvas" });
-              setSelectionAction(undefined);
-              window.getSelection()?.removeAllRanges();
-            }}
-            size="sm"
-            variant="ghost"
-          >
-            <NotebookPen aria-hidden="true" />
-            Add to canvas
-          </Button>
-        </div>
+        <TextSelectionToolbar
+          left={selectionAction.left}
+          onAddToCanvas={() => {
+            canvas.setValue(appendCanvasQuote(canvas.value, selectionAction.text));
+            setContentPreview({ kind: "canvas" });
+            setSelectionAction(undefined);
+            window.getSelection()?.removeAllRanges();
+          }}
+          onAddToChat={() => {
+            setAppendText(selectionAction.text);
+            setSelectionAction(undefined);
+            window.getSelection()?.removeAllRanges();
+          }}
+          onCopy={() => {
+            void copyToClipboard(selectionAction.text, "Selection");
+            setSelectionAction(undefined);
+          }}
+          top={selectionAction.top}
+        />
       )}
       <Dialog onOpenChange={(open) => !open && setTextPrompt(undefined)} open={Boolean(textPrompt)}>
         <DialogContent>
@@ -3416,244 +3751,13 @@ function RunFailurePanel({
   );
 }
 
-/** Exported so the side-thread panel can render a thread's messages with the exact same primitives as the main transcript, instead of duplicating this JSX. */
-export function Message({
-  agentAvatar,
-  agentName,
-  approvalDisabled,
-  approvalUncertain,
-  approvals = [],
-  message,
-  onOpenThread,
-  onPreviewImage,
-  onPreviewTool,
-  onRespondToApproval,
-  onRespondToPlan,
-  planUnavailableReason,
-  showToolCalls,
-  streaming,
-  threadDisabled,
-  threadSessionId,
-  userAvatar,
-  userName,
-}: {
-  agentAvatar: string;
-  agentName: string;
-  approvalDisabled?: (approval: ApprovalRequest) => boolean;
-  approvalUncertain?: (approval: ApprovalRequest) => boolean;
-  approvals?: ApprovalRequest[];
-  message: ChatMessage;
-  onOpenThread?: () => void;
-  onPreviewImage?: (image: ChatImage) => void;
-  onPreviewTool?: (tool: ToolActivity) => void;
-  onRespondToApproval?: (approval: ApprovalRequest, verdict: ApprovalVerdict) => void;
-  onRespondToPlan?: (approval: ApprovalRequest, verdict: PlanVerdict) => void;
-  planUnavailableReason?: (approval: ApprovalRequest) => string | undefined;
-  showToolCalls: boolean;
-  streaming: boolean;
-  threadDisabled: boolean;
-  threadSessionId?: string;
-  userAvatar: string;
-  userName: string;
-}) {
-  const user = message.role === "user";
-  // A turn that ended with no text, no visible tool activity, and nothing
-  // else worth surfacing (reasoning, a failure, a stat line, a stop-reason
-  // chip) renders nothing at all — never a "Thinking…" placeholder for a
-  // run that has already finished (e.g. StopNoProgress with an empty final
-  // turn).
-  const matching = approvals.filter((approval) => messageOwnsApproval(message, approval));
-  const unmatched = approvals.filter((approval) => !matching.includes(approval));
-  const hasVisibleTools = (showToolCalls || matching.length > 0) && Boolean(message.tools?.length);
-  const hasExtras =
-    Boolean(message.images?.length) ||
-    Boolean(message.reasoning) ||
-    Boolean(message.failure) ||
-    Boolean(message.turnStat) ||
-    hasVisibleStopReason(message.stopReason ?? "") ||
-    approvals.length > 0;
-  if (!user && !streaming && !message.content && !hasVisibleTools && !hasExtras) {
-    return null;
-  }
-  return (
-    <article className={`flex gap-3 ${user ? "justify-end" : "justify-start"}`}>
-      {!user && <MessageAvatar avatarUrl={agentAvatar} fallback="agent" name={agentName} />}
-      <div
-        className={
-          user
-            ? "max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-secondary px-4 py-2.5 text-sm leading-6"
-            : "min-w-0 max-w-[90%] text-sm leading-7"
-        }
-      >
-        <p
-          className={`mb-1 text-[11px] font-medium ${user ? "text-right text-muted-foreground" : "text-muted-foreground"}`}
-        >
-          {user ? userName : agentName}
-        </p>
-        {message.reasoning && (
-          <ReasoningDisclosure streaming={streaming} text={message.reasoning} />
-        )}
-        {message.images && message.images.length > 0 && (
-          <div className="mb-2 grid grid-cols-2 gap-2">
-            {message.images.map((image) => {
-              const display = chatImageDisplay(image);
-              return (
-                <div
-                  className="overflow-hidden rounded-lg border bg-background"
-                  key={image.id ?? `${image.name}-${image.data ?? image.url}`}
-                >
-                  {display.kind === "link" ? (
-                    <a
-                      className="flex items-center gap-2 px-3 py-2 text-sm text-foreground underline underline-offset-2 hover:text-brand-ink"
-                      href={display.href}
-                      rel="noopener noreferrer"
-                      target="_blank"
-                    >
-                      <ExternalLink aria-hidden="true" className="size-4 shrink-0" />
-                      <span className="min-w-0 truncate">{image.name}</span>
-                    </a>
-                  ) : display.kind === "name" ? (
-                    <span className="block truncate px-3 py-2 text-sm text-muted-foreground">
-                      {image.name}
-                    </span>
-                  ) : onPreviewImage ? (
-                    <button
-                      aria-label={`Preview ${image.name}`}
-                      className="block w-full"
-                      onClick={() => onPreviewImage(image)}
-                      type="button"
-                    >
-                      <img
-                        alt={image.name}
-                        className="max-h-48 w-full object-cover"
-                        src={display.src}
-                      />
-                    </button>
-                  ) : (
-                    <img
-                      alt={image.name}
-                      className="max-h-48 w-full object-cover"
-                      src={display.src}
-                    />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-        {message.content ? (
-          user ? (
-            message.content
-          ) : (
-            <MarkdownMessage>{message.content}</MarkdownMessage>
-          )
-        ) : message.tools?.length ? null : streaming ? (
-          <StreamingIndicator />
-        ) : null}
-        {(showToolCalls || matching.length > 0) && message.tools && message.tools.length > 0 && (
-          <ToolActivityList
-            approvalDisabled={approvalDisabled}
-            approvalUncertain={approvalUncertain}
-            approvals={matching.filter((approval) => approval.tool !== "PresentPlan")}
-            onPreview={onPreviewTool}
-            onRespondToApproval={onRespondToApproval}
-            tools={message.tools}
-          />
-        )}
-        {matching
-          .filter((approval) => approval.tool === "PresentPlan")
-          .map((approval) => (
-            <PlanReviewCard
-              approval={approval}
-              disabled={!approval.controlTarget || (approvalDisabled?.(approval) ?? false)}
-              key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
-              onRespond={(verdict) => onRespondToPlan?.(approval, verdict)}
-              uncertain={approvalUncertain?.(approval)}
-              unavailableReason={planUnavailableReason?.(approval)}
-            />
-          ))}
-        {unmatched.map((approval) =>
-          approval.tool === "PresentPlan" ? (
-            <PlanReviewCard
-              approval={approval}
-              disabled={!approval.controlTarget || (approvalDisabled?.(approval) ?? false)}
-              key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
-              onRespond={(verdict) => onRespondToPlan?.(approval, verdict)}
-              uncertain={approvalUncertain?.(approval)}
-              unavailableReason={planUnavailableReason?.(approval)}
-            />
-          ) : (
-            <ApprovalPanel
-              approval={approval}
-              disabled={!approval.controlTarget || (approvalDisabled?.(approval) ?? false)}
-              key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
-              onRespond={(verdict) => onRespondToApproval?.(approval, verdict)}
-              uncertain={approvalUncertain?.(approval)}
-            />
-          ),
-        )}
-        {!streaming && !message.failure && <StopReasonChip stopReason={message.stopReason ?? ""} />}
-        {message.failure && (
-          <FailedTurnCard
-            detail={message.failure.detail}
-            permanent={message.failure.permanent}
-            summary={message.failure.message}
-          />
-        )}
-        {!streaming && message.turnStat && (
-          <p
-            className="mt-1.5 text-[11px] tabular-nums text-muted-foreground/70"
-            title="This turn's tokens sent ↑ and received ↓, model time, and the share of input served from the prompt cache."
-          >
-            {message.turnStat}
-          </p>
-        )}
-        {onOpenThread && message.content && (
-          <button
-            aria-label={threadSessionId ? "Open side thread" : "Reply in side thread"}
-            className="mt-2 flex items-center gap-1.5 rounded-full px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
-            disabled={threadDisabled}
-            onClick={onOpenThread}
-            type="button"
-          >
-            <MessageSquareText aria-hidden="true" className="size-3.5" />
-            {threadSessionId ? "Open thread" : "Reply in thread"}
-          </button>
-        )}
-      </div>
-      {user && <MessageAvatar avatarUrl={userAvatar} fallback="user" name={userName} />}
-    </article>
-  );
-}
+/** Half the selection toolbar's width plus a margin, in CSS pixels. */
+const SELECTION_TOOLBAR_HALF_WIDTH = 180;
 
 interface SelectionAction {
   left: number;
   text: string;
   top: number;
-}
-
-function MessageAvatar({
-  avatarUrl,
-  fallback,
-  name,
-}: {
-  avatarUrl: string;
-  fallback: "agent" | "user";
-  name: string;
-}) {
-  return (
-    <span
-      className={`mt-1 flex size-7 shrink-0 items-center justify-center overflow-hidden rounded-full ${fallback === "agent" ? "bg-brand/10 text-brand-ink" : "bg-muted text-muted-foreground"}`}
-    >
-      {avatarUrl ? (
-        <img alt={name} className="size-full object-cover" src={avatarUrl} />
-      ) : fallback === "agent" ? (
-        <Bot aria-hidden="true" className="size-4" />
-      ) : (
-        <User aria-hidden="true" className="size-4" />
-      )}
-    </span>
-  );
 }
 
 function addUsage(

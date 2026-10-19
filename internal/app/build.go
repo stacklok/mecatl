@@ -1561,6 +1561,15 @@ func validateMCPAuthority(cfg Config) error {
 	return nil
 }
 
+// clearGlobalMCPForBroker enforces the broker authority boundary before the
+// candidate catalog is built: broker tools are supplied explicitly by the session
+// attachment, so neither the static MCP servers nor ToolHive may add a global
+// fallback (including a second CallMcpWithQuery).
+func clearGlobalMCPForBroker(cfg *Config) {
+	cfg.MCPServers = nil
+	cfg.ToolHiveEnabled = false
+}
+
 // Build assembles the provider registry, catalog, policy, and engine into a
 // server.Service per the given Config. It is the single composition root every
 // cmd/ main calls.
@@ -1588,8 +1597,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	var discovery *providerDiscovery
 	closeProfiles := sync.OnceFunc(func() {
 		discovery.Close()
-		cfg.MCPProfileLifecycle = mcpProfileLifecycle
-		closeMCPProfileLifecycle(ctx, cfg)
+		profileCfg := cfg
+		profileCfg.MCPProfileLifecycle = mcpProfileLifecycle
+		closeMCPProfileLifecycle(ctx, profileCfg)
 		if providerCredentialLifecycle != nil {
 			_ = providerCredentialLifecycle.Close()
 		}
@@ -2170,8 +2180,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if brokerSelected {
 		// Authority is exclusive: broker sessions receive only their explicit
 		// attachment wrappers, never the process-global MCP manager as a fallback.
-		cfg.MCPServers = nil
-		cfg.ToolHiveEnabled = false
+		clearGlobalMCPForBroker(&cfg)
 	}
 	cfg.guardrailDetails = server.NewReviewDetailRegistry()
 	cfg.guardrailHealth = &guardrailRouteHealth{}
@@ -2190,13 +2199,6 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		defer assets.buildRuntimeRelease()
 	}
 	logMCPInventory(ctx, cfg.diag(), mcpInventory)
-	reservations := newAutomaticReservationReconciliationLoop(ctx, assets.automaticAdmissionLedger, assets.attemptRepository, defaultAutomaticReconcileInterval, func(error) {
-		cfg.diag().Log(ctx, port.LevelWarn, "durable automatic reservation reconciliation unavailable")
-	})
-	if reservations != nil {
-		previousClose := mcpClose
-		mcpClose = func() { reservations.Close(); previousClose() }
-	}
 
 	var brokerRuntime *mcpbroker.Runtime
 	var brokerProcess *mcpbroker.Process
@@ -2288,6 +2290,16 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			_ = brokerRuntime.Close()
 		}
 	}
+	defer func() {
+		if !profilesTransferred {
+			childLiveness.Close()
+			closeBroker()
+			mcpClose()
+			agentClose()
+			storeClose()
+			commandConnClose()
+		}
+	}()
 
 	// Stash the resolved skill seam's command-bridge inputs onto the Build-scope
 	// cfg (the commandSource precedent) so buildCommandLister — which runs HERE,
@@ -2372,11 +2384,6 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			return nil, fmt.Errorf("validate default placement: %w", err)
 		}
 		placementProvider = profiledProvider
-	}
-	attempts := startAttemptRecovery(ctx, cfg, reg, store, eventLog, assets.attemptRepository, assets.reflectionRepository, assets, placementProvider, placementScope)
-	if attempts != nil {
-		previousClose := mcpClose
-		mcpClose = func() { attempts.Close(); previousClose() }
 	}
 	var mcpRefresh func(context.Context) (server.MCPRefreshSnapshot, error)
 	var mcpStatus func() server.MCPSourceStatus
@@ -2807,7 +2814,10 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		SessionEngineWithTools: assets.sessionFactoryWithTools,
 		SessionContextEngine:   assets.sessionContextFactory,
 		DebugSessionEngine:     debugSessionEngineFactory(cfg, reg, provider, store, eventLog, policy, assets.globalMgr, assets.mcpRuntimes),
-		DebugMCP:               debugMCPAvailable(assets),
+		// AgentDefSessionEngine (ADR 0353): binds a session's root to a named
+		// AgentDef, built from the SAME collaborators as SessionEngineWithTools.
+		AgentDefSessionEngine: assets.agentDefSessionEngine,
+		DebugMCP:              debugMCPAvailable(assets),
 		// ModeNeedsEngine: tells the Service whether a session's
 		// PermissionMode would resolve a model DIFFERING from the shared engine's model
 		// (cfg.Model) — i.e. whether a plan slot is configured AND it resolves to a
@@ -2910,12 +2920,6 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 
 	svc, err := server.NewService(svcCfg)
 	if err != nil {
-		closeBroker()
-		childLiveness.Close()
-		mcpClose()
-		agentClose()
-		storeClose()
-		commandConnClose()
 		return nil, fmt.Errorf("build service: %w", err)
 	}
 
@@ -2939,12 +2943,6 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if err != nil {
 		refreshClose()
 		svc.Close()
-		childLiveness.Close()
-		closeBroker()
-		mcpClose()
-		agentClose()
-		storeClose()
-		commandConnClose()
 		return nil, err
 	}
 	// The cadence floor guards the SHARED create-seam (validateScheduleSpec)
@@ -2957,9 +2955,10 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// because the sweep's liveness and maintenance-exclusion predicates are the
 	// Service's process-wide truth. No worker is started when exclusion is
 	// permanently unavailable; runtime loss stickily settles health unavailable.
-	cfg.maintenanceMutationAvailable = svc.MaintenanceMutationAvailable
-	managedTempWorkerClose := startManagedTempWorker(ctx, cfg)
-	childGCClose := startChildGC(ctx, cfg, store, svc.IsLive, svc.DeleteSessionForRetentionCandidate)
+	maintenanceCfg := cfg
+	maintenanceCfg.maintenanceMutationAvailable = svc.MaintenanceMutationAvailable
+	managedTempWorkerClose := startManagedTempWorker(ctx, maintenanceCfg)
+	childGCClose := startChildGC(ctx, maintenanceCfg, store, svc.IsLive, svc.DeleteSessionForRetentionCandidate)
 
 	// Crash-orphaned running-session sweep (issue #475 Step 4): repairs a
 	// StateRunning session a process crash left behind, INCLUDING the
@@ -2973,7 +2972,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// the live-model refresh goroutine and closes the session-store driver
 	// connection (LAST — everything before it may still persist; a no-op for the
 	// local stores, and once-guarded if the memory driver shares the conn).
+	var attempts *attemptRecovery
+	var reservations *automaticReservationReconciliationLoop
 	closeAll := sync.OnceFunc(func() {
+		attempts.Close()
+		reservations.Close()
 		if assets.reflectionLifecycle != nil {
 			assets.reflectionLifecycle.close()
 		}
@@ -3006,6 +3009,13 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	managedTempTransferred = true
 	harnessContextTransferred = true
 	commandResolverTransferred = true
+	// Recovery may reattach placements and publish immediately. Launch only after
+	// composition succeeds, with cleanup owning the loops before their dependencies.
+	diag := cfg.diag()
+	reservations = newAutomaticReservationReconciliationLoop(ctx, assets.automaticAdmissionLedger, assets.attemptRepository, defaultAutomaticReconcileInterval, func(error) {
+		diag.Log(ctx, port.LevelWarn, "durable automatic reservation reconciliation unavailable")
+	})
+	attempts = startAttemptRecovery(ctx, cfg, reg, store, eventLog, assets.attemptRepository, assets.reflectionRepository, assets, placementProvider, placementScope)
 	return &Built{Service: svc, MCPBroker: brokerRuntime, MCPBrokerHandlers: brokerHandlers, MCPBrokerCallbackPath: brokerCallbackPath, GuardrailsAdvisory: guardrailConfigured && cfg.Posture >= PostureYolo, Close: closeAll}, nil
 }
 
@@ -3126,9 +3136,8 @@ func resolveAgentSeam(ctx context.Context, cfg Config) (*agents.Registry, func()
 // (Config.defaultModelPending). It resolves the registry's CURRENT default —
 // a no-op (fallbackProvider, "") when the proxy is still down, so the
 // session fails at request time (the documented residual for a session
-// built before the heal lands). Extracted out of
-// sessionEngineFactory to keep its cyclomatic complexity under the lint cap;
-// it has no other caller.
+// built before the heal lands). Ordinary, debug, and agent-bound roots share
+// this adoption path; child defaults and routing do not participate.
 func adoptHealedDefault(reg *providerRegistry, providerID string, fallbackProvider port.LLMProvider) (port.LLMProvider, string) {
 	healed := reg.ResolvedDefaultModel()
 	if healed == "" {
@@ -3298,6 +3307,24 @@ func mountedClientMCPNames(mgr *mcp.Manager) []string {
 	}
 	return names
 }
+func sessionClientMCPManager(ctx context.Context, cfg Config, specs []mcp.ServerConfig) *mcp.Manager {
+	if len(specs) == 0 {
+		return nil
+	}
+	onError := func(sc mcp.ServerConfig, err error) {
+		cfg.diag().Log(ctx, port.LevelWarn, "client MCP server unreachable; skipping for this session",
+			"server", sc.Name, "url", mcp.RedactURL(sc.URL), "err", mcp.RedactError(err))
+	}
+	mgr, err := mcp.NewManager(ctx, specs, onError, cfg.diag())
+	if err != nil {
+		// Client MCP is best-effort for ACP: retain a usable core-tools session
+		// when every requested server fails. Wire callers enforce their own
+		// all-or-nothing policy from the mounted-server report.
+		cfg.diag().Log(ctx, port.LevelWarn, "client MCP: no servers connected for this session; mounting core tools only",
+			"err", mcp.RedactError(err))
+	}
+	return mgr
+}
 
 func sessionEngineFactory(
 	cfg Config,
@@ -3313,7 +3340,7 @@ func sessionEngineFactory(
 ) server.SessionEngineFactory {
 	withTools := sessionEngineFactoryWithTools(cfg, reg, provider, store, policy, hooks, mcpProvider, instructions, assets, guardrailWaiver)
 	return func(ctx context.Context, sel server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode) (server.SessionEngineResult, error) {
-		return withTools(ctx, sel, specs, profile, workspace, mode, nil)
+		return withTools(ctx, sel, specs, profile, workspace, mode, nil, nil)
 	}
 }
 
@@ -3343,7 +3370,7 @@ func sessionEngineFactoryWithTools(
 	assets catalogAssets,
 	guardrailWaiver *modelhook.WaiverHolder,
 ) server.SessionEngineWithToolsFactory {
-	build := func(ctx context.Context, sel server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode, sessionTools []tool.Tool) (server.SessionEngineResult, error) {
+	build := func(ctx context.Context, sel server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode, sessionTools []tool.Tool, sessionToolKeys []string) (server.SessionEngineResult, error) {
 		cfg := cfg // Permission resolver overrides belong to this invocation, not the shared closure.
 		runtimeAssets := mcpCatalogAssets(ctx, assets)
 		runtimeRevision := mcpRuntimeRevision(ctx)
@@ -3399,21 +3426,6 @@ func sessionEngineFactoryWithTools(
 		// equals the operator default the entry was built with, the shared entry.provider
 		// is reused (no re-mint); a re-mint happens ONLY when effort OR the per-session
 		// capability intersection differs and the entry exposes a remint closure.
-		resolvedEffort := resolveSessionEffort(ctx, cfg, sel.ReasoningEffort)
-		resolvedEffort, clamped := clampEffortForProvider(resolvedProviderID, resolvedEffort)
-		if clamped {
-			cfg.diag().Log(ctx, port.LevelWarn,
-				"reasoning-effort: clamped for provider (this provider supports low/medium/high only)",
-				"provider", resolvedProviderID, "effort", resolvedEffort)
-		}
-		if resolvedEffort != "" {
-			if supported, known := modelReasoningSupport(reg, resolvedProviderID, resolvedModel); known && !supported {
-				cfg.diag().Log(ctx, port.LevelWarn,
-					"reasoning-effort: model does not support reasoning effort; ignoring",
-					"provider", resolvedProviderID, "model", resolvedModel, "effort", resolvedEffort)
-				resolvedEffort = ""
-			}
-		}
 		// utilityProvider is the OPERATOR-DEFAULT provider (the entry's shared
 		// .provider). Reasoning effort binds the AGENT's reasoning (the main engine) and
 		// its SUBAGENTS (the catalog parent below) — NOT the harness's own internal
@@ -3430,22 +3442,7 @@ func sessionEngineFactoryWithTools(
 		// the server adapter. It is ALSO the intersection the provider adapter's
 		// request builder consults to project a tool result's typed Parts (T7) —
 		// threaded into the adapter via the re-mint below.
-		sessionCaps := modelCapability(reg, resolvedProviderID, resolvedModel)
-		// Re-mint ONLY when the resolved session effort OR capability intersection
-		// differs from the OPERATOR-DEFAULT the entry's shared .provider was built
-		// with (the SAME normalise+clamp the registry applied at build, and the
-		// default-model caps the post-assembly fixup stamped). When both match, the
-		// shared provider is reused byte-for-byte (the byte-identical default path).
-		// A hand-built/test registry entry with no defaultCaps (zero value) is treated
-		// as "match anything" so a test without defaultCaps never re-mints on caps.
-		if entry, ok := reg.Lookup(resolvedProviderID); ok && entry.remint != nil {
-			entryEffort, _ := NormalizeReasoningEffort(cfg.ReasoningEffort)
-			entryEffort, _ = clampEffortForProvider(resolvedProviderID, entryEffort)
-			capsDiff := entry.defaultCaps != sessionCaps && entry.defaultCaps != (port.ProviderCapabilities{})
-			if resolvedEffort != entryEffort || capsDiff {
-				resolvedProvider = entry.remint(resolvedEffort, sessionCaps)
-			}
-		}
+		resolvedProvider, resolvedEffort, sessionCaps := sessionProviderOptions(ctx, cfg, reg, resolvedProvider, resolvedProviderID, resolvedModel, sel.ReasoningEffort)
 		// The compaction window is the LIVE-FIRST resolver over the resolved
 		// (provider, model) — the SAME reg.windowResolver the shared and child engines
 		// use, evaluated at the point of use. So the live ListModels picker, the session
@@ -3455,46 +3452,7 @@ func sessionEngineFactoryWithTools(
 		// resolves to the 128k floor (inside the resolver). Override still wins.
 		windowFn := reg.windowResolver(cfg, resolvedProviderID, resolvedModel)
 
-		onError := func(sc mcp.ServerConfig, err error) {
-			// REDACTED url (CWE-532). The header map is secret-shaped and never logged,
-			// but a credential can also ride the URL itself — "?access_token=..." — and
-			// logging sc.URL verbatim put it in the operator's diagnostics. userinfo is
-			// now rejected outright by ValidateClientURL; a query-string token cannot be
-			// (it is indistinguishable from an ordinary parameter), so the URL is
-			// redacted at the log site instead of trusted to be clean. mcp.RedactURL is
-			// the SAME policy the validator's own messages use — one redactor, so the
-			// log and the error cannot drift.
-			// BOTH the url AND the err must be redacted, and the err is the one that
-			// was missed: net/http embeds the complete request URL in a connection
-			// error, and the MCP SDK formats it into its own message text, so a
-			// query-string token reached the operator log through `err` even though
-			// `url` beside it was clean. Redacting one of two channels is not
-			// redacting.
-			cfg.diag().Log(ctx, port.LevelWarn, "client MCP server unreachable; skipping for this session",
-				"server", sc.Name, "url", mcp.RedactURL(sc.URL), "err", mcp.RedactError(err))
-		}
-		var mgr *mcp.Manager
-		if len(specs) > 0 {
-			m, err := mcp.NewManager(ctx, specs, onError, cfg.diag())
-			if err != nil {
-				// Best-effort HERE, by design: every server failed and the session still
-				// gets a usable engine (core tools only) rather than failing outright.
-				// This is the ACP contract — an editor's flaky MCP server should not cost
-				// the user their session, and ACP has its own channel to say so.
-				//
-				// It is NOT the wire contract. A gRPC/HTTP CreateSession caller cannot
-				// see this WARN, so the Service enforces all-or-nothing on that path
-				// using MountedClientMCP below. Reporting which servers connected is
-				// this factory's job; deciding whether a partial mount is acceptable
-				// belongs to the caller, and the two callers disagree.
-				// Same redaction as onError above: this error is NewManager's lastErr,
-				// so it is one of the per-server transport errors and carries that
-				// server's full URL.
-				cfg.diag().Log(ctx, port.LevelWarn, "client MCP: no servers connected for this session; mounting core tools only",
-					"err", mcp.RedactError(err))
-			}
-			mgr = m
-		}
+		mgr := sessionClientMCPManager(ctx, cfg, specs)
 		mountedClientMCP := mountedClientMCPNames(mgr)
 
 		// Assemble the per-session catalog through the SAME assembleCatalog the
@@ -3513,7 +3471,7 @@ func sessionEngineFactoryWithTools(
 		// Skill tool. A failed authoritative read clears only these partitions.
 		skillPartitions := hydrateLearnedSkillPartitions(ctx, cfg, runtimeAssets, projectWorkspace)
 
-		cat, closeFn, clientToolNames := assembleCatalog(ctx, cfg, reg, store, hooks, &runtimeAssets, catalogSession{
+		cat, closeFn, clientToolNames, brokerRegistrationKeys, nonBrokerRegistrationKeys, err := assembleCatalogDetailed(ctx, cfg, reg, store, hooks, &runtimeAssets, catalogSession{
 			provider:        resolvedProvider,
 			providerID:      resolvedProviderID,
 			model:           resolvedModel,
@@ -3524,7 +3482,11 @@ func sessionEngineFactoryWithTools(
 			mode:            mode,
 			skillPartitions: skillPartitions,
 			sessionTools:    sessionTools,
+			sessionToolKeys: sessionToolKeys,
 		})
+		if err != nil {
+			return server.SessionEngineResult{}, err
+		}
 
 		// Identical to the main engine in every NON-provider Deps field except the
 		// catalog (which carries the extra client MCP + per-session sub-agent tools):
@@ -3641,9 +3603,11 @@ func sessionEngineFactoryWithTools(
 			// requested). The factory REPORTS; the Service decides whether a partial
 			// mount is acceptable, because its two callers disagree — see the
 			// best-effort comment on the NewManager error above.
-			MountedClientMCP:      mountedClientMCP,
-			MountedClientMCPTools: clientToolNames,
-			Close:                 closeFn,
+			MountedClientMCP:          mountedClientMCP,
+			MountedClientMCPTools:     clientToolNames,
+			BrokerRegistrationKeys:    brokerRegistrationKeys,
+			NonBrokerRegistrationKeys: nonBrokerRegistrationKeys,
+			Close:                     closeFn,
 		}, nil
 	}
 	return pinMCPRuntimeFactory(assets, build)
@@ -4529,8 +4493,13 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// the UNWRAPPED hooks: the Phase-2b reviewer fires once per MAIN-engine Stop,
 	// not per per-session stop (one of the two sanctioned per-session deltas).
 	assets.sessionFactoryWithTools = sessionEngineFactoryWithTools(cfg, reg, provider, engineStore, sharedPolicy, hooks, mcpProvider, instructions, assets, guardrailWaiver)
+	// agentDefSessionEngine (ADR 0353, Task B): the SAME collaborators as
+	// sessionFactoryWithTools above, so an agent-bound session's guardrail
+	// wiring and governance audience are byte-identical to any other main
+	// session (AC1.6).
+	assets.agentDefSessionEngine = agentDefSessionEngineFactory(cfg, reg, provider, engineStore, sharedPolicy, hooks, mcpProvider, instructions, assets, guardrailWaiver)
 	if cfg.harnessResolver != nil {
-		assets.sessionContextFactory = func(ctx context.Context, id session.SessionID, owner *session.Principal, acquire server.ExecutionWorkspaceAcquirer, selector server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode, extra []tool.Tool, forkSource session.SessionID) (server.SessionEngineResult, error) {
+		assets.sessionContextFactory = func(ctx context.Context, id session.SessionID, owner *session.Principal, acquire server.ExecutionWorkspaceAcquirer, selector server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode, extra []tool.Tool, sessionToolKeys []string, forkSource session.SessionID) (server.SessionEngineResult, error) {
 			// Reject an invalid selector before principal-scoped source binding creates
 			// unpublished state that cannot be adopted by a session.
 			if selector.ProviderID != "" {
@@ -4566,8 +4535,14 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 				sessionAssets.liveSkills = coreskillfs.NewAtomicCatalog(seam.metas, seam.source, nil)
 			}
 			sessionCfg.skillCommandInputs = skillCommandInputs{metas: seam.metas, source: seam.source}
-			factory := sessionEngineFactoryWithTools(sessionCfg, reg, provider, engineStore, sharedPolicy, hooks, mcpProvider, replaceHarnessInstructions(instructions, sessionCfg), sessionAssets, guardrailWaiver)
-			result, err := factory(ctx, selector, specs, profile, workspace, mode, extra)
+			var result server.SessionEngineResult
+			if root, ok := server.AgentDefSessionSelectionFromContext(ctx); ok {
+				factory := agentDefSessionEngineFactory(sessionCfg, reg, provider, engineStore, sharedPolicy, hooks, mcpProvider, replaceHarnessInstructions(instructions, sessionCfg), sessionAssets, guardrailWaiver)
+				result, err = factory(ctx, selector, profile, mode, root.Limits, root.Name)
+			} else {
+				factory := sessionEngineFactoryWithTools(sessionCfg, reg, provider, engineStore, sharedPolicy, hooks, mcpProvider, replaceHarnessInstructions(instructions, sessionCfg), sessionAssets, guardrailWaiver)
+				result, err = factory(ctx, selector, specs, profile, workspace, mode, extra, sessionToolKeys)
+			}
 			if err != nil {
 				release()
 				return result, err
@@ -8528,8 +8503,11 @@ func buildMemberSelectorEngine(cfg Config, provReg *providerRegistry, provider p
 					"member", spec.Name, "agent", def.Name, "skill", name, "source", reg.Detail(def.Name))
 			}
 			// Persistent per-agent memory (issue #33): the team-member path shares the
-			// SAME agentPromptConfig seam, so a memory-bearing def injects its head here too.
-			memHead, _ := resolveAgentMemoryHead(cfg, def)
+			// SAME agentPromptConfig seam, so a memory-bearing def injects its head here
+			// too. A team member has no placement of its own distinct from its parent's,
+			// so "project" tier binds to cfg.Workspace, unchanged (resolveAgentMemoryHead's
+			// sessionRoot docs).
+			memHead, _ := resolveAgentMemoryHead(cfg, def, cfg.Workspace)
 			pc = agentPromptConfig(cfg, def, model, memHead, bodies...)
 			mode = resolvePermissionMode(cfg.diag(), def)
 			// A def's `hooks:` scope lifecycle hooks to this member's engine. A def that
@@ -8763,7 +8741,7 @@ func applyRedisWorkspacePosture(pc prompt.Config, enabled bool) prompt.Config {
 
 const workspaceRootForPrompt = "/workspace"
 
-const remoteExecutionPostureNote = "This session uses a persistent remote Kubernetes workspace. Use the filesystem tools and foreground Shell for work in /workspace. Local project instructions, rules, project-scoped skills and commands, schedules, SkillDraft, Parallel, Team, and Subagent delegation are unavailable; explicitly selected independent commands, operator-global skills, MCP, memory, and web tools remain available. Never assume harness-local files are part of this workspace."
+const remoteExecutionPostureNote = "This session uses a persistent remote Kubernetes workspace. Use the filesystem tools and foreground Shell for work in /workspace. Local project instructions, rules, project-scoped skills and commands, SkillDraft, Parallel, Team, and Subagent delegation are unavailable; in-chat schedules may borrow this session's exact workspace for future fires, but independent scheduled workspace allocation is unsupported and a fire fails if the workspace is busy; explicitly selected independent commands, operator-global skills, MCP, memory, and web tools remain available. Never assume harness-local files are part of this workspace."
 
 func applyRemoteExecutionPosture(deps agent.Deps, enabled bool) agent.Deps {
 	if !enabled {

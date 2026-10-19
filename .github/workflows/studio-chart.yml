@@ -1,0 +1,67 @@
+# Offline checks for the deploy/helm/mecatl-studio chart: its helm-unittest
+# suites and kubeconform over its ci/*-values.yaml fixtures. Neither needs a
+# cluster, so a Studio-only chart change runs these in a few minutes instead of
+# the kind suites in k8s-e2e.yml, which never deploy Studio. k8s-e2e.yml still
+# runs the same tasks when Taskfile.yml or the other charts change.
+#
+# Deliberately uses `pull_request` (NOT `pull_request_target`): the job runs
+# untrusted PR code without repo secrets. Actions are SHA-pinned to the same
+# versions as k8s-e2e.yml.
+name: studio-chart
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - deploy/helm/mecatl-studio/**
+      - .github/workflows/studio-chart.yml
+  pull_request:
+    paths:
+      - deploy/helm/mecatl-studio/**
+      - .github/workflows/studio-chart.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: studio-chart-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOTOOLCHAIN: local
+  GOFLAGS: -mod=readonly
+
+jobs:
+  chart-checks:
+    name: Studio chart checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Only kubeconform is built, so skip the module cache.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Match the Helm version used to package releases.
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.18.4
+
+      - name: Install deploy manifest validators
+        run: go install github.com/yannh/kubeconform/cmd/kubeconform@v0.7.0
+
+      - name: Run Helm unit tests
+        run: task deploy:helm-unittest
+
+      - name: task deploy:check
+        run: task deploy:check

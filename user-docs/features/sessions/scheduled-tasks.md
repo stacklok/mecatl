@@ -82,6 +82,28 @@ for exact request and response fields.
 The `mecatui` overlay is available when the connected server advertises a
 reachable schedule store.
 
+## Manage schedules in Studio
+
+[Studio](/operating/studio.md) lists every schedule you can see, with a detail
+page whose **Run log** lists past runs. **View transcript** on a run opens that
+run's saved transcript, read-only, without leaving the page. When you can't
+view that session's transcript, the dialog shows the reason instead.
+
+- **Filter and search.** Press `/` to search by name, prompt, or cadence.
+  **Scheduled** lists schedules that are running, claimed, or waiting for their
+  next run, and **Paused** lists paused ones. A finished schedule appears only
+  under **All**.
+- **Create and edit.** The dialog sets the prompt, a cron or one-time trigger,
+  whether the task may make changes, and the tool profile. A new cron schedule
+  uses your browser's time zone. Studio has no control for the time zone, run
+  limit, or one-shot retry; use the API or the `Schedule` tool to set them.
+- **What you can't change.** After creation, the name, trigger, and tool
+  profile are fixed. To change when a task runs, create a new schedule and
+  delete the old one. A one-time schedule whose time has passed can't be
+  edited.
+- **Finished schedules.** A one-time schedule that has run, or a cron schedule
+  that reached its run limit, can be deleted but not run, paused, or resumed.
+
 ## Placement and deletion
 
 Mecatl resolves placement when it creates the schedule. Every fire reattaches
@@ -89,6 +111,28 @@ that exact durable placement. An in-chat schedule borrows its originating
 session's worktree; an independent schedule owns a separately provisioned
 placement when the deployment provider supports that lifecycle (including
 `microvm-local`). Updates cannot change either relationship.
+
+On `mecak8s` with remote execution, workspace-backed schedules are limited to
+in-chat schedules that borrow the origin's Kubernetes workspace. Each fire
+receives its own session binding to that workspace, including across server
+and execution-provider restarts. Independent remote workspace allocation is
+unsupported and fails before allocating an environment; independent no-FS
+schedules remain available. A fire fails while another run holds the borrowed
+workspace, and a claimed slot is not retried unless its trigger's retry policy
+allows it.
+
+The original session must remain stored with the same workspace binding for
+future fires. Deleting it, including through session retention, makes future
+fires fail even if retained fire sessions keep the workspace alive. Updates
+cannot retarget the schedule to another session. Create a new in-chat schedule
+from a surviving session eligible to use that workspace instead.
+
+Each retained fire session consumes one of the environment's 64 reference
+slots, shared with the origin and other sessions. Configure fire-session
+retention or delete unneeded fire sessions before that limit blocks further
+fires. Deleting only the schedule does not release those references. Existing
+sessions keep their persisted tool authority; start a new session if the
+`Schedule` tool is absent from an older session's authority.
 
 Deleting a borrowed schedule leaves its origin untouched. Deleting an
 independently placed schedule first persists an atomic, restart-safe deletion

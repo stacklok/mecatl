@@ -74,6 +74,15 @@ by the major's baseline do not need duplicate feature identifiers. Deployment
 capabilities answer whether functionality is available here; disabling a
 capability is not version skew, and advertisement does not replace authorization.
 
+`session_agent_definitions` advertises optional root binding on both gRPC
+`CreateSession.agent_definition_name` and HTTP `POST /v1/sessions`. Both echo
+`resolved_agent_definition_name` and the effective `resolved_model`. It is a build
+fact even with no configured definitions. Clients must require the feature and
+verify the binding echo before relying on it: an older gRPC server can silently
+ignore the request field. These optional fields keep API major 1 and ordinary
+creation unchanged; required-authority restore checks enforce the bound-session
+contract rather than adding requirements to ordinary legacy records.
+
 For a breaking change, explain the old and proposed contracts, affected clients,
 and client/server upgrade implications to the operator. Obtain explicit approval
 before implementing the incompatible behavior or bumping the major. Coordinate
@@ -268,15 +277,18 @@ the session mounts as an ordinary MCP server. Usage is in the
 
 ### Mecatl Studio
 
-Mecatl Studio is the browser UI, a self-contained pnpm workspace in `apps/` with three
+Mecatl Studio is the browser UI, a pnpm workspace in `apps/` with three
 packages: `web` (a Vite and React single-page app), `server` (a Hono backend for
 frontend, or BFF), and `contracts` (Zod schemas, OpenAPI, and the generated client,
 committed and drift-gated).
 
 The browser calls only the BFF's `/api/v1` product API and imports neither the SDK nor
 daemon types. The BFF holds the user's credential, serves app and API from one origin,
-and is the only part that talks to Mecatl. It depends on a released SDK version from
-npm, never the in-repo source, so a UI change that needs an unreleased SDK change waits.
+and is the only part that talks to Mecatl. It builds the SDK from the same checkout
+through a `file:` dependency, never a registry release, so Studio, the SDK, and the
+daemon contract it targets are built from one commit and a change spanning all three
+needs no intermediate SDK release. It still imports the SDK only by package name,
+through the same exports as any other consumer.
 
 The BFF resolves exactly one runtime mode at startup: `external` (an existing gRPC
 listener), `spawn` (a local `mecated`), or `mock`. Login uses the issuer named in the

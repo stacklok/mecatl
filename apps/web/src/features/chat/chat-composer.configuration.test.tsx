@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // @vitest-environment happy-dom
 
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -23,8 +23,20 @@ function ControlledComposer({
       <ChatComposer
         configuration={configuration}
         models={[
-          { id: "image", image: true, label: "Image model", providerId: "provider" },
-          { id: "text", image: false, label: "Text model", providerId: "provider" },
+          {
+            id: "image",
+            image: true,
+            label: "Image model",
+            providerId: "provider",
+            providerLabel: "Provider",
+          },
+          {
+            id: "text",
+            image: false,
+            label: "Text model",
+            providerId: "provider",
+            providerLabel: "Provider",
+          },
         ]}
         onConfigurationChange={(next) => {
           onConfigurationChange(next);
@@ -150,12 +162,24 @@ describe("composer configuration selectors", () => {
     expect(window.innerWidth).toBe(320);
     expect(window.innerHeight).toBe(480);
 
-    await user.click(screen.getByRole("button", { name: "Chat options" }));
-    const sheet = screen.getByRole("dialog", { name: "Chat options" });
-    await user.selectOptions(within(sheet).getByLabelText("Model"), '["provider","text"]');
-    await user.selectOptions(within(sheet).getByLabelText("Effort"), "high");
-    await user.selectOptions(within(sheet).getByLabelText("Mode"), "plan");
+    // The sheet drills into one view per setting, and each pick closes it.
+    const options = screen.getByRole("button", { name: "Composer options" });
+    const pick = async (row: RegExp, choice: string) => {
+      await user.click(options);
+      const sheet = screen.getByRole("dialog", { name: "Composer options" });
+      await user.click(within(sheet).getByRole("button", { name: row }));
+      await user.click(within(sheet).getByRole("button", { name: choice }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    };
+    await pick(/^Model/, "Text model");
+    await pick(/^Model/, "High");
+    await pick(/^Mode\s/, "Plan Create a plan before making changes.");
+    // The Execution picker sits inline in the sheet's main view.
+    await user.click(options);
+    const sheet = screen.getByRole("dialog", { name: "Composer options" });
     await user.selectOptions(within(sheet).getByLabelText("Execution"), "none");
+    await user.click(within(sheet).getByRole("button", { name: "Close composer options" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
     expect(JSON.parse(screen.getByTestId("draft-configuration").textContent ?? "")).toEqual({
       mode: "plan",
@@ -164,7 +188,8 @@ describe("composer configuration selectors", () => {
       execution: { none: {} },
     });
     expect(onConfigurationChange).toHaveBeenCalledTimes(4);
-    await user.click(within(sheet).getByRole("button", { name: "Close chat options" }));
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Chat options" }));
+    await user.click(options);
+    await user.click(screen.getByRole("button", { name: "Close composer options" }));
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Composer options" }));
   });
 });

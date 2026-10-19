@@ -58,6 +58,7 @@ const chat = {
       model: {
         contextWindow: "200000",
         id: "test-model",
+        providerDisplayName: "Test",
         providerId: "test",
         reasoningEffort: "high" as const,
       },
@@ -817,7 +818,15 @@ describe("chat routes", () => {
   it("rejects stale and duplicate plan verdicts across BFF routes", async () => {
     const resolved = new Set<string>();
     const resolvePlan = vi.fn();
+    let planControlSupported = true;
     const resolvePlanAsk = vi.fn(async (askId: string, _verdict: string) => {
+      if (!planControlSupported) {
+        throw new MecatlError("unsupported", {
+          code: "unsupported_feature",
+          status: 501,
+          transport: "http",
+        });
+      }
       if (askId === "ask-unopted") {
         throw new MecatlError("unopted", {
           code: "failed_precondition",
@@ -847,11 +856,7 @@ describe("chat routes", () => {
         return resolvePlanAsk(askId, verdict);
       },
     }));
-    const compatibility = vi.fn().mockResolvedValue({
-      features: new Set(["exact_plan_ask_control"]),
-    });
     const service = createMecatlChatService({
-      server: { compatibility },
       sessions: { get: vi.fn().mockResolvedValue({ controls, resolvePlan }) },
     } as unknown as Client);
     const firstBff = createApp({ chat: service });
@@ -870,7 +875,7 @@ describe("chat routes", () => {
       send(secondBff, "run-plan", "ask-unopted", "iterate"),
     ])) {
       expect(response.status).toBe(409);
-      await expect(response.json()).resolves.toMatchObject({ code: "stale_run_control" });
+      await expect(response.json()).resolves.toMatchObject({ code: "stale_plan_ask" });
     }
     expect((await send(secondBff, "run-plan", "ask-3", "accept_edits")).status).toBe(204);
     expect((await send(firstBff, "run-plan", "ask-4", "iterate")).status).toBe(204);
@@ -885,9 +890,9 @@ describe("chat routes", () => {
 
     expect((await send(firstBff, "run-plan", "ask-5", "allow_once")).status).toBe(400);
     expect(resolvePlanAsk).toHaveBeenCalledTimes(5);
-    compatibility.mockResolvedValue({ features: new Set() });
+    planControlSupported = false;
     expect((await send(firstBff, "run-plan", "ask-6", "approve")).status).toBe(503);
-    expect(resolvePlanAsk).toHaveBeenCalledTimes(5);
+    expect(resolvePlanAsk).toHaveBeenCalledTimes(6);
   });
 
   it("returns 409 stale_run_control when a control targets an ended run", async () => {

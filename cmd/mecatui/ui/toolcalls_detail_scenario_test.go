@@ -298,7 +298,7 @@ func TestMecatuiToolcallsInspector_StatusGlyphsAcrossThemes(t *testing.T) {
 			failed := newToolcallsInspectorModel(t)
 			failed.deps.Theme = th
 			failed = applyAll(failed, tea.WindowSizeMsg{Width: 80, Height: 30}, client.ToolCallMsg{ID: "failed", Name: "Read", Args: `{"path":"failed.go"}`}, client.ToolResultMsg{CallID: "failed", Content: "failure body", IsError: true})
-			conversation := failed.rend.renderConversationFrame(&failed.conv.scrollback, false)
+			conversation := failed.rend.renderConversationFrame(&failed.conv.scrollback, true)
 			if got := strings.Join(blockRows(conversation, toolBlockID(t, failed.conv.scrollback, "failed")), "\n"); !strings.Contains(got, "✗") || !strings.Contains(stripANSIstr(got), "✗ Read · failed.go · failed") {
 				t.Fatalf("failed conversation row: %q", got)
 			}

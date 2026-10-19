@@ -69,7 +69,7 @@ func TestNoticeAndErrorWrap(t *testing.T) {
 		payload scrollback.PayloadSnapshot
 		marker  string
 	}{
-		{"notice", scrollback.NoticeCardSnapshot{Text: long}, "•"},
+		{"notice", scrollback.NoticeCardSnapshot{Text: long}, theme.TranscriptHarnessGlyph},
 		{"error", scrollback.ErrorCardSnapshot{Text: long}, "✗"},
 	} {
 		b := testSnapshot(0, tc.payload)
@@ -98,6 +98,9 @@ func TestNoticeAndErrorWrap(t *testing.T) {
 		if strings.Count(whole, tc.marker) != 1 {
 			t.Errorf("%s: marker %q should appear exactly once, got %d in %q",
 				tc.name, tc.marker, strings.Count(whole, tc.marker), whole)
+		}
+		if tc.name == "notice" {
+			continue
 		}
 		const indent = "  " // marker width: glyph + space
 		for i := 1; i < len(lines); i++ {
@@ -285,6 +288,38 @@ func TestReasoningExpandedWraps(t *testing.T) {
 	}
 	if !wrapped {
 		t.Fatal("expected wrapped reasoning body lines")
+	}
+}
+
+func TestReasoningWrapFitsFramedConversation(t *testing.T) {
+	for _, width := range []int{20, 40, 60, 100} {
+		for _, tc := range []struct {
+			name string
+			text string
+		}{
+			{"prose", strings.Repeat("consider the options carefully ", 12)},
+			{"long_token", strings.Repeat("x", width*3)},
+			{"tabs", strings.Repeat("\tconsider\tthe\toptions\tcarefully", 6)},
+			{"indent", strings.Repeat(" ", width) + "consider the options"},
+		} {
+			t.Run(fmt.Sprintf("%d/%s", width, tc.name), func(t *testing.T) {
+				r := newTestRenderer()
+				c := &conversation{}
+				c.appendReasoning(tc.text)
+				c.appendAssistant("The answer.")
+				for _, w := range []int{width, width + 7, width} {
+					r.setWidth(w)
+					for _, expand := range []bool{false, true} {
+						frame := r.renderConversationFrame(&c.scrollback, expand)
+						for i, line := range frame.lines {
+							if got := maxLineWidth(line); got > w {
+								t.Fatalf("expand=%t width=%d: row %d has width %d: %q", expand, w, i, got, stripANSIstr(line))
+							}
+						}
+					}
+				}
+			})
+		}
 	}
 }
 

@@ -62,6 +62,7 @@
     method func (*Session).RestoreSessionMetadata(kind SessionKind, rel SessionRelationship) error
     method func (*Session).RestoreTitleMetadata(title string, provenance TitleProvenance, revision uint64, generation TitleGenerationState, sources []string, attempts []TitleAttempt)
     method func (*Session).RestoreTokenUsage(usage map[UsageKind]TokenUsage)
+    method func (*Session).RestoreWorkspaceEnrollmentBrokerKeys(keys []string, present bool) error
     method func (*Session).ResumeWith() (PendingAsk, error)
     method func (*Session).RunID() string
     method func (*Session).SeedHistory(messages []Message) error
@@ -72,11 +73,13 @@
     method func (*Session).SetUsageAttribution(providerID string, modelID string)
     method func (*Session).Stop(reason StopReason) error
     method func (*Session).StopReason() (StopReason, bool)
+    method func (*Session).TightenConfiguration(mode PermissionMode, limits Limits) error
     method func (*Session).TitleAttempts() []TitleAttempt
     method func (*Session).TitleSourcePrompts() []string
     method func (*Session).TokenUsageSnapshot() map[UsageKind]TokenUsage
     method func (*Session).UsageFor(kind UsageKind) Usage
     method func (*Session).ValidateAuthorizationState() error
+    method func (*Session).WorkspaceEnrollmentBrokerKeys() ([]string, bool)
     method func (Authority).Clone() Authority
     method func (Authority).Valid() bool
     method func (AuthorizationPayload).Valid() bool
@@ -347,7 +350,7 @@ type ActivityState string
 type ApprovalOrigin string
 type ApprovalPayload struct{AskID string; Verdict string; Tool string; Call ToolCallID; AllowAlways bool; Origin ApprovalOrigin}
 type ApprovalVerdict int
-type Authority struct{CapabilitySet governance.CapabilitySet "json:\"capability_set\""; Provenance string "json:\"provenance\""; DefinitionIdentity string "json:\"definition_identity,omitempty\""}
+type Authority struct{CapabilitySet governance.CapabilitySet "json:\"capability_set\""; Provenance string "json:\"provenance\""; DefinitionIdentity string "json:\"definition_identity,omitempty\""; Ceiling *governance.CapabilitySet "json:\"ceiling,omitempty\""}
 type AuthorizationBinding string
 type AuthorizationPayload struct{AuthorizationID string; DisplayName string; Call ToolCallID; ExpiresAt time.Time; Status AuthorizationStatus}
 type AuthorizationResolution struct{}
@@ -400,7 +403,7 @@ type RetryMetadata struct{Disposition RetryDisposition; Progress StreamProgress}
 type Role string
 type RoutingDecision struct{Backend string; ClassifierModel string; CandidateCategory string; CandidateModel string; Confidence *float64; MinimumConfidence *float64; Outcome string; ConsecutiveMisses int; MissLimit int; BreakerOpen bool}
 type SchedulePayload struct{ScheduleName string; FireID string; SessionID SessionID; Kind string; Stop StopReason; Err string}
-type Session struct{ID SessionID; State State; Mode PermissionMode; Conversation *Conversation; Limits Limits; Counters Counters; EnvironmentRef EnvironmentRef; ExecutionCapabilities *ExecutionCapabilities; Placement PlacementMetadata; ExternalBinding ExternalBinding; Profile string; ExecutionTemplateID string; ExecutionTemplateRevision string; ProviderID string; ModelID string; ReasoningEffort string; DebugMCPServers []string; DebugMCPTools []string; DebugTargetFingerprint string; Title string; TitleProvenance TitleProvenance; TitleGeneration TitleGenerationState; TitleRevision uint64; Owner *Principal; Authority Authority; Kind SessionKind; Relationship SessionRelationship; CreatedAt time.Time}
+type Session struct{ID SessionID; State State; Mode PermissionMode; Conversation *Conversation; Limits Limits; Counters Counters; EnvironmentRef EnvironmentRef; ExecutionCapabilities *ExecutionCapabilities; Placement PlacementMetadata; ExternalBinding ExternalBinding; Profile string; ExecutionTemplateID string; ExecutionTemplateRevision string; AgentDefinitionName string; AgentCreateIntent string; ProviderID string; ModelID string; ReasoningEffort string; DebugMCPServers []string; DebugMCPTools []string; DebugTargetFingerprint string; Title string; TitleProvenance TitleProvenance; TitleGeneration TitleGenerationState; TitleRevision uint64; Owner *Principal; Authority Authority; Kind SessionKind; Relationship SessionRelationship; CreatedAt time.Time}
 type SessionID string
 type SessionKind string
 type SessionRelationship struct{ScheduleName string "json:\"schedule_name,omitempty\""; OriginSessionID SessionID "json:\"origin_session_id,omitempty\""; OriginIncarnation IncarnationID "json:\"origin_incarnation,omitempty\""; ParentSessionID SessionID "json:\"parent_session_id,omitempty\""; ParentIncarnation IncarnationID "json:\"parent_incarnation,omitempty\""; CallID ToolCallID "json:\"call_id,omitempty\""; BranchIndex *int "json:\"branch_index,omitempty\""; TeamID string "json:\"team_id,omitempty\""; MemberName string "json:\"member_name,omitempty\""; DebugTargetID SessionID "json:\"debug_target_id,omitempty\""; DebugTargetIncarnation IncarnationID "json:\"debug_target_incarnation,omitempty\""}

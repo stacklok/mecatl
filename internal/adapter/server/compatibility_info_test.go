@@ -146,6 +146,9 @@ func TestSDKServerEnablers_Scenario1_CompatibilityInfoTransportParity(t *testing
 	if viaHTTP.GetDeployment() != viaGRPC.GetDeployment() {
 		t.Errorf("deployment differs: http=%q grpc=%q", viaHTTP.GetDeployment(), viaGRPC.GetDeployment())
 	}
+	if !slices.Contains(viaGRPC.GetFeatures(), server.FeatureSessionAgentDefinitions) {
+		t.Fatal("session_agent_definitions must be advertised even without configured definitions")
+	}
 	if !slices.Equal(viaHTTP.GetFeatures(), viaGRPC.GetFeatures()) {
 		t.Errorf("features differ: http=%v grpc=%v", viaHTTP.GetFeatures(), viaGRPC.GetFeatures())
 	}

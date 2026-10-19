@@ -34,8 +34,14 @@ longer than 256 bytes are omitted; child execution and the parent session
 are unaffected.
 
 Press `f9` to reveal conversation details, including reasoning summaries,
-per-turn usage, permanent error details, and changed files. Tool results stay in
-`/toolcalls`. Both shortcuts can be [remapped](./keybindings.md#remap-actions).
+per-turn usage, permanent error details, changed files, and individual settled
+tool-call summaries in source order. Use `ctrl+t` to inspect a call's arguments
+and results. Both shortcuts can be [remapped](./keybindings.md#remap-actions).
+
+In the default conversation view, adjacent completed tool, Subagent, and Team
+calls share one summary, including failures. Calls still in progress remain as
+individual cards after that summary. The grouping follows their order in the
+transcript, rather than the order in which work started or finished.
 
 `f9` also temporarily reveals retained benign guardrail notices in live and
 replayed conversations. These are completed, acceptable checks that allowed an
@@ -97,19 +103,37 @@ prose.
 ## Keep working while a run is active
 
 Type your next instruction while the agent is running, then press `enter`.
-`mecatui` steers the run at the next safe turn boundary when the server supports
-steering. Otherwise, it queues the instruction as a follow-up. Images and other
-supported staged media stay attached, including media-only input. Multiple
-queued lines become one prompt.
+With no input pending, `mecatui` steers the run at the next safe turn boundary
+when the server supports steering. Otherwise, it queues a follow-up. While
+input is pending, `enter` adds to the same kind of pending input. Images and
+other supported staged media stay attached, including media-only input.
 
-Bare TUI commands stay in the client. For example, `/help` opens local help.
-While a run is active and the prompt is available, `/clear` replaces the
-session. Unknown slash commands, workspace commands, and built-in commands with
-arguments go to the model.
+To choose the timing explicitly, send one of these commands with your instruction:
 
-To revise queued input, empty the prompt and press `↑`. This restores the
-pending steer or queued follow-up with its staged media. Press `ctrl+u` to clear
-the unsent draft and its attachments.
+|Command|Timing during an active run|
+|-|-|
+|`/steer Check cancellation before continuing.`|The next safe turn boundary; requires server steering support.|
+|`/queue Add a regression test after this run.`|A follow-up run after this run finishes.|
+
+You can have pending steers or queued follow-ups, but not both. To switch,
+wait for the pending input to be consumed or pull it back for editing. If no
+run is active, either command starts a run with its instruction.
+
+Queued entries merge into one follow-up prompt after healthy completion. A
+cancelled or failed run leaves them paused for you to resume or clear.
+
+TUI commands stay in the client. For example, `/help` opens local help and
+`/title <TITLE>` renames the session. While a run is active and the prompt is
+available, `/clear` replaces the session. Unknown slash commands remain
+model-facing.
+
+To revise pending input, empty the prompt and press `↑`. This combines all
+pending messages into one draft, separated by blank lines, with one `/steer`
+or `/queue` prefix and their staged media. Keep the prefix to preserve the
+delivery method, or change it to switch methods. If the run ends while you
+edit, resubmitting starts a normal run. Pulling back a steer requests its
+cancellation; a steer already consumed by the agent cannot be recalled.
+Press `ctrl+u` to clear the unsent draft and its attachments.
 
 Pressing `esc` clears an active selection first. During a run, it cancels the
 run but preserves your draft and queued input. When the session is idle with a

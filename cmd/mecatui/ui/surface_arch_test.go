@@ -35,12 +35,33 @@ var surfaceFileHomes = map[string]bool{
 	"models_surface.go":   true,
 	"usermodel.go":        true,
 	"effort.go":           true,
+	"worktrees.go":        true,
 	"dream.go":            true,
 }
 
 // surfaceFileCount is the explicit homes the gate counts — another surface file
 // is an explicit decision here, not a silent drift.
-const surfaceFileCount = 12
+const surfaceFileCount = 13
+
+var worktreesSymbolHomes = map[string]string{
+	"worktreesState": "worktrees.go", "worktreesResultMsg": "worktrees.go",
+	"worktreeSelectIntent": "worktrees.go", "openWorktrees": "worktrees.go",
+	"filterWorktrees": "worktrees.go", "worktreeRowText": "worktrees.go",
+}
+
+func TestModelHasNoWorktreesStateField(t *testing.T) {
+	st := reflect.TypeOf(Model{})
+	for i := 0; i < st.NumField(); i++ {
+		f := st.Field(i)
+		typ := f.Type
+		for typ.Kind() == reflect.Pointer {
+			typ = typ.Elem()
+		}
+		if f.Name == "worktrees" || typ.Name() == "worktreesState" {
+			t.Errorf("Model.%s retains worktrees open-lifetime state", f.Name)
+		}
+	}
+}
 
 var effortSymbolHomes = map[string]string{
 	"effortState": "effort.go", "effortSelectIntent": "effort.go", "openEffort": "effort.go",
@@ -117,6 +138,14 @@ func TestSurfaceSymbolsLiveInSurfaceFiles(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parse %s: %v", file, err)
 		}
+		if file != "worktrees.go" {
+			ast.Inspect(f, func(node ast.Node) bool {
+				if id, ok := node.(*ast.Ident); ok && id.Name == "worktreesState" {
+					t.Errorf("concrete worktrees state referenced outside its surface: %s", fset.Position(id.Pos()))
+				}
+				return true
+			})
+		}
 		if file != "effort.go" {
 			ast.Inspect(f, func(node ast.Node) bool {
 				if id, ok := node.(*ast.Ident); ok && id.Name == "effortState" {
@@ -150,7 +179,8 @@ func TestSurfaceSymbolsLiveInSurfaceFiles(t *testing.T) {
 				_, isUserModelSymbol := userModelSymbolHomes[n]
 				_, isDreamSymbol := dreamSymbolHomes[n]
 				_, isEffortSymbol := effortSymbolHomes[n]
-				if !surfaceToken.MatchString(n) && !isModelsSymbol && !isUserModelSymbol && !isDreamSymbol && !isEffortSymbol {
+				_, isWorktreesSymbol := worktreesSymbolHomes[n]
+				if !surfaceToken.MatchString(n) && !isModelsSymbol && !isUserModelSymbol && !isDreamSymbol && !isEffortSymbol && !isWorktreesSymbol {
 					continue
 				}
 				if !surfaceFileHomes[file] {
@@ -161,6 +191,9 @@ func TestSurfaceSymbolsLiveInSurfaceFiles(t *testing.T) {
 				}
 				if want, ok := userModelSymbolHomes[n]; ok && file != want {
 					t.Errorf("/memory declaration %q lives in %s, want %s", n, file, want)
+				}
+				if want, ok := worktreesSymbolHomes[n]; ok && file != want {
+					t.Errorf("/worktrees declaration %q lives in %s, want %s", n, file, want)
 				}
 				if want, ok := effortSymbolHomes[n]; ok && file != want {
 					t.Errorf("/effort declaration %q lives in %s, want %s", n, file, want)

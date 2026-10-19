@@ -34,11 +34,13 @@ const (
 )
 
 type selectionPoint struct {
-	blockID      uint64
-	region       regionKind
-	sourceOffset int
-	before       string
-	after        string
+	blockID           uint64
+	region            regionKind
+	sourceOffset      int
+	before            string
+	after             string
+	derivedDisplay    string
+	assistantBoundary int
 }
 
 // selection is the in-app text-selection state: a left-click-drag over the
@@ -111,7 +113,7 @@ func bodyOwnerOpen(m Model) bool {
 		m.agentsInv.view != agentsInvNone || m.modal != nil ||
 		m.reflections.view != reflectionsNone ||
 		m.connect.open || m.executionPicker.open ||
-		m.worktrees.view != worktreesNone || m.schedule.view != scheduleNone
+		m.schedule.view != scheduleNone
 }
 
 // selectable reports whether a left-click may START a selection right now. It is
@@ -332,6 +334,31 @@ func selectedText(content string, sel selection) string {
 	return strings.Join(out, "\n")
 }
 
+// selectedConversationText removes assistant rail chrome before slicing the
+// visible selection. Endpoint columns stay in rendered coordinates elsewhere.
+func selectedConversationText(frame renderedFrame, content string, sel selection) string {
+	if !sel.active || sel.empty() {
+		return ""
+	}
+	lines := strings.Split(content, "\n")
+	start, _, end, _ := sel.normalize()
+	for i := max(0, start); i < min(end+1, len(frame.provenance), len(lines)); i++ {
+		row := frame.provenance[i]
+		if row.kind != scrollback.KindAssistant {
+			continue
+		}
+		text, leading := selectionRowText(frame, row, lines[i])
+		lines[i] = text
+		if sel.anchorL == i {
+			sel.anchorC = max(0, sel.anchorC-leading)
+		}
+		if sel.headL == i {
+			sel.headC = max(0, sel.headC-leading)
+		}
+	}
+	return selectedText(strings.Join(lines, "\n"), sel)
+}
+
 const selectionContextGraphemes = 16
 
 func selectionRowText(_ renderedFrame, row renderedRow, line string) (text string, leading int) {
@@ -345,10 +372,74 @@ func selectionRowText(_ renderedFrame, row renderedRow, line string) (text strin
 	}
 	withoutPresentation := withoutIndent
 	if row.kind == scrollback.KindAssistant {
-		withoutPresentation = strings.TrimPrefix(withoutPresentation, strings.Repeat(" ", assistantBodyHang))
+		withoutPresentation = strings.TrimPrefix(withoutPresentation, "│ ")
 	}
 	leading = graphemeCount(plain) - graphemeCount(withoutPresentation)
 	return canonicalRowText(row.kind, plain, row.indent), leading
+}
+
+// Assistant wrapping drops whitespace at soft line breaks. Selection coordinates
+// and regional context therefore count non-whitespace graphemes. Exact copied
+// text is still checked separately, including whitespace.
+func selectionSourceLength(kind scrollback.Kind, text string) int {
+	if kind != scrollback.KindAssistant {
+		return graphemeCount(text)
+	}
+	n := 0
+	for _, word := range strings.Fields(text) {
+		n += graphemeCount(word)
+	}
+	return n
+}
+
+// Collect only the endpoint's two context windows, stopping after the trailing
+// window rather than materializing the whole assistant region on every gesture.
+func assistantSelectionContext(frame renderedFrame, owner renderedRow, offset int) (string, string, bool) {
+	if offset < 0 {
+		return "", "", false
+	}
+	var before, after []string
+	position := 0
+	for i, row := range frame.provenance {
+		if row.blockID != owner.blockID || row.region != owner.region || !row.text {
+			continue
+		}
+		text, _ := selectionRowText(frame, row, frame.lines[i])
+		for _, word := range strings.Fields(text) {
+			for word != "" {
+				if position == offset+selectionContextGraphemes {
+					return strings.Join(before, ""), strings.Join(after, ""), true
+				}
+				cluster, _ := ansi.FirstGraphemeCluster(word, ansi.GraphemeWidth)
+				if position >= offset-selectionContextGraphemes {
+					if position < offset {
+						before = append(before, cluster)
+					} else {
+						after = append(after, cluster)
+					}
+				}
+				position++
+				word = word[len(cluster):]
+			}
+		}
+	}
+	return strings.Join(before, ""), strings.Join(after, ""), position >= offset
+}
+
+func selectionContextMatches(before, after string, point selectionPoint) bool {
+	return strings.HasSuffix(before, point.before) && strings.HasPrefix(after, point.after)
+}
+
+// At a normalized word boundary, require the same textual side of the omitted
+// whitespace: the start of the next word is not the end of the previous row.
+func assistantSelectionBoundary(text string, offset int) int {
+	if offset < graphemeCount(text) && strings.TrimSpace(graphemeSlice(text, offset, offset+1)) != "" {
+		return 1
+	}
+	if offset > 0 && strings.TrimSpace(graphemeSlice(text, offset-1, offset)) != "" {
+		return -1
+	}
+	return 0
 }
 
 func selectionPointFor(frame renderedFrame, line, col int) (selectionPoint, bool) {
@@ -364,11 +455,29 @@ func selectionPointFor(frame renderedFrame, line, col int) (selectionPoint, bool
 	if offset < 0 || offset > graphemeCount(lineText) {
 		return selectionPoint{}, false
 	}
-	return selectionPoint{
-		blockID: row.blockID, region: row.region, sourceOffset: row.sourceOffset + offset,
+	sourceOffset := row.sourceOffset
+	if row.kind == scrollback.KindAssistant {
+		sourceOffset = 0
+		for i, previous := range frame.provenance[:line] {
+			if previous.blockID == row.blockID && previous.region == row.region && previous.text {
+				text, _ := selectionRowText(frame, previous, frame.lines[i])
+				sourceOffset += selectionSourceLength(row.kind, text)
+			}
+		}
+	}
+	point := selectionPoint{
+		blockID: row.blockID, region: row.region, sourceOffset: sourceOffset + selectionSourceLength(row.kind, graphemeSlice(lineText, 0, offset)),
 		before: graphemeSlice(lineText, max(0, offset-selectionContextGraphemes), offset),
 		after:  graphemeSlice(lineText, offset, min(graphemeCount(lineText), offset+selectionContextGraphemes)),
-	}, true
+	}
+	if row.kind == scrollback.KindAssistant {
+		point.before, point.after, _ = assistantSelectionContext(frame, row, point.sourceOffset)
+		point.assistantBoundary = assistantSelectionBoundary(lineText, offset)
+	}
+	if row.region == conversationRegionToolSummary {
+		point.derivedDisplay = lineText
+	}
+	return point, true
 }
 
 func graphemeSlice(text string, start, end int) string {
@@ -388,7 +497,7 @@ func (s *selection) resolveLogical(frame renderedFrame) bool {
 		return false
 	}
 	s.anchorL, s.anchorC, s.headL, s.headC = anchorL, anchorC, headL, headC
-	return selectedText(strings.Join(frame.lines, "\n"), *s) == s.copied
+	return selectedConversationText(frame, strings.Join(frame.lines, "\n"), *s) == s.copied
 }
 
 func resolveSelectionPoint(frame renderedFrame, point selectionPoint) (int, int, bool) {
@@ -396,20 +505,51 @@ func resolveSelectionPoint(frame renderedFrame, point selectionPoint) (int, int,
 	// offset establishes which occurrence it identifies. Either proof alone can
 	// match duplicated text after a reflow, so reject an ambiguous exact match.
 	line, col, matches := 0, 0, 0
+	assistantOffset := 0
+	assistantContextChecked := false
 	for i, row := range frame.provenance {
 		if row.blockID != point.blockID || row.region != point.region || !row.text {
 			continue
 		}
 		text, leading := selectionRowText(frame, row, frame.lines[i])
-		for offset := 0; offset <= graphemeCount(text); offset++ {
-			if row.sourceOffset+offset != point.sourceOffset {
+		if point.region == conversationRegionToolSummary && text != point.derivedDisplay {
+			continue
+		}
+		sourceOffset := row.sourceOffset
+		if row.kind == scrollback.KindAssistant {
+			if !assistantContextChecked {
+				before, after, ok := assistantSelectionContext(frame, row, point.sourceOffset)
+				if !ok || !selectionContextMatches(before, after, point) {
+					return 0, 0, false
+				}
+				assistantContextChecked = true
+			}
+			sourceOffset = assistantOffset
+			assistantOffset += selectionSourceLength(row.kind, text)
+			if point.sourceOffset < sourceOffset || point.sourceOffset > assistantOffset {
 				continue
 			}
-			before := graphemeSlice(text, max(0, offset-selectionContextGraphemes), offset)
-			after := graphemeSlice(text, offset, min(graphemeCount(text), offset+selectionContextGraphemes))
-			if strings.HasSuffix(before, point.before) && strings.HasPrefix(after, point.after) {
-				line, col, matches = i, leading+offset, matches+1
+		}
+		for offset := 0; offset <= graphemeCount(text); offset++ {
+			inRow := offset
+			if row.kind == scrollback.KindAssistant {
+				inRow = selectionSourceLength(row.kind, graphemeSlice(text, 0, offset))
 			}
+			if sourceOffset+inRow != point.sourceOffset {
+				continue
+			}
+			if row.kind == scrollback.KindAssistant {
+				if assistantSelectionBoundary(text, offset) != point.assistantBoundary {
+					continue
+				}
+			} else {
+				before := graphemeSlice(text, max(0, offset-selectionContextGraphemes), offset)
+				after := graphemeSlice(text, offset, min(graphemeCount(text), offset+selectionContextGraphemes))
+				if !selectionContextMatches(before, after, point) {
+					continue
+				}
+			}
+			line, col, matches = i, leading+offset, matches+1
 		}
 	}
 	return line, col, matches == 1
@@ -425,7 +565,7 @@ func (s *selection) snapshotLogical(frame renderedFrame, content string) bool {
 		return false
 	}
 	s.anchorPoint, s.headPoint = anchor, head
-	s.copied = selectedText(content, *s)
+	s.copied = selectedConversationText(frame, content, *s)
 	s.snapshot = s.copied
 	return s.copied != ""
 }
@@ -549,15 +689,9 @@ func (m Model) wordSelect(line, col int) Model {
 	return m
 }
 
-// lineSelect sets the selection to the WHOLE logical line's CONTENT — from the first
-// non-whitespace grapheme to the line's grapheme count — then snapshots its identity +
-// re-renders the highlight. Skipping the LEADING WHITESPACE means triple-click grabs the
-// line's text regardless of how much left margin the renderer prepended: the base block
-// indent, plus the assistant body hang, plus the user block's rail+padding all leave
-// leading spaces (the rail glyph is the only non-space, and it precedes the body text, so
-// for an assistant/notice/tool line this lands on the first real character). A blank line
-// (all whitespace) yields an empty selection (anchor==head) so the caller copies nothing.
-// An out-of-bounds line index is a no-op.
+// lineSelect selects a visible line's content and snapshots its identity. Assistant
+// text uses semantic bounds so the rail and right padding are not endpoints.
+// Other rows start at their first non-space grapheme; blank lines select nothing.
 func (m Model) lineSelect(line int) Model {
 	lines := strings.Split(m.vp.GetContent(), "\n")
 	if line < 0 || line >= len(lines) {
@@ -576,6 +710,14 @@ func (m Model) lineSelect(line int) Model {
 	}
 	if start > n {
 		start = n
+	}
+	frame := m.conversationView.frame
+	if line < len(frame.provenance) {
+		row := frame.provenance[line]
+		if row.kind == scrollback.KindAssistant && row.text {
+			text, leading := selectionRowText(frame, row, lines[line])
+			start, n = leading, leading+graphemeCount(text)
+		}
 	}
 	m.sel = selection{active: true, anchorL: line, anchorC: start, headL: line, headC: n}
 	snapshotSelection(&m)

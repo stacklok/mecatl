@@ -72,6 +72,88 @@ func TestRepositoryRootFSMaterializer_ClonesStaticRootFSAndInjectsGuestAgentOnce
 	}
 }
 
+func TestRepositoryRootFSMaterializer_ClonesWritableRootFSInIsolation(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	brood := filepath.Join(root, "admitted-brood")
+	if err := os.MkdirAll(filepath.Join(brood, "etc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sourceFile := filepath.Join(brood, "etc", "brood-release")
+	if err := os.WriteFile(sourceFile, []byte("source\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("brood-release", filepath.Join(brood, "etc", "release-link")); err != nil {
+		t.Fatal(err)
+	}
+	artifactSources := filepath.Join(root, "artifact-sources")
+	if err := os.Mkdir(artifactSources, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	requests, resolver := testArtifactSet(t, artifactSources, nil, "")
+	verified, _, err := NewProvisioner(NewVerifiedCache(filepath.Join(root, "verified-cache")), resolver, testPolicy("guest-policy-v1", nil), nil, nil).Verify(t.Context(), requests)
+	if err != nil {
+		t.Fatalf("independently verify guest-agent release artifact: %v", err)
+	}
+
+	first := filepath.Join(root, "repository-rootfs")
+	if err := newRepositoryRootFSMaterializer().Materialize(brood, first, verified.GuestAgent.Path); err != nil {
+		t.Fatalf("materialize repository rootfs: %v", err)
+	}
+	second := filepath.Join(root, "second-rootfs")
+	if err := cloneRootFS(first, second); err != nil {
+		t.Fatalf("clone materialized rootfs: %v", err)
+	}
+	for _, rootfs := range []string{first, second} {
+		agentPath := filepath.Join(rootfs, guestAgentInstallPath)
+		got, err := os.ReadFile(agentPath)
+		if err != nil || string(got) != "guest-agent-complete" {
+			t.Fatalf("guest agent in %q = %q, %v", rootfs, got, err)
+		}
+		info, err := os.Stat(agentPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.Mode().IsRegular() || info.Mode().Perm() != 0o755 {
+			t.Errorf("guest agent mode in %q = %v, want regular executable 0755", rootfs, info.Mode())
+		}
+	}
+
+	for _, rootfs := range []string{brood, first, second} {
+		info, err := os.Stat(filepath.Join(rootfs, "etc", "brood-release"))
+		if err != nil {
+			t.Fatalf("stat %q: %v", rootfs, err)
+		}
+		if info.Mode().Perm() != 0o755 {
+			t.Errorf("mode in %q = %o, want 755", rootfs, info.Mode().Perm())
+		}
+		link, err := os.Readlink(filepath.Join(rootfs, "etc", "release-link"))
+		if err != nil || link != "brood-release" {
+			t.Errorf("safe symlink in %q = %q, %v", rootfs, link, err)
+		}
+	}
+
+	for path, contents := range map[string]string{
+		sourceFile: "source changed\n",
+		filepath.Join(first, "etc", "brood-release"):  "first changed\n",
+		filepath.Join(second, "etc", "brood-release"): "second changed\n",
+	} {
+		if err := os.WriteFile(path, []byte(contents), 0o755); err != nil {
+			t.Fatalf("write %q: %v", path, err)
+		}
+	}
+	for path, want := range map[string]string{
+		sourceFile: "source changed\n",
+		filepath.Join(first, "etc", "brood-release"):  "first changed\n",
+		filepath.Join(second, "etc", "brood-release"): "second changed\n",
+	} {
+		got, err := os.ReadFile(path)
+		if err != nil || string(got) != want {
+			t.Errorf("contents of %q = %q, %v; want %q", path, got, err, want)
+		}
+	}
+}
+
 func TestMicroVMRedesign_Scenario4_GuestRuntimeContractIsExplicit(t *testing.T) {
 	t.Parallel()
 	contract := guestexec.DefaultRuntimeContract()

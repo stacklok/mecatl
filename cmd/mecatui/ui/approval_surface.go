@@ -788,6 +788,7 @@ func askArgsTiersDiffer(th theme.Theme, ask pendingAsk) bool {
 // unbreakable long token (a space-free URL, a base64 blob) can never run off
 // the card. w <= 0 means "unknown width: no wrap".
 func wrapAskArgs(s string, w int) string {
+	s = terminaltext.ExpandTabs(s, terminaltext.DefaultTabWidth)
 	if w <= 0 {
 		return s
 	}

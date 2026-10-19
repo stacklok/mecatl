@@ -884,7 +884,7 @@ function stalePlanAsk(context: Parameters<typeof problem>[0]) {
   return problem(
     context,
     409,
-    "stale_run_control",
+    "stale_plan_ask",
     "Plan ask is no longer actionable",
     "This plan ask is stale, consumed, or its live run did not opt into server-owned continuation.",
   );

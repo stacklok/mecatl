@@ -9,23 +9,25 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
-// TestSpeakerLabels pins decisions 1+2: the user block leads with "▌ you" and the
-// assistant block with "● mecatl" — the speaker-turn glyphs. The labels are the
-// first line of each block's render (stripped of ANSI).
+// TestSpeakerLabels pins the user and LLM actor glyphs in both transcript views.
 func TestSpeakerLabels(t *testing.T) {
 	r := newTestRenderer()
 	r.setWidth(80)
 
 	user := testSnapshot(0, scrollback.UserCardSnapshot{Text: "hello there"})
 	got := stripANSIstr(r.renderSnapshot(0, user, false))
-	if first := strings.TrimLeft(firstLine(got), " "); !strings.HasPrefix(first, "▌ you") {
-		t.Errorf("user block must lead with %q, got first line %q", "▌ you", first)
+	if first := strings.TrimLeft(firstLine(got), " "); !strings.HasPrefix(first, "▶ you") {
+		t.Errorf("user block must lead with %q, got first line %q", "▶ you", first)
 	}
 
 	asst := testSnapshot(1, scrollback.AssistantCardSnapshot{Text: "the answer"})
+	compact := stripANSIstr(r.renderSnapshot(1, asst, false))
+	if first := strings.TrimLeft(firstLine(compact), " "); !strings.HasPrefix(first, "◀ mecatl") {
+		t.Errorf("compact assistant block must lead with %q, got first line %q", "◀ mecatl", first)
+	}
 	got = stripANSIstr(r.renderSnapshot(1, asst, true))
-	if first := strings.TrimLeft(firstLine(got), " "); !strings.HasPrefix(first, "● mecatl") {
-		t.Errorf("assistant block must lead with %q, got first line %q", "● mecatl", first)
+	if first := strings.TrimLeft(firstLine(got), " "); !strings.HasPrefix(first, "◀ mecatl") {
+		t.Errorf("assistant block must lead with %q, got first line %q", "◀ mecatl", first)
 	}
 }
 

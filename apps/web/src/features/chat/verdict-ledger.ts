@@ -35,7 +35,7 @@ type AskTarget = { askId: string; runId: string; sessionId: string };
  * own re-render epoch. Rejected: an external store / useSyncExternalStore,
  * which adds subscription machinery for one component's re-render.
  *
- * Only the side panel uses it today; the workspace still holds four Sets.
+ * The side panel and the workspace each hold one.
  */
 export type VerdictPhase = "idle" | "inFlight" | "acknowledged" | "uncertain";
 

@@ -410,8 +410,9 @@ bound environment. Remote sessions receive filesystem tools and foreground
 Shell only when the selected template grants them. An explicit `execution.none`
 gets no filesystem, even when a template default is configured. Remote sessions
 do not ingest project instructions, rules, skills, or source from the PVC.
-Schedules, SkillDraft, background Shell, and delegated filesystem execution are
-outside this deployment.
+[In-chat schedules](/features/sessions/scheduled-tasks.md#placement-and-deletion)
+can borrow the session's workspace. SkillDraft, background Shell, and delegated
+filesystem execution are outside this deployment.
 
 ## Smoke-test the deployed image
 

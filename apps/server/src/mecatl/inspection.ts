@@ -8,7 +8,7 @@ export interface InspectionService {
   worktrees(sessionId: string): Promise<SessionWorktreesResponse>;
 }
 
-/** Projects only the public inspection fields from the published SDK. */
+/** Projects only the public inspection fields from the SDK. */
 export function createMecatlInspectionService(client: Client): InspectionService {
   return {
     async soul() {

@@ -25,6 +25,7 @@ export const ServerFeature = {
   PromptFreeControls: "prompt_free_controls",
   ServerInfo: "server_info",
   SessionActivityInventory: "session_activity_inventory",
+  SessionAgentDefinitions: "session_agent_definitions",
   SkillFiles: "skill_files",
   WatchSessionEvents: "watch_session_events",
 } as const;

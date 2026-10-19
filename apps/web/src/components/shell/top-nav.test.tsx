@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import type { GetAuthSessionResponse } from "@mecatl-studio/contracts/generated";
 import { getAuthSessionOptions } from "@mecatl-studio/contracts/query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -23,9 +24,12 @@ const destinations = [
 
 // The real nav and search render in a memory router; the auth session search
 // needs to render its button is seeded, so a static render makes no requests.
-async function renderNav(pathname: string) {
+async function renderNav(
+  pathname: string,
+  session: GetAuthSessionResponse = { mode: "none", status: "disabled" },
+) {
   const client = new QueryClient();
-  client.setQueryData(getAuthSessionOptions().queryKey, { mode: "none", status: "disabled" });
+  client.setQueryData(getAuthSessionOptions().queryKey, session);
   const rootRoute = createRootRoute({ component: TopNav });
   const router = createRouter({
     history: createMemoryHistory({ initialEntries: [pathname] }),
@@ -74,5 +78,12 @@ describe("TopNav", () => {
       expect(markup).toContain("[&amp;&gt;button]:min-w-11");
       expect(markup).not.toContain("min-[500px]:w-[214px]");
     }
+  });
+
+  it("collapses the empty search slot when signed out so the nav stays flush right", async () => {
+    const markup = await renderNav("/workspace/chat", { mode: "oidc", status: "anonymous" });
+    expect(markup).not.toContain('aria-label="Search"');
+    // The slot is rendered with no children, so `empty:hidden` removes it from layout.
+    expect(markup).toMatch(/<div class="[^"]*\bempty:hidden\b[^"]*"><\/div>/);
   });
 });

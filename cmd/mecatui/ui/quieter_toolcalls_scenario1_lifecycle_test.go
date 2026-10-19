@@ -17,7 +17,7 @@ func TestMecatuiQuieterToolCalls_Scenario1_OutOfOrderAndResume(t *testing.T) {
 	check := func(m Model, callID, wantStatus string, settled bool, result string) {
 		t.Helper()
 		id := toolBlockID(t, m.conv.scrollback, callID)
-		frame := m.rend.renderConversationFrame(&m.conv.scrollback, false)
+		frame := m.rend.renderConversationFrame(&m.conv.scrollback, true)
 		rows := blockRows(frame, id)
 		m.phase = phaseIdle
 		inspected := openToolcallsForTest(t, m)

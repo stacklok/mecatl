@@ -18,7 +18,8 @@ type ActivityReplayStatus struct {
 }
 
 // SessionTranscript is the coherent, human-displayable projection of one loaded
-// session aggregate. A successful load is complete even when Messages is empty.
+// session aggregate. Harness control continuations are omitted; a successful load
+// is complete even when Messages is empty.
 type SessionTranscript struct {
 	SessionID    session.SessionID
 	Messages     []session.Message
@@ -64,7 +65,7 @@ func (s *Service) transcriptFromSession(sess *session.Session) (*SessionTranscri
 	}
 	return &SessionTranscript{
 		SessionID:    sess.ID,
-		Messages:     session.CloneMessages(sess.Conversation.Messages),
+		Messages:     transcriptMessages(sess.Conversation.Messages),
 		Complete:     true,
 		Kind:         sess.Kind,
 		Relationship: sess.Relationship,
@@ -72,4 +73,22 @@ func (s *Service) transcriptFromSession(sess *session.Session) (*SessionTranscri
 			Available: s.cfg.EventLog != nil,
 		},
 	}, nil
+}
+
+// transcriptMessages projects model history for human display without mutating
+// it. Only positively proven, text-only harness continuations that are neither
+// summaries nor genuine prompts are internal control messages.
+func transcriptMessages(messages []session.Message) []session.Message {
+	projected := make([]session.Message, 0, len(messages))
+	for _, message := range messages {
+		if message.Role == session.RoleUser &&
+			message.UserPromptProvenance == session.UserPromptProvenanceHarness &&
+			len(message.Parts) == 0 &&
+			!session.IsSynthesisedSummary(message.Text) &&
+			!session.IsGenuineUserPrompt(message) {
+			continue
+		}
+		projected = append(projected, message)
+	}
+	return projected
 }

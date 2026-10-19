@@ -108,10 +108,8 @@ func (s *userModelState) HandleWheel(msg tea.MouseWheelMsg) (tea.Cmd, bool) {
 	if s.compact {
 		return nil, true
 	}
-	move := bounded.LineDown
-	if msg.Button == tea.MouseWheelUp {
-		move = bounded.LineUp
-	} else if msg.Button != tea.MouseWheelDown {
+	move, ok := boundedWheelMove(msg)
+	if !ok {
 		return nil, true
 	}
 	if s.view == userModelPanel && s.list != nil {
@@ -173,9 +171,9 @@ func (s *userModelState) setListItems(width int) bool {
 	contentWidth := width - 2 // one selection cell and its trailing padding cell
 	railsFit := true
 	for _, e := range s.model.Entries {
-		text := terminaltext.Sanitize(e.Key)
+		text := terminaltext.ExpandStyleTabs(terminaltext.Sanitize(e.Key), s.deps.theme.Style("toolName"))
 		if e.Description != "" {
-			description := terminaltext.Sanitize(e.Description)
+			description := terminaltext.ExpandStyleTabs(terminaltext.Sanitize(e.Description), s.deps.theme.Style("toolArgs"))
 			if railsFit {
 				if lines, ok := userModelDescriptionLines(description, contentWidth); ok {
 					text += "\n" + strings.Join(lines, "\n")

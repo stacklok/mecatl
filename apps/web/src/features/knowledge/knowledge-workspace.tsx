@@ -8,6 +8,7 @@ import { SortableHead, useTableSort } from "@/components/sortable-head";
 import { PageShell } from "../../components/shell/page-shell";
 import { Input } from "../../components/ui/input";
 import { Table, TableBody, TableCell, TableHeader, TableRow } from "../../components/ui/table";
+import { ToggleGroup, ToggleGroupItem } from "../../components/ui/toggle-group";
 import { errorMessage } from "../../lib/error-message";
 import { pageTitleClass } from "../../lib/typography";
 import { NO_DESCRIPTION } from "./format";
@@ -18,6 +19,10 @@ import { SkillToolDisabledBanner } from "./skill-tool-disabled-banner";
 import { StateCard } from "./state-card";
 
 export type KnowledgeView = "configured" | "learned";
+
+/** The prototype's pill switch, drawn over the shadcn toggle item's defaults. */
+const PILL_CLASS =
+  "h-7 min-w-0 rounded-full px-3.5 font-normal text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-background data-[state=on]:font-medium data-[state=on]:text-foreground data-[state=on]:shadow-sm";
 
 export function KnowledgeWorkspace({
   item,
@@ -43,24 +48,27 @@ export function KnowledgeWorkspace({
     <PageShell className="space-y-5">
       <SkillToolDisabledBanner />
       <h1 className={pageTitleClass()}>Skills</h1>
-      <div className="inline-flex max-w-full items-center gap-0.5 overflow-x-auto rounded-full bg-muted p-1">
+      <ToggleGroup
+        aria-label="Skills view"
+        className="inline-flex max-w-full items-center gap-0.5 overflow-x-auto rounded-full bg-muted p-1"
+        onValueChange={(next) => {
+          // Choosing the selected pill again clears a single toggle group; the view stays.
+          if (next) onViewChange(next as KnowledgeView);
+        }}
+        type="single"
+        value={activeView}
+      >
         {(
           [
             ["configured", "All"],
             ...(learnedHidden ? [] : [["learned", "Learned"] as const]),
           ] as const
         ).map(([value, label]) => (
-          <button
-            aria-pressed={activeView === value}
-            className={`h-7 rounded-full px-3.5 text-sm transition-colors ${activeView === value ? "bg-background font-medium text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-            key={value}
-            onClick={() => onViewChange(value)}
-            type="button"
-          >
+          <ToggleGroupItem className={PILL_CLASS} key={value} value={value}>
             {label}
-          </button>
+          </ToggleGroupItem>
         ))}
-      </div>
+      </ToggleGroup>
       {activeView === "configured" ? (
         <ConfiguredSkills />
       ) : (

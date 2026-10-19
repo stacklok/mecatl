@@ -91,6 +91,83 @@ func TestProductionKindUsesShorterSyncPeriodsOnlyInFixture(t *testing.T) {
 	}
 }
 
+func TestKindNetworkPolicyRuntimeValues(t *testing.T) {
+	render := scriptRange(t, "run.sh", "runtime_values=", "\n# Render one operator-approved revision")
+	for _, profile := range []string{"development", "production"} {
+		t.Run(profile, func(t *testing.T) {
+			state := t.TempDir()
+			out, err := runStep(t, state, `
+kube() {
+  case "$*" in
+    *"get service kubernetes"*"clusterIP"*) printf '10.100.0.1' ;;
+    *"get endpoints kubernetes"*"addresses"*) printf '10.89.4.5' ;;
+    *"get endpoints kubernetes"*"ports"*) printf '6443' ;;
+    *"get pod network-fixture"*)
+      test "$MECATL_EXECUTION_QUAL_PROFILE" = production || exit 1
+      printf '10.244.0.9' ;;
+    *) exit 1 ;;
+  esac
+}
+`+render+"\nprintf '%s' \"$runtime_values\"", "state="+state, "MECATL_EXECUTION_QUAL_PROFILE="+profile)
+			if err != nil {
+				t.Fatalf("render runtime network values: %v: %s", err, out)
+			}
+			data, err := os.ReadFile(string(out))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var values struct {
+				Provider struct {
+					APIServerCIDRs []string `yaml:"apiServerCIDRs"`
+				} `yaml:"provider"`
+				NetworkPolicy struct {
+					APIServerPorts   []int          `yaml:"apiServerPorts"`
+					WorkloadProfiles map[string]any `yaml:"workloadProfiles"`
+				} `yaml:"networkPolicy"`
+			}
+			if err := yaml.Unmarshal(data, &values); err != nil {
+				t.Fatal(err)
+			}
+			if strings.Join(values.Provider.APIServerCIDRs, ",") != "10.100.0.1/32,10.89.4.5/32" {
+				t.Fatalf("API policy must admit only service and discovered endpoint: %+v", values.Provider)
+			}
+			ports := values.NetworkPolicy.APIServerPorts
+			if len(ports) != 2 || ports[0] != 443 || ports[1] != 6443 {
+				t.Fatalf("API policy lacks service or translated port: %v", ports)
+			}
+			if (len(values.NetworkPolicy.WorkloadProfiles) != 0) != (profile == "production") {
+				t.Fatal("workload egress must remain production-only")
+			}
+		})
+	}
+}
+
+func TestKindNetworkPolicyRejectsInvalidEndpoints(t *testing.T) {
+	render := scriptRange(t, "run.sh", "runtime_values=", "\n# Render one operator-approved revision")
+	for _, invalid := range []string{"", "fd00::1", "10.0.0.256", "10.0.1", "10.0.0.1/24", "10.0.0.1\n10.0.0.2", "10.0.0.1\n0.0.0.0/0"} {
+		for _, field := range []string{"service", "endpoint", "fixture"} {
+			t.Run(field+"/"+invalid, func(t *testing.T) {
+				state := t.TempDir()
+				out, err := runStep(t, state, `
+kube() {
+  case "$*" in
+    *"get service kubernetes"*) field=service ;;
+    *"get endpoints kubernetes"*"addresses"*) field=endpoint ;;
+    *"get endpoints kubernetes"*"ports"*) printf '6443'; return ;;
+    *"get pod network-fixture"*) field=fixture ;;
+    *) exit 1 ;;
+  esac
+  if [ "$field" = "$invalid_field" ]; then printf '%s' "$invalid_ip"; else printf '10.0.0.1'; fi
+}
+`+render, "state="+state, "MECATL_EXECUTION_QUAL_PROFILE=production", "invalid_field="+field, "invalid_ip="+invalid)
+				if err == nil || !strings.Contains(string(out), "invalid discovered IPv4 network-policy") {
+					t.Fatalf("invalid IPv4 endpoint accepted: err=%v output=%s", err, out)
+				}
+			})
+		}
+	}
+}
+
 func TestCanonicalTemplateFixtureTracksWorkloadDigest(t *testing.T) {
 	var previous string
 	for _, marker := range []string{"a", "b"} {

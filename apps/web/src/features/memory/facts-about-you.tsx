@@ -28,33 +28,33 @@ export function FactsAboutYou() {
   } else if (query.isError) {
     body = <Note role="alert">{errorMessage(query.error)}</Note>;
   } else if (!query.data.supported) {
-    body = <Note>Facts about you is off, so there is nothing to show.</Note>;
+    body = <Note role="status">Facts about you is off, so there is nothing to show.</Note>;
   } else if (query.data.items.length === 0) {
-    body = <Note>The agent hasn&rsquo;t remembered anything about you yet.</Note>;
+    body = <Note role="status">The agent hasn&rsquo;t remembered anything about you yet.</Note>;
   } else {
     const rows = sortFacts(query.data.items, sort.key, sort.dir);
     body = (
-      <div className="space-y-3">
+      <div className="@container space-y-3">
         <p className="text-xs text-muted-foreground" data-testid="memory-footprint">
           {footprint(rows.length)}
         </p>
         <div className="overflow-hidden rounded-lg border">
           <Table>
-            <TableHeader className="max-[499px]:hidden">
+            <TableHeader className="@max-[440px]:hidden">
               <TableRow className="hover:bg-transparent">
                 <SortableHead
-                  className="w-[280px] px-4 lg:w-[320px]"
+                  className="w-[280px] lg:w-[320px]"
                   label="Name"
                   sort={sort}
                   sortKey="name"
                 />
-                <SortableHead className="px-4" label="Remembers" sort={sort} sortKey="remembers" />
+                <SortableHead label="Remembers" sort={sort} sortKey="remembers" />
               </TableRow>
             </TableHeader>
             <TableBody>
               {rows.map((entry) => (
                 <TableRow key={entry.key}>
-                  <TableCell className="max-w-0 px-4 py-3 max-[499px]:w-full">
+                  <TableCell className="max-w-0 @max-[440px]:w-full">
                     <Link
                       className="block truncate text-sm font-medium hover:underline"
                       search={{ item: entry.key }}
@@ -62,12 +62,13 @@ export function FactsAboutYou() {
                     >
                       {entry.key}
                     </Link>
-                    {/* Mobile collapses to one stacked cell. */}
-                    <p className="line-clamp-2 text-xs text-muted-foreground min-[500px]:hidden">
+                    {/* A narrow column (a phone, or beside the Settings nav up to a
+                        tablet) collapses to one stacked cell. */}
+                    <p className="line-clamp-2 text-xs text-muted-foreground @min-[440px]:hidden">
                       {entry.description || NO_DESCRIPTION}
                     </p>
                   </TableCell>
-                  <TableCell className="max-w-0 px-4 py-3 max-[499px]:hidden">
+                  <TableCell className="max-w-0 @max-[440px]:hidden">
                     <p className="line-clamp-1 whitespace-normal text-xs text-muted-foreground">
                       {entry.description || NO_DESCRIPTION}
                     </p>

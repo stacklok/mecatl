@@ -271,7 +271,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: '1.4.1'
+          bun-version: '1.4.2'
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -286,7 +286,7 @@ jobs:
 
       - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
         with:
-          version: '1.72.0'
+          version: '1.73.0'
           github_token: ${{ github.token }}
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
@@ -618,8 +618,9 @@ jobs:
   studio:
     name: Mecatl Studio (apps/)
     needs: changes
-    # Studio builds the checked-out SDK for execution-template APIs and drives
-    # its integration suite against the daemon; run for apps/, SDK, or Go changes.
+    # Studio builds the checked-out SDK (one commit for Studio, SDK, and daemon)
+    # and drives its integration suite against the daemon; run for apps/, SDK, or
+    # Go changes.
     # The image build is push: false.
     if: needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.studio_relevant == 'true' || needs.changes.outputs.go_relevant == 'true')
     runs-on: ubuntu-24.04
@@ -690,7 +691,7 @@ jobs:
         run: task studio:test:integration
 
       # The approval journey uses the binary built by the integration task
-      # through the published SDK and a loopback-only browser fixture.
+      # through the checked-out SDK and a loopback-only browser fixture.
       - name: Test Studio browser journeys (Playwright, offline)
         run: task studio:browser
 
@@ -860,13 +861,9 @@ jobs:
           (cd provider/openaichat && go build ./...)
 
       - name: Verify Go module and workspace metadata freshness
-        shell: bash
         run: |
-          set -euo pipefail
           task tidy
-          git diff --exit-code -- go.mod go.sum go.work go.work.sum ':(glob)**/go.mod' ':(glob)**/go.sum'
-          untracked=$(git ls-files --others --exclude-standard -- go.mod go.sum go.work go.work.sum ':(glob)**/go.mod' ':(glob)**/go.sum')
-          if [[ -n "$untracked" ]]; then printf 'Untracked Go metadata:\n%s\n' "$untracked" >&2; exit 1; fi
+          task test:module-metadata
 
       - name: Verify nested module publication
         if: needs.changes.outputs.module_publication_relevant == 'true'
@@ -1003,12 +1000,18 @@ jobs:
           go-version-file: go.mod
           cache: true
           cache-dependency-path: '**/go.sum'
+      - name: Test workspace task infrastructure
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
+        run: task test:workspace-infrastructure
       - name: Test modules
         if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
         env:
           IS_DRAFT: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}
         run: |
           if [ "$IS_DRAFT" = true ]; then task --concurrency 3 test; else task --concurrency 3 test:race; fi
+      - name: Verify Go module metadata freshness
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
+        run: task test:module-metadata
 
   analysis:
     name: Analysis
@@ -1133,7 +1136,7 @@ jobs:
       # GORELEASER_VERSION.
       - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
-          version: "v2.16.0"
+          version: "v2.18.2"
           install-only: true
       - name: Validate the GoReleaser config
         # `goreleaser check` exits 2 for "valid, but uses DEPRECATED properties".
@@ -1594,7 +1597,7 @@ jobs:
 
       - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
         with:
-          version: '1.72.0'
+          version: '1.73.0'
           github_token: ${{ github.token }}
 
       # This command validates the executable systemd, launchd, and retention

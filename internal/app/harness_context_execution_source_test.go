@@ -501,7 +501,7 @@ func testExecutionSourceFailureBoundaries(t *testing.T) {
 			}
 			defer resolver.Close()
 			engine := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: tool.NewCatalog()})
-			factory := func(factoryCtx context.Context, id session.SessionID, owner *session.Principal, acquire server.ExecutionWorkspaceAcquirer, _ server.ProviderSelector, _ []mcp.ServerConfig, profile server.SessionProfile, _ string, _ session.PermissionMode, _ []tool.Tool, _ session.SessionID) (server.SessionEngineResult, error) {
+			factory := func(factoryCtx context.Context, id session.SessionID, owner *session.Principal, acquire server.ExecutionWorkspaceAcquirer, _ server.ProviderSelector, _ []mcp.ServerConfig, profile server.SessionProfile, _ string, _ session.PermissionMode, _ []tool.Tool, _ []string, _ session.SessionID) (server.SessionEngineResult, error) {
 				_, release, err := resolver.BorrowWithExecutionWorkspace(factoryCtx, id, owner, string(profile), acquire)
 				if err != nil {
 					return server.SessionEngineResult{}, err

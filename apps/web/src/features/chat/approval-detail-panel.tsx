@@ -1,0 +1,77 @@
+// SPDX-License-Identifier: Apache-2.0
+
+import type { RefObject } from "react";
+import type { ApprovalRequest, ApprovalVerdict } from "./approval-panel";
+import { ApprovalVerdictBar } from "./approval-verdict-bar";
+import { AskArgsView } from "./ask-args-view";
+import { isDestructiveToolName } from "./destructive-tool";
+import { useActiveEscapeAsk } from "./escape-hint-context";
+
+/** The detail panel's live view of one ask; the surface re-resolves it from its ledger. */
+export interface ApprovalDetail {
+  approval: ApprovalRequest;
+  disabled: boolean;
+  onRespond: (verdict: ApprovalVerdict) => void;
+  position: number;
+  total: number;
+  uncertain: boolean;
+}
+
+/**
+ * The body of the approval detail panel, ported from the prototype's
+ * `approval-detail-panel.tsx`: the same ask as its card, with the full
+ * arguments and diff instead of the card's capped view. The side-panel frame
+ * (`SidePanelShell`) owns the title, close, and resize. Like the card, it holds
+ * no verdict state: the verdict ledger decides `disabled` and `uncertain`.
+ * `scope` is that frame: focus anywhere in it, its close button included,
+ * answers this ask from the keyboard, and focus anywhere else never does.
+ */
+export function ApprovalDetailPanel({
+  approval,
+  closeHint = false,
+  disabled,
+  onRespond,
+  scope,
+  uncertain,
+}: Omit<ApprovalDetail, "position" | "total"> & {
+  /** Escape closes this panel: it shows an ask other than the surface's active one. */
+  closeHint?: boolean;
+  scope: RefObject<HTMLElement | null>;
+}) {
+  const destructive = isDestructiveToolName(approval.tool);
+  const active = useActiveEscapeAsk(approval) && !disabled && !uncertain;
+
+  return (
+    <div className="px-4 py-3">
+      {approval.reason && <p className="text-sm">{approval.reason}</p>}
+      {destructive && (
+        <p
+          className={approval.reason ? "mt-2 text-xs text-destructive" : "text-xs text-destructive"}
+        >
+          This action modifies or deletes data.
+        </p>
+      )}
+      <AskArgsView args={approval.args} bounded={false} className="mt-3" tool={approval.tool} />
+      {uncertain && (
+        <p className="mt-3 text-sm" role="status">
+          This verdict's outcome is uncertain. Refresh activity before deciding again.
+        </p>
+      )}
+      <div className="mt-4">
+        <ApprovalVerdictBar
+          allowAvailable={approval.args.trim().length > 0}
+          destructive={destructive}
+          disabled={disabled}
+          onRespond={onRespond}
+          scope={scope}
+          shortcuts={active}
+        />
+      </div>
+      {active ? (
+        <p className="mt-2 text-xs text-muted-foreground">Esc to Deny</p>
+      ) : (
+        closeHint && <p className="mt-2 text-xs text-muted-foreground">Esc to Close</p>
+      )}
+    </div>
+  );
+}

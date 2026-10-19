@@ -2,7 +2,7 @@
 
 import { readFileSync } from "node:fs";
 
-/** Test fixture: the published package installed by this workspace's lockfile. */
+/** Test fixture: the checked-out SDK installed by this workspace's lockfile. */
 export function installedSdkPackageVersion(): string {
   const manifest = JSON.parse(
     readFileSync(

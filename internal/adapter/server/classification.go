@@ -257,6 +257,7 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"BindPlacement":               {KindCallerOwned, "passes the verified context principal and trusted composition scope to the provider's single atomic authorization-and-resolution operation"},
 	"ReattachPlacement":           {KindCallerOwned, "passes the exact persisted ref, verified context principal, and trusted scope to the provider without falling back to Bind"},
 	"ReattachPlacementForBinding": {KindCallerOwned, "passes the exact persisted ref and session binding with the verified context principal to the provider"},
+	"ScheduleFirePlacement":       {KindCallerOwned, "reauthorizes schedule scope, owner and exact origin reference before reserving a distinct native fire binding"},
 	"ReattachPlacementInScope":    {KindCallerOwned, "requires the durable schedule scope to equal trusted composition scope, then reauthorizes the exact persisted ref as the verified owner without default fallback"},
 	"ListCommandsForSession":      {KindCallerOwned, "loads and owner-authorizes the source session before exact placement reattachment and command discovery"},
 	"ListWorktreesForSession":     {KindCallerOwned, "loads and owner-authorizes the source session before exact placement reattachment and scoped selector issuance"},

@@ -11,9 +11,10 @@ export const TURN_STAT_CACHE_FLOOR = 0.1;
 
 /**
  * A model's token count as the compact live-usage label ("1.2k", "3.4M");
- * under 1,000 the exact integer. The daemon reports token counts as
- * arbitrary-precision strings; converting through BigInt first avoids a
- * silent precision loss before handing off to the shared number formatter.
+ * under 1,000 the exact integer. The daemon reports token counts as strings.
+ * `BigInt` rejects anything that is not an integer, so a malformed count
+ * fails loudly; counts beyond 2^53 lose precision in the `Number`, which a
+ * compact label does not need. The one token formatter for the chat UI.
  */
 export function formatTokens(value: string): string {
   return formatTokensNumber(Number(BigInt(value)));

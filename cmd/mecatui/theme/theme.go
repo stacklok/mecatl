@@ -105,15 +105,41 @@ type Theme struct {
 	Name    string
 	Palette Palette
 
-	styles map[string]lipgloss.Style // derived in compile()
-	slots  map[string]string         // slot-name → hex, derived in compile()
+	styles     map[string]lipgloss.Style // derived in compile()
+	slots      map[string]string         // slot-name → hex, derived in compile()
+	transcript transcriptRecipe
+}
+
+// Transcript actor glyphs are text data, separate from their styles.
+const (
+	TranscriptUserGlyph    = "▶"
+	TranscriptLLMGlyph     = "◀"
+	TranscriptToolGlyph    = "●"
+	TranscriptHarnessGlyph = "◆"
+)
+
+type transcriptRecipe struct {
+	llm, tool, user, harness                 string
+	text, harnessText, run, reasoning, stats string
+}
+
+func transcriptFallback(p Palette) transcriptRecipe {
+	return transcriptRecipe{
+		llm: p.Assistant, tool: p.Tool, user: p.User, harness: p.Info,
+		text: p.Text, harnessText: p.TextMuted, run: p.Border,
+		reasoning: p.TextMuted, stats: p.TextMuted,
+	}
 }
 
 // New builds a Theme from a name and palette, compiling the derived styles. It
-// is the only constructor: it guarantees the styles map is populated so Style()
-// never returns a zero value for a known slot.
+// is the constructor for programmatic and custom themes, whose transcript roles
+// derive from their existing palette slots.
 func New(name string, p Palette) Theme {
-	t := Theme{Name: name, Palette: p}
+	return newTheme(name, p, transcriptFallback(p))
+}
+
+func newTheme(name string, p Palette, transcript transcriptRecipe) Theme {
+	t := Theme{Name: name, Palette: p, transcript: transcript}
 	t.compile()
 	return t
 }
@@ -181,7 +207,9 @@ func (t Theme) Color(slot string) color.Color {
 // Style returns the derived lipgloss.Style for a named UI element. Known names:
 // header, footer, viewport, userBlock, userLabel, assistantLabel, toolCard,
 // toolName, toolArgs, toolOk, toolErr, askCard, askTitle, askArgs, askButton,
-// askButtonActive, spinner, muted, warning, dangerPill, errorText. Unknown names
+// askButtonActive, spinner, muted, warning, dangerPill, errorText, and the
+// transcript{LLM,Tool,User,Harness}{Marker,Heading,Rail,Text}, transcriptRunRail,
+// transcriptReasoningText, and transcriptStatistics semantic roles. Unknown names
 // return an empty style so callers degrade gracefully rather than panic.
 func (t Theme) Style(name string) lipgloss.Style {
 	if s, ok := t.styles[name]; ok {
@@ -243,6 +271,7 @@ func buildSlots(p Palette) map[string]string {
 // View() never allocates styles in the hot path.
 func (t *Theme) compile() {
 	p := t.Palette
+	tr := t.transcript
 	t.slots = buildSlots(p)
 	rounded := lipgloss.RoundedBorder()
 	thick := lipgloss.ThickBorder()
@@ -282,10 +311,7 @@ func (t *Theme) compile() {
 		"viewport": lipgloss.NewStyle().
 			Foreground(col(p.Text)),
 
-		// User prompt block: gold left bar. NO background tint — the faint panel tint
-		// belongs ONLY to the input box we type in, never the conversation history (the
-		// tinted history block read as a distinct, off surface). Conversation user turns
-		// are the gold rail + the "▌ you" label over the plain viewport surface.
+		// User-coloured left border over the plain viewport surface.
 		"userBlock": lipgloss.NewStyle().
 			Foreground(col(p.Text)).
 			BorderStyle(lipgloss.NormalBorder()).
@@ -298,6 +324,26 @@ func (t *Theme) compile() {
 		"assistantLabel": lipgloss.NewStyle().
 			Foreground(col(p.Assistant)).
 			Bold(true),
+
+		"transcriptLLMMarker":      lipgloss.NewStyle().Foreground(col(tr.llm)),
+		"transcriptLLMHeading":     lipgloss.NewStyle().Foreground(col(tr.llm)).Bold(true),
+		"transcriptLLMRail":        lipgloss.NewStyle().Foreground(col(tr.llm)),
+		"transcriptLLMText":        lipgloss.NewStyle().Foreground(col(tr.text)),
+		"transcriptToolMarker":     lipgloss.NewStyle().Foreground(col(tr.tool)),
+		"transcriptToolHeading":    lipgloss.NewStyle().Foreground(col(tr.tool)).Bold(true),
+		"transcriptToolRail":       lipgloss.NewStyle().Foreground(col(tr.tool)),
+		"transcriptToolText":       lipgloss.NewStyle().Foreground(col(tr.text)),
+		"transcriptUserMarker":     lipgloss.NewStyle().Foreground(col(tr.user)),
+		"transcriptUserHeading":    lipgloss.NewStyle().Foreground(col(tr.user)).Bold(true),
+		"transcriptUserRail":       lipgloss.NewStyle().Foreground(col(tr.user)),
+		"transcriptUserText":       lipgloss.NewStyle().Foreground(col(tr.text)),
+		"transcriptHarnessMarker":  lipgloss.NewStyle().Foreground(col(tr.harness)),
+		"transcriptHarnessHeading": lipgloss.NewStyle().Foreground(col(tr.harness)).Bold(true),
+		"transcriptHarnessRail":    lipgloss.NewStyle().Foreground(col(tr.harness)),
+		"transcriptHarnessText":    lipgloss.NewStyle().Foreground(col(tr.harnessText)),
+		"transcriptRunRail":        lipgloss.NewStyle().Foreground(col(tr.run)),
+		"transcriptReasoningText":  lipgloss.NewStyle().Foreground(col(tr.reasoning)).Italic(true),
+		"transcriptStatistics":     lipgloss.NewStyle().Foreground(col(tr.stats)),
 
 		// Tool-call card.
 		"toolCard": lipgloss.NewStyle().

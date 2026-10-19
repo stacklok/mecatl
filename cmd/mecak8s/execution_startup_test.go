@@ -76,6 +76,13 @@ func TestExecutionHostOwnerPolicyIsExplicit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if cfg.noScheduler || !appConfig(cfg, nil, observability{}).SchedulerEnabled {
+		t.Fatal("remote execution silently disabled scheduled-task fires")
+	}
+	optOut, err := parseFlags([]string{"--mock", "--execution-enabled", "--execution-endpoint=127.0.0.1:1", "--execution-template-id=go", "--execution-template-revision=v1-" + strings.Repeat("a", 64), "--execution-allowed-subjects=alice", "--execution-tls-ca=unused", "--execution-tls-cert=unused", "--execution-tls-key=unused", "--oidc-issuer=https://issuer.example", "--oidc-audience=mecatl", "--no-scheduler"})
+	if err != nil || !optOut.noScheduler || appConfig(optOut, nil, observability{}).SchedulerEnabled {
+		t.Fatalf("explicit remote scheduler opt-out not honored: %v", err)
+	}
 	allowed := appConfig(cfg, nil, observability{}).ExecutionTemplateAllowed
 	for _, subject := range []string{"bob", "alice-admin", ""} {
 		if allowed(&session.Principal{Issuer: "https://issuer.example", Subject: subject, GrantType: session.GrantTypeUser}, "go", cfg.executionTemplateRevision) {

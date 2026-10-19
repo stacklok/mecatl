@@ -14,6 +14,7 @@ import { routeTree } from "../../routeTree.gen";
 import { authLoginUrl } from "../auth/auth-gate";
 import { MemoryFactDetail } from "../memory/memory-fact-detail";
 import { MemorySettingsPage } from "../memory/memory-settings-page";
+import { SettingsIndex } from "./settings-index";
 import { isSettingsSection, settingsGroups } from "./settings-sections";
 import { SettingsWorkspace } from "./settings-workspace";
 
@@ -70,8 +71,21 @@ describe("settings routes", () => {
         </RouterContextProvider>
       </QueryClientProvider>,
     );
-    for (const section of sections) expect(navigation).toContain(`value="${section}"`);
-    expect(navigation).toMatch(/<option[^>]*value="permissions"[^>]*selected/);
+    // The phone's section index (#2261, in place of the native picker) links every section;
+    // settings-accessibility.test.tsx checks the back bar that names the current one.
+    const index = renderToStaticMarkup(
+      <QueryClientProvider client={new QueryClient()}>
+        <RouterContextProvider router={await load("/workspace/settings/permissions")}>
+          <SettingsIndex />
+        </RouterContextProvider>
+      </QueryClientProvider>,
+    );
+    for (const section of sections)
+      expect(index).toContain(`href="/workspace/settings/${section}"`);
+    for (const label of settingsGroups.flatMap((group) => group.items.map((item) => item.label))) {
+      expect(navigation).toMatch(new RegExp(`<button[^>]*>${label}</button>`));
+    }
+    expect(navigation).not.toContain("<select");
     expect(navigation).toMatch(/<button[^>]*aria-current="page"[^>]*>Permissions<\/button>/);
     const router = await load("/workspace/settings/profile");
     const memoryLocation = router.buildLocation({

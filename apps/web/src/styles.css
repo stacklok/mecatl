@@ -352,10 +352,11 @@
   }
 
   /* Shared controls size bare SVG descendants through parent utilities; their
-     mobile glyphs need the same fixed 20px size as explicit size-4 icons. */
+     mobile glyphs need the same fixed 20px size as explicit size-4 icons.
+     Buttons key on data-button, which survives an asChild trigger's data-slot. */
   svg.lucide.size-4,
   svg.lucide.h-4.w-4,
-  [data-slot="button"] svg.lucide:not([class*="size-"]):not([class*="h-"]):not([class*="w-"]),
+  [data-button] svg.lucide:not([class*="size-"]):not([class*="h-"]):not([class*="w-"]),
   [data-slot="dropdown-menu-item"] svg.lucide:not([class*="size-"]),
   [data-slot="dropdown-menu-checkbox-item"] svg.lucide:not([class*="size-"]),
   [data-slot="dropdown-menu-radio-item"] svg.lucide:not([class*="size-"]),
@@ -368,6 +369,16 @@
   svg.lucide[class~="size-3.5"] {
     width: 18px;
     height: 18px;
+  }
+}
+
+/* The composer's pill row (chat-composer.tsx) scrolls sideways in a narrow
+   container rather than wrapping; a visible scrollbar there would read as a
+   broken layout. */
+@utility hide-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
   }
 }
 
@@ -390,5 +401,88 @@
   50% {
     transform: translateY(-5px);
     animation-timing-function: cubic-bezier(0, 0, 0.2, 1);
+  }
+}
+
+/*
+ * Vertical scroll fade, copied unmodified in behavior from shadcn/ui's `tailwind.css` (MIT):
+ * `scroll-fade-y` fades a scroll container's top edge once it is scrolled away from the top, and
+ * its bottom edge until it reaches the bottom, using CSS scroll-driven animations. Browsers
+ * without them (`animation-timeline`) get no fade, unlike shadcn's fallback, which fades both edges
+ * of every block even when it does not scroll. Only the vertical pieces are copied; the rest of
+ * that stylesheet is not used here.
+ */
+@property --scroll-fade-t {
+  syntax: "<length-percentage>";
+  inherits: false;
+  initial-value: 0px;
+}
+@property --scroll-fade-b {
+  syntax: "<length-percentage>";
+  inherits: false;
+  initial-value: 0px;
+}
+@property --scroll-fade-mask {
+  syntax: "*";
+  inherits: false;
+}
+
+@theme inline {
+  @keyframes scroll-fade-reveal-t {
+    from {
+      --scroll-fade-t: 0px;
+    }
+    to {
+      --scroll-fade-t: var(
+        --_scroll-fade-size-t,
+        var(--scroll-fade-size, min(12%, calc(var(--spacing) * 10)))
+      );
+    }
+  }
+  @keyframes scroll-fade-reveal-b {
+    from {
+      --scroll-fade-b: var(
+        --_scroll-fade-size-b,
+        var(--scroll-fade-size, min(12%, calc(var(--spacing) * 10)))
+      );
+    }
+    to {
+      --scroll-fade-b: 0px;
+    }
+  }
+}
+
+@utility scroll-fade-y {
+  --_scroll-fade-size-t: var(
+    --scroll-fade-t-size,
+    var(--scroll-fade-size, min(12%, calc(var(--spacing) * 10)))
+  );
+  --_scroll-fade-size-b: var(
+    --scroll-fade-b-size,
+    var(--scroll-fade-size, min(12%, calc(var(--spacing) * 10)))
+  );
+  --scroll-fade-block: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--scroll-fade-t, 0px),
+    #000 calc(100% - var(--scroll-fade-b, 0px)),
+    transparent 100%
+  );
+  -webkit-mask-image: var(--scroll-fade-mask, var(--scroll-fade-block));
+  mask-image: var(--scroll-fade-mask, var(--scroll-fade-block));
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+
+  @supports (animation-timeline: scroll()) {
+    animation:
+      scroll-fade-reveal-t 1ms ease-in-out,
+      scroll-fade-reveal-b 1ms ease-in-out;
+    animation-timeline: scroll(self y), scroll(self y);
+    animation-range:
+      0 var(--scroll-fade-reveal, calc(var(--spacing) * 24)),
+      calc(100% - var(--scroll-fade-reveal, calc(var(--spacing) * 24))) 100%;
+    animation-fill-mode: both;
   }
 }

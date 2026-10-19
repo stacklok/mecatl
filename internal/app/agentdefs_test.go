@@ -299,6 +299,104 @@ func TestDefLimitsPerFieldFallback(t *testing.T) {
 	}
 }
 
+// TestTightenLimits pins ADR 0353's AC1.12 tighten-only clamp directly against
+// the pure function, covering every combination the Human decision requires: a
+// zero request field inherits the def's cap outright (never "unlimited"), a
+// looser non-zero request is clamped DOWN to the def's cap, a tighter request
+// passes through unclamped, and MaxConsecutiveFailures always comes from
+// defLimits (mirroring defLimits' own convention — a def/request never sets
+// it).
+func TestTightenLimits(t *testing.T) {
+	defCap := session.Limits{MaxTurns: 10, MaxToolCalls: 5, MaxConsecutiveFailures: 3}
+
+	cases := []struct {
+		name    string
+		request session.Limits
+		want    session.Limits
+	}{
+		{
+			name:    "unset request inherits the def's cap outright",
+			request: session.Limits{},
+			want:    session.Limits{MaxTurns: 10, MaxToolCalls: 5, MaxConsecutiveFailures: 3},
+		},
+		{
+			name:    "looser request is clamped down to the def's cap",
+			request: session.Limits{MaxTurns: 100, MaxToolCalls: 100},
+			want:    session.Limits{MaxTurns: 10, MaxToolCalls: 5, MaxConsecutiveFailures: 3},
+		},
+		{
+			name:    "tighter request passes through unclamped",
+			request: session.Limits{MaxTurns: 3, MaxToolCalls: 2},
+			want:    session.Limits{MaxTurns: 3, MaxToolCalls: 2, MaxConsecutiveFailures: 3},
+		},
+		{
+			name:    "per-field: tighter turns, unset tool calls inherits the def's cap",
+			request: session.Limits{MaxTurns: 3},
+			want:    session.Limits{MaxTurns: 3, MaxToolCalls: 5, MaxConsecutiveFailures: 3},
+		},
+		{
+			name:    "request MaxConsecutiveFailures is ignored — always defLimits' own value",
+			request: session.Limits{MaxConsecutiveFailures: 999},
+			want:    session.Limits{MaxTurns: 10, MaxToolCalls: 5, MaxConsecutiveFailures: 3},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tightenLimits(defCap, tc.request); got != tc.want {
+				t.Fatalf("tightenLimits(%+v, %+v) = %+v, want %+v", defCap, tc.request, got, tc.want)
+			}
+		})
+	}
+
+	// An unlimited (0) def cap imposes no ceiling: a request stands verbatim,
+	// and an unset request also stays unlimited (0), never manufacturing a cap
+	// the def itself never configured.
+	unlimited := session.Limits{}
+	if got := tightenLimits(unlimited, session.Limits{MaxTurns: 500}); got.MaxTurns != 500 {
+		t.Fatalf("unlimited defCap + request 500 = %d, want 500 (nothing to tighten against)", got.MaxTurns)
+	}
+	if got := tightenLimits(unlimited, session.Limits{}); got.MaxTurns != 0 {
+		t.Fatalf("unlimited defCap + unset request = %d, want 0 (still unlimited)", got.MaxTurns)
+	}
+}
+
+// TestClampPermissionMode pins ADR 0353's AC1.13 tighten-only PermissionMode
+// clamp directly against the pure function, over every (defMode, requestMode)
+// combination the ordering (plan < default < acceptEdits) admits, plus the "no
+// ceiling" sentinel (defMode == "").
+func TestClampPermissionMode(t *testing.T) {
+	cases := []struct {
+		defMode, requestMode, want session.PermissionMode
+	}{
+		// No ceiling (def configured no permissionMode): request always stands,
+		// at every rank — never raised, never lowered, never rejected.
+		{"", session.ModePlan, session.ModePlan},
+		{"", session.ModeDefault, session.ModeDefault},
+		{"", session.ModeAccept, session.ModeAccept},
+		// Ceiling = plan (the tightest): every request clamps down to plan.
+		{session.ModePlan, session.ModePlan, session.ModePlan},
+		{session.ModePlan, session.ModeDefault, session.ModePlan},
+		{session.ModePlan, session.ModeAccept, session.ModePlan},
+		// Ceiling = default: plan (tighter) passes through; default unchanged;
+		// acceptEdits (looser) clamps down to default.
+		{session.ModeDefault, session.ModePlan, session.ModePlan},
+		{session.ModeDefault, session.ModeDefault, session.ModeDefault},
+		{session.ModeDefault, session.ModeAccept, session.ModeDefault},
+		// Ceiling = acceptEdits (the loosest): every request passes through
+		// unclamped — nothing is ever looser than acceptEdits.
+		{session.ModeAccept, session.ModePlan, session.ModePlan},
+		{session.ModeAccept, session.ModeDefault, session.ModeDefault},
+		{session.ModeAccept, session.ModeAccept, session.ModeAccept},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.defMode)+"/"+string(tc.requestMode), func(t *testing.T) {
+			if got := clampPermissionMode(tc.defMode, tc.requestMode); got != tc.want {
+				t.Fatalf("clampPermissionMode(%q, %q) = %q, want %q", tc.defMode, tc.requestMode, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestBuildAgentSubagentEnginesCarriesPerDefLimits proves a def's maxTurns/maxToolCalls
 // flow onto AgentMeta.Limits (per-field over the Subagent default child limits), and a
 // def with no limits carries the default unchanged.

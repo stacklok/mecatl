@@ -96,6 +96,13 @@ type SessionMeta struct {
 	// value can be reconstructed from events or inferred from EnvironmentRef.
 	ExecutionTemplateID       string
 	ExecutionTemplateRevision string
+	// AgentDefinitionName optionally binds the session's root to a named
+	// AgentDef (ADR 0353); "" is an ordinary, non-agent-bound session. Write-once
+	// creation label, opaque to the fold — mirrors Profile's discipline exactly.
+	AgentDefinitionName string
+	// AgentCreateIntent is opaque original-create retry evidence, not event-carried.
+	// Missing legacy evidence must remain empty.
+	AgentCreateIntent string
 	// ProviderID and ModelID are the opaque neutral provider+model selector pair
 	// ("" / "" = server default).
 	ProviderID string
@@ -133,9 +140,14 @@ type SessionMeta struct {
 	Incarnation session.IncarnationID
 	Owner       *session.Principal
 	// Authority is the plain derived-capability payload supplied with creation
-	// metadata. Nil is a documented legacy record written without authority; a
-	// present payload is validated and bound before reconstruction proceeds.
+	// metadata. Nil is allowed only for ordinary legacy sessions. Agent-bound
+	// metadata requires authority and a ceiling; present payloads always validate
+	// and bind before reconstruction proceeds.
 	Authority *session.Authority
+	// WorkspaceEnrollmentBrokerKeys and its presence bit must come from the same
+	// committed authority revision. They are not reconstructed from events.
+	WorkspaceEnrollmentBrokerKeys        []string
+	WorkspaceEnrollmentBrokerKeysPresent bool
 	// ExternalBinding is the opaque composition-issued process-external
 	// identity (e.g. an MCP broker attachment binding). Not event-carried:
 	// safe to omit for a pure fold UNLESS the host requires exact external-
@@ -196,8 +208,17 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	if err := s.RestoreSessionMetadata(meta.Kind, meta.Relationship); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
 	}
+	// AgentDefinitionName restores BEFORE authority: BindAuthority (reached via
+	// restoreAuthority below) rejects a bind that claims this label without a
+	// Ceiling (ADR 0353) — it can only see the label if it is set first, exactly
+	// as the real create path already sequences it.
+	s.AgentDefinitionName = meta.AgentDefinitionName
+	s.AgentCreateIntent = meta.AgentCreateIntent
 	if err := restoreAuthority(s, meta.Authority); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
+	}
+	if err := s.RestoreWorkspaceEnrollmentBrokerKeys(meta.WorkspaceEnrollmentBrokerKeys, meta.WorkspaceEnrollmentBrokerKeysPresent); err != nil {
+		return nil, fmt.Errorf("%w: restore workspace enrollment broker keys: %w", ErrReconstruct, err)
 	}
 	if err := s.RestoreLabels(meta.Owner, session.Authority{}); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
@@ -295,7 +316,7 @@ func (f *folder) finalizeOpenTurn() {
 }
 
 func restoreAuthority(s *session.Session, authority *session.Authority) error {
-	if authority == nil {
+	if authority == nil && s.AgentDefinitionName == "" {
 		return nil
 	}
 	if err := sessnap.ValidatePersistedAuthority(authority); err != nil {

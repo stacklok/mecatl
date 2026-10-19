@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ExecutionTemplateInventory } from "@mecatl-studio/contracts";
-import { ArrowUp, LoaderCircle, Mic, MicOff, Paperclip, SlidersHorizontal, X } from "lucide-react";
+import { ArrowUp, LoaderCircle, Mic, Paperclip, Plus, X } from "lucide-react";
 import {
+  type DragEvent,
   type FormEvent,
   type KeyboardEvent,
+  type ReactNode,
   useCallback,
   useEffect,
   useMemo,
@@ -12,7 +14,7 @@ import {
   useState,
 } from "react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Button } from "../../components/ui/button";
+import { Button, buttonVariants } from "../../components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -21,83 +23,149 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../../components/ui/dialog";
-import {
-  Sheet,
-  SheetClose,
-  SheetContent,
-  SheetDescription,
-  SheetTitle,
-} from "../../components/ui/sheet";
 import { Textarea } from "../../components/ui/textarea";
+import { Toggle } from "../../components/ui/toggle";
+import {
+  classifyAttachment,
+  inlineTextAttachments,
+  MAX_INLINE_TEXT_TOTAL_BYTES,
+  readTextAttachment,
+} from "../../lib/attachment-inline";
+import { readDraft, writeDraft } from "../../lib/draft-store";
+import { fileKindMeta } from "../../lib/file-meta";
+import { MODE_OPTIONS, modeTitle, type SessionPermissionMode } from "../../lib/permission-mode";
 import type { EnterSendBehavior } from "../../lib/profile-preferences";
+import { cn } from "../../lib/utils";
+import { ClearDraftButton } from "./clear-draft-button";
+import { composerFrameClass } from "./composer-frame";
 import { ComposerOptionMenu } from "./composer-option-menu";
+import {
+  type ComposerModeControl,
+  type ComposerModelControl,
+  ComposerOptionsSheet,
+} from "./composer-options-sheet";
 import {
   acceptImageAttachments,
   type ImageAttachment,
   imageSource,
+  type LocalFilePreview,
+  localFileKind,
   maxImageAttachmentCount,
   readImageAttachment,
 } from "./local-file-preview";
 import { groupModels, ModelEffortMenu } from "./model-effort-menu";
 import { useVoiceInput } from "./use-voice-input";
 
-const MODE_OPTIONS = [
-  {
-    description: "Always ask before making changes.",
-    title: "Manual",
-    value: "default" as const,
-  },
-  {
-    description: "Automatically accept all file edits.",
-    title: "Accept edits",
-    value: "acceptEdits" as const,
-  },
-  {
-    description: "Create a plan before making changes.",
-    title: "Plan",
-    value: "plan" as const,
-  },
-];
-
 export interface ComposerModelOption {
   id: string;
   image: boolean;
   label: string;
   providerId: string;
+  /** The inventory's `providerDisplayName`: the BFF's name for the provider. */
+  providerLabel: string;
+  /** The inventory's `reasoning` flag: whether the model reports a reasoning-effort tier. */
+  reasoning?: boolean;
 }
 
 export interface DraftChatConfiguration {
-  mode: "acceptEdits" | "default" | "plan";
+  mode: SessionPermissionMode;
   model?: { id: string; providerId: string };
   reasoningEffort: "default" | "high" | "low" | "max" | "medium" | "xhigh";
   execution?: { none: Record<string, never> } | { template: { id: string; revision: string } };
 }
 
+/**
+ * A small text file staged for inlining (see `lib/attachment-inline.ts`). Its
+ * content is read when it is attached, so a binary or size rejection shows at
+ * once rather than at send time.
+ */
+interface StagedTextFile {
+  id: string;
+  name: string;
+  size: number;
+  text: string;
+  type: string;
+}
+
 interface ChatComposerProps {
+  /** A live chat's model can change: the deployment allows model selection. */
+  canForkModel?: boolean;
+  /** Text to add to the draft, after a blank line (a transcript selection's "Add to chat"). */
+  appendText?: string;
   clearDraftSignal?: number;
+  /** Moves focus into the box when it changes while mounted (the approval panel just closed). */
+  focusComposerSignal?: number;
+  /** A draft's settings. Absent on a live chat, whose settings come from the `live*` props. */
   configuration?: DraftChatConfiguration;
+  /**
+   * The chat a draft's send created and opened. When the draft key switches
+   * to it while that send is in flight, the send's text follows into it. Any
+   * other switch during a send swaps in the next chat's own draft.
+   */
+  createdChatKey?: string;
   disabled?: boolean;
-  imageAttachmentsSupported?: boolean;
+  /**
+   * The draft store's key: a chat's session ID, or `new` for the draft view.
+   * Switching keys swaps in that chat's own stored draft. Omit to keep the
+   * draft in memory only.
+   */
+  draftKey?: string;
   executionInventory?: ExecutionTemplateInventory;
   executionStatus?: "disabled" | "loading" | "unavailable" | "ready";
-  onRefreshExecution?: () => void;
+  imageAttachmentsSupported?: boolean;
+  /** A live chat's Mode and Model pills are blocked: a run, a compaction, a fork, or a mode change is in progress. */
+  liveControlsDisabled?: boolean;
+  /** A live chat's mode, once its detail has loaded. */
+  liveMode?: SessionPermissionMode;
+  /** A live chat's model and effort, once its detail has loaded. */
+  liveModel?: { id: string; providerId: string; reasoningEffort: string };
   models?: ComposerModelOption[];
   onConfigurationChange?: (configuration: DraftChatConfiguration) => void;
   onDraftChange?: (present: boolean) => void;
+  /** A Model or Effort pick on a live chat, which forks it: always names a model and an effort. */
+  onForkModel?: (
+    model: { id: string; providerId: string },
+    reasoningEffort: DraftChatConfiguration["reasoningEffort"],
+  ) => void;
+  /** A Mode pick on a live chat, which changes it in place. */
+  onLiveModeChange?: (mode: SessionPermissionMode) => void;
+  onPreviewFile?: (file: LocalFilePreview) => void;
   onPreviewImage?: (image: ImageAttachment) => void;
+  onRefreshExecution?: () => void;
   onSeedConsumed?: () => void;
   onSend: (
     prompt: string,
     action: ComposerEnterAction,
     images: ImageAttachment[],
   ) => Promise<boolean>;
-  safetyLevel?: string;
+  /** A live chat's execution capabilities, on the line under its pills. */
+  pillRowDetail?: ReactNode;
+  /** A live chat's usage and Compact action, at the end of the pill row. */
+  pillRowEnd?: ReactNode;
   seedCanConfirm?: boolean;
   seedContext?: SeedConfirmationContext;
   seedRequiresConfirmation?: boolean;
   seedText?: string;
+  onAppendConsumed?: () => void;
+  /** The same usage and Compact action, at the foot of the phone options sheet. */
+  sheetFooter?: ReactNode;
   working?: boolean;
   workingBehavior?: EnterSendBehavior;
+  /** False when the daemon cannot steer: Enter and Shift+Enter both queue while the agent works. */
+  steerAvailable?: boolean;
+}
+
+/** The send in flight, and where its text lives while it settles. */
+interface InFlightSend {
+  /** The `createdChatKey` when the send began; only a newer one is this send's chat. */
+  createdChatKeyAtSend?: string;
+  /** The draft key whose stored draft holds the sent text. */
+  home?: string;
+  /** A confirmed seed, which is never stored as a draft. */
+  seed: boolean;
+  /** The composer still shows the sent text: it has not swapped to another chat. */
+  shown: boolean;
+  text: string;
 }
 
 export interface SeedConfirmationContext {
@@ -109,39 +177,69 @@ export interface SeedConfirmationContext {
 
 export type ComposerEnterAction = "send" | "queue" | "steer" | "newline";
 
+/**
+ * The chat composer, in the prototype's (`stack-08`) frame: the input box
+ * with its attachment pills and toolbar, then the pill row underneath for
+ * Mode, Execution (a draft only), and Model. On a phone the pill row folds
+ * into the options sheet.
+ *
+ * Studio's semantics stay: the Enter preference and `resolveComposerAction`,
+ * the image limits, the seed confirmation, and voice input.
+ */
 export function ChatComposer({
+  canForkModel = false,
+  appendText,
   clearDraftSignal = 0,
+  focusComposerSignal = 0,
   configuration,
+  createdChatKey,
   disabled = false,
-  imageAttachmentsSupported = false,
+  draftKey,
   executionInventory,
   executionStatus = "disabled",
+  imageAttachmentsSupported = false,
+  liveControlsDisabled = false,
+  liveMode,
+  liveModel,
   models = [],
   onConfigurationChange,
   onDraftChange,
+  onForkModel,
+  onLiveModeChange,
+  onPreviewFile,
   onPreviewImage,
   onRefreshExecution,
   onSeedConsumed,
   onSend,
-  safetyLevel = "managed",
+  pillRowDetail,
+  pillRowEnd,
   seedCanConfirm = true,
   seedContext,
   seedRequiresConfirmation = false,
   seedText,
+  onAppendConsumed,
+  sheetFooter,
   working = false,
   workingBehavior = "queue",
+  steerAvailable = true,
 }: ChatComposerProps) {
-  const [prompt, setPrompt] = useState("");
+  const [prompt, setPrompt] = useState(() => (draftKey === undefined ? "" : readDraft(draftKey)));
+  const [draftOwner, setDraftOwner] = useState(draftKey);
   const [images, setImages] = useState<ImageAttachment[]>([]);
+  const [textFiles, setTextFiles] = useState<StagedTextFile[]>([]);
   const [attachmentError, setAttachmentError] = useState("");
   const [readingAttachments, setReadingAttachments] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [mobileOptionsOpen, setMobileOptionsOpen] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
   const [seedConfirmation, setSeedConfirmation] = useState<string>();
   const fileInput = useRef<HTMLInputElement>(null);
   const imageCapability = useRef(imageAttachmentsSupported);
   imageCapability.current = imageAttachmentsSupported;
-  const optionsButton = useRef<HTMLButtonElement>(null);
+  const latestDraftKey = useRef(draftKey);
+  latestDraftKey.current = draftKey;
+  const inFlight = useRef<InFlightSend | null>(null);
+  /** The draft key a carry emptied; the persist effect clears its stored copy. */
+  const carriedFrom = useRef<string | undefined>(undefined);
   const composing = useRef(false);
   const compositionSequence = useRef(0);
   const sawCompositionEnter = useRef(false);
@@ -151,16 +249,71 @@ export function ChatComposer({
   const updatePrompt = useCallback((value: string) => setPrompt(value), []);
   const voice = useVoiceInput(prompt, updatePrompt);
 
+  // Another chat: swap in its stored draft and drop the staged files, even
+  // while a send is in flight, so one chat's text never lands in another's
+  // draft or send. The one exception is a draft's first send, which opens the
+  // chat it created: its text follows there until the send settles.
+  if (draftOwner !== draftKey) {
+    setDraftOwner(draftKey);
+    const sending = inFlight.current;
+    const carry =
+      sending?.shown === true &&
+      draftKey !== undefined &&
+      draftKey === createdChatKey &&
+      createdChatKey !== sending.createdChatKeyAtSend;
+    if (sending && carry) {
+      // Guarded so a repeated render moves the text only once.
+      if (sending.home !== draftKey) {
+        // A confirmed seed was never stored, so the old key keeps the user's own draft.
+        if (!sending.seed) carriedFrom.current = sending.home;
+        sending.home = draftKey;
+      }
+    } else {
+      if (sending) sending.shown = false;
+      setPrompt(draftKey === undefined ? "" : readDraft(draftKey));
+      setImages([]);
+      setTextFiles([]);
+      setAttachmentError("");
+      setSeedConfirmation(undefined);
+    }
+  }
+
+  // Persist on every change rather than on a timer, so nothing writes after
+  // an account change has cleared storage and before this tree unmounts.
   useEffect(() => {
-    onDraftChange?.(Boolean(prompt || images.length));
-  }, [prompt, images.length, onDraftChange]);
+    if (carriedFrom.current !== undefined) {
+      writeDraft(carriedFrom.current, "");
+      carriedFrom.current = undefined;
+    }
+    if (draftKey === undefined || draftOwner !== draftKey) return;
+    // A seed awaiting confirmation is not the user's draft: storing it would
+    // overwrite what they typed and let a reload send it unconfirmed.
+    if (seedConfirmation !== undefined) return;
+    writeDraft(draftKey, prompt);
+  }, [draftKey, draftOwner, prompt, seedConfirmation]);
+
+  const hasDraftContent = Boolean(prompt) || images.length > 0 || textFiles.length > 0;
   useEffect(() => {
-    if (!clearDraftSignal) return;
+    onDraftChange?.(hasDraftContent);
+  }, [hasDraftContent, onDraftChange]);
+  // Only a signal that changes while mounted clears: a remount (back from an
+  // inspect-only chat) must not wipe the draft it just restored.
+  const handledClearSignal = useRef(clearDraftSignal);
+  useEffect(() => {
+    if (clearDraftSignal === handledClearSignal.current) return;
+    handledClearSignal.current = clearDraftSignal;
     setPrompt("");
     setImages([]);
+    setTextFiles([]);
     setAttachmentError("");
     setSeedConfirmation(undefined);
   }, [clearDraftSignal]);
+  const handledFocusSignal = useRef(focusComposerSignal);
+  useEffect(() => {
+    if (focusComposerSignal === handledFocusSignal.current) return;
+    handledFocusSignal.current = focusComposerSignal;
+    textarea.current?.focus();
+  }, [focusComposerSignal]);
 
   // A starter-prompt chip seeds the draft text without sending it — the
   // caller clears seedText (onSeedConsumed) once applied so re-clicking the
@@ -173,6 +326,16 @@ export function ChatComposer({
     onSeedConsumed?.();
     if (!seedRequiresConfirmation) textarea.current?.focus();
   }, [seedText]);
+  // "Add to chat" adds a transcript selection to the draft (and so to its
+  // stored copy) after a blank line, then hands focus to the box. The caller
+  // clears appendText once applied, so the same selection can be added again.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: onAppendConsumed is stable per caller and re-running on it would re-append after every consume
+  useEffect(() => {
+    if (appendText === undefined) return;
+    setPrompt((current) => (current ? `${current}\n\n${appendText}` : appendText));
+    onAppendConsumed?.();
+    textarea.current?.focus();
+  }, [appendText]);
   useEffect(() => {
     if (imageAttachmentsSupported || images.length === 0) return;
     setImages([]);
@@ -185,9 +348,9 @@ export function ChatComposer({
     action: ComposerEnterAction = working ? workingBehavior : "send",
     confirmedSeed = false,
   ): Promise<boolean> {
-    const nextPrompt = prompt.trim();
+    const typed = prompt.trim();
     if (
-      (!nextPrompt && images.length === 0) ||
+      (!typed && images.length === 0 && textFiles.length === 0) ||
       disabled ||
       submittingRef.current ||
       (seedConfirmation !== undefined && !confirmedSeed)
@@ -197,59 +360,148 @@ export function ChatComposer({
       setAttachmentError("Wait for the active run to finish before sending images.");
       return false;
     }
+    if (working && textFiles.length > 0) {
+      setAttachmentError("Wait for the active run to finish before sending attachments.");
+      return false;
+    }
+    let nextPrompt: string;
+    try {
+      nextPrompt = inlineTextAttachments(typed, textFiles);
+    } catch (error) {
+      setAttachmentError(
+        error instanceof Error ? error.message : "Attachments could not be added.",
+      );
+      return false;
+    }
     voice.stop();
+    const sending: InFlightSend = {
+      createdChatKeyAtSend: createdChatKey,
+      home: draftKey,
+      seed: confirmedSeed,
+      shown: true,
+      text: prompt,
+    };
+    inFlight.current = sending;
     submittingRef.current = true;
     setSubmitting(true);
     try {
-      if (await onSend(nextPrompt, action, images)) {
-        setPrompt("");
+      const accepted = await onSend(nextPrompt, action, images);
+      settleSwappedSend(sending, accepted);
+      if (accepted && sending.shown) {
+        // A confirmed seed never replaced the stored draft, so the user's own text comes back.
+        setPrompt(sending.seed && sending.home !== undefined ? readDraft(sending.home) : "");
         setImages([]);
+        setTextFiles([]);
         setAttachmentError("");
         setSeedConfirmation(undefined);
-        return true;
       }
-      return false;
+      return accepted;
     } finally {
+      inFlight.current = null;
       submittingRef.current = false;
       setSubmitting(false);
     }
   }
 
-  async function addImages(files: File[]) {
-    if (!imageAttachmentsSupported || files.length === 0) return;
+  /**
+   * A send that settles after the composer swapped to another chat. Its text
+   * stays stored under the chat it was typed in: an accepted send spends that
+   * copy, and a refused one keeps it. A copy the user has since edited or
+   * cleared stays as it is, and nothing is written back: by now storage may
+   * belong to another account.
+   */
+  function settleSwappedSend(sending: InFlightSend, accepted: boolean) {
+    const home = sending.home;
+    if (sending.shown || sending.seed || home === undefined) return;
+    if (latestDraftKey.current === home) {
+      if (accepted) setPrompt((current) => (current === sending.text ? "" : current));
+      return;
+    }
+    if (accepted && readDraft(home) === sending.text) writeDraft(home, "");
+  }
+
+  async function addFiles(files: File[]) {
+    if (files.length === 0) return;
     setReadingAttachments(true);
     setAttachmentError("");
+    const errors: string[] = [];
+    const imageFiles: File[] = [];
+    const textCandidates: File[] = [];
+    for (const file of files) {
+      const classification = classifyAttachment(file, { image: imageAttachmentsSupported });
+      if (classification.kind === "rejected") errors.push(classification.reason);
+      else if (classification.kind === "image") imageFiles.push(file);
+      else textCandidates.push(file);
+    }
     try {
-      const remaining = maxImageAttachmentCount - images.length;
-      if (remaining <= 0) {
-        setAttachmentError(`A prompt can include up to ${maxImageAttachmentCount} images.`);
-        return;
-      }
-      const selected = files.slice(0, remaining);
-      const results = await Promise.allSettled(selected.map(readImageAttachment));
-      if (!imageCapability.current) {
-        setAttachmentError("Images were not attached because this model does not support them.");
-        return;
-      }
-      const next = results.flatMap((result) =>
-        result.status === "fulfilled" ? [result.value] : [],
-      );
-      const errors = results.flatMap((result) =>
-        result.status === "rejected"
-          ? [result.reason instanceof Error ? result.reason.message : "An image could not be read."]
-          : [],
-      );
-      const selectedImages = acceptImageAttachments(images, next);
-      const { accepted } = selectedImages;
-      errors.push(...selectedImages.errors);
-      setImages((current) => [...current, ...accepted]);
-      if (files.length > selected.length) {
-        errors.push(`A prompt can include up to ${maxImageAttachmentCount} images.`);
-      }
-      setAttachmentError(errors.join(" "));
+      if (imageFiles.length > 0) errors.push(...(await addImages(imageFiles)));
+      if (textCandidates.length > 0) errors.push(...(await addTextFiles(textCandidates)));
     } finally {
       setReadingAttachments(false);
+      setAttachmentError(errors.join(" "));
     }
+  }
+
+  /** Studio's image path, unchanged: count, size, and total limits, and the model's capability. */
+  async function addImages(files: File[]): Promise<string[]> {
+    const remaining = maxImageAttachmentCount - images.length;
+    if (remaining <= 0) return [`A prompt can include up to ${maxImageAttachmentCount} images.`];
+    const selected = files.slice(0, remaining);
+    const results = await Promise.allSettled(selected.map(readImageAttachment));
+    if (!imageCapability.current) {
+      return ["Images were not attached because this model does not support them."];
+    }
+    const next = results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+    const errors = results.flatMap((result) =>
+      result.status === "rejected"
+        ? [result.reason instanceof Error ? result.reason.message : "An image could not be read."]
+        : [],
+    );
+    const selectedImages = acceptImageAttachments(images, next);
+    errors.push(...selectedImages.errors);
+    setImages((current) => [...current, ...selectedImages.accepted]);
+    if (files.length > selected.length) {
+      errors.push(`A prompt can include up to ${maxImageAttachmentCount} images.`);
+    }
+    return errors;
+  }
+
+  async function addTextFiles(files: File[]): Promise<string[]> {
+    let total = textFiles.reduce((sum, file) => sum + file.size, 0);
+    const errors: string[] = [];
+    const accepted: StagedTextFile[] = [];
+    // One at a time, checking the total first, so a large selection is never read in full.
+    for (const file of files) {
+      if (total + file.size > MAX_INLINE_TEXT_TOTAL_BYTES) {
+        errors.push(`${file.name}: adding this would exceed the 512 KiB total for attached text.`);
+        continue;
+      }
+      let text: string;
+      try {
+        text = await readTextAttachment(file);
+      } catch (error) {
+        errors.push(error instanceof Error ? error.message : "A file could not be read.");
+        continue;
+      }
+      total += file.size;
+      accepted.push({
+        id: crypto.randomUUID(),
+        name: file.name,
+        size: file.size,
+        text,
+        type: file.type,
+      });
+    }
+    setTextFiles((current) => [...current, ...accepted]);
+    return errors;
+  }
+
+  function clearDraftNow() {
+    setPrompt("");
+    setImages([]);
+    setTextFiles([]);
+    setAttachmentError("");
+    textarea.current?.focus();
   }
 
   function handleSubmit(event: FormEvent) {
@@ -274,6 +526,7 @@ export function ChatComposer({
     const action = resolveComposerAction({
       behavior: workingBehavior,
       shift: event.shiftKey,
+      steerAvailable,
       working,
     });
     if (event.key === "Enter" && action !== "newline") {
@@ -282,270 +535,349 @@ export function ChatComposer({
     }
   }
 
+  const attachDisabled = busy || readingAttachments || working;
+
+  function handleDragOver(event: DragEvent<HTMLDivElement>) {
+    if (!event.dataTransfer.types.includes("Files")) return;
+    event.preventDefault();
+    if (!attachDisabled) setIsDragOver(true);
+  }
+
+  function handleDragLeave(event: DragEvent<HTMLDivElement>) {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+    setIsDragOver(false);
+  }
+
+  function handleDrop(event: DragEvent<HTMLDivElement>) {
+    if (!event.dataTransfer.types.includes("Files")) return;
+    event.preventDefault();
+    setIsDragOver(false);
+    if (attachDisabled) return;
+    void addFiles(Array.from(event.dataTransfer.files));
+  }
+
+  function previewTextFile(file: StagedTextFile) {
+    const kind = localFileKind(file.name, file.type);
+    onPreviewFile?.({
+      content: file.text,
+      kind: kind === "code" || kind === "markdown" ? kind : "text",
+      name: file.name,
+      size: file.size,
+      type: file.type || "text/plain",
+    });
+  }
+
+  // One branch decides whether each pill reads the draft's settings or the
+  // live chat's, and what a pick does: a draft updates its configuration,
+  // a live chat changes its mode in place or forks for a model or effort.
   const update = (change: Partial<DraftChatConfiguration>) => {
     if (configuration && onConfigurationChange) {
       onConfigurationChange({ ...configuration, ...change });
     }
   };
+  const draftControlsDisabled = busy || working;
+  const mode: ComposerModeControl | undefined = configuration
+    ? {
+        disabled: draftControlsDisabled,
+        onChange: (next) => update({ mode: next }),
+        value: configuration.mode,
+      }
+    : liveMode && onLiveModeChange
+      ? { disabled: liveControlsDisabled, onChange: onLiveModeChange, value: liveMode }
+      : undefined;
+  const liveEffort = (liveModel?.reasoningEffort ??
+    "default") as DraftChatConfiguration["reasoningEffort"];
+  // No inventory means no choice to offer: render nothing rather than a
+  // permanently dead control.
+  const model: ComposerModelControl | undefined =
+    models.length === 0
+      ? undefined
+      : configuration
+        ? {
+            disabled: draftControlsDisabled,
+            effort: configuration.reasoningEffort,
+            groupedModels,
+            model: configuration.model,
+            onEffortChange: (effort) =>
+              update({ reasoningEffort: effort as DraftChatConfiguration["reasoningEffort"] }),
+            onModelChange: (next) => update({ model: next }),
+            onReset: () => update({ model: undefined, reasoningEffort: "default" }),
+          }
+        : liveModel && onForkModel
+          ? {
+              disabled: liveControlsDisabled || !canForkModel,
+              effort: liveEffort,
+              groupedModels,
+              model: liveModel,
+              onEffortChange: (effort) =>
+                onForkModel(liveModel, effort as DraftChatConfiguration["reasoningEffort"]),
+              onModelChange: (next) => next && onForkModel(next, liveEffort),
+            }
+          : undefined;
+  // A draft's execution choice. The prototype has no template catalog, so
+  // the picker keeps its own form, on the line under the pills and inline in
+  // the phone sheet.
+  const execution = configuration ? (
+    <ExecutionPicker
+      configuration={configuration}
+      disabled={draftControlsDisabled}
+      inventory={executionInventory}
+      onChange={(next) => update({ execution: next })}
+      onRefresh={onRefreshExecution}
+      status={executionStatus}
+    />
+  ) : undefined;
+  const executionLine = execution ?? pillRowDetail;
+  const showPillRow = Boolean(mode || model || executionLine || pillRowEnd);
 
   return (
     <form
-      className="mx-auto w-full max-w-3xl shrink-0 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-6 sm:pb-6"
+      className="mx-auto w-full max-w-3xl shrink-0 px-4 pb-4 max-[640px]:px-0 max-[640px]:pb-[env(safe-area-inset-bottom)] min-[640px]:px-6 min-[640px]:pb-6"
       onSubmit={handleSubmit}
     >
-      <div className="rounded-2xl border bg-card p-2 shadow-[0_8px_30px_rgb(0_0_0/0.06)] focus-within:ring-2 focus-within:ring-ring/40">
-        <Textarea
-          aria-label="Message Mecatl"
-          className="max-h-48 min-h-16 resize-none border-0 bg-transparent px-2 py-2 shadow-none focus-visible:ring-0 dark:bg-transparent"
-          disabled={busy}
-          onChange={(event) => setPrompt(event.target.value)}
-          onCompositionEnd={() => {
-            composing.current = false;
-            suppressCommitEnter.current = !sawCompositionEnter.current;
-            const sequence = compositionSequence.current;
-            queueMicrotask(() => {
-              if (compositionSequence.current === sequence) suppressCommitEnter.current = false;
-            });
-          }}
-          onCompositionStart={() => {
-            composing.current = true;
-            compositionSequence.current += 1;
-            sawCompositionEnter.current = false;
-            suppressCommitEnter.current = false;
-          }}
-          onKeyDown={handleKeyDown}
-          placeholder={
-            busy
-              ? "Mecatl is working…"
-              : working
-                ? workingBehavior === "steer"
-                  ? "Steer the agent…"
-                  : "Queue a message…"
-                : configuration
-                  ? "Start a new chat…"
-                  : "Send a message…"
-          }
-          ref={textarea}
-          value={prompt}
-        />
+      <div className="relative rounded-2xl bg-zinc-50 dark:bg-zinc-900 max-[640px]:rounded-b-none">
+        {/* biome-ignore lint/a11y/noStaticElementInteractions: a drop target, not a widget; the Attach button covers the same action for keyboard and screen-reader users. */}
+        <div
+          className={cn(
+            "relative rounded-2xl border bg-background transition-colors focus-within:border-zinc-400 dark:focus-within:border-zinc-600 max-[640px]:rounded-b-none",
+            composerFrameClass({
+              hasText: Boolean(prompt.trim()),
+              isDragOver,
+              isStreaming: working,
+              mode: configuration?.mode,
+            }),
+          )}
+          onDragLeave={handleDragLeave}
+          onDragOver={handleDragOver}
+          onDrop={handleDrop}
+        >
+          {voice.isListening && (
+            <div className="flex items-center gap-2 px-4 pt-3 pb-1">
+              <span aria-hidden="true" className="size-2 animate-pulse rounded-full bg-brand" />
+              <span className="text-xs font-medium text-brand">Listening</span>
+            </div>
+          )}
 
-        {images.length > 0 && (
-          <ul className="flex gap-2 overflow-x-auto px-2 pb-2">
-            {images.map((image) => (
-              <li
-                className="relative flex w-32 shrink-0 items-center gap-2 rounded-lg border bg-muted/25 p-1.5 pr-7"
-                key={image.id}
-              >
-                <button
-                  aria-label={`Preview ${image.name}`}
-                  className="shrink-0"
-                  onClick={() => onPreviewImage?.(image)}
-                  type="button"
-                >
-                  <img
-                    alt=""
-                    className="size-10 rounded-md object-cover"
-                    src={imageSource(image)}
-                  />
-                </button>
-                <Tooltip onlyWhenTruncated>
-                  <TooltipTrigger asChild>
-                    <span className="min-w-0 truncate text-xs">{image.name}</span>
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-[min(32rem,calc(100vw-2rem))] break-words">
-                    {image.name}
-                  </TooltipContent>
-                </Tooltip>
-                <button
-                  aria-label={`Remove ${image.name}`}
-                  className="absolute right-1 top-1 rounded-full p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-                  onClick={() =>
+          {isDragOver && (
+            <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-2xl bg-brand/10 dark:bg-brand/15">
+              <div className="flex items-center gap-2 text-brand">
+                <Paperclip aria-hidden="true" className="size-5" />
+                <span className="text-sm font-medium">Drop files to attach</span>
+              </div>
+            </div>
+          )}
+
+          {(images.length > 0 || textFiles.length > 0) && (
+            <ul aria-label="Attachments" className="flex flex-wrap gap-1.5 px-4 pt-3">
+              {images.map((image) => (
+                <AttachmentPill
+                  key={image.id}
+                  name={image.name}
+                  onPreview={onPreviewImage ? () => onPreviewImage(image) : undefined}
+                  onRemove={() =>
                     setImages((current) => current.filter((item) => item.id !== image.id))
                   }
-                  type="button"
-                >
-                  <X aria-hidden="true" className="size-3.5" />
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-
-        {attachmentError && (
-          <p className="px-2 pb-2 text-xs text-destructive" role="alert">
-            {attachmentError}
-          </p>
-        )}
-        {voice.errorMessage && (
-          <p className="px-2 pb-2 text-xs text-destructive" role="alert">
-            {voice.errorMessage}
-          </p>
-        )}
-        {voice.interimTranscript && (
-          <p className="px-2 pb-2 text-xs text-muted-foreground" role="status">
-            Hearing: {voice.interimTranscript}
-          </p>
-        )}
-
-        {configuration && (
-          <div className="hidden flex-wrap items-center gap-1.5 border-t px-1 pt-2 sm:flex">
-            <ComposerOptionMenu
-              disabled={busy || working}
-              items={MODE_OPTIONS}
-              label="Mode"
-              onSelect={(mode) => update({ mode })}
-              value={configuration.mode}
-              valueLabel={
-                MODE_OPTIONS.find((option) => option.value === configuration.mode)?.title ??
-                "Manual"
-              }
-            />
-
-            <ExecutionPicker
-              configuration={configuration}
-              disabled={busy || working}
-              inventory={executionInventory}
-              status={executionStatus}
-              onChange={(execution) => update({ execution })}
-              onRefresh={onRefreshExecution}
-            />
-
-            <div
-              aria-label={`Safety level: ${safetyLabel(safetyLevel)}. Managed by your organization.`}
-              className="flex h-8 items-center gap-1.5 rounded-full border bg-muted/30 px-3 text-xs"
-              role="status"
-              title="Safety level is managed by your organization"
-            >
-              <span className="font-medium">Safety</span>
-              <span className="text-muted-foreground">{safetyLabel(safetyLevel)}</span>
-            </div>
-
-            {/* No inventory means no choice to offer: render nothing rather
-                than a permanently dead control. The deployment's model
-                inventory arrives with the settings surface. */}
-            {models.length > 0 ? (
-              <ModelEffortMenu
-                disabled={busy || working}
-                effort={configuration.reasoningEffort}
-                groupedModels={groupedModels}
-                model={configuration.model}
-                onEffortChange={(reasoningEffort) =>
-                  update({
-                    reasoningEffort: reasoningEffort as DraftChatConfiguration["reasoningEffort"],
-                  })
-                }
-                onModelChange={(model) => update({ model })}
-                onReset={() => update({ model: undefined, reasoningEffort: "default" })}
-              />
-            ) : null}
-          </div>
-        )}
-
-        <div className="flex items-center justify-between gap-3 px-1 pb-1 pt-2">
-          <div className="flex min-w-0 items-center gap-2">
-            {onPreviewImage && imageAttachmentsSupported && (
-              <>
-                <input
-                  accept="image/*"
-                  aria-label="Choose images to attach"
-                  className="sr-only"
-                  onChange={(event) => {
-                    const files = Array.from(event.currentTarget.files ?? []);
-                    event.currentTarget.value = "";
-                    void addImages(files);
-                  }}
-                  multiple
-                  ref={fileInput}
-                  type="file"
+                  previewUrl={imageSource(image)}
+                  type={image.mimeType}
                 />
-                <Button
-                  aria-label="Attach images"
-                  className="size-11 shrink-0 rounded-full"
-                  disabled={busy || readingAttachments || working}
-                  onClick={() => fileInput.current?.click()}
-                  size="icon"
-                  title={
-                    working
-                      ? "Wait for the active run to finish before attaching images"
-                      : "Attach images"
+              ))}
+              {textFiles.map((file) => (
+                <AttachmentPill
+                  key={file.id}
+                  name={file.name}
+                  onPreview={onPreviewFile ? () => previewTextFile(file) : undefined}
+                  onRemove={() =>
+                    setTextFiles((current) => current.filter((item) => item.id !== file.id))
                   }
-                  type="button"
-                  variant="ghost"
-                >
-                  <Paperclip aria-hidden="true" />
-                </Button>
-              </>
-            )}
-            {configuration && (
-              <Button
-                aria-label="Chat options"
-                className="size-11 shrink-0 rounded-full sm:hidden"
-                disabled={busy || working}
-                onClick={() => setMobileOptionsOpen(true)}
-                ref={optionsButton}
-                size="icon"
-                type="button"
-                variant="ghost"
-              >
-                <SlidersHorizontal aria-hidden="true" />
-              </Button>
-            )}
-            <Button
-              aria-label={voice.isListening ? "Stop dictation" : "Start dictation"}
-              aria-pressed={voice.isListening}
-              className="size-11 shrink-0 rounded-full"
+                  type={file.type}
+                />
+              ))}
+            </ul>
+          )}
+
+          <div className="px-4 pt-4 pb-2">
+            <Textarea
+              aria-label="Message Mecatl"
+              className="field-sizing-content max-h-48 min-h-[4.5rem] resize-none rounded-none border-0 bg-transparent px-0 py-0 text-sm shadow-none placeholder:opacity-60 focus-visible:ring-0 dark:bg-transparent max-[640px]:max-h-[96px] max-[640px]:min-h-[1.75rem]"
               disabled={busy}
-              onClick={voice.toggle}
-              size="icon"
-              title={voice.isSupported ? "Dictate a message" : "Check dictation availability"}
-              type="button"
-              variant={voice.isListening ? "secondary" : "ghost"}
-            >
-              {voice.isListening ? <MicOff aria-hidden="true" /> : <Mic aria-hidden="true" />}
-            </Button>
-            <p className="hidden truncate text-xs text-muted-foreground md:block">
-              {working
-                ? `Enter to ${workingBehavior} · Shift + Enter does the opposite`
-                : "Enter to send · Shift + Enter for a line break"}
-            </p>
+              onChange={(event) => setPrompt(event.target.value)}
+              onCompositionEnd={() => {
+                composing.current = false;
+                suppressCommitEnter.current = !sawCompositionEnter.current;
+                const sequence = compositionSequence.current;
+                queueMicrotask(() => {
+                  if (compositionSequence.current === sequence) suppressCommitEnter.current = false;
+                });
+              }}
+              onCompositionStart={() => {
+                composing.current = true;
+                compositionSequence.current += 1;
+                sawCompositionEnter.current = false;
+                suppressCommitEnter.current = false;
+              }}
+              onKeyDown={handleKeyDown}
+              placeholder={
+                busy
+                  ? "Mecatl is working…"
+                  : working
+                    ? workingBehavior === "steer"
+                      ? "Steer the agent…"
+                      : "Queue a message…"
+                    : configuration
+                      ? "Start a new chat…"
+                      : "Send a message…"
+              }
+              ref={textarea}
+              value={prompt}
+            />
           </div>
-          <Button
-            aria-label={
-              working
-                ? `${workingBehavior === "queue" ? "Queue" : "Steer"} message`
-                : busy
-                  ? "Mecatl is working"
-                  : "Send message"
-            }
-            className="size-11 shrink-0 rounded-full"
-            disabled={busy || (!prompt.trim() && images.length === 0)}
-            size="icon"
-            type="submit"
-          >
-            {busy ? (
-              <LoaderCircle aria-hidden="true" className="animate-spin" />
-            ) : (
-              <ArrowUp aria-hidden="true" />
-            )}
-          </Button>
+
+          {attachmentError && (
+            <p className="px-4 pb-2 text-xs text-destructive" role="alert">
+              {attachmentError}
+            </p>
+          )}
+          {voice.errorMessage && (
+            <p className="px-4 pb-2 text-xs text-destructive" role="alert">
+              {voice.errorMessage}
+            </p>
+          )}
+          {voice.interimTranscript && (
+            <p className="px-4 pb-2 text-xs text-muted-foreground" role="status">
+              Hearing: {voice.interimTranscript}
+            </p>
+          )}
+
+          <div className="flex items-center gap-1 px-2 pb-2">
+            <input
+              aria-label="Choose files to attach"
+              className="sr-only"
+              multiple
+              onChange={(event) => {
+                const files = Array.from(event.currentTarget.files ?? []);
+                event.currentTarget.value = "";
+                void addFiles(files);
+              }}
+              ref={fileInput}
+              tabIndex={-1}
+              type="file"
+            />
+            <ComposerOptionsSheet
+              attachDisabled={attachDisabled}
+              disabled={busy || working}
+              execution={execution}
+              footer={sheetFooter}
+              mode={mode}
+              model={model}
+              onAddFile={() => fileInput.current?.click()}
+            />
+            <Button
+              aria-label="Attach files"
+              className="size-8 shrink-0 rounded-full text-muted-foreground hover:bg-muted/60 max-[640px]:size-11"
+              disabled={attachDisabled}
+              onClick={() => fileInput.current?.click()}
+              size="icon"
+              title={
+                working
+                  ? "Wait for the active run to finish before attaching files"
+                  : imageAttachmentsSupported
+                    ? "Attach images or text files"
+                    : "Attach text files"
+              }
+              type="button"
+              variant="ghost"
+            >
+              <Plus aria-hidden="true" />
+            </Button>
+            <Toggle
+              aria-label={voice.isListening ? "Stop dictation" : "Start dictation"}
+              // The ghost icon button's look: brand tint while listening, the
+              // ghost's hover ink in both states.
+              className={cn(
+                buttonVariants({ size: "icon", variant: "ghost" }),
+                "size-8 min-w-0 shrink-0 rounded-full border-0 bg-transparent px-0 text-muted-foreground shadow-none hover:bg-muted/60 max-[640px]:size-11 data-[state=on]:bg-brand/10 data-[state=on]:text-brand data-[state=on]:hover:bg-brand/20 data-[state=on]:hover:text-accent-foreground",
+              )}
+              disabled={busy}
+              onPressedChange={voice.toggle}
+              pressed={voice.isListening}
+              size="sm"
+              title={voice.isSupported ? "Dictate a message" : "Check dictation availability"}
+            >
+              {/* Sized here: the phone's 20px glyph rule covers size-4 icons and
+                  Button's bare ones, not a Toggle's. */}
+              <Mic aria-hidden="true" className="size-4" />
+            </Toggle>
+            <div className="ml-auto flex items-center gap-1">
+              <ClearDraftButton
+                className="max-[640px]:size-11"
+                disabled={busy}
+                hasDraft={hasDraftContent}
+                onClear={clearDraftNow}
+              />
+              <Button
+                aria-label={
+                  working
+                    ? `${workingBehavior === "queue" ? "Queue" : "Steer"} message`
+                    : busy
+                      ? "Mecatl is working"
+                      : "Send message"
+                }
+                className="size-8 shrink-0 rounded-full bg-brand text-brand-foreground hover:bg-brand/90 max-[640px]:size-11"
+                disabled={busy || (!prompt.trim() && images.length === 0 && textFiles.length === 0)}
+                size="icon"
+                type="submit"
+              >
+                {busy ? (
+                  <LoaderCircle aria-hidden="true" className="animate-spin" />
+                ) : (
+                  <ArrowUp aria-hidden="true" />
+                )}
+              </Button>
+            </div>
+          </div>
         </div>
+
+        {showPillRow && (
+          <section
+            aria-label="Chat configuration and usage"
+            className="-mt-4 rounded-b-2xl border border-t-0 border-zinc-300 bg-zinc-50 px-2 pt-5 pb-1.5 dark:border-zinc-700 dark:bg-zinc-900 max-[640px]:hidden"
+          >
+            <div className="hide-scrollbar @container flex items-center gap-1 overflow-x-auto">
+              {mode && (
+                <ComposerOptionMenu
+                  disabled={mode.disabled}
+                  items={MODE_OPTIONS}
+                  label="Mode"
+                  menuClassName="w-72"
+                  onSelect={mode.onChange}
+                  value={mode.value}
+                  valueLabel={modeTitle(mode.value)}
+                />
+              )}
+              {model && (
+                <ModelEffortMenu
+                  disabled={model.disabled}
+                  effort={model.effort}
+                  groupedModels={model.groupedModels}
+                  model={model.model}
+                  onEffortChange={model.onEffortChange}
+                  onModelChange={model.onModelChange}
+                  onReset={model.onReset}
+                />
+              )}
+              {pillRowEnd}
+            </div>
+            {/* Execution has no pill in the prototype, so it takes its own line
+                rather than pushing Model or Compact out of the pill row. */}
+            {executionLine && <div className="px-2.5 pt-1">{executionLine}</div>}
+          </section>
+        )}
       </div>
-      {configuration && (
-        <MobileConfigurationSheet
-          configuration={configuration}
-          executionInventory={executionInventory}
-          executionStatus={executionStatus}
-          onRefreshExecution={onRefreshExecution}
-          models={models}
-          onChange={update}
-          onOpenChange={setMobileOptionsOpen}
-          open={mobileOptionsOpen}
-          returnFocus={optionsButton}
-        />
-      )}
       <Dialog
         onOpenChange={(open) => {
-          if (!open) setSeedConfirmation(undefined);
+          // Closing during the confirmed send would store the seed over the
+          // user's draft, and an accepted send would then restore the seed.
+          if (!open && !submittingRef.current) setSeedConfirmation(undefined);
         }}
         open={seedConfirmation !== undefined}
       >
@@ -580,7 +912,12 @@ export function ChatComposer({
             {seedConfirmation}
           </p>
           <DialogFooter>
-            <Button onClick={() => setSeedConfirmation(undefined)} type="button" variant="outline">
+            <Button
+              disabled={submitting}
+              onClick={() => setSeedConfirmation(undefined)}
+              type="button"
+              variant="outline"
+            >
               Edit prompt
             </Button>
             <Button
@@ -594,125 +931,6 @@ export function ChatComposer({
         </DialogContent>
       </Dialog>
     </form>
-  );
-}
-
-function MobileConfigurationSheet({
-  configuration,
-  executionInventory,
-  executionStatus,
-  models,
-  onChange,
-  onRefreshExecution,
-  onOpenChange,
-  open,
-  returnFocus,
-}: {
-  configuration: DraftChatConfiguration;
-  executionInventory?: ExecutionTemplateInventory;
-  executionStatus: "disabled" | "loading" | "unavailable" | "ready";
-  models: ComposerModelOption[];
-  onChange: (change: Partial<DraftChatConfiguration>) => void;
-  onRefreshExecution?: () => void;
-  onOpenChange: (open: boolean) => void;
-  open: boolean;
-  returnFocus: React.RefObject<HTMLButtonElement | null>;
-}) {
-  const groupedModels = groupModels(models);
-  return (
-    <Sheet onOpenChange={onOpenChange} open={open}>
-      <SheetContent
-        className="max-h-[min(85dvh,40rem)] overflow-y-auto rounded-t-2xl p-5 sm:hidden"
-        onCloseAutoFocus={(event) => {
-          event.preventDefault();
-          returnFocus.current?.focus();
-        }}
-        side="bottom"
-      >
-        <div className="flex items-center justify-between gap-3">
-          <SheetTitle>Chat options</SheetTitle>
-          <SheetClose asChild>
-            <Button
-              aria-label="Close chat options"
-              className="size-11"
-              size="icon"
-              type="button"
-              variant="ghost"
-            >
-              <X aria-hidden="true" />
-            </Button>
-          </SheetClose>
-        </div>
-        <SheetDescription className="sr-only">
-          Choose the chat model, mode, and tools.
-        </SheetDescription>
-        <div className="mt-4 grid gap-4">
-          <MobileSelect
-            label="Mode"
-            onChange={(value) => onChange({ mode: value as DraftChatConfiguration["mode"] })}
-            value={configuration.mode}
-          >
-            <option value="default">Manual</option>
-            <option value="plan">Plan</option>
-            <option value="acceptEdits">Accept edits</option>
-          </MobileSelect>
-          {/* Model and effort belong to the deployment's model inventory. With
-              no inventory there is nothing to choose, so this sheet omits both
-              rather than showing a dead Model row beside a live Effort row that
-              applies to a model the user cannot pick. Same rule as the desktop
-              control above. */}
-          {models.length > 0 ? (
-            <>
-              <MobileSelect
-                label="Model"
-                onChange={(value) => {
-                  const selected = models.find((model) => modelKey(model) === value);
-                  onChange({
-                    model: selected
-                      ? { id: selected.id, providerId: selected.providerId }
-                      : undefined,
-                  });
-                }}
-                value={configuration.model ? modelKey(configuration.model) : ""}
-              >
-                <option value="">Default</option>
-                {[...groupedModels.entries()].map(([providerId, providerModels]) => (
-                  <optgroup key={providerId} label={humanize(providerId)}>
-                    {providerModels.map((model) => (
-                      <option key={modelKey(model)} value={modelKey(model)}>
-                        {model.label}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
-              </MobileSelect>
-              <MobileSelect
-                label="Effort"
-                onChange={(value) =>
-                  onChange({ reasoningEffort: value as DraftChatConfiguration["reasoningEffort"] })
-                }
-                value={configuration.reasoningEffort}
-              >
-                <option value="default">Auto</option>
-                <option value="low">Low</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
-                <option value="xhigh">Extra high</option>
-                <option value="max">Max</option>
-              </MobileSelect>
-            </>
-          ) : null}
-          <ExecutionPicker
-            configuration={configuration}
-            disabled={false}
-            inventory={executionInventory}
-            status={executionStatus}
-            onChange={(execution) => onChange({ execution })}
-            onRefresh={onRefreshExecution}
-          />
-        </div>
-      </SheetContent>
-    </Sheet>
   );
 }
 
@@ -809,61 +1027,79 @@ function ExecutionPicker({
   );
 }
 
-function MobileSelect({
-  children,
-  disabled,
-  label,
-  onChange,
-  value,
+/**
+ * The composer's attachment chip, from the prototype's `AttachmentPill`
+ * (`stack-08`): a thumbnail for an image or a file-kind icon otherwise, the
+ * name, and a remove button.
+ */
+export function AttachmentPill({
+  name,
+  onPreview,
+  onRemove,
+  previewUrl,
+  type,
 }: {
-  children: React.ReactNode;
-  disabled?: boolean;
-  label: string;
-  onChange: (value: string) => void;
-  value: string;
+  name: string;
+  onPreview?: () => void;
+  onRemove: () => void;
+  previewUrl?: string;
+  type?: string;
 }) {
+  const kind = fileKindMeta(name, type);
+  const KindIcon = kind.icon;
   return (
-    <label className="grid gap-1.5 text-sm">
-      <span className="font-medium">{label}</span>
-      <select
-        className="h-11 rounded-lg border bg-background px-3"
-        disabled={disabled}
-        onChange={(event) => onChange(event.target.value)}
-        value={value}
+    <li
+      className={cn(
+        "inline-flex h-7 max-w-full items-center gap-1.5 rounded-full border border-brand/30 bg-brand/5 pr-1.5 text-xs text-brand",
+        previewUrl ? "pl-1" : "pl-2.5",
+      )}
+    >
+      <button
+        aria-label={`Preview ${name}`}
+        className="inline-flex min-w-0 items-center gap-1.5 disabled:cursor-default"
+        disabled={!onPreview}
+        onClick={onPreview}
+        type="button"
       >
-        {children}
-      </select>
-    </label>
+        {previewUrl ? (
+          <img alt="" className="size-5 shrink-0 rounded-full object-cover" src={previewUrl} />
+        ) : (
+          <KindIcon aria-hidden="true" className="size-3 shrink-0" />
+        )}
+        <Tooltip onlyWhenTruncated>
+          <TooltipTrigger asChild>
+            <span className="max-w-40 truncate">{name}</span>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-[min(32rem,calc(100vw-2rem))] break-words">
+            {name}
+          </TooltipContent>
+        </Tooltip>
+      </button>
+      <button
+        aria-label={`Remove ${name}`}
+        className="flex size-4 shrink-0 items-center justify-center rounded-full hover:bg-brand/10"
+        onClick={onRemove}
+        type="button"
+      >
+        <X aria-hidden="true" className="size-3" />
+      </button>
+    </li>
   );
-}
-
-function modelKey(model: { id: string; providerId: string }): string {
-  return JSON.stringify([model.providerId, model.id]);
-}
-
-function humanize(value: string): string {
-  return value
-    .split(/[-_]+/u)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
-function safetyLabel(value: string): string {
-  if (!value) return "Managed";
-  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
 }
 
 export function resolveComposerAction({
   behavior,
   shift,
+  steerAvailable = true,
   working,
 }: {
   behavior: EnterSendBehavior;
   shift: boolean;
+  steerAvailable?: boolean;
   working: boolean;
 }): ComposerEnterAction {
   if (!working) return shift ? "newline" : "send";
+  if (!steerAvailable) return "queue";
   if (!shift) return behavior;
   return behavior === "queue" ? "steer" : "queue";
 }

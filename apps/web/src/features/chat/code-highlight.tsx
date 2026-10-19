@@ -129,7 +129,16 @@ function plainLine(text: string): HighlightLine {
  * arrive — same element structure either way); Shiki's tokens swap in once
  * the grammar has loaded.
  */
-export function HighlightedCode({ code, lang = "text" }: { code: string; lang?: string }) {
+export function HighlightedCode({
+  code,
+  lang = "text",
+  tone = "theme",
+}: {
+  code: string;
+  lang?: string;
+  /** "theme" follows the page theme; "dark" keeps the dark colours on a dark panel in both. */
+  tone?: "dark" | "theme";
+}) {
   const [highlighted, setHighlighted] = useState<HighlightLine[] | null>(null);
 
   useEffect(() => {
@@ -158,7 +167,9 @@ export function HighlightedCode({ code, lang = "text" }: { code: string; lang?: 
           {line.map((token, tokenIndex) => (
             <span
               className={cn(
-                "text-[color:var(--sl)] dark:text-[color:var(--sd)]",
+                tone === "dark"
+                  ? "text-[color:var(--sd)]"
+                  : "text-[color:var(--sl)] dark:text-[color:var(--sd)]",
                 token.italic && "italic",
                 token.bold && "font-semibold",
               )}

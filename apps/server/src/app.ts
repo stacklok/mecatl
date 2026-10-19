@@ -6,7 +6,7 @@ import {
   problemDetailsSchema,
   runtimeResponseSchema,
 } from "@mecatl-studio/contracts";
-import { MecatlError } from "@stacklok-oss/mecatl-sdk";
+import { MecatlError, ServerFeature } from "@stacklok-oss/mecatl-sdk";
 import { HTTPException } from "hono/http-exception";
 import type { AuthenticationService } from "./auth/service.js";
 import { studioBuildId as bakedStudioBuildId } from "./build-info.js";
@@ -46,7 +46,7 @@ import { registerScheduleRoutes } from "./routes/schedules.js";
 import { registerSettingsRoutes } from "./routes/settings.js";
 import { registerStatusRoutes } from "./routes/status.js";
 import { registerStorageRoutes } from "./routes/storage.js";
-import { readInstalledSdkVersion } from "./sdk-version.js";
+import { readInstalledSdkVersion, reportedSdkVersion } from "./sdk-version.js";
 
 const sdkVersion = readInstalledSdkVersion();
 
@@ -109,6 +109,7 @@ export interface AppDependencies {
 
 export function createApp(dependencies: AppDependencies = {}) {
   const studioBuildId = dependencies.studioBuildId ?? bakedStudioBuildId;
+  const reportedSdk = reportedSdkVersion(sdkVersion, studioBuildId);
   // Every route's request validation fails as RFC 9457 problem details, never
   // the validator's raw error object; a route may still install its own hook.
   const app = new OpenAPIHono<AppEnv>({
@@ -216,7 +217,7 @@ export function createApp(dependencies: AppDependencies = {}) {
       return context.json(
         {
           ...runtime.snapshot(),
-          ...(sdkVersion === undefined ? {} : { sdkVersion }),
+          ...(reportedSdk === undefined ? {} : { sdkVersion: reportedSdk }),
           ...(studioBuildId === undefined ? {} : { studioBuildId }),
         },
         200,
@@ -232,7 +233,9 @@ export function createApp(dependencies: AppDependencies = {}) {
 
   const chat =
     dependencies.chat ??
-    (runtime === undefined ? undefined : createMecatlChatService(runtime.client));
+    (runtime === undefined
+      ? undefined
+      : createMecatlChatService(runtime.client, () => runtime.compatibility()));
   registerChatRoutes(app, chat, dependencies.activity);
   // Capability read LIVE from the negotiated snapshot: false until negotiation
   // completes or when the deployment has scheduling off.
@@ -392,8 +395,11 @@ export function createApp(dependencies: AppDependencies = {}) {
  */
 export function knowledgeCapabilities(runtime: MecatlRuntime): KnowledgeCapabilities {
   let capabilities: ReturnType<MecatlRuntime["snapshot"]>["capabilities"] | undefined;
+  let features: readonly string[] = [];
   try {
-    capabilities = runtime.snapshot().capabilities;
+    const snapshot = runtime.snapshot();
+    capabilities = snapshot.capabilities;
+    features = snapshot.features;
   } catch {
     capabilities = undefined;
   }
@@ -413,6 +419,7 @@ export function knowledgeCapabilities(runtime: MecatlRuntime): KnowledgeCapabili
       user_model: consolidation(capabilities?.manualDream?.userModel),
     },
     reflection: capabilities?.reflection ?? false,
+    skillFiles: features.includes(ServerFeature.SkillFiles),
     skills: capabilities?.skills ?? false,
     userModel: capabilities?.userModel ?? false,
   };

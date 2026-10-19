@@ -47,11 +47,12 @@ func TestMecatuiQuieterToolCalls_Scenario4_LongRunAnchorsAndSelection(t *testing
 	}
 	m.conv.appendAssistant("ordinary assistant block after the run")
 	m.phase = phaseIdle
+	m, _ = pressKey(m, f9) // retain the individual-line selection/reflow regression
 	m.refreshView()
 
 	for _, width := range []int{28, 100} {
 		m.rend.setWidth(width)
-		frame := m.rend.renderConversationFrame(&m.conv.scrollback, false)
+		frame := m.rend.renderConversationFrame(&m.conv.scrollback, true)
 		firstID := toolBlockID(t, m.conv.scrollback, "settled-000")
 		assertLongRunGap(t, frame, userID, assistantID, 1)
 		assertLongRunGap(t, frame, assistantID, noticeID, 1)
@@ -72,7 +73,7 @@ func TestMecatuiQuieterToolCalls_Scenario4_LongRunAnchorsAndSelection(t *testing
 			t.Fatalf("width %d live call lost its bounded card: %q", width, liveRows)
 		}
 		plain := ansi.Strip(strings.Join(frame.lines, "\n"))
-		if !strings.Contains(plain, "long run request") || !strings.Contains(plain, "starting the long run") || !strings.Contains(plain, "readable long-run notice") || !strings.Contains(plain, "ordinary assistant block") {
+		if !strings.Contains(plain, "long run request") || !strings.Contains(plain, "starting the long run") || !strings.Contains(plain, "history compacted") || !strings.Contains(plain, "long-run notice") || !strings.Contains(plain, "ordinary assistant block") {
 			t.Fatalf("width %d lost ordinary readable conversation blocks:\n%s", width, plain)
 		}
 	}
@@ -102,7 +103,7 @@ func TestMecatuiQuieterToolCalls_Scenario4_LongRunAnchorsAndSelection(t *testing
 	m.refreshView()
 	for _, width := range []int{28, 100} {
 		m.rend.setWidth(width)
-		frame := m.rend.renderConversationFrame(&m.conv.scrollback, false)
+		frame := m.rend.renderConversationFrame(&m.conv.scrollback, true)
 		rows := blockRows(frame, liveID)
 		if len(rows) != 1 || strings.ContainsAny(rows[0], "╭╮╰╯┌┐└┘─│") {
 			t.Fatalf("width %d settled preceding call = %q, want one borderless line", width, rows)
