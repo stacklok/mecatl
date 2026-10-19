@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"iter"
 	"strings"
 	"testing"
@@ -287,6 +288,90 @@ func TestFireWallClockDeadlineTerminatesWithStopTimeout(t *testing.T) {
 	}
 	if err := sess.Interrupt(); err != nil {
 		t.Errorf("Interrupt on the persisted cancelled session failed: %v (the snapshot must be Interrupt-recoverable)", err)
+	}
+}
+
+// ctxLoadStore is a jsonlstore whose Load honors context cancellation, as a
+// network-backed store (Redis) does.
+type ctxLoadStore struct{ *jsonlstore.Store }
+
+func (s ctxLoadStore) Load(ctx context.Context, id session.SessionID) (*session.Session, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return s.Store.Load(ctx, id)
+}
+
+// TestFireDeadlineDuringRunAdmissionNamesDeadline: a per-fire deadline that
+// lapses before the run is admitted fails the fire (the run never started, so it
+// is not a StopTimeout), and the failure names the deadline rather than the
+// admission error its expired context caused. GetSession reports any load
+// failure as not-found, which previously surfaced as "session not found" and
+// mapped FireNow to codes.NotFound.
+func TestFireDeadlineDuringRunAdmissionNamesDeadline(t *testing.T) {
+	ctx := context.Background()
+	inner, err := jsonlstore.New(t.TempDir())
+	if err != nil {
+		t.Fatalf("jsonlstore.New: %v", err)
+	}
+	store := ctxLoadStore{inner}
+	schedStore := store.ScheduleStore()
+	const schedName = "admission-timeout"
+	if err := schedStore.Save(ctx, port.Schedule{
+		Spec: port.ScheduleSpec{
+			Name:           schedName,
+			Prompt:         "never admitted",
+			EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: t.TempDir(), Revision: "in-tree-v1"},
+			PlacementScope: "legacy-local",
+			FireTimeout:    time.Nanosecond,
+			Trigger:        port.TriggerSpec{OneShot: time.Now().Add(-1 * time.Second)},
+		},
+		State: port.ScheduleState{NextFireAt: time.Now().Add(-1 * time.Second), Enabled: true},
+	}); err != nil {
+		t.Fatalf("save schedule: %v", err)
+	}
+
+	llm := blockingFireProvider{}
+	engine := agent.NewEngine(agent.Deps{
+		LLM:     llm,
+		Catalog: tool.NewCatalog(),
+		Policy:  permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
+		Model:   "test-model",
+		Store:   store,
+	})
+	svc, err := newTestServerService(server.Config{
+		Engine:              engine,
+		Store:               store,
+		Now:                 time.Now,
+		DefaultCapabilities: llm.Capabilities(),
+		EventLog:            store,
+		Diagnostics:         port.NopDiagnostics{},
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	defer svc.Close()
+
+	sched := scheduler.New(scheduler.Config{
+		Store:       schedStore,
+		Clock:       wallclock.Clock{},
+		Diagnostics: port.NopDiagnostics{},
+		Fire:        makeFireFunc(svc, schedStore, defaultFireTimeout, nil),
+	})
+
+	fire, fireErr := sched.FireNow(ctx, schedName, time.Now())
+	const want = "scheduled fire wall-clock deadline of 1ns lapsed before the run started"
+	if fireErr == nil || fireErr.Error() != want {
+		t.Errorf("FireNow err = %v, want %q", fireErr, want)
+	}
+	if errors.Is(fireErr, server.ErrNotFound) {
+		t.Errorf("FireNow err wraps ErrNotFound; the schedule exists and the RPC must not report absence")
+	}
+	if fire.Stop != session.StopError || fire.Err != want {
+		t.Errorf("fire Stop=%q Err=%q, want %q %q", fire.Stop, fire.Err, session.StopError, want)
+	}
+	if fire.SessionID == "" {
+		t.Errorf("fire SessionID empty; the created fire session must stay discoverable")
 	}
 }
 

@@ -294,12 +294,40 @@ func TestScheduleFireNowOneShotExhaustedWireMapping(t *testing.T) {
 // pins the delivery contract: the schedule.* lifecycle is durable-log-only
 // (pull-only via GetFire/ListFires), emitted from composition via the
 // EmitScheduleEvent callback.
+//
+// The session-lease case pins the multi-replica path: the FireFunc closes the
+// fire session (releasing its lease) before the scheduler emits, so the emit
+// must hold the lease itself and release it afterwards.
 func TestScheduleEventLogContainsEvScheduleFired(t *testing.T) {
+	t.Run("no session lease", func(t *testing.T) {
+		assertScheduleFiredEventLogged(t, nil)
+	})
+	t.Run("session lease", func(t *testing.T) {
+		lease := &fakeLease{}
+		assertScheduleFiredEventLogged(t, lease)
+		lease.mu.Lock()
+		acquires, releases := lease.acquires, lease.releases
+		lease.mu.Unlock()
+		if acquires == 0 || releases != acquires {
+			t.Fatalf("session lease acquires=%d releases=%d, want every acquired lease released", acquires, releases)
+		}
+	})
+}
+
+func assertScheduleFiredEventLogged(t *testing.T, lease *fakeLease) {
+	t.Helper()
 	ctx := context.Background()
 	storeDir := t.TempDir()
 
 	llm := mockllm.New(mockllm.TextTurn("scheduled fire result"))
-	svc, _, store, cleanup := buildScheduleService(t, storeDir, llm)
+	svc, _, store, cleanup := buildScheduleService(t, storeDir, llm, func(cfg *server.Config) {
+		if lease != nil {
+			cfg.SessionLease = lease
+			cfg.LeaseOwner = "schedule-event-test"
+			cfg.LeaseTTL = time.Hour
+			cfg.LeaseRenewInterval = time.Hour
+		}
+	})
 	defer cleanup()
 	srv := server.NewScheduleServer(svc)
 
@@ -391,8 +419,9 @@ func TestScheduleNoSchedulerVariants(t *testing.T) {
 // into the internal/app package (whose test seams are unexported). The FireFunc
 // mirrors makeFireFunc: CreateSessionWithProfile → StartScheduledRunContent → drain to the
 // terminal EvResult, returning the ScheduleFire carrying the stop reason. The
-// returned cleanup stops the scheduler + closes the service.
-func buildScheduleService(t *testing.T, storeDir string, llm *mockllm.Provider) (*server.Service, *scheduler.Scheduler, *jsonlstore.Store, func()) {
+// returned cleanup stops the scheduler + closes the service. configure, when
+// given, adjusts the server.Config before the Service is built.
+func buildScheduleService(t *testing.T, storeDir string, llm *mockllm.Provider, configure ...func(*server.Config)) (*server.Service, *scheduler.Scheduler, *jsonlstore.Store, func()) {
 	t.Helper()
 	store, err := jsonlstore.New(storeDir)
 	if err != nil {
@@ -409,7 +438,7 @@ func buildScheduleService(t *testing.T, storeDir string, llm *mockllm.Provider) 
 		// session is durable as completed for the pull-only GetSession assertion.
 		Store: store,
 	})
-	svc, err := newPlacementTestService(server.Config{
+	cfg := server.Config{
 		Engine:           engine,
 		Store:            store,
 		SharedEngineRoot: "/workspace",
@@ -418,7 +447,11 @@ func buildScheduleService(t *testing.T, storeDir string, llm *mockllm.Provider) 
 		DefaultCapabilities: llm.Capabilities(),
 		EventLog:            store, // jsonlstore implements EventLog
 		Diagnostics:         port.NopDiagnostics{},
-	})
+	}
+	for _, fn := range configure {
+		fn(&cfg)
+	}
+	svc, err := newPlacementTestService(cfg)
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}

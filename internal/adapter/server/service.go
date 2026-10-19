@@ -8695,10 +8695,17 @@ const autoApprovePollInterval = 10 * time.Millisecond
 // untouched; a lease newly acquired by this mutation is released on every exit.
 // The caller must hold runEntryMu for id.
 func (s *Service) acquireMutationLease(ctx context.Context, id session.SessionID) (func(), error) {
+	return s.acquireScopedLease(id, func() error { return s.acquireLease(ctx, id) })
+}
+
+// acquireScopedLease runs acquire and returns a cleanup that releases the lease
+// only when this call newly installed it; a lease already held for the session
+// lifetime is left untouched. The caller must hold runEntryMu for id.
+func (s *Service) acquireScopedLease(id session.SessionID, acquire func() error) (func(), error) {
 	s.mu.Lock()
 	_, preHeld := s.heldLeases[id]
 	s.mu.Unlock()
-	if err := s.acquireLease(ctx, id); err != nil {
+	if err := acquire(); err != nil {
 		return func() {}, err
 	}
 	s.mu.Lock()
@@ -8745,19 +8752,7 @@ func (s *Service) acquireMutationLease(ctx context.Context, id session.SessionID
 // a new admission, so a shutting-down replica settling one before it exits is
 // safe and desirable, not something Drain() needs to steer away from.
 func (s *Service) acquireMutationLeaseForStaleSettle(ctx context.Context, id session.SessionID) (func(), error) {
-	s.mu.Lock()
-	_, preHeld := s.heldLeases[id]
-	s.mu.Unlock()
-	if err := s.acquireLeaseCore(ctx, id, true); err != nil {
-		return func() {}, err
-	}
-	s.mu.Lock()
-	_, held := s.heldLeases[id]
-	s.mu.Unlock()
-	if preHeld || !held {
-		return func() {}, nil
-	}
-	return func() { s.releaseLease(id) }, nil
+	return s.acquireScopedLease(id, func() error { return s.acquireLeaseCore(ctx, id, true) })
 }
 
 func (s *Service) mutationLeaseHeld(id session.SessionID) bool {

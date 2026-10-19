@@ -205,11 +205,27 @@ func (s *Service) FireNow(ctx context.Context, name string) (port.ScheduleFire, 
 // FireNow (every durable append path stamps). ctx is the
 // caller's; it is cancel-detached here so a fire's finished/cancelled ctx cannot
 // abort the durable append, while its VALUES (the principal) survive.
+//
+// The fire closes its session, releasing the session lease, before the
+// scheduler reports the outcome, so the append holds the lease itself for its
+// duration. reaffirmLease skips the run-entry drain gate: a fire settled during
+// shutdown still records its terminal event.
 func (s *Service) EmitScheduleEvent(ctx context.Context, payload session.SchedulePayload) {
-	if payload.SessionID == "" {
+	if payload.SessionID == "" || s.cfg.EventLog == nil {
 		return
 	}
-	recorder := NewRunEventRecorder(context.WithoutCancel(ctx), s, payload.SessionID)
+	ctx = context.WithoutCancel(ctx)
+	id := payload.SessionID
+	unlock := s.runEntryMu.lock(id)
+	defer unlock()
+	release, err := s.acquireScopedLease(id, func() error { return s.reaffirmLease(ctx, id) })
+	if err != nil {
+		s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "schedule event not recorded: session lease unavailable",
+			"session", string(id), "kind", payload.Kind, "err", err.Error())
+		return
+	}
+	defer release()
+	recorder := NewRunEventRecorder(ctx, s, id)
 	recorder.Observe(session.Event{
 		Type:     scheduleEventType(payload.Kind),
 		Schedule: &payload,

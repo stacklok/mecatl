@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -181,6 +182,19 @@ func makeFireFuncWithCancel(svc *server.Service, store port.ScheduleStore, defau
 
 		run, err := svc.StartScheduledRunContent(runCtx, sess.ID, prompt, sched.Spec.Parts)
 		if err != nil {
+			// A fire deadline that lapsed during admission surfaces as whatever the
+			// expired context broke first (a store load reads as not-found).
+			// The run never started, so it stays a failed fire, but name the
+			// deadline instead of that misleading cause. An earlier caller
+			// deadline would be runCtx's deadline instead, so it is not renamed.
+			if ctxDeadline, ok := runCtx.Deadline(); ok && ctxDeadline.Equal(deadline) &&
+				errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+				svc.Diagnostics().Log(context.WithoutCancel(ctx), port.LevelWarn,
+					"scheduled fire deadline lapsed before run admission",
+					"schedule", literalName, "fire", fireID, "err", err.Error())
+				err = fmt.Errorf("scheduled fire wall-clock deadline of %s lapsed before the run started",
+					deadline.Sub(startedAt))
+			}
 			return fireFailed(sched, now, string(sess.ID), err), err
 		}
 		// Publish the real session only after run admission holds its lease.
