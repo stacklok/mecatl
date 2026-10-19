@@ -424,6 +424,15 @@ func TestPendingApprovalControlsClassifyClosedRPCFailures(t *testing.T) {
 				if !IsPendingApprovalFailure(err, tt.kind) || err.Error() == "private backend detail" {
 					t.Fatalf("%s error = %v, want kind %q", name, err, tt.kind)
 				}
+				// Only a FailedPrecondition keeps the server's reason, behind an
+				// explicit accessor, so the user can see why the ask cannot resume.
+				wantDetail := ""
+				if tt.code == codes.FailedPrecondition {
+					wantDetail = "private backend detail"
+				}
+				if got := PendingApprovalFailureDetail(err); got != wantDetail {
+					t.Fatalf("%s detail = %q, want %q", name, got, wantDetail)
+				}
 			}
 		})
 	}

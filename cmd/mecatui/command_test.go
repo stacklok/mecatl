@@ -118,8 +118,8 @@ func (*sessionsLaunchCreator) GetSession(context.Context, string) (client.Sessio
 	return client.SessionSnapshot{}, nil
 }
 
-func (*sessionsLaunchCreator) SetMode(context.Context, string, string) (string, error) {
-	return "", nil
+func (*sessionsLaunchCreator) SetMode(context.Context, string, string) (client.ModeResult, error) {
+	return client.ModeResult{}, nil
 }
 
 func (*sessionsLaunchCreator) ForkSession(context.Context, string, string) (string, error) {

@@ -31,6 +31,16 @@ type pendingApprovalRecovery struct {
 	resolved      bool
 	resolving     bool
 	cancelled     bool
+	// verdictRefused records that the server refused a verdict for this ask
+	// (FailedPrecondition) while the refused-mode recovery is available. No
+	// verdict is resent; the modal stays open for ModeSwitch or exit.
+	verdictRefused bool
+	// modeTried is the ModeSwitch cycle token of the last recovery mode change,
+	// so a refused one moves on to the next lower mode.
+	modeTried string
+	// notice is the recovery's footer line while the approval modal is open,
+	// where the ordinary status line is not shown.
+	notice string
 }
 
 type pendingApprovalWatchOpenedMsg struct {
@@ -98,7 +108,7 @@ func pendingApprovalRecvCmd(generation uint64, watch PendingApprovalWatch) tea.C
 }
 
 func (m *Model) resolvePendingApprovalCmd(verdict client.Verdict) tea.Cmd {
-	if m.pendingRecovery == nil || m.pendingRecovery.resolving || m.pendingRecovery.resolved {
+	if m.pendingRecovery == nil || m.pendingRecovery.resolving || m.pendingRecovery.resolved || m.recoveryVerdictsBlocked() {
 		return nil
 	}
 	m.pendingRecovery.resolving = true
@@ -205,6 +215,11 @@ func (m Model) updatePendingApprovalWatchOpened(msg pendingApprovalWatchOpenedMs
 	ask := recovery.approval
 	mm, cmd := m.applyPermissionAsk(client.PermissionAskMsg{RunID: ask.RunID, AskID: ask.AskID, Tool: ask.Tool, Args: ask.Args, Reason: ask.Reason, ExpectedRunID: ask.RunID, Recovery: true})
 	m = mm.(Model)
+	if m.recoveryModeSwitchAvailable() && m.activeModeAboveServerPosture() {
+		recovery.notice = "approving will be refused: mode " + m.activeMode + " is above this server's limit · " +
+			firstKey(m.keys.ModeSwitch, "shift+tab") + " switches to a lower mode and cancels the request"
+		m.refreshView()
+	}
 	return m, tea.Batch(cmd, pendingApprovalRecvCmd(recovery.generation, msg.watch)), true
 }
 
@@ -215,6 +230,9 @@ func (m Model) updatePendingApprovalResolved(msg pendingApprovalResolvedMsg) (te
 	}
 	recovery.resolving = false
 	if msg.err != nil {
+		if client.IsPendingApprovalFailure(msg.err, client.PendingApprovalNotRecoverable) {
+			return m.refusedPendingApprovalVerdict(client.PendingApprovalFailureDetail(msg.err)), nil, true
+		}
 		return m.refusePendingApprovalRecovery("the pending approval changed or could not be acknowledged; no verdict will be resent"), nil, true
 	}
 	recovery.resolved = true
@@ -248,6 +266,12 @@ func (m Model) updatePendingApprovalWatch(msg pendingApprovalWatchMsg) (tea.Mode
 	if msg.event.Kind == client.PendingApprovalEventResolved && !recovery.resolved && !recovery.resolving {
 		return m.refusePendingApprovalRecovery("the pending approval changed before your choice; no verdict was sent"), nil, true
 	}
+	if msg.event.Kind == client.PendingApprovalEventRetracted && m.recoveryModeSwitch != "" {
+		// The user's own refused-mode recovery withdraws the ask before the
+		// SetMode response may arrive. onRecoveryModeChanged closes the modal;
+		// a terminal arriving first settles the run through the ordinary path.
+		return m, pendingApprovalRecvCmd(recovery.generation, recovery.watch), true
+	}
 	if msg.event.Kind == client.PendingApprovalEventRetracted {
 		text := "the pending approval was withdrawn; no verdict was sent"
 		if recovery.resolving || recovery.resolved {
@@ -277,6 +301,27 @@ func (m Model) updatePendingApprovalWatch(msg pendingApprovalWatchMsg) (tea.Mode
 		return m, eventCmd, true
 	}
 	return m, tea.Batch(eventCmd, pendingApprovalRecvCmd(recovery.generation, recovery.watch)), true
+}
+
+// refusedPendingApprovalVerdict handles a FailedPrecondition verdict refusal:
+// the server ran nothing, typically because the stored mode is no longer
+// admitted. With the refused-mode recovery available, the modal reopens with
+// verdicts blocked so ModeSwitch can cancel the request; otherwise the recovery
+// ends with the server's reason. No verdict is ever resent.
+func (m Model) refusedPendingApprovalVerdict(detail string) Model {
+	text := recoveryRefusedVerdictNotice(detail)
+	if !m.caps.RefusedModeRecovery || m.deps.DebugTarget != "" || m.deps.Session == nil {
+		return m.refusePendingApprovalRecovery(text + "; no verdict will be resent")
+	}
+	if !(&m).restoreRefusedApproval(nil) {
+		return m.refusePendingApprovalRecovery(text + "; no verdict will be resent")
+	}
+	m.pendingRecovery.verdictRefused = true
+	modeKey := firstKey(m.keys.ModeSwitch, "shift+tab")
+	m.pendingRecovery.notice = text + " · " + modeKey + " switches to a lower mode and cancels it"
+	m.statusMsg = m.deps.Theme.Style("errorText").Render(text)
+	m.refreshView()
+	return m
 }
 
 func (m *Model) applyPendingApprovalEventMessage(message tea.Msg, recovery *pendingApprovalRecovery) tea.Cmd {

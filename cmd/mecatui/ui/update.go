@@ -1059,6 +1059,10 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	case clipboardErrMsg:
 		return m.onClipboardErr(msg), nil, true
 	case client.ModeChangedMsg:
+		if m.recoveryModeSwitch != "" && msg.SessionID == m.sessionID && client.ModeString(client.ModeFromString(msg.Requested)) == m.recoveryModeSwitch {
+			mm, cmd := m.onRecoveryModeChanged(msg, m.recoveryModeSwitch)
+			return mm, cmd, true
+		}
 		return m.onModeChanged(msg), nil, true
 	case client.StreamClosedMsg:
 		// Clear still owns the handoff, but the source stream can settle before the
@@ -2354,11 +2358,24 @@ func (m Model) onGlobalLifecycleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bo
 }
 
 func (m Model) onPendingApprovalRecoveryKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
-	if m.pendingRecovery == nil || m.pendingRecovery.resolving || m.pendingRecovery.resolved || !key.Matches(msg, m.keys.Close) {
+	if m.pendingRecovery == nil || m.pendingRecovery.resolving || m.pendingRecovery.resolved {
 		return m, nil, false
 	}
-	(&m).retirePendingApprovalRecovery()
-	return m, tea.Quit, true
+	if key.Matches(msg, m.keys.Close) {
+		(&m).retirePendingApprovalRecovery()
+		return m, tea.Quit, true
+	}
+	// Ahead of the approval surface, which owns every other key: ModeSwitch asks
+	// the refused-mode recovery for a lower mode, and verdict keys are swallowed
+	// while that change is in flight or after the server refused a verdict.
+	if key.Matches(msg, m.keys.ModeSwitch) && m.recoveryModeSwitchAvailable() {
+		mm, cmd := m.switchRecoveryMode()
+		return mm, cmd, true
+	}
+	if m.recoveryVerdictsBlocked() && isApprovalVerdictKey(msg, m.keys) {
+		return m, nil, true
+	}
+	return m, nil, false
 }
 
 // selection owner is active.
@@ -4309,6 +4326,10 @@ func (m Model) onMouseMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.MouseWheelMsg:
 			return m.onMouseWheel(msg)
 		case tea.MouseClickMsg:
+			if m.recoveryVerdictsBlocked() {
+				// A button click would send the verdict the recovery withholds.
+				return m, nil
+			}
 			return m.onMousePress(msg.Mouse())
 		case tea.MouseMotionMsg, tea.MouseReleaseMsg:
 			return m, nil

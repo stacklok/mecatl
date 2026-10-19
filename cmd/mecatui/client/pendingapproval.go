@@ -44,11 +44,32 @@ const (
 )
 
 type pendingApprovalError struct {
-	kind PendingApprovalFailure
-	text string
+	kind   PendingApprovalFailure
+	text   string
+	detail string
 }
 
 func (e *pendingApprovalError) Error() string { return e.text }
+
+// PendingApprovalFailureDetail returns the server's reason for a
+// PendingApprovalNotRecoverable control refusal, or "" for every other error.
+// Only that category keeps it: a FailedPrecondition is the server explaining
+// why the exact ask cannot resume (for example, a stored mode it no longer
+// admits), which the user needs in order to recover.
+func PendingApprovalFailureDetail(err error) string {
+	var target *pendingApprovalError
+	if errors.As(err, &target) && target.kind == PendingApprovalNotRecoverable {
+		return target.detail
+	}
+	return ""
+}
+
+// PendingApprovalNotRecoverableError is the PendingApprovalNotRecoverable
+// refusal carrying the server's reason, which PendingApprovalFailureDetail
+// returns.
+func PendingApprovalNotRecoverableError(detail string) error {
+	return &pendingApprovalError{kind: PendingApprovalNotRecoverable, text: pendingApprovalFailure(PendingApprovalNotRecoverable).Error(), detail: detail}
+}
 
 // IsPendingApprovalFailure reports a closed recovery refusal without exposing a
 // server error or tool arguments to presentation code.
@@ -85,7 +106,7 @@ func pendingApprovalControlFailure(err error) error {
 	case codes.Aborted:
 		return pendingApprovalFailure(PendingApprovalCorrelation)
 	case codes.FailedPrecondition:
-		return pendingApprovalFailure(PendingApprovalNotRecoverable)
+		return PendingApprovalNotRecoverableError(status.Convert(err).Message())
 	case codes.Unimplemented:
 		return pendingApprovalFailure(PendingApprovalControlsUnsupported)
 	default:

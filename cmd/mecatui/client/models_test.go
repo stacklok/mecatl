@@ -282,6 +282,31 @@ func TestCreateSessionReadsSessionPermissionModesFeature(t *testing.T) {
 	}
 }
 
+// TestCreateSessionReadsRefusedModeRecoveryFeature pins that only the
+// refused_mode_recovery feature lets the ui offer a mode change from a
+// recovered pending approval.
+func TestCreateSessionReadsRefusedModeRecoveryFeature(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		features []string
+		want     bool
+	}{
+		{name: "server without the feature", features: []string{"server_info", SessionPermissionModesFeature}, want: false},
+		{name: "server advertising the feature", features: []string{"server_info", RefusedModeRecoveryFeature}, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeModelsClient{caps: &mecatlv1.ServerCapabilities{Posture: "trusted"}, features: tc.features}
+			_, caps, _, err := newFakeClient(fake).CreateSession(context.Background(), mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT, ModelSelection{})
+			if err != nil {
+				t.Fatalf("CreateSession: %v", err)
+			}
+			if caps.RefusedModeRecovery != tc.want {
+				t.Fatalf("capabilities refusedModeRecovery=%v, want %v", caps.RefusedModeRecovery, tc.want)
+			}
+		})
+	}
+}
+
 // TestReasoningEffortIsZero asserts an effort-only selection is NOT zero (the client
 // must still send it) while a fully-empty selection is.
 func TestReasoningEffortIsZero(t *testing.T) {

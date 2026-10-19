@@ -135,8 +135,11 @@ history is unchanged. A resumed subagent gets the same check, as described in
 [Subagents under auto](#subagents-under-auto). If that session is waiting on an approval, switch it to an
 admitted mode lower than its stored one: the server cancels the pending request
 without running it, then applies the mode, and your next prompt continues the
-conversation. Servers that support this advertise the `refused_mode_recovery`
-feature identifier. If the session is waiting on an MCP server authorization,
+conversation. Clients watching the session's event log see the request
+withdrawn and the run end as cancelled. Servers that support this advertise the
+`refused_mode_recovery` feature identifier. In `mecatui`, see
+[Recover a pending approval](/mecatui/sessions.md#recover-a-pending-approval).
+If the session is waiting on an MCP server authorization,
 completing or cancelling that authorization records a result for the waiting
 tool call without running it or resuming the turn, and the session then
 accepts a switch to an admitted mode.
