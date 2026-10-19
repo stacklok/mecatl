@@ -2,15 +2,17 @@
 sidebar_position: 5.5
 title: Work with delegated agents
 description:
-  Delegate investigations, implementation, and reviews from mecatui. Choose a
-  mode, prompt Mecatl, and supervise the work.
+  Delegate investigations, implementation, and reviews from mecatui. Describe
+  the outcome, steer delegation when needed, and supervise the work.
 ---
 
 # Work with delegated agents
 
-Ask Mecatl to delegate through an ordinary prompt in your session. Describe the
-work, the files involved, the result you need, and whether agents can make
-changes. Use the live **Agents** overlay to follow their progress.
+Describe your task in an ordinary prompt: the work, the files involved, the
+result you need, and whether agents can make changes. Mecatl can choose how to
+delegate using the tools available in your session. You can request a specific
+mode when you want control over how the work runs. Use the live **Agents**
+overlay to follow delegated work.
 
 Start a [local session](./getting-started.md) or
 [connect to your team's server](./remote-servers.md) with the project you want
@@ -18,7 +20,10 @@ to work on. In a remote session, file paths refer to the server's workspace.
 The connected server's capabilities and permission policy determine which
 delegation modes and tools are available.
 
-## Choose a mode
+## Understand how work runs
+
+Use this comparison to understand Mecatl's choice or request a particular
+approach. A task can stay in the main session when delegation adds little value.
 
 |Your task|Choose|What to ask for|
 |-|-|-|
@@ -71,29 +76,34 @@ See [Work in the TUI](./using-the-tui.md) for tool inspection and run steering.
 `/agents` opens the inventory of named agent definitions. Use `f6` to monitor
 live delegated work. Opening either view does not start a delegation.
 
-## Investigate a failure with a Subagent
+## Investigate a failure
 
-Use a read-only Subagent to trace a failing test while keeping the main
-conversation focused on the decision. Replace `<TEST_COMMAND>` with the
-focused test command and `<RELEVANT_PATHS>` with the code or test paths.
+Ask for a diagnosis and evidence before requesting a fix. Replace
+`<TEST_COMMAND>` with the focused test command and `<RELEVANT_PATHS>` with the
+code or test paths.
 
 **Copy this prompt into Mecatl:**
 
 ```text
-Use one read-only background Subagent to investigate why this test fails:
+Investigate why this test fails:
 <TEST_COMMAND>
 
 Start with <RELEVANT_PATHS>. Reproduce the failure if the available tools and
 permissions allow it, trace the likely cause, and return file and line
 references, the relevant test output, and a suggested fix. Do not edit files.
 If you cannot reproduce it, distinguish observed facts from hypotheses.
-Collect the child's result and summarize the next action in this conversation.
+Summarize the evidence and next action in this conversation. If you delegate,
+collect the findings before giving your diagnosis.
 ```
 
-Open `f6` and select the child on the **Subagents** tab. Use `x` there to stop
-it if the investigation is no longer needed. When it finishes, check that the
-main agent's report includes evidence and a proposed next action before asking
-for an implementation.
+To request a separate investigation explicitly, add: "Use one read-only
+background Subagent and collect its result." Open `f6` and select the child on
+the **Subagents** tab. Use `x` there to stop it if the investigation is no
+longer needed. If Mecatl works directly, follow its tool calls with `ctrl+t`
+and cancel from the conversation with `esc`.
+
+When it finishes, check that the report includes evidence and a proposed next
+action before asking for an implementation.
 
 For separate questions, such as tracing a request handler and checking its
 tests, ask for independent read-only Subagents in the same prompt. Use a Team
@@ -101,20 +111,21 @@ when the investigators need to discuss findings as they work.
 
 ## Implement a focused fix in isolation
 
-Use Parallel when you want an implementation to run separately from your
-working tree until it succeeds. For example, give one branch a specific fix
-for a CLI command that ignores its configured timeout. Replace the placeholders
-with the command's paths, expected behavior, and focused tests.
+Ask for isolation when an implementation should run separately from your
+working tree until it succeeds. For example, fix a CLI command that ignores its
+configured timeout. Replace the placeholders with the command's paths, expected
+behavior, and focused tests.
 
 **Copy this prompt into Mecatl:**
 
 ```text
-Use Parallel with one isolated writable branch and join: first to implement
-this fix: <COMMAND> must honor its configured timeout and report a timeout
-error when the operation exceeds it.
+Implement this fix: <COMMAND> must honor its configured timeout and report a
+timeout error when the operation exceeds it. Keep implementation isolated from
+my working tree until it succeeds. If the available tools cannot provide that
+isolation, explain the limitation before making changes.
 
 Start with <RELEVANT_PATHS>. Keep the change focused, add regression coverage,
-and run <TEST_COMMAND>. The branch must report the files changed, the test
+and run <TEST_COMMAND>. Report the files changed, the test
 result, and any remaining limitations. Treat a failing regression test as
 unfinished work.
 
@@ -123,9 +134,12 @@ path, then summarize the resulting diff and test evidence. If implementation
 or merge fails, report the failure and recovery options. Do not commit or push.
 ```
 
-Follow the branch on the **Parallel** tab under `f6`. Select a running branch
-and press `x` to stop it. After completion, inspect the resulting diff and the
-main agent's test report before committing.
+To select the mechanism explicitly, add: "Use Parallel with one isolated
+writable branch and join: first." Follow the branch on the **Parallel** tab
+under `f6`. Select a running branch and press `x` to stop it. If Mecatl cannot
+meet the isolation requirement, review its explanation before agreeing to a
+different approach. After completion, inspect the resulting diff and test
+report before committing.
 
 For competing approaches, ask for multiple branches and state the criteria
 Mecatl should use to choose a result. Check the canonical
@@ -135,43 +149,61 @@ Mecatl; plan to collect the result during the delegation. For a focused fix
 that can edit your working tree immediately, ask for a
 [direct-write Subagent](/features/agent-behavior/subagents-and-teams.md#direct-write-subagents).
 
-## Review a shared change with a Team
+## Review a change across specialties
 
-Use a read-only Team when reviewers need to compare evidence and reconcile
-findings. For example, review an authentication change for correctness,
-security, and test coverage before committing it. Finish your edits first and
-keep the review target stable while the Team runs. Replace `<REVIEW_SCOPE>`
-with a precise target, such as the current uncommitted diff or a diff against a
-specific branch, and name the relevant paths.
+Ask for specialist perspectives when a change must work across several systems.
+For example, review an authentication change for compatibility with Microsoft
+Entra ID, Okta, and Keycloak and compliance with OAuth. Give each specialty
+relevant sources, such as provider documentation or local reference repositories.
+
+Finish your edits first and keep the review target stable while the review
+runs. Replace `<REVIEW_SCOPE>` with a precise target, such as the current
+uncommitted diff or a diff against a specific branch, and name the relevant
+paths. Replace `<REFERENCE_SOURCES>` with the sources available to this session.
 
 **Copy this prompt into Mecatl:**
 
 ```text
-Use a read-only Team to review the authentication change in <REVIEW_SCOPE>.
+Review the authentication change in <REVIEW_SCOPE> for compatibility with
+Microsoft Entra ID, Okta, and Keycloak and compliance with OAuth.
+
+Use <REFERENCE_SOURCES>. Use existing specialist definitions where available,
+and identify any missing sources or expertise. Compare findings across the
+providers and reconcile disagreements against the evidence.
+
 All reviewers must assess the same change, including the relevant uncommitted
 files when that is the target. Confirm what diff is visible before reviewing;
 report any inability to access it instead of reviewing a different version.
 
-Make the first member the lead, responsible for reconciling findings and
-producing the final report. Assign reviewers to correctness, security, and test
-coverage. Have them share evidence and discuss overlapping or conflicting
-findings with the lead. Keep all members read-only; do not edit files or apply
-fixes.
+Keep the review read-only; do not edit files or apply fixes.
 
 Return a consolidated list of actionable findings with severity, file and line
 references, impact, and suggested verification. State any coverage gaps. If
 there are no actionable findings, say so and identify what was checked.
 ```
 
-Use `/team` or `f6` and the **Teams** tab to follow the members' activity,
-tasks, and findings. Select a running member and press `x` to stop that child;
-cancel the whole run from the conversation if you want to end the review.
-Read the lead's consolidated report in the main conversation before deciding
-which fixes to request.
+When you want the reviewers to coordinate explicitly, add: "Form a read-only
+Team. Make the first member the lead responsible for OAuth compliance and the
+consolidated report. Assign the other members to Entra ID, Okta, and Keycloak.
+Have them share evidence and resolve overlapping or conflicting findings with
+the lead."
+
+Use `/team` or `f6` and the **Teams** tab to follow a Team's activity, tasks,
+and findings. Select a running member and press `x` to stop that child; cancel
+the whole run from the conversation if you want to end the review. Read the
+consolidated report in the main conversation before deciding which fixes to
+request.
 
 For independent reviews that only need a final comparison, ask for concurrent
-read-only Subagents instead. Team coordination is useful when reviewers need
-to resolve questions together.
+read-only Subagents instead and follow them on the **Subagents** tab. Team
+coordination is useful when reviewers need to resolve questions together. For a
+disputed proposal, you can ask one reviewer to argue for it, another to argue
+against it, and the lead to reconcile the evidence.
+
+[Named agent definitions](/features/agent-behavior/named-agents.md) let you reuse
+specialist instructions, tools, and sources for later tasks. Reusing a definition
+does not keep its workers running between tasks. The deliverable from a Team
+review is its consolidated report.
 
 ## If delegation is unavailable
 
