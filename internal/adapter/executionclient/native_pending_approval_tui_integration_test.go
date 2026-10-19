@@ -197,7 +197,8 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 			defer releaseCommand()
 			executor := &recordingExecutor{executed: make(chan executionenv.ExecutorRequest, 1), release: release}
 			controllerStore := executioncontroller.NewStore(dyn, "ns", profiles, executor)
-			profile, err := controllerStore.ValidateProfile(ctx, "coding")
+			revision := profiles.DefaultRevision("coding")
+			profile, err := controllerStore.ValidateTemplate(ctx, "coding", revision)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -209,7 +210,7 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 			ref := session.EnvironmentRef{Kind: session.EnvironmentKind("kubernetes"), ID: "env-" + tc.name, Revision: "rev-1"}
 			envObj := &unstructured.Unstructured{Object: map[string]any{
 				"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": ref.ID, "namespace": "ns"},
-				"spec":   map[string]any{"schemaVersion": int64(2), "revision": ref.Revision, "ownerHash": hex.EncodeToString(ownerSum[:]), "ownerIssuer": owner.Issuer, "ownerSubject": owner.Subject, "clientHash": hex.EncodeToString(clientSum[:]), "bindingID": string(sessionID), "profile": "coding", "profileDigest": profile.Digest, "desired": "Active"},
+				"spec":   map[string]any{"schemaVersion": int64(2), "revision": ref.Revision, "ownerHash": hex.EncodeToString(ownerSum[:]), "ownerIssuer": owner.Issuer, "ownerSubject": owner.Subject, "clientHash": hex.EncodeToString(clientSum[:]), "bindingID": string(sessionID), "templateID": "coding", "templateRevision": revision, "templateDigest": profile.Digest, "desired": "Active"},
 				"status": map[string]any{"schemaVersion": int64(2), "epoch": int64(1), "grantGeneration": int64(1), "fenceState": "Healthy", "pod": map[string]any{"name": "executor-pod"}, "references": []any{map[string]any{"bindingID": string(sessionID), "state": "Published", "operationID": "seed", "createdAt": now.Format(time.RFC3339Nano)}}, "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}},
 			}}
 			if _, err := dyn.Resource(executioncontroller.ExecutionEnvironmentGVR).Namespace("ns").Create(ctx, envObj, metav1.CreateOptions{}); err != nil {
@@ -222,7 +223,7 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer executionClient.Close()
-			provider, err := NewProvider(executionClient, "coding")
+			provider, err := NewTemplateProvider(executionClient, "coding", revision)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -588,12 +589,19 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 			if toolResults != 1 || continuationRequests.Load() != 1 || stats.ownerConverse.Load() != 0 || stats.ownerResolve.Load() != 1 || stats.foreignCalls.Load() != 3 {
 				t.Fatalf("unexpected work counts: tool-results=%d model=%d converse=%d resolve=%d foreign=%d", toolResults, continuationRequests.Load(), stats.ownerConverse.Load(), stats.ownerResolve.Load(), stats.foreignCalls.Load())
 			}
+			wantAggregate := "● 1 tool run · 1 failed"
 			wantSummary := "✗ Shell · printf bridge-command"
 			if tc.wantRun {
+				wantAggregate = "● 1 tool run · f9"
 				wantSummary = "✓ Shell · printf bridge-command"
 			}
-			if strings.Count(view, wantSummary) != 1 || !strings.Contains(view, tc.wantOutput) || !strings.Contains(view, "draft only") || strings.Contains(view, "● mecatl") || strings.Contains(view, "enter queue") || strings.Contains(view, "… Shell") || strings.Contains(view, "│ ✓ Shell") || strings.Contains(view, "│ ✗ Shell") {
-				t.Fatalf("terminal view lost draft, continuation, or one-line resolved tool summary:\n%s", view)
+			if strings.Count(view, wantAggregate) != 1 || strings.Contains(view, wantSummary) || !strings.Contains(view, tc.wantOutput) || !strings.Contains(view, "draft only") || !strings.Contains(view, "◀ mecatl") || strings.Contains(view, "enter queue") || strings.Contains(view, "… Shell") {
+				t.Fatalf("terminal view lost draft, continuation, or settled tool aggregate:\n%s", view)
+			}
+			detailed, _ := final.Model.Update(tea.KeyPressMsg{Code: tea.KeyF9})
+			detailView := ansi.Strip(detailed.View().Content)
+			if strings.Count(detailView, wantSummary) != 1 || strings.Contains(detailView, "● 1 tool run") || !strings.Contains(detailView, tc.wantOutput) || !strings.Contains(detailView, "draft only") || strings.Contains(detailView, "│ ✓ Shell") || strings.Contains(detailView, "│ ✗ Shell") {
+				t.Fatalf("detail view lost draft, continuation, or one-line resolved tool summary:\n%s", detailView)
 			}
 			executor.mu.Lock()
 			operations := append([]executionenv.Operation(nil), executor.operations...)

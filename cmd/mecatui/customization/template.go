@@ -154,8 +154,8 @@ type templateLiveTeam struct {
 type templateServer struct{ DisplayTarget, ConnectionMode templateText }
 type templateSession struct{ Title, Handle, Mode, ReasoningEffort templateText }
 type templateModel struct {
-	ProviderID, ID, DisplayName, Route templateText
-	ContextWindow                      templateContextAtom
+	ProviderID, ID, ProviderLabel, FriendlyName, Route templateText
+	ContextWindow                                      templateContextAtom
 }
 type templateUsageAtom struct {
 	Raw   int64
@@ -287,7 +287,7 @@ func newTemplateInput(input Input) templateInput {
 		Version:    input.Version,
 		Server:     templateServer{escapeTemplateText(input.Server.DisplayTarget), escapeTemplateText(input.Server.ConnectionMode)},
 		Session:    templateSession{escapeTemplateText(input.Session.Title), escapeTemplateText(input.Session.Handle), escapeTemplateText(input.Session.Mode), escapeTemplateText(input.Session.ReasoningEffort)},
-		Model:      templateModel{escapeTemplateText(input.Model.ProviderID), escapeTemplateText(input.Model.ID), escapeTemplateText(input.Model.DisplayName), escapeTemplateText(input.Model.Route), templateContextAtom{input.Model.ContextWindow.Raw, escapeTemplateText(input.Model.ContextWindow.Human)}},
+		Model:      templateModel{escapeTemplateText(input.Model.ProviderID), escapeTemplateText(input.Model.ID), escapeTemplateText(input.Model.ProviderLabel), escapeTemplateText(input.Model.FriendlyName), escapeTemplateText(input.Model.Route), templateContextAtom{input.Model.ContextWindow.Raw, escapeTemplateText(input.Model.ContextWindow.Human)}},
 		Usage:      templateUsage{templateUsageAtom{input.Usage.Input.Raw, escapeTemplateText(input.Usage.Input.Human)}, templateUsageAtom{input.Usage.Output.Raw, escapeTemplateText(input.Usage.Output.Human)}, templateUsageAtom{input.Usage.CacheRead.Raw, escapeTemplateText(input.Usage.CacheRead.Human)}, templateUsageAtom{input.Usage.CacheWrite.Raw, escapeTemplateText(input.Usage.CacheWrite.Human)}, input.Usage.CacheReadPercent},
 		Context:    templateContext{templateContextAtom{input.Context.Used.Raw, escapeTemplateText(input.Context.Used.Human)}, templateContextAtom{input.Context.Window.Raw, escapeTemplateText(input.Context.Window.Human)}, input.Context.Percent, input.Context.Known, input.Context.Estimated},
 		Workspace:  templateWorkspace{escapeTemplateText(input.Workspace.Location), escapeTemplateText(input.Workspace.Name), escapeTemplateText(input.Workspace.Path)},

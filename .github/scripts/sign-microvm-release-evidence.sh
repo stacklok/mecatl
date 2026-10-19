@@ -31,7 +31,9 @@ for provenance in "$assets"/*.provenance.json; do
       --bundle "$bundle" "$provenance" >/dev/null
     echo "Reusing verified signature bundle $(basename "$bundle")"
   elif [ -n "${MICROVM_RELEASE_SIGNING_KEY:-}" ]; then
-    COSIGN_PASSWORD=${COSIGN_PASSWORD:-} cosign sign-blob --yes --key "$MICROVM_RELEASE_SIGNING_KEY" --bundle "$bundle" "$provenance"
+    # A throwaway test key: keep its signature out of the public Rekor log. The
+    # upload is worthless here and a retried POST can come back as a 409 conflict.
+    COSIGN_PASSWORD=${COSIGN_PASSWORD:-} cosign sign-blob --yes --use-signing-config=false --tlog-upload=false --key "$MICROVM_RELEASE_SIGNING_KEY" --bundle "$bundle" "$provenance"
   else
     cosign sign-blob --yes --bundle "$bundle" "$provenance"
   fi

@@ -77,6 +77,23 @@ func TestLogGuardrailsPostureBranches(t *testing.T) {
 			notSubs:   []string{"default set"},
 		},
 		{
+			name: "ON yolo safety checks are advisory",
+			cfg: Config{
+				UseMock:         true,
+				Posture:         PostureYolo,
+				GuardrailsModel: "gpt-5-mini",
+			},
+			wantCount: 1,
+			wantSubs:  []string{"guardrails: ON", "AI safety checks are advisory only."},
+		},
+		{
+			name:      "OFF yolo has no advisory safety notice",
+			cfg:       Config{Posture: PostureYolo, GuardrailsDisabled: true},
+			wantCount: 1,
+			wantSubs:  []string{"guardrails: OFF", "kill-switch"},
+			notSubs:   []string{"AI safety checks are advisory only."},
+		},
+		{
 			// SHIP-BLOCKER regression guard (issue #159 iter-2 review Finding 1): a slot
 			// that is BOUND but UNRESOLVABLE (a bare token with no model-alias / no
 			// separator, so lookupModelAlias returns known=false and resolveSlotModel
@@ -278,12 +295,12 @@ func TestGuardrailsPostureLine(t *testing.T) {
 func TestGuardrailsPostureLineStatesYoloDemotion(t *testing.T) {
 	specs := []modelhook.RuleSpec{{Match: "Shell", Phases: []string{"pre"}, Mode: string(modelhook.ModeAdvisory)}}
 	yolo := guardrailsPostureLine(Config{Posture: PostureYolo}, "m", srcGate, specs, false)
-	if !strings.Contains(yolo, "DEMOTED to advisory by posture yolo") {
+	if !strings.Contains(yolo, "YOLO: AI safety checks are advisory only.") {
 		t.Fatalf("the yolo posture line must state the advisory demotion; line=%q", yolo)
 	}
 	for _, p := range []Posture{PostureStrict, PostureTrusted, PostureAuto} {
 		line := guardrailsPostureLine(Config{Posture: p}, "m", srcGate, specs, false)
-		if strings.Contains(line, "DEMOTED to advisory by posture yolo") {
+		if strings.Contains(line, "AI safety checks are advisory only.") {
 			t.Fatalf("posture %s must NOT carry the yolo demotion note; line=%q", p, line)
 		}
 	}

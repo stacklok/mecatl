@@ -9,18 +9,53 @@ release behavior. This page is only a stable index to operational guidance.
 - [Mecatequi CI adoption](../../user-docs/building/ci/mecatequi.md)
 - [microVM environment operations](../../user-docs/operating/microvm-environments.md)
 
+## Continuous builds from main
+
+[Continuous main build](continuous.yml) publishes signed `mecak8s` and Studio images
+and their charts after [CI](ci.yml) passes on a push to `main`. Its header comment
+describes the version scheme and publication order.
+
+- **Packages:** images at `ghcr.io/stacklok/mecatl/main/{mecak8s,studio}` and charts
+  at `oci://ghcr.io/stacklok/mecatl/main/charts`, each pinning its image by digest.
+  Follow the newest build with a prerelease range such as `>=0.0.0-0`. GitHub creates
+  these packages as private; pull them with a GHCR credential or make them public.
+  Main builds ship without the product-metrics ingest key.
+- **Verification:** signatures and attestations name
+  `.github/workflows/continuous.yml@refs/heads/main`. Have followers verify charts
+  with that identity (for Flux, `verify.provider: cosign`), so they never deploy a
+  chart whose signing failed.
+- **Publishing by hand:** dispatch the workflow from `main` once CI has passed on its
+  commit. Dispatch while no run is in progress and check that it published, because
+  a later automatic run replaces a pending dispatch. Dispatching again republishes a
+  commit whose chart was pushed but not signed and attested.
+- **Rolling back:** dispatch with `force` and an older `commit_sha`. Followers move to
+  it until the next main build publishes; to hold a version, pin it on the follower.
+- **Partial failures:** the `mecak8s` chart publishes before `mecatl-studio`, so a run
+  that fails between them leaves followers on the new daemon with the previous Studio
+  until the next build publishes.
+
+[Prune main builds](prune-main-builds.yml) deletes old main builds daily. Each image
+package keeps every build younger than 7 days plus the newest 30 older ones; each chart
+package keeps 20. Every kept chart still resolves its images unless more than 10 older
+runs failed between pushing an image and pushing the charts. A follower more than 7
+days and 20 builds behind loses its images. Deleting an image also deletes its platform
+manifests, signatures, SBOMs, and attestations, and untagged leftovers of failed runs go
+too. A package that doesn't exist or that this repository can't access fails its job.
+Dispatch it by hand for a dry run, which is the default for manual runs.
+
 ## Cutting a root release
 
 Releases go through a pull request; nothing pushes a commit to `main`.
 
 1. A maintainer dispatches [Create Release PR](create-release-pr.yml) and picks
    `patch`, `minor`, or `major`. A bot opens `Release vX.Y.Z` on branch
-   `release/vX.Y.Z`, bumping [`VERSION`](../../VERSION), the `mecak8s` chart
-   version and app version, and its default image tag.
+   `release/vX.Y.Z`, bumping [`VERSION`](../../VERSION), the `mecak8s` and
+   `mecatl-studio` chart versions and app versions, and the `mecak8s` chart's
+   default image tag.
 2. A maintainer reviews and squash-merges that PR.
 3. [Create Release Tag](create-release-tag.yml) sees `VERSION` change on `main`,
    re-verifies the commit is a merged release PR, and pushes the annotated tag.
-4. [Release](release.yml) publishes images, the Helm chart, the GitHub Release,
+4. [Release](release.yml) publishes images, the Helm charts, the GitHub Release,
    and the Homebrew formula bump.
 
 Both release workflows draw the release GitHub App from a `release` GitHub Environment
@@ -29,8 +64,9 @@ including post-release verification, is in the
 [cut-release skill](../../.claude/skills/cut-release/SKILL.md).
 
 `VERSION` is the source of truth for the release version. The release PR propagates it
-to `deploy/helm/mecak8s/Chart.yaml` and `deploy/helm/mecak8s/values.yaml`, and both
-release workflows verify the synchronized values without relying on a fixed list of files.
+to `deploy/helm/mecak8s/Chart.yaml`, `deploy/helm/mecak8s/values.yaml`, and
+`deploy/helm/mecatl-studio/Chart.yaml`, and both release workflows verify the synchronized
+values without relying on a fixed list of files.
 Mecatequi's sibling actions use `$/` self-repository refs, which resolve to this repository
 at the ref the workflow is running from, so they need no version pin.
 

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -65,10 +66,11 @@ func TestProfileEnvironmentAdmissionLimit(t *testing.T) {
 	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{ExecutionEnvironmentGVR: "ExecutionEnvironmentList"}, env)
 	profiles := testProfiles()
 	profile := profiles.byName["go"]
-	profile.Spec.MaxEnvironments = 1
-	profiles.byName["go"] = profile
-	store := NewStore(client, "ns", profiles, nil).WithKubeClient(kubernetesfake.NewSimpleClientset())
-	_, err := store.Ensure(t.Context(), "client", "owner", "new-binding", "go", "new-fingerprint")
+	profiles.capacityLimit["go"] = 1
+	profiles.revisions["go"][profiles.defaultRevision["go"]] = profile
+	store := NewStore(client, "ns", profiles, nil).WithKubeClient(kubernetesfake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap("go"), Namespace: "ns"}, Data: map[string]string{profileAllocationKey("go"): "[]"}}))
+	owner := executionenv.Owner{Issuer: "issuer", Subject: "subject"}
+	_, err := store.EnsurePendingOwnedRevision(t.Context(), "client", ownerHash(owner), owner, "new-binding", "go", profiles.defaultRevision["go"], "new-fingerprint", "new-operation")
 	var controlled *executionenv.Error
 	if !errors.As(err, &controlled) || controlled.Code != executionenv.CodeResourceExhausted {
 		t.Fatalf("limit error=%v", err)
@@ -77,5 +79,5 @@ func TestProfileEnvironmentAdmissionLimit(t *testing.T) {
 
 func runFixtureEnvironment(epoch, generation uint64) *unstructured.Unstructured {
 	now := time.Now().UTC()
-	return &unstructured.Unstructured{Object: map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "env", "namespace": "ns"}, "spec": map[string]any{"schemaVersion": int64(2), "revision": "rev", "ownerHash": "owner", "clientHash": hashText("client"), "profile": "go", "profileDigest": "sha256:profile", "desired": "Active"}, "status": map[string]any{"schemaVersion": int64(2), "epoch": int64(epoch), "grantGeneration": int64(generation), "fenceState": "Healthy", "references": []any{map[string]any{"bindingID": "binding", "state": "Published", "operationID": "seed", "createdAt": now.Format(time.RFC3339Nano)}}, "activeRun": map[string]any{"bindingID": "binding", "runID": "run", "claimID": "claim", "operationID": "acquire", "ownerHash": "owner", "clientHash": hashText("client"), "epoch": int64(epoch), "grantGeneration": int64(generation), "expiresAt": now.Add(time.Minute).Format(time.RFC3339Nano)}, "pod": map[string]any{"name": "pod"}, "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}}}}
+	return &unstructured.Unstructured{Object: map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "env", "namespace": "ns"}, "spec": map[string]any{"schemaVersion": int64(2), "revision": "rev", "ownerHash": "owner", "clientHash": hashText("client"), "templateID": "go", "templateRevision": testProfiles().defaultRevision["go"], "templateDigest": testProfiles().byName["go"].Digest, "desired": "Active"}, "status": map[string]any{"schemaVersion": int64(2), "epoch": int64(epoch), "grantGeneration": int64(generation), "fenceState": "Healthy", "references": []any{map[string]any{"bindingID": "binding", "state": "Published", "operationID": "seed", "createdAt": now.Format(time.RFC3339Nano)}}, "activeRun": map[string]any{"bindingID": "binding", "runID": "run", "claimID": "claim", "operationID": "acquire", "ownerHash": "owner", "clientHash": hashText("client"), "epoch": int64(epoch), "grantGeneration": int64(generation), "expiresAt": now.Add(time.Minute).Format(time.RFC3339Nano)}, "pod": map[string]any{"name": "pod"}, "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}}}}
 }

@@ -280,6 +280,9 @@ Flags:
   --model-alias model
         model alias mapping as name=model-id. Repeatable; for example, --model-alias
         fast=gpt-4o-mini. Agent definitions can use these aliases in their model field.
+  --model-alias-provider value
+        provider for a same-tier --model-alias as name=provider-id. Repeatable; an
+        entry without a matching --model-alias is invalid.
   --model-slot compaction
         model binding as slot=selector. Repeatable; for example, --model-slot
         compaction=cheap. Slots compaction, `ask-reviewer`, and `guardrail` select
@@ -408,8 +411,8 @@ Flags:
         capability, if any. Uses the same driver authentication and TLS settings as --
         session-store-url.
   --scheduler-max-concurrent-fires int
-        maximum schedules started in parallel per scheduler tick. Applies only when
-        scheduling is enabled. (default 4)
+        maximum admitted scheduled fires, including manual fires and teardown. (default
+        4)
   --scheduler-min-interval duration
         minimum allowed scheduled cadence. Default 1m. Set 0 to allow any cadence.
         (default 1m0s)
@@ -624,13 +627,18 @@ Usage: mecak8s [flags]
         Enable the Parallel tool for isolated child branches
   --enable-teams
         Enable the experimental agent-team capability
+  --execution-allowed-subjects string
+        Comma-separated OIDC subject allowlist for execution template inventory and
+        binding; empty denies all
   --execution-enabled
         Use an independently deployed Kubernetes execution provider for default sessions
   --execution-endpoint string
         Host:port endpoint of the mTLS gRPC execution provider. Requires --execution-
         enabled
-  --execution-profile string
-        Operator-configured execution provider profile
+  --execution-template-id string
+        Operator-configured default execution template ID
+  --execution-template-revision string
+        Exact versioned default execution template revision
   --execution-tls-ca string
         Mounted CA bundle used only by the execution client
   --execution-tls-cert string
@@ -714,6 +722,9 @@ Usage: mecak8s [flags]
   --model-alias model
         model alias mapping as name=model-id. Repeatable; for example, --model-alias
         fast=gpt-4o-mini. Agent definitions can use these aliases in their model field.
+  --model-alias-provider value
+        provider for a same-tier --model-alias as name=provider-id. Repeatable; an
+        entry without a matching --model-alias is invalid.
   --model-slot compaction
         model binding as slot=selector. Repeatable; for example, --model-slot
         compaction=cheap. Slots compaction, `ask-reviewer`, and `guardrail` select
@@ -847,7 +858,8 @@ Usage: mecak8s [flags]
         Keep at most this many scheduled-run snapshots; delete the oldest non-active
         snapshots above the limit. Zero disables count cleanup
   --scheduler-max-concurrent-fires int
-        Maximum schedules started concurrently in one scheduler tick (default 4)
+        Maximum admitted scheduled fires, including manual fires and teardown (default
+        4)
   --scheduler-min-interval duration
         Minimum accepted schedule interval. Shorter intervals are rejected; zero
         disables the limit (default 1m0s)

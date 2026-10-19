@@ -164,7 +164,7 @@ func TestPasteIgnoredWhileHelpOpen(t *testing.T) {
 	// "?" on an empty prompt opens the help overlay.
 	mm, _ := m.Update(qmark())
 	m = mm.(Model)
-	if !m.showHelp {
+	if m.modal == nil {
 		t.Fatalf("help overlay should be open after '?'")
 	}
 
@@ -174,7 +174,7 @@ func TestPasteIgnoredWhileHelpOpen(t *testing.T) {
 	if got := m.prompt.Value(); got != "" {
 		t.Fatalf("paste leaked into input behind help overlay: %q", got)
 	}
-	if !m.showHelp {
+	if m.modal == nil {
 		t.Fatalf("help overlay should still be open after an ignored paste")
 	}
 }

@@ -43,6 +43,7 @@ func maintenanceScenarioModel(fake *scenario8Maintenance) Model {
 	})
 	m.caps = client.Capabilities{StorageHealth: true, StorageCleanup: true}
 	m.width, m.height = 100, 40
+	m.vp.SetHeight(32)
 	setActiveSessions(&m, newSessionsPanelState())
 	ensureActiveSessions(&m).loading = false
 	ensureActiveSessions(&m).loadState = sessionsComplete

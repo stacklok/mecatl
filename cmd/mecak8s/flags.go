@@ -28,6 +28,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -35,6 +36,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
@@ -111,27 +113,29 @@ type config struct {
 	logLevelWarning string
 	// diagnostics is installed by run after the command root builds its operator
 	// sink; tests and alternate callers may leave it nil for a silent edge.
-	diagnostics            port.Diagnostics
-	grpcAddr               string
-	httpAddr               string
-	drainAddr              string
-	drainTimeout           time.Duration
-	grpcStopTimeout        time.Duration
-	httpShutdownTimeout    time.Duration
-	closeTimeout           time.Duration
-	workspace              string
-	executionEnabled       bool
-	executionEndpoint      string
-	executionProfile       string
-	executionTLSCA         string
-	executionTLSCert       string
-	executionTLSKey        string
-	model                  string
-	defaultProvider        string
-	defaultModel           string
-	defaultProviderFlagSet bool
-	useOpenAI              bool
-	openAIBearerTokenFile  string
+	diagnostics               port.Diagnostics
+	grpcAddr                  string
+	httpAddr                  string
+	drainAddr                 string
+	drainTimeout              time.Duration
+	grpcStopTimeout           time.Duration
+	httpShutdownTimeout       time.Duration
+	closeTimeout              time.Duration
+	workspace                 string
+	executionEnabled          bool
+	executionEndpoint         string
+	executionTemplateID       string
+	executionTemplateRevision string
+	executionAllowedSubjects  string
+	executionTLSCA            string
+	executionTLSCert          string
+	executionTLSKey           string
+	model                     string
+	defaultProvider           string
+	defaultModel              string
+	defaultProviderFlagSet    bool
+	useOpenAI                 bool
+	openAIBearerTokenFile     string
 	// providerFlags holds shared provider flag bindings; providerCredentials is
 	// the once-resolved snapshot projected by appConfig without further I/O.
 	providerFlags       *cliconfig.ProviderFlags
@@ -142,8 +146,9 @@ type config struct {
 	toolhiveLLMFlags *cliconfig.ToolhiveLLMFlags
 	// modelAliases/modelSlots are the repeatable --model-alias/--model-slot
 	// bindings (cliconfig.RegisterModelFlags), threaded onto app.Config.
-	modelAliases *cliconfig.KeyValueList
-	modelSlots   *cliconfig.KeyValueList
+	modelAliases        *cliconfig.KeyValueList
+	modelAliasProviders *cliconfig.KeyValueList
+	modelSlots          *cliconfig.KeyValueList
 	// mcpServers holds the repeatable --mcp-server name=URL entries (issue #341,
 	// the factory MCP wiring), via the SAME cliconfig.MCPServerList helper as
 	// mecated/mecatequi: a per-server bearer rides the MCP_<NAME>_TOKEN env (a
@@ -360,7 +365,9 @@ func parseFlags(argv []string) (config, error) {
 	fs.StringVar(&cfg.workspace, "workspace", "", "Shared agent workspace root, such as a mounted PVC. Empty gives every session a shell-less, file-less workspace; clients cannot choose another root")
 	fs.BoolVar(&cfg.executionEnabled, "execution-enabled", false, "Use an independently deployed Kubernetes execution provider for default sessions")
 	fs.StringVar(&cfg.executionEndpoint, "execution-endpoint", "", "Host:port endpoint of the mTLS gRPC execution provider. Requires --execution-enabled")
-	fs.StringVar(&cfg.executionProfile, "execution-profile", "", "Operator-configured execution provider profile")
+	fs.StringVar(&cfg.executionTemplateID, "execution-template-id", "", "Operator-configured default execution template ID")
+	fs.StringVar(&cfg.executionTemplateRevision, "execution-template-revision", "", "Exact versioned default execution template revision")
+	fs.StringVar(&cfg.executionAllowedSubjects, "execution-allowed-subjects", "", "Comma-separated OIDC subject allowlist for execution template inventory and binding; empty denies all")
 	fs.StringVar(&cfg.executionTLSCA, "execution-tls-ca", "", "Mounted CA bundle used only by the execution client")
 	fs.StringVar(&cfg.executionTLSCert, "execution-tls-cert", "", "Mounted execution-provider mTLS client certificate")
 	fs.StringVar(&cfg.executionTLSKey, "execution-tls-key", "", "Mounted execution-provider mTLS client private key")
@@ -380,7 +387,7 @@ func parseFlags(argv []string) (config, error) {
 	// config file, so this is inert unless an operator mounts one or passes
 	// --toolhive-llm-base-url explicitly.
 	cfg.toolhiveLLMFlags = cliconfig.RegisterToolhiveLLMFlags(fs, cliconfig.DefaultToolhiveLLMFlagHelp)
-	cfg.modelAliases, cfg.modelSlots = cliconfig.RegisterModelFlags(fs, cliconfig.ModelFlagHelp{})
+	cfg.modelAliases, cfg.modelAliasProviders, cfg.modelSlots = cliconfig.RegisterModelFlags(fs, cliconfig.ModelFlagHelp{})
 	// Remote MCP servers (issue #341): the shared repeatable name=URL flag +
 	// MCP_<NAME>_TOKEN bearer convention, identical to mecated/mecatequi.
 	cfg.mcpServers = cliconfig.RegisterMCPServerFlag(fs, "")
@@ -418,7 +425,7 @@ func parseFlags(argv []string) (config, error) {
 	fs.BoolVar(&cfg.noScheduler, "no-scheduler", false, "Disable scheduled-task execution. Schedule management APIs remain available; one replica runs the scheduler when leasing is enabled")
 	fs.DurationVar(&cfg.schedulerTickInterval, "scheduler-tick-interval", 30*time.Second, "Interval for polling due schedules. Zero uses the default interval; inactive when scheduling is unavailable or disabled")
 	fs.DurationVar(&cfg.schedulerMinInterval, "scheduler-min-interval", time.Minute, "Minimum accepted schedule interval. Shorter intervals are rejected; zero disables the limit")
-	fs.IntVar(&cfg.schedulerMaxConcurrentFires, "scheduler-max-concurrent-fires", 4, "Maximum schedules started concurrently in one scheduler tick")
+	fs.IntVar(&cfg.schedulerMaxConcurrentFires, "scheduler-max-concurrent-fires", 4, "Maximum admitted scheduled fires, including manual fires and teardown")
 
 	// LLM resilience knobs (mirrors mecated's defaults).
 	fs.IntVar(&cfg.llmMaxAttempts, "llm-max-attempts", 60, "maximum attempts for one precommit model step (initial request included)")
@@ -626,8 +633,13 @@ func parseFlags(argv []string) (config, error) {
 		return config{}, fmt.Errorf("--workspace %q must be a clean absolute path (a mounted filesystem root); leave it empty for a file-less deployment", cfg.workspace)
 	}
 	if cfg.executionEnabled {
-		if cfg.executionEndpoint == "" || cfg.executionProfile == "" || cfg.executionTLSCA == "" || cfg.executionTLSCert == "" || cfg.executionTLSKey == "" {
-			return config{}, errors.New("--execution-enabled requires --execution-endpoint, --execution-profile, --execution-tls-ca, --execution-tls-cert, and --execution-tls-key")
+		if cfg.executionEndpoint == "" || cfg.executionTemplateID == "" || cfg.executionTemplateRevision == "" || cfg.executionAllowedSubjects == "" || cfg.executionTLSCA == "" || cfg.executionTLSCert == "" || cfg.executionTLSKey == "" {
+			return config{}, errors.New("--execution-enabled requires --execution-endpoint, --execution-template-id, --execution-template-revision, --execution-allowed-subjects, --execution-tls-ca, --execution-tls-cert, and --execution-tls-key")
+		}
+		for _, subject := range strings.Split(cfg.executionAllowedSubjects, ",") {
+			if subject == "" || strings.TrimSpace(subject) != subject {
+				return config{}, errors.New("--execution-allowed-subjects requires nonempty, unpadded OIDC subjects")
+			}
 		}
 		if !cfg.oidc.Enabled() {
 			return config{}, errors.New("--execution-enabled requires OIDC caller ownership enforcement")
@@ -638,7 +650,6 @@ func parseFlags(argv []string) (config, error) {
 		if cfg.enableParallel || cfg.enableTeams {
 			return config{}, errors.New("remote execution does not support --enable-parallel or --enable-teams")
 		}
-		cfg.noScheduler = true
 	}
 	if cfg.redisFilesystem && cfg.workspace != "" {
 		return config{}, errors.New("--redis-filesystem and --workspace are mutually exclusive")
@@ -692,7 +703,16 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		// The legacy --mcp-server surface is global-only.
 		mcpAuthorityDefault = mcpauthority.Global
 	}
+	ownerAllowed := func(p *session.Principal) bool {
+		return cfg.executionEnabled && cfg.oidc.Enabled() && p != nil && p.Issuer != "" && p.Subject != "" &&
+			(p.GrantType == session.GrantTypeUser || p.GrantType == session.GrantTypeClientCredentials) &&
+			slices.Contains(strings.Split(cfg.executionAllowedSubjects, ","), p.Subject)
+	}
 	out := app.Config{
+		ExecutionTemplateAllowed: func(p *session.Principal, _, _ string) bool {
+			return ownerAllowed(p)
+		},
+		ExecutionOwnerAllowed:  ownerAllowed,
 		RemoteExecution:        cfg.executionEnabled,
 		Workspace:              cfg.workspace,
 		Model:                  cfg.model,
@@ -765,7 +785,8 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		RouterDisabled:                cfg.subagentModelRouterSet && !cfg.subagentModelRouter,
 		GuardrailsModel:               cfg.guardrailsModel,
 		GuardrailsDisabled:            cfg.guardrailsOff,
-		ModelAliases:                  cfg.modelAliases.AsMap(),
+		ModelAliases:                  cliconfig.ScalarModelAliases(cfg.modelAliases, cfg.modelAliasProviders),
+		ModelAliasTargets:             cliconfig.ModelAliasTargets(cfg.modelAliases, cfg.modelAliasProviders),
 		ModelSlots:                    cfg.modelSlots.AsMap(),
 		// Remote MCP servers (issue #341): the static name=URL entries (with any
 		// MCP_<NAME>_TOKEN bearer already resolved into Headers at parse time).

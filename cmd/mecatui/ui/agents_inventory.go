@@ -125,19 +125,8 @@ func (m Model) onAgentsInvKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	if m.agentsInv.viewport == nil {
 		return m, nil, true
 	}
-	switch {
-	case key.Matches(msg, m.keys.Down):
-		m.agentsInv.viewport.Move(bounded.LineDown, len(rows))
-	case key.Matches(msg, m.keys.Up):
-		m.agentsInv.viewport.Move(bounded.LineUp, len(rows))
-	case key.Matches(msg, m.keys.ScrollD):
-		m.agentsInv.viewport.Move(bounded.PageDown, len(rows))
-	case key.Matches(msg, m.keys.ScrollU):
-		m.agentsInv.viewport.Move(bounded.PageUp, len(rows))
-	case key.Matches(msg, m.keys.ScrollBottom):
-		m.agentsInv.viewport.Move(bounded.End, len(rows))
-	case key.Matches(msg, m.keys.ScrollTop):
-		m.agentsInv.viewport.Move(bounded.Top, len(rows))
+	if move, ok := boundedNavigationMove(msg, m.keys, bounded.LineDown, bounded.LineUp, bounded.PageDown, bounded.PageUp, bounded.End, bounded.Top); ok {
+		m.agentsInv.viewport.Move(move, len(rows))
 	}
 	return m, nil, true
 }
@@ -153,11 +142,8 @@ func (m Model) onAgentsInvWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	if m.agentsInv.viewport == nil {
 		return m, nil
 	}
-	switch msg.Button {
-	case tea.MouseWheelUp:
-		m.agentsInv.viewport.Move(bounded.LineUp, len(rows))
-	case tea.MouseWheelDown:
-		m.agentsInv.viewport.Move(bounded.LineDown, len(rows))
+	if move, ok := boundedWheelMove(msg); ok {
+		m.agentsInv.viewport.Move(move, len(rows))
 	}
 	return m, nil
 }
@@ -282,6 +268,7 @@ func renderAgentsInvTextLines(style lipgloss.Style, text string, width int) []st
 	if width <= 0 {
 		return nil
 	}
+	text = terminaltext.ExpandStyleTabs(text, style)
 	plain := strings.Split(ansi.Hardwrap(text, width, true), "\n")
 	lines := make([]string, 0, len(plain))
 	for _, line := range plain {

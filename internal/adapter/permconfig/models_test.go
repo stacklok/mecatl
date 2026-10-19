@@ -3,6 +3,7 @@ package permconfig
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -86,15 +87,8 @@ func TestOperatorContextWindowsHonouredAndProjectIgnored(t *testing.T) {
 	if got := r.OperatorModelPolicy().ContextWindows["openai"]["shared-model"]; got != 321000 {
 		t.Fatalf("operator context window = %d, want 321000", got)
 	}
-	project := r.ProjectModelBindings(ws)
-	if project == nil || project.Default != "allowed" {
-		t.Fatalf("trusted project binding was not retained: %+v", project)
-	}
-	if project.ContextWindows != nil {
-		t.Fatalf("project context-window map must be stripped, got %+v", project.ContextWindows)
-	}
-	if log := buf.String(); !strings.Contains(log, "IGNORING project-tier models.context_windows") {
-		t.Fatalf("dedicated project context_windows warning missing: %s", log)
+	if log := buf.String(); !strings.Contains(log, "IGNORING project-tier models block") {
+		t.Fatalf("project models warning missing: %s", log)
 	}
 }
 
@@ -114,7 +108,7 @@ func TestOperatorModelsFromCLIHonoured(t *testing.T) {
 	if m.Slots["compaction"].Model != "cheap" || m.Slots["guardrail"].Model != "fast" {
 		t.Fatalf("slots not parsed faithfully: %+v", m.Slots)
 	}
-	if m.Aliases["cheap"] != "gpt-4o-mini" || m.Aliases["fast"] != "gpt-4o" {
+	if m.Aliases["cheap"].Model != "gpt-4o-mini" || m.Aliases["fast"].Model != "gpt-4o" {
 		t.Fatalf("aliases not parsed faithfully: %+v", m.Aliases)
 	}
 }
@@ -135,7 +129,7 @@ func TestProjectModelsIgnoredWithWarn(t *testing.T) {
 	if r.OperatorModelSlots() != nil {
 		t.Fatal("a PROJECT-tier models: block must NOT become operator models")
 	}
-	if log := buf.String(); !strings.Contains(log, "IGNORING a project-tier models") {
+	if log := buf.String(); !strings.Contains(log, "IGNORING project-tier models block") {
 		t.Fatalf("expected an ignore-WARN naming the project tier; got:\n%s", log)
 	}
 }
@@ -241,20 +235,58 @@ models:
 	r := newWithEnv(Options{Conventional: true, TrustProject: true, ExplicitFiles: []string{"/etc/mecatl/op.yaml"}, Diagnostics: diag}, env)
 	_ = r.Resolve(context.Background(), ws)
 
-	proj := r.ProjectModelBindings(ws)
-	if proj != nil && proj.Router != nil {
-		t.Fatal("a project-tier models.router must NEVER be honoured (operator-tier only)")
-	}
 	operator := r.OperatorModelPolicy()
 	if operator == nil || operator.Router == nil || operator.Router.Jev == nil || operator.Router.Jev.MaximumInputBytes != 1 {
 		t.Fatalf("project router altered operator maximum-input-bytes: %+v", operator)
 	}
-	if log := buf.String(); !strings.Contains(log, "IGNORING project-tier models.router") {
+	if log := buf.String(); !strings.Contains(log, "IGNORING project-tier models block") {
 		t.Fatalf("expected a router-strip WARN; got:\n%s", log)
 	}
 }
 
-// TestRouterStrictUnknownKeyRejected pins the strict parse of the router subtree.
+func TestRouterCategoryFoldedDescriptionKeepsOperatorConfigValid(t *testing.T) {
+	const yamlCfg = `providers: {}
+models:
+  router:
+    categories:
+      - name: small
+        description: >
+          Handles straightforward tasks
+          without extra reasoning.
+        model: target
+`
+	r := newWithEnv(Options{ExplicitFiles: []string{"/operator.yaml"}}, envWithExplicit("/operator.yaml", yamlCfg))
+	if _, _, err := r.OperatorProviders(); err != nil {
+		t.Fatalf("folded router description invalidated provider config: %v", err)
+	}
+	models := r.OperatorModelPolicy()
+	if models == nil || models.Router == nil || len(models.Router.Categories) != 1 {
+		t.Fatal("folded router description dropped operator model policy")
+	}
+	if got := models.Router.Categories[0].Description; got != "Handles straightforward tasks without extra reasoning.\n" {
+		t.Fatalf("folded description = %q", got)
+	}
+}
+
+func TestRouterCategoryDescriptionBounded(t *testing.T) {
+	for name, description := range map[string]string{
+		"overlong": strings.Repeat("x", 513),
+		"control":  "safe\u0007unsafe",
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw := fmt.Sprintf("models:\n  router:\n    categories:\n      - name: category\n        description: %q\n        model: target\n", description)
+			if _, err := parseYAML([]byte(raw)); err == nil {
+				t.Fatalf("router description %q was accepted", name)
+			}
+		})
+	}
+	valid := strings.Repeat("é", 256)
+	raw := fmt.Sprintf("models:\n  router:\n    categories:\n      - name: category\n        description: %q\n        model: target\n", valid)
+	if _, err := parseYAML([]byte(raw)); err != nil {
+		t.Fatalf("512-byte UTF-8 description rejected: %v", err)
+	}
+}
+
 func TestRouterStrictUnknownKeyRejected(t *testing.T) {
 	const bad = `
 models:
@@ -343,11 +375,7 @@ models:
 	r := newWithEnv(Options{Conventional: true, TrustProject: true, ExplicitFiles: []string{"/etc/mecatl/op.yaml"}, Diagnostics: diag}, env)
 	_ = r.Resolve(context.Background(), ws)
 
-	proj := r.ProjectModelBindings(ws)
-	if proj != nil && proj.DefaultProvider != "" {
-		t.Fatalf("a project-tier models.default_provider must NEVER be honoured (operator-tier only); got %q", proj.DefaultProvider)
-	}
-	if log := buf.String(); !strings.Contains(log, "IGNORING project-tier models.default_provider") {
+	if log := buf.String(); !strings.Contains(log, "IGNORING project-tier models block") {
 		t.Fatalf("expected a default_provider-strip WARN; got:\n%s", log)
 	}
 }
@@ -411,11 +439,7 @@ models:
 	r := newWithEnv(Options{Conventional: true, TrustProject: true, ExplicitFiles: []string{"/etc/mecatl/op.yaml"}, Diagnostics: diag}, env)
 	_ = r.Resolve(context.Background(), ws)
 
-	proj := r.ProjectModelBindings(ws)
-	if proj != nil && proj.Subagent != "" {
-		t.Fatalf("a project-tier models.subagent must NEVER be honoured (operator-tier only); got %q", proj.Subagent)
-	}
-	if log := buf.String(); !strings.Contains(log, "IGNORING project-tier models.subagent") {
+	if log := buf.String(); !strings.Contains(log, "IGNORING project-tier models block") {
 		t.Fatalf("expected a subagent-strip WARN; got:\n%s", log)
 	}
 }

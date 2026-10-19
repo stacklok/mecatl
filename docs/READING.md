@@ -34,6 +34,8 @@ foundations.
 
 Also for contributors:
 
+- [Develop changes across Go modules](module-development.md): workspace tests,
+  dependency metadata, and dependency-first release verification.
 - [Developing the `mecatui` terminal UI](tui.md): client boundaries and UI conventions.
 - [Performance regression tracking](perf-tracking.md) and
   [measuring performance](perf-measurement-survey.md): benchmarks, gates, and live
@@ -41,7 +43,7 @@ Also for contributors:
 - [Qualify local microVM source builds](architecture/microvm-environments.md#qualify-local-microvm-source-builds):
   contributor procedure for the macOS development path.
 - The [formal domain model](architecture/mecatl.modelith.md), generated from its `.yaml`.
-- [User-docs authoring contract](../user-docs/_README.md) and
+- [User-docs authoring contract](../user-docs/AGENTS.md) and
   [style guide](../user-docs/_STYLE.md), for public documentation.
 
 ## Operators

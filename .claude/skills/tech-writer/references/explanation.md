@@ -4,7 +4,7 @@
 
 Explanation is a discussion. The reader is away from the keyboard, or at least away from the task, and wants to deepen their understanding: how does this work, why is it designed this way, how does it relate to the alternatives? Explanation is the mode that serves study rather than work, and it's the only mode where context, background, opinion, and trade-offs belong.
 
-Place explanation by topic ownership in the [authoring contract](../../../../user-docs/_README.md). Shared capability concepts belong in `features/`; operator and builder context belongs in the corresponding journey. Diataxis mode does not require a separate concepts directory.
+Place explanation by topic ownership in the [authoring contract](../../../../user-docs/AGENTS.md). Shared capability concepts belong in `features/`; operator and builder context belongs in the corresponding journey. Diataxis mode does not require a separate concepts directory.
 
 ## Principles
 

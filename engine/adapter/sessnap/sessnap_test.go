@@ -496,6 +496,51 @@ func TestSnapshotRoundTripsPhase1Fields(t *testing.T) {
 	}
 }
 
+// TestSessionScopedAgentIdentity_Scenario2_PersistsAcrossSnapshotRoundTrip pins
+// AC2.1 (docs/acceptance/session-scoped-agent-identity.md): a session's
+// AgentDefinitionName write-once creation label (ADR 0353) is carried on the
+// snapshot and restores byte-identical across a save/restore round-trip —
+// the same discipline as Profile/ProviderID/ModelID alongside it.
+func TestSessionScopedAgentIdentity_Scenario2_PersistsAcrossSnapshotRoundTrip(t *testing.T) {
+	want := session.New("agent", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
+	want.AgentDefinitionName = "release-reviewer"
+	bound := authorityBinding(t)
+	ceiling := bound.Clone().CapabilitySet
+	bound.Ceiling = &ceiling
+	if err := want.BindAuthority(bound); err != nil {
+		t.Fatal(err)
+	}
+	want.AgentCreateIntent = "v1:opaque-create-intent"
+	if err := want.BeginTurn(); err != nil {
+		t.Fatal(err)
+	}
+	line := mustMarshal(t, want)
+
+	if !strings.Contains(string(line), `"agent_definition_name":"release-reviewer"`) {
+		t.Errorf("marshalled snapshot missing agent_definition_name key:\n%s", line)
+	}
+
+	got, err := sessnap.Unmarshal(line)
+	if err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got.AgentCreateIntent != want.AgentCreateIntent {
+		t.Fatalf("create intent = %q, want %q", got.AgentCreateIntent, want.AgentCreateIntent)
+	}
+	if got.AgentDefinitionName != "release-reviewer" {
+		t.Errorf("AgentDefinitionName = %q, want %q (round-trip must survive)", got.AgentDefinitionName, "release-reviewer")
+	}
+
+	// An ordinary (unbound) session's empty label omits the key entirely — the
+	// additive omitempty discipline that keeps a pre-ADR-0353 snapshot
+	// byte-identical.
+	ordinary := session.New("ordinary", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
+	ordinaryLine := mustMarshal(t, ordinary)
+	if strings.Contains(string(ordinaryLine), `"agent_definition_name"`) {
+		t.Errorf("ordinary session's snapshot unexpectedly carries agent_definition_name:\n%s", ordinaryLine)
+	}
+}
+
 // TestZeroUsageEmitsCanonicalLedger pins that current snapshots always carry
 // token_usage, even when every bucket is empty.
 func TestZeroUsageEmitsCanonicalLedger(t *testing.T) {

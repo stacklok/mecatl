@@ -16,13 +16,13 @@ import (
 // — enter applies DIRECTLY (no confirm step) and the transcript SURVIVES.
 // Renders purely from client state (no proto in ui).
 
-// pressEffortKey routes a key through onEffortKey, asserting it was handled.
+// pressEffortKey routes a key through Model.Update while the picker owns input.
 func pressEffortKey(t *testing.T, m Model, msg tea.KeyPressMsg) Model {
 	t.Helper()
-	mm, _, handled := m.onEffortKey(msg)
-	if !handled {
-		t.Fatalf("key %v should be handled by the open picker", msg)
+	if m.modal == nil {
+		t.Fatal("effort input requires an open modal")
 	}
+	mm, _ := m.Update(msg)
 	return mm.(Model)
 }
 
@@ -32,8 +32,8 @@ func TestF7OpensEffortPicker(t *testing.T) {
 	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF7})
 	m = mm.(Model)
-	if m.effort.view != effortPanel {
-		t.Fatalf("f7 left effort view = %v, want effortPanel", m.effort.view)
+	if m.modal == nil {
+		t.Fatalf("f7 left effort view = %v, want an effort modal", m.modal)
 	}
 }
 
@@ -43,8 +43,8 @@ func TestRunEffortOpensPicker(t *testing.T) {
 	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
 	mm, cmd := m.runEffort()
 	m = mm.(Model)
-	if m.effort.view != effortPanel {
-		t.Fatalf("view = %v, want effortPanel", m.effort.view)
+	if m.modal == nil {
+		t.Fatalf("view = %v, want an effort modal", m.modal)
 	}
 	if m.prompt.Focused() {
 		t.Error("opening the picker should blur the textarea")
@@ -109,8 +109,8 @@ func TestRunEffortGatedWithoutModelSelection(t *testing.T) {
 	m := newModelsModel(t, sampleModels(), &fakeStore{}, client.Capabilities{ModelSelection: false}, client.ModelSelection{})
 	mm, _ := m.runEffort()
 	m = mm.(Model)
-	if m.effort.view != effortNone {
-		t.Fatalf("without ModelSelection the picker must stay closed, view = %v", m.effort.view)
+	if m.modal != nil {
+		t.Fatalf("without ModelSelection the picker must stay closed, view = %v", m.modal)
 	}
 }
 
@@ -122,8 +122,8 @@ func TestEffortCursorStartsOnCurrent(t *testing.T) {
 	mm, _ := m.runEffort()
 	m = mm.(Model)
 	// effortTiers = [auto low medium high xhigh max] → "high" is index 3.
-	if m.effort.cursor != 3 {
-		t.Fatalf("cursor = %d, want 3 (the current 'high' row)", m.effort.cursor)
+	if m.modal.(*effortState).list.Cursor() != 3 {
+		t.Fatalf("cursor = %d, want 3 (the current 'high' row)", m.modal.(*effortState).list.Cursor())
 	}
 }
 
@@ -134,15 +134,15 @@ func TestEffortNavBounds(t *testing.T) {
 	m = mm.(Model)
 	// Up at the top stays at 0.
 	m = pressEffortKey(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
-	if m.effort.cursor != 0 {
-		t.Fatalf("up at top = %d, want 0", m.effort.cursor)
+	if m.modal.(*effortState).list.Cursor() != 0 {
+		t.Fatalf("up at top = %d, want 0", m.modal.(*effortState).list.Cursor())
 	}
 	// Down past the bottom clamps at len-1.
 	for i := 0; i < len(effortTiers)+3; i++ {
 		m = pressEffortKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
-	if m.effort.cursor != len(effortTiers)-1 {
-		t.Fatalf("down past bottom = %d, want %d", m.effort.cursor, len(effortTiers)-1)
+	if m.modal.(*effortState).list.Cursor() != len(effortTiers)-1 {
+		t.Fatalf("down past bottom = %d, want %d", m.modal.(*effortState).list.Cursor(), len(effortTiers)-1)
 	}
 }
 
@@ -151,11 +151,11 @@ func TestEffortEscCloses(t *testing.T) {
 	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
 	mm, _ := m.runEffort()
 	m = mm.(Model)
-	mm, _, handled := m.onEffortKey(tea.KeyPressMsg{Code: tea.KeyEsc})
+	mm, _, handled := m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if !handled {
 		t.Fatal("esc should be handled by the open picker")
 	}
-	if mm.(Model).effort.view != effortNone {
+	if mm.(Model).modal != nil {
 		t.Error("esc should close the picker")
 	}
 }
@@ -180,7 +180,7 @@ func TestEffortPickForksDirectly(t *testing.T) {
 	m = pressEffortKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 	m = pressEffortKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 	m = pressEffortKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
-	mm, cmd, handled := m.onEffortKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	mm, cmd, handled := m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
 	if !handled {
 		t.Fatal("enter should be handled by the open picker")
@@ -196,8 +196,8 @@ func TestEffortPickForksDirectly(t *testing.T) {
 		t.Fatalf("pickedThisSession = %+v, want %+v", m.pickedThisSession, want)
 	}
 	// The overlay is dismissed (no confirm step) and the session is mid-switch.
-	if m.effort.view != effortNone {
-		t.Errorf("the switch should dismiss the effort overlay, view = %v", m.effort.view)
+	if m.modal != nil {
+		t.Errorf("the switch should dismiss the effort overlay, view = %v", m.modal)
 	}
 	if m.phase != phaseConnecting {
 		t.Errorf("the switch should drive phaseConnecting, got %v", m.phase)
@@ -241,7 +241,7 @@ func TestEffortPickPreservesTranscript(t *testing.T) {
 	mm, _ := m.runEffort()
 	m = mm.(Model)
 	m = pressEffortKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown}) // low (index 1)
-	mm, cmd, _ := m.onEffortKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	mm, cmd, _ := m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
 	// The transcript is UNTOUCHED by the handoff itself.
 	if len(m.conv.testBlocks()) != len(before.testBlocks()) {
@@ -285,7 +285,7 @@ func TestEffortPickFailureLeavesSourceOpen(t *testing.T) {
 	mm, _ := m.runEffort()
 	m = mm.(Model)
 	m = pressEffortKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown}) // low
-	mm, cmd, _ := m.onEffortKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	mm, cmd, _ := m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
 	m = feedCmd(t, m, cmd)
 	// The recoverable reducer fired (NOT the terminal fatal path).
@@ -341,7 +341,7 @@ func TestEffortPickRefetchFailureKeepsFork(t *testing.T) {
 	mm, _ := m.runEffort()
 	m = mm.(Model)
 	m = pressEffortKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown}) // low
-	mm, cmd, _ := m.onEffortKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	mm, cmd, _ := m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
 	m = feedCmd(t, m, cmd)
 
@@ -386,10 +386,10 @@ func TestEffortPickAutoSendsEmpty(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		m = pressEffortKey(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
 	}
-	if m.effort.cursor != 0 {
-		t.Fatalf("cursor = %d, want 0 (auto)", m.effort.cursor)
+	if m.modal.(*effortState).list.Cursor() != 0 {
+		t.Fatalf("cursor = %d, want 0 (auto)", m.modal.(*effortState).list.Cursor())
 	}
-	mm, cmd, _ := m.onEffortKey(tea.KeyPressMsg{Code: tea.KeyEnter}) // apply directly
+	mm, cmd, _ := m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter}) // apply directly
 	m = mm.(Model)
 	want := client.ModelSelection{ProviderID: "openai", ModelID: "gpt-5", ReasoningEffort: ""}
 	if m.createModelSelection != want {
@@ -442,8 +442,8 @@ func TestEffortPickerGolden(t *testing.T) {
 	m = mm.(Model)
 	// Move the cursor OFF the current row so the ● and the highlight are distinct.
 	m = pressEffortKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
-	if m.effort.view != effortPanel {
-		t.Fatalf("view = %v, want effortPanel", m.effort.view)
+	if m.modal == nil {
+		t.Fatalf("view = %v, want an effort modal", m.modal)
 	}
 	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
@@ -462,13 +462,13 @@ func TestEffortPickCurrentTierForksToo(t *testing.T) {
 	// moving picks the already-current tier and forks directly.
 	mm, _ := m.runEffort()
 	m = mm.(Model)
-	mm, cmd, handled := m.onEffortKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	mm, cmd, handled := m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
 	if !handled {
 		t.Fatal("enter on the current tier should be handled")
 	}
-	if m.effort.view != effortNone {
-		t.Errorf("the switch should dismiss the effort overlay, view = %v", m.effort.view)
+	if m.modal != nil {
+		t.Errorf("the switch should dismiss the effort overlay, view = %v", m.modal)
 	}
 	if m.phase != phaseConnecting {
 		t.Errorf("phase = %v, want phaseConnecting (the fork fires even on the current tier)", m.phase)
@@ -495,10 +495,10 @@ func TestEffortPickCurrentTierNonAutoForksToo(t *testing.T) {
 	mm, _ := m.runEffort()
 	m = mm.(Model)
 	// The cursor opens on the current "high" row (index 3) — enter WITHOUT moving.
-	if m.effort.cursor != 3 {
-		t.Fatalf("cursor = %d, want 3 (the current 'high' row)", m.effort.cursor)
+	if m.modal.(*effortState).list.Cursor() != 3 {
+		t.Fatalf("cursor = %d, want 3 (the current 'high' row)", m.modal.(*effortState).list.Cursor())
 	}
-	mm, cmd, handled := m.onEffortKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	mm, cmd, handled := m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
 	if !handled {
 		t.Fatal("enter on the current non-auto tier should be handled")
@@ -524,13 +524,13 @@ func TestEffortPickerSwallowsOtherKeys(t *testing.T) {
 	mm, _ := m.runEffort()
 	m = mm.(Model)
 	// A stray rune key is swallowed; the overlay stays on the panel.
-	mm, _, handled := m.onEffortKey(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	mm, _, handled := m.onOverlayKey(tea.KeyPressMsg{Code: 'x', Text: "x"})
 	if !handled {
 		t.Fatal("a stray rune key should be handled (swallowed) by the picker overlay")
 	}
 	m = mm.(Model)
-	if m.effort.view != effortPanel {
-		t.Fatalf("view = %v, want effortPanel (the key must not leak or dismiss)", m.effort.view)
+	if m.modal == nil {
+		t.Fatalf("view = %v, want an effort modal (the key must not leak or dismiss)", m.modal)
 	}
 }
 
@@ -568,7 +568,7 @@ func TestEffortForkReturnsCapsFromSnapshot(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		m = pressEffortKey(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
-	mm, cmd, handled := m.onEffortKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	mm, cmd, handled := m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
 	if !handled {
 		t.Fatal("enter should be handled by the open picker")

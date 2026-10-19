@@ -2,6 +2,7 @@ package executioncontroller
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -30,12 +31,26 @@ func operationLeaseCurrent(o *unstructured.Unstructured, authority operationLeas
 
 func (s *Store) operationAuthorityCurrent(o *unstructured.Unstructured, authority operationLeaseAuthority) bool {
 	claim, _, expiry, ok := activeRunFrom(o)
-	return ok && s.now().Before(expiry) && intNested(o.Object, "status", "activeRun", "epoch") == int64(authority.epoch) && //nolint:gosec // epochs are bounded before persistence.
+	return !s.profiles.isRevoked(o) && ok && s.now().Before(expiry) && intNested(o.Object, "status", "activeRun", "epoch") == int64(authority.epoch) && //nolint:gosec // epochs are bounded before persistence.
 		claim.Environment.ID == authority.environment && claim.Environment.Revision == authority.revision &&
 		claim.BindingID == authority.bindingID && claim.RunID == authority.runID && claim.ClaimID == authority.claimID &&
 		claim.Epoch == authority.epoch && claim.GrantGeneration == authority.grantGeneration &&
 		epochMatches(o, authority.epoch) && generationMatches(o, authority.grantGeneration) &&
 		textNested(o.Object, "spec", "clientHash") == hashText(authority.client) && textNested(o.Object, "spec", "ownerHash") == authority.owner
+}
+
+func (s *Store) operationPolicyCurrent(ctx context.Context, authority operationLeaseAuthority, o *unstructured.Unstructured) bool {
+	if s.security == nil {
+		return true
+	}
+	chain, _, err := clientCertificates(ctx)
+	if err != nil {
+		return false
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	id, policy, err := s.security.authorize(checkCtx, chain)
+	return err == nil && id == authority.client && policy.MayAttestOwner && slices.Contains(policy.ExecutionTemplates, textNested(o.Object, "spec", "templateID"))
 }
 
 func (s *Store) renewOperationLease(ctx context.Context, authority operationLeaseAuthority) error {
@@ -52,7 +67,7 @@ func (s *Store) renewOperationLease(ctx context.Context, authority operationLeas
 		case <-ticker.C:
 			err := s.retryUpdateStatus(ctx, authority.environment, func(o *unstructured.Unstructured) error {
 				now := s.now()
-				if !operationLeaseCurrent(o, authority, s.holderID, now) || !s.operationAuthorityCurrent(o, authority) {
+				if !operationLeaseCurrent(o, authority, s.holderID, now) || !s.operationAuthorityCurrent(o, authority) || !s.operationPolicyCurrent(ctx, authority, o) {
 					return incompatibleOperationError()
 				}
 				m, _, _ := unstructured.NestedMap(o.Object, "status", "activeOperation")

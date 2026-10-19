@@ -39,8 +39,8 @@ func TestSubagentAgentPlusModelRunsScopedChildOnOverrideModel(t *testing.T) {
 			map[string]*agent.Engine{"reviewer": prebuiltReviewer},
 			// A def with maxTurns=2 pins the agent+model child's turn budget.
 			[]agent.AgentMeta{{Name: "reviewer", Description: "reviews", Limits: session.Limits{MaxTurns: 2}}}),
-		agent.WithAgentModelEngineFactory(func(agentName, model string) (*agent.Engine, bool) {
-			if agentName == "reviewer" && model == "fast" {
+		agent.WithAgentModelEngineFactory(func(agentName string, target agent.ModelTarget) (*agent.Engine, bool) {
+			if agentName == "reviewer" && target.Model == "fast" {
 				return overrideEngine, true
 			}
 			return nil, false
@@ -102,7 +102,7 @@ func TestSubagentAgentPlusModelRunsScopedCatalog(t *testing.T) {
 		agent.WithAgentEngines(
 			map[string]*agent.Engine{"reviewer": childEngineWith(mockllm.New(mockllm.TextTurn("r")), catalogWith(t))},
 			[]agent.AgentMeta{{Name: "reviewer", Description: "reviews"}}),
-		agent.WithAgentModelEngineFactory(func(string, string) (*agent.Engine, bool) { return overrideEngine, true }),
+		agent.WithAgentModelEngineFactory(func(string, agent.ModelTarget) (*agent.Engine, bool) { return overrideEngine, true }),
 	)
 
 	results, _ := subagentParentResults(t, task,
@@ -138,7 +138,7 @@ func TestSubagentAgentPlusModelPerDefLimitsBind(t *testing.T) {
 		agent.WithAgentEngines(
 			map[string]*agent.Engine{"reviewer": childEngineWith(mockllm.New(mockllm.TextTurn("r")), catalogWith(t))},
 			[]agent.AgentMeta{{Name: "reviewer", Description: "reviews", Limits: session.Limits{MaxTurns: 1}}}),
-		agent.WithAgentModelEngineFactory(func(string, string) (*agent.Engine, bool) { return overrideEngine, true }),
+		agent.WithAgentModelEngineFactory(func(string, agent.ModelTarget) (*agent.Engine, bool) { return overrideEngine, true }),
 	)
 
 	results, _ := subagentParentResults(t, task,

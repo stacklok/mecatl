@@ -25,12 +25,16 @@ for the shared placement, no-FS, child-environment, and reattachment model.
 For per-session PVC-backed workspaces,
 [configure the execution provider](native-execution.md). Follow its
 [authority and retained-state lifecycle](execution-provider-lifecycle.md) for
-rotation, upgrades, retirement, and deletion.
+rotation, upgrades, retirement, and deletion. Configure both
+`execution.templateID` and the exact generated `execution.templateRevision` in
+`mecak8s` values. The provider's template default does not change this pin or the
+environment already bound to a session. Verify a workload image with the
+[deployed-image smoke test](native-execution.md#smoke-test-the-deployed-image).
 
 When `execution.enabled` is `false`, the chart mounts no execution mTLS Secret
 and passes no execution-provider flags. The separate provider and its existing
 environments continue independently. Clients can explicitly request
-`profile: "no-fs"` to keep a session filesystem-free.
+`execution: {none: {}}` to keep a session filesystem-free.
 
 ## Mounted workspace (shared filesystem root)
 

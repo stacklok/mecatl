@@ -1,6 +1,6 @@
 module github.com/stacklok/mecatl/adapters
 
-go 1.27.0
+go 1.27.2
 
 require (
 	github.com/alicebob/miniredis/v2 v2.39.0
@@ -8,7 +8,7 @@ require (
 	github.com/gofrs/flock v0.13.1
 	github.com/redis/go-redis/v9 v9.23.0
 	github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver v0.1.0
-	github.com/stacklok/mecatl/engine v0.15.1-0.20260929125653-6142f5252a09
+	github.com/stacklok/mecatl/engine v0.16.1-0.20261013103539-36b6ca993df9
 	github.com/stacklok/mecatl/internal/adaptersupport v0.1.0
 	github.com/stacklok/toolhive-core/redisconn v0.0.2
 	go.uber.org/goleak v1.3.0
@@ -25,7 +25,7 @@ require (
 	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.uber.org/atomic v1.12.0 // indirect
-	golang.org/x/net v0.59.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 )

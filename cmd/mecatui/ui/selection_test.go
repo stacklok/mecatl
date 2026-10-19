@@ -770,7 +770,20 @@ func TestGestureInDirtyWindowKeepsDisplayedFrame(t *testing.T) {
 	m.refreshView()
 
 	top := convTopRow(m)
-	y := top + 5
+	y := -1
+	frame := m.conversationView.frame
+	for screenRow := 1; screenRow < m.vp.Height()-1; screenRow++ {
+		line := m.vp.YOffset() + screenRow
+		row := frame.provenance[line]
+		text, _ := selectionRowText(frame, row, frame.lines[line])
+		if row.text && graphemeCount(text) > 30 {
+			y = top + screenRow
+			break
+		}
+	}
+	if y < 0 {
+		t.Fatal("fixture needs a visible text row long enough for the drag")
+	}
 
 	// Anchor + extend a selection (non-empty, so it stays active).
 	m, _ = pressMouse(m, tea.MouseLeft, 10, y)
@@ -1075,7 +1088,8 @@ func TestEscClearsSelectionThenRestoresSemantics(t *testing.T) {
 // starts NO selection (Req 8).
 func TestSelectionBlockedUnderOverlay(t *testing.T) {
 	m, _ := selModel(t)
-	m.showHelp = true // help owns the body
+	mm, _ := m.runHelp()
+	m = mm.(Model) // help owns the body
 	top := convTopRow(m)
 
 	m, _ = pressMouse(m, tea.MouseLeft, 0, top)
@@ -1395,7 +1409,7 @@ func TestOpeningOverlayClearsSelection(t *testing.T) {
 
 	// "?" on an empty prompt opens help.
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: '?'})
-	if !m.showHelp {
+	if m.modal == nil {
 		t.Fatal("precondition: ? should open help")
 	}
 	if m.sel.active {
@@ -2085,9 +2099,9 @@ func TestSelectableGateBlocksAndClears(t *testing.T) {
 	cases := []nonSelectableCase{
 		{"mcpOverlay", func(m *Model) { m.modal = &mcpState{view: mcpPanel} }},
 		{"modelsOverlay", func(m *Model) { m.modal = &modelsState{view: modelsPanel} }},
-		{"worktreesOverlay", func(m *Model) { m.worktrees.view = worktreesPanel }},
+		{"worktreesOverlay", func(m *Model) { m.modal = &worktreesState{deps: m.surfaceDeps()} }},
 		{"soulOverlay", func(m *Model) { m.modal = &soulState{view: soulPanel} }},
-		{"help", func(m *Model) { m.showHelp = true }},
+		{"help", func(m *Model) { mm, _ := m.runHelp(); *m = mm.(Model) }},
 		{"awaitingApproval", func(m *Model) { m.phase = phaseAwaitingApproval }},
 		{"fatal", func(m *Model) { m.phase = phaseFatal }},
 	}
@@ -2329,8 +2343,8 @@ func TestTripleClickSelectsLine(t *testing.T) {
 	if m.sel.anchorC != convBodyXOffset {
 		t.Errorf("triple-click anchorC = %d, want %d (past the left margin + body hang)", m.sel.anchorC, convBodyXOffset)
 	}
-	if want := graphemeCount(stripped); m.sel.headC != want {
-		t.Errorf("triple-click headC = %d, want graphemeCount %d", m.sel.headC, want)
+	if want := graphemeCount(strings.TrimRight(stripped, " ")); m.sel.headC != want {
+		t.Errorf("triple-click headC = %d, want content end %d (excluding rail padding)", m.sel.headC, want)
 	}
 	if got := selectedText(m.vp.GetContent(), m.sel); got != "hello world here" {
 		t.Errorf("triple-click selectedText = %q, want %q (whole line, margin + trailing trimmed)", got, "hello world here")
@@ -2516,7 +2530,7 @@ func TestTripleClickEmptyLineNoCopy(t *testing.T) {
 // start NO selection AND leave clickCount==0 (Req 9, count is AFTER the gate).
 func TestMultiClickInertUnderOverlay(t *testing.T) {
 	cases := []nonSelectableCase{
-		{"help", func(m *Model) { m.showHelp = true }},
+		{"help", func(m *Model) { mm, _ := m.runHelp(); *m = mm.(Model) }},
 		{"noMouse", func(m *Model) { m.deps.NoMouse = true }},
 		{"noAltScreen", func(m *Model) { m.deps.NoAltScreen = true }},
 	}

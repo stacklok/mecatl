@@ -11,6 +11,11 @@ owns the workspace, model access, session storage, and permissions. Your client
 provides the terminal interface. This separation is part of Mecatl's
 [cloud-native architecture](/cloud-native-harness.md).
 
+Before normal TUI startup, `mecatui` checks that the server implements the same
+API major before reading or creating a session. It repeats the check when you
+reconnect. This is a wire-contract check, not a software release-version
+comparison.
+
 ## Before you connect
 
 [Install `mecatui`](./installation.md), then ask your operator for the server

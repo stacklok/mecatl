@@ -53,8 +53,8 @@ services:
 
   studio:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: apps/Dockerfile
     depends_on:
       mecated:
         condition: service_healthy

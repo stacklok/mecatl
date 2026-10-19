@@ -2,6 +2,7 @@
 
 import type { ProviderSettingsResponse, RuntimeSettingsResponse } from "@mecatl-studio/contracts";
 import type { Client } from "@stacklok-oss/mecatl-sdk";
+import { providerDisplayName } from "./provider-names.js";
 
 export interface SettingsService {
   get(): Promise<RuntimeSettingsResponse>;
@@ -83,6 +84,7 @@ function projectInventory(
       {
         availableNotDefault: provider.availableNotDefault,
         defaultModelAutoSelected: provider.defaultModelAutoSelected,
+        displayName: providerDisplayName(provider.providerId),
         hint: provider.hint,
         id: provider.providerId,
         modelCount: provider.modelCount,
@@ -96,6 +98,7 @@ function projectInventory(
       providers.set(model.providerId, {
         availableNotDefault: false,
         defaultModelAutoSelected: false,
+        displayName: providerDisplayName(model.providerId),
         hint: "",
         id: model.providerId,
         modelCount: inventory.models.filter(
@@ -112,6 +115,7 @@ function projectInventory(
       displayName: model.displayName || model.id,
       id: model.id,
       image: model.image,
+      providerDisplayName: providerDisplayName(model.providerId),
       providerId: model.providerId,
       reasoning: model.reasoning,
     })),

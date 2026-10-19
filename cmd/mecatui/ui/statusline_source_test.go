@@ -114,7 +114,7 @@ func TestStatusCustomization_Scenario1_StatusInputProjectsLiveUIState(t *testing
 	if input.Session.Title != "Status work" || input.Session.ReasoningEffort != "high" || input.Session.Mode != "default" || input.Session.Handle != "" {
 		t.Fatalf("session projection = %#v", input.Session)
 	}
-	if input.Model.ProviderID != "openai" || input.Model.ID != "gpt-5" || input.Model.DisplayName != "gpt-5" || input.Model.ContextWindow != (customization.ContextAtom{Raw: 200_000, Human: "200K"}) {
+	if input.Model.ProviderID != "openai" || input.Model.ID != "gpt-5" || input.Model.ProviderLabel != "openai/gpt-5" || input.Model.FriendlyName != "gpt-5" || input.Model.ContextWindow != (customization.ContextAtom{Raw: 200_000, Human: "200K"}) {
 		t.Fatalf("model projection = %#v", input.Model)
 	}
 	if input.Usage != (customization.Usage{
@@ -140,6 +140,33 @@ func TestStatusCustomization_Scenario1_StatusInputProjectsLiveUIState(t *testing
 	}
 	if input.Clock.Now.IsZero() {
 		t.Fatal("clock projection is zero")
+	}
+}
+
+func TestStatusModelLabelsUseResolvedPairAndMatchingInventory(t *testing.T) {
+	for _, tc := range []struct {
+		name, provider, id, wantLabel, wantFriendly string
+		inventory                                   []client.ModelInfo
+	}{
+		{name: "matching inventory", provider: "openrouter", id: "anthropic/claude", wantLabel: "openrouter/anthropic/claude", wantFriendly: "Claude", inventory: []client.ModelInfo{{ProviderID: "other", ID: "anthropic/claude", DisplayName: "Wrong"}, {ProviderID: "openrouter", ID: "anthropic/claude", DisplayName: "Claude"}}},
+		{name: "missing inventory", provider: "openrouter", id: "anthropic/claude", wantLabel: "openrouter/anthropic/claude", wantFriendly: "anthropic/claude"},
+		{name: "missing provider", id: "anthropic/claude", wantLabel: "anthropic/claude", wantFriendly: "anthropic/claude", inventory: []client.ModelInfo{{ProviderID: "openrouter", ID: "anthropic/claude", DisplayName: "Wrong"}}},
+		{name: "missing model", provider: "openrouter"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := New(Deps{Ctx: context.Background(), Theme: theme.New("aztec", theme.AztecPalette())})
+			m.phase = phaseRunning
+			m.resolvedSessionModel.ProviderID = tc.provider
+			m.resolvedSessionModel.ModelID = tc.id
+			m.modelCatalog.models = tc.inventory
+			model := m.statusModel()
+			if model.ProviderID != tc.provider || model.ID != tc.id || model.ProviderLabel != tc.wantLabel || model.FriendlyName != tc.wantFriendly {
+				t.Fatalf("model projection = %#v, want label %q and name %q", model, tc.wantLabel, tc.wantFriendly)
+			}
+			if got := m.headerModelLabel(); got != tc.wantLabel {
+				t.Fatalf("header identity = %q, want %q", got, tc.wantLabel)
+			}
+		})
 	}
 }
 

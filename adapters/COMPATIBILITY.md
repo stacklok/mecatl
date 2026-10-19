@@ -62,6 +62,15 @@ The adapter manifest requires the real engine baseline
 Redis, gRPC, the root host, or adapters. Root `go.mod` replacements and
 `go.work` are checkout conveniences, not external installation requirements.
 
+### Redis one-shot retry records
+
+Redis schedules use `last_fire_outcome_id` to identify the terminal outcome
+that authorizes a one-shot retry. A record without this field remains disabled
+until a terminal outcome is recorded by a writer that supplies it, or an
+operator resolves the schedule. Do not use mixed old and new Redis writers to
+re-arm an existing one-shot schedule: the older writer cannot establish the
+required outcome authority.
+
 ## Release verification
 
 The `adapters/v0.1.0` tag pins support and driver modules to a PR-head

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { fileURLToPath } from "node:url";
-import { serve } from "@hono/node-server";
 import { bootstrap, describeStartupFailure } from "./bootstrap.js";
+import { startServer } from "./http/listen.js";
 
 const defaultWebDist = fileURLToPath(new URL("../../web/dist", import.meta.url));
 const environment: NodeJS.ProcessEnv = {
@@ -19,14 +19,17 @@ try {
 }
 
 const { app, config, logger, runtime } = booted;
-const server = serve({ fetch: app.fetch, hostname: config.host, port: config.port }, (info) => {
-  logger.info("studio.listening", {
-    address: info.address,
-    authMode: runtime.authMode,
-    port: info.port,
-    publicUrl: config.publicUrl?.toString(),
-  });
-});
+const server = startServer(
+  { fetch: app.fetch, hostname: config.host, port: config.port },
+  (info) => {
+    logger.info("studio.listening", {
+      address: info.address,
+      authMode: runtime.authMode,
+      port: info.port,
+      publicUrl: config.publicUrl?.toString(),
+    });
+  },
+);
 
 let stopping = false;
 const stop = () => {

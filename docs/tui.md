@@ -55,13 +55,42 @@ rather than keeping a second set of row offsets.
 
 Overlays that take over the conversation region own their interaction state and
 size themselves from the geometry offered on each render; the parent owns placement
-and pointer mapping. Follow the [`surface` contract](../cmd/mecatui/ui/surface.go)
-and its [migration guidance](drafts/surface-migration-plan.md) when adding or
+and pointer mapping. Before keys or wheel events on any open surface, the parent
+prepares its current Render offer; only View publishes pointer hits. Resize and
+undisplayed preparation invalidate both hits and placement metrics. A surface
+captures its presentation and operating dependencies when it opens. Introduce
+dynamic theme or keybinding updates only with a deliberate UI-wide design that
+covers every affected component.
+Follow the [`surface` contract](../cmd/mecatui/ui/surface.go) when adding or
 converting an overlay. A closed surface must not receive late results or leak
 keyboard and wheel events into the conversation.
 
+Keep surface-specific state, transitions, asynchronous result validation, and view
+caches on the surface. The parent owns modal lifetime, placement, frame-scoped
+pointer mapping, and effects that change root-owned state. A surface that needs a
+root-owned effect emits a narrow intent; it does not require the parent to inspect
+its concrete type. Correlate asynchronous results with the surface instance and
+its active request, then discard results the open surface does not own.
+
+The `ui` package is large, so keep its internal components narrow and their
+contracts explicit. Prefer a shared contract when all comparable components use
+the same behavior. Treat a concrete type assertion in generic UI flow as a smell:
+justify the component's genuinely unique lifecycle before adding one. Do not add
+an interface for a speculative future capability; introduce it when the shared
+behavior exists and the contract can make the code simpler.
+
 Selectable inventories use `presentListRow` for the cursor marker, status cells,
-and selected-row styling. Let the surface own item semantics and activation.
+and selected-row styling. Follow `/models`: use the `spinner` accent style for
+selected rows and `muted` for unselected rows. The `▶` cursor appears only on the
+first visible physical row of the selected item; selected styling covers all its
+wrapped rows. Optional current or default status cells remain distinct from the
+cursor. `presentListRow` owns the gutter and cursor/status markers; surfaces must
+not embed those markers or their padding in item text. Let the surface own item
+semantics and activation.
+Keep unavailable entries visible when that explains the available choices, but
+exclude them from selection and activation. Translate shared navigation keys to
+`bounded.Move` values in the `ui` package. Keep `internal/bounded` independent
+of UI key-event and keymap dependencies.
 Tool-call status uses `…` with `toolName`, `✓` with `toolOk`, and `✗` with
 `toolErr`. Pending and failed calls retain readable labels; settled successful
 single-line calls use the glyph and name without a redundant success label.
@@ -93,15 +122,27 @@ independently inspectable.
 
 List-and-detail browsers use a bounded list for selection and a separate bounded
 viewport for detail. Wheel scrolling moves the list window without changing
-selection. Returning from detail preserves the selected item and list window, and
-detail follows appended lines only while the reader is at the bottom. The
-saved-memory browser shows list/detail ownership; Sessions shows a surface that
-fills the conversation region while keeping the header, prompt, and footer.
+selection. Keyboard navigation and clicking an enabled row select and reveal it;
+selection alone does not activate it. Returning from detail preserves the selected
+item and list window, and detail follows appended lines only while the reader is
+at the bottom. Consequential activation requires a separate explicit confirmation
+using keyboard, pointer, or both as appropriate to the widget. The saved-memory
+browser shows list/detail ownership; Sessions shows a surface that fills the
+conversation region while keeping the header, prompt, and footer.
 
 List and inspector cards cap their outer width at 128 cells, permission cards at
-132, and inline tool cards at 100, or the available width if smaller. Budget
-wrapped chrome before allocating viewport rows, fall back to close-only when no
-body row fits, and check narrow terminals, not just a wide golden.
+132, and inline tool cards at 100, or the available width if smaller. These are
+ceilings, not target sizes. Small finite pickers should prefer a content-sized
+width measured from the complete inventory and fixed chrome, including gutters,
+frame, warnings, and captured key hints. Large inventories and text inspectors
+can use more of the available width when it improves readability.
+
+Keep card dimensions stable while selection or the visible window changes at a
+fixed geometry offer. Measure all items when choosing a content-sized width,
+not just the visible rows. Recalculate for terminal resize; wrap or clip content
+when the offer is smaller than its preferred size. Budget wrapped chrome before
+allocating viewport rows, fall back to close-only when no body row fits, and
+check narrow terminals as well as a wide golden.
 
 An open modal or transient handles its keys before the prompt, and a wheel event
 over a modal must not scroll the hidden conversation. Every surface needs a
@@ -114,7 +155,25 @@ existing chord a second meaning in the same focus context; stay consistent with 
 The conversation follows the tail while the reader is at the bottom; once they
 scroll up, renders keep a logical reading anchor until they return. Use
 `conversationView` rather than setting viewport offsets directly. Speaker labels,
-hanging alignment, and spacing distinguish turns without color.
+hanging alignment, and spacing distinguish turns without color. User prompts,
+model responses, and ordinary harness notices use accented, bold `▶ you`,
+`◀ mecatl`, and `◆ system` labels in both views; their bodies remain neutral.
+Recovery and tool or hook outcome markers retain their own warning or lifecycle
+meaning.
+
+In the default view, render one aggregate for settled adjacent visible
+Tool, Subagent, and Team calls, followed by any active cards in their original
+relative order. Presentation adjacency, rather than dispatch or concurrency,
+defines the group. The detail view restores settled calls as one-line summaries
+in source order; keep arguments and results in the Toolcalls inspector. Preserve
+one blank row between response blocks or groups, with none between calls in a
+tool group.
+
+Snapshot transcript loads use the server's human-display projection, which omits
+known background-work and no-progress control continuations only with explicit
+stored harness provenance. Preserve user/legacy lookalikes, compaction summaries
+and scheduled deliveries; the stored model conversation and event replay remain
+unchanged.
 
 Collapse large tool arguments and results into cards and keep hidden content
 inspectable. A preview must not flood scrollback or show more than the bounded,
@@ -128,8 +187,22 @@ success claim, and a notice never shows raw transport or credential material.
 
 ## Styling and terminal behavior
 
-Use semantic slots from `theme.Palette` so a surface works in light and dark
-themes. The fixed danger badge and the contrast-calculated selection foreground are
+Use theme-owned semantic styles so a surface works in light and dark themes.
+Transcript actor glyph constants are separate from
+`transcript{LLM,Tool,User,Harness}{Marker,Rail,Text}` styles. Marker styles own
+only the actor symbol; body and label text, reasoning, statistics, and outcome
+indicators have independent styles. User prompts and LLM responses use their
+actor's rail style beside the body; rails stay within each message block.
+`transcriptRunRail` remains separate. Markdown keeps its dedicated palette and
+syntax styles.
+
+Built-in Aztec and Solar have separate dark/light transcript recipes. Custom
+themes derive transcript defaults from existing palette slots, including when
+they override a built-in name. Startup background detection selects built-in
+Solar only when no explicit theme is supplied on a real TTY; `switchTheme`
+replaces the renderer and its caches so baked-in styles change together.
+
+The fixed danger badge and the contrast-calculated selection foreground are
 deliberate exceptions, not a model for widget-local colors. Check ANSI-stripped
 rendering when a visual cue carries meaning.
 
@@ -137,6 +210,23 @@ Treat terminal features as capabilities: provide a keyboard path when mouse inpu
 is off and a fallback when a terminal lacks enhanced keys, color, or graphics.
 Display text goes through `cmd/mecatui/internal/terminaltext` sanitizing; never interpolate
 untrusted server text into terminal control sequences.
+
+Expand literal tabs to spaces before measuring, wrapping, or clipping display text.
+Sanitizing preserves tabs, and ANSI width and wrapping helpers do not account for
+Lip Gloss's later tab expansion (four spaces by default). Expanding tabs only in
+`Style.Render` can widen an already-wrapped line; a surrounding rail or card can
+then pad every row to that oversized width. Use `terminaltext.ExpandStyleTabs`
+for content that will receive a Lip Gloss style, or `terminaltext.ExpandTabs`
+with the owning renderer's explicit tab width. These helpers live in
+`cmd/mecatui/internal/terminaltext/tabs.go`, separate from sanitization and
+Markdown processing. The style helper resolves the implicit default as well as
+explicit tab settings; the raw `GetTabWidth()` getter does not distinguish an
+unset value from an explicit zero.
+
+Wrap against the content budget after subtracting outer indentation, rails,
+borders, and padding. Verify widths on the fully styled and framed rows passed to
+the viewport, including tabbed text and terminal resizes. Measuring only the raw
+text misses expansion and framing added later in the render path.
 
 ## Verification
 

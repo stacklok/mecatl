@@ -233,8 +233,8 @@ func TestKeyValueListAsMapIsNilSafe(t *testing.T) {
 // defaulted) help text, and returns distinct bindings that parse independently.
 func TestRegisterModelFlagsRegistersBoth(t *testing.T) {
 	fs := flag.NewFlagSet("t", flag.ContinueOnError)
-	aliases, slots := RegisterModelFlags(fs, ModelFlagHelp{})
-	for _, name := range []string{"model-alias", "model-slot"} {
+	aliases, providers, slots := RegisterModelFlags(fs, ModelFlagHelp{})
+	for _, name := range []string{"model-alias", "model-alias-provider", "model-slot"} {
 		if f := fs.Lookup(name); f == nil {
 			t.Fatalf("flag --%s not registered", name)
 			return
@@ -246,6 +246,7 @@ func TestRegisterModelFlagsRegistersBoth(t *testing.T) {
 	}
 
 	if err := fs.Parse([]string{
+		"--model-alias-provider", "fast=anthropic",
 		"--model-alias", "fast=gpt-4o-mini",
 		"--model-slot", "compaction=cheap",
 	}); err != nil {
@@ -253,6 +254,9 @@ func TestRegisterModelFlagsRegistersBoth(t *testing.T) {
 	}
 	if got := aliases.AsMap()["fast"]; got != "gpt-4o-mini" {
 		t.Errorf("aliases[fast] = %q, want gpt-4o-mini", got)
+	}
+	if got := providers.AsMap()["fast"]; got != "anthropic" {
+		t.Errorf("providers[fast] = %q, want anthropic", got)
 	}
 	if got := slots.AsMap()["compaction"]; got != "cheap" {
 		t.Errorf("slots[compaction] = %q, want cheap", got)
@@ -264,7 +268,7 @@ func TestRegisterModelFlagsRegistersBoth(t *testing.T) {
 // still falling back.
 func TestRegisterModelFlagsHelpOverride(t *testing.T) {
 	fs := flag.NewFlagSet("t", flag.ContinueOnError)
-	_, _ = RegisterModelFlags(fs, ModelFlagHelp{ModelAlias: "CUSTOM HELP"})
+	_, _, _ = RegisterModelFlags(fs, ModelFlagHelp{ModelAlias: "CUSTOM HELP"})
 	if got := fs.Lookup("model-alias").Usage; got != "CUSTOM HELP" {
 		t.Errorf("model-alias help = %q, want CUSTOM HELP", got)
 	}

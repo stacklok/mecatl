@@ -52,6 +52,10 @@ service HarnessService {
   // UNIMPLEMENTED stay distinguishable.
   rpc GetCompatibilityInfo(GetCompatibilityInfoRequest) returns (GetCompatibilityInfoResponse);
 
+  // ListExecutionTemplates returns the authenticated caller's bounded eligible
+  // catalog. It allocates nothing; CreateSession rechecks exact eligibility.
+  rpc ListExecutionTemplates(ListExecutionTemplatesRequest) returns (ListExecutionTemplatesResponse);
+
   // CreateSession allocates a new server-side session and returns its id.
   rpc CreateSession(CreateSessionRequest) returns (CreateSessionResponse);
 
@@ -343,6 +347,19 @@ service HarnessService {
   // a skill remains a run-path concern (the Skill tool reads the body).
   rpc ListSkills(ListSkillsRequest) returns (ListSkillsResponse);
 
+  // ListSkillFiles lists the readable files of one skill in the caller's skill view:
+  // the instruction body as "SKILL.md" first, then the skill's bundled assets by
+  // logical name. A learned skill lists only "SKILL.md". Read-only and bounded; an
+  // unknown skill is NOT_FOUND. Files are addressed by logical name, never by a
+  // filesystem path.
+  rpc ListSkillFiles(ListSkillFilesRequest) returns (ListSkillFilesResponse);
+
+  // ReadSkillFile returns the text of one file of a skill in the caller's skill view,
+  // capped at the same size the Skill tool returns. An unknown skill or file is
+  // NOT_FOUND, an invalid logical name is INVALID_ARGUMENT, and a file that is not valid
+  // text or exceeds the cap is refused rather than returned truncated or repaired.
+  rpc ReadSkillFile(ReadSkillFileRequest) returns (ReadSkillFileResponse);
+
   // GetSoul returns the resolved soul (user-scoped persona) BUILD-TIME SNAPSHOT:
   // the selected soul's content + size/hash + provenance (user/project) + trust
   // and drift state. The soul is selected once at startup (USER-wins precedence,
@@ -529,28 +546,32 @@ message CreateSessionRequest {
   Limits limits = 3;
 
   // provider_id selects which configured provider backs this session, by its
-  // stable registry id ("openai" / "openrouter"). Empty => the server default
-  // provider (today's behaviour). An unknown/unavailable id is a loud
+  // stable registry id ("openai" / "openrouter"). Empty => the agent definition's
+  // base provider when bound, otherwise the server default provider.
+  // An unknown/unavailable id is a loud
   // InvalidArgument, never a silent fallback. The provider is FIXED for the
   // session lifetime (reasoning-replay + byte-stable prefix are provider-private);
   // "switch provider" = new session. Keys are NEVER on the wire — only this id.
   // (multi-provider Phase 0, S3.)
   string provider_id = 4;
 
-  // model_id is the opaque model selector within provider_id. Empty => the
-  // provider's default model. An id ListModels did not advertise is passed
-  // through to the provider VERBATIM (a power-user escape hatch for a model the
-  // embedded catalog doesn't yet know). NOT slash-joined with provider_id —
-  // two distinct fields by design. Setting model_id WITHOUT provider_id is a loud
-  // InvalidArgument (a bare model on an env-derived default provider is ambiguous).
+  // model_id is an opaque literal model selector, never expanded as an alias.
+  // With provider_id alone, the provider's default model applies. With neither
+  // field, an agent-bound session uses its definition's base provider/model pair;
+  // an ordinary session uses the deployment default. An id ListModels did not
+  // advertise is passed through VERBATIM. Provider and model are distinct fields,
+  // never slash-joined. model_id WITHOUT provider_id requires agent_definition_name
+  // to supply the base provider; otherwise it is InvalidArgument.
   string model_id = 5;
 
-  // profile selects the session's TOOL-SURFACE profile. Empty binds the
-  // deployment default; "no-fs" explicitly attenuates filesystem access.
-  string profile = 6;
+  // execution selects the deployment default when omitted, explicit no-filesystem
+  // attenuation, or one exact operator-owned template revision.
+  ExecutionSelection execution = 12;
+  reserved 6;
+  reserved "profile";
 
   // reasoning_effort sets this session's reasoning-effort tier, enum-as-string
-  // (the profile / Result.stop idiom — NO proto enum, additive values):
+  // (the Result.stop string idiom — NO proto enum, additive values):
   //
   //   - "" or "auto": UNSET — do not send a reasoning-effort field; the
   //     operator default (and ultimately the provider default) applies.
@@ -560,8 +581,8 @@ message CreateSessionRequest {
   // low/medium/high only, so xhigh/max clamp DOWN to high; Anthropic maps all
   // five) and CAPABILITY-GATES it (a model with no reasoning support drops it).
   // An unknown value falls back to the operator default with a WARN (it never
-  // 400s the request). It OUT-RANKS the operator default; unlike model_id it is
-  // meaningful WITHOUT a provider_id (it rides the server-default provider). The
+  // 400s the request). It OUT-RANKS the operator default and is meaningful WITHOUT
+  // a provider_id (it rides the resolved provider). The
   // EFFECTIVE resolved value is echoed back on resolved_model.reasoning_effort.
   string reasoning_effort = 7;
 
@@ -593,6 +614,45 @@ message CreateSessionRequest {
   // policy: a stdio entry and an sse entry are hard-rejected as such (AGENTS.md:
   // "No stdio MCP, ever" — mecatl never spawns an MCP server process).
   repeated McpServerSpec mcp_servers = 11;
+
+  // agent_definition_name optionally binds this session's root to a named
+  // AgentDef (ADR 0353). Empty preserves ordinary session creation. Clients MUST
+  // require session_agent_definitions in GetCompatibilityInfo.features before
+  // relying on binding, then verify resolved_agent_definition_name echoes the
+  // requested name. Older gRPC servers can silently ignore this field.
+  // Unknown definitions and combinations with debug_target_session_id,
+  // debug_mcp_servers, or mcp_servers are rejected. The definition supplies the
+  // exclusive catalog and a nonwidenable authority ceiling.
+  string agent_definition_name = 13;
+}
+
+// ExecutionSelection is an exclusive choice; absence means deployment default.
+message ExecutionSelection {
+  ExecutionNone none = 1;
+  ExecutionTemplate template = 2;
+}
+message ExecutionNone {}
+message ExecutionTemplate {
+  string id = 1;
+  string revision = 2;
+}
+
+// ListExecutionTemplates is authenticated and returns only eligible, bounded
+// display metadata. An empty list is distinct from an unavailable backend.
+message ListExecutionTemplatesRequest {}
+message ListExecutionTemplatesResponse {
+  repeated ExecutionTemplateInfo items = 1;
+  string inventory_revision = 2;
+}
+message ExecutionTemplateInfo {
+  ExecutionTemplate template = 1;
+  string name = 2;
+  string description = 3;
+  string display_token = 4;
+  map<string, string> extensions = 5;
+  // Declared provider affordances; effective session capabilities may be narrower.
+  bool declared_execution_files = 6;
+  bool declared_built_in_shell = 7;
 }
 
 // McpServerSpec is one client-provided MCP server on CreateSessionRequest. It
@@ -805,6 +865,9 @@ message ServerCapabilities {
   // mcp_refresh is true when direct/global MCP source reconciliation is wired.
   // It is mutually exclusive with workspace_enrollment in a valid deployment.
   bool mcp_refresh = 30;
+  // execution_templates is true only when an authenticated template catalog is
+  // wired; an eligible inventory may still be empty.
+  bool execution_templates = 31;
 }
 
 // ListSessionMcpConnectorsRequest names an owned, broker-bound session.
@@ -863,6 +926,11 @@ message CreateSessionResponse {
   ResolvedModel resolved_model = 4;
   // placement is bounded display-only metadata, never reusable authority.
   PlacementMetadata placement = 5;
+
+  // resolved_agent_definition_name echoes the bound agent_definition_name
+  // VERBATIM (mirroring resolved_model), the same server-owns-resolution
+  // discipline: empty when the request never set agent_definition_name.
+  string resolved_agent_definition_name = 6;
 }
 
 // PlacementMetadata is safe display data. It never contains a filesystem path,
@@ -898,19 +966,20 @@ message ResolvedModel {
   string reasoning_effort = 4;
 }
 
-// SessionCapabilities is the per-session resolved input capability: ONLY the
-// model-varying input bits (image/audio). A dedicated message (not a reuse of
-// ServerCapabilities) keeps the per-session surface MINIMAL — the other
-// ServerCapabilities bits (mcp/skills/teams/...) are server-wide and would be
-// misleading per session. Reasoning is intentionally EXCLUDED: it is discoverable
-// via ListModels for the selected id and is not a per-session input-gating
-// concern (no adapter "can replay reasoning" authority bit exists). The value is
-// the catalog ∩ adapter intersection computed in composition. (Phase 0, S5.)
+// SessionCapabilities is the per-session effective capability projection.
+// Image/audio are the resolved model's media input support (catalog ∩ adapter);
+// execution_files/built_in_shell report actual session environment, tool catalog
+// and authority instead. Unlike ServerCapabilities these bits may differ for
+// two sessions on the same deployment. Reasoning is discovered via ListModels.
 message SessionCapabilities {
   // image is true when the resolved provider+model can consume image prompt parts.
   bool image = 1;
   // audio is true when the resolved provider+model can consume audio prompt parts.
   bool audio = 2;
+  // execution_files and built_in_shell are effective session tool affordances,
+  // separate from the provider's image/audio input modalities.
+  bool execution_files = 3;
+  bool built_in_shell = 4;
 }
 
 // GetSessionRequest looks up an existing session by id.
@@ -944,7 +1013,8 @@ message ActivityReplayStatus {
 }
 
 // GetSessionTranscriptResponse is one coherent SessionStore snapshot projection.
-// messages are the loaded aggregate's current Conversation.Messages in order.
+// messages are the ordered human-display projection; internal harness control
+// continuations are omitted, while a successful empty projection is complete.
 message GetSessionTranscriptResponse {
   // session_id is copied from the same loaded aggregate as messages.
   string session_id = 1;
@@ -2395,6 +2465,11 @@ message Subagent {
   optional RoutingDecision routing_decision = 19;
   // Exact child tool.call/tool.result ID, scoped by child_id; empty otherwise.
   string child_tool_call_id = 20;
+  // provider is the concrete provider that actually ran the child.
+  string provider = 21;
+  // explicit_router_category is the requested router category only for an explicit
+  // provider:"model-router" selection. Classifier-originated routing leaves it empty.
+  string explicit_router_category = 22;
 }
 
 // TeamMemberSpec is one roster entry forwarded on team.start. Mirrors
@@ -2442,6 +2517,11 @@ message TeamMemberSpec {
   // routing_decision is the optional bounded configured-router evidence captured
   // for this member on team.start. Historical roster entries omit it.
   optional RoutingDecision routing_decision = 9;
+  // provider is the concrete provider backing the retained member engine.
+  string provider = 10;
+  // explicit_router_category is the requested router category only for an explicit
+  // provider:"model-router" selection. Classifier-originated routing leaves it empty.
+  string explicit_router_category = 11;
 }
 
 // Team is the BOUNDED observability projection carried by the three team.* events.
@@ -2650,6 +2730,11 @@ message Parallel {
   optional RoutingDecision routing_decision = 26;
   // Exact branch tool.call/tool.result ID, scoped by branch_index; empty otherwise.
   string child_tool_call_id = 27;
+  // provider is the concrete provider that actually ran the branch.
+  string provider = 28;
+  // explicit_router_category is the requested router category only for an explicit
+  // provider:"model-router" selection. Classifier-originated routing leaves it empty.
+  string explicit_router_category = 29;
 }
 
 // ToolCall is a request from the model to invoke a named tool. Mirrors
@@ -3080,6 +3165,47 @@ message ListSkillsRequest {}
 message ListSkillsResponse {
   // skills are the (possibly empty) discovered skills, name-sorted.
   repeated SkillInfo skills = 1;
+}
+
+// SkillFileInfo is one readable file of a skill.
+message SkillFileInfo {
+  // name is the file's logical name: "SKILL.md" for the instruction body, otherwise a
+  // slash-separated relative name such as "references/api.md". Never a filesystem path.
+  string name = 1;
+  // size is the file's size in bytes. For the instruction body it is the size of the body text
+  // after the frontmatter, not of the file on disk.
+  int64 size = 2;
+  // instructions marks the skill's instruction body. Its content is the text after the
+  // frontmatter (name, description, license, allowed-tools), so it is NOT the raw SKILL.md file
+  // and is not a valid skill definition on its own. A client keys off this field, not off the
+  // name "SKILL.md", to find the body.
+  bool instructions = 3;
+}
+
+// ListSkillFilesRequest names the skill whose files to list.
+message ListSkillFilesRequest {
+  // name is the skill's activation name from ListSkills.
+  string name = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+// ListSkillFilesResponse carries the skill's files.
+message ListSkillFilesResponse {
+  // files lists "SKILL.md" first, then the assets sorted by name.
+  repeated SkillFileInfo files = 1;
+}
+
+// ReadSkillFileRequest names one file of one skill.
+message ReadSkillFileRequest {
+  // name is the skill's activation name from ListSkills.
+  string name = 1 [(buf.validate.field).string.min_len = 1];
+  // file is a logical file name from ListSkillFiles.
+  string file = 2 [(buf.validate.field).string.min_len = 1];
+}
+
+// ReadSkillFileResponse carries one file's text.
+message ReadSkillFileResponse {
+  // content is the file's text, valid UTF-8, at most the Skill tool's output cap.
+  string content = 1;
 }
 
 // --- Soul (persona) inspection ----------------------------------------------

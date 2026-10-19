@@ -1,0 +1,12 @@
+apiVersion: v2
+name: mecatl-studio
+description: Mecatl Studio, the early-access browser UI and its backend for frontend, connected to an existing Mecatl deployment.
+type: application
+# The preStop sleep action needs Kubernetes 1.30 or later.
+kubeVersion: ">=1.30.0-0"
+# Release PRs keep version and appVersion aligned with VERSION. The Release
+# workflow also sets both when it packages the chart.
+version: 0.0.48
+appVersion: "v0.0.48"
+annotations:
+  org.stacklok.mecatl.studio.stability: early-access

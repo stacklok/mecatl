@@ -139,24 +139,24 @@ func TestConversationDetailToggleShowsTurnChromeOnlyOnF9(t *testing.T) {
 	m.phase = phaseIdle
 	m.refreshView()
 	collapsed := detailText(m)
-	for _, want := range []string{"Please check the files", "I will inspect them.", "notice stays visible", "reasoning summary", "✓ Read", "✓ Grep"} {
+	for _, want := range []string{"Please check the files", "I will inspect them.", "notice stays visible", "reasoning summary", "● 2 tools run"} {
 		if !strings.Contains(collapsed, want) {
 			t.Errorf("normal conversation lacks %q: %q", want, collapsed)
 		}
 	}
-	for _, hidden := range []string{"● mecatl", "↑1.2K ↓100", "↑1.3K ↓110", "4.1s", "3.1s", "why this tool is needed", "changed this session", "appendix-only.go"} {
+	for _, hidden := range []string{"↑1.2K ↓100", "↑1.3K ↓110", "4.1s", "3.1s", "why this tool is needed", "changed this session", "appendix-only.go"} {
 		if strings.Contains(collapsed, hidden) {
 			t.Errorf("normal conversation shows hidden detail %q: %q", hidden, collapsed)
 		}
 	}
 	m, _ = pressKey(m, f9)
 	expanded := detailText(m)
-	for _, want := range []string{"● mecatl", "↑1.2K ↓100 · 4.1s", "↑1.3K ↓110 · 3.1s", "why this tool is needed", "changed this session", "  appendix-only.go", "I will inspect them.", "notice stays visible", "✓ Read", "✓ Grep"} {
+	for _, want := range []string{"◀ mecatl", "↑1.2K ↓100 · 4.1s", "↑1.3K ↓110 · 3.1s", "why this tool is needed", "changed this session", "  appendix-only.go", "I will inspect them.", "notice stays visible", "✓ Read", "✓ Grep"} {
 		if !strings.Contains(expanded, want) {
 			t.Errorf("F9 view lacks %q: %q", want, expanded)
 		}
 	}
-	if count := strings.Count(expanded, "● mecatl"); count != 1 {
+	if count := strings.Count(expanded, "◀ mecatl"); count != 1 {
 		t.Errorf("F9 resurrected empty assistant heading: count=%d", count)
 	}
 	m, _ = pressKey(m, f9)

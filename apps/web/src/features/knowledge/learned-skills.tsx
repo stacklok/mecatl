@@ -11,6 +11,7 @@ import {
 } from "@mecatl-studio/contracts/query";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, useSyncExternalStore } from "react";
+import { Alert, AlertDescription } from "../../components/ui/alert";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -31,7 +32,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../../components/ui/dialog";
-import { errorMessage, formatDate, NO_DESCRIPTION } from "./format";
+import { errorMessage } from "../../lib/error-message";
+import { formatDate, formatRelativeTime } from "../../lib/formatters";
+import { NO_DESCRIPTION } from "./format";
 import { DiffBlock, hasSkillDiffChanges, skillDiffRows } from "./skill-diff";
 import { StateCard } from "./state-card";
 
@@ -50,6 +53,17 @@ type LearnedSkillAction = "activate" | "archive" | "reject" | "rollback";
  * SPEC: a failed action (stale revision, conflict) re-reads the inventory and ledger and
  * shows the error inside the dialog; it never closes the dialog or reports success.
  */
+
+/**
+ * A list's timestamp the prototype's way: relative ("1d ago"), short enough
+ * to leave a phone's row its skill name, with the exact time on hover.
+ */
+function RelativeTime({ iso }: { iso: string }) {
+  const relative = formatRelativeTime(Date.parse(iso));
+  const absolute = formatDate(iso);
+  return <span title={absolute}>{relative ? `${relative} ago` : absolute}</span>;
+}
+
 const LEDGER_LIMIT = 20;
 
 /**
@@ -143,15 +157,14 @@ export function LearnedSkills({
   return (
     <div className="space-y-5">
       {notice && (
-        <div
-          className="flex items-start justify-between gap-3 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm"
-          role="alert"
-        >
-          <p>{notice}</p>
-          <Button onClick={() => setPublicationNotice(undefined)} size="sm" variant="ghost">
-            Dismiss
-          </Button>
-        </div>
+        <Alert className="border-warning/40 bg-warning/10 p-3">
+          <AlertDescription className="flex items-start justify-between gap-3 text-foreground [&_p]:leading-[inherit]">
+            <p>{notice}</p>
+            <Button onClick={() => setPublicationNotice(undefined)} size="sm" variant="ghost">
+              Dismiss
+            </Button>
+          </AlertDescription>
+        </Alert>
       )}
       {query.data.items.length === 0 ? (
         <StateCard
@@ -184,7 +197,12 @@ export function LearnedSkills({
                 </span>
                 <span className="shrink-0 text-xs text-muted-foreground">
                   {skill.ownerAgent}
-                  {skill.updatedAt && ` · ${formatDate(skill.updatedAt)}`}
+                  {skill.updatedAt && (
+                    <>
+                      {" · "}
+                      <RelativeTime iso={skill.updatedAt} />
+                    </>
+                  )}
                 </span>
               </button>
             ))}
@@ -210,7 +228,9 @@ export function LearnedSkills({
                 </span>
                 {change.verdict && <Badge variant="outline">{change.verdict}</Badge>}
                 {change.at && (
-                  <span className="ml-auto text-muted-foreground">{formatDate(change.at)}</span>
+                  <span className="ml-auto text-muted-foreground">
+                    <RelativeTime iso={change.at} />
+                  </span>
                 )}
               </li>
             ))}
@@ -313,9 +333,11 @@ function LearnedSkillDialog({
         </DialogHeader>
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
           {error && (
-            <p className="rounded-lg bg-destructive/10 p-3 text-sm text-foreground" role="alert">
-              {error} The skill was refreshed; review its current state before trying again.
-            </p>
+            <Alert className="border-0 bg-destructive/10 p-3">
+              <AlertDescription className="text-foreground">
+                {error} The skill was refreshed; review its current state before trying again.
+              </AlertDescription>
+            </Alert>
           )}
           {skill.supersedes && (
             <div className="space-y-1">
@@ -323,7 +345,9 @@ function LearnedSkillDialog({
                 Changes since {skill.supersedes}
               </p>
               {comparison.isPending ? (
-                <p className="text-xs text-muted-foreground">Comparing versions…</p>
+                <p className="text-xs text-muted-foreground" role="status">
+                  Comparing versions…
+                </p>
               ) : comparison.isError || !hasSkillDiffChanges(rows) ? (
                 <p className="text-xs text-muted-foreground">
                   No textual diff available — full body below.

@@ -22,7 +22,7 @@ func embeddedCaps() client.Capabilities {
 func allOnCaps() client.Capabilities {
 	return client.Capabilities{
 		MCP: true, SlashCommands: true, Memory: true, Skills: true, Teams: true, Shell: true,
-		ModelSelection: true, Scheduling: true,
+		ModelSelection: true, Scheduling: true, Steer: true,
 	}
 }
 
@@ -59,7 +59,7 @@ func helpModel(t *testing.T, caps client.Capabilities, tweak ...func(*Deps)) Mod
 	m.conv.addUser("hello")
 	m.refreshView()
 	m = applyAll(m, qmark())
-	if !m.showHelp {
+	if m.modal == nil {
 		t.Fatal("help overlay did not open on '?' with empty input")
 	}
 	return m
@@ -71,7 +71,7 @@ func qmark() tea.KeyPressMsg { return tea.KeyPressMsg{Code: '?', Text: "?"} }
 // TestHelpOverlayEmbeddedGolden locks the help overlay under embedded defaults:
 // mcp/commands/skills rows carry [not enabled]; memory/teams/shell are available.
 func TestHelpOverlayEmbeddedGolden(t *testing.T) {
-	m := helpModel(t, embeddedCaps())
+	m := applyAll(helpModel(t, embeddedCaps()), tea.WindowSizeMsg{Width: 200, Height: 30})
 	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "help_embedded.golden", got)
@@ -81,7 +81,7 @@ func TestHelpOverlayEmbeddedGolden(t *testing.T) {
 // server: every row available, no [not enabled] tags, plus the commands +
 // memory prose lines.
 func TestHelpOverlayAllOnGolden(t *testing.T) {
-	m := helpModel(t, allOnCaps())
+	m := applyAll(helpModel(t, allOnCaps()), tea.WindowSizeMsg{Width: 200, Height: 30})
 	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "help_all_on.golden", got)
@@ -99,8 +99,10 @@ func TestHelpOmitsDebugOnlyBuiltins(t *testing.T) {
 // are tagged not-enabled and memory/teams are not.
 func TestHelpAnnotationsTrackCaps(t *testing.T) {
 	for _, body := range []string{stripANSIstr(m_helpBody(embeddedCaps())), stripANSIstr(m_helpBody(allOnCaps()))} {
-		if !strings.Contains(body, "/quit") || !strings.Contains(body, "alias: /exit") {
-			t.Errorf("help must document /quit and /exit alias:\n%s", body)
+		for _, want := range []string{"/quit", "alias: /exit", "/queue TEXT", "/steer TEXT", "prefixed draft"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("help must describe %q:\n%s", want, body)
+			}
 		}
 	}
 	embedded := stripANSIstr(m_helpBody(embeddedCaps()))
@@ -413,7 +415,7 @@ func TestHelpReflectsKeyOverride(t *testing.T) {
 		occurs int // rows whose action text appears on this many lines
 	}{
 		{name: "Submit", match: "send prompt", want: "ctrl+f1", absent: "enter", occurs: 1},
-		{name: "Submit queued", match: "queue a follow-up", want: "ctrl+f1", absent: "enter", occurs: 1},
+		{name: "Submit pending", match: "add to pending input", want: "ctrl+f1", absent: "enter", occurs: 1},
 		{name: "Newline", match: "newline", want: "ctrl+f2", absent: "shift+enter", occurs: 1},
 		{name: "Paste", match: "paste a clipboard image", want: "ctrl+f3", absent: "ctrl+v", occurs: 1},
 		{name: "SelectAll", match: "select all prompt text", want: "ctrl+f31", absent: "ctrl+g", occurs: 1},
@@ -484,7 +486,7 @@ func TestHelpKeyOverrideEndToEnd(t *testing.T) {
 	m.conv.addUser("hello")
 	m.refreshView()
 	m = applyAll(m, qmark())
-	if !m.showHelp {
+	if m.modal == nil {
 		t.Fatal("help overlay did not open on '?' with empty input")
 	}
 

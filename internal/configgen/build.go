@@ -48,6 +48,7 @@ func BuildModel(docs Docs) *Model {
 		openRouterSubtree(docs),
 		telemetrySubtree(docs),
 		mcpSubtree(docs),
+		webSearchSubtree(docs),
 	}}
 }
 
@@ -535,11 +536,10 @@ func modelsSubtree(docs Docs) *Subtree {
 	}
 	return &Subtree{
 		Key:  "models",
-		Tier: TierProject,
-		Doc: "Per-slot/alias/default model config + the operator allowlist cap and " +
-			"the semantic Subagent model-router taxonomy. At the operator tier all " +
-			"fields are honoured; a project tier honours slots/aliases/default within the operator " +
-			"allowlist on a trusted workspace (router/allowlist are operator-only).",
+		Tier: TierOperator,
+		Doc: "Provider/model aliases, slots, defaults, and delegated router taxonomy. Every effective " +
+			"binding is operator-owned. A project-tier models block is ignored in full with one warning, " +
+			"regardless of trust. The legacy operator allowlist key remains parseable but has no effect and warns.",
 		CommentedOut: true,
 		Fields:       fields,
 	}
@@ -567,6 +567,22 @@ func telemetrySubtree(docs Docs) *Subtree {
 			"  productMetrics:",
 			"    enabled: false",
 		},
+	}
+}
+
+func webSearchSubtree(docs Docs) *Subtree {
+	fields := fieldsOf("WebSearchSection", permconfig.WebSearchSection{}, docs)
+	for _, f := range fields {
+		if f.Key == "searxng" {
+			f.Nested = fieldsOf("WebSearchSearxngSection", permconfig.WebSearchSearxngSection{}, docs)
+		}
+	}
+	return &Subtree{
+		Key:          "websearch",
+		Tier:         TierOperator,
+		CommentedOut: true,
+		Doc:          "HTTP web-search adapter settings. Operator-tier only; project values are ignored.",
+		Fields:       fields,
 	}
 }
 

@@ -8,38 +8,29 @@ description:
 
 # Keybindings
 
-Press `?` on an empty prompt to open the live help overlay. The overlay shows
-your active bindings and dims features that the connected server does not
-provide.
-
-Use **Up/Down** to move one line, **Page Up/Page Down** to move one page, and
-**Home/End** to jump to the beginning or end of a long help overlay.
+Press `?` on an empty prompt to open the live help overlay. It shows your active
+bindings and dims features that the connected server does not provide.
 
 ## Everyday keys
 
 |Key|Action|
 |-|-|
-|`enter`|Send a prompt; while work is running, steer when the server supports it or queue a follow-up otherwise.|
+|`enter`|Send a prompt; during a run, add to the pending delivery kind. With nothing pending, steer if supported or queue otherwise. See [Steer or queue input](./using-the-tui.md#keep-working-while-a-run-is-active).|
 |`shift+enter`, `ctrl+j`, `ctrl+enter`, or `alt+enter`|Insert a newline. Your terminal decides which of these chords it can send; see [Newline chords and your terminal](#newline-chords-and-your-terminal).|
-|`↑`|With empty input, bring queued follow-ups back for editing.|
-|`ctrl+u`|Clear the unsent draft, including staged attachments and large-paste placeholders (`ClearPrompt`; remappable).|
+|`↑`|With empty input, pull back pending steers or queued follow-ups into one editable draft.|
+|`ctrl+u`|Clear the unsent draft and staged attachments (`ClearPrompt`; remappable).|
 |physical `esc` twice within 500ms|Clear an idle draft in terminals with enhanced key events. See [Clear a draft with Escape](#clear-a-draft-with-escape).|
 |`esc`|Clear an active selection first. While work is running, cancel directly and preserve the draft, queued follow-ups, and steer. While idle with a paused queue, clear that queue but preserve the draft.|
 |`ctrl+t`|Open `/toolcalls` for the current session; approval requests use it for details.|
-|`f9`|Reveal conversation details: reasoning, turn stats, changed files, permanent error details, and benign guardrail notices. Tool results stay in `/toolcalls`.|
+|`f9`|Reveal conversation details: reasoning, turn stats, changed files, permanent error details, benign guardrail notices, and individual settled tool-call summaries. Use `ctrl+t` for tool arguments and results.|
 |`shift+tab`|Cycle the current session permission mode: **default → plan → accept-edits → default**. In an MCP prompt argument form, it instead moves to the previous required field.|
 |`ctrl+g`|Select all prompt text.|
-|`ctrl+a` / `ctrl+e`|Move to the start / end of the current prompt line.|
-|`ctrl+p`|Move to the previous prompt line.|
-|`ctrl+y`|Copy the active prompt or conversation selection; no selection is a no-op.|
+|`ctrl+y`|Copy the active prompt or visible conversation selection.|
 |`f6` / `f7` / `f8`|Open Agents / Effort / MCP Prompts.|
-|Agents overlay controls|Select and inspect delegated work. See [Navigate the Agents overlay](#navigate-the-agents-overlay).|
-|Models picker controls|The mouse wheel scrolls the visible model list without moving its cursor. A primary click on a visible model row moves the cursor without switching models; press `enter` to activate the cursor row.|
-|`pgup` / `pgdn`|Scroll the conversation.|
-|`home` / `end`|Jump to the top or bottom; `end` resumes auto-follow.|
+|`end`|Return to the latest output and resume following new messages.|
 |`/`|Open the slash-command palette.|
 |`ctrl+c`|With text in the prompt, the first press clears the draft and staged media without quitting. With an empty prompt, press twice to quit.|
-|`/quit` (or `/exit`)|Quit immediately and cancel an active run. `/quit` appears in the slash palette; `/exit` is a dispatch-only alias.|
+|`/quit` or `/exit`|Quit immediately and cancel an active run.|
 |`ctrl+z`|Suspend to the shell; use `fg` to return.|
 
 Suspending does not stop an embedded server or active run. Cancel the run first
@@ -57,20 +48,6 @@ run takes precedence and disarms the gesture. Another key or expiration of the
 500 ms window also disarms it. This physical gesture cannot be remapped and
 requires enhanced key-event support. Use the remappable `ClearPrompt` (`ctrl+u`)
 action in other terminals.
-
-### Navigate the Agents overlay
-
-At terminal heights of at least 24 rows, use the remappable `Up`, `Down`,
-`ScrollU`, `ScrollD`, `JumpTop`, and `JumpEnd` actions to navigate Subagent and
-Team rosters and focused Parallel groups. In a detail view, the same actions
-scroll activity, tasks, or findings. The mouse wheel scrolls one line without
-moving the cursor. Press `enter` to focus an item and `esc` to return or close.
-
-If the conversation area cannot fit a minimal card, a `vp short` line preserves
-the active context and `esc` action. Below 24 rows, a compact line identifies
-the active tab, child, group, member, Tasks, or Findings view. Only `esc`
-remains active; wheel input is consumed without scrolling the hidden
-conversation.
 
 ## Newline chords and your terminal
 
@@ -150,7 +127,6 @@ In a permission modal, inspect the request before choosing:
 |`a`, `y`, or `enter`|Allow this call once.|
 |`w`|Allow this exact main-agent call for the current session when the option is offered.|
 |`d`, `n`, or `esc`|Deny.|
-|`tab` or `←` / `→`|Move between buttons.|
 
 `Allow always` is session-scoped, applies only to the exact main-agent action,
 and never overrides configured policy. In ordinary tool approvals, the
@@ -196,18 +172,17 @@ The prompt editor provides fixed editing keys. Only `SelectAll`,
 |Key|Editing action|
 |-|-|
 |`ctrl+a` / `ctrl+e`|Move to the start or end of the current line.|
+|`ctrl+p`|Move to the previous prompt line.|
 |`ctrl+b` / `ctrl+f`|Move backward or forward by one character.|
 |`ctrl+w`|Delete the previous word.|
 |`ctrl+k`|Delete to the end of the line.|
 
-Use `shift+arrow` for keyboard selection. On the alternate screen, drag over
-prompt text for mouse selection. Starting a prompt selection clears a
-conversation selection and vice versa. Releasing the mouse does not copy the
-prompt; use `ctrl+y` or right-click to copy the active selection. Copying writes
-the text to the system clipboard and, on X11 and Wayland, the primary selection.
-Install `wl-clipboard` or `xclip` when your terminal does not support the
-primary-selection mirror through OSC 52. With `--no-mouse`, the terminal retains
-native mouse selection and keyboard selection remains available.
+Copying with `ctrl+y` or right-click writes the selection to the system clipboard
+and, on X11 and Wayland, the primary selection. Conversation selections include
+only visible text. If a selected tool summary changes, `mecatui` can clear the
+selection. Install `wl-clipboard` or `xclip` when your terminal does not support
+the primary-selection mirror through OSC 52. With `--no-mouse`, the terminal
+retains native mouse selection and keyboard selection remains available.
 
 Client-owned actions take precedence over textarea chords. For example, `ctrl+t`
 opens tool-call inspection and `ctrl+v` handles paste. `ctrl+g` selects all only

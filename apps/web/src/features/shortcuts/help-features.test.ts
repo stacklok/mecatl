@@ -9,6 +9,7 @@ const allOff: ServerCapabilitiesResponse = {
   audio: false,
   bash: false,
   debugMcp: false,
+  executionTemplates: false,
   image: false,
   learnedSkills: false,
   learningProposals: false,
@@ -48,6 +49,7 @@ describe("deriveHelpFeatures", () => {
       "manual_compaction",
       "scheduling",
       "model_selection",
+      "image",
     ]);
   });
 
@@ -66,7 +68,7 @@ describe("deriveHelpFeatures", () => {
     expect(userModel.find((row) => row.id === "memory")?.enabled).toBe(true);
   });
 
-  it("reads memory consolidation off the exact gate the Consolidate button uses", () => {
+  it("reads memory consolidation off whether any target can generate a plan", () => {
     const off = deriveHelpFeatures(allOff);
     expect(off.find((row) => row.id === "manual_dream")?.enabled).toBe(false);
 
@@ -81,5 +83,21 @@ describe("deriveHelpFeatures", () => {
       manualDream: { userModel: { decide: true, generate: true } },
     });
     expect(generateReady.find((row) => row.id === "manual_dream")?.enabled).toBe(true);
+
+    const projectOnly = deriveHelpFeatures({
+      ...allOff,
+      manualDream: {
+        projectMemory: { decide: true, generate: true },
+        userModel: { decide: false, generate: false },
+      },
+    });
+    expect(projectOnly.find((row) => row.id === "manual_dream")?.enabled).toBe(true);
+  });
+
+  it("reads image attachments off the deployment's image capability", () => {
+    expect(deriveHelpFeatures(allOff).find((row) => row.id === "image")?.enabled).toBe(false);
+    const on = deriveHelpFeatures({ ...allOff, image: true }).find((row) => row.id === "image");
+    expect(on?.enabled).toBe(true);
+    expect(on?.label).toBe("Image attachments");
   });
 });

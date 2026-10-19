@@ -26,6 +26,7 @@ type TeamLane struct {
 	Name, SessionID, Role                             string
 	Mutating, Lead                                    bool
 	RoutedCategory, RoutedModel, RoutingReason, Model string
+	Provider, ExplicitRouterCategory                  string
 	Routing                                           RoutingDecision
 	Current                                           string
 	ToolCount                                         int

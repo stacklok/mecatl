@@ -62,6 +62,7 @@ func progressiveSessionsModel(pager client.SessionPager) Model {
 		Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), NoAltScreen: true,
 	})
 	m.width, m.height = 80, 24
+	m.vp.SetHeight(18)
 	return m
 }
 

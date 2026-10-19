@@ -11,6 +11,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/eventsource"
 	"github.com/stacklok/mecatl/engine/adapter/sessnap"
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -33,6 +34,22 @@ func meta() eventsource.SessionMeta {
 		Limits:         session.Limits{},
 		EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"},
 		CreatedAt:      time.Unix(0, 0),
+	}
+}
+
+func TestFoldRestoresExecutionCapabilityFacts(t *testing.T) {
+	m := meta()
+	m.ExecutionCapabilities = &session.ExecutionCapabilities{Files: true}
+	folded, err := eventsource.Fold(m, seq(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if folded.ExecutionCapabilities == nil || *folded.ExecutionCapabilities != *m.ExecutionCapabilities {
+		t.Fatalf("folded facts = %+v", folded.ExecutionCapabilities)
+	}
+	folded.ExecutionCapabilities.Files = false
+	if !m.ExecutionCapabilities.Files {
+		t.Fatal("fold aliased source metadata")
 	}
 }
 
@@ -59,6 +76,70 @@ func TestEventFoldRejectsEmptyAuthorityClaim(t *testing.T) {
 	if _, bound := legacy.BoundAuthority(); bound {
 		t.Fatal("authority-absent legacy fold restored as bound")
 	}
+}
+
+// TestSessionScopedAgentIdentity_FoldRejectsAgentBoundMetaWithoutCeiling pins
+// the eventsource counterpart to sessnap's equivalent hardening: SessionMeta
+// claiming AgentDefinitionName without a bound Ceiling would otherwise fold
+// into a session routed everywhere as agent-bound yet fully widenable in
+// practice (GrantToolAuthority/CompleteWorkspaceEnrollment treat a nil Ceiling
+// as unrestricted). Fold must reject this combination, not silently restore an
+// unsafe session. Mutation-verified: this test failed (folded successfully)
+// before AgentDefinitionName was restored ahead of authority in Fold.
+func TestSessionScopedAgentIdentity_FoldRejectsAgentBoundMetaWithoutCeiling(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil authority is rejected", func(t *testing.T) {
+		m := meta()
+		m.AgentDefinitionName = "escalator"
+		if restored, err := eventsource.Fold(m, seq(nil)); !errors.Is(err, eventsource.ErrReconstruct) || restored != nil {
+			t.Fatalf("missing authority folded: %v, %v", restored, err)
+		}
+	})
+
+	t.Run("agent-bound label with a Ceiling-less authority is rejected", func(t *testing.T) {
+		m := meta()
+		m.AgentDefinitionName = "escalator"
+		m.Authority = &session.Authority{
+			CapabilitySet: governance.CapabilitySet{Tools: []string{"Read"}},
+			Provenance:    "agent-def:test",
+		}
+		restored, err := eventsource.Fold(m, seq(nil))
+		if err == nil {
+			t.Fatal("agent-bound meta without a Ceiling folded successfully")
+		}
+		if restored != nil {
+			t.Fatal("agent-bound meta without a Ceiling returned a session")
+		}
+		if !errors.Is(err, eventsource.ErrReconstruct) {
+			t.Fatalf("error = %v, want ErrReconstruct", err)
+		}
+	})
+
+	t.Run("agent-bound label WITH a matching Ceiling folds fine (positive control)", func(t *testing.T) {
+		m := meta()
+		m.AgentDefinitionName = "escalator"
+		m.AgentCreateIntent = "v1:opaque-create-intent"
+		m.Authority = &session.Authority{
+			CapabilitySet: governance.CapabilitySet{Tools: []string{"Read"}},
+			Provenance:    "agent-def:test",
+			Ceiling:       &governance.CapabilitySet{Tools: []string{"Read"}},
+		}
+		restored, err := eventsource.Fold(m, seq(nil))
+		if err != nil {
+			t.Fatalf("agent-bound meta with a consistent Ceiling: fold failed: %v", err)
+		}
+		if restored.AgentCreateIntent != m.AgentCreateIntent {
+			t.Fatalf("create intent = %q, want %q", restored.AgentCreateIntent, m.AgentCreateIntent)
+		}
+		if restored.AgentDefinitionName != "escalator" {
+			t.Fatalf("AgentDefinitionName = %q, want escalator", restored.AgentDefinitionName)
+		}
+		got, bound := restored.BoundAuthority()
+		if !bound || got.Ceiling == nil {
+			t.Fatalf("bound=%v Ceiling=%v, want a bound authority with a non-nil Ceiling", bound, got.Ceiling)
+		}
+	})
 }
 
 // ev is a terse Event constructor.
@@ -521,14 +602,16 @@ func TestFoldStreamErrorPropagates(t *testing.T) {
 // applied to the reconstructed session.
 func TestFoldMetaIsApplied(t *testing.T) {
 	m := eventsource.SessionMeta{
-		ID:             "sess-42",
-		Mode:           session.ModePlan,
-		Limits:         session.Limits{MaxTurns: 9},
-		EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work/space", Revision: "in-tree-v1"},
-		Profile:        "no-fs",
-		ProviderID:     "openrouter",
-		ModelID:        "anthropic/claude",
-		CreatedAt:      time.Unix(1700000000, 0),
+		ID:                        "sess-42",
+		Mode:                      session.ModePlan,
+		Limits:                    session.Limits{MaxTurns: 9},
+		EnvironmentRef:            session.EnvironmentRef{Kind: session.EnvironmentKind("kubernetes"), ID: "exec-test", Revision: "alloc-rev"},
+		Profile:                   "default",
+		ExecutionTemplateID:       "go",
+		ExecutionTemplateRevision: "v1-" + strings.Repeat("a", 64),
+		ProviderID:                "openrouter",
+		ModelID:                   "anthropic/claude",
+		CreatedAt:                 time.Unix(1700000000, 0),
 	}
 	evs := []session.Event{
 		{Type: session.EvTurnStart, Turn: 0},
@@ -540,7 +623,7 @@ func TestFoldMetaIsApplied(t *testing.T) {
 		t.Fatalf("Fold: %v", err)
 	}
 	if s.ID != "sess-42" || s.Mode != session.ModePlan || s.EnvironmentRef != m.EnvironmentRef ||
-		s.Profile != "no-fs" || s.ProviderID != "openrouter" || s.ModelID != "anthropic/claude" ||
+		s.Profile != "default" || s.ExecutionTemplateID != m.ExecutionTemplateID || s.ExecutionTemplateRevision != m.ExecutionTemplateRevision || s.ProviderID != "openrouter" || s.ModelID != "anthropic/claude" ||
 		s.Limits.MaxTurns != 9 || !s.CreatedAt.Equal(time.Unix(1700000000, 0)) {
 		t.Fatalf("meta not applied: %+v", s)
 	}

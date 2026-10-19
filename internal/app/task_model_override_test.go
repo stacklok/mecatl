@@ -7,6 +7,7 @@ import (
 
 	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
@@ -27,14 +28,14 @@ func TestBuildSubagentEngineFactoryReDerivesForOverrideModel(t *testing.T) {
 	reg := regForTest(prov, providerAnthropic, "claude-default")
 	cfg := Config{Model: "claude-default"}
 
-	factory := buildSubagentEngineFactory(cfg, reg, prov, providerAnthropic, "claude-default", nil)
+	factory := buildSubagentTargetEngineFactory(cfg, reg, prov, providerAnthropic, nil)
 
 	// An empty model is unroutable (ok=false), so Subagent surfaces a model-addressable error.
-	if _, ok := factory(""); ok {
+	if _, ok := factory(agent.ModelTarget{}); ok {
 		t.Fatal("empty model must be unroutable (ok=false)")
 	}
 
-	eng, ok := factory(overrideModel)
+	eng, ok := factory(agent.ModelTarget{Model: overrideModel})
 	if !ok || eng == nil {
 		t.Fatalf("factory(%q) = (%v, %v), want a non-nil engine", overrideModel, eng, ok)
 	}
@@ -62,22 +63,22 @@ func TestBuildAgentModelEngineFactoryRebuildsDefScopeOnOverrideModel(t *testing.
 	agentReg := agents.NewRegistry([]agents.AgentDef{def})
 	cfg := Config{Model: "claude-default"}
 
-	factory := buildAgentModelEngineFactory(context.Background(), cfg, reg, prov, providerAnthropic, "claude-default",
+	factory := buildAgentTargetEngineFactory(context.Background(), cfg, reg, providerAnthropic,
 		agentReg, nil, hookexec.New(nil), nil, nil)
 
 	// An empty agent or model is unroutable.
-	if _, ok := factory("", overrideModel); ok {
+	if _, ok := factory("", agent.ModelTarget{Model: overrideModel}); ok {
 		t.Fatal("empty agent must be unroutable (ok=false)")
 	}
-	if _, ok := factory("reviewer", ""); ok {
+	if _, ok := factory("reviewer", agent.ModelTarget{}); ok {
 		t.Fatal("empty model must be unroutable (ok=false)")
 	}
 	// An unknown agent is unroutable.
-	if _, ok := factory("ghost", overrideModel); ok {
+	if _, ok := factory("ghost", agent.ModelTarget{Model: overrideModel}); ok {
 		t.Fatal("unknown agent must be unroutable (ok=false)")
 	}
 
-	eng, ok := factory("reviewer", overrideModel)
+	eng, ok := factory("reviewer", agent.ModelTarget{Model: overrideModel})
 	if !ok || eng == nil {
 		t.Fatalf("factory(reviewer, %q) = (%v, %v), want a non-nil engine", overrideModel, eng, ok)
 	}
@@ -120,15 +121,15 @@ func TestBuildAgentModelEngineFactoryDeclinesInlineMCP(t *testing.T) {
 	agentReg := agents.NewRegistry([]agents.AgentDef{inlineDef, refDef})
 	cfg := Config{Model: "claude-default"}
 
-	factory := buildAgentModelEngineFactory(context.Background(), cfg, reg, prov, providerAnthropic, "claude-default",
+	factory := buildAgentTargetEngineFactory(context.Background(), cfg, reg, providerAnthropic,
 		agentReg, nil, hookexec.New(nil), nil, nil)
 
 	// Inline MCP server ⇒ declined (the v1 scope limit).
-	if eng, ok := factory("inline-reviewer", "claude-default"); ok || eng != nil {
+	if eng, ok := factory("inline-reviewer", agent.ModelTarget{Model: "claude-default"}); ok || eng != nil {
 		t.Fatalf("a def with an inline MCP server must be declined (nil, false), got (%v, %v)", eng, ok)
 	}
 	// Reference-only MCP server ⇒ NOT declined (borrows mainMgr, no new connection).
-	eng, ok := factory("ref-reviewer", "claude-default")
+	eng, ok := factory("ref-reviewer", agent.ModelTarget{Model: "claude-default"})
 	if !ok || eng == nil {
 		t.Fatalf("a reference-only MCP def must NOT be declined (it borrows mainMgr), got (%v, %v)", eng, ok)
 	}

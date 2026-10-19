@@ -492,7 +492,7 @@ func reviewTarget(call session.ToolCall) (ReviewTarget, []string) {
 		var args struct {
 			URL string `json:"url"`
 		}
-		if json.Unmarshal(call.Args, &args) == nil && args.URL != "" {
+		if _, ok := session.ParseArgs(call, &args); ok && args.URL != "" {
 			return ReviewTarget{Kind: "external", Display: args.URL, DestinationID: args.URL}, nil
 		}
 	}

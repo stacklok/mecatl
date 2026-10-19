@@ -100,8 +100,6 @@ func (m Model) renderBody() string {
 	switch {
 	case m.sessionDetailsOpen:
 		return renderSessionDetails(m.deps.Theme, m.sessionDetails(), m.helpKeyMarkings(), m.width, m.vp.Height())
-	case m.showHelp:
-		return renderHelpOverlay(m.deps.Theme, m.caps, m.width, m.vp.Height(), m.helpScroll, m.helpKeyMarkings())
 	case m.team.view != teamNone:
 		return renderAgentsOverlay(m.deps.Theme, m.agentsTab, m.subagents, m.parallel, m.team, m.teamBlockForOverlay(), m.conv.subagentFleet, m.conv.parallelGroups, m.helpKeyMarkings(), m.width, m.vp.Height(), m.height)
 	case m.agentsInv.view != agentsInvNone:
@@ -110,12 +108,8 @@ func (m Model) renderBody() string {
 		return (&m).renderModalSurface()
 	case m.reflections.view != reflectionsNone:
 		return renderReflectionsOverlay(m.deps.Theme, m.reflections, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
-	case m.dream.view != dreamClosed:
-		return renderDreamOverlay(m.deps.Theme, m.dream, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
-	case m.effort.view != effortNone:
-		return renderEffortOverlay(m.deps.Theme, m.effort, m.resolvedSessionModel.ReasoningEffort, m.currentModelNoReasoning(), m.helpKeyMarkings(), m.width, m.vp.Height())
-	case m.worktrees.view != worktreesNone:
-		return renderWorktreesOverlay(m.deps.Theme, m.worktrees, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
+	case m.executionPicker.open:
+		return m.renderExecutionPicker()
 	case m.schedule.view != scheduleNone:
 		return renderScheduleOverlay(m.deps.Theme, m.schedule, m.caps, m.deps.Transcript != nil, m.helpKeyMarkings(), m.width, m.vp.Height())
 	case m.connect.open:
@@ -252,30 +246,22 @@ func (m Model) postureBadgeRender() (styled string, plainWidth int) {
 //
 //  1. While CONNECTING (no create response yet) ⇒ "" (no segment): the server owns
 //     the resolved value and we must not guess it.
-//  2. The EFFECTIVE model the server resolved THIS session to (m.resolvedSessionModel,
-//     echoed verbatim on SessionReadyMsg) — shown from turn zero. Its human display
-//     name is resolved from the already-held ListModels inventory by (provider_id,
-//     model_id); when the inventory has no match (not yet loaded, or a passthrough
-//     id) it falls back to the raw model id.
+//  2. The EFFECTIVE provider/model the server resolved THIS session to
+//     (m.resolvedSessionModel, echoed on SessionReadyMsg), shown exactly from
+//     turn zero, even when the inventory has a friendly display name.
 //  3. The picker's active selection (what the NEXT session will request), then the
-//     launch-time --model — the PRE-EXISTING fallbacks, kept as-is so an older server
-//     that omits resolved_model still shows the configured model after connect.
+//     launch-time --model (without an inferred provider) for older servers.
 func (m Model) headerModelLabel() string {
 	if m.phase == phaseConnecting {
 		return ""
 	}
-	if rm := m.resolvedSessionModel; rm.ModelID != "" {
-		for _, mi := range m.modelCatalog.models {
-			if mi.ProviderID == rm.ProviderID && mi.ID == rm.ModelID && mi.DisplayName != "" {
-				return mi.DisplayName
-			}
-		}
-		return rm.ModelID
+	if label := m.statusModel().ProviderLabel; label != "" {
+		return terminaltext.Sanitize(label)
 	}
-	if name := m.createModelSelection.ModelID; name != "" {
-		return name
+	if sel := m.createModelSelection; sel.ModelID != "" {
+		return qualifiedModelLabel(sel.ProviderID, sel.ModelID)
 	}
-	return m.deps.Model
+	return terminaltext.Sanitize(m.deps.Model)
 }
 
 func (m Model) inputMode() string {
@@ -522,7 +508,7 @@ func (m Model) idleFooterLeft() string {
 // whole segment is muted so it reads as chrome, not an alert.
 func (m Model) selectionStatus() string {
 	muted := m.deps.Theme.Style("muted")
-	txt := selectedText(m.vp.GetContent(), m.sel)
+	txt := selectedConversationText(m.conversationView.frame, m.vp.GetContent(), m.sel)
 	chars := len([]rune(txt))
 	startL, _, endL, _ := m.sel.normalize()
 	lines := endL - startL + 1
@@ -539,25 +525,8 @@ func (m Model) selectionStatus() string {
 // right-aligned usage segment so they never touch.
 const footerGapPad = 2
 
-// queuePreviewLimit is the number of staged follow-ups previewed in the queue
-// card; the rest are summarised as a "+K more" line so a deep queue stays compact.
+// queuePreviewLimit bounds visible pending preview rows; overflow shows a count.
 const queuePreviewLimit = 3
-
-// queuePreviewWidth caps each preview line's display width so a long staged prompt
-// can't blow out the card; truncate appends an ellipsis past the cap.
-const queuePreviewWidth = 60
-
-// queuePreviewBound caps how many leading RUNES of a queued prompt feed the
-// per-frame preview flatten (oneLine) + truncate. renderQueue runs on every
-// rendered frame while the queue is non-empty, and an enqueue-expanded staged
-// paste can be a multi-KB payload — flattening it in full made every frame pay
-// O(payload) until the queue drained (the very lag issue #45's staging removes
-// from the input). 4× the preview's display width is always enough runes to fill
-// the truncate(…, queuePreviewWidth) output, except for a prefix that is almost
-// entirely collapsed whitespace — then the preview just shows less of a huge
-// payload, which is fine for a one-line hint. Output is byte-identical to the
-// unbounded algorithm for any queued string under the bound.
-const queuePreviewBound = 4 * queuePreviewWidth
 
 // runePrefix returns the first n runes of s without scanning past them (no
 // full-string RuneCountInString) — the O(1)-in-payload slice renderQueue's
@@ -572,19 +541,8 @@ func runePrefix(s string, n int) string {
 	return s
 }
 
-// renderQueue draws the "staged follow-ups" card shown just above the input
-// whenever the queue is non-empty. It reuses existing theme slots only (muted /
-// toolArgs for the normal card, ctxWarn for the paused header) — no new slots — so
-// it inherits the palette/card visual language. Returns "" for an empty queue (View
-// omits it then).
-//
-// Two states:
-//   - DRAINING (m.queuePaused == ""): a run is streaming (or about to) and the queue
-//     will fire FIFO at its clean completion — a muted "⏳ N queued".
-//   - PAUSED (m.queuePaused != ""): the last run ended on a non-clean stop (error /
-//     cancel / repeated failures / stream close) so the queue is HELD, not fired. A
-//     ctxWarn "⏸ N queued · paused: <reason>" header plus the resume/clear keys, so
-//     a held queue never reads as a silent hang (the whole point of this card).
+// renderQueue shows staged follow-ups as a pending user prompt. A non-clean
+// stop keeps the queue paused, with its reason and recovery keys in the heading.
 func (m Model) renderQueue() string {
 	n := len(m.queued)
 	if n == 0 {
@@ -592,82 +550,85 @@ func (m Model) renderQueue() string {
 	}
 	th := m.deps.Theme
 	hk := m.helpKeyMarkings()
-	muted := th.Style("muted")
-	var b strings.Builder
+	status := th.Style("muted").Render(fmt.Sprintf("%d queued", n))
+	hints := ""
+	if strings.TrimSpace(m.prompt.Value()) == "" {
+		hints = hk.editBack + " edit"
+	}
 	if m.queuePaused != "" {
 		reason, _ := renderfmt.StopReasonLabel(m.queuePaused)
-		b.WriteString(th.Style("ctxWarn").Render(fmt.Sprintf("⏸ %d queued · paused: %s", n, reason)))
-	} else {
-		// The edit hint only applies when EditBack is actionable, which
-		// requires an EMPTY input line; a draft present would make the
-		// hint misleading.
-		if strings.TrimSpace(m.prompt.Value()) == "" {
-			b.WriteString(muted.Render(fmt.Sprintf("⏳ %d queued · %s edit", n, hk.editBack)))
-		} else {
-			b.WriteString(muted.Render(fmt.Sprintf("⏳ %d queued", n)))
+		status = th.Style("ctxWarn").Render(fmt.Sprintf("%d queued · paused: %s", n, terminaltext.SanitizeSingleLine(reason)))
+		if hints != "" {
+			hints = hk.submit + " sends · " + hints + " · "
 		}
+		hints += hk.cancel + " clears"
 	}
-	shown := min(n, queuePreviewLimit)
-	for i := 0; i < shown; i++ {
-		// Bound the flatten to a rune prefix (queuePreviewBound) so a multi-KB
-		// queued payload is never whitespace-scanned in full on every frame.
-		b.WriteString("\n" + th.Style("toolArgs").Render("  "+truncate(oneLine(runePrefix(m.queued[i], queuePreviewBound)), queuePreviewWidth)))
-	}
-	if rest := n - shown; rest > 0 {
-		b.WriteString("\n" + muted.Render(fmt.Sprintf("  +%d more", rest)))
-	}
-	if m.queuePaused != "" {
-		b.WriteString("\n" + muted.Render("  "+hk.submit+" sends · "+hk.editBack+" edit · "+hk.cancel+" clears"))
-	}
-	return th.Style("askCard").Render(b.String())
+	return m.renderPendingPrompt(status, m.queued, hints)
 }
 
-// renderSteer draws the steer-mode (Capabilities.Steer) "in-flight steer" card
-// shown just above the input whenever a steer is live. It mirrors renderQueue's
-// visual language (muted / toolArgs / ctxWarn on the askCard style) but reflects
-// the AUTHORITATIVE server-reported state — the engine is the sole authority on
-// what happened to a steer (the client cannot observe the drain moment across
-// stream latency), so the card shows what the server acked/echoed, never a
-// client-side guess. Returns "" when no steer is in flight (layout omits it then).
-//
-// Four honest states:
-//   - PENDING (steerPending): sent, ack not yet back — a muted "⏳ steer: sending…".
-//   - SENT (steerSent): acked accepted/appended, parked for the next turn
-//     boundary — a muted "⏳ steer queued · ↑ edit · esc cancel".
-//   - PROMOTED (steerPromoted): acked too_late — the run had ended, so the text
-//     auto-started a follow-up — a ctxWarn "↪ steer sent as a follow-up (run had
-//     already ended)".
-//   - RETRACTED (steerRetracted): the steer_cancel won — a muted "✕ steer
-//     retracted".
+// renderSteer reflects the server-acknowledged lifecycle, not a local guess at
+// when a steer drained. It shares the local queue's pending user-prompt styling.
 func (m Model) renderSteer() string {
 	if m.steer == nil {
 		return ""
 	}
 	th := m.deps.Theme
 	hk := m.helpKeyMarkings()
-	muted := th.Style("muted")
-	var b strings.Builder
+	status, hints := "", ""
 	switch m.steer.Phase {
 	case steerPending:
-		b.WriteString(muted.Render("⏳ steer: sending…"))
-	case steerSent:
-		b.WriteString(muted.Render("⏳ steer queued · " + hk.editBack + " edit · " + hk.cancel + " cancel"))
-	case steerPromoted:
-		b.WriteString(th.Style("ctxWarn").Render("↪ steer sent as a follow-up (run had already ended)"))
-	case steerRetracted:
-		b.WriteString(muted.Render("✕ steer retracted"))
-	}
-	// Preview each logical message on its own line. A re-composed (↑-edit)
-	// fragment carries the WHOLE merged bundle in its Text (with blank-line
-	// separators INSIDE), so split each send's text on the merge separator:
-	// the wire stays one frame while the card shows the parts as separate
-	// queued lines.
-	for _, s := range m.steer.Sends {
-		for _, part := range strings.Split(s.Text, queueMergeSep) {
-			b.WriteString("\n" + th.Style("toolArgs").Render("  "+truncate(oneLine(runePrefix(part, queuePreviewBound)), queuePreviewWidth)))
+		status = th.Style("muted").Render("steer: sending…")
+		if strings.TrimSpace(m.prompt.Value()) == "" {
+			hints = hk.editBack + " edit"
 		}
+	case steerSent:
+		status = th.Style("muted").Render("steer queued")
+		hints = hk.cancel + " cancel"
+		if strings.TrimSpace(m.prompt.Value()) == "" {
+			hints = hk.editBack + " edit · " + hints
+		}
+	case steerPromoted:
+		status = th.Style("ctxWarn").Render("↪ steer sent as a follow-up (run had already ended)")
+	case steerRetracted:
+		status = th.Style("muted").Render("✕ steer retracted")
 	}
-	return th.Style("askCard").Render(b.String())
+	var previews []string
+	for _, send := range m.steer.Sends {
+		previews = append(previews, send.Text)
+	}
+	return m.renderPendingPrompt(status, previews, hints)
+}
+
+// renderPendingPrompt uses the transcript's user heading, neutral text and left
+// rail, without the permission card's border or padding. Logical lines, including
+// blank lines, are preserved within the preview row limit.
+func (m Model) renderPendingPrompt(status string, texts []string, hints string) string {
+	th := m.deps.Theme
+	width := m.widthOr()
+	heading := " " + th.Style("transcriptUserMarker").Render(theme.TranscriptUserGlyph) +
+		th.Style("transcriptUserHeading").Render(" you") + th.Style("muted").Render(" · ") + status
+	if hints != "" {
+		heading += th.Style("muted").Render(" · " + hints)
+	}
+	heading = ansi.Truncate(heading, width, "…")
+	// Bound work by the available width, not the size of expanded pastes.
+	bodyWidth := max(0, width-3)
+	previewBound := 4 * bodyWidth
+	var previewLines []string
+	for _, text := range texts {
+		previewLines = append(previewLines, strings.Split(runePrefix(text, previewBound), "\n")...)
+	}
+	lines := []string{heading}
+	for _, text := range previewLines[:min(len(previewLines), queuePreviewLimit)] {
+		preview := terminaltext.SanitizeSingleLine(oneLine(text))
+		line := " " + th.Style("transcriptUserRail").Render("│") + " " +
+			th.Style("transcriptUserText").Render(ansi.Truncate(preview, bodyWidth, "…"))
+		lines = append(lines, ansi.Truncate(line, width, ""))
+	}
+	if rest := len(previewLines) - queuePreviewLimit; rest > 0 {
+		lines = append(lines, ansi.Truncate(th.Style("muted").Render(fmt.Sprintf("   +%d more", rest)), width, ""))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // renderInput renders the textarea (now always focused — it stays editable while a

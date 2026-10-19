@@ -540,3 +540,65 @@ func TestPresentPlanHeadlessNoAsk(t *testing.T) {
 		t.Fatal("a headless plan run must NOT terminate with StopPlanApproved (no approval, no flip)")
 	}
 }
+
+// TestPresentPlanAmbiguousArgsAreRejectedBeforeApproval pins that PresentPlan,
+// which is intercepted before the permission gate, applies the same argument
+// check: a plan whose argument object repeats a key or spells one in another
+// case is refused without surfacing an approval, alone (the serial path), in a
+// read batch, on the serial path, and on a headless engine.
+func TestPresentPlanAmbiguousArgsAreRejectedBeforeApproval(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name        string
+		interactive bool
+		serial      bool
+		siblings    []session.ToolCall
+	}{
+		{name: "alone", interactive: true},
+		{name: "in a read batch", interactive: true, siblings: []session.ToolCall{toolCall("c2", "PresentPlan", `{"plan":"canonical"}`)}},
+		{name: "serial path", interactive: true, serial: true},
+		{name: "headless", interactive: false},
+	} {
+		for _, args := range []string{
+			`{"plan":"shown","plan":"recorded"}`,
+			`{"plan":"shown","plan":"recorded"}`,
+			`{"plan":"shown","Plan":"recorded"}`,
+		} {
+			t.Run(tc.name+"/"+args, func(t *testing.T) {
+				t.Parallel()
+				calls := append([]session.ToolCall{toolCall("c1", "PresentPlan", args)}, tc.siblings...)
+				llm := mockllm.New(mockllm.ToolCallTurn(calls...), mockllm.TextTurn("done"))
+				cat := planCatalog(t)
+				if tc.serial {
+					// A PresentPlan that is not read-only flushes alone through
+					// the serial dispatch path rather than a read batch.
+					cat = catalogWith(t, serialPresentPlan{agent.NewPresentPlanTool()})
+				}
+				e := newEngine(agent.Deps{LLM: llm, Catalog: cat, Interactive: tc.interactive})
+				r := e.Run(context.Background(), newPlanSession(t), agent.MemEnv("/ws"), agent.RunRequest{Text: "plan"})
+				var rejected bool
+				for ev := range r.Events() {
+					if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
+						if ev.Ask.Call == "c1" {
+							t.Errorf("ambiguous plan surfaced an approval: %s", ev.Ask.Args)
+						}
+						r.Approve(ev.Ask.AskID, session.VerdictDeny)
+					}
+					if ev.ToolResult != nil && ev.ToolResult.CallID == "c1" && ev.ToolResult.IsError &&
+						strings.Contains(ev.ToolResult.Content, "ambiguous tool arguments") {
+						rejected = true
+					}
+				}
+				if !rejected {
+					t.Fatal("the ambiguous PresentPlan call was not rejected with an ambiguous-arguments error")
+				}
+			})
+		}
+	}
+}
+
+// serialPresentPlan is a PresentPlan that is not read-only, so dispatch routes it
+// through the serial path instead of a read batch.
+type serialPresentPlan struct{ tool.Tool }
+
+func (serialPresentPlan) ReadOnly() bool { return false }

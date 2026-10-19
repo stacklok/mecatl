@@ -79,7 +79,7 @@ func TestRouterDecisionEvidence(t *testing.T) {
 	// A real delegation whose routed target factory rejects the candidate must
 	// advertise the inherited model as actual and keep the capable candidate only
 	// in decision evidence.
-	rejectingTool := NewSubagentTool(markerEngine("inherited-model"), WithSubagentEngineFactory(func(string) (*Engine, bool) {
+	rejectingTool := NewSubagentTool(markerEngine("inherited-model"), WithSubagentEngineFactory(func(ModelTarget) (*Engine, bool) {
 		return nil, false
 	})).(*SubagentTool)
 	var rejectedStart *session.SubagentPayload

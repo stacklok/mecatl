@@ -246,7 +246,7 @@ func newKeyringProvider(root string, backend keyringBackend) (*KeyringProvider, 
 		return nil, fmt.Errorf("clientauth: canonicalize store root: %w", err)
 	}
 	root = filepath.Clean(root)
-	// #nosec G302 -- the key lock and credential store require an owner-only root.
+	// #nosec G302 G703 -- Intentionally set the caller-selected, symlink-resolved credential storage root to owner-only mode; credential identities do not select this path.
 	if err := os.Chmod(root, 0700); err != nil {
 		return nil, fmt.Errorf("clientauth: protect store root: %w", err)
 	}
@@ -719,7 +719,7 @@ func OpenRegistry(root string) (*Registry, error) {
 	if root == "" || !filepath.IsAbs(root) || filepath.Clean(root) != root {
 		return nil, errors.New("clientauth: registry root must be absolute and clean")
 	}
-	// #nosec G703 -- root was validated as an absolute, clean trusted adapter boundary above.
+	// #nosec G703 -- root comes from the operator's XDG config directory, not server input.
 	if err := os.MkdirAll(root, 0700); err != nil {
 		return nil, err
 	}
@@ -730,7 +730,7 @@ func OpenRegistry(root string) (*Registry, error) {
 	root = filepath.Clean(root)
 	// The registry directory contains connection metadata and is intentionally
 	// owner-only; 0700 is stricter than the file-mode default required by gosec.
-	// #nosec G302 -- preserving the deliberate owner-only directory permission.
+	// #nosec G302 G703 -- root comes from the operator's XDG config directory, not server input; 0700 is intentionally owner-only.
 	if err := os.Chmod(root, 0700); err != nil {
 		return nil, err
 	}

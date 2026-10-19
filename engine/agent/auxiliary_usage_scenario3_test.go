@@ -458,8 +458,8 @@ func TestParallelBranchRouterUsageStaysPrivateUntilDispatcherDrain(t *testing.T)
 	child := NewEngine(Deps{
 		LLM: &blockingAuxiliaryProvider{started: started}, Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: "routed-model",
 	})
-	parallel := NewParallelTool(child, auxiliaryUsageForker{}, WithParallelEngineFactory(func(model string) (*Engine, bool) {
-		return child, model == "routed-model"
+	parallel := NewParallelTool(child, auxiliaryUsageForker{}, WithParallelEngineFactory(func(target ModelTarget) (*Engine, bool) {
+		return child, target.Model == "routed-model"
 	})).(*ParallelTool)
 	catalog := tool.NewCatalog()
 	catalog.MustRegister(parallel)

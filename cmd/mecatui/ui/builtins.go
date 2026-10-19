@@ -39,6 +39,7 @@ type wiredCollaborators struct {
 	Reflections  bool
 	Dream        bool
 	Compactor    bool
+	Execution    bool
 	Models       bool // mirrors client.Capabilities.ModelSelection
 	Guardrails   bool
 	Worktrees    bool
@@ -61,8 +62,10 @@ type wiredCollaborators struct {
 func (m Model) wiredCollaborators() wiredCollaborators {
 	_, mcpConnector := m.deps.MCP.(client.MCPConnectorReader)
 	_, mcpRefresh := m.deps.MCP.(client.MCPRefresher)
+	_, execution := m.deps.Session.(ExecutionCreator)
 	return wiredCollaborators{
-		MCP: m.deps.MCP != nil, MCPRefresh: mcpRefresh, MCPConnector: mcpConnector,
+		Execution: execution && m.deps.DebugTarget == "",
+		MCP:       m.deps.MCP != nil, MCPRefresh: mcpRefresh, MCPConnector: mcpConnector,
 		Agents: m.deps.Agents != nil, Skills: m.deps.Skills != nil,
 		Soul: m.deps.Soul != nil, UserModel: m.deps.UserModel != nil, Models: m.deps.Models != nil,
 		Guardrails:  m.deps.Guardrails != nil,
@@ -129,6 +132,22 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 			},
 		},
 		{
+			name:        "queue",
+			desc:        "queue a follow-up prompt after the active run",
+			acceptsArgs: true,
+			run: func(m Model) (tea.Model, tea.Cmd) {
+				return m.deliverPrompt("queue", "")
+			},
+		},
+		{
+			name:        "steer",
+			desc:        "steer the active run with a prompt",
+			acceptsArgs: true,
+			run: func(m Model) (tea.Model, tea.Cmd) {
+				return m.deliverPrompt("steer", "")
+			},
+		},
+		{
 			name: "session",
 			desc: "show active session details and copy its exact ID",
 			run:  Model.runSessionDetails,
@@ -148,6 +167,9 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 			desc: "send a concise client and server diagnostics report",
 			run:  Model.runDiagnostics,
 		},
+	}
+	if w.Execution {
+		out = append(out, builtin{name: "execution", desc: "start a new session with default, none, or an eligible template", run: Model.openExecution})
 	}
 	if caps.ManualCompaction && w.Compactor {
 		out = append(out, builtin{
@@ -440,10 +462,13 @@ func (m Model) runCompact() (tea.Model, tea.Cmd) {
 	return m, client.CompactSessionCmd(m.deps.Ctx, m.deps.Compactor, m.sessionID, m.compactRequestToken)
 }
 
-// runHelp opens the "?" keys-&-features overlay — the same state the "?" key
-// sets (see onIdleKey). It blurs the textarea so the overlay owns the keyboard.
+// runHelp opens the keys-and-features surface and blurs the composer.
 func (m Model) runHelp() (tea.Model, tea.Cmd) {
-	m.showHelp = true
+	if m.modal != nil {
+		return m, nil
+	}
+	deps := (&m).surfaceDeps()
+	m.modal = &helpState{deps: deps, lines: strings.Split(helpBody(deps.theme, deps.caps, deps.marks), "\n")}
 	m.prompt.Blur()
 	return m, nil
 }
@@ -647,10 +672,11 @@ type builtinName struct {
 // before a capability-gated builtin can be dispatched.
 var builtinNameRegistry = []builtinName{
 	{name: "clear", acceptsArgs: false}, {name: "help", acceptsArgs: false}, {name: "quit", acceptsArgs: false}, {name: "title", acceptsArgs: true}, {name: "session", acceptsArgs: false},
+	{name: "queue", acceptsArgs: true}, {name: "steer", acceptsArgs: true},
 	{name: "retry", acceptsArgs: false}, {name: "toolcalls", acceptsArgs: false}, {name: "diagnostics", acceptsArgs: false}, {name: "compact", acceptsArgs: false},
 	{name: "mcp", acceptsArgs: false}, {name: "agents", acceptsArgs: false}, {name: "team", acceptsArgs: false},
 	{name: "skills", acceptsArgs: false}, {name: "soul", acceptsArgs: false}, {name: "memory", acceptsArgs: false},
-	{name: "models", acceptsArgs: false}, {name: "effort", acceptsArgs: false}, {name: "worktrees", acceptsArgs: false},
+	{name: "execution", acceptsArgs: false}, {name: "models", acceptsArgs: false}, {name: "effort", acceptsArgs: false}, {name: "worktrees", acceptsArgs: false},
 	{name: "schedule", acceptsArgs: false}, {name: "sessions", acceptsArgs: false}, {name: "learning", acceptsArgs: false},
 	{name: "learning-sensitivity", acceptsArgs: false}, {name: "posture", acceptsArgs: false},
 }
@@ -728,6 +754,10 @@ func (m Model) renameTitle(title string) (tea.Model, tea.Cmd) {
 // recognized built-in that does not accept arguments keeps the input and shows a
 // local warning. Unknown slash commands remain model-facing.
 func (m Model) dispatchBareBuiltin(text string) (tea.Model, tea.Cmd, bool) {
+	if kind, payload, ok := deliveryCommand(text); ok {
+		mm, cmd := m.deliverPrompt(kind, payload)
+		return mm, cmd, true
+	}
 	if title, bare, ok := titleCommand(text); ok {
 		if bare {
 			m.prompt.Reset()

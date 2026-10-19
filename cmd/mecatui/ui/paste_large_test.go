@@ -270,7 +270,7 @@ func TestPlaceholderIgnoredBehindOverlay(t *testing.T) {
 	m := zeroStateModel(t, embeddedCaps())
 	mm, _ := m.Update(qmark())
 	m = mm.(Model)
-	if !m.showHelp {
+	if m.modal == nil {
 		t.Fatalf("help overlay should be open after '?'")
 	}
 

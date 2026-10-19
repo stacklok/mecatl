@@ -89,7 +89,8 @@ func TestStatusLine_InputCarriesUsageContextAndSurfaceColumns(t *testing.T) {
 		Model: Model{
 			ProviderID:    "openai",
 			ID:            "gpt-5",
-			DisplayName:   "GPT-5",
+			ProviderLabel: "openai/gpt-5",
+			FriendlyName:  "GPT-5",
 			ContextWindow: ContextAtom{Raw: 100, Human: "100"},
 		},
 		Session: Session{Title: "Status work", ReasoningEffort: "high"},
@@ -140,8 +141,11 @@ func TestStatusLine_InputCarriesUsageContextAndSurfaceColumns(t *testing.T) {
 	if got, want := input.Model.ID, "gpt-5"; got != want {
 		t.Fatalf("model ID = %q, want %q", got, want)
 	}
-	if got, want := input.Model.DisplayName, "GPT-5"; got != want {
-		t.Fatalf("model display name = %q, want %q", got, want)
+	if got, want := input.Model.ProviderLabel, "openai/gpt-5"; got != want {
+		t.Fatalf("model provider label = %q, want %q", got, want)
+	}
+	if got, want := input.Model.FriendlyName, "GPT-5"; got != want {
+		t.Fatalf("model friendly name = %q, want %q", got, want)
 	}
 	if got, want := input.Model.ContextWindow.Human, "100"; got != want {
 		t.Fatalf("model context window human = %q, want %q", got, want)
@@ -170,6 +174,23 @@ func TestStatusLine_TemplateProjectsContextState(t *testing.T) {
 	}}))
 	if got, want := statusSurfaceText(doc.Footer), "true/true/~75"; got != want {
 		t.Fatalf("context template projection = %q, want %q", got, want)
+	}
+}
+
+func TestStatusLine_ModelLabelsEscapedInTemplates(t *testing.T) {
+	input := Input{Model: Model{
+		ProviderLabel: "provider/<error>forged</error>\x1b]8;;x\a",
+		FriendlyName:  "<accent>friendly</accent>\n",
+	}}
+	tmpl := parseStatusTemplate("header", `<header><text>{{.Model.ProviderLabel}} · {{.Model.FriendlyName}}</text></header>`, defaultTemplateSet().Header.Full)
+	doc := tmpl.render(context.Background(), newTemplateInput(input))
+	if got, want := statusSurfaceText(doc.Header), "provider/<error>forged</error>]8;;x · <accent>friendly</accent>"; got != want {
+		t.Fatalf("escaped model labels = %q, want %q", got, want)
+	}
+	for _, span := range doc.Header.Spans {
+		if span.Token != TokenText || span.Text != terminaltext.SanitizeSingleLine(span.Text) {
+			t.Fatalf("model label injected markup or terminal controls: %#v", span)
+		}
 	}
 }
 

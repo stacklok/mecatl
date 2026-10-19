@@ -323,10 +323,11 @@ type config struct {
 	// The *cliconfig.KeyValueList pointers are the flag bindings returned by
 	// cliconfig.RegisterModelFlags (issue #93: the type lives in cliconfig so the
 	// two mains cannot drift).
-	agentsDirs         stringList
-	agentsConventional bool
-	subagentModel      string
-	modelAliases       *cliconfig.KeyValueList
+	agentsDirs          stringList
+	agentsConventional  bool
+	subagentModel       string
+	modelAliases        *cliconfig.KeyValueList
+	modelAliasProviders *cliconfig.KeyValueList
 	// modelSlots binds a named internal lightweight call (compaction/ask-reviewer/
 	// guardrail) — or a tier (cheap/fast/reasoning) a slot falls through to — to a
 	// model selector (an alias or a concrete id), via the repeatable --model-slot
@@ -426,22 +427,16 @@ type config struct {
 
 	// WebSearch (issue #26): the vendor-neutral HTTP JSON search backend behind the
 	// always-present WebSearch tool. websearchURL is the search endpoint (empty =>
-	// the tool reports "not configured"); the API key is read from WEBSEARCH_API_KEY
-	// (a secret, never a flag value); websearchAuthHeader/websearchQueryParam tune
-	// the request shape for a generic JSON endpoint.
+	// the tool reports "not configured"); websearchAuthHeader/websearchQueryParam
+	// tune the request shape for a generic JSON endpoint.
 	websearchURL        string
-	websearchAPIKey     string
 	websearchAuthHeader string
 	websearchQueryParam string
 
 	// WebSearch backend ladder (issue #26): web search is ON by default (Exa
-	// anonymous). searxngURL/braveAPIKey/exaAPIKey are read from SEARXNG_URL/
-	// BRAVE_API_KEY/EXA_API_KEY (secrets/URLs, never flag values) and SWITCH the
-	// backend; websearchMode is the raw --websearch value ("off" → websearchOff),
-	// the kill switch mirroring --guardrails.
+	// anonymous). SearXNG selects a different backend; Exa and Brave keys
+	// are resolved by the shared provider credential lifecycle.
 	searxngURL    string
-	braveAPIKey   string
-	exaAPIKey     string
 	websearchMode string // raw --websearch value ("off" → websearchOff)
 	websearchOff  bool
 
@@ -1293,25 +1288,25 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		// and cost knobs are operator-tier YAML only (the `guardrails:` subtree of the
 		// user-global settings.yaml), folded onto Config by foldOperatorGuardrails — a
 		// flag cannot express a rule list.
-		GuardrailsModel:     cfg.guardrailsModel,
-		GuardrailsDisabled:  cfg.guardrailsOff,
-		ModelAliases:        cfg.modelAliases.AsMap(),
-		ModelSlots:          cfg.modelSlots.AsMap(),
-		CommandsDir:         cfg.commandsDir,
-		EnableCommands:      cfg.enableCommands,
-		EnableParallel:      cfg.enableParallel,
-		WebSearchURL:        cfg.websearchURL,
-		WebSearchAPIKey:     cfg.websearchAPIKey,
-		WebSearchAuthHeader: cfg.websearchAuthHeader,
-		WebSearchQueryParam: cfg.websearchQueryParam,
-		SearXNGURL:          cfg.searxngURL,
-		BraveAPIKey:         cfg.braveAPIKey,
-		ExaAPIKey:           cfg.exaAPIKey,
-		WebSearchOff:        cfg.websearchOff,
-		ForkPreservedCap:    cfg.forkPreservedCap,
-		EnableTeams:         cfg.enableTeams,
-		MCPServers:          cfg.mcpServers.Servers(),
-		MCPProfileLoader:    cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv),
+		GuardrailsModel:            cfg.guardrailsModel,
+		GuardrailsDisabled:         cfg.guardrailsOff,
+		ModelAliases:               cliconfig.ScalarModelAliases(cfg.modelAliases, cfg.modelAliasProviders),
+		ModelAliasTargets:          cliconfig.ModelAliasTargets(cfg.modelAliases, cfg.modelAliasProviders),
+		ModelSlots:                 cfg.modelSlots.AsMap(),
+		CommandsDir:                cfg.commandsDir,
+		EnableCommands:             cfg.enableCommands,
+		EnableParallel:             cfg.enableParallel,
+		WebSearchURL:               cfg.websearchURL,
+		WebSearchAuthHeader:        cfg.websearchAuthHeader,
+		WebSearchQueryParam:        cfg.websearchQueryParam,
+		WebSearchAuthHeaderFlagSet: cfg.cliExplicit["websearch-auth-header"],
+		WebSearchQueryParamFlagSet: cfg.cliExplicit["websearch-query-param"],
+		SearXNGURL:                 cfg.searxngURL,
+		WebSearchOff:               cfg.websearchOff,
+		ForkPreservedCap:           cfg.forkPreservedCap,
+		EnableTeams:                cfg.enableTeams,
+		MCPServers:                 cfg.mcpServers.Servers(),
+		MCPProfileLoader:           cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv),
 		// Route mcp.mode through the canonical authority resolver. Broker stays
 		// opt-in so an omitted mode and an empty MCP configuration retain the
 		// existing global/no-broker behavior.
@@ -1407,7 +1402,7 @@ func applyPostureCLI(cfg config, diag port.Diagnostics) error {
 	case app.PostureAuto:
 		slog.Warn("OPERATOR POSTURE: auto — allow-all is ACTIVE server-wide (the built-in mutate-ask floor + the MAIN agent's substitution floor are waived). A Deny in any scope and any deliberately configured Ask still apply. The CHILD prompt-injection defense stays ON: a subagent's $()/backtick/heredoc still resolves through the child-ask model. Recommended for UNATTENDED single-tenant use.")
 	case app.PostureYolo:
-		slog.Warn("OPERATOR POSTURE: yolo — allow-all server-wide AND the CHILD prompt-injection defense is OFF: $()/backtick/heredoc commands AUTO-RUN in subagents/branches. A Deny in any scope and any deliberately configured Ask still apply. ISOLATED, EPHEMERAL, SINGLE-TENANT deployments ONLY. NOTE behaviour change: --yolo now ALSO loosens the child substitution floor.")
+		slog.Warn("YOLO skips default approvals. Commands can delete files or expose data.\nUse an isolated, disposable environment. Explicit permission rules still apply.")
 	}
 	return nil
 }
@@ -1801,7 +1796,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.BoolVar(&cfg.noScheduler, "no-scheduler", false, "disable scheduling for a schedule-capable durable store. Create, list, and manual fire operations remain available.")
 	fs.DurationVar(&cfg.schedulerTickInterval, "scheduler-tick-interval", 30*time.Second, "interval for polling due schedules. Default 30s; 0 also uses 30s. Applies only when scheduling is enabled.")
 	fs.DurationVar(&cfg.schedulerMinInterval, "scheduler-min-interval", time.Minute, "minimum allowed scheduled cadence. Default 1m. Set 0 to allow any cadence.")
-	fs.IntVar(&cfg.schedulerMaxConcurrentFires, "scheduler-max-concurrent-fires", 4, "maximum schedules started in parallel per scheduler tick. Applies only when scheduling is enabled.")
+	fs.IntVar(&cfg.schedulerMaxConcurrentFires, "scheduler-max-concurrent-fires", 4, "maximum admitted scheduled fires, including manual fires and teardown.")
 	fs.StringVar(&cfg.driverAuthToken, "driver-auth-token", "", "bearer token sent on every store-driver RPC (or MECATL_DRIVER_AUTH_TOKEN; empty disables driver auth). Refused over cleartext to a non-loopback driver — pair with --driver-tls")
 	fs.BoolVar(&cfg.driverTLS, "driver-tls", false, "enable transport TLS on the store-driver connections (--session-store-url/--memory-store-url)")
 	fs.StringVar(&cfg.driverTLSCA, "driver-tls-ca", "", "PEM CA bundle to verify the store driver's server certificate (with --driver-tls; empty uses the system roots)")
@@ -1832,7 +1827,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.StringVar(&cfg.subagentModel, "subagent-model", "", "default model for child subagents, parallel branches, and team members. Accepts a model identifier or --model-alias. Empty inherits --model; an unresolved value prevents startup.")
 	// Shared model alias/slot flags (cliconfig): mecated uses the default help
 	// wording, so a zero ModelFlagHelp is enough.
-	cfg.modelAliases, cfg.modelSlots = cliconfig.RegisterModelFlags(fs, cliconfig.ModelFlagHelp{})
+	cfg.modelAliases, cfg.modelAliasProviders, cfg.modelSlots = cliconfig.RegisterModelFlags(fs, cliconfig.ModelFlagHelp{})
 	fs.StringVar(&cfg.subagentAskReviewer, "subagent-ask-reviewer", "", "model identifier or --model-alias for reviewing child permission requests in headless mode. An allow applies only to that request; denied or failed reviews deny it. Empty disables reviews.")
 	fs.IntVar(&cfg.subagentAskReviewerMaxDenies, "subagent-ask-reviewer-max-denies", agent.DefaultAskReviewMaxDenies, "maximum consecutive denied, failed, or timed-out child-permission reviews before later requests are automatically denied. An allowed review resets the count. Values at or below 0 use the default of 3.")
 	fs.StringVar(&cfg.subagentAskReviewerPolicyFile, "subagent-ask-reviewer-policy", "", "path to a trusted policy file that replaces the built-in child-permission review rubric. Startup fails if the file is unreadable.")
@@ -1979,16 +1974,9 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	// "OpenAI key implies the real provider" flip moved there too (off the resolved
 	// key). The registry still auto-detects the keys via its envDetector; reading them
 	// in the cmd layer makes credential custody explicit.
-	//
-	// WebSearch (issue #26): the search backend's API key is a SECRET, read from the
-	// environment (never a flag value), mirroring the provider keys' custody rule.
-	cfg.websearchAPIKey = os.Getenv("WEBSEARCH_API_KEY")
-	// WebSearch backend ladder (issue #26): the SearXNG URL and the Brave/Exa keys
-	// are secrets/URLs read from the environment, never flag values. Web search is ON
-	// by default (Exa anonymous) — these only SWITCH the backend.
+	// WebSearch backend ladder (issue #26): SearXNG selects its backend;
+	// Brave, Exa, and the generic URL credentials use the shared provider credential lifecycle.
 	cfg.searxngURL = os.Getenv("SEARXNG_URL")
-	cfg.braveAPIKey = os.Getenv("BRAVE_API_KEY")
-	cfg.exaAPIKey = os.Getenv("EXA_API_KEY")
 	// An auth token from the environment is honored when the flag is unset, so a
 	// secret need not appear in the process argv.
 	if cfg.authToken == "" {

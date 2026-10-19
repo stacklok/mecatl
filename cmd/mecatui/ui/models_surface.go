@@ -69,6 +69,11 @@ type modelsGlobalDefaultIntent struct {
 func (modelsGlobalDefaultIntent) isSurfaceIntent() {}
 
 func (s *modelsState) Render(width, height int) (string, []ClickableRegion) {
+	if width <= 0 || height <= 0 {
+		s.rowBudget = 0
+		s.hitItems = nil
+		return "", nil
+	}
 	prefix, suffix := modelsFixedLines(*s, s.provenance)
 	s.rowBudget = max(0, height-len(prefix)-len(suffix))
 	list := s.listControl()
@@ -124,7 +129,12 @@ func (s *modelsState) Render(width, height int) (string, []ClickableRegion) {
 }
 
 func (s *modelsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
+	move, navigation := boundedFilterNavigationMove(msg, s.deps.keys)
 	switch {
+	case key.Matches(msg, s.deps.keys.Close) && s.rowBudget == 0:
+		return nil, true, true
+	case s.rowBudget == 0:
+		return nil, true, false
 	case key.Matches(msg, s.deps.keys.Close):
 		if s.filter.Value() != "" {
 			s.filter.SetValue("")
@@ -132,18 +142,8 @@ func (s *modelsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 			return nil, true, false
 		}
 		return nil, true, true
-	case msg.String() == keyMenuUp:
-		s.moveCursor(bounded.LineUp)
-	case msg.String() == keyMenuDown:
-		s.moveCursor(bounded.LineDown)
-	case key.Matches(msg, s.deps.keys.ScrollU):
-		s.moveCursor(bounded.PageUp)
-	case key.Matches(msg, s.deps.keys.ScrollD):
-		s.moveCursor(bounded.PageDown)
-	case key.Matches(msg, s.deps.keys.ScrollTop):
-		s.moveCursor(bounded.Top)
-	case key.Matches(msg, s.deps.keys.ScrollBottom):
-		s.moveCursor(bounded.End)
+	case navigation:
+		s.moveCursor(move)
 	case key.Matches(msg, s.deps.keys.SetGlobalDefault):
 		if chosen, ok := s.chosen(); ok {
 			s.intent = modelsGlobalDefaultIntent{client.ModelSelection{ProviderID: chosen.ProviderID, ModelID: chosen.ID}, modelLabel(chosen)}

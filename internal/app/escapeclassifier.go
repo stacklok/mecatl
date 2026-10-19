@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
@@ -132,7 +133,7 @@ func (c *escapeClassifier) classify(toolName string, args json.RawMessage) escap
 		return escapeInRoot
 	}
 	var a fsPathArg
-	if err := json.Unmarshal(args, &a); err != nil || a.Path == "" {
+	if err := governance.DecodeToolArgs(args, &a); err != nil || a.Path == "" {
 		return escapeInRoot
 	}
 	path := a.Path

@@ -28,12 +28,12 @@ func TestSourceOwnsDefaultSurfaces(t *testing.T) {
 	}
 }
 
-func TestStatusLine_DefaultTemplatesExposeLegacyDisplayAtoms(t *testing.T) {
+func TestStatusLine_DefaultTemplatesUseProviderLabel(t *testing.T) {
 	source := NewDefaultSource(0)
 	t.Cleanup(func() { _ = source.Close(context.Background()) })
 	source.Submit(Input{
 		Session: Session{Handle: "deadbeef", Mode: "plan"},
-		Model:   Model{ProviderID: "openai", DisplayName: "GPT-5", Route: "azure"},
+		Model:   Model{ProviderID: "openai", ProviderLabel: "openai/gpt-5", FriendlyName: "GPT-5", Route: "azure"},
 		Server:  ServerTarget{DisplayTarget: "server.example", ConnectionMode: "connect"},
 		Usage:   Usage{Input: UsageAtom{Raw: 4_000, Human: "4K"}, Output: UsageAtom{Raw: 1_000, Human: "1K"}, CacheWrite: UsageAtom{Raw: 500, Human: "500"}, CacheReadPercent: 75},
 		Context: Context{Used: ContextAtom{Raw: 7_000, Human: "7K"}, Window: ContextAtom{Raw: 10_000, Human: "10K"}, Percent: 70, Known: true},
@@ -50,7 +50,7 @@ func TestStatusLine_DefaultTemplatesExposeLegacyDisplayAtoms(t *testing.T) {
 		t.Fatal("source did not publish")
 	}
 	line := source.Latest()
-	if got, want := statusSurfaceText(line.Header), "mecatui · openai/GPT-5/azure · mode plan · server.example"; got != want {
+	if got, want := statusSurfaceText(line.Header), "mecatui · openai/gpt-5/azure · mode plan · server.example"; got != want {
 		t.Fatalf("header = %q, want %q", got, want)
 	}
 	if got := statusSurfaceText(line.Footer); !strings.Contains(got, "⑂ parallel 1◐ 2✓") || !strings.Contains(got, "⛭ subagents 3◐ 4✓") || !strings.Contains(got, "⟳ team-abc · 1/2 working") || !strings.Contains(got, "ctx ▓▓▓▓▓▓░░ 70% · 7K/10K") || !strings.Contains(got, "↑4K ↓1K ⊕500 cache 75%") {
@@ -70,7 +70,7 @@ func TestStatusLine_DefaultHeaderOmitsEmbeddedServerTarget(t *testing.T) {
 	source := NewDefaultSource(0)
 	t.Cleanup(func() { _ = source.Close(context.Background()) })
 	source.Submit(Input{
-		Model:    Model{DisplayName: "GPT-5"},
+		Model:    Model{ProviderLabel: "gpt-5", FriendlyName: "GPT-5"},
 		Server:   ServerTarget{DisplayTarget: "unix:///private/mecatui.sock", ConnectionMode: "embedded"},
 		Terminal: Terminal{HeaderAvailCols: 80},
 	})
@@ -79,7 +79,7 @@ func TestStatusLine_DefaultHeaderOmitsEmbeddedServerTarget(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("source did not publish")
 	}
-	if got, want := statusSurfaceText(source.Latest().Header), "mecatui · GPT-5"; got != want {
+	if got, want := statusSurfaceText(source.Latest().Header), "mecatui · gpt-5"; got != want {
 		t.Fatalf("embedded header = %q, want %q", got, want)
 	}
 }

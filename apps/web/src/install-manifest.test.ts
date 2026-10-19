@@ -2,6 +2,7 @@
 
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
+import { consumeChatSeed } from "./features/chat/chat-seed";
 
 const publicAsset = (name: string) => new URL(`../public/${name}`, import.meta.url);
 
@@ -31,7 +32,12 @@ describe("Studio installation", () => {
       { src: "/icon-512.png", sizes: "512x512", type: "image/png" },
       { src: "/icon-maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
     ]);
-    expect(manifest).not.toHaveProperty("share_target");
+    // Shared text opens a chat draft through the chat seed (see below).
+    expect(manifest.share_target).toEqual({
+      action: "/workspace/chat",
+      method: "GET",
+      params: { text: "prompt" },
+    });
 
     for (const [name, size] of [
       ["icon-192.png", 192],
@@ -51,5 +57,38 @@ describe("Studio installation", () => {
     expect(html).toContain('media="(prefers-color-scheme: dark)" content="#02141b"');
     expect(html).toContain("width=device-width, initial-scale=1.0");
     expect(html).not.toContain("user-scalable=no");
+  });
+
+  it("hands shared text to the chat seed, sanitized and consumed", async () => {
+    const manifest = JSON.parse(await readFile(publicAsset("manifest.webmanifest"), "utf8"));
+    const target = manifest.share_target as {
+      action: string;
+      method: string;
+      params: Record<string, string>;
+    };
+    // GET share targets need no enctype, and the action stays inside the app's scope.
+    expect(target.method).toBe("GET");
+    expect(target.action.startsWith(manifest.scope)).toBe(true);
+    // Only the seed's prompt is requested: a share never asks to send, and no
+    // parameter is left for the chat route to ignore in the address bar.
+    expect(Object.values(target.params)).toEqual(["prompt"]);
+
+    const shared: Record<string, string> = {
+      text: ` Summarize\u0000 this ${"x".repeat(40_000)}😀`,
+      title: "Ignored title",
+      url: "https://example.com/ignored",
+    };
+    // The browser builds the action URL from the shared fields the manifest names.
+    const arrival = new URL(target.action, "https://studio.example");
+    for (const [field, param] of Object.entries(target.params)) {
+      const value = shared[field];
+      if (value !== undefined) arrival.searchParams.append(param, value);
+    }
+    const consumed = consumeChatSeed(arrival);
+    expect(consumed.seed?.requiresConfirmation).toBe(false);
+    expect(consumed.seed?.text.startsWith("Summarize this ")).toBe(true);
+    expect(consumed.seed?.text.length).toBeLessThanOrEqual(32 * 1024);
+    expect(consumed.url.pathname).toBe("/workspace/chat");
+    expect(consumed.url.search).toBe("");
   });
 });

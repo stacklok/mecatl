@@ -30,6 +30,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"k8s.io/client-go/kubernetes"
@@ -148,6 +149,13 @@ type Config struct {
 	// PlacementScope is the trusted authorization scope passed to the provider.
 	// Empty defaults to the process deployment scope.
 	PlacementScope server.PlacementScope
+	// ExecutionTemplateAllowed is the operator-owned per-caller policy. Nil
+	// denies all public template selection, independent of provider mTLS grants.
+	ExecutionTemplateAllowed func(*session.Principal, string, string) bool
+	// ExecutionOwnerAllowed authorizes continued use of an existing allocation,
+	// independently of eligibility for any new template selection. When either
+	// callback is configured, both are required for new remote binds.
+	ExecutionOwnerAllowed func(*session.Principal) bool
 	// DefaultPlacement and MicroVMGuestEgress are command-root overrides for the
 	// operator execution policy. Their Set bits preserve omission so settings.yaml
 	// remains authoritative unless a serve flag was actually supplied.
@@ -269,6 +277,9 @@ type Config struct {
 	// catalogued; the mock path never consults the resolved default).
 	DefaultProvider string
 	DefaultModel    string
+	// defaultModelFromAlias records an already Build-validated provider-aware alias.
+	// Its opaque model is provider runtime truth and is not catalog-probed.
+	defaultModelFromAlias bool
 
 	// DefaultProviderFlagSet records whether the operator passed an explicit
 	// --default-provider flag. When true, foldOperatorDefaultProvider leaves the
@@ -835,6 +846,15 @@ type Config struct {
 	// concrete provider model id. Resolved only here; the domain/agent always
 	// receives a concrete model string.
 	ModelAliases map[string]string
+	// ModelAliasTargets carries provider-aware alias targets from typed config and
+	// shared CLI plumbing. ModelAliases remains the scalar compatibility seam.
+	ModelAliasTargets ModelAliases
+	// modelBindingProvider is the effective operator default before a paired
+	// session default overrides it. Configured scalar bindings use this provider.
+	modelBindingProvider string
+	// modelProviderRegistry is the immutable Build-owned registry used only to mint
+	// provider-specific auxiliary-call dependencies. It never reaches engine core.
+	modelProviderRegistry *providerRegistry
 
 	// ModelSlots binds a named internal lightweight LLM call (a "slot") to a model
 	// selector — an alias or a concrete id. The recognised call slots are listed in
@@ -847,9 +867,8 @@ type Config struct {
 	// the call keeps the session model (resolveSlotModel returns ("", false) and
 	// every routed site uses its unconfigured behaviour). Sources: --model-slot,
 	// the user-global settings.yaml `models.slots:` subtree (folded by
-	// foldOperatorModelSlots), and a TRUSTED project's `.mecatl/settings.yaml`
-	// models.slots block, capped by the operator allowlist
-	// (foldProjectModelBindings). Resolution is FAIL-SOFT: a typo'd slot key or an
+	// foldOperatorModelSlots). Project-tier model bindings are ignored.
+	// Resolution is FAIL-SOFT: a typo'd slot key or an
 	// alias meaning inherit WARNs and degrades to the session model — a broken
 	// housekeeping slot never wedges a compaction / ask-review / guardrail call.
 	ModelSlots map[string]string
@@ -873,26 +892,32 @@ type Config struct {
 
 	// WebSearch (issue #26): web search is ON by default (Exa anonymous tier) behind
 	// the always-present WebSearch core tool — see the backend ladder fields below.
-	// WebSearchURL is the EXPLICIT-override endpoint (e.g. a SearXNG /search URL or
-	// a generic JSON search API) that wins over the env tiers and the Exa default.
+	// WebSearchURL is the generic JSON search endpoint, supplied explicitly or
+	// folded from operator settings. The explicit endpoint wins over settings.
 	// WebSearchAPIKey is an OPTIONAL credential sent in
 	// WebSearchAuthHeader (default "Authorization" as a Bearer token) — NEVER in the
 	// query string. WebSearchQueryParam overrides the URL query parameter the search
-	// string is placed in (default "q"). The cmd layer reads the key from a
-	// secret/env source, never a flag value. The adapter carries its OWN per-call
-	// timeout and concurrency limiter (egress is bounded in the adapter, never the
+	// string is placed in (default "q"). Credentials come from the shared
+	// provider credential lifecycle, never from a flag value. The adapter carries
+	// its own per-call timeout and concurrency limiter (egress is bounded in the adapter, never the
 	// dispatcher).
-	WebSearchURL        string
-	WebSearchAPIKey     string
-	WebSearchAuthHeader string
-	WebSearchQueryParam string
+	WebSearchURL                  string
+	WebSearchAPIKey               string
+	WebSearchAuthHeader           string
+	WebSearchQueryParam           string
+	WebSearchAuthHeaderFlagSet    bool
+	WebSearchQueryParamFlagSet    bool
+	webSearchURLFromSettings      bool
+	searxngURLFromSettings        bool
+	webSearchDisabledFromSettings bool
 
 	// WebSearch backend ladder (issue #26): web search is ON by default via the Exa
 	// anonymous tier (no key, no config). The precedence is, first match wins:
-	// WebSearchOff (kill switch) > WebSearchURL (explicit override) > SearXNGURL >
-	// BraveAPIKey > Exa anonymous default. SearXNGURL/BraveAPIKey/ExaAPIKey are read
-	// from SEARXNG_URL/BRAVE_API_KEY/EXA_API_KEY (secrets/URLs, never flag values);
-	// WebSearchOff is set by --websearch=off.
+	// WebSearchOff > explicit URL > operator enabled:false > operator URL >
+	// operator SearXNG URL > legacy SEARXNG_URL > BraveAPIKey > Exa default.
+	// The operator settings are folded before the shared backend is built.
+	// Brave and Exa credentials come from the shared provider lifecycle
+	// (BRAVE_API_KEY/EXA_API_KEY or auth.yaml), never flag values.
 	SearXNGURL   string
 	BraveAPIKey  string
 	ExaAPIKey    string
@@ -1464,6 +1489,9 @@ type providerCredentialFileSetter interface {
 // ProviderCredentials is the immutable credential snapshot returned by a
 // ProviderCredentialLoader.
 type ProviderCredentials struct {
+	ExaAPIKey             string
+	BraveAPIKey           string
+	WebSearchAPIKey       string
 	OpenAIKey             string
 	OpenRouterKey         string
 	AnthropicKey          string
@@ -1479,6 +1507,7 @@ type Built struct {
 	MCPBroker             *mcpbroker.Runtime
 	MCPBrokerHandlers     mcpbroker.HandlerBundle
 	MCPBrokerCallbackPath string
+	GuardrailsAdvisory    bool
 	Close                 func()
 }
 
@@ -1532,6 +1561,15 @@ func validateMCPAuthority(cfg Config) error {
 	return nil
 }
 
+// clearGlobalMCPForBroker enforces the broker authority boundary before the
+// candidate catalog is built: broker tools are supplied explicitly by the session
+// attachment, so neither the static MCP servers nor ToolHive may add a global
+// fallback (including a second CallMcpWithQuery).
+func clearGlobalMCPForBroker(cfg *Config) {
+	cfg.MCPServers = nil
+	cfg.ToolHiveEnabled = false
+}
+
 // Build assembles the provider registry, catalog, policy, and engine into a
 // server.Service per the given Config. It is the single composition root every
 // cmd/ main calls.
@@ -1559,8 +1597,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	var discovery *providerDiscovery
 	closeProfiles := sync.OnceFunc(func() {
 		discovery.Close()
-		cfg.MCPProfileLifecycle = mcpProfileLifecycle
-		closeMCPProfileLifecycle(ctx, cfg)
+		profileCfg := cfg
+		profileCfg.MCPProfileLifecycle = mcpProfileLifecycle
+		closeMCPProfileLifecycle(ctx, profileCfg)
 		if providerCredentialLifecycle != nil {
 			_ = providerCredentialLifecycle.Close()
 		}
@@ -1669,6 +1708,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// the child deps builders (the workspace-PINNED child resolver) consume the
 	// SAME instance — one discovery pass, one cache, no per-consumer drift.
 	cfg.permResolver = buildPermResolver(cfg)
+	cfg = foldOperatorWebSearch(cfg)
 	if resolver, ok := cfg.permResolver.(*permconfig.Resolver); ok {
 		if section := resolver.OperatorHarnessContext(); section != nil && section.ProjectInstructionMaxBytes != nil {
 			cfg.ProjectInstructionMaxBytes = *section.ProjectInstructionMaxBytes
@@ -1816,6 +1856,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			return nil, err
 		}
 		cfg.CustomProviderAPIKeys = credentials.CustomProviderAPIKeys
+		cfg.ExaAPIKey = credentials.ExaAPIKey
+		cfg.BraveAPIKey = credentials.BraveAPIKey
+		cfg.WebSearchAPIKey = credentials.WebSearchAPIKey
 		cfg.OpenAIKey = credentials.OpenAIKey
 		cfg.OpenRouterKey = credentials.OpenRouterKey
 		cfg.AnthropicKey = credentials.AnthropicKey
@@ -1836,25 +1879,18 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	cfg = foldOperatorGuardrails(cfg)
 	cfg.GuardrailsTaskWindow = clampReviewTaskWindow(cfg.GuardrailsTaskWindow)
 
-	// Per-slot models: fold the operator-tier `models:` YAML
-	// subtree (user-global + CLI only — a project file's models: block is handled by
-	// foldProjectModelBindings below) onto cfg.ModelSlots/cfg.ModelAliases, CLI flags
-	// (--model-slot/--model-alias) winning per key. Runs after the resolver is built;
-	// the routed call sites read the resolved slot models lazily.
-	//
-	// Precedence (CLI > project-YAML > operator-YAML > built-in): snapshot the
-	// CLI-set model-binding keys BEFORE this operator-YAML fold runs, so the later
-	// foldOperatorModelDefault / foldProjectModelBindings can layer the YAML rungs UNDER
-	// the CLI ones (a CLI-set key/--model is SKIPPED by both YAML folds).
+	// Per-slot models: fold the operator-tier `models:` YAML subtree (user-global +
+	// CLI only; project-tier models blocks are ignored) onto cfg.ModelSlots and
+	// cfg.ModelAliases, with explicit CLI bindings winning per key.
+	// Snapshot the CLI-set keys before folding operator YAML so that operator YAML
+	// never overrides an explicit CLI key.
 	//
 	// ORDERING INVARIANT (load-bearing — do NOT move this capture below foldOperatorModelSlots):
 	// the snapshot is only a faithful CLI-vs-YAML discriminator BECAUSE at THIS point cfg
 	// holds ONLY the CLI bindings (foldOperatorModelSlots has not merged operator-YAML in
 	// yet) and cfg.Model is the bare CLI --model (the registry default + operator-YAML
-	// default are applied LATER). Capturing after either fold would record YAML-set keys as
-	// "CLI-set" and silently invert the precedence (project/operator-YAML would stop
-	// overriding). Pinned by TestPrecedenceCombinedTiersSameSlotCLIWins +
-	// TestPrecedenceCombinedTiersOperatorYAMLAndProject (the all-three-tiers seam guards).
+	// default are applied LATER). Capturing after either fold would incorrectly
+	// treat YAML bindings as explicit CLI choices.
 	cliModelKeys := captureCLIModelKeys(cfg)
 	cfg = foldOperatorModelSlots(cfg)
 
@@ -1907,11 +1943,27 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// feeds the UNCHANGED preferredDefaultProvider ladder as an explicit override; it
 	// does NOT lower the precedence of key-driven providers. No-op when absent.
 	cfg = foldOperatorDefaultProvider(cfg)
+	cfg = bindOperatorModelProvider(cfg, cliModelKeys)
+	cfg = foldOperatorPairModelDefault(cfg, cliModelKeys)
+	resolvedDefaultCfg, err := applyDeploymentDefaultTarget(cfg)
+	if err != nil {
+		return nil, err
+	}
+	cfg = resolvedDefaultCfg
 
 	reg, provider, err := buildProvider(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
+	if !cfg.UseMock && cfg.modelBindingProvider != "" && cfg.modelBindingProvider != cfg.DefaultProvider {
+		if _, ok := reg.Lookup(cfg.modelBindingProvider); !ok {
+			return nil, fmt.Errorf("configured model binding provider is unknown or unavailable")
+		}
+	}
+	if err := validateModelAliases(cfg.ModelAliasTargets, reg); err != nil {
+		return nil, err
+	}
+	cfg.modelProviderRegistry = reg
 	discovery = reg.discovery
 	reg.contextWindows = cfg.contextWindows
 	reg.contextWindowOverride = cfg.ContextWindowOverride
@@ -1938,23 +1990,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	}
 	// Operator-YAML models.default: an operator's settings.yaml
 	// `models.default:` re-binds the session default OVER the registry default, but UNDER
-	// a CLI --model. The operator's OWN default is UNCAPPED (the allowlist caps PROJECT
-	// bindings only — the operator is authoritative). It is the operator-YAML rung of the
-	// default precedence: CLI --model > project-YAML default (capped) > operator-YAML
-	// default > registry default. Runs after the registry default so it overrides it, and
-	// before foldProjectModelBindings so a capped project default can override it in turn.
-	// No-op (byte-identical) when no operator models.default is configured.
+	// a CLI --model. The operator's own default is authoritative. Runs after the
+	// registry default so it overrides it. No-op when absent.
 	cfg = foldOperatorModelDefault(cfg, cliModelKeys)
-	// Project-overridable model bindings within the operator allowlist:
-	// a TRUSTED project's .mecatl/settings.yaml models: block may re-bind
-	// default/slots/aliases, but ONLY to allowlisted entries (resolve-then-check). Runs
-	// AFTER foldOperatorModelSlots (so it overrides the operator-YAML layer) and AFTER
-	// cfg.Model was resolved to the registry default (so a project `default` can re-bind
-	// it and the cap resolves through the operator-merged alias map), and BEFORE
-	// modeNeedsEngine/logSlotConfigFacts below (so the plan slot, the predicate, and the
-	// narration all see the final merged maps). No-op (byte-identical) when there is no
-	// operator allowlist, an untrusted workspace, or no project models block.
-	cfg = foldProjectModelBindings(cfg, cliModelKeys)
 	// issue #262 §1 deviation, review finding 1: the shared engine booted with
 	// an UNRESOLVED default model (sole intent-driven provider, probe down —
 	// none of the folds above filled cfg.Model either). Route every
@@ -2142,8 +2180,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if brokerSelected {
 		// Authority is exclusive: broker sessions receive only their explicit
 		// attachment wrappers, never the process-global MCP manager as a fallback.
-		cfg.MCPServers = nil
-		cfg.ToolHiveEnabled = false
+		clearGlobalMCPForBroker(&cfg)
 	}
 	cfg.guardrailDetails = server.NewReviewDetailRegistry()
 	cfg.guardrailHealth = &guardrailRouteHealth{}
@@ -2162,13 +2199,6 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		defer assets.buildRuntimeRelease()
 	}
 	logMCPInventory(ctx, cfg.diag(), mcpInventory)
-	reservations := newAutomaticReservationReconciliationLoop(ctx, assets.automaticAdmissionLedger, assets.attemptRepository, defaultAutomaticReconcileInterval, func(error) {
-		cfg.diag().Log(ctx, port.LevelWarn, "durable automatic reservation reconciliation unavailable")
-	})
-	if reservations != nil {
-		previousClose := mcpClose
-		mcpClose = func() { reservations.Close(); previousClose() }
-	}
 
 	var brokerRuntime *mcpbroker.Runtime
 	var brokerProcess *mcpbroker.Process
@@ -2260,6 +2290,16 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			_ = brokerRuntime.Close()
 		}
 	}
+	defer func() {
+		if !profilesTransferred {
+			childLiveness.Close()
+			closeBroker()
+			mcpClose()
+			agentClose()
+			storeClose()
+			commandConnClose()
+		}
+	}()
 
 	// Stash the resolved skill seam's command-bridge inputs onto the Build-scope
 	// cfg (the commandSource precedent) so buildCommandLister — which runs HERE,
@@ -2339,16 +2379,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if placementProvider == nil {
 		placementProvider = localProvider
 	} else if cfg.RemoteExecution {
-		profiledProvider := &profilePlacementProvider{remote: placementProvider, local: localProvider}
+		profiledProvider := &profilePlacementProvider{remote: placementProvider, local: localProvider, allowed: cfg.ExecutionTemplateAllowed, ownerAllowed: cfg.ExecutionOwnerAllowed}
 		if err := profiledProvider.ValidatePlacement(ctx); err != nil {
 			return nil, fmt.Errorf("validate default placement: %w", err)
 		}
 		placementProvider = profiledProvider
-	}
-	attempts := startAttemptRecovery(ctx, cfg, reg, store, eventLog, assets.attemptRepository, assets.reflectionRepository, assets, placementProvider, placementScope)
-	if attempts != nil {
-		previousClose := mcpClose
-		mcpClose = func() { attempts.Close(); previousClose() }
 	}
 	var mcpRefresh func(context.Context) (server.MCPRefreshSnapshot, error)
 	var mcpStatus func() server.MCPSourceStatus
@@ -2424,11 +2459,12 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		StorageMaintenanceStatus: cfg.storageMaintenance.snapshot,
 		StorageMaintenanceUpdate: cfg.storageMaintenance.update,
 
-		PlacementProvider: placementProvider,
-		PlacementScope:    placementScope,
-		ExecutionAccess:   executionAccess(placementProvider),
-		ReferenceIntents:  referenceIntentLifecycle(placementProvider),
-		SessionReadLedger: sessionReadLedger,
+		PlacementProvider:        placementProvider,
+		PlacementScope:           placementScope,
+		ExecutionTemplateAllowed: cfg.ExecutionTemplateAllowed,
+		ExecutionAccess:          executionAccess(placementProvider),
+		ReferenceIntents:         referenceIntentLifecycle(placementProvider),
+		SessionReadLedger:        sessionReadLedger,
 		RootAuthority: func(kind session.SessionKind) session.Authority {
 			return mintRuntimeRootAuthority(assets.rootCatalog, assets.mcpRuntimes, kind)
 		},
@@ -2489,11 +2525,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 				providerID = reg.Default()
 			}
 			modelID = selectedProviderModel(reg, providerID, modelID)
-			if mode == session.ModePlan {
-				if planModel, configured := resolveSlotModel(cfg, slotPlan, modelID); configured && planModel != "" {
-					modelID = planModel
-				}
-			}
+			modelID, _ = resolvePlanSessionModel(cfg, providerID, modelID, mode)
 			return modelCapability(reg, providerID, modelID)
 		},
 		ResolveSessionModel: func(sel server.ProviderSelector, mode session.PermissionMode) server.ResolvedModel {
@@ -2562,6 +2594,14 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 				out = append(out, info)
 			}
 			return out
+		},
+		SkillSourceFor: func(ctx context.Context) tool.SkillSource {
+			// Without a learned-skill store there is no live catalog; the deployment's skills are
+			// still readable through the static source ListSkills falls back to.
+			if assets.liveSkills == nil {
+				return assets.skillSource
+			}
+			return assets.liveSkills.SourceForPartitions(learnedSkillPartitions(ctx, "", cfg)...)
 		},
 		LearnedSkills: assets.learnedSkills,
 		PublishLearnedSkills: func(ctx context.Context, partition learning.SkillPartition) error {
@@ -2774,7 +2814,10 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		SessionEngineWithTools: assets.sessionFactoryWithTools,
 		SessionContextEngine:   assets.sessionContextFactory,
 		DebugSessionEngine:     debugSessionEngineFactory(cfg, reg, provider, store, eventLog, policy, assets.globalMgr, assets.mcpRuntimes),
-		DebugMCP:               debugMCPAvailable(assets),
+		// AgentDefSessionEngine (ADR 0353): binds a session's root to a named
+		// AgentDef, built from the SAME collaborators as SessionEngineWithTools.
+		AgentDefSessionEngine: assets.agentDefSessionEngine,
+		DebugMCP:              debugMCPAvailable(assets),
 		// ModeNeedsEngine: tells the Service whether a session's
 		// PermissionMode would resolve a model DIFFERING from the shared engine's model
 		// (cfg.Model) — i.e. whether a plan slot is configured AND it resolves to a
@@ -2877,12 +2920,6 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 
 	svc, err := server.NewService(svcCfg)
 	if err != nil {
-		closeBroker()
-		childLiveness.Close()
-		mcpClose()
-		agentClose()
-		storeClose()
-		commandConnClose()
 		return nil, fmt.Errorf("build service: %w", err)
 	}
 
@@ -2906,12 +2943,6 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if err != nil {
 		refreshClose()
 		svc.Close()
-		childLiveness.Close()
-		closeBroker()
-		mcpClose()
-		agentClose()
-		storeClose()
-		commandConnClose()
 		return nil, err
 	}
 	// The cadence floor guards the SHARED create-seam (validateScheduleSpec)
@@ -2924,9 +2955,10 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// because the sweep's liveness and maintenance-exclusion predicates are the
 	// Service's process-wide truth. No worker is started when exclusion is
 	// permanently unavailable; runtime loss stickily settles health unavailable.
-	cfg.maintenanceMutationAvailable = svc.MaintenanceMutationAvailable
-	managedTempWorkerClose := startManagedTempWorker(ctx, cfg)
-	childGCClose := startChildGC(ctx, cfg, store, svc.IsLive, svc.DeleteSessionForRetentionCandidate)
+	maintenanceCfg := cfg
+	maintenanceCfg.maintenanceMutationAvailable = svc.MaintenanceMutationAvailable
+	managedTempWorkerClose := startManagedTempWorker(ctx, maintenanceCfg)
+	childGCClose := startChildGC(ctx, maintenanceCfg, store, svc.IsLive, svc.DeleteSessionForRetentionCandidate)
 
 	// Crash-orphaned running-session sweep (issue #475 Step 4): repairs a
 	// StateRunning session a process crash left behind, INCLUDING the
@@ -2940,7 +2972,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// the live-model refresh goroutine and closes the session-store driver
 	// connection (LAST — everything before it may still persist; a no-op for the
 	// local stores, and once-guarded if the memory driver shares the conn).
+	var attempts *attemptRecovery
+	var reservations *automaticReservationReconciliationLoop
 	closeAll := sync.OnceFunc(func() {
+		attempts.Close()
+		reservations.Close()
 		if assets.reflectionLifecycle != nil {
 			assets.reflectionLifecycle.close()
 		}
@@ -2973,7 +3009,14 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	managedTempTransferred = true
 	harnessContextTransferred = true
 	commandResolverTransferred = true
-	return &Built{Service: svc, MCPBroker: brokerRuntime, MCPBrokerHandlers: brokerHandlers, MCPBrokerCallbackPath: brokerCallbackPath, Close: closeAll}, nil
+	// Recovery may reattach placements and publish immediately. Launch only after
+	// composition succeeds, with cleanup owning the loops before their dependencies.
+	diag := cfg.diag()
+	reservations = newAutomaticReservationReconciliationLoop(ctx, assets.automaticAdmissionLedger, assets.attemptRepository, defaultAutomaticReconcileInterval, func(error) {
+		diag.Log(ctx, port.LevelWarn, "durable automatic reservation reconciliation unavailable")
+	})
+	attempts = startAttemptRecovery(ctx, cfg, reg, store, eventLog, assets.attemptRepository, assets.reflectionRepository, assets, placementProvider, placementScope)
+	return &Built{Service: svc, MCPBroker: brokerRuntime, MCPBrokerHandlers: brokerHandlers, MCPBrokerCallbackPath: brokerCallbackPath, GuardrailsAdvisory: guardrailConfigured && cfg.Posture >= PostureYolo, Close: closeAll}, nil
 }
 
 // resolveAgentSeam resolves the agent-definition registry from cfg: the
@@ -3093,9 +3136,8 @@ func resolveAgentSeam(ctx context.Context, cfg Config) (*agents.Registry, func()
 // (Config.defaultModelPending). It resolves the registry's CURRENT default —
 // a no-op (fallbackProvider, "") when the proxy is still down, so the
 // session fails at request time (the documented residual for a session
-// built before the heal lands). Extracted out of
-// sessionEngineFactory to keep its cyclomatic complexity under the lint cap;
-// it has no other caller.
+// built before the heal lands). Ordinary, debug, and agent-bound roots share
+// this adoption path; child defaults and routing do not participate.
 func adoptHealedDefault(reg *providerRegistry, providerID string, fallbackProvider port.LLMProvider) (port.LLMProvider, string) {
 	healed := reg.ResolvedDefaultModel()
 	if healed == "" {
@@ -3134,7 +3176,7 @@ func selectedProviderModel(reg *providerRegistry, providerID, model string) stri
 	return reg.DefaultModelFor(providerID)
 }
 
-func resolvedSessionIdentity(cfg Config, reg *providerRegistry, sel server.ProviderSelector, mode session.PermissionMode) (string, string) {
+func resolvedSessionIdentity(cfg Config, reg *providerRegistry, sel server.ProviderSelector, mode session.PermissionMode) (string, string, bool) {
 	providerID, model := reg.Default(), cfg.Model
 	if sel.ProviderID != "" {
 		providerID = sel.ProviderID
@@ -3142,16 +3184,12 @@ func resolvedSessionIdentity(cfg Config, reg *providerRegistry, sel server.Provi
 	} else if model == "" {
 		model = reg.ResolvedDefaultModel()
 	}
-	if mode == session.ModePlan {
-		if planModel, configured := resolveSlotModel(cfg, slotPlan, model); configured && planModel != "" {
-			model = planModel
-		}
-	}
-	return providerID, model
+	model, crossProviderFallback := resolvePlanSessionModel(cfg, providerID, model, mode)
+	return providerID, model, crossProviderFallback
 }
 
 func resolvedSessionProjection(cfg Config, reg *providerRegistry, sel server.ProviderSelector, mode session.PermissionMode) server.ResolvedModel {
-	providerID, model := resolvedSessionIdentity(cfg, reg, sel, mode)
+	providerID, model, _ := resolvedSessionIdentity(cfg, reg, sel, mode)
 	effort, ok := NormalizeReasoningEffort(sel.ReasoningEffort)
 	if strings.TrimSpace(sel.ReasoningEffort) == "" || !ok {
 		effort, _ = NormalizeReasoningEffort(cfg.ReasoningEffort)
@@ -3203,11 +3241,8 @@ func debugSessionEngineFactory(cfg Config, reg *providerRegistry, fallback port.
 			provider, providerID = entry.provider, sel.ProviderID
 			model = selectedProviderModel(reg, providerID, sel.ModelID)
 		}
-		if mode == session.ModePlan {
-			if planModel, configured := resolveSlotModel(cfg, slotPlan, model); configured && planModel != "" {
-				model = planModel
-			}
-		}
+		model, planProviderFallback := resolvePlanSessionModel(cfg, providerID, model, mode)
+		warnPlanProviderFallback(ctx, cfg, planProviderFallback)
 
 		cat := tool.NewCatalog()
 		cat.MustRegister(sessiondebug.NewBound(target, expectedFingerprint, expectedOwner, cfg.OwnershipEnforced, store, eventLog))
@@ -3272,6 +3307,24 @@ func mountedClientMCPNames(mgr *mcp.Manager) []string {
 	}
 	return names
 }
+func sessionClientMCPManager(ctx context.Context, cfg Config, specs []mcp.ServerConfig) *mcp.Manager {
+	if len(specs) == 0 {
+		return nil
+	}
+	onError := func(sc mcp.ServerConfig, err error) {
+		cfg.diag().Log(ctx, port.LevelWarn, "client MCP server unreachable; skipping for this session",
+			"server", sc.Name, "url", mcp.RedactURL(sc.URL), "err", mcp.RedactError(err))
+	}
+	mgr, err := mcp.NewManager(ctx, specs, onError, cfg.diag())
+	if err != nil {
+		// Client MCP is best-effort for ACP: retain a usable core-tools session
+		// when every requested server fails. Wire callers enforce their own
+		// all-or-nothing policy from the mounted-server report.
+		cfg.diag().Log(ctx, port.LevelWarn, "client MCP: no servers connected for this session; mounting core tools only",
+			"err", mcp.RedactError(err))
+	}
+	return mgr
+}
 
 func sessionEngineFactory(
 	cfg Config,
@@ -3287,7 +3340,7 @@ func sessionEngineFactory(
 ) server.SessionEngineFactory {
 	withTools := sessionEngineFactoryWithTools(cfg, reg, provider, store, policy, hooks, mcpProvider, instructions, assets, guardrailWaiver)
 	return func(ctx context.Context, sel server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode) (server.SessionEngineResult, error) {
-		return withTools(ctx, sel, specs, profile, workspace, mode, nil)
+		return withTools(ctx, sel, specs, profile, workspace, mode, nil, nil)
 	}
 }
 
@@ -3317,7 +3370,7 @@ func sessionEngineFactoryWithTools(
 	assets catalogAssets,
 	guardrailWaiver *modelhook.WaiverHolder,
 ) server.SessionEngineWithToolsFactory {
-	build := func(ctx context.Context, sel server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode, sessionTools []tool.Tool) (server.SessionEngineResult, error) {
+	build := func(ctx context.Context, sel server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode, sessionTools []tool.Tool, sessionToolKeys []string) (server.SessionEngineResult, error) {
 		cfg := cfg // Permission resolver overrides belong to this invocation, not the shared closure.
 		runtimeAssets := mcpCatalogAssets(ctx, assets)
 		runtimeRevision := mcpRuntimeRevision(ctx)
@@ -3345,7 +3398,8 @@ func sessionEngineFactoryWithTools(
 		// keeps the default provider + cfg.Model. resolvedProviderID
 		// is threaded so the per-session capability intersection (modelCapability) keys
 		// on the right provider — the zero selector uses the registry default.
-		resolvedProviderID, resolvedModel := resolvedSessionIdentity(cfg, reg, sel, mode)
+		resolvedProviderID, resolvedModel, planProviderFallback := resolvedSessionIdentity(cfg, reg, sel, mode)
+		warnPlanProviderFallback(ctx, cfg, planProviderFallback)
 		resolvedProvider := provider
 		if sel.ProviderID == "" && cfg.Model == "" && resolvedModel != "" {
 			if entry, ok := reg.Lookup(resolvedProviderID); ok {
@@ -3372,21 +3426,6 @@ func sessionEngineFactoryWithTools(
 		// equals the operator default the entry was built with, the shared entry.provider
 		// is reused (no re-mint); a re-mint happens ONLY when effort OR the per-session
 		// capability intersection differs and the entry exposes a remint closure.
-		resolvedEffort := resolveSessionEffort(ctx, cfg, sel.ReasoningEffort)
-		resolvedEffort, clamped := clampEffortForProvider(resolvedProviderID, resolvedEffort)
-		if clamped {
-			cfg.diag().Log(ctx, port.LevelWarn,
-				"reasoning-effort: clamped for provider (this provider supports low/medium/high only)",
-				"provider", resolvedProviderID, "effort", resolvedEffort)
-		}
-		if resolvedEffort != "" {
-			if supported, known := modelReasoningSupport(reg, resolvedProviderID, resolvedModel); known && !supported {
-				cfg.diag().Log(ctx, port.LevelWarn,
-					"reasoning-effort: model does not support reasoning effort; ignoring",
-					"provider", resolvedProviderID, "model", resolvedModel, "effort", resolvedEffort)
-				resolvedEffort = ""
-			}
-		}
 		// utilityProvider is the OPERATOR-DEFAULT provider (the entry's shared
 		// .provider). Reasoning effort binds the AGENT's reasoning (the main engine) and
 		// its SUBAGENTS (the catalog parent below) — NOT the harness's own internal
@@ -3403,22 +3442,7 @@ func sessionEngineFactoryWithTools(
 		// the server adapter. It is ALSO the intersection the provider adapter's
 		// request builder consults to project a tool result's typed Parts (T7) —
 		// threaded into the adapter via the re-mint below.
-		sessionCaps := modelCapability(reg, resolvedProviderID, resolvedModel)
-		// Re-mint ONLY when the resolved session effort OR capability intersection
-		// differs from the OPERATOR-DEFAULT the entry's shared .provider was built
-		// with (the SAME normalise+clamp the registry applied at build, and the
-		// default-model caps the post-assembly fixup stamped). When both match, the
-		// shared provider is reused byte-for-byte (the byte-identical default path).
-		// A hand-built/test registry entry with no defaultCaps (zero value) is treated
-		// as "match anything" so a test without defaultCaps never re-mints on caps.
-		if entry, ok := reg.Lookup(resolvedProviderID); ok && entry.remint != nil {
-			entryEffort, _ := NormalizeReasoningEffort(cfg.ReasoningEffort)
-			entryEffort, _ = clampEffortForProvider(resolvedProviderID, entryEffort)
-			capsDiff := entry.defaultCaps != sessionCaps && entry.defaultCaps != (port.ProviderCapabilities{})
-			if resolvedEffort != entryEffort || capsDiff {
-				resolvedProvider = entry.remint(resolvedEffort, sessionCaps)
-			}
-		}
+		resolvedProvider, resolvedEffort, sessionCaps := sessionProviderOptions(ctx, cfg, reg, resolvedProvider, resolvedProviderID, resolvedModel, sel.ReasoningEffort)
 		// The compaction window is the LIVE-FIRST resolver over the resolved
 		// (provider, model) — the SAME reg.windowResolver the shared and child engines
 		// use, evaluated at the point of use. So the live ListModels picker, the session
@@ -3428,46 +3452,7 @@ func sessionEngineFactoryWithTools(
 		// resolves to the 128k floor (inside the resolver). Override still wins.
 		windowFn := reg.windowResolver(cfg, resolvedProviderID, resolvedModel)
 
-		onError := func(sc mcp.ServerConfig, err error) {
-			// REDACTED url (CWE-532). The header map is secret-shaped and never logged,
-			// but a credential can also ride the URL itself — "?access_token=..." — and
-			// logging sc.URL verbatim put it in the operator's diagnostics. userinfo is
-			// now rejected outright by ValidateClientURL; a query-string token cannot be
-			// (it is indistinguishable from an ordinary parameter), so the URL is
-			// redacted at the log site instead of trusted to be clean. mcp.RedactURL is
-			// the SAME policy the validator's own messages use — one redactor, so the
-			// log and the error cannot drift.
-			// BOTH the url AND the err must be redacted, and the err is the one that
-			// was missed: net/http embeds the complete request URL in a connection
-			// error, and the MCP SDK formats it into its own message text, so a
-			// query-string token reached the operator log through `err` even though
-			// `url` beside it was clean. Redacting one of two channels is not
-			// redacting.
-			cfg.diag().Log(ctx, port.LevelWarn, "client MCP server unreachable; skipping for this session",
-				"server", sc.Name, "url", mcp.RedactURL(sc.URL), "err", mcp.RedactError(err))
-		}
-		var mgr *mcp.Manager
-		if len(specs) > 0 {
-			m, err := mcp.NewManager(ctx, specs, onError, cfg.diag())
-			if err != nil {
-				// Best-effort HERE, by design: every server failed and the session still
-				// gets a usable engine (core tools only) rather than failing outright.
-				// This is the ACP contract — an editor's flaky MCP server should not cost
-				// the user their session, and ACP has its own channel to say so.
-				//
-				// It is NOT the wire contract. A gRPC/HTTP CreateSession caller cannot
-				// see this WARN, so the Service enforces all-or-nothing on that path
-				// using MountedClientMCP below. Reporting which servers connected is
-				// this factory's job; deciding whether a partial mount is acceptable
-				// belongs to the caller, and the two callers disagree.
-				// Same redaction as onError above: this error is NewManager's lastErr,
-				// so it is one of the per-server transport errors and carries that
-				// server's full URL.
-				cfg.diag().Log(ctx, port.LevelWarn, "client MCP: no servers connected for this session; mounting core tools only",
-					"err", mcp.RedactError(err))
-			}
-			mgr = m
-		}
+		mgr := sessionClientMCPManager(ctx, cfg, specs)
 		mountedClientMCP := mountedClientMCPNames(mgr)
 
 		// Assemble the per-session catalog through the SAME assembleCatalog the
@@ -3486,7 +3471,7 @@ func sessionEngineFactoryWithTools(
 		// Skill tool. A failed authoritative read clears only these partitions.
 		skillPartitions := hydrateLearnedSkillPartitions(ctx, cfg, runtimeAssets, projectWorkspace)
 
-		cat, closeFn, clientToolNames := assembleCatalog(ctx, cfg, reg, store, hooks, &runtimeAssets, catalogSession{
+		cat, closeFn, clientToolNames, brokerRegistrationKeys, nonBrokerRegistrationKeys, err := assembleCatalogDetailed(ctx, cfg, reg, store, hooks, &runtimeAssets, catalogSession{
 			provider:        resolvedProvider,
 			providerID:      resolvedProviderID,
 			model:           resolvedModel,
@@ -3497,7 +3482,11 @@ func sessionEngineFactoryWithTools(
 			mode:            mode,
 			skillPartitions: skillPartitions,
 			sessionTools:    sessionTools,
+			sessionToolKeys: sessionToolKeys,
 		})
+		if err != nil {
+			return server.SessionEngineResult{}, err
+		}
 
 		// Identical to the main engine in every NON-provider Deps field except the
 		// catalog (which carries the extra client MCP + per-session sub-agent tools):
@@ -3512,12 +3501,12 @@ func sessionEngineFactoryWithTools(
 		learningCfg.automaticAdmissionLedger = runtimeAssets.automaticAdmissionLedger
 		learningCfg.learningSourceStore = store
 		deps := engineDepsForProvider(cfg, resolvedProvider, session.ProviderModelID{ProviderID: resolvedProviderID, ModelID: resolvedModel}, windowFn, store, sessionPolicy, hooks, mcpProvider, sessionInstructions)
-		deps = applyRemoteExecutionPosture(deps, remote)
 
 		attachOperatorProfile(&deps, runtimeAssets.userModelStore)
 		deps.LearningMode = learningCfg.LearningMode
 		deps.LearningObserver = bindMaterializationLifecycle(buildReflectionObserver(learningCfg, resolvedProvider, session.ProviderModelID{ProviderID: resolvedProviderID, ModelID: learningCfg.Model}, runtimeAssets.userModelStore, runtimeAssets.memStore, runtimeAssets.reflectionRepository, runtimeAssets.reflectionCoordinator, runtimeAssets.learningAdmissionGate, buildProcedureProcessor(learningCfg, runtimeAssets)), runtimeAssets.reflectionLifecycle)
 		deps.Catalog = cat
+		deps = applyRemoteExecutionPosture(deps, remote)
 		// Fire-result delivery drain: the per-session engine's Step 2a
 		// drain reads the SAME durable queue as the main engine. nil (no
 		// schedule-capable store) is the byte-identical no-delivery path.
@@ -3614,9 +3603,11 @@ func sessionEngineFactoryWithTools(
 			// requested). The factory REPORTS; the Service decides whether a partial
 			// mount is acceptable, because its two callers disagree — see the
 			// best-effort comment on the NewManager error above.
-			MountedClientMCP:      mountedClientMCP,
-			MountedClientMCPTools: clientToolNames,
-			Close:                 closeFn,
+			MountedClientMCP:          mountedClientMCP,
+			MountedClientMCPTools:     clientToolNames,
+			BrokerRegistrationKeys:    brokerRegistrationKeys,
+			NonBrokerRegistrationKeys: nonBrokerRegistrationKeys,
+			Close:                     closeFn,
 		}, nil
 	}
 	return pinMCPRuntimeFactory(assets, build)
@@ -4502,8 +4493,13 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// the UNWRAPPED hooks: the Phase-2b reviewer fires once per MAIN-engine Stop,
 	// not per per-session stop (one of the two sanctioned per-session deltas).
 	assets.sessionFactoryWithTools = sessionEngineFactoryWithTools(cfg, reg, provider, engineStore, sharedPolicy, hooks, mcpProvider, instructions, assets, guardrailWaiver)
+	// agentDefSessionEngine (ADR 0353, Task B): the SAME collaborators as
+	// sessionFactoryWithTools above, so an agent-bound session's guardrail
+	// wiring and governance audience are byte-identical to any other main
+	// session (AC1.6).
+	assets.agentDefSessionEngine = agentDefSessionEngineFactory(cfg, reg, provider, engineStore, sharedPolicy, hooks, mcpProvider, instructions, assets, guardrailWaiver)
 	if cfg.harnessResolver != nil {
-		assets.sessionContextFactory = func(ctx context.Context, id session.SessionID, owner *session.Principal, acquire server.ExecutionWorkspaceAcquirer, selector server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode, extra []tool.Tool, forkSource session.SessionID) (server.SessionEngineResult, error) {
+		assets.sessionContextFactory = func(ctx context.Context, id session.SessionID, owner *session.Principal, acquire server.ExecutionWorkspaceAcquirer, selector server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode, extra []tool.Tool, sessionToolKeys []string, forkSource session.SessionID) (server.SessionEngineResult, error) {
 			// Reject an invalid selector before principal-scoped source binding creates
 			// unpublished state that cannot be adopted by a session.
 			if selector.ProviderID != "" {
@@ -4539,8 +4535,14 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 				sessionAssets.liveSkills = coreskillfs.NewAtomicCatalog(seam.metas, seam.source, nil)
 			}
 			sessionCfg.skillCommandInputs = skillCommandInputs{metas: seam.metas, source: seam.source}
-			factory := sessionEngineFactoryWithTools(sessionCfg, reg, provider, engineStore, sharedPolicy, hooks, mcpProvider, replaceHarnessInstructions(instructions, sessionCfg), sessionAssets, guardrailWaiver)
-			result, err := factory(ctx, selector, specs, profile, workspace, mode, extra)
+			var result server.SessionEngineResult
+			if root, ok := server.AgentDefSessionSelectionFromContext(ctx); ok {
+				factory := agentDefSessionEngineFactory(sessionCfg, reg, provider, engineStore, sharedPolicy, hooks, mcpProvider, replaceHarnessInstructions(instructions, sessionCfg), sessionAssets, guardrailWaiver)
+				result, err = factory(ctx, selector, profile, mode, root.Limits, root.Name)
+			} else {
+				factory := sessionEngineFactoryWithTools(sessionCfg, reg, provider, engineStore, sharedPolicy, hooks, mcpProvider, replaceHarnessInstructions(instructions, sessionCfg), sessionAssets, guardrailWaiver)
+				result, err = factory(ctx, selector, specs, profile, workspace, mode, extra, sessionToolKeys)
+			}
 			if err != nil {
 				release()
 				return result, err
@@ -4878,8 +4880,9 @@ func engineDepsForProvider(
 	// supplies a request-local budget derived from the live session window and complete
 	// request. The tier-4 Model remains the load-bearing slot swap (the heuristic
 	// compactor has no Model/Counter at all, so it is unaffected).
-	compactorCfg, compactorCounter := modelCfg, counter
-	if cm, ok := resolveSlotModel(cfg, slotCompaction, model); ok {
+	compactorCfg, compactorCounter, compactorProvider, compactorProviderID := modelCfg, counter, provider, providerModel.ProviderID
+	if cp, cpID, cm, ok := resolveAuxiliarySlotTarget(cfg, cfg.modelProviderRegistry, slotCompaction, provider, providerModel.ProviderID, model); ok {
+		compactorProvider, compactorProviderID = cp, cpID
 		compactorCfg = modelCfg
 		compactorCfg.Model = cm
 		compactorCounter = buildTokenCounter(compactorCfg)
@@ -4913,7 +4916,7 @@ func engineDepsForProvider(
 		CompactionRatio:       defaultCompactionRatio,
 		OperatorProfileSource: cfg.operatorProfileSource,
 		TokenCounter:          counter,
-		Compactor:             buildCompactor(compactorCfg, provider, session.ProviderModelID{ProviderID: providerModel.ProviderID, ModelID: compactorCfg.Model}, compactorCounter),
+		Compactor:             buildCompactor(compactorCfg, compactorProvider, session.ProviderModelID{ProviderID: compactorProviderID, ModelID: compactorCfg.Model}, compactorCounter),
 		CommandExpander:       buildCommandExpander(cfg, mcpProvider),
 		// No-progress nudge budget: operator-tunable (cfg), inherited by children
 		// (childEngineDepsForProvider keeps this field). Zero → NewEngine applies the
@@ -5186,16 +5189,16 @@ func normalizeSubagentModel(cfg Config) (string, error) {
 	if sel == "" {
 		return "", nil
 	}
-	resolved, known := lookupModelAlias(cfg, sel)
+	target, known := lookupModelAliasTarget(cfg, sel)
 	switch {
 	case !known:
 		return "", fmt.Errorf("--subagent-model / models.subagent %q: unknown model alias (not in --model-alias, not a built-in alias, and a bare token is not a concrete model id); every def-less child would silently run on the parent model — pass a concrete model id or define the alias", sel)
-	case resolved == "":
+	case strings.TrimSpace(target.Model) == "":
 		return "", fmt.Errorf("--subagent-model / models.subagent %q: the alias resolves to \"inherit\" (the built-in sonnet/opus/haiku aliases mean inherit unless overridden via --model-alias), which would make the child-default override a no-op — pass a concrete model id or map the alias to one", sel)
 	}
 	cfg.diag().Log(context.Background(), port.LevelInfo,
 		"subagent default model ACTIVE: def-less Subagent explorer / Parallel-branch / undefined-team-member children run on it (the Parallel judge stays on the session model); a def `model:` or per-call override still wins",
-		"model", resolved)
+		"provider", target.ProviderID, "model", target.Model)
 	return sel, nil
 }
 
@@ -5221,12 +5224,12 @@ func normalizeAskReviewerModel(cfg Config) (string, error) {
 	// rather than the day someone adds --headless and the now-active reviewer can't
 	// resolve its model. (Skipped only under UseMock, where the model is a literal
 	// the offline mock ignores.)
-	resolved, known := lookupModelAlias(cfg, sel)
+	target, known := lookupModelAliasTarget(cfg, sel)
 	if !cfg.UseMock {
 		switch {
 		case !known:
 			return "", fmt.Errorf("--subagent-ask-reviewer %q: unknown model alias (not in --model-alias, not a built-in alias, and a bare token is not a concrete model id); the headless ask reviewer would silently stay off — pass a concrete model id or define the alias", sel)
-		case resolved == "":
+		case target.Model == "":
 			return "", fmt.Errorf("--subagent-ask-reviewer %q: the alias resolves to \"inherit\" (the built-in sonnet/opus/haiku aliases mean inherit unless overridden via --model-alias); pass a concrete model id or map the alias to one", sel)
 		}
 	}
@@ -5271,12 +5274,12 @@ func normalizeGuardrailsModel(cfg Config) (string, error) {
 	if sel == "" || cfg.GuardrailsDisabled {
 		return sel, nil
 	}
-	resolved, known := lookupModelAlias(cfg, sel)
+	target, known := lookupModelAliasTarget(cfg, sel)
 	if !cfg.UseMock {
 		switch {
 		case !known:
 			return "", fmt.Errorf("--guardrails-model %q: unknown model alias (not in --model-alias, not a built-in alias, and a bare token is not a concrete model id); guardrails would silently stay off — pass a concrete model id or define the alias", sel)
-		case resolved == "":
+		case target.Model == "":
 			return "", fmt.Errorf("--guardrails-model %q: the alias resolves to \"inherit\" (the built-in sonnet/opus/haiku aliases mean inherit unless overridden via --model-alias); pass a concrete model id or map the alias to one", sel)
 		}
 	}
@@ -5377,7 +5380,7 @@ func guardrailsPostureLine(cfg Config, model string, src guardrailSource, specs 
 	// operator sees it in the log, not only in the docs — `mode=` already reflects the
 	// demoted specs for explicit rules; the note states WHY it is advisory.
 	if cfg.Posture >= PostureYolo {
-		out += " — DEMOTED to advisory by posture yolo (no block, no ask)"
+		out += " — YOLO: AI safety checks are advisory only."
 	}
 	return out
 }
@@ -5537,7 +5540,7 @@ func validateDefaultModel(cfg Config, reg *providerRegistry) error {
 	if cfg.UseMock || (cfg.DefaultProvider == "" && cfg.DefaultModel == "") {
 		return nil
 	}
-	if cfg.DefaultModel != "" && !modelCatalogued(reg.Default(), cfg.DefaultModel) && reg.DefaultModelFor(reg.Default()) != cfg.DefaultModel {
+	if cfg.DefaultModel != "" && !cfg.defaultModelFromAlias && !modelCatalogued(reg.Default(), cfg.DefaultModel) && reg.DefaultModelFor(reg.Default()) != cfg.DefaultModel {
 		return fmt.Errorf("--default-model %q: not catalogued for the default provider %q; a deployment-wide default must be known-good at startup — either choose a catalogued model id, or pass it as the per-session passthrough --model (which accepts any model the provider serves)", cfg.DefaultModel, reg.Default())
 	}
 	if cfg.DefaultModel != "" && cfg.Model != "" {
@@ -5687,7 +5690,7 @@ func registerCoreTools(cfg Config, cat *tool.Catalog, log, noFS, remote bool, se
 	}
 	cat.MustRegister(refsearch.NewWebSearchTool(searchProvider))
 	runner := buildCommandRunner(cfg)
-	if runner != nil || remote {
+	if runner != nil || remote && !cfg.NoShell {
 		// The AGENT-loop Shell tool (not the fstools one): foreground byte-identical,
 		// plus the `background: true` detach over the run's child registry. Its
 		// companion ShellStatus — the SOLE status/collect/cancel channel for those
@@ -5979,10 +5982,8 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 		forkReaper:           forkReaper,
 		autoMerger:           autoMerger,
 		modelInventory:       reg.discovery,
-		// WebSearch provider (issue #26): resolved ONCE here via the backend ladder
-		// (kill switch > --websearch-url > SEARXNG_URL > BRAVE_API_KEY > Exa default)
-		// and threaded onto the assets so every per-session catalog reuses the SAME
-		// provider.
+		// WebSearch provider: resolved ONCE from the folded operator settings,
+		// explicit inputs and credential snapshot, then shared by every catalog.
 		searchProvider:           buildSearchProvider(ctx, cfg),
 		reflectionLifecycle:      reflectionLifecycle,
 		reflectionCoordinator:    reflectionCoordinator,
@@ -6567,8 +6568,8 @@ const braveSearchEndpoint = "https://api.search.brave.com/res/v1/web/search"
 // line per branch and NEVER a key/secret in any log line (CWE-200):
 //
 //  1. WebSearchOff (kill switch)      → refsearch.Unavailable (tool reports disabled)
-//  2. WebSearchURL set (explicit)     → HTTP adapter (wins over env)
-//  3. SearXNGURL set                  → HTTP adapter against the SearXNG URL
+//  2. WebSearchURL set (explicit or operator settings) → generic HTTP adapter
+//  3. SearXNGURL set (operator settings or legacy env) → SearXNG HTTP adapter
 //  4. BraveAPIKey set                 → HTTP adapter against the Brave endpoint
 //  5. default                         → Exa anonymous (zero-config, no key)
 //
@@ -6576,13 +6577,17 @@ const braveSearchEndpoint = "https://api.search.brave.com/res/v1/web/search"
 // NOT degrade to the kill-switch "disabled" sentinel — the operator INTENDED a
 // backend, it is just unusable, which is backend-down semantics. It fails soft to
 // refsearch.BackendDown (the tool reports the backend is down, naming the upgrade
-// path) with a WARN (the harness still boots). Only the kill switch (WebSearchOff)
-// resolves to refsearch.Unavailable / the "disabled by operator" message.
+// path) with a WARN (the harness still boots). Only an intentional operator disable
+// (the kill switch or settings.yaml enabled:false) resolves to refsearch.Unavailable.
 func buildSearchProvider(ctx context.Context, cfg Config) tool.SearchProvider {
 	switch {
 	case cfg.WebSearchOff:
-		cfg.diag().Log(ctx, port.LevelInfo, "WebSearch DISABLED by operator (--websearch=off); the tool reports it is disabled")
-		return refsearch.Unavailable{}
+		cfg.diag().Log(ctx, port.LevelInfo, "WebSearch DISABLED by operator; the tool reports it is disabled")
+		reason := ""
+		if cfg.webSearchDisabledFromSettings {
+			reason = "the operator set websearch.enabled: false in settings.yaml"
+		}
+		return refsearch.Unavailable{Reason: reason}
 
 	case strings.TrimSpace(cfg.WebSearchURL) != "":
 		provider, err := refsearch.NewHTTPProvider(refsearch.HTTPConfig{
@@ -6592,19 +6597,35 @@ func buildSearchProvider(ctx context.Context, cfg Config) tool.SearchProvider {
 			QueryParam: cfg.WebSearchQueryParam,
 		})
 		if err != nil {
-			cfg.diag().Log(ctx, port.LevelWarn, "WebSearch backend misconfigured; the tool reports the backend is down (NOT disabled)", "err", err)
+			if cfg.webSearchURLFromSettings {
+				cfg.diag().Log(ctx, port.LevelWarn, "WebSearch operator HTTP backend misconfigured; the tool reports the backend is down (NOT disabled)")
+			} else {
+				cfg.diag().Log(ctx, port.LevelWarn, "WebSearch backend misconfigured; the tool reports the backend is down (NOT disabled)")
+			}
 			return refsearch.BackendDown{}
 		}
-		cfg.diag().Log(ctx, port.LevelInfo, "WebSearch ENABLED with explicit HTTP backend (--websearch-url; wins over env/default)", "endpoint", cfg.WebSearchURL)
+		if cfg.webSearchURLFromSettings {
+			cfg.diag().Log(ctx, port.LevelInfo, "WebSearch ENABLED with operator HTTP backend (settings.yaml)", "endpoint", cfg.WebSearchURL)
+		} else {
+			cfg.diag().Log(ctx, port.LevelInfo, "WebSearch ENABLED with explicit HTTP backend (--websearch-url; wins over env/default)", "endpoint", cfg.WebSearchURL)
+		}
 		return provider
 
 	case strings.TrimSpace(cfg.SearXNGURL) != "":
 		provider, err := refsearch.NewHTTPProvider(refsearch.HTTPConfig{BaseURL: cfg.SearXNGURL})
 		if err != nil {
-			cfg.diag().Log(ctx, port.LevelWarn, "WebSearch SearXNG backend misconfigured; the tool reports the backend is down (NOT disabled)", "err", err)
+			if cfg.searxngURLFromSettings {
+				cfg.diag().Log(ctx, port.LevelWarn, "WebSearch operator SearXNG backend misconfigured; the tool reports the backend is down (NOT disabled)")
+			} else {
+				cfg.diag().Log(ctx, port.LevelWarn, "WebSearch SearXNG backend misconfigured; the tool reports the backend is down (NOT disabled)")
+			}
 			return refsearch.BackendDown{}
 		}
-		cfg.diag().Log(ctx, port.LevelInfo, "WebSearch ENABLED with SearXNG backend (SEARXNG_URL)", "endpoint", cfg.SearXNGURL)
+		if cfg.searxngURLFromSettings {
+			cfg.diag().Log(ctx, port.LevelInfo, "WebSearch ENABLED with SearXNG backend (settings.yaml)", "endpoint", cfg.SearXNGURL)
+		} else {
+			cfg.diag().Log(ctx, port.LevelInfo, "WebSearch ENABLED with SearXNG backend (SEARXNG_URL)", "endpoint", cfg.SearXNGURL)
+		}
 		return provider
 
 	case strings.TrimSpace(cfg.BraveAPIKey) != "":
@@ -6624,8 +6645,12 @@ func buildSearchProvider(ctx context.Context, cfg Config) tool.SearchProvider {
 
 	default:
 		provider := refsearch.NewExaProvider(refsearch.ExaConfig{APIKey: cfg.ExaAPIKey})
-		// NEVER log the key — only the fixed base endpoint + the paid-tier boolean.
-		cfg.diag().Log(ctx, port.LevelInfo, "WebSearch ENABLED (Exa anonymous default; set SEARXNG_URL/BRAVE_API_KEY to switch backends, or --websearch=off to disable)", "endpoint", provider.BaseEndpoint(), "paid_tier", provider.PaidTier())
+		// Never log the paid-tier request URL (it contains the key).
+		mode := "anonymous"
+		if provider.PaidTier() {
+			mode = "authenticated/paid"
+		}
+		cfg.diag().Log(ctx, port.LevelInfo, "WebSearch ENABLED with Exa backend", "endpoint", provider.BaseEndpoint(), "mode", mode)
 		return provider
 	}
 }
@@ -7135,8 +7160,8 @@ func buildChildEngine(cfg Config, provReg *providerRegistry, provider port.LLMPr
 // assert the resolved Deps directly (Model / PromptConfig.Env.Model /
 // ContextWindow are private once inside the engine).
 func childExplorerDeps(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, runner tool.CommandRunner) agent.Deps {
-	model, windowFn := resolveDefaultChildModel(cfg, provReg, parentProviderID, parentModel)
-	return childEngineDepsForProvider(cfg, "task", provider, session.ProviderModelID{ProviderID: parentProviderID, ModelID: model}, windowFn,
+	childProvider, childProviderID, model, windowFn := resolveChildProvider(cfg, provReg, agents.AgentDef{}, provider, parentProviderID, parentModel)
+	return childEngineDepsForProvider(cfg, "task", childProvider, session.ProviderModelID{ProviderID: childProviderID, ModelID: model}, windowFn,
 		readOnlyExplorerCatalog(runner), explorerPromptConfig(modelCfgFor(cfg, model)), nil)
 }
 
@@ -7251,7 +7276,7 @@ func buildParallelChildEngine(cfg Config, provReg *providerRegistry, provider po
 // buildParallelChildEngine (the childExplorerDeps precedent) so a test can assert
 // the resolved Deps directly.
 func parallelChildDeps(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, runner tool.CommandRunner) agent.Deps {
-	model, windowFn := resolveDefaultChildModel(cfg, provReg, parentProviderID, parentModel)
+	childProvider, childProviderID, model, windowFn := resolveChildProvider(cfg, provReg, agents.AgentDef{}, provider, parentProviderID, parentModel)
 	// Start from the read-only explorer surface (Read/Grep/Glob + sandboxed Shell) then
 	// LAYER Edit/Write on top — a Parallel branch MAY mutate its OWN fork. Shell is
 	// workspace-aware (ShellTool reads its runner from the per-branch Environment bound to
@@ -7260,7 +7285,7 @@ func parallelChildDeps(cfg Config, provReg *providerRegistry, provider port.LLMP
 	// excluded — readOnlyExplorerCatalog never adds them — so a branch can't recurse.)
 	childCat := writableExplorerCatalog(runner, "parallel child tool catalog")
 
-	return childEngineDepsForProvider(cfg, "parallel", provider, session.ProviderModelID{ProviderID: parentProviderID, ModelID: model}, windowFn,
+	return childEngineDepsForProvider(cfg, "parallel", childProvider, session.ProviderModelID{ProviderID: childProviderID, ModelID: model}, windowFn,
 		childCat, promptConfig(modelCfgFor(cfg, model), cfg.gitStatus), nil)
 }
 
@@ -7280,15 +7305,13 @@ func parallelChildDeps(cfg Config, provReg *providerRegistry, provider port.LLMP
 // through the SAME def-less chain (SubagentModel > parentModel) as the read-only
 // explorer and Parallel branches.
 func buildWritableSubagentChildEngine(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, runner tool.CommandRunner) *agent.Engine {
-	model, windowFn := resolveDefaultChildModel(cfg, provReg, parentProviderID, parentModel)
-	return agent.NewEngine(writableExplorerDeps(cfg, provider, session.ProviderModelID{ProviderID: parentProviderID, ModelID: model}, "task:read-write", windowFn, runner))
+	childProvider, childProviderID, model, windowFn := resolveChildProvider(cfg, provReg, agents.AgentDef{}, provider, parentProviderID, parentModel)
+	return agent.NewEngine(writableExplorerDeps(cfg, childProvider, session.ProviderModelID{ProviderID: childProviderID, ModelID: model}, "task:read-write", windowFn, runner))
 }
 
 // writableExplorerDeps builds the agent.Deps for a WRITABLE explorer child engine on a
 // given model + role. It is the SHARED body of buildWritableSubagentChildEngine (the
-// default-model writable explorer, role "task:read-write") and
-// buildWritableSubagentEngineFactory (the per-call/routed-model writable explorer, role
-// "task:read-write:model=<model>") — extracted so the two never drift (issue #285). The
+// default-model writable explorer and the per-call target factory.
 // catalog is the read-only explorer surface (Read/Grep/Glob + Shell) LAYERED with
 // Edit/Write — a writable child MAY mutate the parent tree DIRECTLY; Subagent/Parallel/
 // ToolSearch stay excluded (readOnlyExplorerCatalog never adds them), so a writable child
@@ -7305,70 +7328,55 @@ func writableExplorerDeps(cfg Config, provider port.LLMProvider, providerModel s
 		childCat, promptConfig(modelCfgFor(cfg, model), cfg.gitStatus), nil)
 }
 
-// buildWritableSubagentEngineFactory returns the per-call model-override factory the
-// Subagent tool invokes for a mode:"read-write" call with a per-call `model` (or the OPT-IN
-// router pick) and NO `agent` (issue #285). It mirrors buildParallelEngineFactory's SHAPE:
-// given an opaque model id it mints a fresh WRITABLE explorer engine pinned to that model on
-// the parent's provider, re-deriving the provider-closing Deps (Compactor/TokenCounter/
-// Env.Model/ContextWindow) via the contamination-safe per-provider path, NEVER a
-// clone-and-swap. It shares writableExplorerDeps with buildWritableSubagentChildEngine so the
-// catalog/runner/prompt recipe cannot drift. The routed/override id is used VERBATIM — NOT
-// through resolveDefaultChildModel (which would re-run the def-less `SubagentModel > parent`
-// chain and discard the pick when a cheap child default is configured) — the same discipline
-// buildParallelEngineFactory/buildSubagentEngineFactory use. The MAIN session's command
-// runner is captured ONCE outside the closure (the buildAgentWritableEngineFactory pattern),
-// so every minted writable engine shares the one runner. A blank model → (nil, false); any
-// non-blank model routes on the parent provider with its window re-derived through
-// childWindowFor. Cross-provider routing by a bare model id is out of scope (the registry is
-// keyed by provider) — same posture as the read-only Subagent + Parallel factories.
-func buildWritableSubagentEngineFactory(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, _ string) func(model string) (*agent.Engine, bool) {
+// buildWritableSubagentTargetEngineFactory returns the provider-aware per-call override
+// factory for a mode:"read-write" Subagent without an `agent`. It mints a fresh writable
+// explorer and re-derives provider/model-specific dependencies for the resolved target.
+func buildWritableSubagentTargetEngineFactory(cfg Config, provReg *providerRegistry, parentProvider port.LLMProvider, parentProviderID string) func(agent.ModelTarget) (*agent.Engine, bool) {
 	mainRunner := directWriteCommandRunner(cfg)
-	return func(model string) (*agent.Engine, bool) {
-		model = strings.TrimSpace(model)
+	return func(target agent.ModelTarget) (*agent.Engine, bool) {
+		providerID := strings.TrimSpace(target.Provider)
+		model := strings.TrimSpace(target.Model)
+		if providerID == "" {
+			providerID = parentProviderID
+		}
 		if model == "" {
 			return nil, false
 		}
-		windowFn := childWindowFor(cfg, provReg, parentProviderID, model)
-		deps := writableExplorerDeps(cfg, provider, session.ProviderModelID{ProviderID: parentProviderID, ModelID: model}, "task:read-write:model="+model, windowFn, mainRunner)
+		provider := parentProvider
+		if providerID != parentProviderID {
+			entry, ok := provReg.Lookup(providerID)
+			if !ok {
+				return nil, false
+			}
+			provider = entry.provider
+		}
+		windowFn := childWindowFor(cfg, provReg, providerID, model)
+		deps := writableExplorerDeps(cfg, provider, session.ProviderModelID{ProviderID: providerID, ModelID: model}, "task:read-write:model="+model, windowFn, mainRunner)
 		return agent.NewEngine(deps), true
 	}
 }
 
-// buildParallelEngineFactory returns the per-branch model-override factory the Parallel
-// tool invokes when the OPT-IN model router classifies a branch onto a model.
-// It mirrors the SHAPE of buildSubagentEngineFactory — given an opaque model id it mints a
-// fresh child engine pinned to that model on the parent's provider, re-deriving the
-// provider-closing Deps (Compactor/TokenCounter/Env.Model/ContextWindow) via the
-// contamination-safe per-provider path, NEVER a clone-and-swap of an existing engine's LLM.
-// It is deliberately NOT identical to buildSubagentEngineFactory (do not try to DRY them on
-// the strength of this comment): a Parallel BRANCH layers Edit+Write onto the read-only
-// explorer surface, uses promptConfig (not explorerPromptConfig), the role "parallel:model="
-// (not "task:model="), and goes through childEngineDepsForProvider (not
-// newChildEngineForProvider) — the same divergences buildParallelChildEngine/parallelChildDeps
-// carry from buildChildEngine. The branch catalog is the
-// SAME Read/Grep/Glob/Edit/Write (+ Shell when a runner is wired) parallelChildDeps builds,
-// so a routed branch has the identical mutating-in-its-own-fork surface as the shared
-// branch child. A blank model is unroutable (ok=false → the branch falls back to the
-// shared childEngine, fail-soft); any non-blank model routes on the parent provider with
-// its window re-derived through childWindowFor. Cross-provider routing by a bare model id
-// is out of scope (the registry is keyed by provider) — same posture as the Subagent and
-// member factories. composition owns the category→model→engine mapping; engine/agent only
-// ever sees func(string)(*Engine,bool).
-func buildParallelEngineFactory(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, _ string, runner tool.CommandRunner) func(model string) (*agent.Engine, bool) {
-	return func(model string) (*agent.Engine, bool) {
-		model = strings.TrimSpace(model)
+func buildParallelTargetEngineFactory(cfg Config, provReg *providerRegistry, parentProvider port.LLMProvider, parentProviderID string, runner tool.CommandRunner) func(agent.ModelTarget) (*agent.Engine, bool) {
+	return func(target agent.ModelTarget) (*agent.Engine, bool) {
+		providerID := strings.TrimSpace(target.Provider)
+		if providerID == "" {
+			providerID = parentProviderID
+		}
+		model := strings.TrimSpace(target.Model)
 		if model == "" {
 			return nil, false
 		}
-		// Use the routed model DIRECTLY — NOT through resolveDefaultChildModel (which would
-		// re-run the def-less `SubagentModel > parent` chain and discard the routed id when a
-		// cheap-child default is configured). The routed id is the ALREADY-RESOLVED concrete
-		// model composition's buildModelRouterTask produced; the same discipline
-		// buildSubagentEngineFactory uses for a per-call model override. The branch catalog
-		// mirrors parallelChildDeps exactly (Read/Grep/Glob/Edit/Write + Shell when wired).
+		provider := parentProvider
+		if providerID != parentProviderID {
+			entry, ok := provReg.Lookup(providerID)
+			if !ok {
+				return nil, false
+			}
+			provider = entry.provider
+		}
 		childCat := writableExplorerCatalog(runner, "routed parallel child tool catalog")
-		windowFn := childWindowFor(cfg, provReg, parentProviderID, model)
-		deps := childEngineDepsForProvider(cfg, "parallel:model="+model, provider, session.ProviderModelID{ProviderID: parentProviderID, ModelID: model}, windowFn,
+		windowFn := childWindowFor(cfg, provReg, providerID, model)
+		deps := childEngineDepsForProvider(cfg, "parallel:model="+model, provider, session.ProviderModelID{ProviderID: providerID, ModelID: model}, windowFn,
 			childCat, promptConfig(modelCfgFor(cfg, model), cfg.gitStatus), nil)
 		return agent.NewEngine(deps), true
 	}
@@ -7439,24 +7447,28 @@ func askAdjudicatorDeps(cfg Config, provReg *providerRegistry, provider port.LLM
 	// ASK-REVIEWER SLOT: a configured `ask-reviewer` slot
 	// SUPERSEDES the flag's model (the flag still gates ON/OFF). Otherwise resolve the
 	// flag's value through the alias machinery.
-	var model string
-	if sm, ok := resolveSlotModel(cfg, slotAskReviewer, parentModel); ok {
-		model = sm
-	} else {
-		model, _ = lookupModelAlias(cfg, sel)
+	model := parentModel
+	reviewerProvider, reviewerProviderID := provider, parentProviderID
+	if slotProvider, slotProviderID, slotModel, ok := resolveAuxiliarySlotTarget(cfg, provReg, slotAskReviewer, provider, parentProviderID, parentModel); ok {
+		reviewerProvider, reviewerProviderID, model = slotProvider, slotProviderID, slotModel
+	} else if target, err := resolveModelTarget(cfg, parentProviderID, "", sel); err == nil {
+		model = target.Model
+		if target.ProviderID != parentProviderID && provReg != nil {
+			if entry, found := provReg.Lookup(target.ProviderID); found {
+				reviewerProvider, reviewerProviderID = entry.provider, target.ProviderID
+			}
+		}
 	}
 	if model == "" {
-		// Defensive only: Build's normalizeAskReviewerModel already rejected an
-		// unknown/inherit value fail-fast (and UseMock passes the literal through).
 		model = parentModel
 	}
-	windowFn := childWindowFor(cfg, provReg, parentProviderID, model)
-	providerModel := session.ProviderModelID{ProviderID: parentProviderID, ModelID: model}
+	windowFn := childWindowFor(cfg, provReg, reviewerProviderID, model)
+	providerModel := session.ProviderModelID{ProviderID: reviewerProviderID, ModelID: model}
 	// newChildEngineForProvider's deps builder: the reviewer compacts/counts/
 	// prompts on ITS resolved model with a re-derived window — and, crucially,
 	// childEngineDepsForProvider forces ChildAskReviewer nil, so the reviewer
 	// engine can never carry a nested reviewer (no construct-recursion).
-	deps := childEngineDepsForProvider(cfg, "ask-reviewer", provider, providerModel, windowFn,
+	deps := childEngineDepsForProvider(cfg, "ask-reviewer", reviewerProvider, providerModel, windowFn,
 		tool.NewCatalog(), promptConfig(modelCfgFor(cfg, model), cfg.gitStatus), nil)
 	// Disable the no-progress nudge on the reviewer engine: its session caps at
 	// MaxTurns=1, and an EMPTY (verdict-less) first turn must terminate cleanly in
@@ -7517,6 +7529,14 @@ func buildModelRouterTask(cfg Config, provReg *providerRegistry, provider port.L
 		return nil
 	}
 	classifierModel := resolveRouterClassifierModel(cfg, parentModel)
+	classifierProvider, classifierProviderID := provider, parentProviderID
+	classifierSlot := slotRouter
+	if cfg.RouterClassifierSlot != "" {
+		classifierSlot = cfg.RouterClassifierSlot
+	}
+	if routedProvider, routedProviderID, routedModel, ok := resolveAuxiliarySlotTarget(cfg, provReg, classifierSlot, provider, parentProviderID, parentModel); ok {
+		classifierProvider, classifierProviderID, classifierModel = routedProvider, routedProviderID, routedModel
+	}
 	cats := make([]agent.ModelRouteCategory, 0, len(cfg.RouterCategories))
 	selectorByName := make(map[string]string, len(cfg.RouterCategories))
 	for _, c := range cfg.RouterCategories {
@@ -7536,12 +7556,13 @@ func buildModelRouterTask(cfg Config, provReg *providerRegistry, provider port.L
 			result.Reason, result.OK = fmt.Sprintf("category-selector-empty (category=%s)", category), false
 			return result
 		}
-		id, known := lookupModelAlias(cfg, sel)
-		if !known || id == "" {
+		resolved, err := resolveConfiguredModelTarget(cfg, parentProviderID, sel)
+		if err != nil || resolved.Model == "" {
 			result.Reason, result.OK = fmt.Sprintf("category-target-unresolvable (category=%s selector=%s)", category, sel), false
 			return result
 		}
-		result.Model = id
+		result.Provider = resolved.ProviderID
+		result.Model = resolved.Model
 		return result
 	}
 	if cfg.RouterBackend == routerBackendJev {
@@ -7575,7 +7596,7 @@ func buildModelRouterTask(cfg Config, provReg *providerRegistry, provider port.L
 	return &agent.SubagentModelRouter{
 		Backend: routerBackendLLM, ClassifierModel: classifierModel,
 		Route: func(ctx context.Context, taskPrompt string) agent.ModelRouteResult {
-			deps := modelRouterDeps(cfg, provReg, provider, parentProviderID, classifierModel)
+			deps := modelRouterDeps(cfg, provReg, classifierProvider, classifierProviderID, classifierModel)
 			eng := agent.NewEngine(deps)
 			category, classifierUsage, missReason, ok := agent.RunModelRouter(ctx, eng, agent.ModelRouteRequest{
 				TaskPrompt: taskPrompt, Categories: cats, Default: cfg.RouterDefaultCategory,
@@ -7677,6 +7698,7 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 	// gets the HARDENED runner (the main session keeps its own unhardened runner). nil
 	// when Shell is disabled — then no shell, no forker.
 	sandboxedRunner := buildSandboxedCommandRunner(cfg)
+	_, defaultChildProviderID, _, _ := resolveChildProvider(cfg, provReg, agents.AgentDef{}, provider, parentProviderID, parentModel)
 	engines, meta, mcpClose := buildAgentSubagentEngines(ctx, cfg, provider, provReg, parentProviderID, parentModel, reg, skillIdx, hooks, sandboxedRunner, mainMgr)
 	opts := []agent.SubagentOption{
 		agent.WithSubagentStopHook(hooks),
@@ -7733,18 +7755,20 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 	// Per-call model override factory: mint an explorer child engine for a requested
 	// model through the SAME contamination-safe per-provider path (newChildEngineFor
 	// Provider re-derives Compactor/TokenCounter/Env.Model/ContextWindow for the
-	// override model) — never a clone-and-swap of the LLM on an existing engine. The
-	// closure hands engine/agent only func(string)(*Engine,bool); the registry never
-	// crosses (same shape/spirit as WithAgentEngines).
-	opts = append(opts, agent.WithSubagentEngineFactory(
-		buildSubagentEngineFactory(cfg, provReg, provider, parentProviderID, parentModel, sandboxedRunner)))
+	// override model) — never a clone-and-swap of the LLM on an existing engine.
+	// Only the resolved ModelTarget crosses into engine/agent, not the registry.
+	opts = append(opts,
+		agent.WithSubagentProvider(defaultChildProviderID),
+		agent.WithSubagentSelectorResolver(buildSubagentSelectorResolver(cfg, provReg, parentProviderID)),
+		agent.WithSubagentEngineFactory(buildSubagentTargetEngineFactory(cfg, provReg, provider, parentProviderID, sandboxedRunner)))
 	// agent+model override factory: rebuild a named specialist's SCOPED engine on the
-	// per-call override model (the override runs on the def's resolved provider). The
-	// closure hands engine/agent only func(string,string)(*Engine,bool); the registry never
-	// crosses (same shape/spirit as WithAgentEngines). A def with inline MCP servers is a
-	// v1 scope limit (the factory declines; selectChildEngine surfaces the error).
-	opts = append(opts, agent.WithAgentModelEngineFactory(
-		buildAgentModelEngineFactory(ctx, cfg, provReg, provider, parentProviderID, parentModel, reg, skillIdx, hooks, sandboxedRunner, mainMgr)))
+	// per-call override model (the override runs on the def's resolved provider).
+	// The closure carries a ModelTarget, not the provider registry. Inline MCP servers
+	// remain a v1 scope limit (the factory declines; selectChildEngine reports it).
+	opts = append(opts,
+		agent.WithAgentModelEngineFactory(
+			buildAgentTargetEngineFactory(ctx, cfg, provReg, parentProviderID, reg, skillIdx, hooks, sandboxedRunner, mainMgr)),
+	)
 	// ROUTABLE agent defs (issue #286): the SET of def names that expressed NO model intent
 	// (absent `model:`), don't switch provider, and have no inline MCP — so the OPT-IN router
 	// may classify an `agent`-named delegation to them and rebuild the def's scoped engine on
@@ -7759,13 +7783,12 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 	// WRITABLE named specialist (mode:"read-write"+`agent`): factories that
 	// REBUILD the named specialist's scoped engine with allowMutating=true, using the MAIN
 	// session's command runner (direct-write parity — no fork/merge-back). The
-	// routed sibling keeps the def scope but replaces an unpinned same-provider def's model
-	// with the router-selected bare model. Both are skipped under no-FS.
-	writableAgentFactory, writableAgentModelFactory := buildAgentWritableEngineFactories(
+	// routed target keeps the def scope and replaces an unpinned def's model and provider.
+	writableAgentFactory := buildAgentWritableEngineFactory(
 		ctx, cfg, provReg, provider, parentProviderID, parentModel, reg, skillIdx, hooks, mainMgr)
 	opts = append(opts,
 		agent.WithAgentWritableEngineFactory(writableAgentFactory),
-		agent.WithAgentWritableModelEngineFactory(writableAgentModelFactory),
+		agent.WithAgentWritableModelEngineFactory(buildAgentWritableTargetEngineFactory(ctx, cfg, provReg, parentProviderID, reg, skillIdx, hooks, mainMgr)),
 	)
 	// WRITABLE subagent (mode:"read-write"): a child engine whose catalog
 	// adds Edit/Write over the read-only explorer surface and runs DIRECTLY against
@@ -7790,11 +7813,10 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 	// WRITABLE EXPLORER per-call/routed model (mode:"read-write"+`model`, no `agent`;
 	// issue #285): a factory that rebuilds the WRITABLE explorer on the requested model via
 	// the SAME writableExplorerDeps recipe (MAIN runner, direct-write parity). It also backs
-	// the OPT-IN router's writable pick. The closure hands engine/agent only
-	// func(string)(*Engine,bool). Skipped under no-FS (buildNoFSSubagentTool wires no
-	// writable path).
-	opts = append(opts, agent.WithWritableEngineFactory(
-		buildWritableSubagentEngineFactory(cfg, provReg, provider, parentProviderID, parentModel)))
+	// the OPT-IN router's writable provider/model pick. Skipped under no-FS
+	// (buildNoFSSubagentTool wires no writable path).
+	opts = append(opts,
+		agent.WithWritableEngineFactory(buildWritableSubagentTargetEngineFactory(cfg, provReg, provider, parentProviderID)))
 	return agent.NewSubagentTool(
 		buildChildEngine(cfg, provReg, provider, parentProviderID, parentModel, sandboxedRunner),
 		opts...,
@@ -7824,27 +7846,40 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 // the same def-less chain as everywhere (SubagentModel > parent). The returned
 // tool has no close func (no inline MCP managers are connected on this path).
 func buildNoFSSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, hooks port.HookRunner, store port.SessionStore, a catalogAssets) tool.Tool {
-	newNoFSChild := func(role, model string, windowFn func() int) *agent.Engine {
+	newNoFSChild := func(role string, childProvider port.LLMProvider, childProviderID, model string, windowFn func() int) *agent.Engine {
 		pc := applyNoFSPosture(explorerPromptConfig(modelCfgFor(cfg, model)), noFSMemberNote)
-		return newChildEngineForProvider(cfg, role, provider, session.ProviderModelID{ProviderID: parentProviderID, ModelID: model}, windowFn, noFSChildCatalog(ctx, cfg, a), pc, nil)
+		return newChildEngineForProvider(cfg, role, childProvider, session.ProviderModelID{ProviderID: childProviderID, ModelID: model}, windowFn, noFSChildCatalog(ctx, cfg, a), pc, nil)
 	}
-	model, windowFn := resolveDefaultChildModel(cfg, provReg, parentProviderID, parentModel)
+	childProvider, childProviderID, model, windowFn := resolveChildProvider(cfg, provReg, agents.AgentDef{}, provider, parentProviderID, parentModel)
 	opts := []agent.SubagentOption{
 		agent.WithSubagentStopHook(hooks),
 		agent.WithSubagentStore(store),
 		agent.WithSubagentOwnershipEnforced(cfg.OwnershipEnforced),
 		agent.WithSubagentNoFSNote(),
 		agent.WithSubagentReadLedgerFactory(func() tool.ReadLedger { return memledger.New() }),
-		agent.WithSubagentEngineFactory(func(overrideModel string) (*agent.Engine, bool) {
-			overrideModel = strings.TrimSpace(overrideModel)
-			if overrideModel == "" {
+		agent.WithSubagentProvider(childProviderID),
+		agent.WithSubagentSelectorResolver(buildSubagentSelectorResolver(cfg, provReg, parentProviderID)),
+		agent.WithSubagentEngineFactory(func(target agent.ModelTarget) (*agent.Engine, bool) {
+			providerID := strings.TrimSpace(target.Provider)
+			if providerID == "" {
+				providerID = parentProviderID
+			}
+			model := strings.TrimSpace(target.Model)
+			if model == "" {
 				return nil, false
 			}
-			w := childWindowFor(cfg, provReg, parentProviderID, overrideModel)
-			return newNoFSChild("task:model="+overrideModel, overrideModel, w), true
+			childProvider := provider
+			if providerID != parentProviderID {
+				entry, ok := provReg.Lookup(providerID)
+				if !ok {
+					return nil, false
+				}
+				childProvider = entry.provider
+			}
+			return newNoFSChild("task:model="+model, childProvider, providerID, model, childWindowFor(cfg, provReg, providerID, model)), true
 		}),
 	}
-	return agent.NewSubagentTool(newNoFSChild("task", model, windowFn), opts...)
+	return agent.NewSubagentTool(newNoFSChild("task", childProvider, childProviderID, model, windowFn), opts...)
 }
 
 // buildSubagentEngineFactory returns the per-call model-override factory the Subagent tool
@@ -7867,117 +7902,178 @@ func buildNoFSSubagentTool(ctx context.Context, cfg Config, provReg *providerReg
 // Cross-provider routing by a bare model id is intentionally out of scope this round
 // (the registry is keyed by provider, not model) — a def's `provider:` remains the
 // cross-provider seam.
-func buildSubagentEngineFactory(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, _ string, runner tool.CommandRunner) func(model string) (*agent.Engine, bool) {
-	return func(model string) (*agent.Engine, bool) {
+func validDelegationSelectorValue(value string) bool {
+	if len(value) > maxAgentModelDiscoveryFilterBytes || !utf8.ValidString(value) {
+		return false
+	}
+	for _, r := range value {
+		if unicode.Is(unicode.Cc, r) || unicode.Is(unicode.Cf, r) {
+			return false
+		}
+	}
+	return true
+}
+
+func buildSubagentSelectorResolver(cfg Config, provReg *providerRegistry, parentProviderID string) agent.SubagentSelectorResolver {
+	resolve := func(explicitProvider, selector, contextualProvider string) (agent.ModelTarget, string, error) {
+		explicitProvider = strings.TrimSpace(explicitProvider)
+		selector = strings.TrimSpace(selector)
+		var target ModelTarget
+		if _, alias := lookupModelAliasTarget(cfg, selector); alias {
+			resolved, err := resolveModelTarget(cfg, contextualProvider, explicitProvider, selector)
+			if err != nil {
+				return agent.ModelTarget{}, "", err
+			}
+			target = resolved
+		} else {
+			target = ModelTarget{ProviderID: explicitProvider, Model: selector}
+			if target.ProviderID == "" {
+				target.ProviderID = contextualProvider
+			}
+		}
+		if target.Model == "" {
+			return agent.ModelTarget{}, "", fmt.Errorf("model is required")
+		}
+		if _, ok := provReg.Lookup(target.ProviderID); !ok {
+			return agent.ModelTarget{}, "", fmt.Errorf("unknown or unavailable provider")
+		}
+		factoryTarget := agent.ModelTarget{Model: target.Model}
+		if explicitProvider != "" || target.ProviderID != parentProviderID {
+			factoryTarget.Provider = target.ProviderID
+		}
+		return factoryTarget, target.ProviderID, nil
+	}
+	return func(provider, model string) (agent.ResolvedModelSelector, error) {
+		if !validDelegationSelectorValue(provider) || !validDelegationSelectorValue(model) {
+			return agent.ResolvedModelSelector{}, fmt.Errorf("selector values must be valid UTF-8 without control or format characters and at most 512 bytes")
+		}
+		provider = strings.TrimSpace(provider)
 		model = strings.TrimSpace(model)
+		if provider != reservedModelRouterProvider {
+			rawAlias, alias := lookupModelAliasTarget(cfg, model)
+			target, actual, err := resolve(provider, model, parentProviderID)
+			return agent.ResolvedModelSelector{Target: target, ActualProvider: actual, ProviderBearing: provider != "" || target.Provider != "" || (alias && rawAlias.ProviderID != "")}, err
+		}
+		if cfg.RouterDisabled || len(cfg.RouterCategories) == 0 {
+			return agent.ResolvedModelSelector{}, fmt.Errorf("model router is unavailable")
+		}
+		for _, category := range cfg.RouterCategories {
+			if strings.TrimSpace(category.Name) != model {
+				continue
+			}
+			contextualProvider := parentProviderID
+			if cfg.modelBindingProvider != "" {
+				contextualProvider = cfg.modelBindingProvider
+			}
+			target, actual, err := resolve("", category.Model, contextualProvider)
+			if err != nil {
+				return agent.ResolvedModelSelector{}, fmt.Errorf("router category is unresolvable")
+			}
+			return agent.ResolvedModelSelector{Target: target, ActualProvider: actual, ProviderBearing: true, ExplicitRouterCategory: model}, nil
+		}
+		return agent.ResolvedModelSelector{}, fmt.Errorf("unknown router category")
+	}
+}
+
+func buildSubagentTargetEngineFactory(cfg Config, provReg *providerRegistry, parentProvider port.LLMProvider, parentProviderID string, runner tool.CommandRunner) func(agent.ModelTarget) (*agent.Engine, bool) {
+	return func(target agent.ModelTarget) (*agent.Engine, bool) {
+		providerID := strings.TrimSpace(target.Provider)
+		model := strings.TrimSpace(target.Model)
+		if providerID == "" {
+			providerID = parentProviderID
+		}
 		if model == "" {
 			return nil, false
 		}
-		// Same read-only explorer surface + References convention as the default explorer
-		// (buildChildEngine) — a model-override child is still the explorer, just on a
-		// different model.
+		provider := parentProvider
+		if providerID != parentProviderID {
+			entry, ok := provReg.Lookup(providerID)
+			if !ok {
+				return nil, false
+			}
+			provider = entry.provider
+		}
 		childCat := readOnlyExplorerCatalog(runner)
-		windowFn := childWindowFor(cfg, provReg, parentProviderID, model)
-		eng := newChildEngineForProvider(cfg, "task:model="+model, provider, session.ProviderModelID{ProviderID: parentProviderID, ModelID: model}, windowFn,
+		windowFn := childWindowFor(cfg, provReg, providerID, model)
+		eng := newChildEngineForProvider(cfg, "task:model="+model, provider, session.ProviderModelID{ProviderID: providerID, ModelID: model}, windowFn,
 			childCat, explorerPromptConfig(modelCfgFor(cfg, model)), nil)
 		return eng, true
 	}
 }
 
-// buildAgentModelEngineFactory returns the per-call `agent`+`model` override factory the
-// Subagent tool invokes when a call sets BOTH `agent` and `model`. Given a (agentName,
-// model) pair it rebuilds the named specialist's SCOPED engine on the override model —
-// the SAME catalog/prompt/hooks/memory the startup path builds (buildAgentDefEngine), so
-// the override child keeps the specialist's tools/playbook (NOT the generic explorer set),
-// while re-deriving the provider-closing Deps (Compactor/TokenCounter/Env.Model/
-// ContextWindow) for the override model via newChildEngineForProvider. The pre-built
-// agentEngines map is NEVER mutated (a fresh engine is minted per call).
-//
-// PROVIDER/MODEL RESOLUTION (parity with the model-only path, per the architect's
-// decision): the override runs on the DEF's resolved provider. resolveProviderModel is
-// called with the REAL def to select the provider (pid) — then the override model is set
-// VERBATIM (resolvedModel = wantModel, no alias resolution — an opaque string the provider
-// validates at request time, matching buildSubagentEngineFactory's "opaque string" posture).
-// A synthetic-def approach is NOT used (it would double-alias-resolve). childProvider is the
-// def's resolved provider entry (or the parent's when the def pins none/unknown);
-// windowFn = childWindowFor(cfg, provReg, pid, wantModel). Cross-provider override OF the
-// provider by a bare model id is out of scope (matches buildSubagentEngineFactory's existing
-// out-of-scope comment) — a def's `provider:` remains the only cross-provider seam.
-//
-// INLINE MCP v1 LIMIT (Risk-1, Option B): a def with INLINE MCP servers (any entry where
-// !IsReference()) is unsupported on the agent+model path. The inline managers' live
-// sessions (mcp.remoteTool.Execute proxies over a *mcpsdk.ClientSession) must outlive a
-// per-call engine, but the per-call factory has no process-lifetime owner for a freshly-
-// built manager (reusing cached managers would require a per-def manager cache with
-// careful Close ownership the per-call engine can't hold). The factory returns (nil, false)
-// and selectChildEngine surfaces the model-addressable error naming both agent and model.
-// Safe and leak-free; a documented v1 scope limit. REFERENCE-only MCP servers ARE
-// supported (they borrow the process-lifetime mainMgr, no new connection).
-//
-// The returned inline-MCP close func (from buildAgentDefEngine) is invoked immediately
-// (safe close) when the def has NO inline servers — there are none to keep alive, and a
-// reference-only def's tools borrow mainMgr, so closing the (nil) inline close is a no-op.
-// (A def that reached here with inline servers was already rejected above, so the close
-// func is always nil by the time it could matter.)
-func buildAgentModelEngineFactory(ctx context.Context, cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, reg *agents.Registry, skillIdx skillIndex, defaultHooks port.HookRunner, runner tool.CommandRunner, mainMgr *mcp.Manager) func(agentName, model string) (*agent.Engine, bool) {
-	return func(agentName, model string) (*agent.Engine, bool) {
-		agentName = strings.TrimSpace(agentName)
-		model = strings.TrimSpace(model)
-		if reg == nil || agentName == "" || model == "" {
+func buildAgentTargetEngineFactory(ctx context.Context, cfg Config, provReg *providerRegistry, parentProviderID string, reg *agents.Registry, skillIdx skillIndex, defaultHooks port.HookRunner, runner tool.CommandRunner, mainMgr *mcp.Manager) func(string, agent.ModelTarget) (*agent.Engine, bool) {
+	return func(agentName string, target agent.ModelTarget) (*agent.Engine, bool) {
+		agentName, target.Provider, target.Model = strings.TrimSpace(agentName), strings.TrimSpace(target.Provider), strings.TrimSpace(target.Model)
+		if reg == nil || agentName == "" || target.Model == "" {
 			return nil, false
 		}
 		def, ok := reg.Get(agentName)
-		if !ok {
+		if !ok || (target.Provider != "" && strings.TrimSpace(def.Model) != "") {
 			return nil, false
 		}
-		// Risk-1 (Option B): inline MCP servers are a v1 scope limit on the agent+model
-		// path. The factory declines; selectChildEngine surfaces the model-addressable error.
+		if target.Provider == "" {
+			target.Provider, _ = resolveProviderModel(cfg, provReg, def, parentProviderID, "")
+		}
 		if inline, found := defInlineMCPServer(def); found {
-			cfg.diag().Log(ctx, port.LevelInfo, "agent+model override declined: def has inline MCP servers (v1 scope limit)",
-				"agent", def.Name, "model", model, "server", inline.Name)
+			cfg.diag().Log(ctx, port.LevelInfo, "automatic routed specialist declined: def has inline MCP servers (v1 scope limit)", "agent", def.Name, "server", inline.Name)
 			return nil, false
 		}
-		// Provider selection via the REAL def (def.Provider pinned-and-known → that provider;
-		// else parent). The override model is set VERBATIM (no alias resolution — parity with
-		// the model-only path's opaque-string posture; a synthetic def would double-resolve).
-		pid, _ := resolveProviderModel(cfg, provReg, def, parentProviderID, parentModel)
-		childProvider := provider
-		if pid != parentProviderID {
-			if entry, found := provReg.Lookup(pid); found {
-				childProvider = entry.provider
-			}
+		entry, found := provReg.Lookup(target.Provider)
+		if !found || !entry.available || entry.provider == nil {
+			return nil, false
 		}
-		windowFn := childWindowFor(cfg, provReg, pid, model)
-
-		eng, mcpClose, names, _, skillCount := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name+":model="+model, reg.Detail(def.Name), childProvider, session.ProviderModelID{ProviderID: pid, ModelID: model}, windowFn,
+		windowFn := childWindowFor(cfg, provReg, target.Provider, target.Model)
+		eng, mcpClose, names, _, skillCount := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name+":target="+target.Provider+"/"+target.Model, reg.Detail(def.Name), entry.provider, session.ProviderModelID{ProviderID: target.Provider, ModelID: target.Model}, windowFn,
 			baseSubagentTools(cfg), false /*allowMutating*/, runner != nil, skillIdx, defaultHooks, runner, mainMgr)
-		// The def has no inline servers (rejected above), so mcpClose is nil; call it
-		// defensively in case a future reference-only path ever returns one (a reference
-		// borrows mainMgr, so closing is a no-op). Never closes mainMgr.
 		if mcpClose != nil {
 			if err := mcpClose(); err != nil {
-				cfg.diag().Log(ctx, port.LevelWarn, "agent+model override engine inline MCP close",
-					"agent", def.Name, "model", model, "err", err)
+				cfg.diag().Log(ctx, port.LevelWarn, "automatic routed specialist engine inline MCP close", "agent", def.Name, "model", target.Model, "err", err)
 			}
 		}
-
-		cfg.diag().Log(ctx, port.LevelInfo, "agent def engine rebuilt on override model",
-			"agent", def.Name, "tools", strings.Join(names, ","), "provider", pid, "model", model,
-			"preloaded_skills", skillCount, "source", reg.Detail(def.Name))
+		cfg.diag().Log(ctx, port.LevelInfo, "agent def engine rebuilt on automatic routed target", "agent", def.Name, "tools", strings.Join(names, ","), "provider", target.Provider, "model", target.Model, "preloaded_skills", skillCount, "source", reg.Detail(def.Name))
 		return eng, true
 	}
 }
 
-// buildAgentWritableEngineFactories returns the ordinary and routed-model factories for
-// writable named specialists. Both share one MAIN-bound runner and one construction path,
-// so routing can change only the model tuple: the def prompt, scoped mutating catalog,
-// preloaded skills, hooks, memory head, reference MCP tools, and direct-write semantics
-// remain identical. Inline MCP defs decline before buildAgentDefEngine can open resources.
-func buildAgentWritableEngineFactories(ctx context.Context, cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, reg *agents.Registry, skillIdx skillIndex, defaultHooks port.HookRunner, mainMgr *mcp.Manager) (func(string) (*agent.Engine, bool), func(string, string) (*agent.Engine, bool)) {
+func buildAgentWritableTargetEngineFactory(ctx context.Context, cfg Config, provReg *providerRegistry, parentProviderID string, reg *agents.Registry, skillIdx skillIndex, defaultHooks port.HookRunner, mainMgr *mcp.Manager) func(string, agent.ModelTarget) (*agent.Engine, bool) {
 	mainRunner := directWriteCommandRunner(cfg)
-	build := func(agentName, routedModel string) (*agent.Engine, bool) {
+	return func(agentName string, target agent.ModelTarget) (*agent.Engine, bool) {
+		agentName, target.Provider, target.Model = strings.TrimSpace(agentName), strings.TrimSpace(target.Provider), strings.TrimSpace(target.Model)
+		if reg == nil || agentName == "" || target.Model == "" {
+			return nil, false
+		}
+		def, ok := reg.Get(agentName)
+		if !ok || strings.TrimSpace(def.Model) != "" {
+			return nil, false
+		}
+		if target.Provider == "" {
+			target.Provider, _ = resolveProviderModel(cfg, provReg, def, parentProviderID, "")
+		}
+		if inline, found := defInlineMCPServer(def); found {
+			cfg.diag().Log(ctx, port.LevelInfo, "automatic routed writable specialist declined: def has inline MCP servers (v1 scope limit)", "agent", def.Name, "server", inline.Name)
+			return nil, false
+		}
+		entry, found := provReg.Lookup(target.Provider)
+		if !found || !entry.available || entry.provider == nil {
+			return nil, false
+		}
+		eng, mcpClose, names, _, skillCount := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name+":writable:target="+target.Provider+"/"+target.Model, reg.Detail(def.Name), entry.provider, session.ProviderModelID{ProviderID: target.Provider, ModelID: target.Model}, childWindowFor(cfg, provReg, target.Provider, target.Model),
+			baseSubagentTools(cfg), true /*allowMutating*/, mainRunner != nil, skillIdx, defaultHooks, mainRunner, mainMgr)
+		if mcpClose != nil {
+			if err := mcpClose(); err != nil {
+				cfg.diag().Log(ctx, port.LevelWarn, "automatic routed writable specialist engine inline MCP close", "agent", def.Name, "model", target.Model, "err", err)
+			}
+		}
+		cfg.diag().Log(ctx, port.LevelInfo, "agent def engine rebuilt writable on automatic routed target", "agent", def.Name, "tools", strings.Join(names, ","), "provider", target.Provider, "model", target.Model, "preloaded_skills", skillCount, "source", reg.Detail(def.Name))
+		return eng, true
+	}
+}
+
+// buildAgentWritableEngineFactory builds the ordinary writable named specialist.
+func buildAgentWritableEngineFactory(ctx context.Context, cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, reg *agents.Registry, skillIdx skillIndex, defaultHooks port.HookRunner, mainMgr *mcp.Manager) func(agentName string) (*agent.Engine, bool) {
+	mainRunner := directWriteCommandRunner(cfg)
+	return func(agentName string) (*agent.Engine, bool) {
 		agentName = strings.TrimSpace(agentName)
-		routedModel = strings.TrimSpace(routedModel)
 		if reg == nil || agentName == "" {
 			return nil, false
 		}
@@ -7990,54 +8086,17 @@ func buildAgentWritableEngineFactories(ctx context.Context, cfg Config, provReg 
 				"agent", def.Name, "server", inline.Name)
 			return nil, false
 		}
-
 		childProvider, pid, model, windowFn := resolveChildProvider(cfg, provReg, def, provider, parentProviderID, parentModel)
-		role := "task:" + def.Name + ":writable"
-		if routedModel != "" {
-			// A routed model is a bare id in the parent/session provider's namespace. The
-			// public router gate already excludes pinned and provider-switched defs; repeat
-			// those checks here so a future direct caller cannot cross providers or override
-			// expressed model intent. Unknown providers preserve resolveProviderModel's
-			// established loud fallback to the parent and are therefore still routable.
-			if strings.TrimSpace(def.Model) != "" || pid != parentProviderID {
-				return nil, false
-			}
-			childProvider = provider
-			pid = parentProviderID
-			model = routedModel
-			windowFn = childWindowFor(cfg, provReg, parentProviderID, model)
-			role += ":model=" + model
-		}
-
-		eng, mcpClose, names, _, skillCount := buildAgentDefEngine(ctx, cfg, def, role, reg.Detail(def.Name), childProvider, session.ProviderModelID{ProviderID: pid, ModelID: model}, windowFn,
+		eng, mcpClose, names, _, skillCount := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name+":writable", reg.Detail(def.Name), childProvider, session.ProviderModelID{ProviderID: pid, ModelID: model}, windowFn,
 			baseSubagentTools(cfg), true /*allowMutating*/, mainRunner != nil /*allowShell*/, skillIdx, defaultHooks, mainRunner, mainMgr)
 		if mcpClose != nil {
 			if err := mcpClose(); err != nil {
-				cfg.diag().Log(ctx, port.LevelWarn, "writable-specialist engine inline MCP close",
-					"agent", def.Name, "model", model, "err", err)
+				cfg.diag().Log(ctx, port.LevelWarn, "writable-specialist engine inline MCP close", "agent", def.Name, "model", model, "err", err)
 			}
 		}
-		cfg.diag().Log(ctx, port.LevelInfo, "agent def engine rebuilt writable",
-			"agent", def.Name, "tools", strings.Join(names, ","), "provider", pid, "model", model,
-			"preloaded_skills", skillCount, "source", reg.Detail(def.Name))
+		cfg.diag().Log(ctx, port.LevelInfo, "agent def engine rebuilt writable", "agent", def.Name, "tools", strings.Join(names, ","), "provider", pid, "model", model, "preloaded_skills", skillCount, "source", reg.Detail(def.Name))
 		return eng, true
 	}
-	return func(agentName string) (*agent.Engine, bool) {
-			return build(agentName, "")
-		}, func(agentName, model string) (*agent.Engine, bool) {
-			if strings.TrimSpace(model) == "" {
-				return nil, false
-			}
-			return build(agentName, model)
-		}
-}
-
-// buildAgentWritableEngineFactory is the ordinary writable-specialist half retained for
-// direct composition tests and callers. buildSubagentTool obtains both halves together so
-// they share the same MAIN-bound runner.
-func buildAgentWritableEngineFactory(ctx context.Context, cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, reg *agents.Registry, skillIdx skillIndex, defaultHooks port.HookRunner, mainMgr *mcp.Manager) func(agentName string) (*agent.Engine, bool) {
-	ordinary, _ := buildAgentWritableEngineFactories(ctx, cfg, provReg, provider, parentProviderID, parentModel, reg, skillIdx, defaultHooks, mainMgr)
-	return ordinary
 }
 
 func routeChildForker(cfg Config, local tool.EnvironmentForker) tool.EnvironmentForker {
@@ -8263,42 +8322,47 @@ func modelCfgFor(cfg Config, model string) Config {
 // member still resolves its model through the def-less chain. The catalog's
 // non-read-only tools (Remember/RememberUser, MCP) ride MemberBuild.MCPToolNames
 // — the supervisor's documented exemption for non-WORKSPACE mutators — so the
-// applyMemberRoute substitutes the OPT-IN model router's ALREADY-RESOLVED routedModel
-// for an UNDEFINED member's def-less default model, re-deriving the window AND
-// the prompt's per-model config through the SAME contamination-safe path the rest of
-// buildMemberEngine uses (childWindowFor / modelCfgFor) — so the member compacts/counts/
-// prompts on the routed model, never a clone-and-swap. An empty routedModel (router off,
-// miss, or zero-caps RunTeam) returns the inputs unchanged (byte-identical default). It is
-// split out of buildMemberEngine purely to keep that function under the gocyclo budget; it
-// is only ever called on the UNDEFINED branch (a defined member's def pins its own model).
-func applyMemberRoute(cfg Config, provReg *providerRegistry, parentProviderID, routedModel, model string, windowFn func() int, pc prompt.Config) (string, func() int, prompt.Config) {
-	rm := strings.TrimSpace(routedModel)
-	if rm == "" {
-		return model, windowFn, pc
-	}
-	return rm, childWindowFor(cfg, provReg, parentProviderID, rm), promptConfig(modelCfgFor(cfg, rm), cfg.gitStatus)
-}
-
 // base-sharing read-only-member backstop stays sound. `a` is read only when noFS.
 //
 //nolint:gocyclo // Member catalog shaping and its generation lease share one teardown transaction.
 func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, teamHooks port.HookRunner, reg *agents.Registry, skillIdx skillIndex, runner, mutatingRunner tool.CommandRunner, roIsolationAvailable bool, mainMgr *mcp.Manager, a catalogAssets, noFS bool) server.MemberEngineFactory {
-	cfg.operatorProfileSource, _ = a.userModelStore.(prompt.OperatorProfileSource)
+	selectorFactory := buildMemberSelectorEngine(cfg, provReg, provider, parentProviderID, parentModel, teamHooks, reg, skillIdx, runner, mutatingRunner, roIsolationAvailable, mainMgr, a, noFS)
 	return func(t *team.Team, spec agent.MemberSpec, routedModel string) agent.MemberBuild {
+		selected := agent.ResolvedModelSelector{}
+		if spec.Selector != nil {
+			selected = *spec.Selector
+		} else if strings.TrimSpace(spec.AgentType) == "" {
+			selected.Target.Model = routedModel
+		}
+		return selectorFactory(t, spec, selected)
+	}
+}
+
+//nolint:gocyclo // Member catalog shaping and its generation lease share one teardown transaction.
+func buildMemberSelectorEngine(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, teamHooks port.HookRunner, reg *agents.Registry, skillIdx skillIndex, runner, mutatingRunner tool.CommandRunner, roIsolationAvailable bool, mainMgr *mcp.Manager, a catalogAssets, noFS bool) func(*team.Team, agent.MemberSpec, agent.ResolvedModelSelector) agent.MemberBuild {
+	cfg.operatorProfileSource, _ = a.userModelStore.(prompt.OperatorProfileSource)
+	return func(t *team.Team, spec agent.MemberSpec, selected agent.ResolvedModelSelector) agent.MemberBuild {
 		generationClose, err := retainHarnessGeneration(cfg)
 		if err != nil {
 			return agent.MemberBuild{}
 		}
 		if noFS {
-			model, windowFn := resolveDefaultChildModel(cfg, provReg, parentProviderID, parentModel)
-			// OPT-IN model router: an undefined member the supervisor classified
-			// runs on the ALREADY-RESOLVED routed model with its re-derived window, through
-			// the SAME contamination-safe newChildEngineForProvider path the default uses.
-			// (The no-FS member is always undefined here — agent-def adoption is skipped on
-			// this branch — so any routedModel applies.) Empty routedModel = the default model.
-			if rm := strings.TrimSpace(routedModel); rm != "" {
-				model = rm
-				windowFn = childWindowFor(cfg, provReg, parentProviderID, rm)
+			childProvider, childProviderID, model, windowFn := resolveChildProvider(cfg, provReg, agents.AgentDef{}, provider, parentProviderID, parentModel)
+			if selectedModel := strings.TrimSpace(selected.Target.Model); selectedModel != "" {
+				model = selectedModel
+				selectedProvider := strings.TrimSpace(selected.Target.Provider)
+				if selectedProvider == "" {
+					selectedProvider = strings.TrimSpace(selected.ActualProvider)
+				}
+				if selectedProvider != "" && selectedProvider != childProviderID {
+					entry, ok := provReg.Lookup(selectedProvider)
+					if !ok {
+						_ = generationClose()
+						return agent.MemberBuild{}
+					}
+					childProvider, childProviderID = entry.provider, selectedProvider
+				}
+				windowFn = childWindowFor(cfg, provReg, childProviderID, model)
 			}
 			classified := newNoFSClassifiedChildCatalog(context.Background(), cfg, a)
 			cat := classified.catalog
@@ -8313,8 +8377,8 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 			}
 			mustValidateClassifiedCatalog(classified, "no-FS team member tool catalog")
 			pc := applyNoFSPosture(promptConfig(modelCfgFor(cfg, model), ""), noFSMemberNote)
-			eng := newChildEngineForProvider(cfg, "member:"+spec.Name, provider, session.ProviderModelID{ProviderID: parentProviderID, ModelID: model}, windowFn, cat, pc, nil)
-			return agent.MemberBuild{Engine: eng, Close: generationClose, MCPToolNames: exempt}
+			eng := newChildEngineForProvider(cfg, "member:"+spec.Name, childProvider, session.ProviderModelID{ProviderID: childProviderID, ModelID: model}, windowFn, cat, pc, nil)
+			return agent.MemberBuild{Engine: eng, Provider: childProviderID, Close: generationClose, MCPToolNames: exempt}
 		}
 		classified := newClassifiedCatalog()
 		cat := classified.catalog
@@ -8325,18 +8389,18 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 		// LEAD INCLUDED (a lead-strong/member-cheap split is deferred — a lead that
 		// must stay on the strong model can pin it via an agent def today). A
 		// DEFINED member overrides all of this via resolveChildProvider below.
-		defaultModel, defaultWindowFn := resolveDefaultChildModel(cfg, provReg, parentProviderID, parentModel)
+		defaultProvider, defaultProviderID, defaultModel, defaultWindowFn := resolveChildProvider(cfg, provReg, agents.AgentDef{}, provider, parentProviderID, parentModel)
 		var (
 			// Default (undefined) member: inherit the parent provider + the resolved
 			// def-less model the call site supplied (the build-time default, or a
 			// session-selected provider in Half B). A DEFINED member overrides these
 			// via resolveProviderModel below.
-			model         = defaultModel
-			pc            = promptConfig(modelCfgFor(cfg, defaultModel), cfg.gitStatus)
-			childProvider = provider
-			providerID    = parentProviderID
-			windowFn      = defaultWindowFn
-			mode          session.PermissionMode
+			model           = defaultModel
+			pc              = promptConfig(modelCfgFor(cfg, defaultModel), cfg.gitStatus)
+			childProvider   = defaultProvider
+			childProviderID = defaultProviderID
+			windowFn        = defaultWindowFn
+			mode            session.PermissionMode
 			// memberLimits carries ONLY the def-set per-round stop conditions (zero =
 			// unset); AddMember per-field merges them onto the team default (s.limits).
 			memberLimits session.Limits
@@ -8428,15 +8492,22 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 			// Resolve the def's (provider, model, window) via the SHARED helper: a
 			// pinned-and-known provider switches the member engine; a def pinning none
 			// inherits the parent. resolve ONCE; thread the model into agentPromptConfig.
-			childProvider, providerID, model, windowFn = resolveChildProvider(cfg, provReg, def, provider, parentProviderID, parentModel)
+			childProvider, childProviderID, model, windowFn = resolveChildProvider(cfg, provReg, def, provider, parentProviderID, parentModel)
+			if selectedModel := strings.TrimSpace(selected.Target.Model); selectedModel != "" {
+				model = selectedModel
+				windowFn = childWindowFor(cfg, provReg, childProviderID, model)
+			}
 			bodies, missing := preloadedSkillBodies(def, skillIdx)
 			for _, name := range missing {
 				cfg.diag().Log(context.Background(), port.LevelWarn, "team member agent def references an unknown skill; not preloaded",
 					"member", spec.Name, "agent", def.Name, "skill", name, "source", reg.Detail(def.Name))
 			}
 			// Persistent per-agent memory (issue #33): the team-member path shares the
-			// SAME agentPromptConfig seam, so a memory-bearing def injects its head here too.
-			memHead, _ := resolveAgentMemoryHead(cfg, def)
+			// SAME agentPromptConfig seam, so a memory-bearing def injects its head here
+			// too. A team member has no placement of its own distinct from its parent's,
+			// so "project" tier binds to cfg.Workspace, unchanged (resolveAgentMemoryHead's
+			// sessionRoot docs).
+			memHead, _ := resolveAgentMemoryHead(cfg, def, cfg.Workspace)
 			pc = agentPromptConfig(cfg, def, model, memHead, bodies...)
 			mode = resolvePermissionMode(cfg.diag(), def)
 			// A def's `hooks:` scope lifecycle hooks to this member's engine. A def that
@@ -8465,9 +8536,25 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 			// member, so run it on the ALREADY-RESOLVED routed model in place of the
 			// def-less default (a DEFINED member never reaches here — its def pinned the
 			// model via resolveChildProvider above). applyMemberRoute is a no-op on an empty
-			// routedModel (router off, miss, or zero-caps RunTeam), so the default
+			// selection (router off, miss, or zero-caps RunTeam), so the default
 			// keeps the member's own model.
-			model, windowFn, pc = applyMemberRoute(cfg, provReg, parentProviderID, routedModel, model, windowFn, pc)
+			if selectedModel := strings.TrimSpace(selected.Target.Model); selectedModel != "" {
+				model = selectedModel
+				selectedProvider := strings.TrimSpace(selected.Target.Provider)
+				if selectedProvider == "" {
+					selectedProvider = strings.TrimSpace(selected.ActualProvider)
+				}
+				if selectedProvider != "" && selectedProvider != childProviderID {
+					entry, ok := provReg.Lookup(selectedProvider)
+					if !ok {
+						_ = generationClose()
+						return agent.MemberBuild{}
+					}
+					childProvider, childProviderID = entry.provider, selectedProvider
+				}
+				windowFn = childWindowFor(cfg, provReg, childProviderID, model)
+				pc = promptConfig(modelCfgFor(cfg, model), cfg.gitStatus)
+			}
 		}
 
 		// Team coordination tools ALWAYS, in both branches: they bypass the def
@@ -8485,7 +8572,7 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 		// compacts/counts on its own model (contamination fix); an inherited-default
 		// member now resolves the parent model's REAL window via childWindowFor too
 		// (issue #64), flooring to 128k only for a genuinely uncatalogued model.
-		eng := newChildEngineForProvider(cfg, "member:"+spec.Name, childProvider, session.ProviderModelID{ProviderID: providerID, ModelID: model}, windowFn, cat, pc, memberHooks)
+		eng := newChildEngineForProvider(cfg, "member:"+spec.Name, childProvider, session.ProviderModelID{ProviderID: childProviderID, ModelID: model}, windowFn, cat, pc, memberHooks)
 		memberClose := sync.OnceValue(func() error {
 			var mcpErr, generationErr error
 			if mcpClose != nil {
@@ -8496,7 +8583,7 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 			}
 			return errors.Join(mcpErr, generationErr)
 		})
-		return agent.MemberBuild{Engine: eng, Mode: mode, Limits: memberLimits, Close: memberClose, MCPToolNames: mcpNames, IsolateReadOnly: isolateReadOnly}
+		return agent.MemberBuild{Engine: eng, Provider: childProviderID, Mode: mode, Limits: memberLimits, Close: memberClose, MCPToolNames: mcpNames, IsolateReadOnly: isolateReadOnly}
 	}
 }
 
@@ -8654,18 +8741,25 @@ func applyRedisWorkspacePosture(pc prompt.Config, enabled bool) prompt.Config {
 
 const workspaceRootForPrompt = "/workspace"
 
-const remoteExecutionPostureNote = "This session uses a persistent remote Kubernetes workspace. Use the filesystem tools and foreground Shell for work in /workspace. Local project instructions, rules, project-scoped skills and commands, schedules, SkillDraft, Parallel, Team, and Subagent delegation are unavailable; explicitly selected independent commands, operator-global skills, MCP, memory, and web tools remain available. Never assume harness-local files are part of this workspace."
+const remoteExecutionPostureNote = "This session uses a persistent remote Kubernetes workspace. Use the filesystem tools and foreground Shell for work in /workspace. Local project instructions, rules, project-scoped skills and commands, SkillDraft, Parallel, Team, and Subagent delegation are unavailable; in-chat schedules may borrow this session's exact workspace for future fires, but independent scheduled workspace allocation is unsupported and a fire fails if the workspace is busy; explicitly selected independent commands, operator-global skills, MCP, memory, and web tools remain available. Never assume harness-local files are part of this workspace."
 
 func applyRemoteExecutionPosture(deps agent.Deps, enabled bool) agent.Deps {
 	if !enabled {
 		return deps
 	}
 	pc := &deps.PromptConfig
-	pc.Env.Cwd, pc.Env.Shell, pc.Env.GitStatus = workspaceRootForPrompt, "remote foreground shell", ""
+	pc.Env.Cwd, pc.Env.Shell, pc.Env.GitStatus = workspaceRootForPrompt, "", ""
 	if pc.Role == "" {
 		pc.Role = prompt.DefaultRole()
 	}
-	pc.Role += "\n\n" + remoteExecutionPostureNote
+	if deps.Catalog != nil {
+		if _, ok := deps.Catalog.Lookup(tool.ShellToolName); ok {
+			pc.Env.Shell = "remote foreground shell"
+			pc.Role += "\n\n" + remoteExecutionPostureNote
+			return deps
+		}
+	}
+	pc.Role += "\n\n" + strings.Replace(remoteExecutionPostureNote, "filesystem tools and foreground Shell", "filesystem tools (no built-in Shell is registered)", 1)
 	return deps
 }
 
@@ -8713,7 +8807,7 @@ func applyPlanModePosture(pc prompt.Config, mode session.PermissionMode) prompt.
 	return pc
 }
 
-const agentModelDiscoveryPostureNote = "You have a DiscoverModels tool for bounded inspection of the currently resolved model inventory. When the provider is unknown, call DiscoverModels without provider_id; omission searches all selectable providers, and the unfiltered result lists their exact selectable provider IDs. Only use a returned exact (provider_id, model_id) pair with an existing surface that explicitly accepts both, or return it to the caller for selection. DiscoverModels itself cannot switch the session."
+const agentModelDiscoveryPostureNote = "Use DiscoverModels before making a justified explicit choice of delegation provider or model. Omit delegation provider and model selectors by default so inherited/default selection and automatic routing apply; set them only when the user requests a selection or a concrete task capability justifies it. Use returned exact provider/model pairs only with delegation surfaces that explicitly accept both. model-router rows are delegation categories rather than session-selection targets. DiscoverModels is read-only and cannot switch the current session."
 
 func applyAgentModelDiscoveryPosture(pc prompt.Config, catalog *tool.Catalog) prompt.Config {
 	if catalog == nil {
@@ -9122,6 +9216,42 @@ func promptConfig(cfg Config, gitStatus string) prompt.Config {
 		pc.Role = prompt.DefaultRole() + "\n\n" + d
 	}
 	return pc
+}
+
+// foldOperatorWebSearch applies operator settings before the shared search backend
+// is constructed. A nonempty explicit URL outranks settings.enabled; an empty
+// URL does not. CLI request-shape flags win independently on the generic tier.
+func foldOperatorWebSearch(cfg Config) Config {
+	res, ok := cfg.permResolver.(*permconfig.Resolver)
+	if !ok || res == nil || cfg.WebSearchOff {
+		return cfg
+	}
+	settings := res.OperatorWebSearch()
+	if settings == nil {
+		return cfg
+	}
+	if strings.TrimSpace(cfg.WebSearchURL) == "" {
+		if settings.Enabled != nil && !*settings.Enabled {
+			cfg.WebSearchOff = true
+			cfg.webSearchDisabledFromSettings = true
+			return cfg
+		}
+		if strings.TrimSpace(settings.URL) != "" {
+			cfg.WebSearchURL = settings.URL
+			cfg.webSearchURLFromSettings = true
+		}
+	}
+	if !cfg.WebSearchAuthHeaderFlagSet && cfg.WebSearchAuthHeader == "" {
+		cfg.WebSearchAuthHeader = settings.AuthHeader
+	}
+	if !cfg.WebSearchQueryParamFlagSet && cfg.WebSearchQueryParam == "" {
+		cfg.WebSearchQueryParam = settings.QueryParam
+	}
+	if settings.Searxng != nil && strings.TrimSpace(settings.Searxng.URL) != "" {
+		cfg.SearXNGURL = settings.Searxng.URL
+		cfg.searxngURLFromSettings = true
+	}
+	return cfg
 }
 
 // foldOperatorCommitCoauthor carries the already-resolved OPERATOR-TIER

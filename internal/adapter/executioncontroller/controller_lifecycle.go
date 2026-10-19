@@ -177,8 +177,7 @@ func (r *Reconciler) prepareReplacement(ctx context.Context, env *unstructured.U
 }
 
 func (r *Reconciler) replacementProfile(env *unstructured.Unstructured) (resolvedProfile, bool) {
-	profile, ok := r.profiles.get(textNested(env.Object, "spec", "profile"))
-	return profile, ok && profile.Digest == textNested(env.Object, "spec", "profileDigest")
+	return r.profiles.forEnvironment(env)
 }
 
 func (r *Reconciler) finishReplacement(ctx context.Context, env *unstructured.Unstructured, operationID string) error {
@@ -249,7 +248,7 @@ func (r *Reconciler) reconcileRetainedDelete(ctx context.Context, env *unstructu
 	if current.GetUID() != env.GetUID() || !found || text(currentOp, "id") != text(op, "id") || text(currentOp, "type") != text(op, "type") || text(currentOp, "phase") != "ReleasingSlot" || !runtimeObservationMatches(current, env) {
 		return lifecycleConflict()
 	}
-	if err := releaseProfileSlot(ctx, r.kube, r.namespace, textNested(current.Object, "spec", "profile"), current.GetName()); err != nil {
+	if err := releaseProfileSlot(ctx, r.kube, r.namespace, textNested(current.Object, "spec", "templateID"), current.GetName()); err != nil {
 		return err
 	}
 	current.SetFinalizers(withoutString(current.GetFinalizers(), environmentFinalizer))

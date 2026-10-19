@@ -36,7 +36,7 @@ import (
 // knownAuthProviders is the closed set of provider names an auth.yaml entry
 // may use — passed into authfile.Load so that package stays agnostic of which
 // providers mecatl specifically knows about.
-var knownAuthProviders = []string{"anthropic", "openai", "openrouter", "opencode", "openai-codex"}
+var knownAuthProviders = []string{"anthropic", "openai", "openrouter", "opencode", "openai-codex", "brave", "exa", "websearch"}
 
 // Provider credential / base-URL environment variables. These are the SECRET-shaped
 // inputs the cmd layer reads on the operator's behalf (the registry also auto-detects
@@ -48,6 +48,9 @@ const (
 	envAnthropicKey  = "ANTHROPIC_API_KEY"
 	envOpenCodeKey   = "OPENCODE_API_KEY"
 	envTypesafeKey   = "TYPESAFE_API_KEY"
+	envExaKey        = "EXA_API_KEY"
+	envBraveKey      = "BRAVE_API_KEY"
+	envWebSearchKey  = "WEBSEARCH_API_KEY"
 )
 
 // ProviderFlagHelp carries the per-main help text for the three provider base-URL
@@ -115,7 +118,7 @@ func RegisterProviderFlags(fs *flag.FlagSet, help ProviderFlagHelp) *ProviderFla
 	return pf
 }
 
-// Apply is the compatibility wrapper that resolves the four API-key credentials
+// Apply is the compatibility wrapper that resolves API-key credentials
 // plus the file-only Codex credential, then projects the resulting snapshot.
 // Production roots instead call Resolve once and ApplyResolved wherever the
 // resulting app.Config is assembled. A non-empty AuthFileWarning is safe for a
@@ -157,6 +160,9 @@ func (pf *ProviderFlags) resolve(env xdgconfig.ResolveEnv, now time.Time) Resolv
 	keys.OpenRouter = cmp.Or(keys.OpenRouter, af.APIKey("openrouter"))
 	keys.Anthropic = cmp.Or(keys.Anthropic, af.APIKey("anthropic"))
 	keys.OpenCode = cmp.Or(keys.OpenCode, af.APIKey("opencode"))
+	keys.Exa = cmp.Or(keys.Exa, af.APIKey("exa"))
+	keys.Brave = cmp.Or(keys.Brave, af.APIKey("brave"))
+	keys.WebSearch = cmp.Or(keys.WebSearch, af.APIKey("websearch"))
 	loadCodexCredential(&keys, af, path, now)
 	return keys
 }
@@ -228,6 +234,9 @@ func ResolveProviderCredentials(pf *ProviderFlags, definitions permconfig.Provid
 	keys.OpenRouter = cmp.Or(keys.OpenRouter, file.APIKey("openrouter"))
 	keys.Anthropic = cmp.Or(keys.Anthropic, file.APIKey("anthropic"))
 	keys.OpenCode = cmp.Or(keys.OpenCode, file.APIKey("opencode"))
+	keys.Exa = cmp.Or(keys.Exa, file.APIKey("exa"))
+	keys.Brave = cmp.Or(keys.Brave, file.APIKey("brave"))
+	keys.WebSearch = cmp.Or(keys.WebSearch, file.APIKey("websearch"))
 	loadCodexCredential(&keys, file, path, time.Now())
 	keys.customAPIKeys = make(map[string]string, len(definitions))
 	keys.customMethods = make(map[string]string, len(definitions))
@@ -286,6 +295,9 @@ func (*ProviderFlags) applyResolvedAPIKeys(cfg *app.Config, keys ResolvedCredent
 	cfg.AnthropicKey = keys.Anthropic
 	cfg.OpenCodeKey = keys.OpenCode
 	cfg.TypesafeAPIKey = keys.Typesafe
+	cfg.ExaAPIKey = keys.Exa
+	cfg.BraveAPIKey = keys.Brave
+	cfg.WebSearchAPIKey = keys.WebSearch
 }
 
 // EndpointOverrides returns the non-secret CLI endpoint overrides. Command roots
@@ -321,11 +333,14 @@ func readProviderKeys(getenv func(string) string) ResolvedCredentials {
 		Anthropic:  getenv(envAnthropicKey),
 		OpenCode:   getenv(envOpenCodeKey),
 		Typesafe:   getenv(envTypesafeKey),
+		Exa:        getenv(envExaKey),
+		Brave:      getenv(envBraveKey),
+		WebSearch:  getenv(envWebSearchKey),
 	}
 }
 
 // ResolvedCredentials is the immutable-by-value snapshot resolved from the
-// environment and auth.yaml. The four API-key fields are SECRET-shaped: callers
+// environment and auth.yaml. API-key fields are SECRET-shaped: callers
 // must not log or print them.
 type ResolvedCredentials struct {
 	OpenAI     string
@@ -333,6 +348,9 @@ type ResolvedCredentials struct {
 	Anthropic  string
 	OpenCode   string
 	Typesafe   string
+	Exa        string
+	Brave      string
+	WebSearch  string
 	// OpenAICodex is a distinct billing identity from OpenAIKey. Its fields are
 	// immutable outside the provider adjunct and it is populated only after
 	// startup validation of a file-backed manual token.
@@ -535,6 +553,43 @@ func (m *KeyValueList) AsMap() map[string]string {
 	return map[string]string(*m)
 }
 
+// ModelAliasTargets combines the completed same-tier CLI maps. Provider-only
+// entries are retained with an empty model so app.Build can reject them after
+// all arguments have been parsed, independent of argument order.
+func ModelAliasTargets(models, providers *KeyValueList) app.ModelAliases {
+	if models == nil && providers == nil {
+		return nil
+	}
+	out := make(app.ModelAliases, len(models.AsMap())+len(providers.AsMap()))
+	for name, model := range models.AsMap() {
+		out[name] = app.ModelTarget{Model: model}
+	}
+	for name, provider := range providers.AsMap() {
+		target := out[name]
+		target.ProviderID = provider
+		out[name] = target
+	}
+	return out
+}
+
+// ScalarModelAliases retains the legacy scalar map for consumers not yet
+// converted to provider-aware targets. Entries with same-tier provider intent
+// are excluded so no consumer can silently discard that provider.
+func ScalarModelAliases(models, providers *KeyValueList) map[string]string {
+	modelMap := models.AsMap()
+	if modelMap == nil {
+		return nil
+	}
+	out := make(map[string]string, len(modelMap))
+	for name, model := range modelMap {
+		out[name] = model
+	}
+	for name := range providers.AsMap() {
+		delete(out, name)
+	}
+	return out
+}
+
 // ModelFlagHelp carries the per-main help text for the two repeatable model
 // flags --model-alias and --model-slot. The two mains word these slightly
 // differently (mecatui prefixes "embedded server only:"), so the help is passed
@@ -542,16 +597,18 @@ func (m *KeyValueList) AsMap() map[string]string {
 // the extraction. A zero ModelFlagHelp falls back to DefaultModelFlagHelp (the
 // mecated wording), which is what a new consumer (mecatequi) would use.
 type ModelFlagHelp struct {
-	ModelAlias string
-	ModelSlot  string
+	ModelAlias         string
+	ModelAliasProvider string
+	ModelSlot          string
 }
 
 // DefaultModelFlagHelp is the mecated-style wording, used when a field of the
 // passed ModelFlagHelp is empty. It mirrors the help text the mecated twin
 // carried before the extraction.
 var DefaultModelFlagHelp = ModelFlagHelp{
-	ModelAlias: "model alias mapping as name=model-id. Repeatable; for example, --model-alias fast=gpt-4o-mini. Agent definitions can use these aliases in their `model` field.",
-	ModelSlot:  "model binding as slot=selector. Repeatable; for example, --model-slot compaction=cheap. Slots `compaction`, `ask-reviewer`, and `guardrail` select models for those operations. The selector is a --model-alias or model identifier. An invalid selector uses the session model. `ask-reviewer` and `guardrail` slots do not enable those features.",
+	ModelAlias:         "model alias mapping as name=model-id. Repeatable; for example, --model-alias fast=gpt-4o-mini. Agent definitions can use these aliases in their `model` field.",
+	ModelAliasProvider: "provider for a same-tier --model-alias as name=provider-id. Repeatable; an entry without a matching --model-alias is invalid.",
+	ModelSlot:          "model binding as slot=selector. Repeatable; for example, --model-slot compaction=cheap. Slots `compaction`, `ask-reviewer`, and `guardrail` select models for those operations. The selector is a --model-alias or model identifier. An invalid selector uses the session model. `ask-reviewer` and `guardrail` slots do not enable those features.",
 }
 
 // RegisterModelFlags registers --model-alias / --model-slot on fs, each bound
@@ -561,18 +618,23 @@ var DefaultModelFlagHelp = ModelFlagHelp{
 // value (or override only the fields it words differently). It is the ONE place
 // the two repeatable model flags are wired, so the two mains (and a future
 // mecatequi consumer) cannot drift apart.
-func RegisterModelFlags(fs *flag.FlagSet, help ModelFlagHelp) (aliases, slots *KeyValueList) {
+func RegisterModelFlags(fs *flag.FlagSet, help ModelFlagHelp) (aliases, aliasProviders, slots *KeyValueList) {
 	help = help.withModelDefaults()
 	aliases = new(KeyValueList)
+	aliasProviders = new(KeyValueList)
 	slots = new(KeyValueList)
 	fs.Var(aliases, "model-alias", help.ModelAlias)
+	fs.Var(aliasProviders, "model-alias-provider", help.ModelAliasProvider)
 	fs.Var(slots, "model-slot", help.ModelSlot)
-	return aliases, slots
+	return aliases, aliasProviders, slots
 }
 
 func (h ModelFlagHelp) withModelDefaults() ModelFlagHelp {
 	if h.ModelAlias == "" {
 		h.ModelAlias = DefaultModelFlagHelp.ModelAlias
+	}
+	if h.ModelAliasProvider == "" {
+		h.ModelAliasProvider = DefaultModelFlagHelp.ModelAliasProvider
 	}
 	if h.ModelSlot == "" {
 		h.ModelSlot = DefaultModelFlagHelp.ModelSlot

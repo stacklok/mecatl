@@ -15,13 +15,12 @@ executable. Add `status_customization` to
 embedded and connected sessions. Project files, remote servers, prompts, and
 sessions cannot change it.
 
-With no `status_customization:` entry, `mecatui` uses its shipped responsive
-templates. The header includes the active session title at every width and the
-remote target in its full variant. Keyboard help, the header
-posture/scroll/changed-file indicators, and the footer activity lane remain part
-of the client interface; customization cannot remove them. In a debug session,
-the header also keeps a `⚠ DEBUG target` cue ahead of generated content and a
-privacy disclosure below it, even if a custom header is empty.
+With no `status_customization:` entry, `mecatui` uses its shipped templates.
+The header includes the session title at every width and the connected remote
+target in its full variant. Customization cannot remove keyboard help, the
+posture, scroll, and changed-file indicators, or the activity cue. In a debug
+session, it cannot remove the `⚠ DEBUG target` cue or privacy disclosure, even
+if the custom header is empty.
 
 ## Choose a source
 
@@ -67,7 +66,9 @@ sequences, or links. Use StatusML tags in the template itself.
 Template fields have the same shape as the command JSON below. `Clock.Now` is a
 time value and supports `{{.Clock.Now.Format "15:04"}}`. The `Human` members are
 preformatted display values; use each `Raw` member when a template needs an
-exact count.
+exact count. For example, `<header><text>{{.Model.ProviderLabel}}</text></header>`
+shows the provider-qualified model identity; use `.Model.FriendlyName` when a
+human-readable catalog name is preferable.
 
 ### Common template functions
 
@@ -125,14 +126,17 @@ refreshes it.
 
 |JSON path|Type|Meaning|
 |-|-|-|
-|`Version`|integer|Status input protocol version (currently `4`).|
+|`Version`|integer|Status input protocol version (currently `5`).|
 |`Server.DisplayTarget`|string|Credential-free target shown by the client.|
 |`Server.ConnectionMode`|string|`embedded`, `connect`, or empty while unknown.|
 |`Session.Title`|string|Optional display title.|
 |`Session.Handle`|string|Short displayed session ID, available to custom status and terminal-title templates. Use `/session` to copy the full ID.|
 |`Session.Mode`|string|Active or pending permission mode used by the shipped header.|
 |`Session.ReasoningEffort`|string|`low`, `medium`, `high`, `xhigh`, `max`, or empty.|
-|`Model.ProviderID`, `Model.ID`, `Model.DisplayName`, `Model.Route`|strings|Provider/model routing identifiers, display label, and observed downstream route.|
+|`Model.ProviderID`, `Model.ID`|strings|Exact provider and model routing identifiers for the resolved session.|
+|`Model.ProviderLabel`|string|Provider-qualified identity (`provider-id/model-id`), or the raw model ID if provider evidence is unavailable. Slashes in the model ID are retained.|
+|`Model.FriendlyName`|string|Human-readable catalog name, falling back to the raw model ID. This is a display name, not the provider-qualified identity.|
+|`Model.Route`|string|Observed downstream route, separate from model identity.|
 |`Model.ContextWindow.{Raw,Human}`|integer, string|Resolved context capacity as exact and display-ready values.|
 |`Usage.{Input,Output,CacheRead,CacheWrite}.{Raw,Human}`|integer, string|Cumulative exact and display-ready token atoms. `CacheRead` is a subset of input.|
 |`Usage.CacheReadPercent`|integer|`CacheRead.Raw / Input.Raw` as an integer percentage, or `0` when input is zero.|

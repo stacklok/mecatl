@@ -144,8 +144,9 @@ assert_if user-docs hasnot "docs_only"
 # The Mecatl Studio job gates on studio_relevant OR go_relevant (plus the
 # docs_only guard — an apps/README.md-only change is docs-only and needs no Node
 # run): its integration suite drives the BFF against the current bin/mecated,
-# so a daemon change can break it. Studio consumes the PUBLISHED SDK, so it must
-# NOT be tied to sdk relevance.
+# so a daemon change can break it. Studio builds the checked-out SDK, but
+# studio_relevant already covers sdk/typescript/*, so the job needs no separate
+# sdk_relevant term.
 assert_if studio has "needs.changes.outputs.studio_relevant == 'true' || needs.changes.outputs.go_relevant == 'true'"
 assert_if studio has "needs.changes.outputs.docs_only != 'true'"
 assert_if studio hasnot "sdk_relevant"

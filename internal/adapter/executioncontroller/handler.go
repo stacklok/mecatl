@@ -5,8 +5,6 @@ package executioncontroller
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
@@ -33,21 +31,12 @@ import (
 type ClientPolicy struct {
 	MayAttestOwner, Administrator bool
 	AdministratorFor              []string
+	ExecutionTemplates            []string
 }
 
-// GrantSigner configures short-lived environment grant issuance.
-type GrantSigner struct {
-	KeyID            string
-	PrivateKey       ed25519.PrivateKey
-	Issuer, Audience string
-	Lifetime         time.Duration
-}
-
-// HandlerConfig configures authentication and capability grants.
+// HandlerConfig configures authenticated client policy.
 type HandlerConfig struct {
 	Clients     map[string]ClientPolicy
-	Signer      GrantSigner
-	Verifier    executionenv.GrantVerifier
 	Ready       func() bool
 	Security    *SecurityManager
 	Diagnostics port.Diagnostics
@@ -71,8 +60,6 @@ type Allocation struct {
 
 // Backend implements provider-side authorization state and executor dispatch.
 type Backend interface {
-	ValidateProfile(context.Context, string) (Profile, error)
-	Ensure(context.Context, string, string, string, string, string) (Allocation, error)
 	Attach(context.Context, executionenv.EnvironmentRef, string, string, string) (Allocation, error)
 	ReleaseReference(context.Context, executionenv.EnvironmentRef, string, string, string) error
 	File(context.Context, string, string, executionenv.FileRequest) (executionenv.FileResponse, error)
@@ -86,7 +73,6 @@ type runClaimValidator interface {
 }
 
 type lifecycleBackend interface {
-	EnsurePending(context.Context, string, string, string, string, string, string) (Allocation, error)
 	AcquireRun(context.Context, executionenv.EnvironmentRef, string, string, string, string, string, time.Duration) (executionenv.RunClaim, error)
 	RenewRun(context.Context, executionenv.EnvironmentRef, string, string, executionenv.RunClaimRequest) (executionenv.RunClaim, error)
 	ReleaseRun(context.Context, executionenv.EnvironmentRef, string, string, executionenv.RunClaimRequest) error
@@ -101,7 +87,6 @@ type lifecycleBackend interface {
 }
 
 type ownerIntentBackend interface {
-	EnsurePendingOwned(context.Context, string, string, executionenv.Owner, string, string, string, string) (Allocation, error)
 	ListReferenceIntentsForClient(context.Context, string, int) ([]executionenv.ReferenceIntent, error)
 }
 
@@ -190,50 +175,7 @@ func (h *Handler) lifecycle() (lifecycleBackend, error) {
 	return h.lifecycleBackend, nil
 }
 
-// ValidateProfile validates one operator-defined execution profile.
-func (h *Handler) ValidateProfile(ctx context.Context, q *executionv1.ValidateProfileRequest) (*executionv1.ValidateProfileResponse, error) {
-	if _, err := h.client(ctx); err != nil {
-		return nil, err
-	}
-	if q == nil || q.Profile == "" || len(q.Profile) > 63 {
-		return nil, wireError(executionenv.CodeInvalidArgument, false)
-	}
-	p, err := h.backend.ValidateProfile(ctx, q.Profile)
-	if err != nil {
-		return nil, backendError(err)
-	}
-	return &executionv1.ValidateProfileResponse{Profile: valid(p.Name), Digest: valid(p.Digest), Capabilities: validAll(p.Capabilities), MaxFileBytes: p.MaxFileBytes, MaxCommandBytes: p.MaxCommandBytes, MaxCommandDurationMillis: p.MaxCommandDuration.Milliseconds()}, nil
-}
-
-// EnsureEnvironment idempotently resolves or allocates an environment.
-func (h *Handler) EnsureEnvironment(ctx context.Context, q *executionv1.EnsureEnvironmentRequest) (*executionv1.EnsureEnvironmentResponse, error) {
-	c, err := h.client(ctx)
-	if err != nil {
-		return nil, err
-	}
-	owner, ok := ownerFromProto(q.GetOwner())
-	if q == nil || !c.policy.MayAttestOwner || !ok || q.BindingId == "" || len(q.BindingId) > executionenv.MaxBindingBytes || q.Profile == "" || len(q.Profile) > 63 || !validOperationID(q.OperationId) {
-		return nil, wireError(executionenv.CodePermissionDenied, false)
-	}
-	oh := ownerHash(owner)
-	lifecycle, lifecycleErr := h.lifecycle()
-	if lifecycleErr != nil {
-		return nil, lifecycleErr
-	}
-	fp := fingerprint(c.id, oh, q.BindingId, q.Profile)
-	var a Allocation
-	if owned, ok := h.backend.(ownerIntentBackend); ok {
-		a, err = owned.EnsurePendingOwned(ctx, c.id, oh, owner, q.BindingId, q.Profile, fp, q.OperationId)
-	} else {
-		a, err = lifecycle.EnsurePending(ctx, c.id, oh, q.BindingId, q.Profile, fp, q.OperationId)
-	}
-	if err != nil {
-		return nil, backendError(err)
-	}
-	return ensureResponse(a, "", time.Time{}), nil
-}
-
-// AttachEnvironment exactly reattaches and refreshes a short-lived grant.
+// AttachEnvironment exactly reattaches to a durable reference.
 func (h *Handler) AttachEnvironment(ctx context.Context, q *executionv1.AttachEnvironmentRequest) (*executionv1.AttachEnvironmentResponse, error) {
 	c, err := h.client(ctx)
 	if err != nil {
@@ -248,10 +190,10 @@ func (h *Handler) AttachEnvironment(ctx context.Context, q *executionv1.AttachEn
 	if err != nil {
 		return nil, backendError(err)
 	}
-	return attachResponse(a, "", time.Time{}), nil
+	return attachResponse(a), nil
 }
 
-// AcquireRun takes environment-wide execution ownership and issues a run-bound grant.
+// AcquireRun takes environment-wide execution ownership.
 func (h *Handler) AcquireRun(ctx context.Context, q *executionv1.AcquireRunRequest) (*executionv1.RunClaimResponse, error) {
 	c, err := h.client(ctx)
 	if err != nil {
@@ -270,7 +212,7 @@ func (h *Handler) AcquireRun(ctx context.Context, q *executionv1.AcquireRunReque
 	if err != nil {
 		return nil, backendError(err)
 	}
-	return h.runClaimResponse(ctx, claim, c.id, ownerHash(owner))
+	return runClaimResponse(claim), nil
 }
 
 func (h *Handler) RenewRun(ctx context.Context, q *executionv1.RenewRunRequest) (*executionv1.RunClaimResponse, error) {
@@ -286,7 +228,7 @@ func (h *Handler) RenewRun(ctx context.Context, q *executionv1.RenewRunRequest) 
 	if backendErr != nil {
 		return nil, backendError(backendErr)
 	}
-	return h.runClaimResponse(ctx, claim, c.id, owner)
+	return runClaimResponse(claim), nil
 }
 
 func (h *Handler) ReleaseRun(ctx context.Context, q *executionv1.ReleaseRunRequest) (*emptypb.Empty, error) {
@@ -317,15 +259,8 @@ func (h *Handler) runClaimRequest(ctx context.Context, pRef *executionv1.Environ
 	return c, ownerHash(owner), executionenv.RunClaimRequest{Environment: ref, Owner: owner, BindingID: binding, RunID: runID, ClaimID: claimID, Epoch: epoch, GrantGeneration: generation, OperationID: operationID, TTL: time.Duration(ttlMillis) * time.Millisecond}, nil
 }
 
-func (h *Handler) runClaimResponse(ctx context.Context, claim executionenv.RunClaim, client, owner string) (*executionv1.RunClaimResponse, error) {
-	grant, expiry, err := h.signClaim(ctx, claim, client, owner)
-	if err != nil {
-		if errors.Is(err, errAuthorityUnavailable) {
-			return nil, securityAuthorizationError(err)
-		}
-		return nil, wireError(executionenv.CodeInternal, false)
-	}
-	return &executionv1.RunClaimResponse{Environment: refToProto(claim.Environment), BindingId: valid(claim.BindingID), RunId: valid(claim.RunID), ClaimId: valid(claim.ClaimID), Epoch: claim.Epoch, GrantGeneration: claim.GrantGeneration, Grant: valid(grant), ExpiresAt: timestamppb.New(expiry)}, nil
+func runClaimResponse(claim executionenv.RunClaim) *executionv1.RunClaimResponse {
+	return &executionv1.RunClaimResponse{Environment: refToProto(claim.Environment), BindingId: valid(claim.BindingID), RunId: valid(claim.RunID), ClaimId: valid(claim.ClaimID), Epoch: claim.Epoch, GrantGeneration: claim.GrantGeneration, ExpiresAt: timestamppb.New(claim.ExpiresAt)}
 }
 
 func (h *Handler) referenceRequest(ctx context.Context, q *executionv1.ReferenceMutationRequest) (authenticatedClient, string, executionenv.EnvironmentRef, string, string, error) {
@@ -456,11 +391,17 @@ func (h *Handler) ListReferenceIntents(ctx context.Context, q *executionv1.ListR
 
 // ReleaseReference releases one authorized durable binding reference.
 func (h *Handler) ReleaseReference(ctx context.Context, q *executionv1.ReleaseReferenceRequest) (*emptypb.Empty, error) {
-	c, owner, rc, err := h.authorize(ctx, q.GetContext(), executionenv.OpReferenceRelease)
+	c, err := h.client(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if err := h.backend.ReleaseReference(ctx, rc.Environment, c.id, owner, rc.BindingID); err != nil {
+	p := q.GetContext()
+	owner, ok := ownerFromProto(p.GetOwner())
+	ref := refFromProto(p.GetEnvironment())
+	if q == nil || !c.policy.MayAttestOwner || !ok || !validRef(ref) || !validBinding(p.GetBindingId()) {
+		return nil, wireError(executionenv.CodeInvalidArgument, false)
+	}
+	if err := h.backend.ReleaseReference(ctx, ref, c.id, ownerHash(owner), p.GetBindingId()); err != nil {
 		return nil, backendError(err)
 	}
 	return &emptypb.Empty{}, nil
@@ -623,6 +564,11 @@ func (h *Handler) commandQuery(ctx context.Context, q *executionv1.CommandQueryR
 }
 
 func (h *Handler) authorize(ctx context.Context, p *executionv1.RequestContext, op executionenv.Operation) (authenticatedClient, string, executionenv.RequestContext, error) {
+	switch op {
+	case executionenv.OpFileRead, executionenv.OpFileResolveAuthority, executionenv.OpFileStat, executionenv.OpFileCreate, executionenv.OpFileReplace, executionenv.OpFileList, executionenv.OpFileRemove, executionenv.OpFileRename, executionenv.OpFileCopy, executionenv.OpFileGlob, executionenv.OpFileGrep, executionenv.OpCommandStart, executionenv.OpCommandStatus, executionenv.OpCommandCancel:
+	default:
+		return authenticatedClient{}, "", executionenv.RequestContext{}, wireError(executionenv.CodePermissionDenied, false)
+	}
 	c, err := h.client(ctx)
 	if err != nil {
 		return c, "", executionenv.RequestContext{}, err
@@ -632,25 +578,15 @@ func (h *Handler) authorize(ctx context.Context, p *executionv1.RequestContext, 
 		return c, "", rc, wireError(executionenv.CodePermissionDenied, false)
 	}
 	oh := ownerHash(rc.Owner)
-	verifier := h.cfg.Verifier
-	if h.cfg.Security != nil {
-		now := h.cfg.Security.now()
-		material, materialErr := h.cfg.Security.authoritativeAt(ctx, now)
-		if materialErr != nil {
-			return c, "", rc, wireError(executionenv.CodeNotReady, true)
-		}
-		verifier = material.verifierAt(now)
-	}
-	if _, err := verifier.Verify(rc.Grant, executionenv.GrantExpectation{Client: c.id, OwnerHash: oh, BindingID: rc.BindingID, RunID: rc.RunID, ClaimID: rc.ClaimID, Environment: rc.Environment, Epoch: rc.Epoch, GrantGeneration: rc.GrantGeneration, Operation: op}); err != nil {
-		if errors.Is(err, executionenv.ErrGrantExpired) {
-			return c, "", rc, wireError(executionenv.CodeUnauthenticated, true)
-		}
+	if !c.policy.MayAttestOwner {
 		return c, "", rc, wireError(executionenv.CodePermissionDenied, false)
 	}
-	if validator, ok := h.backend.(runClaimValidator); ok {
-		if err := validator.ValidateRunClaim(ctx, c.id, oh, rc); err != nil {
-			return c, "", rc, backendError(err)
-		}
+	validator, ok := h.backend.(runClaimValidator)
+	if !ok {
+		return c, "", rc, wireError(executionenv.CodeNotReady, false)
+	}
+	if err := validator.ValidateRunClaim(ctx, c.id, oh, rc); err != nil {
+		return c, "", rc, backendError(err)
 	}
 	return c, oh, rc, nil
 }
@@ -658,8 +594,8 @@ func (h *Handler) authorize(ctx context.Context, p *executionv1.RequestContext, 
 func requestContextFromProto(p *executionv1.RequestContext) (executionenv.RequestContext, bool) {
 	owner, ownerOK := ownerFromProto(p.GetOwner())
 	ref := refFromProto(p.GetEnvironment())
-	rc := executionenv.RequestContext{Environment: ref, Owner: owner, BindingID: p.GetBindingId(), RunID: p.GetRunId(), ClaimID: p.GetClaimId(), Epoch: p.GetEpoch(), GrantGeneration: p.GetGrantGeneration(), Grant: p.GetGrant()}
-	ok := p != nil && ownerOK && ref.ID != "" && ref.Revision != "" && len(ref.ID) <= executionenv.MaxIdentityBytes && len(ref.Revision) <= executionenv.MaxIdentityBytes && rc.BindingID != "" && len(rc.BindingID) <= executionenv.MaxBindingBytes && validIdentity(rc.RunID) && validIdentity(rc.ClaimID) && rc.Epoch != 0 && rc.GrantGeneration != 0 && rc.Grant != "" && len(rc.Grant) <= executionenv.MaxGrantBytes
+	rc := executionenv.RequestContext{Environment: ref, Owner: owner, BindingID: p.GetBindingId(), RunID: p.GetRunId(), ClaimID: p.GetClaimId(), Epoch: p.GetEpoch(), GrantGeneration: p.GetGrantGeneration()}
+	ok := p != nil && ownerOK && ref.ID != "" && ref.Revision != "" && len(ref.ID) <= executionenv.MaxIdentityBytes && len(ref.Revision) <= executionenv.MaxIdentityBytes && rc.BindingID != "" && len(rc.BindingID) <= executionenv.MaxBindingBytes && validIdentity(rc.RunID) && validIdentity(rc.ClaimID) && rc.Epoch != 0 && rc.GrantGeneration != 0
 	return rc, ok
 }
 func attachContext(p *executionv1.RequestContext) (executionenv.RequestContext, bool) {
@@ -710,11 +646,11 @@ func operationFromProto(op executionv1.FileOperation) (executionenv.Operation, b
 	return v, ok
 }
 
-func ensureResponse(a Allocation, grant string, expiry time.Time) *executionv1.EnsureEnvironmentResponse {
-	return &executionv1.EnsureEnvironmentResponse{Environment: refToProto(a.Environment), Epoch: a.Epoch, Ready: a.Ready, GrantGeneration: a.GrantGeneration, Grant: valid(grant), GrantExpiresAt: timestamppb.New(expiry)}
+func ensureResponse(a Allocation) *executionv1.EnsureEnvironmentResponse {
+	return &executionv1.EnsureEnvironmentResponse{Environment: refToProto(a.Environment), Epoch: a.Epoch, Ready: a.Ready, GrantGeneration: a.GrantGeneration}
 }
-func attachResponse(a Allocation, grant string, expiry time.Time) *executionv1.AttachEnvironmentResponse {
-	return &executionv1.AttachEnvironmentResponse{Environment: refToProto(a.Environment), Epoch: a.Epoch, Ready: a.Ready, GrantGeneration: a.GrantGeneration, Grant: valid(grant), GrantExpiresAt: timestamppb.New(expiry)}
+func attachResponse(a Allocation) *executionv1.AttachEnvironmentResponse {
+	return &executionv1.AttachEnvironmentResponse{Environment: refToProto(a.Environment), Epoch: a.Epoch, Ready: a.Ready, GrantGeneration: a.GrantGeneration}
 }
 func fileResponse(v executionenv.FileResponse) *executionv1.FileResponse {
 	r := &executionv1.FileResponse{Data: v.Data, Version: []byte(v.Version), Paths: validAll(v.Paths), AuthorityTarget: valid(v.AuthorityTarget), AuthorityWorkspace: valid(v.AuthorityWorkspace)}
@@ -784,38 +720,6 @@ func validRef(v executionenv.EnvironmentRef) bool {
 	return validIdentity(v.ID) && validIdentity(v.Revision)
 }
 
-func (h *Handler) signClaim(ctx context.Context, claim executionenv.RunClaim, client, owner string) (string, time.Time, error) {
-	signer := h.cfg.Signer
-	now := time.Now().UTC()
-	var signingDeadline time.Time
-	if h.cfg.Security != nil {
-		now = h.cfg.Security.now()
-		material, err := h.cfg.Security.authoritativeAt(ctx, now)
-		if err != nil {
-			return "", time.Time{}, err
-		}
-		signer = material.signer
-		signingDeadline = material.activeWindow.verifyUntil
-	}
-	life := signer.Lifetime
-	if life <= 0 {
-		life = time.Minute
-	}
-	expiry := now.Add(life)
-	if !signingDeadline.IsZero() && signingDeadline.Before(expiry) {
-		expiry = signingDeadline
-	}
-	if !now.Before(expiry) {
-		return "", time.Time{}, errors.New("active signing key is expired")
-	}
-	nonce := make([]byte, 16)
-	if _, err := rand.Read(nonce); err != nil {
-		return "", time.Time{}, err
-	}
-	ops := []executionenv.Operation{executionenv.OpFileRead, executionenv.OpFileResolveAuthority, executionenv.OpFileStat, executionenv.OpFileCreate, executionenv.OpFileReplace, executionenv.OpFileList, executionenv.OpFileRemove, executionenv.OpFileRename, executionenv.OpFileCopy, executionenv.OpFileGlob, executionenv.OpFileGrep, executionenv.OpCommandStart, executionenv.OpCommandStatus, executionenv.OpCommandCancel}
-	grant, err := executionenv.SignGrant(signer.PrivateKey, executionenv.GrantClaims{KeyID: signer.KeyID, Issuer: signer.Issuer, Audience: signer.Audience, Client: client, OwnerHash: owner, BindingID: claim.BindingID, RunID: claim.RunID, ClaimID: claim.ClaimID, Environment: claim.Environment, Epoch: claim.Epoch, GrantGeneration: claim.GrantGeneration, Operations: ops, NotBefore: now, ExpiresAt: expiry, Nonce: hex.EncodeToString(nonce)})
-	return grant, expiry, err
-}
 func ownerHash(o executionenv.Owner) string {
 	s := sha256.Sum256([]byte(o.Issuer + "\x00" + o.Subject))
 	return hex.EncodeToString(s[:])

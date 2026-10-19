@@ -31,6 +31,25 @@ func chartDir(t *testing.T) string {
 	return "."
 }
 
+func TestExecutionTemplateClientChartRequiresOwnerGrants(t *testing.T) {
+	base := []string{"template", "qualification", ".", "-f", "../../mecatl-execution-kind/mecak8s-values.yaml", "--set-string", "execution.templateRevision=v1-" + strings.Repeat("a", 64)}
+	rendered, err := helm(t, base...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0].Args
+	for _, expected := range []string{"--execution-template-id=go", "--execution-template-revision=v1-" + strings.Repeat("a", 64), "--execution-allowed-subjects=alice"} {
+		if !slices.Contains(args, expected) {
+			t.Fatalf("client chart omitted %q", expected)
+		}
+	}
+	for _, invalid := range [][]string{{"--set-json", "execution.allowedSubjects=[]"}, {"--set", "execution.profile=go"}, {"--set-json", `execution.allowedSubjects=["alice,anyone"]`}} {
+		if output, err := helm(t, append(append([]string{}, base...), invalid...)...); err == nil {
+			t.Fatalf("unsafe execution client values rendered: %s", output)
+		}
+	}
+}
+
 func TestMecak8sHelmChart_ReleaseMetadataMatchesVersion(t *testing.T) {
 	versionData, err := os.ReadFile("../../../VERSION")
 	if err != nil {
@@ -66,6 +85,33 @@ func TestMecak8sHelmChart_ReleaseMetadataMatchesVersion(t *testing.T) {
 	if chart.Version != version || chart.AppVersion != "v"+version || values.Image.Tag != "v"+version {
 		t.Fatalf("release metadata is not synchronized: VERSION=%q chart.version=%q chart.appVersion=%q image.tag=%q",
 			version, chart.Version, chart.AppVersion, values.Image.Tag)
+	}
+}
+
+// The Studio chart has no Go package of its own; release PRs bump it with this
+// chart, so its drift check lives beside this one.
+func TestMecatlStudioHelmChart_ReleaseMetadataMatchesVersion(t *testing.T) {
+	versionData, err := os.ReadFile("../../../VERSION")
+	if err != nil {
+		t.Fatalf("read root VERSION: %v", err)
+	}
+	version := strings.TrimSpace(string(versionData))
+
+	chartData, err := os.ReadFile("../mecatl-studio/Chart.yaml")
+	if err != nil {
+		t.Fatalf("read mecatl-studio Chart.yaml: %v", err)
+	}
+	var chart struct {
+		Version    string `yaml:"version"`
+		AppVersion string `yaml:"appVersion"`
+	}
+	if err := yaml.Unmarshal(chartData, &chart); err != nil {
+		t.Fatalf("parse mecatl-studio Chart.yaml: %v", err)
+	}
+
+	if chart.Version != version || chart.AppVersion != "v"+version {
+		t.Fatalf("mecatl-studio release metadata is not synchronized: VERSION=%q chart.version=%q chart.appVersion=%q",
+			version, chart.Version, chart.AppVersion)
 	}
 }
 

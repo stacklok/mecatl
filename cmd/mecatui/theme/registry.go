@@ -12,9 +12,9 @@ const defaultName = "aztec"
 // the lowest layer of the resolution order; user JSON themes (load.go) override
 // or extend it.
 var builtins = map[string]Theme{
-	"aztec": New("aztec", aztecPalette),
+	"aztec": newTheme("aztec", aztecPalette, aztecTranscript),
 	"mono":  New("mono", monoPalette),
-	"solar": New("solar", solarPalette),
+	"solar": newTheme("solar", solarPalette, solarTranscript),
 }
 
 // Registry holds a set of themes by name and answers Get/List/Default. main.go

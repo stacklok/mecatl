@@ -64,7 +64,8 @@ forward compatibility. `build_id` is not a semantic-version API.
 
 |Method & path|Body|Response|
 |-|-|-|
-|`POST /v1/sessions`|`{mode?, limits?, provider_id?, model_id?, profile?, mcp_servers?}`; `profile` omitted = server default, `"no-fs"` = explicit attenuation|`201` `{session_id, placement}` where placement is bounded display metadata; no path or exact private ref|
+|`POST /v1/sessions`|`{mode?, limits?, provider_id?, model_id?, reasoning_effort?, execution?, agent_definition_name?, debug_target_session_id?, debug_mcp_servers?, mcp_servers?}`; `execution` omitted = server default, `{none:{}}` = no filesystem, `{template:{id,revision}}` = exact operator-approved revision|`201` `{session_id, placement, session_capabilities, resolved_model, resolved_agent_definition_name?}` where placement is bounded display metadata; no path or exact private ref|
+|`GET /v1/execution-templates`|Authenticated, enabled catalog only|`200` `{items:[{template:{id,revision},name,description,display_token,extensions}],inventory_revision}`; at most 64 eligible rows|
 |`GET /v1/sessions`|No body|`200` `{sessions: [...]}` with path-free stored-session inventory|
 |`GET /v1/sessions/{id}`|No body|`200` authoritative session snapshot, including title/provenance, title-generation lifecycle, and canonical durable token usage when present|
 |`GET /v1/sessions/{id}/events`|No body|`200` SSE durable event replay; empty for an unknown ID, `501` without durable storage. See [Durable event replay](#durable-event-replay).|
@@ -86,6 +87,28 @@ forward compatibility. `build_id` is not a semantic-version API.
 |`POST /v1/sessions/{id}/controls/cancel-steer`|`{expected_run_id, message_id?}`|`200` `{outcome, run_id, message_id}`; `409 stale_run_control` when the run is no longer live|
 |`POST /v1/sessions/{id}/clear`|`{"worktree_selector":"..."}` optional|`201` `{session_id, placement}` — distinct empty-history successor; omitted selector inherits exact source placement|
 |`POST /v1/sessions/{id}/fork`|optional `{title, reasoning_effort, provider_id, model_id, worktree_selector}`|`201` `{session_id, placement}` — history-carrying successor; omitted selector inherits exact placement, supplied selector must be fresh and source-scoped; all overrides resolve atomically|
+
+### Agent-bound session creation
+
+`POST /v1/sessions` accepts optional `agent_definition_name` and echoes a bound
+name as `resolved_agent_definition_name`. Empty or omitted selects ordinary
+creation and omits the echo. `resolved_model` reports the effective provider/model
+pair, including when the definition supplies the base provider for a model-only
+request. Wire `model_id` is an opaque literal, not an alias selector.
+
+Clients **MUST** require `session_agent_definitions` in
+`GET /v1/compatibility` `features` and verify the response name before relying on
+binding. The feature reports build support regardless of configured definitions.
+Unknown definitions return `400`. Create bodies remain strict: unknown keys,
+including the ProtoJSON spelling `agentDefinitionName`, return `400`.
+
+The [agent-bound creation contract](grpc-api.md#agent-bound-session-creation)
+defines the five provider/model precedence cases, definition-only catalog,
+nonwidenable authority, tighten-only mode and limits, and no-filesystem
+attenuation for both transports. The same contract forbids client/debug MCP and
+debug targets, preserves binding through fork and clear, and refuses mode changes
+and restart/client-MCP execution resume. Authentication and ownership checks are
+unchanged; feature discovery is not authorization.
 
 ### Durable event replay
 
@@ -186,6 +209,8 @@ These routes mirror the gRPC inventory, introspection, and learning methods.
 |`GET /v1/models`|the selectable provider/model inventory (`ListModels`)|
 |`GET /v1/agents`|the agent-definition inventory|
 |`GET /v1/skills`|the skills inventory|
+|`GET /v1/skills/files?name=...`|the readable files of one skill in the caller's own skill view: `SKILL.md` (the instruction body, without frontmatter, marked `instructions: true`) first, then bundled files by name, each with its size; unknown skill is `404 skill_not_found`|
+|`GET /v1/skills/files/read?name=...&file=...`|one file's text, at most 25,000 bytes of UTF-8 with no NUL byte: `404 skill_file_not_found`, `422 skill_file_too_large`, and `422 skill_file_not_text` refuse rather than truncate or repair|
 |`GET /v1/commands?session_id=...`|slash commands for an owned, exactly reattached source; no-FS returns empty|
 |`GET /v1/worktrees?session_id=...`|display-safe worktrees plus ephemeral caller/source-scoped selectors; no paths/exact refs|
 |`GET /v1/soul`|the resolved soul snapshot (provenance, trust, drift)|
@@ -291,24 +316,31 @@ A `workspace`, `cwd`, placement ID, or exact environment ref is an unknown field
 and the strict decoder returns `400`; configure local `--workspace` on the
 server.
 
-### Create a no-filesystem session (`profile: "no-fs"`)
+### Create a no-filesystem session (`execution: {none:{}}`)
 
 The `no-fs` profile creates a session without filesystem tools, suitable for
 research or coordination through MCP, memory, and web tools:
 
 ```sh
 $ curl -s -X POST http://127.0.0.1:8081/v1/sessions \
-       -d '{"profile":"no-fs"}'
+       -d '{"execution":{"none":{}}}'
 {"session_id":"..."}
 ```
 
-The gRPC `CreateSessionRequest` accepts the same profile strings: `""` selects
-the deployment default and `"no-fs"` selects the filesystem-free profile. The
-server enforces these rules:
+The same `execution` union exists on gRPC `CreateSessionRequest`. The server enforces:
 
-- `"no-fs"` binds the server's filesystem-free placement; no workspace field
-  exists. Omitted profile binds the server's deployment default.
-- The server rejects every other profile value.
+- `{ "none": {} }` creates a file-less session. Omission binds the deployment
+  default. `{ "template": { "id": "coding", "revision":
+  "v1-<64 lowercase hex characters>" } }` selects an exact eligible operator
+  revision; list `GET /v1/execution-templates` first. The example revision is
+  illustrative, not a deployable identifier.
+- The request accepts one complete `execution` variant. Invalid variants return
+  `400`. Unauthorized and absent templates both return `404`; disabled catalog
+  returns `501`, and a temporarily unavailable catalog returns `503`. `features`
+  must include `execution_templates` and `capabilities.execution_templates` must
+  be true to offer a picker.
+- `session_capabilities.execution_files` and `built_in_shell` on create and get
+  report effective registered tools, separately from image/audio media input.
 - The no-FS session excludes
   Read/ListDir/Edit/Write/Copy/Move/Remove/Grep/Glob/Shell/ShellStatus,
   Parallel, and SkillDraft. It keeps MCP tools (server-global + resource
@@ -318,7 +350,7 @@ server enforces these rules:
   shell or worktree/fork isolation.
 - A system-prompt posture note and the Subagent tool description explain the
   available MCP, memory, and web tools to the model.
-- The profile composes with `provider_id`/`model_id` and remains fixed for the
+- The execution selection composes with `provider_id`/`model_id` and remains fixed for the
   session lifetime.
 
 ### Inspect a session

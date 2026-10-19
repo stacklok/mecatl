@@ -25,6 +25,12 @@
 name: k8s-e2e
 
 on:
+  workflow_dispatch:
+    inputs:
+      natural_expiry:
+        description: Include long deployed mecak8s automatic TLS reload proof across natural expiry
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -52,6 +58,7 @@ on:
       - contracts/proto/mecatl/execution/**
       - e2e/k8s_execution/**
       - deploy/mecatl-execution-kind/**
+      - deploy/execution-templates/**
       - build/execution-provider/Dockerfile
       - build/execution-workload/Dockerfile
       - e2e/k8s/**
@@ -86,6 +93,7 @@ on:
       - contracts/proto/mecatl/execution/**
       - e2e/k8s_execution/**
       - deploy/mecatl-execution-kind/**
+      - deploy/execution-templates/**
       - build/execution-provider/Dockerfile
       - build/execution-workload/Dockerfile
       - e2e/k8s/**
@@ -207,7 +215,9 @@ jobs:
   execution-production-e2e:
     name: execution provider production profile (kind)
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    # Serial tests (45m) + mandatory in-flight renewal (30m) + setup/cleanup.
+    # Only explicit manual qualification adds natural expiry (80m).
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.natural_expiry && 210 || 100 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -238,6 +248,7 @@ jobs:
         env:
           CONTAINER_ENGINE: docker
           MECATL_EXECUTION_QUAL_CI: "1"
+          MECATL_EXECUTION_QUAL_NATURAL_EXPIRY: ${{ github.event_name == 'workflow_dispatch' && inputs.natural_expiry && '1' || '0' }}
         run: task e2e:k8s:execution:production
       - name: Upload bounded failure artifact
         if: failure()

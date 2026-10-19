@@ -216,7 +216,12 @@ func inspectLocalProviders() (providerInspection, error) {
 	var aliases map[string]string
 	selectedProvider, selectedModel := "", ""
 	if policy := resolver.OperatorModelPolicy(); policy != nil {
-		aliases = policy.Aliases
+		aliases = make(map[string]string, len(policy.Aliases))
+		for name, target := range policy.Aliases {
+			if target.Provider == "" {
+				aliases[name] = target.Model
+			}
+		}
 		selectedProvider, selectedModel = policy.DefaultProvider, policy.Default
 	}
 	path, explicit := flags.AuthFilePath()

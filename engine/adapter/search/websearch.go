@@ -217,8 +217,7 @@ func (t WebSearchTool) Execute(ctx context.Context, in session.ToolCall, _ tool.
 	if err != nil {
 		switch {
 		case errors.Is(err, tool.ErrSearchUnavailable):
-			// Operator disabled web search (--websearch=off). Non-error: the tool ran.
-			return session.NewToolResult(in.ID, webSearchDisabledMsg), nil
+			return session.NewToolResult(in.ID, disabledMessage(t.provider)), nil
 		case errors.Is(err, tool.ErrSearchBackendDown):
 			// A configured/default backend was attempted but is down/rate-limited.
 			// Non-error: the condition is environmental, names the upgrade path.
@@ -234,11 +233,20 @@ func (t WebSearchTool) Execute(ctx context.Context, in session.ToolCall, _ tool.
 	return session.NewToolResult(in.ID, formatSearchResults(results, limit)), nil
 }
 
+// disabledMessage returns the concrete operator action that made search unavailable.
+// An empty reason is the explicit --websearch=off kill switch (and nil-provider)
+// compatibility path.
+func disabledMessage(provider tool.SearchProvider) string {
+	if unavailable, ok := provider.(Unavailable); ok && unavailable.Reason != "" {
+		return "Web search is disabled on this deployment (" + unavailable.Reason + "). " +
+			"No query ran and none will until web search is re-enabled. " +
+			"Report this to the user rather than retrying."
+	}
+	return webSearchDisabledMsg
+}
+
 // webSearchDisabledMsg is the honest, model-facing message returned when web
-// search is DISABLED on the deployment — the operator kill switch (--websearch=off)
-// or a nil provider. It is NOT an error result: the tool exists and is callable,
-// the operator simply turned outbound search off. The model should report that to
-// the user rather than retry (nothing will ever run until it is re-enabled).
+// search is DISABLED by the explicit --websearch=off kill switch or a nil provider.
 const webSearchDisabledMsg = "Web search is disabled on this deployment (the operator set --websearch=off). " +
 	"No query ran and none will until web search is re-enabled. " +
 	"Report this to the user rather than retrying."

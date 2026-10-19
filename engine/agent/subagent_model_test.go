@@ -20,9 +20,9 @@ func TestSubagentPerCallModelRoutesToFactory(t *testing.T) {
 
 	var sawModel string
 	task := agent.NewSubagentTool(defaultEngine, agent.WithSubagentEngineFactory(
-		func(model string) (*agent.Engine, bool) {
-			sawModel = model
-			if model == "fast-mini" {
+		func(target agent.ModelTarget) (*agent.Engine, bool) {
+			sawModel = target.Model
+			if target.Model == "fast-mini" {
 				return overrideEngine, true
 			}
 			return nil, false
@@ -55,7 +55,7 @@ func TestSubagentPerCallModelCarriesOverrideOnStart(t *testing.T) {
 		return childEngineWithModel(model, mockllm.New(mockllm.TextTurn("OVERRIDE:"+model)), catalogWith(t))
 	}
 	task := agent.NewSubagentTool(defaultEngine, agent.WithSubagentEngineFactory(
-		func(model string) (*agent.Engine, bool) { return overrideEngineFor(model), true }))
+		func(target agent.ModelTarget) (*agent.Engine, bool) { return overrideEngineFor(target.Model), true }))
 
 	parentLLM := mockllm.New(
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"explore","model":"fast-mini"}`)),
@@ -91,7 +91,7 @@ func TestSubagentPerCallModelUnknownErrors(t *testing.T) {
 	defaultLLM := mockllm.New(mockllm.TextTurn("DEFAULT"))
 	defaultEngine := childEngineWith(defaultLLM, catalogWith(t))
 	task := agent.NewSubagentTool(defaultEngine, agent.WithSubagentEngineFactory(
-		func(string) (*agent.Engine, bool) { return nil, false }))
+		func(agent.ModelTarget) (*agent.Engine, bool) { return nil, false }))
 
 	results, _ := subagentParentResults(t, task,
 		mockllm.ToolCallTurn(toolCall("p1", "Subagent", `{"prompt":"x","model":"bogus"}`)),
@@ -120,8 +120,8 @@ func TestSubagentAgentAndModelTogetherSupported(t *testing.T) {
 		agent.WithAgentEngines(
 			map[string]*agent.Engine{"reviewer": reviewerEngine},
 			[]agent.AgentMeta{{Name: "reviewer", Description: "reviews"}}),
-		agent.WithAgentModelEngineFactory(func(agentName, model string) (*agent.Engine, bool) {
-			if agentName == "reviewer" && model == "fast" {
+		agent.WithAgentModelEngineFactory(func(agentName string, target agent.ModelTarget) (*agent.Engine, bool) {
+			if agentName == "reviewer" && target.Model == "fast" {
 				return overrideEngine, true
 			}
 			return nil, false
@@ -178,7 +178,7 @@ func TestSubagentAgentModelUnknownAgentListsNames(t *testing.T) {
 		agent.WithAgentEngines(
 			map[string]*agent.Engine{"reviewer": reviewerEngine},
 			[]agent.AgentMeta{{Name: "reviewer", Description: "reviews"}}),
-		agent.WithAgentModelEngineFactory(func(string, string) (*agent.Engine, bool) { return nil, false }),
+		agent.WithAgentModelEngineFactory(func(string, agent.ModelTarget) (*agent.Engine, bool) { return nil, false }),
 	)
 
 	results, _ := subagentParentResults(t, task,
@@ -206,7 +206,7 @@ func TestSubagentAgentModelUnroutableModelErrors(t *testing.T) {
 		agent.WithAgentEngines(
 			map[string]*agent.Engine{"reviewer": reviewerEngine},
 			[]agent.AgentMeta{{Name: "reviewer", Description: "reviews"}}),
-		agent.WithAgentModelEngineFactory(func(string, string) (*agent.Engine, bool) { return nil, false }),
+		agent.WithAgentModelEngineFactory(func(string, agent.ModelTarget) (*agent.Engine, bool) { return nil, false }),
 	)
 
 	results, _ := subagentParentResults(t, task,

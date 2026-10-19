@@ -84,6 +84,7 @@ const (
 type PlacementSelector struct {
 	Kind      PlacementSelectorKind
 	ID        string
+	Revision  string
 	Source    session.SessionID
 	SourceRef session.EnvironmentRef
 }
@@ -93,6 +94,7 @@ type PlacementSelectorKind string
 
 // Private placement selector kinds.
 const (
+	PlacementSelectorTemplate PlacementSelectorKind = "template"
 	PlacementSelectorDefault  PlacementSelectorKind = "default"
 	PlacementSelectorNoFS     PlacementSelectorKind = "no-fs"
 	PlacementSelectorWorktree PlacementSelectorKind = "worktree"
@@ -111,6 +113,14 @@ func SelectWorktree(source session.SessionID, ref session.EnvironmentRef, token 
 	return PlacementSelector{Kind: PlacementSelectorWorktree, ID: token, Source: source, SourceRef: ref}
 }
 
+// SelectTemplate binds a validated operator-owned recipe by exact revision.
+func SelectTemplate(id, revision string) PlacementSelector {
+	return PlacementSelector{Kind: PlacementSelectorTemplate, ID: id, Revision: revision}
+}
+
+// IsTemplate reports whether an exact execution template was selected.
+func (s PlacementSelector) IsTemplate() bool { return s.Kind == PlacementSelectorTemplate }
+
 // IsDefault reports whether the deployment default was selected.
 func (s PlacementSelector) IsDefault() bool { return s.Kind == PlacementSelectorDefault }
 
@@ -121,12 +131,32 @@ func (s PlacementSelector) IsNoFS() bool { return s.Kind == PlacementSelectorNoF
 func (s PlacementSelector) IsWorktree() bool { return s.Kind == PlacementSelectorWorktree }
 
 // Valid reports whether the selector has exactly one valid protocol shape.
+//
+//nolint:gocyclo // Selector validation keeps every protocol shape explicit at this boundary.
 func (s PlacementSelector) Valid() bool {
 	switch s.Kind {
 	case PlacementSelectorDefault, PlacementSelectorNoFS:
-		return s.ID == "" && s.Source == "" && !s.SourceRef.Valid()
+		return s.ID == "" && s.Revision == "" && s.Source == "" && !s.SourceRef.Valid()
+	case PlacementSelectorTemplate:
+		if s.ID == "" || len(s.ID) > 63 || len(s.Revision) != 67 || !strings.HasPrefix(s.Revision, "v1-") || s.Source != "" || s.SourceRef.Valid() {
+			return false
+		}
+		for i, r := range s.ID {
+			if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+				continue
+			}
+			if r != '-' || i == 0 || i == len(s.ID)-1 {
+				return false
+			}
+		}
+		for _, r := range s.Revision[3:] {
+			if r < '0' || r > '9' && r < 'a' || r > 'f' {
+				return false
+			}
+		}
+		return true
 	case PlacementSelectorWorktree:
-		return s.ID != "" && s.Source != "" && s.SourceRef.Valid()
+		return s.ID != "" && s.Revision == "" && s.Source != "" && s.SourceRef.Valid()
 	default:
 		return false
 	}
@@ -432,11 +462,7 @@ func configuredPlacementBinder(cfg Config) (*PlacementBinder, error) {
 	return NewPlacementBinder(cfg.PlacementProvider)
 }
 
-func (s *Service) bindPlacementForCreate(ctx context.Context, profile SessionProfile, owner *session.Principal, bindingID session.SessionID) (string, *PlacementBinding, error) {
-	selector := DefaultPlacement()
-	if profile == ProfileNoFS {
-		selector = NoFSPlacement()
-	}
+func (s *Service) bindPlacementForCreate(ctx context.Context, selector PlacementSelector, profile SessionProfile, owner *session.Principal, bindingID session.SessionID) (string, *PlacementBinding, error) {
 	binding, err := s.placementBinder.Bind(ctx, PlacementBindRequest{
 		Selector: selector, Principal: owner, Scope: s.cfg.PlacementScope,
 		Operation: PlacementOperationCreate, BindingID: bindingID,
@@ -487,7 +513,7 @@ type schedulePlacement struct {
 	rollback func(context.Context) error
 }
 
-func (s *Service) resolveSchedulePlacement(ctx context.Context, ref session.EnvironmentRef, profile SessionProfile) (schedulePlacement, error) {
+func (s *Service) resolveSchedulePlacement(ctx context.Context, ref session.EnvironmentRef, origin session.SessionID, profile SessionProfile) (schedulePlacement, error) {
 	if profile == ProfileNoFS {
 		binding, err := s.BindPlacement(ctx, NoFSPlacement(), PlacementOperationCreate)
 		if err != nil {
@@ -501,8 +527,20 @@ func (s *Service) resolveSchedulePlacement(ctx context.Context, ref session.Envi
 	var binding PlacementBinding
 	var err error
 	newBinding := !ref.Valid()
+	if newBinding && s.cfg.ExecutionAccess != nil {
+		return schedulePlacement{}, fmt.Errorf("%w: independent native schedules require durable reference ownership", ErrFailedPrecondition)
+	}
 	if ref.Valid() {
-		binding, err = s.ReattachPlacement(ctx, ref)
+		if origin != "" && s.cfg.ExecutionAccess != nil && s.cfg.ExecutionAccess.Applies(ref) {
+			var source *session.Session
+			source, err = s.GetSession(ctx, origin)
+			if err != nil || source.EnvironmentRef != ref {
+				return schedulePlacement{}, ErrPlacementNotFound
+			}
+			binding, err = s.ReattachPlacementForBinding(ctx, ref, origin)
+		} else {
+			binding, err = s.ReattachPlacement(ctx, ref)
+		}
 	} else {
 		binding, err = s.BindPlacement(ctx, DefaultPlacement(), PlacementOperationCreate)
 	}
@@ -523,6 +561,40 @@ func (s *Service) resolveSchedulePlacement(ctx context.Context, ref session.Envi
 		}
 	}
 	return resolved, nil
+}
+
+// ScheduleFirePlacement reauthorizes the stored placement; a borrowed native
+// schedule additionally reserves a distinct reference for the fire session.
+// Session creation owns rollback and commit of the returned binding.
+func (s *Service) ScheduleFirePlacement(ctx context.Context, spec port.ScheduleSpec, fireID session.SessionID) (PlacementBinding, error) {
+	if s.cfg.ExecutionAccess == nil || !s.cfg.ExecutionAccess.Applies(spec.EnvironmentRef) {
+		return s.ReattachPlacementInScope(ctx, spec.EnvironmentRef, spec.PlacementScope)
+	}
+	if spec.OriginSessionID == "" || fireID == "" || spec.PlacementScope == "" || PlacementScope(spec.PlacementScope) != s.cfg.PlacementScope {
+		return PlacementBinding{}, ErrPlacementNotFound
+	}
+	owner := session.PrincipalFromContext(ctx)
+	if spec.Owner == nil || !spec.Owner.SameIdentity(owner) {
+		return PlacementBinding{}, ErrPlacementNotFound
+	}
+	source, err := s.GetSession(ctx, spec.OriginSessionID)
+	if err != nil || source.EnvironmentRef != spec.EnvironmentRef || source.Owner == nil || !source.Owner.SameIdentity(spec.Owner) {
+		return PlacementBinding{}, ErrPlacementNotFound
+	}
+	binding, err := s.successorPlacement(ctx, source, SuccessorPlacement{}, fireID)
+	if err != nil {
+		s.logPlacementProviderError(ctx, "reserve schedule fire", err)
+		return PlacementBinding{}, sanitizePlacementProviderError(err)
+	}
+	if binding.Ref != spec.EnvironmentRef {
+		rollbackUnpublishedPlacement(s, &binding)
+		return PlacementBinding{}, ErrInvalidPlacementBinding
+	}
+	if err := validatePlacementBinding(binding); err != nil {
+		rollbackUnpublishedPlacement(s, &binding)
+		return PlacementBinding{}, err
+	}
+	return binding, nil
 }
 
 func (s *Service) deleteSchedulePlacement(ctx context.Context, ref session.EnvironmentRef, scope string) (bool, error) {
@@ -585,14 +657,22 @@ func (s *Service) installSessionPlacement(id session.SessionID, binding Placemen
 	}
 	attachment.refs++
 	s.placementAttachMu.Unlock()
-	if redundantClose != nil {
+	// A reserved successor sharing the source's environment must be committed
+	// before its Close runs: Close aborts an unpublished reference.
+	if redundantClose != nil && binding.Commit == nil {
 		_ = redundantClose()
+		redundantClose = nil
 	}
 
 	var once sync.Once
 	release := func() error {
 		var err error
-		once.Do(func() { err = s.releasePlacementAttachment(binding.Ref) })
+		once.Do(func() {
+			err = s.releasePlacementAttachment(binding.Ref)
+			if redundantClose != nil {
+				err = errors.Join(err, redundantClose())
+			}
+		})
 		return err
 	}
 	s.setSessionEnvironment(id, binding.Environment, release)

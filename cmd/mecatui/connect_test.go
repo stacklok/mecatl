@@ -101,7 +101,7 @@ func TestCanonicalSavedTargetFlowsThroughRecoveryRestart(t *testing.T) {
 	if !ok || reason != client.AuthStorageUnavailable {
 		t.Fatalf("resolve error = %v, reason=%q ok=%v", resolveErr, reason, ok)
 	}
-	options := authRecoveryOptions(reason, target, "Authentication needs attention.", "session-1", restartTransport{Target: target, TLSCAFile: serverCA})
+	options := authRecoveryOptions(reason, target, "session-1", restartTransport{Target: target, TLSCAFile: serverCA})
 	m := ui.New(ui.Deps{
 		Connect:                savedConnectController{},
 		ConnectOpen:            true,
@@ -932,7 +932,7 @@ func TestReauthenticateRestartAlwaysPassesNoBrowser(t *testing.T) {
 	}
 }
 
-func TestRecoveryRestartFailurePreservesSecondAttemptIntent(t *testing.T) {
+func TestRecoveryRestartFailureClearsStaleAuthRecovery(t *testing.T) {
 	const target = "canonical.example:443"
 	for _, action := range []ui.ConnectAction{ui.RetryAfterCleanup, ui.Reauthenticate} {
 		t.Run(string(rune('0'+action)), func(t *testing.T) {
@@ -958,7 +958,7 @@ func TestRecoveryRestartFailurePreservesSecondAttemptIntent(t *testing.T) {
 			if err != nil || runs != 2 {
 				t.Fatalf("restart = %v, runs=%d", err, runs)
 			}
-			if reopened.connectReason != connectRecoveryReason(action) || reopened.connectResumeSessionID != "session-1" || reopened.connectTransport.Target != target || reopened.connectTransport.TLSCAFile != "/server-ca.pem" {
+			if reopened.connectReason != "" || reopened.connectResumeSessionID != "session-1" || reopened.connectTransport.Target != target || reopened.connectTransport.TLSCAFile != "/server-ca.pem" {
 				t.Fatalf("reopened recovery options = %#v", reopened)
 			}
 
@@ -969,7 +969,7 @@ func TestRecoveryRestartFailurePreservesSecondAttemptIntent(t *testing.T) {
 			m = model.(ui.Model)
 			model, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 			intent, ok := model.(ui.Model).ConnectRestartIntent()
-			if !ok || intent.Action != action || intent.Target != target || intent.ResumeSessionID != "session-1" {
+			if !ok || intent.Action != ui.ConnectSaved || intent.Target != target || intent.ResumeSessionID != "" {
 				t.Fatalf("second-attempt intent = %#v, ok=%v", intent, ok)
 			}
 		})
@@ -1002,6 +1002,101 @@ func TestRestartConnectRejectsUnknownAction(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "invalid connect action") || called {
 		t.Fatalf("err=%v called=%v", err, called)
 	}
+}
+
+func TestConnectRestartCompatibilityFailureReopensSafeRecovery(t *testing.T) {
+	compatibilityErr := startupCompatibilityCheck(t, 2)
+	invalidErr := startupCompatibilityCheck(t, 0)
+	for _, tc := range []struct {
+		name     string
+		err      error
+		want     string
+		noRemote string
+	}{
+		{name: "update advice", err: &startupCompatibilityError{cause: compatibilityErr}, want: "update mecatui"},
+		{name: "invalid descriptor", err: &startupCompatibilityError{cause: invalidErr}, want: "invalid compatibility information"},
+		{name: "probe timeout", err: &startupCompatibilityError{cause: context.DeadlineExceeded}, want: "compatibility check timed out"},
+		{name: "remote text is redacted", err: &startupCompatibilityError{cause: errors.New("arbitrary remote-private-detail")}, want: "compatibility check failed", noRemote: "arbitrary remote-private-detail"},
+	} {
+		for _, action := range []ui.ConnectAction{ui.RetryAfterCleanup, ui.Reauthenticate} {
+			t.Run(tc.name+string(rune('0'+action)), func(t *testing.T) {
+				const target = "canonical.example:443"
+				var recovery runOptions
+				runs, logins := 0, 0
+				err := restartFromConnectIntentWith([]string{"mecatui"}, ui.ConnectRestartIntent{Target: target, Action: action, ResumeSessionID: "session-1"}, restartTransport{Target: target, TLSCAFile: "/server-ca.pem"}, connectRestartOps{
+					run: func(argv []string, options runOptions) error {
+						runs++
+						if len(argv) > 1 {
+							return tc.err
+						}
+						recovery = options
+						return nil
+					},
+					connection: func(string) (clientauth.Connection, error) {
+						return clientauth.Connection{Identity: clientauth.Identity{Target: target}}, nil
+					},
+					login: func(context.Context, clientauth.Connection, bool) error { logins++; return nil },
+					loginContext: func(time.Duration) (context.Context, context.CancelFunc) {
+						return context.WithCancel(t.Context())
+					},
+				})
+				if err != nil || runs != 2 {
+					t.Fatalf("restart = %v, runs = %d", err, runs)
+				}
+				wantLogins := 0
+				if action == ui.Reauthenticate {
+					wantLogins = 1
+				}
+				if logins != wantLogins || recovery.connectReason != "" || recovery.connectError == "" || !strings.Contains(recovery.connectError, tc.want) || (tc.noRemote != "" && strings.Contains(recovery.connectError, tc.noRemote)) {
+					t.Fatalf("logins=%d recovery=%#v", logins, recovery)
+				}
+				model := ui.New(ui.Deps{Connect: staticConnectController{target: target}, ConnectOpen: true, ConnectError: recovery.connectError, ConnectReason: recovery.connectReason, ConnectTarget: recovery.connectTarget, ConnectResumeSessionID: recovery.connectResumeSessionID, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: t.Context(), NoAltScreen: true})
+				updated, _ := model.Update(model.Init()())
+				view := updated.(ui.Model).View().Content
+				if !strings.Contains(view, tc.want) || (tc.noRemote != "" && strings.Contains(view, tc.noRemote)) || strings.Contains(view, "Authentication needs attention.") {
+					t.Fatalf("recovery UI = %q", view)
+				}
+			})
+		}
+	}
+}
+
+func TestConnectRestartAuthenticationFailurePreservesRecovery(t *testing.T) {
+	const target = "canonical.example:443"
+	var recovery runOptions
+	err := restartFromConnectIntentWith([]string{"mecatui"}, ui.ConnectRestartIntent{Target: target, Action: ui.RetryAfterCleanup, ResumeSessionID: "session-1"}, restartTransport{Target: target}, connectRestartOps{
+		run: func(argv []string, options runOptions) error {
+			if len(argv) > 1 {
+				return &client.AuthError{Reason: client.AuthRejected}
+			}
+			recovery = options
+			return nil
+		},
+	})
+	if err != nil || recovery.connectReason != client.AuthRejected {
+		t.Fatalf("restart = %v, recovery = %#v", err, recovery)
+	}
+}
+
+func TestConnectRestartCancellationDoesNotReopenRecovery(t *testing.T) {
+	runs := 0
+	err := restartFromConnectIntentWith([]string{"mecatui"}, ui.ConnectRestartIntent{Target: "canonical.example:443", Action: ui.RetryAfterCleanup}, restartTransport{Target: "canonical.example:443"}, connectRestartOps{
+		run: func([]string, runOptions) error { runs++; return context.Canceled },
+	})
+	if !errors.Is(err, context.Canceled) || runs != 1 {
+		t.Fatalf("restart = %v, runs = %d", err, runs)
+	}
+}
+
+func startupCompatibilityCheck(t *testing.T, major int32) error {
+	t.Helper()
+	target := startStartupCompatibilityServer(t, &startupCompatibilityServer{major: major})
+	cl, err := client.Dial(client.DialConfig{Server: target})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cl.Close() })
+	return cl.CheckCompatibility(t.Context())
 }
 
 func TestSavedLoginContextRespondsToTerminationSignals(t *testing.T) {

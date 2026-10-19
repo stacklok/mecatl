@@ -24,6 +24,8 @@ const APIMajor int32 = 1
 // Identifiers are STABLE ONCE PUBLISHED. Renaming one is a break dressed up as
 // a refactor: a deployed client gates on the exact string.
 const (
+	// FeatureExecutionTemplates gates the authenticated public template catalog.
+	FeatureExecutionTemplates = "execution_templates"
 	// FeatureExactPlanAskControl reports both strict ResolvePlanAsk transports
 	// when the deployment can durably record a known continuation failure.
 	FeatureExactPlanAskControl = "exact_plan_ask_control"
@@ -33,6 +35,12 @@ const (
 	// separate runtime fact; this identifier reports that the HTTP transport
 	// implements the routes the TypeScript SDK can drive.
 	FeatureHTTPSteer = "http_steer"
+
+	// FeatureSkillFiles is the read-only skill-file pair: the ListSkillFiles and
+	// ReadSkillFile RPCs and their GET /v1/skills/files routes. Against a daemon
+	// that lacks it, the routes answer a generic 404 that looks like skill_not_found,
+	// so a client checks this identifier before offering a skill's files.
+	FeatureSkillFiles = "skill_files"
 
 	// FeatureServerInfo is this RPC itself. It is degenerate over the wire — a
 	// client that received a response already knows the server implements it —
@@ -74,6 +82,10 @@ const (
 	// FeatureSessionActivityInventory reports that ListSessions pages carry the
 	// atomically persisted activity projection.
 	FeatureSessionActivityInventory = "session_activity_inventory"
+
+	// FeatureSessionAgentDefinitions reports root agent-definition binding on both
+	// create transports, independent of whether any definitions are configured.
+	FeatureSessionAgentDefinitions = "session_agent_definitions"
 )
 
 // FeatureScope is what the DEPLOYMENT permits, as distinct from what the build
@@ -107,11 +119,14 @@ type FeatureScope struct {
 // diffs and golden fixtures readable.
 var allFeatures = []string{
 	FeatureExactPlanAskControl,
+	FeatureExecutionTemplates,
 	FeatureHTTPSteer,
 	FeatureMCPServersOnCreate,
 	FeaturePromptFreeControls,
 	FeatureServerInfo,
 	FeatureSessionActivityInventory,
+	FeatureSessionAgentDefinitions,
+	FeatureSkillFiles,
 	FeatureWatchSessionEvents,
 }
 

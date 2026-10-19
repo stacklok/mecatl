@@ -5,12 +5,14 @@ import {
   configuredSkillsResponseSchema,
   decideLearningProposalRequestSchema,
   decideMemoryConsolidationPlanRequestSchema,
+  generateMemoryConsolidationPlanRequestSchema,
   learnedSkillActionRequestSchema,
   learnedSkillActionResponseSchema,
   learnedSkillChangesResponseSchema,
   learnedSkillDiffResponseSchema,
   learnedSkillSchema,
   learnedSkillsResponseSchema,
+  learningProposalDetailSchema,
   learningProposalSchema,
   learningProposalsResponseSchema,
   memoryConsolidationPlanSchema,
@@ -18,6 +20,7 @@ import {
   memoryDetailResponseSchema,
   problemDetailsSchema,
   reflectionReceiptSchema,
+  skillFilesResponseSchema,
   undoLearningPromotionRequestSchema,
   userMemoryResponseSchema,
 } from "@mecatl-studio/contracts";
@@ -55,7 +58,12 @@ const memoryConsolidationPlanParameters = z.object({
     .min(1)
     .openapi({ param: { in: "path", name: "planId" } }),
 });
-const learningProposalQuery = z.object({ status: z.string().optional() });
+const learningProposalQuery = z.object({
+  cursor: z.string().optional(),
+  // The daemon refuses a page larger than 200; an absent limit takes the BFF's default.
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  status: z.string().optional(),
+});
 const learnedSkillLocatorQuery = z.object({
   ownerAgent: z.string().min(1),
   version: z.string().min(1),
@@ -69,12 +77,15 @@ const errorResponse = {
   content: { "application/problem+json": { schema: problemDetailsSchema } },
   description: "The request could not be completed.",
 } as const;
+// The validation hook and `app.onError` can answer any route with these.
+const transportErrors = { 400: errorResponse, 429: errorResponse } as const;
 
 const listConfiguredSkillsRoute = createRoute({
   method: "get",
   operationId: "listConfiguredSkills",
   path: "/api/v1/skills",
   responses: {
+    ...transportErrors,
     200: {
       content: { "application/json": { schema: configuredSkillsResponseSchema } },
       description: "The configured skill inventory.",
@@ -84,11 +95,37 @@ const listConfiguredSkillsRoute = createRoute({
   },
 });
 
+const skillNameParameters = z.object({
+  name: z
+    .string()
+    .min(1)
+    .openapi({ param: { in: "path", name: "name" } }),
+});
+
+const listSkillFilesRoute = createRoute({
+  method: "get",
+  operationId: "listSkillFiles",
+  path: "/api/v1/skills/{name}/files",
+  request: { params: skillNameParameters },
+  responses: {
+    ...transportErrors,
+    200: {
+      content: { "application/json": { schema: skillFilesResponseSchema } },
+      description: "A configured skill's files with their text.",
+    },
+    404: errorResponse,
+    500: errorResponse,
+    501: errorResponse,
+    503: errorResponse,
+  },
+});
+
 const listLearnedSkillsRoute = createRoute({
   method: "get",
   operationId: "listLearnedSkills",
   path: "/api/v1/learned-skills",
   responses: {
+    ...transportErrors,
     200: {
       content: { "application/json": { schema: learnedSkillsResponseSchema } },
       description: "The learned skill lifecycle inventory.",
@@ -110,6 +147,7 @@ const learnedSkillActionRoute = createRoute({
     params: learnedSkillParameters,
   },
   responses: {
+    ...transportErrors,
     200: {
       content: { "application/json": { schema: learnedSkillActionResponseSchema } },
       description:
@@ -127,6 +165,7 @@ const getLearnedSkillRoute = createRoute({
   path: "/api/v1/learned-skills/{skillId}",
   request: { params: learnedSkillParameters, query: learnedSkillLocatorQuery },
   responses: {
+    ...transportErrors,
     200: {
       content: { "application/json": { schema: learnedSkillSchema } },
       description: "One complete learned-skill version.",
@@ -143,6 +182,7 @@ const diffLearnedSkillVersionsRoute = createRoute({
   path: "/api/v1/learned-skills/{skillId}/diff",
   request: { params: learnedSkillParameters, query: learnedSkillDiffQuery },
   responses: {
+    ...transportErrors,
     200: {
       content: { "application/json": { schema: learnedSkillDiffResponseSchema } },
       description: "A unified diff between two learned-skill versions.",
@@ -158,6 +198,7 @@ const listLearnedSkillChangesRoute = createRoute({
   operationId: "listLearnedSkillChanges",
   path: "/api/v1/learned-skills/changes",
   responses: {
+    ...transportErrors,
     200: {
       content: { "application/json": { schema: learnedSkillChangesResponseSchema } },
       description: "Recent learned-skill lifecycle changes.",
@@ -173,6 +214,7 @@ const listMemoryRoute = createRoute({
   operationId: "listUserMemory",
   path: "/api/v1/user-memory",
   responses: {
+    ...transportErrors,
     200: {
       content: { "application/json": { schema: userMemoryResponseSchema } },
       description: "The user-model memory index.",
@@ -188,11 +230,32 @@ const listLearningProposalsRoute = createRoute({
   path: "/api/v1/learning-proposals",
   request: { query: learningProposalQuery },
   responses: {
+    ...transportErrors,
     200: {
       content: { "application/json": { schema: learningProposalsResponseSchema } },
       description: "The daemon-curated learning proposal review queue.",
     },
     500: errorResponse,
+    503: errorResponse,
+  },
+});
+
+const getLearningProposalRoute = createRoute({
+  method: "get",
+  operationId: "getLearningProposal",
+  path: "/api/v1/learning-proposals/{proposalId}",
+  request: { params: learningProposalParameters },
+  responses: {
+    ...transportErrors,
+    200: {
+      content: { "application/json": { schema: learningProposalDetailSchema } },
+      description:
+        "One learning proposal, re-read with each evidence source's current availability.",
+    },
+    404: errorResponse,
+    409: errorResponse,
+    500: errorResponse,
+    501: errorResponse,
     503: errorResponse,
   },
 });
@@ -209,6 +272,7 @@ const decideLearningProposalRoute = createRoute({
     params: learningProposalParameters,
   },
   responses: {
+    ...transportErrors,
     200: {
       content: { "application/json": { schema: learningProposalSchema } },
       description: "The proposal after the recorded review decision.",
@@ -232,6 +296,7 @@ const undoLearningPromotionRoute = createRoute({
     params: learningProposalParameters,
   },
   responses: {
+    ...transportErrors,
     200: {
       content: { "application/json": { schema: learningProposalSchema } },
       description: "The proposal after its promotion was reverted.",
@@ -249,6 +314,7 @@ const reflectSessionRoute = createRoute({
   path: "/api/v1/sessions/{sessionId}/reflection",
   request: { params: sessionParameters },
   responses: {
+    ...transportErrors,
     200: {
       content: { "application/json": { schema: reflectionReceiptSchema } },
       description: "The completed session reflection receipt.",
@@ -263,10 +329,17 @@ const generateMemoryConsolidationPlanRoute = createRoute({
   method: "post",
   operationId: "generateMemoryConsolidationPlan",
   path: "/api/v1/user-memory/consolidation/plans",
+  request: {
+    body: {
+      content: { "application/json": { schema: generateMemoryConsolidationPlanRequestSchema } },
+      required: false,
+    },
+  },
   responses: {
+    ...transportErrors,
     201: {
       content: { "application/json": { schema: memoryConsolidationPlanSchema } },
-      description: "A bounded daemon-curated user-memory consolidation plan.",
+      description: "A bounded daemon-curated consolidation plan for the requested memory store.",
     },
     500: errorResponse,
     501: errorResponse,
@@ -286,6 +359,7 @@ const decideMemoryConsolidationPlanRoute = createRoute({
     params: memoryConsolidationPlanParameters,
   },
   responses: {
+    ...transportErrors,
     200: {
       content: { "application/json": { schema: memoryConsolidationReceiptSchema } },
       description: "The receipt for applying or dismissing the whole consolidation plan.",
@@ -305,6 +379,7 @@ const getMemoryRoute = createRoute({
   path: "/api/v1/user-memory/{memoryKey}",
   request: { params: memoryParameters },
   responses: {
+    ...transportErrors,
     200: {
       content: { "application/json": { schema: memoryDetailResponseSchema } },
       description: "One user-model memory entry and its revisions.",
@@ -323,6 +398,17 @@ export function registerKnowledgeRoutes(
   app.openapi(listConfiguredSkillsRoute, async (context) => {
     if (!knowledge) return unavailable(context);
     return context.json(await knowledge.listConfiguredSkills(), 200);
+  });
+  app.openapi(listSkillFilesRoute, async (context) => {
+    if (!knowledge) return unavailable(context);
+    if (!knowledge.capabilities.skillFiles)
+      return unsupported(
+        context,
+        "skill_files_unsupported",
+        "This Mecatl server cannot show a skill's files.",
+      );
+    const { name } = context.req.valid("param");
+    return context.json(await knowledge.listSkillFiles(name), 200);
   });
   app.openapi(listLearnedSkillsRoute, async (context) => {
     if (!knowledge) return unavailable(context);
@@ -383,10 +469,35 @@ export function registerKnowledgeRoutes(
   });
   app.openapi(listLearningProposalsRoute, async (context) => {
     if (!knowledge) return unavailable(context);
+    const query = context.req.valid("query");
     return context.json(
-      await knowledge.listLearningProposals(context.req.valid("query").status ?? ""),
+      await knowledge.listLearningProposals(
+        query.status ?? "",
+        query.cursor ?? "",
+        query.limit ?? 0,
+      ),
       200,
     );
+  });
+  app.openapi(getLearningProposalRoute, async (context) => {
+    if (!knowledge) return unavailable(context);
+    if (!knowledge.capabilities.learningProposals)
+      return unsupported(
+        context,
+        "learning_proposals_unsupported",
+        "Learning proposals are not enabled on this deployment.",
+      );
+    try {
+      return context.json(
+        await knowledge.getLearningProposal(context.req.valid("param").proposalId),
+        200,
+      );
+    } catch (error) {
+      if (error instanceof KnowledgeNotFoundError) {
+        return problem(context, 404, "not_found", "Not found", error.message);
+      }
+      throw error;
+    }
   });
   app.openapi(decideLearningProposalRoute, async (context) => {
     if (!knowledge) return unavailable(context);
@@ -432,21 +543,23 @@ export function registerKnowledgeRoutes(
   });
   app.openapi(generateMemoryConsolidationPlanRoute, async (context) => {
     if (!knowledge) return unavailable(context);
-    if (!knowledge.capabilities.memoryConsolidation.generate)
-      return unsupported(
-        context,
-        "memory_consolidation_unsupported",
-        knowledge.capabilities.memoryConsolidation.unavailableReason,
-      );
-    return context.json(await knowledge.generateMemoryConsolidationPlan(), 201);
+    // An absent body (older clients) consolidates the user model, as before.
+    const target = context.req.valid("json")?.target ?? "user_model";
+    const capability = knowledge.capabilities.memoryConsolidation[target];
+    if (!capability.generate)
+      return unsupported(context, "memory_consolidation_unsupported", capability.unavailableReason);
+    return context.json(await knowledge.generateMemoryConsolidationPlan(target), 201);
   });
   app.openapi(decideMemoryConsolidationPlanRoute, async (context) => {
     if (!knowledge) return unavailable(context);
-    if (!knowledge.capabilities.memoryConsolidation.decide)
+    // The plan id carries no target, so any target that can decide admits the
+    // request; the daemon still enforces each plan's own decision authority.
+    const consolidation = knowledge.capabilities.memoryConsolidation;
+    if (!consolidation.user_model.decide && !consolidation.project_memory.decide)
       return unsupported(
         context,
         "memory_consolidation_decision_unsupported",
-        knowledge.capabilities.memoryConsolidation.unavailableReason,
+        consolidation.user_model.unavailableReason,
       );
     return context.json(
       await knowledge.decideMemoryConsolidationPlan(

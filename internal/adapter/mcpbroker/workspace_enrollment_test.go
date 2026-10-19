@@ -49,16 +49,7 @@ func newWorkspaceEnrollmentRuntime(t *testing.T, tokenServer *httptest.Server, q
 	if err != nil {
 		t.Fatal(err)
 	}
-	process := &Process{
-		Runtime:            runtime,
-		construction:       toolHiveConstruction{protectedBackends: backends},
-		protectedTarget:    target,
-		queryAuthenticated: queries.query,
-		occupied:           []string{"Read"},
-		ctx:                context.Background(),
-		cancel:             func() {},
-	}
-	runtime.process = process
+	runtime.configureEnrollment(enrollmentConfig{backends: backends, target: target, occupied: []string{"Read"}}, queries, &testPublicationGate{})
 	return runtime
 }
 
@@ -439,7 +430,7 @@ func TestWorkspaceEnrollmentDiscoveryCancellationIsRetryable(t *testing.T) {
 	entered := make(chan struct{})
 	var mu sync.Mutex
 	attempts := 0
-	runtime.process.queryAuthenticated = func(ctx context.Context, _ oauth2.TokenSource, backend string) (AuthenticatedCapabilities, error) {
+	runtime.discovery = authenticatedDiscoveryFunc(func(ctx context.Context, _ oauth2.TokenSource, backend string) (AuthenticatedCapabilities, error) {
 		mu.Lock()
 		attempts++
 		attempt := attempts
@@ -450,7 +441,7 @@ func TestWorkspaceEnrollmentDiscoveryCancellationIsRetryable(t *testing.T) {
 			return AuthenticatedCapabilities{}, ctx.Err()
 		}
 		return AuthenticatedCapabilities{Backend: backend, Tools: []ToolDefinition{{Backend: backend, Name: "mcp__github__list", Schema: json.RawMessage(`{"type":"object"}`)}}}, nil
-	}
+	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	observed := make(chan error, 1)
@@ -507,7 +498,7 @@ func TestCancelledPeerCannotPublishUncommittedCatalogue(t *testing.T) {
 	release := make(chan struct{})
 	var mu sync.Mutex
 	attempts := 0
-	runtime.process.queryAuthenticated = func(_ context.Context, _ oauth2.TokenSource, backend string) (AuthenticatedCapabilities, error) {
+	runtime.discovery = authenticatedDiscoveryFunc(func(_ context.Context, _ oauth2.TokenSource, backend string) (AuthenticatedCapabilities, error) {
 		mu.Lock()
 		attempts++
 		attempt := attempts
@@ -517,7 +508,7 @@ func TestCancelledPeerCannotPublishUncommittedCatalogue(t *testing.T) {
 			<-release
 		}
 		return AuthenticatedCapabilities{Backend: backend, Tools: []ToolDefinition{{Backend: backend, Name: "mcp__github__list", Schema: json.RawMessage(`{"type":"object"}`)}}}, nil
-	}
+	})
 
 	observed := make(chan error, 1)
 	go func() {

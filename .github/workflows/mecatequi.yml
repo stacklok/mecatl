@@ -187,7 +187,7 @@ jobs:
         with:
           version: 3.51.1
 
-      # Install golangci-lint at the version the Taskfile documents (v2.12.2) so `task lint`
+      # Install golangci-lint at the version the Taskfile documents (v2.14.0) so `task lint`
       # finds it on PATH. We only want the BINARY available (ci.yml uses the action to RUN the
       # linter), so `go install` it instead of the prior `curl … install.sh | sh` (the official,
       # version-pinned installer over HTTPS — a defensible pattern). The `go install` path is a
@@ -198,7 +198,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
           echo "$(go env GOPATH)/bin" >> "${GITHUB_PATH}"
 
       # Extract the UNTRUSTED prompt from the event JSON into a file via jq — never an

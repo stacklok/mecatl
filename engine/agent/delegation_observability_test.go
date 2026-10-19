@@ -317,6 +317,9 @@ func TestInvariant_subagent_payload_previews_bounded(t *testing.T) {
 	allowed := map[string]bool{
 		"ParentCallID": true, "ChildID": true, "ChildIncarnation": true, "Goal": true, "Background": true,
 		"RoutedCategory": true, "RoutedModel": true, "Model": true,
+		// Provider and ExplicitRouterCategory are bounded operator-configured selector
+		// metadata, never task or child content.
+		"Provider": true, "ExplicitRouterCategory": true,
 		// RoutingReason (issue #397) is the bare-metadata REASON the child was not
 		// routed (a session.RoutingReason* gate const or a bounded harness/composition
 		// miss string), EMPTY on a routed hit — never the task prompt or classifier

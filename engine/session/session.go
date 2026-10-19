@@ -290,6 +290,14 @@ var (
 	ErrNoPendingAuthorization = errors.New("session: no pending external authorization")
 )
 
+// ExecutionCapabilities records only whether the bound execution environment
+// and engine offered these tools at creation. It contains no placement identity
+// or live authorization; readers must still intersect it with bound authority.
+type ExecutionCapabilities struct {
+	Files bool
+	Shell bool
+}
+
 // Session is the aggregate root of the Agent Session context. All mutation of
 // the conversation, counters, and lifecycle flows through its intention-revealing
 // methods so the state machine and stop conditions always hold. Outside code
@@ -324,6 +332,10 @@ type Session struct {
 	// It is minted by the placement provider and must be valid before persistence
 	// or execution. Resolution to live capabilities belongs to composition.
 	EnvironmentRef EnvironmentRef
+	// ExecutionCapabilities is the creation-time host-observed tool and placement
+	// ceiling. Nil means no trusted observation was persisted; it does not imply
+	// the current service's default tool surface. It is never execution authority.
+	ExecutionCapabilities *ExecutionCapabilities
 	// Placement is safe display-only metadata minted by the placement provider.
 	// It is persisted for public inventory projection but never used to bind or
 	// reattach an environment.
@@ -340,6 +352,23 @@ type Session struct {
 	// process rebuild the same tool surface. The exact EnvironmentRef remains the
 	// sole placement identity.
 	Profile string
+	// ExecutionTemplateID and ExecutionTemplateRevision are opaque, write-once
+	// provenance for retry matching. Reattachment uses EnvironmentRef, never these labels.
+	ExecutionTemplateID       string
+	ExecutionTemplateRevision string
+	// AgentDefinitionName optionally binds this session's root to a named
+	// AgentDef (ADR 0353). The aggregate STORES it but never interprets it: the
+	// meaning (catalog restriction, provider/model/limits/permission-mode
+	// resolution) lives entirely in composition, like Profile. It is a
+	// write-once creation label set by the composition root after New (no
+	// mutator); persisting it lets a restarted process re-identify the binding.
+	// Empty means an ordinary session (today's default-explorer behavior).
+	AgentDefinitionName string
+	// AgentCreateIntent is an opaque, versioned fingerprint of the original
+	// explicit-ID create request, distinct from effective mode, limits and model.
+	// Empty means no retry evidence; hosts must not infer it from effective values.
+	// Write-once at creation, never inherited by successors.
+	AgentCreateIntent string
 	// ProviderID and ModelID are the opaque neutral provider+model selector pair
 	// this session was bound to. The aggregate STORES them but never interprets
 	// them — the ProviderSelector type and all resolution stay in composition; only
@@ -421,6 +450,12 @@ type Session struct {
 	// A zero Authority with this marker is impossible: BindAuthority validates the
 	// payload before setting either field.
 	authorityBound bool
+	// workspaceEnrollmentBrokerKeys records exactly the broker registration keys
+	// installed by the last completed workspace enrollment. Presence distinguishes
+	// a fully restored empty ledger from unrepaired legacy state.
+	workspaceEnrollmentBrokerKeys         []string
+	workspaceEnrollmentBrokerKeysPresent  bool
+	workspaceEnrollmentBrokerKeysRestored bool
 	// pending is set iff State == StateAwaiting.
 	pending *PendingAsk
 	// pendingAuthorization is set iff State == StateAuthorizing.
@@ -1164,6 +1199,37 @@ func (s *Session) SetMode(mode PermissionMode) error {
 		return fmt.Errorf("%w: SetMode from %q", ErrIllegalTransition, s.State)
 	}
 	s.Mode = mode
+	return nil
+}
+
+// TightenConfiguration restricts an idle, not-yet-run session's initial posture
+// and budgets atomically. Hosts use it on an unpublished successor after factory
+// resolution, never to change an existing session's lifetime configuration.
+func (s *Session) TightenConfiguration(mode PermissionMode, limits Limits) error {
+	if s.State != StateIdle || s.Counters != (Counters{}) {
+		return fmt.Errorf("%w: TightenConfiguration requires an idle, not-yet-run session", ErrIllegalTransition)
+	}
+	rank := func(m PermissionMode) int {
+		switch m {
+		case ModePlan:
+			return 1
+		case ModeDefault:
+			return 2
+		case ModeAccept:
+			return 3
+		default:
+			return 0
+		}
+	}
+	if rank(mode) == 0 || rank(s.Mode) == 0 || rank(mode) > rank(s.Mode) {
+		return errors.New("session: configuration would widen or invalidate permission mode")
+	}
+	for _, pair := range [][2]int{{s.Limits.MaxTurns, limits.MaxTurns}, {s.Limits.MaxToolCalls, limits.MaxToolCalls}, {s.Limits.MaxConsecutiveFailures, limits.MaxConsecutiveFailures}} {
+		if pair[1] < 0 || pair[0] > 0 && (pair[1] == 0 || pair[1] > pair[0]) {
+			return errors.New("session: configuration would widen or invalidate limits")
+		}
+	}
+	s.Mode, s.Limits = mode, limits
 	return nil
 }
 

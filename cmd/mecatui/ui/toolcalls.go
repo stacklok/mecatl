@@ -464,12 +464,13 @@ func (s *toolcallsState) restoreChildSummaryAnchor(previous *toolcallDetail) {
 }
 
 func (s *toolcallsState) Render(width, height int) (string, []ClickableRegion) {
-	s.compact = false
+	s.compact = true
 	s.hitItems = nil
 	if !s.open || width <= 0 || height <= 0 {
 		s.list = nil
 		return "", nil
 	}
+	s.compact = false
 	th := s.deps.theme
 	line := func(style lipgloss.Style, text string) string {
 		return ansi.Cut(style.Render(terminaltext.Sanitize(text)), 0, width) + "\x1b[0m"
@@ -917,21 +918,9 @@ func (s *toolcallsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 	if s.compact || len(s.entries) == 0 {
 		return nil, true, false
 	}
-	move := bounded.LineDown
-	switch {
-	case bubbleskey.Matches(msg, s.deps.keys.Down):
-	case bubbleskey.Matches(msg, s.deps.keys.Up):
-		move = bounded.LineUp
-	case bubbleskey.Matches(msg, s.deps.keys.ScrollD):
-		move = bounded.PageDown
-	case bubbleskey.Matches(msg, s.deps.keys.ScrollU):
-		move = bounded.PageUp
-	case bubbleskey.Matches(msg, s.deps.keys.ScrollBottom):
-		move = bounded.End
-	case bubbleskey.Matches(msg, s.deps.keys.ScrollTop):
-		move = bounded.Top
-	case bubbleskey.Matches(msg, s.deps.keys.Choose):
-		if !s.detail {
+	move, navigation := boundedNavigationMove(msg, s.deps.keys, bounded.LineDown, bounded.LineUp, bounded.PageDown, bounded.PageUp, bounded.End, bounded.Top)
+	if !navigation {
+		if bubbleskey.Matches(msg, s.deps.keys.Choose) && !s.detail {
 			s.detail = true
 			s.intent = toolcallsDetailIntent{blockID: s.entries[s.selected].blockID}
 			s.window = new(bounded.Viewport)
@@ -939,8 +928,6 @@ func (s *toolcallsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 			s.anchor = 0
 			s.follow = false
 		}
-		return nil, true, false
-	default:
 		return nil, true, false
 	}
 	if s.detail {
@@ -962,11 +949,11 @@ func (s *toolcallsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 }
 
 func (s *toolcallsState) HandleWheel(msg tea.MouseWheelMsg) (tea.Cmd, bool) {
+	move := bounded.LineDown
+	if msg.Mouse().Button == tea.MouseWheelUp {
+		move = bounded.LineUp
+	}
 	if s.detail && s.window != nil {
-		move := bounded.LineDown
-		if msg.Mouse().Button == tea.MouseWheelUp {
-			move = bounded.LineUp
-		}
 		s.window.Move(move, s.lines)
 		s.follow = s.window.Offset() >= max(0, s.lines-s.window.Height())
 		if !s.follow {
@@ -977,7 +964,7 @@ func (s *toolcallsState) HandleWheel(msg tea.MouseWheelMsg) (tea.Cmd, bool) {
 	if s.list == nil {
 		return nil, true
 	}
-	s.list.Scroll(map[bool]bounded.Move{true: bounded.LineUp, false: bounded.LineDown}[msg.Mouse().Button == tea.MouseWheelUp])
+	s.list.Scroll(move)
 	s.listFollow = s.selected == len(s.entries)-1 && s.list.View().Below == 0
 	return nil, true
 }

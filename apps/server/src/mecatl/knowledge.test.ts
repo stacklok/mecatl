@@ -28,6 +28,116 @@ function sdkSkill(over: Record<string, unknown> = {}) {
   };
 }
 
+function sdkProposal() {
+  return {
+    body: "",
+    createdAt: { nanos: 0, seconds: 1_700_000_000n },
+    decisions: [],
+    description: "How the user likes answers",
+    evidence: [
+      {
+        availability: "available",
+        available: true,
+        digest: "sha256:aaa",
+        eventSeq: 0n,
+        locator: "message",
+        ordinal: 3,
+        preview: "Please keep answers short.",
+        sessionId: "session-1",
+        toolCallId: "",
+      },
+      {
+        availability: "evidence changed",
+        available: false,
+        digest: "sha256:bbb",
+        eventSeq: 9_007_199_254_740_993n,
+        locator: "event",
+        ordinal: 0,
+        preview: "",
+        sessionId: "session-2",
+        toolCallId: "call-1",
+      },
+    ],
+    id: "proposal-1",
+    key: "communication",
+    kind: "fact",
+    learnedSkillId: "",
+    projectScoped: false,
+    promotionAvailable: true,
+    promotionUnavailableReason: "",
+    status: "staged",
+    title: "",
+    triggers: ["explicit"],
+    updatedAt: { nanos: 0, seconds: 1_700_000_000n },
+    value: "Keep answers concise.",
+    version: "v1",
+  };
+}
+
+const allConsolidation = {
+  project_memory: { decide: true, generate: true, unavailableReason: "" },
+  user_model: { decide: true, generate: true, unavailableReason: "" },
+};
+
+const allCapabilities = {
+  learnedSkills: true,
+  learningProposals: true,
+  memoryConsolidation: allConsolidation,
+  reflection: true,
+  skillFiles: true,
+  skills: true,
+  userModel: true,
+};
+
+function sdkDreamPlan(target: string) {
+  return {
+    expiresAt: { nanos: 0, seconds: 1_700_000_000n },
+    id: "plan-1",
+    operations: [
+      {
+        exactDuplicateEligible: true,
+        kind: "merge",
+        reason: "duplicates",
+        replacement: { description: "Merged", value: "Uses vim" },
+        sources: [{ description: "Older", key: "editor_2", value: "vim" }],
+        survivor: { description: "Editor", key: "editor", value: "Uses vim" },
+      },
+    ],
+    plannedOperationCount: 1,
+    plannedSourceCount: 2,
+    target,
+  };
+}
+
+function sdkDreamReceipt(target: string) {
+  return {
+    appliedSourceCount: 1,
+    conflictedSourceCount: 1,
+    disposition: "applied",
+    failedSourceCount: 0,
+    id: "plan-1",
+    plannedSourceCount: 2,
+    skippedSourceCount: 0,
+    target,
+  };
+}
+
+function sdkRevision(over: Record<string, unknown> = {}) {
+  return {
+    description: "Prefers concise answers",
+    key: "communication",
+    origin: "reflection",
+    sourceProposalId: "proposal-7",
+    sourceSessionId: "session-1",
+    status: "active",
+    updatedAt: { nanos: 0, seconds: 1_700_000_000n },
+    value: "Keep explanations short.",
+    version: "3",
+    writer: "mecatl",
+    ...over,
+  };
+}
+
 describe("Mecatl knowledge adapter", () => {
   it("derives the knowledge capability set from the live runtime snapshot", async () => {
     const snapshot = sampleSnapshot();
@@ -36,6 +146,11 @@ describe("Mecatl knowledge adapter", () => {
       learnedSkills: true,
       learningProposals: false,
       manualDream: {
+        projectMemory: {
+          decide: false,
+          generate: false,
+          unavailableReason: "target store is unavailable",
+        },
         userModel: { decide: true, generate: false, unavailableReason: "needs a model" },
       },
       reflection: true,
@@ -46,8 +161,16 @@ describe("Mecatl knowledge adapter", () => {
     expect(live).toEqual({
       learnedSkills: true,
       learningProposals: false,
-      memoryConsolidation: { decide: true, generate: false, unavailableReason: "needs a model" },
+      memoryConsolidation: {
+        project_memory: {
+          decide: false,
+          generate: false,
+          unavailableReason: "target store is unavailable",
+        },
+        user_model: { decide: true, generate: false, unavailableReason: "needs a model" },
+      },
       reflection: true,
+      skillFiles: false,
       skills: false,
       userModel: true,
     });
@@ -62,8 +185,20 @@ describe("Mecatl knowledge adapter", () => {
     expect(pending).toMatchObject({
       learnedSkills: false,
       learningProposals: false,
-      memoryConsolidation: { decide: false, generate: false },
+      memoryConsolidation: {
+        project_memory: {
+          decide: false,
+          generate: false,
+          unavailableReason: "Memory consolidation is not enabled on this deployment.",
+        },
+        user_model: {
+          decide: false,
+          generate: false,
+          unavailableReason: "Memory consolidation is not enabled on this deployment.",
+        },
+      },
       reflection: false,
+      skillFiles: false,
       skills: false,
       userModel: false,
     });
@@ -107,8 +242,9 @@ describe("Mecatl knowledge adapter", () => {
     const service = createMecatlKnowledgeService({ learnedSkills } as unknown as Client, {
       learnedSkills: true,
       learningProposals: true,
-      memoryConsolidation: { decide: true, generate: true, unavailableReason: "" },
+      memoryConsolidation: allConsolidation,
       reflection: true,
+      skillFiles: true,
       skills: true,
       userModel: true,
     });
@@ -204,8 +340,9 @@ describe("Mecatl knowledge adapter", () => {
         {
           learnedSkills: true,
           learningProposals: true,
-          memoryConsolidation: { decide: true, generate: true, unavailableReason: "" },
+          memoryConsolidation: allConsolidation,
           reflection: true,
+          skillFiles: true,
           skills: true,
           userModel: true,
         },
@@ -230,8 +367,9 @@ describe("Mecatl knowledge adapter", () => {
       {
         learnedSkills: true,
         learningProposals: true,
-        memoryConsolidation: { decide: true, generate: true, unavailableReason: "" },
+        memoryConsolidation: allConsolidation,
         reflection: true,
+        skillFiles: true,
         skills: true,
         userModel: true,
       },
@@ -253,5 +391,402 @@ describe("Mecatl knowledge adapter", () => {
       status: 409,
     });
     expect(activate).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps a memory revision's provenance for the current value and its history", async () => {
+    const get = vi.fn().mockResolvedValue({
+      detail: {
+        current: sdkRevision(),
+        history: [
+          sdkRevision({
+            origin: "",
+            sourceProposalId: "",
+            sourceSessionId: "",
+            status: "superseded",
+            updatedAt: undefined,
+            version: "2",
+            writer: "",
+          }),
+        ],
+        historyAvailable: true,
+      },
+    });
+    const service = createMecatlKnowledgeService(
+      { userModel: { get } } as unknown as Client,
+      allCapabilities,
+    );
+    await expect(service.getMemory("communication")).resolves.toEqual({
+      current: {
+        description: "Prefers concise answers",
+        key: "communication",
+        origin: "reflection",
+        sourceProposalId: "proposal-7",
+        sourceSessionId: "session-1",
+        status: "active",
+        updatedAt: "2023-11-14T22:13:20.000Z",
+        value: "Keep explanations short.",
+        version: "3",
+        writer: "mecatl",
+      },
+      history: [
+        {
+          description: "Prefers concise answers",
+          key: "communication",
+          origin: "",
+          sourceProposalId: "",
+          sourceSessionId: "",
+          status: "superseded",
+          updatedAt: null,
+          value: "Keep explanations short.",
+          version: "2",
+          writer: "",
+        },
+      ],
+      historyAvailable: true,
+    });
+    expect(get).toHaveBeenCalledWith({
+      $typeName: "mecatl.v1.GetUserModelRequest",
+      key: "communication",
+    });
+  });
+
+  it("pages learning proposals with the daemon's cursor and keeps list items evidence-free", async () => {
+    const list = vi.fn().mockResolvedValue({
+      nextCursor: "proposal-2",
+      proposals: [sdkProposal()],
+    });
+    const service = createMecatlKnowledgeService(
+      { learningProposals: { list } } as unknown as Client,
+      allCapabilities,
+    );
+    const page = await service.listLearningProposals("staged", "proposal-0", 50);
+    expect(list).toHaveBeenCalledWith(
+      expect.objectContaining({ cursor: "proposal-0", limit: 50, project: "", status: "staged" }),
+    );
+    expect(page).toMatchObject({ complete: false, nextCursor: "proposal-2", supported: true });
+    // The list projection is not re-verified by the daemon, so it carries only the count.
+    expect(page.items[0]).toMatchObject({ evidenceCount: 2, id: "proposal-1", version: "v1" });
+    expect(page.items[0]).not.toHaveProperty("evidence");
+
+    list.mockResolvedValue({ nextCursor: "", proposals: [] });
+    await expect(service.listLearningProposals("promoted")).resolves.toMatchObject({
+      complete: true,
+      nextCursor: "",
+    });
+    expect(list).toHaveBeenLastCalledWith(
+      expect.objectContaining({ cursor: "", limit: 100, status: "promoted" }),
+    );
+  });
+
+  it("re-reads one learning proposal with each source's checked availability", async () => {
+    const get = vi.fn().mockResolvedValue({ proposal: sdkProposal() });
+    const service = createMecatlKnowledgeService(
+      { learningProposals: { get } } as unknown as Client,
+      allCapabilities,
+    );
+    await expect(service.getLearningProposal("proposal-1")).resolves.toMatchObject({
+      evidence: [
+        {
+          availability: "available",
+          available: true,
+          digest: "sha256:aaa",
+          eventSeq: "0",
+          locator: "message",
+          ordinal: 3,
+          preview: "Please keep answers short.",
+          sessionId: "session-1",
+          toolCallId: "",
+        },
+        {
+          availability: "evidence changed",
+          available: false,
+          eventSeq: "9007199254740993",
+          locator: "event",
+          preview: "",
+          sessionId: "session-2",
+        },
+      ],
+      evidenceCount: 2,
+      id: "proposal-1",
+    });
+    expect(get).toHaveBeenCalledWith(expect.objectContaining({ id: "proposal-1", project: "" }));
+  });
+
+  it("answers 404 not_found for a proposal the daemon cannot find", async () => {
+    // The daemon's generic not-found sentinel carries `session_not_found`, even for a proposal.
+    for (const code of ["session_not_found", "not_found"] as const) {
+      const get = vi.fn().mockRejectedValue(
+        new MecatlError('server: not found: proposal "gone"', {
+          code,
+          status: 5,
+          transport: "grpc",
+        }),
+      );
+      const service = createMecatlKnowledgeService(
+        { learningProposals: { get } } as unknown as Client,
+        allCapabilities,
+      );
+      const response = await createApp({ knowledge: service }).request(
+        "/api/v1/learning-proposals/gone",
+      );
+      expect(response.status, code).toBe(404);
+      await expect(response.json()).resolves.toMatchObject({
+        code: "not_found",
+        detail: "No learning proposal with id gone",
+      });
+    }
+  });
+
+  it("keeps a refused proposal re-read's daemon code", async () => {
+    const get = vi.fn().mockRejectedValue(
+      new MecatlError("server: failed precondition: proposal manifest is unavailable", {
+        code: "failed_precondition",
+        status: 9,
+        transport: "grpc",
+      }),
+    );
+    const service = createMecatlKnowledgeService(
+      { learningProposals: { get } } as unknown as Client,
+      allCapabilities,
+    );
+    const response = await createApp({ knowledge: service }).request(
+      "/api/v1/learning-proposals/proposal-1",
+    );
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ code: "failed_precondition" });
+  });
+
+  it("generates a consolidation plan for either target and keeps the daemon's target", async () => {
+    for (const target of ["user_model", "project_memory"] as const) {
+      const generate = vi.fn().mockResolvedValue({ plan: sdkDreamPlan(target) });
+      const service = createMecatlKnowledgeService(
+        { dreamPlans: { generate } } as unknown as Client,
+        allCapabilities,
+      );
+      const plan = await service.generateMemoryConsolidationPlan(target);
+      expect(generate).toHaveBeenCalledWith({
+        $typeName: "mecatl.v1.GenerateDreamPlanRequest",
+        target,
+      });
+      expect(plan).toMatchObject({
+        expiresAt: "2023-11-14T22:13:20.000Z",
+        id: "plan-1",
+        operations: [{ sources: [{ key: "editor_2" }], survivor: { key: "editor" } }],
+        plannedOperationCount: 1,
+        plannedSourceCount: 2,
+        target,
+      });
+    }
+  });
+
+  it("maps decision receipts for either target and rejects an unknown target", async () => {
+    for (const target of ["user_model", "project_memory"] as const) {
+      const decide = vi.fn().mockResolvedValue({ receipt: sdkDreamReceipt(target) });
+      const service = createMecatlKnowledgeService(
+        { dreamPlans: { decide } } as unknown as Client,
+        allCapabilities,
+      );
+      await expect(
+        service.decideMemoryConsolidationPlan("plan-1", { decision: "apply" }),
+      ).resolves.toEqual({
+        applied: 1,
+        conflicted: 1,
+        disposition: "applied",
+        failed: 0,
+        id: "plan-1",
+        planned: 2,
+        skipped: 0,
+        target,
+      });
+    }
+    const service = createMecatlKnowledgeService(
+      {
+        dreamPlans: {
+          decide: vi.fn().mockResolvedValue({ receipt: sdkDreamReceipt("team_memory") }),
+          generate: vi.fn().mockResolvedValue({ plan: sdkDreamPlan("team_memory") }),
+        },
+      } as unknown as Client,
+      allCapabilities,
+    );
+    await expect(
+      service.decideMemoryConsolidationPlan("plan-1", { decision: "dismiss" }),
+    ).rejects.toThrow("memory consolidation receipt for another target");
+    await expect(service.generateMemoryConsolidationPlan("user_model")).rejects.toThrow(
+      "memory consolidation plan for another target",
+    );
+  });
+});
+
+describe("listSkillFiles", () => {
+  const caps = {
+    learnedSkills: false,
+    learningProposals: false,
+    memoryConsolidation: {
+      project_memory: { decide: false, generate: false, unavailableReason: "" },
+      user_model: { decide: false, generate: false, unavailableReason: "" },
+    },
+    reflection: false,
+    skillFiles: true,
+    skills: true,
+    userModel: false,
+  };
+  const refusal = (code: string) =>
+    new MecatlError("refused", { code: code as never, transport: "grpc" });
+
+  // The daemon marks only the instruction body, which it names SKILL.md.
+  const listed = (name: string, size: number) => ({
+    instructions: name === "SKILL.md",
+    name,
+    size,
+  });
+
+  function serviceWith(
+    files: Array<{ name: string; size: number }>,
+    read: (file: string) => string,
+  ) {
+    const readFile = vi.fn(async ({ file }: { file: string }) => ({ content: read(file) }));
+    const listFiles = vi.fn(async () => ({ files: files.map((f) => listed(f.name, f.size)) }));
+    const service = createMecatlKnowledgeService(
+      { skills: { listFiles, readFile } } as unknown as Client,
+      caps,
+    );
+    return { listFiles, readFile, service };
+  }
+
+  it("loads every file's text in one response, keeping the daemon's order", async () => {
+    const { listFiles, readFile, service } = serviceWith(
+      [
+        { name: "SKILL.md", size: 5 },
+        { name: "references/api.md", size: 3 },
+      ],
+      (file) => `text of ${file}`,
+    );
+    const result = await service.listSkillFiles("deploy");
+    expect(listFiles).toHaveBeenCalledWith({
+      $typeName: "mecatl.v1.ListSkillFilesRequest",
+      name: "deploy",
+    });
+    expect(readFile).toHaveBeenCalledTimes(2);
+    expect(result.omitted).toBe(0);
+    expect(result.files).toEqual([
+      {
+        content: "text of SKILL.md",
+        instructions: true,
+        name: "SKILL.md",
+        size: 5,
+        unavailable: "",
+      },
+      {
+        content: "text of references/api.md",
+        instructions: false,
+        name: "references/api.md",
+        size: 3,
+        unavailable: "",
+      },
+    ]);
+  });
+
+  it("shows a file the daemon refuses as unavailable instead of failing the whole skill", async () => {
+    const files = [listed("SKILL.md", 5), listed("big.txt", 100), listed("blob.bin", 3)];
+    const readFile = vi.fn(async ({ file }: { file: string }) => {
+      if (file === "big.txt") throw refusal("skill_file_too_large");
+      if (file === "blob.bin") throw refusal("skill_file_not_text");
+      return { content: "body" };
+    });
+    const service = createMecatlKnowledgeService(
+      { skills: { listFiles: async () => ({ files }), readFile } } as unknown as Client,
+      caps,
+    );
+    const result = await service.listSkillFiles("deploy");
+    expect(result.files.map((f) => [f.name, f.content, f.unavailable])).toEqual([
+      ["SKILL.md", "body", ""],
+      ["big.txt", "", "Too large to show here."],
+      ["blob.bin", "", "This is a binary file, so it can't be shown here."],
+    ]);
+  });
+
+  it("does not request a file already listed as over the read cap", async () => {
+    const { readFile, service } = serviceWith(
+      [
+        { name: "SKILL.md", size: 5 },
+        { name: "exact.txt", size: 25_000 },
+        { name: "huge.txt", size: 25_001 },
+      ],
+      () => "x",
+    );
+    const result = await service.listSkillFiles("deploy");
+    expect(readFile.mock.calls.map(([request]) => request.file)).toEqual(["SKILL.md", "exact.txt"]);
+    expect(result.files.map((f) => f.unavailable)).toEqual(["", "", "Too large to show here."]);
+  });
+
+  it("loads only the first files and says how many more there are", async () => {
+    const files = Array.from({ length: 40 }, (_, i) => ({
+      name: `f${String(i).padStart(2, "0")}.md`,
+      size: 1,
+    }));
+    const { readFile, service } = serviceWith(files, () => "x");
+    const result = await service.listSkillFiles("many");
+    expect(result.files).toHaveLength(32);
+    expect(result.omitted).toBe(8);
+    expect(readFile).toHaveBeenCalledTimes(32);
+  });
+
+  it("reads at most four files at a time and keeps the daemon's order", async () => {
+    const files = Array.from({ length: 12 }, (_, i) => listed(`f${i}.md`, 1));
+    let inFlight = 0;
+    let peak = 0;
+    const readFile = vi.fn(async ({ file }: { file: string }) => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight -= 1;
+      return { content: file };
+    });
+    const service = createMecatlKnowledgeService(
+      { skills: { listFiles: async () => ({ files }), readFile } } as unknown as Client,
+      caps,
+    );
+    const result = await service.listSkillFiles("deploy");
+    expect(peak).toBeLessThanOrEqual(4);
+    expect(peak).toBeGreaterThan(1);
+    expect(result.files.map((f) => f.content)).toEqual(files.map((f) => f.name));
+  });
+
+  it("shows any other failure on that file only, so one failure never hides the rest", async () => {
+    // A rate-limited daemon rejects part of a burst; the other files must still come back.
+    const files = [listed("SKILL.md", 5), listed("a.md", 1), listed("b.md", 1)];
+    const readFile = vi.fn(async ({ file }: { file: string }) => {
+      if (file === "a.md")
+        throw new MecatlError("rate limit exceeded", {
+          code: "unknown" as never,
+          transport: "http",
+        });
+      return { content: `text of ${file}` };
+    });
+    const service = createMecatlKnowledgeService(
+      { skills: { listFiles: async () => ({ files }), readFile } } as unknown as Client,
+      caps,
+    );
+    const result = await service.listSkillFiles("deploy");
+    expect(result.files.map((f) => [f.name, f.content, f.unavailable])).toEqual([
+      ["SKILL.md", "text of SKILL.md", ""],
+      ["a.md", "", "Couldn't load this file."],
+      ["b.md", "text of b.md", ""],
+    ]);
+  });
+
+  it("still lets a rejected session propagate, so sign-in can start", async () => {
+    const service = createMecatlKnowledgeService(
+      {
+        skills: {
+          listFiles: async () => ({ files: [listed("SKILL.md", 1)] }),
+          readFile: async () => {
+            throw refusal("unauthenticated");
+          },
+        },
+      } as unknown as Client,
+      caps,
+    );
+    await expect(service.listSkillFiles("deploy")).rejects.toThrow("refused");
   });
 });

@@ -30,8 +30,11 @@ const ScopeManaged Scope = 0
 const ScopeSharedProject Scope = 3
 const ScopeUser Scope = 4
 const UntrustedFence untyped string = "<<<UNTRUSTED"
+func AmbiguousArgsReason(err error) string
 func Canonicalize(cmd string) string
+func CheckToolArgs(args json.RawMessage) error
 func ConsumeDelegationHop(set CapabilitySet) (CapabilitySet, error)
+func DecodeToolArgs(args json.RawMessage, dst any) error
 func FenceUntrusted(body string) string
 func HasSubstitutionOrGrouping(seg string) bool
 func IsReadOnlyTool(tool string) bool
@@ -60,4 +63,5 @@ type HookPhase string
 type PermissionDecision struct{Effect Effect; Reason string; AskProvenance AskProvenance}
 type Rule struct{Scope Scope; Tool string; Pattern string; Effect Effect; Exact bool; Audience Audience}
 type Scope int
+var ErrAmbiguousToolArgs error
 var ErrDelegationDepthExhausted error

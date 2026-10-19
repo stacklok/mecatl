@@ -44,11 +44,11 @@ func TestCreateSessionDerivedAffinity(t *testing.T) {
 		req  *mecatlv1.CreateSessionRequest
 		want codes.Code
 	}{
-		{name: "debug exact", ctx: affinityContext("target"), req: &mecatlv1.CreateSessionRequest{Profile: "no-fs", DebugTargetSessionId: "target"}, want: codes.NotFound},
-		{name: "debug missing header compatibility", ctx: context.Background(), req: &mecatlv1.CreateSessionRequest{Profile: "no-fs", DebugTargetSessionId: "target"}, want: codes.NotFound},
+		{name: "debug exact", ctx: affinityContext("target"), req: &mecatlv1.CreateSessionRequest{Execution: &mecatlv1.ExecutionSelection{None: &mecatlv1.ExecutionNone{}}, DebugTargetSessionId: "target"}, want: codes.NotFound},
+		{name: "debug missing header compatibility", ctx: context.Background(), req: &mecatlv1.CreateSessionRequest{Execution: &mecatlv1.ExecutionSelection{None: &mecatlv1.ExecutionNone{}}, DebugTargetSessionId: "target"}, want: codes.NotFound},
 		{name: "no derived reference rejects header", ctx: affinityContext("target"), req: &mecatlv1.CreateSessionRequest{}, want: codes.InvalidArgument},
-		{name: "debug mismatch", ctx: affinityContext("other"), req: &mecatlv1.CreateSessionRequest{Profile: "no-fs", DebugTargetSessionId: "target"}, want: codes.InvalidArgument},
-		{name: "debug duplicate", ctx: duplicateAffinityContext("target", "target"), req: &mecatlv1.CreateSessionRequest{Profile: "no-fs", DebugTargetSessionId: "target"}, want: codes.InvalidArgument},
+		{name: "debug mismatch", ctx: affinityContext("other"), req: &mecatlv1.CreateSessionRequest{Execution: &mecatlv1.ExecutionSelection{None: &mecatlv1.ExecutionNone{}}, DebugTargetSessionId: "target"}, want: codes.InvalidArgument},
+		{name: "debug duplicate", ctx: duplicateAffinityContext("target", "target"), req: &mecatlv1.CreateSessionRequest{Execution: &mecatlv1.ExecutionSelection{None: &mecatlv1.ExecutionNone{}}, DebugTargetSessionId: "target"}, want: codes.InvalidArgument},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1205,7 +1206,16 @@ func recordValidatedApproval(r *Run, sessionID session.SessionID, ask session.Pe
 // permissionDecision evaluates normal Shell authority and, only for the declared
 // system temporary scope, the independent tool-wide escape capability. The
 // synthetic capability is never dispatched or registered as a tool.
+//
+// It is the single entry to permission evaluation for every dispatched call
+// (fresh, hook-mutated, or resumed after approval), so it first refuses an
+// argument object that is not in the canonical form governance.CheckToolArgs
+// requires. No policy, guardrail, approval surface, hook or tool then sees
+// arguments whose fields different decoders would read differently.
 func (e *Engine) permissionDecision(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, c session.ToolCall) governance.PermissionDecision {
+	if err := governance.CheckToolArgs(c.Args); err != nil {
+		return governance.PermissionDecision{Effect: governance.Deny, Reason: governance.AmbiguousArgsReason(err)}
+	}
 	evaluate := func(c session.ToolCall) governance.PermissionDecision {
 		result := e.deps.Policy.Evaluate(ctx, sess.ID, sess.Mode, c, env.Workspace())
 		if r != nil {
@@ -1235,28 +1245,39 @@ func shellSystemScope(c session.ToolCall) bool {
 	return ok && shellScope(args) == tool.TemporaryScopeSystem
 }
 
-// systemScopeApprovalArgs projects only the requested scope and a command verb.
-// It must never include a runner-owned temporary path or environment value.
+// systemScopeApproval is the approval projection of a system-scope Shell call:
+// the shellArgs fields that change what runs, each as parseShellArgs decoded it.
+type systemScopeApproval struct {
+	Command    string `json:"command"`
+	TimeoutMS  int    `json:"timeout_ms,omitempty"`
+	Background bool   `json:"background,omitempty"`
+	TempScope  string `json:"temp_scope"`
+}
+
+// systemScopeApprovalArgs projects the system-scope Shell call the engine will
+// execute: the full command, a non-zero timeout, the background flag, and the
+// requested scope, re-encoded from the decoded shellArgs (permissionDecision has
+// already refused ambiguous argument objects, so this is the decode the Shell
+// tool executes). Runner-owned temporary paths and environment values are
+// chosen when the command runs and never enter the call, so the projection
+// cannot carry them.
 func systemScopeApprovalArgs(c session.ToolCall) []byte {
 	args, _, ok := parseShellArgs(c)
 	if !ok {
-		return []byte(`{"temp_scope":"system","command_summary":"Shell command"}`)
+		// Unreachable: shellSystemScope already required a valid call.
+		return []byte(`{"temp_scope":"system"}`)
 	}
-	summary := "Shell command"
-	if fields := strings.Fields(args.Command); len(fields) > 0 {
-		summary = fields[0]
-		if len(fields) > 1 {
-			summary += " " + fields[1]
-		}
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	// Shell commands are full of & < >; keep them literal for raw-args views.
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(systemScopeApproval{
+		Command: args.Command, TimeoutMS: args.TimeoutMS, Background: args.Background,
+		TempScope: string(tool.TemporaryScopeSystem),
+	}); err != nil {
+		return []byte(`{"temp_scope":"system"}`)
 	}
-	out, err := json.Marshal(struct {
-		TempScope string `json:"temp_scope"`
-		Summary   string `json:"command_summary"`
-	}{TempScope: "system", Summary: summary})
-	if err != nil {
-		return []byte(`{"temp_scope":"system","command_summary":"Shell command"}`)
-	}
-	return out
+	return bytes.TrimSuffix(b.Bytes(), []byte("\n"))
 }
 
 func (e *Engine) reauthorizeApprovedCall(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, acceptAsk bool) (permissionAuthorization, session.ToolResult, bool) {
@@ -1588,6 +1609,14 @@ func (e *Engine) askHookApproval(ctx context.Context, r *Run, sess *session.Sess
 // askHookApproval relies on its caller's openCard. It emits NO diagnostics line
 // (the loop's "exactly THREE lines" invariant holds).
 func (e *Engine) surfacePlanAsk(ctx context.Context, r *Run, sess *session.Session, turnIdx int, c session.ToolCall, resultEvent session.EventType) (session.ToolResult, bool) {
+	// PresentPlan is intercepted before permissionDecision, so it applies the
+	// same argument check here: an approver must never see a plan whose fields
+	// different readers would decode differently.
+	if err := governance.CheckToolArgs(c.Args); err != nil {
+		res := denyResult(c, governance.AmbiguousArgsReason(err))
+		e.publishToolResult(r, session.Event{Type: resultEvent, Turn: turnIdx, ToolResult: ptr(res)})
+		return res, false
+	}
 	// Headless degrade (mirrors preHook's askable-block degrade): a
 	// non-interactive engine has NO human to approve a plan, so it must NOT surface
 	// an ask (a headless run never emits EvPermissionAsk). Fail safe: synthesize a
@@ -1855,7 +1884,7 @@ func authorityTarget(call session.ToolCall, _ governance.CapabilitySet) (string,
 			Server string `json:"server"`
 			Tool   string `json:"tool"`
 		}
-		if err := json.Unmarshal(call.Args, &args); err != nil || strings.TrimSpace(args.Server) == "" || strings.TrimSpace(args.Tool) == "" {
+		if _, ok := session.ParseArgs(call, &args); !ok || strings.TrimSpace(args.Server) == "" || strings.TrimSpace(args.Tool) == "" {
 			return "", errors.New("CallMcpWithQuery target is invalid")
 		}
 		return "mcp__" + strings.TrimSpace(args.Server) + "__" + strings.TrimSpace(args.Tool), nil
@@ -1863,7 +1892,7 @@ func authorityTarget(call session.ToolCall, _ governance.CapabilitySet) (string,
 		var args struct {
 			Server string `json:"server"`
 		}
-		if err := json.Unmarshal(call.Args, &args); err != nil || strings.TrimSpace(args.Server) == "" {
+		if _, ok := session.ParseArgs(call, &args); !ok || strings.TrimSpace(args.Server) == "" {
 			return "", errors.New("MCP resource target is invalid")
 		}
 		return governance.MCPResourceCapability(strings.TrimSpace(args.Server)), nil
@@ -2338,7 +2367,7 @@ func routeTaskBody(
 	if diag != nil {
 		diag.Log(ctx, port.LevelInfo, "subagent routed", routingDiagnosticAttrs(decision)...)
 	}
-	return modelRoutingResult{category: result.Category, model: result.Model, ok: true, decision: decision}
+	return modelRoutingResult{category: result.Category, provider: result.Provider, model: result.Model, ok: true, decision: decision}
 }
 
 // logRouterMissReason emits the per-miss model-router INFO (issue #287) naming WHY a plain
@@ -2385,14 +2414,24 @@ func routingDiagnosticAttrs(decision *session.RoutingDecision) []any {
 // surfacedCommandPreview returns the human-facing preview of a surfaced child ask: for
 // a Shell ask, the command string; otherwise the ask reason (already policy-authored, not
 // peer content). It is the single text that rides the surfaced EvPermissionAsk and is
-// always clampPreview'd by the caller before emission.
+// always clampPreview'd by the caller before emission. A system temp-scope Shell ask
+// also names its scope, since the surfaced ask carries no args.
 func surfacedCommandPreview(ask session.PendingAsk) string {
 	if ask.Tool == "Shell" {
 		if cmd := shellCmdFromArgs(ask.Args); cmd != "" {
+			if systemScopeAsk(ask) {
+				return cmd + " [temp_scope: system]"
+			}
 			return cmd
 		}
 	}
 	return ask.Reason
+}
+
+// systemScopeAsk reports whether a pending ask gates a system temp-scope Shell
+// call, decoding its args exactly as Shell does.
+func systemScopeAsk(ask session.PendingAsk) bool {
+	return shellSystemScope(session.NewToolCall(ask.Call, ask.Tool, ask.Args))
 }
 
 // resultPayload is the JSON shape of the PostToolUse hook's view of a tool

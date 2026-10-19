@@ -36,16 +36,16 @@ func main() {
 	}
 }
 func run() error { //nolint:gocyclo // Startup validation and owned-resource shutdown stay in one composition root.
-	var addr, healthAddr, namespace, profilesPath, manifestPath, keyDirectory, authorityConfigMap, executorServiceAccount string
+	var addr, healthAddr, namespace, templatesPath, manifestPath, keyDirectory, authorityConfigMap, executorServiceAccount string
 	var reloadInterval time.Duration
 	var maxConcurrentStreams, maxConcurrentRPCs, maxConcurrentRPCsPerClient int
 	flag.StringVar(&addr, "listen", ":8443", "gRPC listen address")
 	flag.StringVar(&namespace, "namespace", "", "managed Kubernetes namespace")
 	flag.StringVar(&executorServiceAccount, "executor-service-account", "", "chart-owned RBAC-free executor ServiceAccount name")
-	flag.StringVar(&profilesPath, "profiles", "/etc/mecatl-execution/profiles.yaml", "strict operator profile file")
+	flag.StringVar(&templatesPath, "templates", "/etc/mecatl-execution/templates.yaml", "strict versioned execution template file")
 	flag.StringVar(&healthAddr, "health-listen", ":8081", "operational HTTP health listen address; empty disables")
-	flag.StringVar(&manifestPath, "grant-keyring-manifest", "/etc/mecatl-execution/security/manifest.json", "versioned security manifest")
-	flag.StringVar(&keyDirectory, "grant-key-directory", "/etc/mecatl-execution/security", "projected security key and TLS directory")
+	flag.StringVar(&manifestPath, "security-policy-manifest", "/etc/mecatl-execution/security/manifest.json", "versioned client authorization policy manifest")
+	flag.StringVar(&keyDirectory, "tls-directory", "/etc/mecatl-execution/security", "projected server TLS and client CA directory")
 	flag.StringVar(&authorityConfigMap, "security-authority-configmap", "", "provider-owned security generation high-water ConfigMap")
 	flag.DurationVar(&reloadInterval, "security-reload-interval", 2*time.Second, "security material reload interval")
 	flag.IntVar(&maxConcurrentStreams, "max-concurrent-streams", 64, "maximum concurrent HTTP/2 streams per connection")
@@ -58,11 +58,11 @@ func run() error { //nolint:gocyclo // Startup validation and owned-resource shu
 	if namespace == "" || authorityConfigMap == "" || reloadInterval <= 0 || reloadInterval > time.Minute || maxConcurrentStreams < 1 || maxConcurrentStreams > 1024 || maxConcurrentRPCs < 1 || maxConcurrentRPCs > 4096 || maxConcurrentRPCsPerClient < 1 || maxConcurrentRPCsPerClient > maxConcurrentRPCs {
 		return errors.New("required identity, security reload interval, or RPC concurrency bounds are invalid")
 	}
-	profiles, err := executioncontroller.LoadProfiles(profilesPath)
+	templates, err := executioncontroller.LoadTemplates(templatesPath)
 	if err != nil {
 		return err
 	}
-	profiles.WithExecutorServiceAccount(executorServiceAccount)
+	templates.WithExecutorServiceAccount(executorServiceAccount)
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
 		return fmt.Errorf("build in-cluster Kubernetes config: %w", err)
@@ -80,8 +80,8 @@ func run() error { //nolint:gocyclo // Startup validation and owned-resource shu
 		return fmt.Errorf("load security material: %w", err)
 	}
 	podexec := executioncontroller.NewPodExecutor(cfg, kube, namespace)
-	store := executioncontroller.NewStore(dyn, namespace, profiles, podexec).WithKubeClient(kube)
-	reconciler := executioncontroller.NewReconciler(dyn, kube, namespace, profiles)
+	store := executioncontroller.NewStore(dyn, namespace, templates, podexec).WithKubeClient(kube).WithSecurityManager(security)
+	reconciler := executioncontroller.NewReconciler(dyn, kube, namespace, templates)
 	handler := executioncontroller.NewHandler(executioncontroller.HandlerConfig{Security: security, Ready: func() bool { return reconciler.Ready() && security.Ready() }, Diagnostics: slogdiag.New(os.Stderr, true, port.LevelInfo)}, store)
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()

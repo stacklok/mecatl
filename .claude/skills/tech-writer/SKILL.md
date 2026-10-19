@@ -15,7 +15,7 @@ Everything in this skill and its references is guidelines, not rules. Each one e
 Don't duplicate guidance; read it from where it lives:
 
 1. **[Mecatl's style guide](../../../user-docs/_STYLE.md)** is the canonical prose and style guide.
-2. **[The user-docs authoring contract](../../../user-docs/_README.md)** is the canonical information-architecture,
+2. **[The user-docs authoring contract](../../../user-docs/AGENTS.md)** is the canonical information-architecture,
    ownership, link, and verification contract for public documentation. Its
    Mecatl-specific placement, page structure, and verification requirements take
    precedence over the style guide and mode references.
@@ -26,7 +26,7 @@ Don't duplicate guidance; read it from where it lives:
 ## Workflow
 
 1. **Classify.** Use the compass below to decide the page's primary mode. Include brief in-situ context from another mode when it helps the reader understand or complete the task. Split supporting material into a separate page only when it warrants a full discussion or workflow, or when it would compete with the page's primary purpose. Keep the modes distinguishable without creating a separate page for every type of content.
-2. **Place.** For public documentation, follow the ownership map in `user-docs/_README.md`. Diataxis determines the page's mode, not its directory: use the terminal-client, operator, or builder journey that owns the task; shared capability behavior stays in `features/`, and exact contracts stay in `reference/`. For contributor documentation, use the owning architecture topic from `docs/READING.md`. Update that owner; do not append the same feature narrative to several pages. Create a page only for a distinct reader need.
+2. **Place.** For public documentation, follow the ownership map in `user-docs/AGENTS.md`. Diataxis determines the page's mode, not its directory: use the terminal-client, operator, or builder journey that owns the task; shared capability behavior stays in `features/`, and exact contracts stay in `reference/`. For contributor documentation, use the owning architecture topic from `docs/READING.md`. Update that owner; do not append the same feature narrative to several pages. Create a page only for a distinct reader need.
 3. **Read.** Read the reference file for your mode, plus [the write-time anti-patterns](references/anti-patterns.md), plus the style guide sections your task touches. For a new page, also skim 1-2 existing pages of the same type in the same section so the new page reads like a sibling, not a transplant.
 4. **Draft.** Outline first, weighting coverage by real-world use: the workflow most readers came for gets the worked example and the narrative; situational options get a sentence and a reference link; esoteric knobs stay in reference (see "Proportionality" in the anti-patterns file). Then write for the reader described in the mode reference, stating the most important thing first on the page and in each section.
 5. **Self-check.** Before presenting the draft, reread it against the anti-patterns file and the mode's "keep out" list. Cut what fails. For substantial new content, use an independent editorial review when available; for small edits, the self-check is enough.

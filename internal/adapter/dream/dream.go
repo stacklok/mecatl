@@ -37,6 +37,15 @@ const (
 	entriesPrefix      = "Current memory entries:\n"
 )
 
+var (
+	// ErrReadStore marks a failure reading or encoding selected memory.
+	ErrReadStore = errors.New("dream: read store failed")
+	// ErrPlanner marks a failure requesting or streaming a proposed plan.
+	ErrPlanner = errors.New("dream: planner failed")
+	// ErrSynthesis marks an invalid or unparseable model plan.
+	ErrSynthesis = errors.New("dream: invalid plan output")
+)
+
 // Config tunes the Consolidator. Zero values select package defaults.
 type Config struct {
 	Model           string
@@ -299,7 +308,7 @@ func (c *Consolidator) generatePlan(ctx context.Context, minEntries int) (Plan, 
 	}
 	entries, err := c.store.List(ctx, c.cfg.Prefix)
 	if err != nil {
-		return Plan{}, fmt.Errorf("dream: list memory: %w", err)
+		return Plan{}, fmt.Errorf("%w: %w", ErrReadStore, err)
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Key < entries[j].Key })
 	plan := Plan{owner: c, candidates: make(map[string]candidate), eligible: len(entries)}
@@ -321,13 +330,13 @@ func (c *Consolidator) generatePlan(ctx context.Context, minEntries int) (Plan, 
 	defer cancel()
 	operations, err := c.planner.Plan(pctx, selected)
 	if err != nil {
-		return Plan{}, fmt.Errorf("dream: plan: %w", err)
+		return Plan{}, fmt.Errorf("%w: %w", ErrPlanner, err)
 	}
 	if err := validateModelText(operations); err != nil {
-		return Plan{}, errors.New("dream: invalid plan output")
+		return Plan{}, ErrSynthesis
 	}
 	if err := validateOperations(operations, bindings); err != nil {
-		return Plan{}, errors.New("dream: invalid plan output")
+		return Plan{}, ErrSynthesis
 	}
 	plan.operations = operations
 	return plan, nil
@@ -415,7 +424,7 @@ func (c *Consolidator) selectEntries(ctx context.Context, entries []tool.MemoryE
 		examined++
 		record, found, err := c.store.Inspect(ctx, entry.Key)
 		if err != nil {
-			return nil, nil, fmt.Errorf("dream: inspect candidate: %w", err)
+			return nil, nil, fmt.Errorf("%w: %w", ErrReadStore, err)
 		}
 		if !found || record.Current.Status != tool.MemoryStatusActive {
 			continue
@@ -424,7 +433,7 @@ func (c *Consolidator) selectEntries(ctx context.Context, entries []tool.MemoryE
 		binding := candidate{entry: entry, version: record.Current.Version}
 		raw, err := json.Marshal(entryWireOf(entry))
 		if err != nil {
-			return nil, nil, errors.New("dream: encode candidate")
+			return nil, nil, ErrReadStore
 		}
 		extra := len(raw)
 		if len(selected) > 0 {
@@ -747,7 +756,7 @@ func (l *llmPlanner) Plan(ctx context.Context, entries []tool.MemoryEntry) ([]su
 		}
 		if chunk.Kind == port.ChunkText {
 			if len(chunk.Text) > maxPlanOutputBytes-b.Len() {
-				return nil, errors.New("invalid plan output")
+				return nil, ErrSynthesis
 			}
 			b.WriteString(chunk.Text)
 		}
@@ -758,7 +767,7 @@ func (l *llmPlanner) Plan(ctx context.Context, entries []tool.MemoryEntry) ([]su
 	wire, err := parsePlan(b.String(), l.maxForgets)
 	if err != nil {
 		// Never include model output (including unknown field names) in errors.
-		return nil, errors.New("invalid plan output")
+		return nil, ErrSynthesis
 	}
 	operations := make([]supersession, 0, len(wire.ExactDuplicates)+len(wire.SynthesizedReplacements))
 	for _, operation := range wire.ExactDuplicates {

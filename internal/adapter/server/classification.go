@@ -247,6 +247,7 @@ func requireCallerOwnedContext(surface string, t reflect.Type, table map[string]
 // TestInvariant_owned_access_is_classified fails, naming the method.
 var serviceAccessTable = map[string]ClassificationEntry{
 	// --- caller-owned: sessions ---
+	"ListExecutionTemplates":      {KindCallerOwned, "requires verified owner and ownership enforcement before using operator-scoped provider catalog"},
 	"CreateSession":               {KindCallerOwned, "binds the verified context principal as owner atomically with visibility (reserveSessionID)"},
 	"CreateSessionWithProvider":   {KindCallerOwned, "delegates to CreateSessionWithProfile's atomic owner bind"},
 	"CreateSessionWithProfile":    {KindCallerOwned, "atomic owner bind at creation (reserveSessionID); ForkSession/carryover sources are authorized via authorizeSession before copying history"},
@@ -256,6 +257,7 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"BindPlacement":               {KindCallerOwned, "passes the verified context principal and trusted composition scope to the provider's single atomic authorization-and-resolution operation"},
 	"ReattachPlacement":           {KindCallerOwned, "passes the exact persisted ref, verified context principal, and trusted scope to the provider without falling back to Bind"},
 	"ReattachPlacementForBinding": {KindCallerOwned, "passes the exact persisted ref and session binding with the verified context principal to the provider"},
+	"ScheduleFirePlacement":       {KindCallerOwned, "reauthorizes schedule scope, owner and exact origin reference before reserving a distinct native fire binding"},
 	"ReattachPlacementInScope":    {KindCallerOwned, "requires the durable schedule scope to equal trusted composition scope, then reauthorizes the exact persisted ref as the verified owner without default fallback"},
 	"ListCommandsForSession":      {KindCallerOwned, "loads and owner-authorizes the source session before exact placement reattachment and command discovery"},
 	"ListWorktreesForSession":     {KindCallerOwned, "loads and owner-authorizes the source session before exact placement reattachment and scoped selector issuance"},
@@ -365,7 +367,9 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"ListMcpSources":          {KindSharedInfrastructure, "the cached deployment-wide MCP source inventory, identical for every caller and never an independent probe"},
 	"ListToolHiveGroups":      {KindSharedInfrastructure, "derives group names from the same deployment-wide MCP source inventory as ListMcpSources"},
 	"ListAgents":              {KindSharedInfrastructure, "the deployment's configured agent-definition catalog, identical for every caller"},
-	"ListSkills":              {KindSharedInfrastructure, "the deployment's configured skill catalog, identical for every caller"},
+	"ListSkills":              {KindSharedInfrastructure, "the deployment's configured skill catalog, identical for every caller; the verified caller's own published learned skills are added to that view (see ListSkillFiles)"},
+	"ListSkillFiles":          {KindCallerOwned, "resolves the skill through the verified caller's own skill view (deployment skills plus that caller's learned skills), and a skill outside it is absent"},
+	"ReadSkillFile":           {KindCallerOwned, "resolves the skill and file through the verified caller's own skill view, and a skill or file outside it is absent"},
 	"ListModelSnapshot":       {KindSharedInfrastructure, "the deployment's combined model/status publication, identical for every caller"},
 	"ListModels":              {KindSharedInfrastructure, "the deployment's model catalog/live listing, identical for every caller"},
 	"GetSoul":                 {KindSharedInfrastructure, "the deployment's configured soul, identical for every caller"},

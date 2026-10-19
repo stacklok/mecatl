@@ -12,7 +12,9 @@ import { describe, expect, it } from "vitest";
 import { stringSearchParams } from "../../lib/search-params";
 import { routeTree } from "../../routeTree.gen";
 import { authLoginUrl } from "../auth/auth-gate";
-import { MemoryFactDetail, MemorySettings } from "./memory-settings";
+import { MemoryFactDetail } from "../memory/memory-fact-detail";
+import { MemorySettingsPage } from "../memory/memory-settings-page";
+import { SettingsIndex } from "./settings-index";
 import { isSettingsSection, settingsGroups } from "./settings-sections";
 import { SettingsWorkspace } from "./settings-workspace";
 
@@ -69,8 +71,21 @@ describe("settings routes", () => {
         </RouterContextProvider>
       </QueryClientProvider>,
     );
-    for (const section of sections) expect(navigation).toContain(`value="${section}"`);
-    expect(navigation).toMatch(/<option[^>]*value="permissions"[^>]*selected/);
+    // The phone's section index (#2261, in place of the native picker) links every section;
+    // settings-accessibility.test.tsx checks the back bar that names the current one.
+    const index = renderToStaticMarkup(
+      <QueryClientProvider client={new QueryClient()}>
+        <RouterContextProvider router={await load("/workspace/settings/permissions")}>
+          <SettingsIndex />
+        </RouterContextProvider>
+      </QueryClientProvider>,
+    );
+    for (const section of sections)
+      expect(index).toContain(`href="/workspace/settings/${section}"`);
+    for (const label of settingsGroups.flatMap((group) => group.items.map((item) => item.label))) {
+      expect(navigation).toMatch(new RegExp(`<button[^>]*>${label}</button>`));
+    }
+    expect(navigation).not.toContain("<select");
     expect(navigation).toMatch(/<button[^>]*aria-current="page"[^>]*>Permissions<\/button>/);
     const router = await load("/workspace/settings/profile");
     const memoryLocation = router.buildLocation({
@@ -118,7 +133,13 @@ describe("settings routes", () => {
 
     const queryClient = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
     queryClient.setQueryData(getRuntimeQueryKey(), {
-      capabilities: { manualDream: { userModel: { decide: true, generate: true } } },
+      capabilities: {
+        manualDream: {
+          projectMemory: { decide: false, generate: false },
+          userModel: { decide: true, generate: true },
+        },
+      },
+      connection: "online",
     });
     queryClient.setQueryData(listUserMemoryQueryKey(), {
       items: [{ description: "A voice preference", key }],
@@ -157,23 +178,23 @@ describe("settings routes", () => {
     const list = renderToStaticMarkup(
       <QueryClientProvider client={queryClient}>
         <RouterContextProvider router={await load("/workspace/settings/memory")}>
-          <MemorySettings />
+          <MemorySettingsPage />
         </RouterContextProvider>
       </QueryClientProvider>,
     );
     expect(list).toContain('href="/workspace/memory?item=team%2Fvoice"');
     expect(list).toContain("Consolidate memory");
-    expect(list).toContain("Generate plan");
+    expect(list).toContain("Memory to consolidate");
     const detail = renderToStaticMarkup(
       <QueryClientProvider client={queryClient}>
         <RouterContextProvider router={reloaded}>
-          <MemoryFactDetail memoryKey={key} />
+          <MemoryFactDetail memoryId={key} />
         </RouterContextProvider>
       </QueryClientProvider>,
     );
     expect(detail).toContain("Use a calm voice.");
-    expect(detail).toContain("Revision history (1)");
-    expect(detail).toContain("Use a short voice.");
+    expect(detail).toContain("1 bounded revision");
+    expect(detail).toContain("1 · active · —");
     expect(detail).toContain('href="/workspace/settings/memory"');
   });
 

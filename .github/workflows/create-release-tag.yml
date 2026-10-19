@@ -167,7 +167,9 @@ jobs:
           # generated output over time. The invariant is that every required version agrees.
           if ! grep -Fxq "version: ${VERSION}" deploy/helm/mecak8s/Chart.yaml \
             || ! grep -Fxq "appVersion: \"v${VERSION}\"" deploy/helm/mecak8s/Chart.yaml \
-            || ! grep -Fxq "  tag: \"v${VERSION}\"" deploy/helm/mecak8s/values.yaml; then
+            || ! grep -Fxq "  tag: \"v${VERSION}\"" deploy/helm/mecak8s/values.yaml \
+            || ! grep -Fxq "version: ${VERSION}" deploy/helm/mecatl-studio/Chart.yaml \
+            || ! grep -Fxq "appVersion: \"v${VERSION}\"" deploy/helm/mecatl-studio/Chart.yaml; then
             echo "::error::chart or image metadata does not match VERSION — refusing to tag"
             exit 1
           fi

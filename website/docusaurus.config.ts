@@ -91,6 +91,13 @@ const config: Config = {
         docs: {
           // Content lives in user-docs/ at the repo root, not inside website/.
           path: '../user-docs',
+          exclude: [
+            '**/_*.{js,jsx,ts,tsx,md,mdx}',
+            '**/_*/**',
+            '**/*.test.{js,jsx,ts,tsx}',
+            '**/__tests__/**',
+            '**/{AGENTS,CLAUDE}.md',
+          ],
           routeBasePath: '/docs',
           sidebarPath: './sidebars.ts',
           editUrl: 'https://github.com/stacklok/mecatl/edit/main/user-docs/',

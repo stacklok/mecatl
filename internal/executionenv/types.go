@@ -16,7 +16,6 @@ const (
 	MaxPathBytes     = 4096
 	MaxIdentityBytes = 1024
 	MaxBindingBytes  = 253
-	MaxGrantBytes    = 16 << 10
 	MaxListEntries   = 10_000
 )
 
@@ -84,39 +83,14 @@ type RequestContext struct {
 	ClaimID         string         `json:"claim_id"`
 	Epoch           uint64         `json:"epoch"`
 	GrantGeneration uint64         `json:"grant_generation"`
-	Grant           string         `json:"grant"`
 }
 
-// ValidateProfileRequest selects an operator-defined profile for validation.
-type ValidateProfileRequest struct {
-	Profile string `json:"profile"`
-}
-
-// ValidateProfileResponse reports immutable profile capabilities and bounds.
-type ValidateProfileResponse struct {
-	Profile                  string   `json:"profile"`
-	Digest                   string   `json:"digest"`
-	Capabilities             []string `json:"capabilities"`
-	MaxFileBytes             int64    `json:"max_file_bytes"`
-	MaxCommandBytes          int64    `json:"max_command_bytes"`
-	MaxCommandDurationMillis int64    `json:"max_command_duration_ms"`
-}
-
-// EnsureEnvironmentRequest requests an idempotent environment allocation.
-type EnsureEnvironmentRequest struct {
-	BindingID string `json:"binding_id"`
-	Profile   string `json:"profile"`
-	Owner     Owner  `json:"owner"`
-}
-
-// EnsureEnvironmentResponse returns allocation identity, readiness, and a short-lived grant.
+// EnsureEnvironmentResponse returns allocation identity and readiness.
 type EnsureEnvironmentResponse struct {
 	Environment     EnvironmentRef `json:"environment"`
 	Epoch           uint64         `json:"epoch"`
 	Ready           bool           `json:"ready"`
 	GrantGeneration uint64         `json:"grant_generation"`
-	Grant           string         `json:"grant"`
-	GrantExpiresAt  time.Time      `json:"grant_expires_at"`
 }
 
 // AttachEnvironmentRequest requests exact reattachment to an existing environment.
@@ -128,14 +102,12 @@ type AttachEnvironmentRequest struct {
 // PurposeSession is the supported attachment purpose.
 const PurposeSession = "session"
 
-// AttachEnvironmentResponse returns exact attachment state and a refreshed grant.
+// AttachEnvironmentResponse returns exact attachment state.
 type AttachEnvironmentResponse struct {
 	Environment     EnvironmentRef `json:"environment"`
 	Epoch           uint64         `json:"epoch"`
 	Ready           bool           `json:"ready"`
 	GrantGeneration uint64         `json:"grant_generation"`
-	Grant           string         `json:"grant"`
-	GrantExpiresAt  time.Time      `json:"grant_expires_at"`
 }
 
 const (
@@ -164,7 +136,6 @@ type RunClaim struct {
 	ClaimID         string
 	Epoch           uint64
 	GrantGeneration uint64
-	Grant           string
 	ExpiresAt       time.Time
 }
 

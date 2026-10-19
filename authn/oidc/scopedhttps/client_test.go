@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -144,6 +145,50 @@ func TestPolicyRejectsDNSAddressDrift(t *testing.T) {
 	}
 	if _, err := policy.dialTLS(context.Background(), "tcp", "issuer.test:443"); err == nil || !strings.Contains(err.Error(), "no longer resolves to an approved private address") {
 		t.Fatalf("DNS-pinned dial accepted changed address: %v", err)
+	}
+}
+
+func TestClientBodyLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		size    int
+		wantErr bool
+	}{
+		{"exactly the limit", maxOIDCResponseBytes, false},
+		{"one byte over", maxOIDCResponseBytes + 1, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(strings.Repeat("x", tc.size)))
+			}))
+			t.Cleanup(srv.Close)
+			response, err := newTestClient(t, srv).Get(srv.URL)
+			if err != nil {
+				t.Fatalf("GET: %v", err)
+			}
+			defer func() { _ = response.Body.Close() }()
+			got, err := io.ReadAll(response.Body)
+			var tooLarge *http.MaxBytesError
+			if tc.wantErr != errors.As(err, &tooLarge) || (!tc.wantErr && (err != nil || len(got) != tc.size)) {
+				t.Fatalf("ReadAll = (%d bytes, %v), wantErr %v", len(got), err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestPolicyRejectsConflictingCABundlesForOneAuthority(t *testing.T) {
+	lookup := func(context.Context, string) ([]net.IP, error) { return []net.IP{net.ParseIP("10.0.0.1")}, nil }
+	endpoints := map[string][]byte{
+		"https://issuer.internal/discovery": unrelatedCertPEM(t),
+		"https://issuer.internal/keys":      unrelatedCertPEM(t),
+	}
+	if _, err := newPolicy(context.Background(), endpoints, lookup); err == nil || !strings.Contains(err.Error(), "conflicting CA bundles") {
+		t.Fatalf("newPolicy with two CAs for one host:port = %v, want conflicting CA bundles", err)
+	}
+	same := unrelatedCertPEM(t)
+	endpoints = map[string][]byte{"https://issuer.internal/discovery": same, "https://issuer.internal/keys": same}
+	if _, err := newPolicy(context.Background(), endpoints, lookup); err != nil {
+		t.Fatalf("newPolicy with one CA for both URLs: %v", err)
 	}
 }
 

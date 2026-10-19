@@ -162,7 +162,7 @@ type keyMap struct {
 	// with textarea input. Like the /effort command it is idle-only and gated on
 	// caps.ModelSelection: openEffort returns the model unchanged (the key falls
 	// through inert) when model selection is unavailable, so f7 never opens an
-	// empty picker. esc dismisses it via the shared onEffortKey overlay route.
+	// empty picker. esc dismisses it via the shared modal surface route.
 	Effort key.Binding
 
 	// SetGlobalDefault (ctrl+g) sets the /models picker's CURSOR row as the client

@@ -129,7 +129,7 @@ func TestStatusLine_Scenario5_DefaultCompatibility(t *testing.T) {
 	t.Cleanup(func() { _ = s.Close(context.Background()) })
 	s.Submit(customization.Input{
 		Session: customization.Session{Handle: "deadbeef", Mode: "default"},
-		Model:   customization.Model{ProviderID: "openai", DisplayName: "GPT-5", Route: "azure"},
+		Model:   customization.Model{ProviderID: "openai", ProviderLabel: "openai/gpt-5", FriendlyName: "GPT-5", Route: "azure"},
 		Usage: customization.Usage{
 			Input:  customization.UsageAtom{Human: "4K"},
 			Output: customization.UsageAtom{Human: "1K"},
@@ -143,7 +143,7 @@ func TestStatusLine_Scenario5_DefaultCompatibility(t *testing.T) {
 		t.Fatal("no result")
 	}
 	line := s.Latest()
-	if got, want := statusSpansText(line.Header.Spans), "mecatui · openai/GPT-5/azure · mode default"; got != want {
+	if got, want := statusSpansText(line.Header.Spans), "mecatui · openai/gpt-5/azure · mode default"; got != want {
 		t.Fatalf("header = %q, want %q", got, want)
 	}
 	if got, want := statusSpansText(line.Footer.Spans), "ctx ▒▒░░░░░░ 20% · 2K/10K · ↑4K ↓1K cache 0%"; got != want {

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,6 +20,7 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/mcpperf"
 	"github.com/stacklok/mecatl/internal/adapter/skills"
@@ -57,6 +59,69 @@ func TestLogListenerPostureClassifiesCallerAuthentication(t *testing.T) {
 				t.Fatalf("authenticated posture not reported: %s", got)
 			}
 		})
+	}
+}
+
+func TestApplyPostureCLIYoloWarning(t *testing.T) {
+	t.Setenv("MECATL_SANDBOX", "1")
+	var logs bytes.Buffer
+	original := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(original) })
+
+	if err := applyPostureCLI(config{posture: "yolo", postureFlagSet: true}, port.NopDiagnostics{}); err != nil {
+		t.Fatalf("applyPostureCLI(yolo): %v", err)
+	}
+	for _, want := range []string{
+		"YOLO skips default approvals. Commands can delete files or expose data.",
+		"Use an isolated, disposable environment. Explicit permission rules still apply.",
+	} {
+		if !strings.Contains(logs.String(), want) {
+			t.Fatalf("startup log missing %q: %s", want, logs.String())
+		}
+	}
+
+	logs.Reset()
+	if err := applyPostureCLI(config{posture: "strict", postureFlagSet: true}, port.NopDiagnostics{}); err != nil {
+		t.Fatalf("applyPostureCLI(strict): %v", err)
+	}
+	if strings.Contains(logs.String(), "YOLO skips default approvals") {
+		t.Fatalf("strict posture emitted yolo warning: %s", logs.String())
+	}
+}
+
+func TestSearchCommandRootProjection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auth.yaml")
+	if err := os.WriteFile(path, []byte("providers:\n  exa:\n    api_key: daemon-exa-key\n  brave:\n    api_key: daemon-brave-key\n  websearch:\n    api_key: daemon-websearch-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("EXA_API_KEY", "")
+	t.Setenv("BRAVE_API_KEY", "")
+	t.Setenv("WEBSEARCH_API_KEY", "")
+	cfg, err := parseFlags([]string{"--api-key-file", path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.providerCredentials.Any() {
+		t.Fatal("search keys must not count as LLM provider credentials")
+	}
+	out := appConfig(cfg, nil, nil, nil, nil, nil)
+	if out.ExaAPIKey != "daemon-exa-key" || out.BraveAPIKey != "daemon-brave-key" || out.WebSearchAPIKey != "daemon-websearch-key" {
+		t.Fatal("daemon did not project file-backed search credentials")
+	}
+	profile, _, err := out.ProviderCredentialLoader.Load(nil)
+	if err != nil || profile.ExaAPIKey != out.ExaAPIKey || profile.BraveAPIKey != out.BraveAPIKey || profile.WebSearchAPIKey != out.WebSearchAPIKey {
+		t.Fatalf("daemon credential loader search keys = exa=%q brave=%q websearch=%q err=%v", profile.ExaAPIKey, profile.BraveAPIKey, profile.WebSearchAPIKey, err)
+	}
+	t.Setenv("BRAVE_API_KEY", "env-brave-key")
+	t.Setenv("WEBSEARCH_API_KEY", "env-websearch-key")
+	cfg, err = parseFlags([]string{"--api-key-file", path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out = appConfig(cfg, nil, nil, nil, nil, nil)
+	if out.BraveAPIKey != "env-brave-key" || out.WebSearchAPIKey != "env-websearch-key" {
+		t.Fatalf("daemon did not give environment search credentials precedence: brave=%q websearch=%q", out.BraveAPIKey, out.WebSearchAPIKey)
 	}
 }
 
@@ -305,6 +370,7 @@ func TestParseFlagsAgentDefs(t *testing.T) {
 		"--agents-conventional=false",
 		"--subagent-model", "cheap-id",
 		"--model-alias", "fast=gpt-4o-mini",
+		"--model-alias-provider", "smart=anthropic",
 		"--model-alias", "smart=gpt-5",
 		"--model-slot", "compaction=cheap",
 		"--model-slot", "guardrail=fast",
@@ -323,6 +389,9 @@ func TestParseFlagsAgentDefs(t *testing.T) {
 	}
 	if got := cfg.modelAliases.AsMap(); got["fast"] != "gpt-4o-mini" || got["smart"] != "gpt-5" {
 		t.Errorf("modelAliases = %v, want fast=gpt-4o-mini smart=gpt-5", got)
+	}
+	if got := cfg.modelAliasProviders.AsMap()["smart"]; got != "anthropic" {
+		t.Errorf("modelAliasProviders[smart] = %q, want anthropic", got)
 	}
 	if got := cfg.modelSlots.AsMap(); got["compaction"] != "cheap" || got["guardrail"] != "fast" {
 		t.Errorf("modelSlots = %v, want compaction=cheap guardrail=fast", got)

@@ -38,11 +38,11 @@ func qualifyDistinctAdministrator(t *testing.T, ctx context.Context, state, kube
 	if _, err := admin.Attach(ctx, executionenv.AttachEnvironmentRequest{Context: executionenv.RequestContext{Environment: attached.Environment, Owner: owner, BindingID: binding}, Purpose: executionenv.PurposeSession}); !isRemoteCode(err, executionenv.CodeNotFound) {
 		t.Fatal("scoped administrator acquired creator attach privilege:", remoteErrorCode(err))
 	}
-	if _, err := admin.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileRead, Path: "admin-sentinel"}); !isRemoteCode(err, executionenv.CodePermissionDenied) {
-		t.Fatal("scoped administrator used creator file grant:", remoteErrorCode(err))
+	if _, err := admin.File(ctx, executionenv.FileRequest{Context: rc, Operation: executionenv.OpFileRead, Path: "admin-sentinel"}); !isRemoteCode(err, executionenv.CodeNotFound) {
+		t.Fatal("scoped administrator used creator's run:", remoteErrorCode(err))
 	}
-	if _, err := admin.StartCommand(ctx, executionenv.CommandStartRequest{Context: rc, Command: "true"}); !isRemoteCode(err, executionenv.CodePermissionDenied) {
-		t.Fatal("scoped administrator used creator command grant:", remoteErrorCode(err))
+	if _, err := admin.StartCommand(ctx, executionenv.CommandStartRequest{Context: rc, Command: "true"}); !isRemoteCode(err, executionenv.CodeNotFound) {
+		t.Fatal("scoped administrator used creator's command authority:", remoteErrorCode(err))
 	}
 	release()
 	before := readExecutionStatus(t, ctx, kubeconfig, attached.Environment.ID)

@@ -364,6 +364,7 @@ func TestControlRefusedWireRoundTripRestoresCorrelatedAskAndPreservesQueue(t *te
 	}
 
 	m := New(Deps{Theme: theme.New("aztec", theme.AztecPalette())})
+	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
 	m.sessionID = "session-1"
 	m.stream = stream
 	m.phase = phaseRunning
@@ -407,6 +408,7 @@ func TestRefusedScopedApprovalReopensExactAskWithoutFalseAllowedNotice(t *testin
 	recorder := &authorizationControlRecorder{err: errors.New("intent mismatch")}
 	stream := client.NewAuthorizationEventStream(client.NewFakeEventStream(), recorder)
 	m := New(Deps{Theme: theme.New("aztec", theme.AztecPalette())})
+	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
 	m.sessionID = "session-1"
 	m.authorization = mcpAuthorizationState{controlStream: stream, controlGen: 3, runningControlGen: 3}
 	m.phase = phaseRunning
@@ -444,6 +446,7 @@ func TestMCPAuthorizationContinuationPermissionUsesControlStream(t *testing.T) {
 	recorder := &authorizationControlRecorder{}
 	stream := client.NewAuthorizationEventStream(client.NewFakeEventStream(), recorder)
 	m := New(Deps{Theme: theme.New("aztec", theme.AztecPalette())})
+	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
 	m.sessionID = "session-1"
 	m = applyAll(m, client.MCPAuthorizationMsg{AuthorizationID: "auth-1", CallID: "call-1", Status: "pending"})
 	m.authorization.controlStream = stream

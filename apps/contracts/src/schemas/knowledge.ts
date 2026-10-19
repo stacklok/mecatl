@@ -16,6 +16,26 @@ export const configuredSkillsResponseSchema = z.object({
   supported: z.boolean(),
 });
 
+/**
+ * One file of a configured skill as the browser shows it. `content` is the file's text, or empty
+ * when it could not be shown; `unavailable` then says why in one line, and is empty otherwise.
+ * The BFF loads every file's text in one request so the browser makes a single call.
+ */
+export const skillFileSchema = z.object({
+  content: z.string(),
+  /** True for the skill's instructions, which are the text after the frontmatter, not the raw file. */
+  instructions: z.boolean(),
+  name: z.string(),
+  size: z.number().int().nonnegative(),
+  unavailable: z.string(),
+});
+
+export const skillFilesResponseSchema = z.object({
+  files: z.array(skillFileSchema),
+  /** How many further files the skill has that are not included in `files`. */
+  omitted: z.number().int().nonnegative(),
+});
+
 export const learnedSkillActionsSchema = z.object({
   activate: z.boolean(),
   archive: z.boolean(),
@@ -122,9 +142,35 @@ export const learningProposalSchema = z.object({
   version: z.string(),
 });
 
+/**
+ * One source the daemon recorded for a proposal: the chat it came from, the
+ * message or event within it, and the digest of what was read. `available` and
+ * `preview` come from the daemon's ownership- and digest-checked re-read, so
+ * only the single-proposal read carries them; `preview` is the daemon's bounded,
+ * redacted excerpt and is plain text.
+ */
+export const learningEvidenceSchema = z.object({
+  availability: z.string(),
+  available: z.boolean(),
+  digest: z.string(),
+  eventSeq: z.string(),
+  locator: z.string(),
+  ordinal: z.number().int(),
+  preview: z.string(),
+  sessionId: z.string(),
+  toolCallId: z.string(),
+});
+
+/** One proposal re-read by id, with each evidence source's current availability. */
+export const learningProposalDetailSchema = learningProposalSchema.extend({
+  evidence: z.array(learningEvidenceSchema),
+});
+
 export const learningProposalsResponseSchema = z.object({
   complete: z.boolean(),
   items: z.array(learningProposalSchema),
+  /** The cursor for the next page; empty on the last page. */
+  nextCursor: z.string(),
   reason: z.string(),
   supported: z.boolean(),
 });
@@ -151,6 +197,12 @@ export const reflectionReceiptSchema = z.object({
   staged: z.number().int().nonnegative(),
 });
 
+/**
+ * The two memory stores a consolidation plan can target: facts about the
+ * operator (`user_model`) and the per-project store (`project_memory`).
+ */
+export const memoryConsolidationTargetSchema = z.enum(["user_model", "project_memory"]);
+
 export const memoryConsolidationParticipantSchema = z.object({
   description: z.string(),
   key: z.string(),
@@ -172,7 +224,12 @@ export const memoryConsolidationPlanSchema = z.object({
   operations: z.array(memoryConsolidationOperationSchema),
   plannedOperationCount: z.number().int().nonnegative(),
   plannedSourceCount: z.number().int().nonnegative(),
-  target: z.literal("user_model"),
+  target: memoryConsolidationTargetSchema,
+});
+
+/** Omitting the body, or its target, consolidates `user_model` as before. */
+export const generateMemoryConsolidationPlanRequestSchema = z.object({
+  target: memoryConsolidationTargetSchema.default("user_model"),
 });
 
 export const decideMemoryConsolidationPlanRequestSchema = z.object({
@@ -187,7 +244,7 @@ export const memoryConsolidationReceiptSchema = z.object({
   id: z.string(),
   planned: z.number().int().nonnegative(),
   skipped: z.number().int().nonnegative(),
-  target: z.literal("user_model"),
+  target: memoryConsolidationTargetSchema,
 });
 
 export const memoryEntrySchema = z.object({
@@ -207,6 +264,7 @@ export const memoryRevisionSchema = z.object({
   description: z.string(),
   key: z.string(),
   origin: z.string(),
+  sourceProposalId: z.string(),
   sourceSessionId: z.string(),
   status: z.string(),
   updatedAt: z.string().nullable(),
@@ -222,9 +280,13 @@ export const memoryDetailResponseSchema = z.object({
 });
 
 export type ConfiguredSkillsResponse = z.infer<typeof configuredSkillsResponseSchema>;
+export type SkillFilesResponse = z.infer<typeof skillFilesResponseSchema>;
 export type DecideLearningProposalRequest = z.infer<typeof decideLearningProposalRequestSchema>;
 export type DecideMemoryConsolidationPlanRequest = z.infer<
   typeof decideMemoryConsolidationPlanRequestSchema
+>;
+export type GenerateMemoryConsolidationPlanRequest = z.infer<
+  typeof generateMemoryConsolidationPlanRequestSchema
 >;
 export type LearnedSkillActionRequest = z.infer<typeof learnedSkillActionRequestSchema>;
 export type LearnedSkillChangesResponse = z.infer<typeof learnedSkillChangesResponseSchema>;
@@ -232,10 +294,13 @@ export type LearnedSkillDiffResponse = z.infer<typeof learnedSkillDiffResponseSc
 export type LearnedSkillActionResponse = z.infer<typeof learnedSkillActionResponseSchema>;
 export type LearnedSkillResponse = z.infer<typeof learnedSkillSchema>;
 export type LearnedSkillsResponse = z.infer<typeof learnedSkillsResponseSchema>;
+export type LearningEvidenceResponse = z.infer<typeof learningEvidenceSchema>;
+export type LearningProposalDetailResponse = z.infer<typeof learningProposalDetailSchema>;
 export type LearningProposalResponse = z.infer<typeof learningProposalSchema>;
 export type LearningProposalsResponse = z.infer<typeof learningProposalsResponseSchema>;
 export type MemoryConsolidationPlanResponse = z.infer<typeof memoryConsolidationPlanSchema>;
 export type MemoryConsolidationReceiptResponse = z.infer<typeof memoryConsolidationReceiptSchema>;
+export type MemoryConsolidationTarget = z.infer<typeof memoryConsolidationTargetSchema>;
 export type MemoryDetailResponse = z.infer<typeof memoryDetailResponseSchema>;
 export type ReflectionReceiptResponse = z.infer<typeof reflectionReceiptSchema>;
 export type UndoLearningPromotionRequest = z.infer<typeof undoLearningPromotionRequestSchema>;

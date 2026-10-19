@@ -70,7 +70,7 @@ func TestNativeBuildPreservesIndependentContext(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer client.Close()
-			provider, err := NewProvider(client, "coding")
+			provider, err := NewTemplateProvider(client, "coding", codingRevision)
 			if err != nil {
 				t.Fatal(err)
 			}

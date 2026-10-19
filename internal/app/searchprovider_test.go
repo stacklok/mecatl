@@ -70,8 +70,8 @@ func TestBuildSearchProviderPrecedence(t *testing.T) {
 		if exa.PaidTier() {
 			t.Fatal("no EXA_API_KEY => anonymous (not paid) tier")
 		}
-		if !strings.Contains(d.all(), "Exa anonymous default") {
-			t.Fatalf("expected the Exa-default INFO line; got:\n%s", d.all())
+		if !strings.Contains(d.all(), "mode anonymous") {
+			t.Fatalf("expected anonymous mode; got:\n%s", d.all())
 		}
 	})
 
@@ -85,8 +85,8 @@ func TestBuildSearchProviderPrecedence(t *testing.T) {
 		if !exa.PaidTier() {
 			t.Fatal("EXA_API_KEY set => paid tier")
 		}
-		if strings.Contains(d.all(), exaKey) {
-			t.Fatalf("EXA key leaked into diagnostics:\n%s", d.all())
+		if !strings.Contains(d.all(), "mode authenticated/paid") || strings.Contains(d.all(), exaKey) || strings.Contains(d.all(), "exaApiKey=") {
+			t.Fatalf("Exa paid-mode diagnostics missing or leaked key/request URL:\n%s", d.all())
 		}
 	})
 
@@ -101,6 +101,17 @@ func TestBuildSearchProviderPrecedence(t *testing.T) {
 		}
 		if strings.Contains(d.all(), braveKey) {
 			t.Fatalf("Brave key leaked into diagnostics:\n%s", d.all())
+		}
+	})
+
+	t.Run("BRAVE_API_KEY beats EXA_API_KEY", func(t *testing.T) {
+		d := &searchDiag{}
+		p := buildSearchProvider(context.Background(), Config{Diagnostics: d, BraveAPIKey: braveKey, ExaAPIKey: exaKey})
+		if _, ok := p.(*refsearch.HTTPProvider); !ok {
+			t.Fatalf("BRAVE_API_KEY should resolve to *HTTPProvider, got %T", p)
+		}
+		if !strings.Contains(d.all(), "Brave backend") || strings.Contains(d.all(), "Exa backend") || strings.Contains(d.all(), braveKey) || strings.Contains(d.all(), exaKey) {
+			t.Fatalf("Brave must win over Exa without leaking keys; got:\n%s", d.all())
 		}
 	})
 

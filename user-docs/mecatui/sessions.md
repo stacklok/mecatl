@@ -21,15 +21,15 @@ mecatui --resume <SESSION_ID>
 mecatui connect 127.0.0.1:8080 --resume-latest
 ```
 
-On servers that provide session activity inventory, `--resume-latest` considers
-only main chats marked active in that inventory and verifies each candidate's
-authoritative transcript. It excludes chats awaiting approval and does not
-select drafts or unknown legacy rows automatically. Older servers use their
-mixed inventory but still reject an empty authoritative transcript. If no chat
-qualifies, `mecatui` starts a new one. Storage and listing failures still return
-an error. You can combine either resume option with `--prompt` to send a task
-after an ordinary transcript load; pending-approval recovery keeps it as a
-draft.
+`--resume-latest` uses the server's session activity inventory when available:
+it considers main chats marked active, excludes drafts and unknown activity,
+and verifies each candidate's authoritative transcript. Without activity
+inventory, it checks the mixed session listing and rejects empty transcripts.
+Chats awaiting approval are excluded. If no chat qualifies, `mecatui` starts a
+new one. Storage and listing failures return an error. Use an exact session ID
+to guarantee that you reopen the intended workspace. You can combine either
+resume option with `--prompt` to send a task after an ordinary transcript load;
+pending-approval recovery keeps it as a draft.
 
 A resumed chat is the stored chat, not a copy. It keeps its model, exact
 server-owned placement, cumulative token totals, and latest saved context meter.
@@ -138,8 +138,8 @@ mecatui connect 127.0.0.1:8080 sessions
 You can also run `/sessions` from an open chat. On servers that provide session
 activity inventory, known empty main sessions appear in **Drafts** as
 `New — no messages`. **Chats** contains active and unknown main sessions. You
-can continue a draft by selecting it or using its exact ID. Older servers hide
-**Drafts** and keep all main sessions in **Chats**.
+can continue a draft by selecting it or using its exact ID. Without activity
+inventory, **Drafts** is hidden and all main sessions appear in **Chats**.
 
 Scheduled runs, child runs, and other sessions have separate tabs. Search and
 pagination help with large stores. **Delete** permanently removes a session when

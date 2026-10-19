@@ -420,7 +420,7 @@ func TestSubagentResumeWithModelRejected(t *testing.T) {
 	defaultEngine := childEngineWith(mockllm.New(mockllm.TextTurn("X")), catalogWith(t))
 	task := agent.NewSubagentTool(defaultEngine,
 		agent.WithSubagentStore(store),
-		agent.WithSubagentEngineFactory(func(string) (*agent.Engine, bool) {
+		agent.WithSubagentEngineFactory(func(agent.ModelTarget) (*agent.Engine, bool) {
 			return childEngineWith(mockllm.New(mockllm.TextTurn("M")), catalogWith(t)), true
 		}))
 

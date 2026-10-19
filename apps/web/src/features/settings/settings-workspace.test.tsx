@@ -12,7 +12,7 @@ import {
   getRuntimeQueryKey,
   getRuntimeSettingsQueryKey,
   getStorageHealthQueryKey,
-  listLearningProposalsQueryKey,
+  listLearningProposalsInfiniteQueryKey,
   listUserMemoryQueryKey,
 } from "@mecatl-studio/contracts/query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -34,12 +34,14 @@ const model = {
   displayName: "Model One",
   id: "model-one",
   image: true,
+  providerDisplayName: "Team/openai",
   providerId,
   reasoning: true,
 };
 const provider = {
   availableNotDefault: true,
   defaultModelAutoSelected: false,
+  displayName: "Team/openai",
   hint: "Ready through the gateway",
   id: providerId,
   modelCount: 1,
@@ -73,11 +75,15 @@ function runtime(overrides: Partial<GetRuntimeResponse> = {}): GetRuntimeRespons
       audio: false,
       bash: true,
       debugMcp: false,
+      executionTemplates: false,
       image: true,
       learnedSkills: true,
       learningProposals: true,
       manualCompaction: true,
-      manualDream: { userModel: { decide: true, generate: true } },
+      manualDream: {
+        projectMemory: { decide: false, generate: false },
+        userModel: { decide: true, generate: true },
+      },
       mcp: true,
       mcpConnectorStatus: false,
       memory: true,
@@ -328,7 +334,8 @@ describe("settings facts", () => {
     expect(agent).toContain("deployment");
     expect(agent).not.toContain("Change agent behavior");
 
-    client.setQueryData(listLearningProposalsQueryKey({ query: { status: "staged" } }), {
+    // The queue pages through an infinite query; seed its first page.
+    const firstPage = {
       complete: true,
       items: [
         {
@@ -352,13 +359,22 @@ describe("settings facts", () => {
           version: "1",
         },
       ],
+      nextCursor: "",
       reason: "",
       supported: true,
-    });
+    };
+    client.setQueryData(
+      listLearningProposalsInfiniteQueryKey({ query: { limit: 50, status: "staged" } }),
+      { pageParams: [""], pages: [firstPage] },
+    );
     const learning = await renderSection("learning", client);
     expect(learning).toContain("Learning configuration is managed by this deployment");
-    expect(learning).toContain("Approve");
-    expect(learning).toContain("Reject");
+    // The filter pills read "Approved" and "Rejected", so match the row's buttons exactly.
+    const buttons = [
+      ...new DOMParser().parseFromString(learning, "text/html").querySelectorAll("button"),
+    ].map((button) => button.textContent);
+    expect(buttons).toContain("Approve");
+    expect(buttons).toContain("Reject");
   });
 
   it("titles every section with a plain card heading and no implementation line", async () => {
@@ -379,12 +395,12 @@ describe("settings facts", () => {
       unknownCount: "0",
     });
     const titles = {
-      about: ["About"],
+      about: ["About Mecatl Studio", "About the agent"],
       agent: ["Agent", "Agent behavior"],
-      appearance: ["Appearance"],
+      appearance: ["Appearance", "Chat"],
       diagnostics: ["Diagnostics"],
       labs: ["Labs"],
-      learning: ["Learning settings"],
+      learning: ["Learning", "Suggestions", "Learn from a chat"],
       "mcp-tools": ["MCP tools"],
       models: ["Models"],
       permissions: ["Permissions"],
@@ -415,9 +431,11 @@ describe("settings facts", () => {
     });
     const page = await renderSection("memory", client);
     expect(page).toContain("Consolidate memory");
-    expect(page).toContain("Generate plan");
+    expect(page).toContain("Memory to consolidate");
     expect(page).toContain('href="/workspace/memory?item=team%2Fvoice"');
-    expect(page).toContain("deployment");
+    expect(page).toContain("Memory is set where the agent runs");
+    expect(page).toContain('data-testid="memory-stores"');
+    expect(page).not.toContain("Source:");
   });
 
   it("explains managed sections without write controls", async () => {

@@ -2,17 +2,20 @@ package openai
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	oai "github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/packages/ssestream"
 	"github.com/openai/openai-go/v3/responses"
 
 	"github.com/stacklok/mecatl/engine/port"
@@ -320,6 +323,7 @@ type providerErrorMetadata struct {
 }
 
 type responseStreamError struct {
+	err           error  // SDK cause, when it intercepted the event before translation
 	msg           string // private raw classification input; never rendered
 	status        int    // HTTP-status equivalent; 0 means unknown/non-retryable
 	metadata      providerErrorMetadata
@@ -327,25 +331,31 @@ type responseStreamError struct {
 }
 
 func (e *responseStreamError) Error() string {
-	if isContextOverflowMessage(e.metadata.providerCode) {
+	if e.paramOverflow || isContextOverflowMessage(e.msg) || isContextOverflowMessage(e.metadata.providerCode) || e.metadata.providerCode == "context_length_exceeded" {
 		return "provider request failed: context window exceeded"
 	}
 	switch e.metadata.providerCode {
 	case "content_filter", "content_policy_violation":
 		return "provider request failed: content filter blocked the response"
-	case "context_length_exceeded":
-		return "provider request failed: context window exceeded"
 	case "invalid_request_error", "invalid_prompt":
 		return "provider request failed: invalid request"
 	case "invalid_encrypted_content":
 		return "provider request failed: invalid encrypted content"
+	case "model_not_found":
+		return "provider request failed: model not found"
+	case "insufficient_quota":
+		return "provider request failed: insufficient quota"
+	case "access_denied":
+		return "provider request failed: access denied"
 	default:
-		if e.paramOverflow {
-			return "provider request failed: context window exceeded"
+		text := providerErrorText(e.status, e.msg)
+		if text == "provider request failed" {
+			return "provider request failed: provider stream error event"
 		}
-		return providerErrorText(e.status, e.msg)
+		return text
 	}
 }
+func (e *responseStreamError) Unwrap() error             { return e.err }
 func (e *responseStreamError) ProviderHTTPStatus() int   { return e.metadata.httpStatus }
 func (e *responseStreamError) ProviderInBandStatus() int { return e.metadata.inBandStatus }
 func (e *responseStreamError) ProviderErrorCode() string { return e.metadata.providerCode }
@@ -385,10 +395,14 @@ func providerErrorText(status int, message string) string {
 	return "provider request failed"
 }
 
-func withHTTPErrorMetadata(err error) error {
+func withHTTPErrorMetadata(err error, responseID string) error {
+	var streamErr *ssestream.StreamError
+	if errors.As(err, &streamErr) {
+		return sdkStreamError(err, streamErr.Event.Data, responseID)
+	}
 	var apiErr *oai.Error
 	if !errors.As(err, &apiErr) {
-		return &httpMetadataError{err: err, message: "provider request failed"}
+		return &httpMetadataError{err: err, message: providerFailureText(err)}
 	}
 	metadata := providerErrorMetadata{
 		httpStatus:   apiErr.StatusCode,
@@ -412,10 +426,62 @@ func withHTTPErrorMetadata(err error) error {
 	}
 }
 
+// sdkStreamError handles nested envelopes intercepted by the SDK before translate.
+// Decode atomically: a malformed field must not leave a partially decoded retry code.
+func sdkStreamError(cause error, data []byte, responseID string) *responseStreamError {
+	var envelope struct {
+		Error *struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+			Param   string `json:"param"`
+		} `json:"error"`
+	}
+	e := &responseStreamError{err: cause, metadata: streamErrorMetadata("", "", responseID)}
+	if json.Unmarshal(data, &envelope) != nil || envelope.Error == nil {
+		return e
+	}
+	e.msg = envelope.Error.Message
+	e.paramOverflow = isContextOverflowMessage(envelope.Error.Param)
+	e.metadata = streamErrorMetadata(envelope.Error.Code, e.msg, responseID)
+	e.status = e.metadata.inBandStatus
+	return e
+}
+
+func providerFailureText(err error) string {
+	var syntaxErr *json.SyntaxError
+	var schemaErr *json.UnmarshalTypeError
+	var networkErr net.Error
+	switch {
+	case errors.As(err, &syntaxErr):
+		return "provider request failed: invalid JSON response"
+	case errors.As(err, &schemaErr):
+		return "provider request failed: unexpected JSON response schema"
+	case errors.Is(err, io.ErrUnexpectedEOF), errors.Is(err, io.EOF):
+		return "provider request failed: response ended unexpectedly"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "provider request failed: deadline exceeded"
+	case errors.Is(err, context.Canceled):
+		return "provider request failed: request canceled"
+	case errors.As(err, &networkErr):
+		if networkErr.Timeout() {
+			return "provider request failed: network timeout"
+		}
+		return "provider request failed: network error"
+	default:
+		return "provider request failed"
+	}
+}
+
 // StatusCode returns the HTTP-status equivalent of the provider error code. The
 // llmresilience DefaultClassifier recognises this interface and routes retryable
-// statuses (408, 429, 5xx) through its retry logic.
-func (e *responseStreamError) StatusCode() int { return e.status }
+// statuses (408, 429, 5xx) through its retry logic. Parameter overflow is
+// request-specific and breaker-neutral; in-band metadata retains the code mapping.
+func (e *responseStreamError) StatusCode() int {
+	if e.paramOverflow {
+		return 0
+	}
+	return e.status
+}
 
 // RetryDisposition implements session.RetryDispositionError.
 func (e *responseStreamError) RetryDisposition() session.RetryDisposition {

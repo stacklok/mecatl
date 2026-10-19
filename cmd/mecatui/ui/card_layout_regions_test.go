@@ -62,8 +62,10 @@ func TestMecatuiCardLayout_Scenario3_InventoryAndMCPFitWidth(t *testing.T) {
 	t.Run("sessions and worktrees", func(t *testing.T) {
 		st := sessionsState{filtered: []client.SessionListItem{{ID: "s", Title: long, State: long, ModelID: long, Relationship: client.SessionRelationship{MemberName: long}}}, handles: map[string]string{"s": long}}
 		assertFits(t, "sessions", renderSessionsPanel(th, st, client.Capabilities{}, hk, width, 20))
-		wt := worktreesState{view: worktreesPanel, filtered: []client.Worktree{{Label: long, Branch: long}}}
-		assertFits(t, "worktrees", renderWorktreesPanel(th, wt, client.Capabilities{}, hk, width, 20))
+		wt := worktreesState{deps: surfaceDeps{theme: th, keys: defaultKeys(), marks: hk}, identities: make(map[client.WorktreeSelector]string), worktrees: []client.Worktree{{Selector: testWorktreeSelector("long"), Label: long, Branch: long}}}
+		wt.syncFilter()
+		out, _ := wt.Render(width, 20)
+		assertFits(t, "worktrees", out)
 	})
 
 	t.Run("agents team and parallel", func(t *testing.T) {

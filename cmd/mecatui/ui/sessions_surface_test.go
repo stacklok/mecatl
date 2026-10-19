@@ -171,6 +171,7 @@ func TestSessionsTranscriptEscapeRetainsModalAndRestoresModelPhase(t *testing.T)
 	st := newSessionsPanelState()
 	st.deps = (&m).surfaceDeps()
 	st.view = sessionsTranscript
+	m = applyAll(m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m.modal = &st
 	m.phase = phaseReplay
 
@@ -328,6 +329,8 @@ func TestSessionsModelKeyDispatchesThroughSurfaceIntent(t *testing.T) {
 	st.sessions = []client.SessionListItem{{ID: "one", Title: "old", Kind: client.SessionKindMain, Capabilities: client.SessionInventoryCapabilities{Rename: true}}}
 	st.syncFilter()
 	m.modal = &st
+	m.width, m.height = 100, 40
+	m.vp.SetHeight(32)
 	m.deps.SessionManagement = &fakeSessionManager{}
 
 	updated, _, handled := m.dispatchSurfaceKey(tea.KeyPressMsg{Code: 'r', Text: "r"})

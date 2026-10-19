@@ -99,7 +99,7 @@ func TestKindExecutionExpiredRunAllowsFinalReferenceRetireAndDelete(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	rc := executionenv.RequestContext{Environment: claim.Environment, Owner: owner, BindingID: binding, RunID: claim.RunID, ClaimID: claim.ClaimID, Epoch: claim.Epoch, GrantGeneration: claim.GrantGeneration, Grant: claim.Grant}
+	rc := executionenv.RequestContext{Environment: claim.Environment, Owner: owner, BindingID: binding, RunID: claim.RunID, ClaimID: claim.ClaimID, Epoch: claim.Epoch, GrantGeneration: claim.GrantGeneration}
 	status := readExecutionStatus(t, ctx, kubeconfig, attached.Environment.ID)
 	commandDone := make(chan error, 1)
 	go func() {
@@ -178,7 +178,7 @@ func TestKindExecutionServiceExplicitIDRetriesReuseOneAllocation(t *testing.T) {
 	state, kubeconfig, ctx, cancel := requireProduction(t)
 	defer cancel()
 	client, _ := productionClient(t, ctx, state, kubeconfig)
-	provider, err := executionclient.NewProvider(client, "go")
+	provider, err := executionclient.NewTemplateProvider(client, "go", kindTemplateRevision(t, ctx, client, "go"))
 	if err != nil {
 		t.Fatal(err)
 	}

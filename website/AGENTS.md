@@ -41,7 +41,7 @@ for small, targeted changes.
 `user-docs/.prettierignore` excludes the generated reference pages
 (`reference/server-cli.md`, `reference/configuration.md`, `reference/typescript-sdk-api/core.md`,
 `reference/typescript-sdk-api/node.md`) so prettier never fights their own
-generators — see [`../user-docs/_README.md`](../user-docs/_README.md#verify-behavior).
+generators — see [`../user-docs/AGENTS.md`](../user-docs/AGENTS.md#verify-behavior).
 
 Prettier resolves `.prettierignore` relative to the invoking process's `cwd`,
 not by walking up from each file the way `.prettierrc` config resolution
@@ -155,5 +155,5 @@ wanted — `sidebars.ts` is intentionally minimal.
 ## Writing user-docs
 
 The human-facing authoring and information-architecture contract lives in
-[`../user-docs/_README.md`](../user-docs/_README.md). Keep content in `user-docs/`
+[`../user-docs/AGENTS.md`](../user-docs/AGENTS.md). Keep content in `user-docs/`
 and site infrastructure in `website/`.

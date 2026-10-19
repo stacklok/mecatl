@@ -32,6 +32,29 @@ export type NodeTransportOptions = NodeTransportCommonOptions &
   );
 
 /**
+ * Ends each stream's request side once its response trailers arrive.
+ *
+ * A gRPC server that finishes while the request side is still open follows its
+ * trailers with RST_STREAM(NO_ERROR). Node then emits `aborted`, and its stream
+ * iterator rejects complete, still-buffered response bytes with
+ * ERR_STREAM_PREMATURE_CLOSE (nodejs/node#66693), hiding EOF or the real status;
+ * Bun and Deno behave the same. Node ends the request side on that reset
+ * anyway; ending it at the trailers first avoids the spurious abort. Genuine
+ * resets still fail.
+ */
+class ResponseCompletingSessionManager extends Http2SessionManager {
+  override async request(
+    ...args: Parameters<Http2SessionManager["request"]>
+  ): ReturnType<Http2SessionManager["request"]> {
+    const stream = await super.request(...args);
+    stream.once("trailers", () => {
+      if (!stream.writableEnded) stream.end();
+    });
+    return stream;
+  }
+}
+
+/**
  * Creates a gRPC transport for Node.js, Bun, or Deno over HTTP/2 or a Unix domain socket.
  *
  * @param options - TCP authority or Unix socket plus credentials and HTTP/2 settings.
@@ -46,7 +69,7 @@ export function createNodeTransport(options: NodeTransportOptions): Transport {
       : { credentialProvider: options.credentialProvider }),
   };
   const baseUrl = options.baseUrl ?? "http://localhost";
-  const sessionManager = new Http2SessionManager(baseUrl, undefined, {
+  const sessionManager = new ResponseCompletingSessionManager(baseUrl, undefined, {
     ...options.nodeOptions,
     ...(options.socketPath === undefined
       ? {}

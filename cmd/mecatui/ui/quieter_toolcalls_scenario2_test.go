@@ -261,12 +261,12 @@ func TestMecatuiQuieterToolCalls_Scenario2_ContextualShortcutAndOverrides(t *tes
 	t.Run("help overlay swallows Toolcalls", func(t *testing.T) {
 		m := scenario2Model(t, 100, 30, false, phaseIdle, nil)
 		m, _ = pressKey(m, qmark())
-		if !m.showHelp {
+		if m.modal == nil {
 			t.Fatal("precondition: help did not open")
 		}
 		m, _ = pressKey(m, ctrlT)
-		if !m.showHelp || m.modal != nil || m.prompt.Value() != "" {
-			t.Fatalf("help must own Toolcalls: showHelp=%v modal=%T prompt=%q", m.showHelp, m.modal, m.prompt.Value())
+		if m.modal == nil || m.prompt.Value() != "" {
+			t.Fatalf("help must own Toolcalls: modal=%T prompt=%q", m.modal, m.prompt.Value())
 		}
 	})
 

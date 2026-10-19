@@ -458,6 +458,43 @@ func TestMecatuiSkillsInventoryBoundedViewport_Scenario3_OpenCloseAndFilterLifec
 	}
 }
 
+func TestSkillsNavigationHistoricalOverlapAndPrintableGuard(t *testing.T) {
+	st := skillsScenarioState(testTheme(), 30, 20)
+	st.Render(70, 18)
+	st.deps.keys = applyKeyOverrides(defaultKeys(), map[string][]string{"Up": {"z"}, "Down": {"z"}, "ScrollD": {"z"}})
+	st.HandleKey(navigationTestKey("z"))
+	if st.viewport.Offset() != 1 || st.filter.Value() != "" {
+		t.Fatal("external remapped printable Down must precede Up and PageDown")
+	}
+	st.HandleKey(tea.KeyPressMsg{Code: tea.KeyTab})
+	st.HandleKey(navigationTestKey("z"))
+	if st.cursor != 1 {
+		t.Fatal("learned Down must precede Up and PageDown")
+	}
+	st.deps.keys = applyKeyOverrides(defaultKeys(), map[string][]string{"Down": {"j"}, "Up": {"k"}})
+	st.HandleKey(navigationTestKey("j"))
+	if st.cursor != 2 {
+		t.Fatal("learned j must remain navigation")
+	}
+	st.HandleKey(navigationTestKey("k"))
+	if st.cursor != 1 {
+		t.Fatal("learned k must remain navigation")
+	}
+	st.HandleKey(tea.KeyPressMsg{Code: tea.KeyTab})
+	st.HandleKey(navigationTestKey("j"))
+	st.HandleKey(navigationTestKey("k"))
+	if st.filter.Value() != "jk" || st.cursor != 1 {
+		t.Fatal("external j/k must remain filter input, not navigation")
+	}
+	st.deps.keys = applyKeyOverrides(st.deps.keys, map[string][]string{"Close": {"z"}, "Down": {"z"}})
+	if _, _, closed := st.HandleKey(navigationTestKey("z")); closed || st.filter.Value() != "" {
+		t.Fatal("Skills Close/filter clear must precede Down")
+	}
+	if _, _, closed := st.HandleKey(navigationTestKey("z")); !closed {
+		t.Fatal("Skills Close must precede Down after filter is clear")
+	}
+}
+
 func TestMecatuiSkillsInventoryBoundedViewport_Scenario3_RemappablePhysicalLineAndPagingNavigation(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
 	st := skillsScenarioState(th, 30, 20)
@@ -576,10 +613,12 @@ func TestMecatuiSkillsInventoryBoundedViewport_Scenario3_WheelOwnershipAndCompac
 	if st.cursor != len(st.learned)-1 || m.vp.YOffset() != before {
 		t.Fatal("learned bottom endpoint was not consumed")
 	}
-	_, _ = st.Render(10, 3)
+	m = resize(m, 10, 11)
+	_ = m.View()
+	compactConversationOffset := m.vp.YOffset()
 	mm, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 	m = mm.(Model)
-	if st.viewport != nil || st.cursor != 0 || m.vp.YOffset() != before {
+	if st.viewport != nil || st.cursor != 0 || m.vp.YOffset() != compactConversationOffset {
 		t.Fatal("compact wheel constructed or moved state")
 	}
 }
@@ -656,5 +695,17 @@ func TestMecatuiSkillsInventoryBoundedViewport_Scenario3_PreservesLearnedControl
 	cmd, _, _ = st.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd != nil {
 		t.Fatal("compact exposed learned action")
+	}
+	st.view, st.detail = skillsDetail, &longDetail
+	_, _ = st.Render(80, 14)
+	if st.compact {
+		t.Fatal("sized learned detail unexpectedly compact")
+	}
+	_, _ = st.Render(0, 0)
+	if cmd, handled, _ := st.HandleKey(tea.KeyPressMsg{Code: 'a', Text: "a"}); !handled || cmd != nil || !st.compact {
+		t.Fatal("zero-sized learned detail exposed a hidden lifecycle action")
+	}
+	if _, handled, closed := st.HandleKey(tea.KeyPressMsg{Code: tea.KeyEsc}); !handled || !closed {
+		t.Fatal("zero-sized learned detail cannot close")
 	}
 }

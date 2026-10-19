@@ -13,6 +13,105 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
+func TestModelsNavigationThroughUpdate(t *testing.T) {
+	for _, disabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("disabled=%t", disabled), func(t *testing.T) {
+			m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
+			m.keys = applyKeyOverrides(m.keys, map[string][]string{
+				"Up": {"u"}, "Down": {"d"}, "ScrollTop": {"x"},
+				"Choose": {"x", "q"}, "SetGlobalDefault": {"x", "q"}, "Close": {"q"},
+			})
+			m.keys.Up.SetEnabled(!disabled)
+			m.keys.Down.SetEnabled(!disabled)
+			mm, cmd := m.runModels()
+			m = feedCmd(t, mm.(Model), cmd)
+			s := modelsSurface(t, m)
+			active, globalDefault := m.modelCatalog.active, m.modelCatalog.globalDefault
+			m.prompt.Rewrite("draft")
+			for _, step := range []struct {
+				msg    tea.KeyPressMsg
+				cursor int
+				filter string
+				closed bool
+			}{
+				{tea.KeyPressMsg{Code: tea.KeyDown}, 1, "", false},
+				{tea.KeyPressMsg{Code: tea.KeyUp}, 0, "", false},
+				{tea.KeyPressMsg{Code: tea.KeyDown}, 1, "", false},
+				{navigationTestKey("x"), 0, "", false}, // navigation precedes both actions
+				{navigationTestKey("j"), 0, "j", false},
+				{navigationTestKey("k"), 0, "jk", false},
+				{navigationTestKey("q"), 0, "", false}, // Close clears before either action
+				{navigationTestKey("q"), 0, "", true},
+			} {
+				updated, _ := m.Update(step.msg)
+				m = updated.(Model)
+				if s.list.Cursor() != step.cursor || s.filter.Value() != step.filter || (m.modal == nil) != step.closed {
+					t.Fatalf("%q: cursor=%d filter=%q modal=%T", step.msg.String(), s.list.Cursor(), s.filter.Value(), m.modal)
+				}
+				if m.prompt.Value() != "draft" || m.phase != phaseIdle || m.modelCatalog.active != active || m.modelCatalog.globalDefault != globalDefault || s.intent != nil {
+					t.Fatalf("%q leaked input or triggered a model action", step.msg.String())
+				}
+			}
+		})
+	}
+}
+
+func TestModelsFilterNavigationPreservesPagingAndPriority(t *testing.T) {
+	models := make([]client.ModelInfo, 40)
+	for i := range models {
+		models[i] = client.ModelInfo{ProviderID: "provider", ID: fmt.Sprintf("jk-model-%02d", i)}
+	}
+	m := newModelsModel(t, &fakeModels{models: models}, &fakeStore{}, modelsCaps(), client.ModelSelection{})
+	mm, cmd := m.runModels()
+	m = feedCmd(t, mm.(Model), cmd)
+	s := modelsSurface(t, m)
+	s.deps.keys = navigationTestKeys()
+	s.deps.keys.Up.SetEnabled(false)
+	s.deps.keys.Down.SetEnabled(false)
+	s.Render(80, 24)
+	for _, text := range []string{"j", "k"} {
+		s.HandleKey(navigationTestKey(text))
+	}
+	if s.filter.Value() != "jk" || len(s.filtered) != 40 {
+		t.Fatal("j/k did not remain filter input")
+	}
+	s.HandleKey(tea.KeyPressMsg{Code: tea.KeyDown})
+	if s.list.Cursor() != 1 {
+		t.Fatal("physical Down lost to disabled/remapped binding")
+	}
+	s.HandleKey(tea.KeyPressMsg{Code: tea.KeyUp})
+	if s.list.Cursor() != 0 {
+		t.Fatal("physical Up lost to disabled/remapped binding")
+	}
+	s.HandleKey(navigationTestKey("n"))
+	if s.list.Cursor() <= 1 {
+		t.Fatal("Models must retain configurable paging")
+	}
+	s.HandleKey(navigationTestKey("p"))
+	if s.list.Cursor() != 0 {
+		t.Fatal("remapped PageUp did not return to first row")
+	}
+	s.HandleKey(navigationTestKey("b"))
+	if s.list.Cursor() != 39 {
+		t.Fatal("remapped End did not select final row")
+	}
+	s.HandleKey(navigationTestKey("t"))
+	if s.list.Cursor() != 0 {
+		t.Fatal("remapped Top did not select first row")
+	}
+	s.deps.keys = applyKeyOverrides(s.deps.keys, map[string][]string{"ScrollU": {"z"}, "ScrollD": {"z"}, "Choose": {"z"}, "SetGlobalDefault": {"z"}})
+	s.list.SetCursor(20)
+	s.HandleKey(navigationTestKey("z"))
+	if s.list.Cursor() >= 20 || s.intent != nil {
+		t.Fatal("Models PageUp must precede PageDown, Choose and SetGlobalDefault")
+	}
+	s.deps.keys = applyKeyOverrides(s.deps.keys, map[string][]string{"Close": {"z"}})
+	selected := s.list.CursorID()
+	if _, _, closed := s.HandleKey(navigationTestKey("z")); closed || s.filter.Value() != "" || s.list.CursorID() != selected {
+		t.Fatal("Models Close/filter clear must precede navigation")
+	}
+}
+
 func TestModelsSurfaceCapturesInputAndLateCatalogDoesNotReopen(t *testing.T) {
 	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
 	mm, cmd := m.runModels()

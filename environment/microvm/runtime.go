@@ -17,6 +17,7 @@ import (
 	"github.com/stacklok/go-microvm/extract"
 	gomicrovmlibkrun "github.com/stacklok/go-microvm/hypervisor/libkrun"
 	gomicrovmnet "github.com/stacklok/go-microvm/net"
+	"github.com/stacklok/go-microvm/rootfs"
 	"golang.org/x/sys/unix"
 
 	"github.com/stacklok/mecatl/environment/microvm/control"
@@ -147,7 +148,7 @@ func (b *LibkrunBackend) Start(ctx context.Context, launch GoMicroVMLaunch) (GoM
 	return &libkrunInstance{vm: vm, launch: launch, dataDir: dataDir, ownedArtifactsRoot: ownedArtifactsRoot}, nil
 }
 
-func cloneRootFS(source, destination string) error { return copyTree(source, destination) }
+func cloneRootFS(source, destination string) error { return rootfs.CloneDir(source, destination) }
 
 func prepareOwnedRuntimeArtifacts(runtimeSource, firmwareSource, parent, environmentID string) (runtimePath, firmwarePath, ownedRoot string, retErr error) {
 	ownedRoot = filepath.Join(parent, "artifacts-"+environmentID)
@@ -189,11 +190,11 @@ type guestBootConfig struct {
 	Repository    *repositoryGuestBootConfig `json:"repository,omitempty"`
 }
 
-func writeRepositoryGuestBootConfig(rootfs string, launch GoMicroVMLaunch) error {
+func writeRepositoryGuestBootConfig(rootFS string, launch GoMicroVMLaunch) error {
 	if launch.RepositoryOwner == "" || launch.RepositoryKey == "" || launch.VMID == "" || launch.Generation == 0 || launch.PlacementGeneration == 0 || len(launch.CapabilityKey) < 32 {
 		return errors.New("repository guest boot config is incomplete")
 	}
-	if err := secureRootFSMkdir(rootfs); err != nil {
+	if err := secureRootFSMkdir(rootFS); err != nil {
 		return err
 	}
 	payload, err := json.Marshal(guestBootConfig{
@@ -204,11 +205,11 @@ func writeRepositoryGuestBootConfig(rootfs string, launch GoMicroVMLaunch) error
 	if err != nil {
 		return err
 	}
-	return replaceRepositoryGuestBootConfig(rootfs, append(payload, '\n'))
+	return replaceRepositoryGuestBootConfig(rootFS, append(payload, '\n'))
 }
 
-func replaceRepositoryGuestBootConfig(rootfs string, payload []byte) error {
-	rootFD, err := unix.Open(rootfs, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+func replaceRepositoryGuestBootConfig(rootFS string, payload []byte) error {
+	rootFD, err := unix.Open(rootFS, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
 		return err
 	}

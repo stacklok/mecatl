@@ -29,6 +29,8 @@ type sdkBoundaryRow struct {
 // This test-only inventory classifies the reusable outcome of each TUI builtin.
 // Its SDK names describe a separate client; the TUI never imports the SDK.
 var sdkBoundaryBuiltins = map[string]sdkBoundaryRow{
+	"queue":   {category: applicationOnly, rationale: "The delivery prefix selects the TUI's local follow-up queue, not a new server operation."},
+	"steer":   {category: applicationOnly, rationale: "The delivery prefix selects the existing steer channel or an ordinary idle prompt."},
 	"clear":   {category: sdkBacked, sdkOperation: "Session.clear"},
 	"title":   {category: sdkBacked, sdkOperation: "Session.rename"},
 	"session": {category: sdkBacked, sdkOperation: "Session.snapshot"},
@@ -54,6 +56,7 @@ var sdkBoundaryBuiltins = map[string]sdkBoundaryRow{
 	"reflections": {category: sdkBacked, sdkOperation: "Client.learningProposals.list"},
 	"reflect":     {category: sdkBacked, sdkOperation: "Client.reflection.reflect"},
 	"dream":       {category: sdkBacked, sdkOperation: "Client.dreamPlans.generate"},
+	"execution":   {category: sdkBacked, sdkOperation: "Client.server.executionTemplates", additionalSDKOperation: "Client.sessions.create", applicationDetail: "The TUI offers default and none without a template catalog and binds exact revisions on create."},
 	"models":      {category: sdkBacked, sdkOperation: "Client.models.list"},
 	"effort":      {category: sdkBacked, sdkOperation: "Client.sessions.fork"},
 	"worktrees": {

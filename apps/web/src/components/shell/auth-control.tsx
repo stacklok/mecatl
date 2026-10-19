@@ -19,12 +19,13 @@ export function AuthControl() {
   if (session.data?.status !== "authenticated") return null;
 
   return (
-    <div className="flex items-center justify-between gap-3 py-3">
+    <div className="flex flex-wrap items-center justify-between gap-3 py-3">
       <div>
         <p className="text-sm font-medium">Signed in</p>
         <p className="text-sm text-muted-foreground">You're signed in to this Mecatl deployment.</p>
       </div>
       <Button
+        className="min-h-11"
         onClick={async () => {
           await logoutAuthSession({ throwOnError: true });
           queryClient.clear();
