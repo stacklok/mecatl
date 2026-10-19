@@ -411,8 +411,8 @@ Flags:
         capability, if any. Uses the same driver authentication and TLS settings as --
         session-store-url.
   --scheduler-max-concurrent-fires int
-        maximum schedules started in parallel per scheduler tick. Applies only when
-        scheduling is enabled. (default 4)
+        maximum admitted scheduled fires, including manual fires and teardown. (default
+        4)
   --scheduler-min-interval duration
         minimum allowed scheduled cadence. Default 1m. Set 0 to allow any cadence.
         (default 1m0s)
@@ -551,7 +551,8 @@ Flags:
         base URL of an HTTP JSON search endpoint. Overrides configured environment-
         based search providers. The API key is read from WEBSEARCH_API_KEY.
   --workspace string
-        default session workspace root (default "<WORKSPACE>")
+        default session workspace root (default
+        "<WORKSPACE>")
   --yolo
         alias for --posture=yolo. Allows tools server-wide and lets child command
         substitutions run automatically. Deny rules and configured ask rules still
@@ -626,13 +627,18 @@ Usage: mecak8s [flags]
         Enable the Parallel tool for isolated child branches
   --enable-teams
         Enable the experimental agent-team capability
+  --execution-allowed-subjects string
+        Comma-separated OIDC subject allowlist for execution template inventory and
+        binding; empty denies all
   --execution-enabled
         Use an independently deployed Kubernetes execution provider for default sessions
   --execution-endpoint string
         Host:port endpoint of the mTLS gRPC execution provider. Requires --execution-
         enabled
-  --execution-profile string
-        Operator-configured execution provider profile
+  --execution-template-id string
+        Operator-configured default execution template ID
+  --execution-template-revision string
+        Exact versioned default execution template revision
   --execution-tls-ca string
         Mounted CA bundle used only by the execution client
   --execution-tls-cert string
@@ -852,7 +858,8 @@ Usage: mecak8s [flags]
         Keep at most this many scheduled-run snapshots; delete the oldest non-active
         snapshots above the limit. Zero disables count cleanup
   --scheduler-max-concurrent-fires int
-        Maximum schedules started concurrently in one scheduler tick (default 4)
+        Maximum admitted scheduled fires, including manual fires and teardown (default
+        4)
   --scheduler-min-interval duration
         Minimum accepted schedule interval. Shorter intervals are rejected; zero
         disables the limit (default 1m0s)

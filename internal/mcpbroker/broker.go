@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/stacklok/mecatl/contracts/sessionaffinity"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -31,6 +32,16 @@ var (
 	// into a safe, internally consistent snapshot.
 	ErrInvalidWorkspaceCatalogue = errors.New("mcp broker invalid workspace catalogue")
 )
+
+// MaxLogicalSessionIDBytes bounds logical session identifiers before registry access.
+const MaxLogicalSessionIDBytes = sessionaffinity.MaxValueBytes
+
+// ValidLogicalSessionID is the shared bounded identifier contract. It matches the
+// session-affinity header rule so an admitted session can also be reached
+// through the Converse client and connector inventory.
+func ValidLogicalSessionID(id session.SessionID) bool {
+	return sessionaffinity.ValidValue(string(id))
+}
 
 // AttachOutcome is the closed result vocabulary for AttachSession.
 type AttachOutcome string

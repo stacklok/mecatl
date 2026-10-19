@@ -133,7 +133,9 @@ spec:
             {{- if .Values.execution.enabled }}
             - --execution-enabled
             - {{ printf "--execution-endpoint=%s" .Values.execution.endpoint | quote }}
-            - {{ printf "--execution-profile=%s" .Values.execution.profile | quote }}
+            - {{ printf "--execution-template-id=%s" .Values.execution.templateID | quote }}
+            - {{ printf "--execution-template-revision=%s" .Values.execution.templateRevision | quote }}
+            - {{ printf "--execution-allowed-subjects=%s" (join "," .Values.execution.allowedSubjects) | quote }}
             - {{ printf "--execution-tls-ca=/var/run/secrets/execution/%s" .Values.execution.caKey | quote }}
             - {{ printf "--execution-tls-cert=/var/run/secrets/execution/%s" .Values.execution.certKey | quote }}
             - {{ printf "--execution-tls-key=/var/run/secrets/execution/%s" .Values.execution.keyKey | quote }}

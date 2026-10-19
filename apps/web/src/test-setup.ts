@@ -2,6 +2,7 @@
 
 import { client as apiClient } from "@mecatl-studio/contracts/client";
 import { cleanup } from "@testing-library/react";
+import { toast } from "sonner";
 import { afterEach, beforeEach, onTestFinished, vi } from "vitest";
 import { clearUserScopedStorage } from "./lib/account-storage";
 import { resetApiClientState } from "./lib/api-client";
@@ -56,7 +57,8 @@ import { resetApiClientState } from "./lib/api-client";
  * SPEC: after any test, the text selection is cleared, fake timers and the fake
  * system clock are off, React Testing Library trees are unmounted, Web Storage
  * is empty, `account-storage`'s and `api-client`'s module-level state is reset,
- * and the shared generated client has its original `baseUrl` and `fetch`.
+ * no sonner toast is still active, and the shared generated client has its
+ * original `baseUrl` and `fetch`.
  * Testing Library registers its own auto-cleanup once per module load, which
  * under `isolate: false` means only the first file in a worker, so cleanup is
  * explicit here.
@@ -85,6 +87,10 @@ afterEach(() => {
   apiClient.setConfig({ baseUrl: initialApiConfig.baseUrl, fetch: initialApiConfig.fetch });
   // The text selection lives on the shared document; addRange() is a no-op while one exists.
   realWindow?.getSelection()?.removeAllRanges();
+  // sonner keeps its toasts in a module-level store and replays the active ones
+  // to every Toaster that mounts, so a toast raised in one test would appear in
+  // the next test's Toaster. Dismissing marks them all inactive.
+  toast.dismiss();
 });
 
 // DECISION: storage is reset from an `onTestFinished` registered here, not from

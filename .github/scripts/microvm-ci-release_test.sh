@@ -478,10 +478,10 @@ COSIGN_PASSWORD= MICROVM_RELEASE_SIGNING_KEY="$scratch/publisher.key" "$sign" "$
 for kind in runtime firmware execution-image; do
   statement="$scratch/one/mecatl-$kind-linux-amd64.provenance.json"
   bundle="$scratch/one/mecatl-$kind-linux-amd64.provenance.sigstore.json"
-  cosign verify-blob --key "$scratch/publisher.pub" --bundle "$bundle" "$statement" >/dev/null
+  cosign verify-blob --key "$scratch/publisher.pub" --insecure-ignore-tlog --bundle "$bundle" "$statement" >/dev/null
   cp "$statement" "$scratch/tampered.provenance.json"
   printf ' ' >>"$scratch/tampered.provenance.json"
-  if cosign verify-blob --key "$scratch/publisher.pub" --bundle "$bundle" "$scratch/tampered.provenance.json" >/dev/null 2>&1; then
+  if cosign verify-blob --key "$scratch/publisher.pub" --insecure-ignore-tlog --bundle "$bundle" "$scratch/tampered.provenance.json" >/dev/null 2>&1; then
     echo "tampered $kind publisher evidence was accepted" >&2
     exit 1
   fi

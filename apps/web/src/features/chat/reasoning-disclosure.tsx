@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { useId } from "react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useDetailsOpen } from "./use-details-open";
 
 /**
@@ -35,7 +36,6 @@ function clampLine(text: string, max: number): string {
  */
 export function ReasoningDisclosure({ streaming, text }: { text: string; streaming: boolean }) {
   const [open, toggleOpen] = useDetailsOpen();
-  const bodyId = useId();
   const lines = nonEmptyLines(text);
   if (lines.length === 0) return null;
 
@@ -44,38 +44,40 @@ export function ReasoningDisclosure({ streaming, text }: { text: string; streami
     return (
       <div className="mt-1 flex min-w-0 items-baseline gap-2 text-xs text-muted-foreground">
         <span className="shrink-0 animate-pulse font-medium">Reasoning…</span>
-        <span className="min-w-0 truncate text-muted-foreground/70" title={preview}>
-          {preview}
-        </span>
+        <Tooltip onlyWhenTruncated>
+          <TooltipTrigger asChild>
+            <span className="min-w-0 truncate text-muted-foreground/70">{preview}</span>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-[min(32rem,calc(100vw-2rem))] break-words">
+            {preview}
+          </TooltipContent>
+        </Tooltip>
       </div>
     );
   }
 
   const count = `${lines.length} ${lines.length === 1 ? "line" : "lines"}`;
   return (
-    <div className="mt-1">
-      <button
-        aria-controls={bodyId}
-        aria-expanded={open}
-        className="inline-flex items-center gap-1 rounded text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        onClick={toggleOpen}
-        type="button"
-      >
-        {open ? (
-          <ChevronDown aria-hidden="true" className="size-3" />
-        ) : (
-          <ChevronRight aria-hidden="true" className="size-3" />
-        )}
-        Reasoning summary · {count}
-      </button>
-      {open && (
-        <div className="mt-1" id={bodyId}>
-          <p className="text-[11px] italic text-muted-foreground/70">{REASONING_CAVEAT}</p>
-          <div className="mt-1 max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded border border-border/60 bg-muted/30 px-2.5 py-2 text-xs leading-relaxed text-muted-foreground">
-            {text.trim()}
-          </div>
+    <Collapsible className="mt-1" onOpenChange={toggleOpen} open={open}>
+      <CollapsibleTrigger asChild>
+        <button
+          className="inline-flex items-center gap-1 rounded text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          type="button"
+        >
+          {open ? (
+            <ChevronDown aria-hidden="true" className="size-3" />
+          ) : (
+            <ChevronRight aria-hidden="true" className="size-3" />
+          )}
+          Reasoning summary · {count}
+        </button>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="mt-1">
+        <p className="text-[11px] italic text-muted-foreground/70">{REASONING_CAVEAT}</p>
+        <div className="mt-1 max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded border border-border/60 bg-muted/30 px-2.5 py-2 text-xs leading-relaxed text-muted-foreground">
+          {text.trim()}
         </div>
-      )}
-    </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }

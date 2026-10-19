@@ -3,6 +3,7 @@
 import type {
   ClearSessionRequest,
   CreateSessionRequest,
+  ExecutionTemplateInventory,
   ForkSessionRequest,
   ListSessionsResponse,
   RunStreamEvent,
@@ -22,12 +23,14 @@ import {
   type PermissionVerdict,
   type PlanApprovalVerdict,
   type Run,
-  ServerFeature,
+  type ServerCompatibility,
   SessionMode,
   textPart,
 } from "@stacklok-oss/mecatl-sdk";
 import { sanitizeUpstreamDetail } from "../http/problem.js";
 import { projectDeliveryNote } from "./delivery-note.js";
+import { providerDisplayName } from "./provider-names.js";
+import { RuntimeNotReadyError } from "./runtime.js";
 
 const maximumInventoryPages = 20;
 const inventoryPageSize = 100;
@@ -77,6 +80,7 @@ export interface ChatService {
   clearSession(sessionId: string, request?: ClearSessionRequest): Promise<{ id: string }>;
   compactSession(sessionId: string): Promise<{ compacted: boolean }>;
   createSession(request: CreateSessionRequest): Promise<{ id: string }>;
+  executionTemplates?(): Promise<ExecutionTemplateInventory>;
   deleteSession(sessionId: string): Promise<void>;
   detail(sessionId: string, signal?: AbortSignal): Promise<SessionDetailResponse>;
   forkSession(sessionId: string, request: ForkSessionRequest): Promise<{ id: string }>;
@@ -112,7 +116,16 @@ export interface ChatService {
   transcript(sessionId: string, signal?: AbortSignal): Promise<SessionTranscriptResponse>;
 }
 
-export function createMecatlChatService(client: Client): ChatService {
+/**
+ * `compatibility` returns the runtime's cached negotiation so reads such as
+ * `detail` need no RPC per request; it defaults to "not ready".
+ */
+export function createMecatlChatService(
+  client: Client,
+  compatibility: () => ServerCompatibility = () => {
+    throw new RuntimeNotReadyError();
+  },
+): ChatService {
   return {
     async *activity(sessionId, request) {
       const { cursor, replayMax, signal } = request;
@@ -260,6 +273,9 @@ export function createMecatlChatService(client: Client): ChatService {
     },
 
     async createSession(request) {
+      if (request.debugTargetSessionId && request.execution && !("none" in request.execution)) {
+        throw new Error("Debug chats require no execution environment.");
+      }
       const session = await client.sessions.create({
         mode: toSessionMode(request.mode),
         ...(request.model === undefined
@@ -268,17 +284,30 @@ export function createMecatlChatService(client: Client): ChatService {
         ...(request.reasoningEffort === "default"
           ? {}
           : { reasoningEffort: request.reasoningEffort }),
-        // An AI-debug session is always no-fs (the daemon requires it — its
-        // engine has exactly one read-only tool and never touches a
-        // filesystem), independent of the ordinary toolAccess choice.
-        ...(request.toolAccess === "noFilesystem" || request.debugTargetSessionId
-          ? { profile: "no-fs" }
-          : {}),
+        ...(request.execution === undefined && !request.debugTargetSessionId
+          ? {}
+          : { execution: request.debugTargetSessionId ? { none: {} } : request.execution }),
         ...(request.debugTargetSessionId === undefined
           ? {}
           : { debugTargetSessionId: request.debugTargetSessionId }),
       });
       return { id: session.id };
+    },
+
+    async executionTemplates() {
+      const inventory = await client.server.executionTemplates();
+      return {
+        inventoryRevision: inventory.inventoryRevision,
+        items: inventory.items.map((item) => ({
+          template: { id: item.template.id, revision: item.template.revision },
+          name: item.name,
+          description: item.description,
+          displayToken: item.displayToken,
+          extensions: { ...item.extensions },
+          declaredExecutionFiles: item.declaredExecutionFiles,
+          declaredBuiltInShell: item.declaredBuiltInShell,
+        })),
+      };
     },
 
     async deleteSession(sessionId) {
@@ -288,16 +317,17 @@ export function createMecatlChatService(client: Client): ChatService {
 
     async detail(sessionId, signal) {
       const session = await client.sessions.get(sessionId, { signal });
-      const [snapshot, compatibility] = await Promise.all([
-        session.snapshot({ signal }),
-        client.server.compatibility(),
-      ]);
+      const snapshot = await session.snapshot({ signal });
+      const { capabilities } = compatibility();
       const resolvedModel = snapshot.resolvedModel;
       return {
         capabilities: {
+          audio: snapshot.sessionCapabilities?.audio === true,
+          builtInShell: snapshot.sessionCapabilities?.builtInShell === true,
+          executionFiles: snapshot.sessionCapabilities?.executionFiles === true,
           image: snapshot.sessionCapabilities?.image === true,
-          manualCompaction: compatibility.capabilities.manualCompaction,
-          modelSelection: compatibility.capabilities.modelSelection,
+          manualCompaction: capabilities.manualCompaction,
+          modelSelection: capabilities.modelSelection,
         },
         id: snapshot.sessionId,
         kind: snapshot.kind,
@@ -330,6 +360,7 @@ export function createMecatlChatService(client: Client): ChatService {
               model: {
                 contextWindow: resolvedModel.contextWindow.toString(),
                 id: resolvedModel.modelId,
+                providerDisplayName: providerDisplayName(resolvedModel.providerId),
                 providerId: resolvedModel.providerId,
                 reasoningEffort: toReasoningEffort(resolvedModel.reasoningEffort),
               },
@@ -432,8 +463,8 @@ export function createMecatlChatService(client: Client): ChatService {
     },
 
     async resolvePlanAsk(sessionId, runId, askId, verdict) {
-      const compatibility = await client.server.compatibility();
-      if (!compatibility.features.has(ServerFeature.ExactPlanAskControl)) return "unavailable";
+      // The SDK checks ExactPlanAskControl from its cached features and throws
+      // `unsupported_feature`, mapped to "unavailable" below.
       try {
         const session = await client.sessions.get(sessionId);
         await session.controls(runId).resolvePlanAsk(askId, verdict);

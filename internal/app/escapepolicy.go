@@ -319,7 +319,7 @@ func (*escapeGuardrailRoute) failClosedDecision(err error) governance.Permission
 // in-root then, so this is only ever reached with a well-formed path).
 func escapePath(args json.RawMessage) string {
 	var a fsPathArg
-	if err := json.Unmarshal(args, &a); err != nil {
+	if err := governance.DecodeToolArgs(args, &a); err != nil {
 		return ""
 	}
 	return a.Path

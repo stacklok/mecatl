@@ -27,13 +27,18 @@ import {
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "../../components/ui/collapsible";
+import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "../../components/ui/select";
-import { errorMessage } from "../knowledge/format";
+import { errorMessage } from "../../lib/error-message";
 import { SettingsCard } from "../settings/settings-card";
 
 /**
@@ -400,21 +405,30 @@ export function ConsolidateMemoryCard() {
                     {operation.replacement.description && (
                       <p className="text-muted-foreground">{operation.replacement.description}</p>
                     )}
-                    <details className="rounded-md border px-2 py-1">
-                      <summary className="cursor-pointer select-none text-muted-foreground">
+                    <Collapsible className="rounded-md border px-2 py-1">
+                      <CollapsibleTrigger className="group/current block w-full cursor-pointer select-none text-start text-muted-foreground">
+                        {/* The native disclosure triangle `<summary>` drew: an empty
+                            inside list item renders the same marker. */}
+                        <span aria-hidden="true" className="inline-block">
+                          <span className="list-inside list-[disclosure-closed] [display:list-item] group-data-[state=open]/current:list-[disclosure-open]" />
+                        </span>
                         Show current values
-                      </summary>
-                      <dl className="mt-2 space-y-2">
-                        <ParticipantDetail label="Keeps" participant={operation.survivor} />
-                        {operation.sources.map((source) => (
-                          <ParticipantDetail
-                            key={source.key}
-                            label="Merges in"
-                            participant={source}
-                          />
-                        ))}
-                      </dl>
-                    </details>
+                      </CollapsibleTrigger>
+                      {/* Closed values stay in the page, so find-in-page reaches them
+                          and opens the change, as it did for `<details>`. */}
+                      <CollapsibleContent hiddenUntilFound>
+                        <dl className="mt-2 space-y-2">
+                          <ParticipantDetail label="Keeps" participant={operation.survivor} />
+                          {operation.sources.map((source) => (
+                            <ParticipantDetail
+                              key={source.key}
+                              label="Merges in"
+                              participant={source}
+                            />
+                          ))}
+                        </dl>
+                      </CollapsibleContent>
+                    </Collapsible>
                   </div>
                 </li>
               ))}

@@ -196,16 +196,8 @@ func (s *dreamState) HandleKey(msg tea.KeyPressMsg) (cmd tea.Cmd, handled bool, 
 }
 
 func (s *dreamState) moveKey(msg tea.KeyPressMsg) bool {
-	move := bounded.LineDown
-	switch {
-	case key.Matches(msg, s.deps.keys.Down):
-	case key.Matches(msg, s.deps.keys.Up):
-		move = bounded.LineUp
-	case key.Matches(msg, s.deps.keys.ScrollD):
-		move = bounded.PageDown
-	case key.Matches(msg, s.deps.keys.ScrollU):
-		move = bounded.PageUp
-	default:
+	move, ok := boundedNavigationMove(msg, s.deps.keys, bounded.LineDown, bounded.LineUp, bounded.PageDown, bounded.PageUp)
+	if !ok {
 		return false
 	}
 	s.moveViewport(move)
@@ -222,10 +214,8 @@ func (s *dreamState) moveViewport(move bounded.Move) {
 }
 
 func (s *dreamState) HandleWheel(msg tea.MouseWheelMsg) (tea.Cmd, bool) {
-	move := bounded.LineDown
-	if msg.Mouse().Button == tea.MouseWheelUp {
-		move = bounded.LineUp
-	} else if msg.Mouse().Button != tea.MouseWheelDown {
+	move, ok := boundedWheelMove(msg)
+	if !ok {
 		return nil, true
 	}
 	if s.view == dreamTargets && !s.compact && s.list != nil {

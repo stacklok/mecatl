@@ -22,7 +22,7 @@ func TestSkillSummaryIncludesNameOnConversationAndInspector(t *testing.T) {
 	)
 	for _, width := range []int{28, 100} {
 		m.rend.setWidth(width)
-		frame := m.rend.renderConversationFrame(&m.conv.scrollback, false)
+		frame := m.rend.renderConversationFrame(&m.conv.scrollback, true)
 		rows := blockRows(frame, toolBlockID(t, m.conv.scrollback, "skill"))
 		if len(rows) != 1 || strings.TrimSpace(stripANSIstr(rows[0])) != "✓ Skill · test-writer" || ansi.StringWidth(rows[0]) > width {
 			t.Fatalf("width %d Skill conversation line = %q, want one bounded named row", width, rows)
@@ -49,7 +49,7 @@ func TestMecatuiQuieterToolCalls_Scenario1_PendingAndSettledParity(t *testing.T)
 	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30}, client.ToolCallMsg{ID: "read", Name: "Read", Args: `{"path":"greeting.txt"}`})
 
-	pending := m.rend.renderConversationFrame(&m.conv.scrollback, false)
+	pending := m.rend.renderConversationFrame(&m.conv.scrollback, true)
 	pendingID := toolBlockID(t, m.conv.scrollback, "read")
 	if got := blockRows(pending, pendingID); len(got) < 2 || !strings.Contains(strings.Join(got, "\n"), "Read") || !strings.Contains(strings.Join(got, "\n"), "greeting.txt") {
 		t.Fatalf("pending call must retain its bounded bordered card with action and target, got:\n%s", strings.Join(got, "\n"))
@@ -70,7 +70,7 @@ func TestMecatuiQuieterToolCalls_Scenario1_PendingAndSettledParity(t *testing.T)
 		client.ToolResultMsg{CallID: "write", Content: "written"},
 	)
 
-	frame := m.rend.renderConversationFrame(&m.conv.scrollback, false)
+	frame := m.rend.renderConversationFrame(&m.conv.scrollback, true)
 	for _, want := range []struct {
 		call, line string
 	}{
@@ -186,7 +186,7 @@ func TestMecatuiQuieterToolCalls_Scenario1_SharedIntentAndSafety(t *testing.T) {
 
 	for _, width := range []int{20, 12, 1} {
 		m.rend.setWidth(width)
-		frame := m.rend.renderConversationFrame(&m.conv.scrollback, false)
+		frame := m.rend.renderConversationFrame(&m.conv.scrollback, true)
 		for _, entry := range m.toolcallEntries() {
 			rows := blockRows(frame, uint64(entry.blockID))
 			if len(rows) != 1 {
@@ -203,7 +203,7 @@ func TestMecatuiQuieterToolCalls_Scenario1_SharedIntentAndSafety(t *testing.T) {
 	}
 
 	m.rend.setWidth(160)
-	frame := m.rend.renderConversationFrame(&m.conv.scrollback, false)
+	frame := m.rend.renderConversationFrame(&m.conv.scrollback, true)
 	entries := m.toolcallEntries()
 	m.phase = phaseIdle
 	modal, _ := m.runToolcalls()

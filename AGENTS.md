@@ -22,11 +22,16 @@ go run ./cmd/mecademo    # offline session smoke test
   after every edit.
 - Before a PR is ready, `task lint && task test:race` must pass and the offline demo
   must show tool call, permission ask/approval, and result. CI verifies the branch
-  independently; it does not replace these local gates. Give full gates a 600-second
-  timeout.
+  independently; it does not replace these local gates. Give complete Go test suites
+  (`test`, `test:race`, `test:workspace`, and `test:workspace:race`) an outer timeout
+  of 1800 seconds (30 minutes). Give other full gates a 600-second timeout.
 - Tests are offline and isolated from operator state: prefer `mockllm`, `memfs`,
   `memstore`, and the conformance suites; real-adapter tests need explicit fixtures.
   `task e2e` uses live providers and costs money; it is not an offline gate.
+- For changes spanning Go modules, follow [the cross-module workflow](docs/module-development.md)
+  before changing dependency pins. Use `task test:workspace:race` for same-checkout
+  evidence; it does not replace standalone/publication checks. Keep module sums
+  tracked; root `go.work.sum` is ignored.
 - See [Taskfile.yml](Taskfile.yml) for golden updates, benchmarks, and other tasks.
 
 ## Module layout
@@ -44,6 +49,10 @@ for that area from [`docs/READING.md`](docs/READING.md).
   tests may use reference `engine/adapter/*`, never host `internal`. Wiring lives in
   `internal/app` and `cmd` mains. Keep depguard, DAG, and standalone-module guards and
   their existing narrow exceptions.
+- Remote-observable API changes, including engine-originated semantics, require
+  the [wire API compatibility assessment](docs/architecture/api-surface.md#wire-api-compatibility).
+  Follow the [scoped rule](.claude/rules/wire-api-compatibility.md); surface breaks
+  and their upgrade implications to the operator before implementation.
 - File writes preserve read-before-edit, exact matching, uniqueness, and CAS;
   new-file writes are create-only. Dispatch stays read-parallel/mutate-serial;
   direct-write children mutate the parent and run behind the barrier.
@@ -84,9 +93,21 @@ for that area from [`docs/READING.md`](docs/READING.md).
 - Generated files change only via `task generate`, never by hand.
 - `docs/drafts/` holds proposals and work records, not current behavior; don't rely
   on it for how Mecatl works.
+- Before editing `user-docs/`, use the `tech-writer` skill and read
+  [`user-docs/AGENTS.md`](user-docs/AGENTS.md). It owns documentation scope
+  and authoring guidance.
 - Markdown changes run `task docs`. User-facing changes update the owning
-  `user-docs/` page named in [`user-docs/_README.md`](user-docs/_README.md).
-  Changing behavior a `docs/` chapter describes updates that chapter.
+  `user-docs/` page when documentation adds information beyond UI hints or
+  self-evident behavior.
+- Architecture docs record stable boundaries, ownership, dependencies, data flow,
+  contracts, and rationale. Update them only when an existing architectural claim
+  becomes false or materially incomplete, or a new architectural concept needs
+  explaining.
+- A bug fix that restores an existing invariant normally needs no architecture edit.
+  When an edit is needed, make the smallest in-place correction rather than appending
+  a paragraph about the change.
+- Keep per-fix implementation details and regression cases in code and tests; keep
+  change history in PR descriptions or release notes, not architecture chapters.
 
 Path-scoped invariants live in `.claude/rules/*.md`, including test isolation
 (composition helpers and a test-owned `UserModelDir`).

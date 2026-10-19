@@ -36,7 +36,7 @@ func nativeSteps(t *testing.T) map[string]workflowStep {
 		t.Fatal(err)
 	}
 	job := workflow.Jobs["native-execution-live"]
-	if strings.Join(strings.Fields(job.If), " ") != "github.repository == 'stacklok/mecatl' && github.event_name == 'workflow_dispatch' && inputs.native_execution" || job.Timeout != 100 {
+	if strings.Join(strings.Fields(job.If), " ") != "github.repository == 'stacklok/mecatl' && github.event_name == 'workflow_dispatch' && inputs.native_execution" || job.Timeout != 160 {
 		t.Fatal("native job must remain explicitly dispatched, repo-gated, and bounded")
 	}
 	steps := make(map[string]workflowStep)
@@ -65,11 +65,26 @@ func nativeSteps(t *testing.T) map[string]workflowStep {
 			t.Fatal("downstream ownership must use production outputs, never current")
 		}
 	}
+	if steps["production"].Timeout != 100 || steps["production"].Env["MECATL_EXECUTION_QUAL_NATURAL_EXPIRY"] != "0" || !strings.Contains(steps["production"].Run, "timeout --kill-after=15s 98m task e2e:k8s:execution:production") {
+		t.Fatal("native coding must use bounded production qualification without natural expiry")
+	}
 	if steps["production"].Env["MECATL_EXECUTION_QUAL_CI"] != "0" || len(steps["credential"].Env) != 1 || steps["credential"].Env["OPENROUTER_API_KEY"] != "${{ secrets.OPENROUTER_API_KEY }}" {
 		t.Fatal("production retention or step-scoped credential wiring drifted")
 	}
-	if steps["credential"].If != "success() && steps.production.outcome == 'success'" || steps["live"].If != "success() && steps.production.outcome == 'success' && steps.credential.outcome == 'success'" || steps["cleanup"].If != "always() && steps.prepare.outcome == 'success'" {
+	if steps["credential"].If != "success() && steps.production.outcome == 'success' && steps.production.outputs.handoff_complete == '1' && steps.validation.outcome == 'success'" || steps["live"].If != "success() && steps.production.outcome == 'success' && steps.production.outputs.handoff_complete == '1' && steps.credential.outcome == 'success'" || steps["cleanup"].If != "always() && steps.prepare.outcome == 'success'" {
 		t.Fatal("qualification must depend on actual production success and always clean up")
+	}
+	validation := steps["validation"]
+	if validation.Timeout != 2 || validation.If != "success() && steps.production.outcome == 'success' && steps.production.outputs.handoff_complete == '1'" || validation.Run != "timeout --kill-after=5s 105s ./deploy/mecatl-execution-kind/live.sh --verify-handoff" {
+		t.Fatal("private file staging requires bounded secret-free handoff verification")
+	}
+	for _, key := range []string{"MECATL_EXECUTION_LIVE_QUALIFIED", "MECATL_EXECUTION_QUAL_STATE", "MECATL_EXECUTION_HANDOFF_CLUSTER", "MECATL_EXECUTION_HANDOFF_COMPLETE", "MECATL_EXECUTION_HANDOFF_DIGEST", "MECATL_EXECUTION_HANDOFF_SHA", "MECATL_EXECUTION_HANDOFF_RUN_ID", "MECATL_EXECUTION_HANDOFF_RUN_ATTEMPT"} {
+		if validation.Env[key] != steps["live"].Env[key] {
+			t.Fatalf("validation/live identity mismatch: %s", key)
+		}
+	}
+	if len(validation.Env) != 8 {
+		t.Fatal("secret-free validation must not receive a credential")
 	}
 	return steps
 }
@@ -87,6 +102,81 @@ func runStep(t *testing.T, root, script string, env ...string) ([]byte, error) {
 	cmd.Dir = root
 	cmd.Env = append([]string{"PATH=" + os.Getenv("PATH"), "HOME=" + root}, env...)
 	return cmd.CombinedOutput()
+}
+
+func TestNativeHandoffSelectorsAndCleanEnvironment(t *testing.T) {
+	steps := nativeSteps(t)
+	if steps["production"].Env["MECATL_EXECUTION_QUAL_HANDOFF"] != "1" || steps["production"].Env["MECATL_EXECUTION_HANDOFF_SHA"] != "${{ github.sha }}" || steps["live"].Env["MECATL_EXECUTION_LIVE_QUALIFIED"] != "1" {
+		t.Fatal("native job did not explicitly request/consume qualification")
+	}
+	for _, key := range []string{"COMPLETE", "DIGEST", "SHA", "RUN_ID", "RUN_ATTEMPT"} {
+		if steps["live"].Env["MECATL_EXECUTION_HANDOFF_"+key] != "${{ steps.production.outputs.handoff_"+strings.ToLower(key)+" }}" {
+			t.Fatalf("missing step-output binding: %s", key)
+		}
+	}
+	preflight := scriptRange(t, "run.sh", "#!/bin/sh", "\nrun_id=")
+	helper, err := os.ReadFile("handoff.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fault := range []string{"", "default", "selector", "profile", "resume", "delete", "not-ci", "sha", "run", "attempt", "output", "dirty"} {
+		t.Run("fault="+fault, func(t *testing.T) {
+			root := t.TempDir()
+			scripts := filepath.Join(root, "deploy/mecatl-execution-kind")
+			bin := filepath.Join(root, "bin")
+			for _, dir := range []string{scripts, bin} {
+				if err := os.MkdirAll(dir, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			writeFixture(t, filepath.Join(scripts, "handoff.sh"), string(helper), 0o600)
+			writeFixture(t, filepath.Join(scripts, "run.sh"), preflight+"\nprintf 'admitted\\n'\n", 0o700)
+			writeFixture(t, filepath.Join(bin, "docker"), "#!/bin/sh\nexit 99\n", 0o700)
+			sha := strings.Repeat("a", 40)
+			git := "#!/bin/sh\nset -eu\ntest -z \"${OPENROUTER_API_KEY+x}\"\ncase \"$1\" in rev-parse) printf '%s\\n' '" + sha + "' ;; diff) exit "
+			if fault == "dirty" {
+				git += "1"
+			} else {
+				git += "0"
+			}
+			writeFixture(t, filepath.Join(bin, "git"), git+" ;; *) exit 99 ;; esac\n", 0o700)
+			selector, profile, resume, ci, actions, run, attempt, output := "1", "production", "", "0", "true", "123", "2", filepath.Join(root, "output")
+			switch fault {
+			case "default":
+				selector = "0"
+				actions = ""
+			case "selector":
+				selector = "$(touch injected)"
+			case "profile":
+				profile = "development"
+			case "resume":
+				resume = "owned"
+			case "delete":
+				ci = "1"
+			case "not-ci":
+				actions = ""
+			case "sha":
+				sha = strings.Repeat("b", 40)
+			case "run":
+				run = "1:2"
+			case "attempt":
+				attempt = ""
+			case "output":
+				output = ""
+			}
+			out, err := runStep(t, root, "sh ./deploy/mecatl-execution-kind/run.sh", "PATH="+bin+":"+os.Getenv("PATH"), "CONTAINER_ENGINE=docker", "MECATL_EXECUTION_QUAL_HANDOFF="+selector, "MECATL_EXECUTION_QUAL_PROFILE="+profile, "MECATL_EXECUTION_QUAL_RESUME_STATE="+resume, "MECATL_EXECUTION_QUAL_CI="+ci, "GITHUB_ACTIONS="+actions, "GITHUB_RUN_ID="+run, "GITHUB_RUN_ATTEMPT="+attempt, "GITHUB_SHA="+sha, "MECATL_EXECUTION_HANDOFF_SHA="+sha, "GITHUB_OUTPUT="+output, "MECATL_EXECUTION_QUAL_OUTPUT="+filepath.Join(root, "output"), "OPENROUTER_API_KEY=PRIVATE-SENTINEL")
+			want := fault == "" || fault == "default"
+			if (err == nil) != want || strings.Contains(string(out), "PRIVATE-SENTINEL") || (strings.Contains(string(out), "admitted") != want) {
+				t.Fatalf("producer preflight: %v: %s", err, out)
+			}
+			if _, err := os.Stat(filepath.Join(root, "injected")); !os.IsNotExist(err) {
+				t.Fatal("handoff selector executed")
+			}
+			if _, err := os.Stat(filepath.Join(root, "output")); !os.IsNotExist(err) {
+				t.Fatal("preflight published a proof")
+			}
+		})
+	}
 }
 
 func TestNativeWorkflowCommitAndCredentialBoundary(t *testing.T) {

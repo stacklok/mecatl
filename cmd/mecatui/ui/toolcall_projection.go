@@ -32,6 +32,18 @@ func projectToolCall(metadata scrollback.ToolCallMetadata) toolcallProjection {
 	if title, ok := mcpTitle(metadata.Name); ok {
 		displayName = terminaltext.SanitizeSingleLine(title)
 	}
+	return toolcallProjection{
+		blockID: metadata.ID, revision: metadata.Revision,
+		displayName: displayName, fullName: fullName,
+		intent: renderfmt.ToolIntent(metadata.Name, metadata.Arguments),
+		state:  toolCallState(metadata),
+	}
+}
+
+// toolCallState is the lifecycle-only metadata projection used on warm render
+// passes. It deliberately does not inspect presentation fields such as name or
+// arguments, which are only needed when preparing a cache-miss card.
+func toolCallState(metadata scrollback.ToolCallMetadata) toolcallProjectionState {
 	state := toolcallPending
 	switch {
 	case metadata.ResultReceived && !metadata.Provisional && metadata.ResultError:
@@ -47,12 +59,7 @@ func projectToolCall(metadata scrollback.ToolCallMetadata) toolcallProjection {
 	case metadata.Terminal:
 		state = toolcallAwaitingResult
 	}
-	return toolcallProjection{
-		blockID: metadata.ID, revision: metadata.Revision,
-		displayName: displayName, fullName: fullName,
-		intent: renderfmt.ToolIntent(metadata.Name, metadata.Arguments),
-		state:  state,
-	}
+	return state
 }
 
 func (p toolcallProjection) settled() bool {

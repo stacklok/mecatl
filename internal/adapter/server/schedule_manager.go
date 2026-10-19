@@ -140,7 +140,7 @@ type scheduleManager struct {
 	// placementForCreate atomically resolves or exactly reauthorizes durable
 	// schedule placement through the owning Service. The returned ref and scope
 	// are private store state; neither is accepted from public schedule mappings.
-	placementForCreate func(context.Context, session.EnvironmentRef, SessionProfile) (schedulePlacement, error)
+	placementForCreate func(context.Context, session.EnvironmentRef, session.SessionID, SessionProfile) (schedulePlacement, error)
 	// deletePlacement removes only an exact schedule-owned placement. Borrowed,
 	// no-FS, host-local, and legacy-ambiguous records never call it.
 	deletePlacement func(context.Context, session.EnvironmentRef, string) (bool, error)
@@ -257,7 +257,7 @@ func (m *scheduleManager) setModelsPointer(p *atomic.Pointer[[]*mecatlv1.ModelIn
 
 // setPlacementForCreate attaches the Service-owned placement authority to the
 // manager after Service construction.
-func (m *scheduleManager) setPlacementForCreate(fn func(context.Context, session.EnvironmentRef, SessionProfile) (schedulePlacement, error)) {
+func (m *scheduleManager) setPlacementForCreate(fn func(context.Context, session.EnvironmentRef, session.SessionID, SessionProfile) (schedulePlacement, error)) {
 	m.placementForCreate = fn
 }
 
@@ -418,7 +418,7 @@ func (m *scheduleManager) CreateSchedule(ctx context.Context, spec port.Schedule
 	}
 	var placement schedulePlacement
 	if m.placementForCreate != nil {
-		placement, err = m.placementForCreate(ctx, spec.EnvironmentRef, SessionProfile(spec.Profile))
+		placement, err = m.placementForCreate(ctx, spec.EnvironmentRef, spec.OriginSessionID, SessionProfile(spec.Profile))
 		if err != nil {
 			return port.Schedule{}, err
 		}

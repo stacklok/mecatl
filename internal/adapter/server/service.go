@@ -93,6 +93,10 @@ type ProviderSelector struct {
 type SessionEngineResult struct {
 	// Engine is the built per-session engine. Required (non-nil on a nil error).
 	Engine *agent.Engine
+	// AgentDefinitionName acknowledges the named root actually resolved by the
+	// factory. This internal composition contract is not a wire field: a context
+	// selection alone cannot prove that a custom factory built the bounded catalog.
+	AgentDefinitionName string
 	// Capabilities is the session's resolved input capability (catalog ∩ adapter),
 	// computed in composition. The server echoes it verbatim; it never recomputes.
 	Capabilities port.ProviderCapabilities
@@ -172,8 +176,54 @@ type SessionEngineResult struct {
 	// publication. Engines do not hold runtime pins; run admission compares this
 	// tag with the operation pin and rebuilds before use.
 	RuntimeRevision uint64
+	// Authority is the per-session session.Authority the factory minted
+	// DIRECTLY from THIS session's own resolved catalog + resource-capability
+	// list (ADR 0353) — set only by a factory whose Authority must NOT be
+	// derived from Config.RootAuthority's deployment-default closure (today:
+	// AgentDefSessionEngine). The zero value means "the caller derives
+	// Authority the ordinary way" (Config.RootAuthority / carried-authority-
+	// on-fork); every other factory leaves this zero and setPerSessionLabels
+	// ignores it.
+	Authority session.Authority
+	// Limits is the ADR-0353 tighten-only clamped run-limit ceiling this
+	// agent-bound create or successor must persist. A live runtime rebuild must
+	// match the session's fixed limits or be refused. Set only by
+	// AgentDefSessionEngine, which knows the bound def's configured limits;
+	// nil leaves the caller's limits unchanged.
+	Limits *session.Limits
+	// BrokerRegistrationKeys are the exact registration keys successfully mounted
+	// from the candidate broker bundle. NonBrokerRegistrationKeys is the complete
+	// final-catalog partition excluding that bundle. Both are Catalog.Names metadata.
+	BrokerRegistrationKeys    []string
+	NonBrokerRegistrationKeys []string
 	// Close tears down the session's MCP manager. Never nil (a no-op when no specs).
 	Close func() error
+}
+
+func workspaceEnrollmentRegistrationOverlap(priorBrokerKeys, authorityTools, nonBrokerRegistrationKeys []string) (string, bool) {
+	for _, key := range nonBrokerRegistrationKeys {
+		if slices.Contains(priorBrokerKeys, key) && slices.Contains(authorityTools, key) {
+			return key, true
+		}
+	}
+	return "", false
+}
+
+func sameWorkspaceEnrollmentToolKeys(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	keys := make(map[string]struct{}, len(left))
+	for _, key := range left {
+		keys[key] = struct{}{}
+	}
+	for _, key := range right {
+		if _, ok := keys[key]; !ok {
+			return false
+		}
+		delete(keys, key)
+	}
+	return len(keys) == 0
 }
 
 // ResolvedModel is the per-session EFFECTIVE model echoed on the wire: the
@@ -239,6 +289,108 @@ type SessionEngineFactory func(ctx context.Context, sel ProviderSelector, specs 
 // authorized target incarnation; neither may be projected to the model or wire.
 type DebugSessionEngineFactory func(ctx context.Context, sel ProviderSelector, profile SessionProfile, mode session.PermissionMode, target session.SessionID, targetFingerprint string, targetOwner *session.Principal, selectedServers, toolCeiling []string) (SessionEngineResult, error)
 
+// AgentDefSessionEngineFactory builds the dedicated engine for a session bound
+// to a named AgentDef (ADR 0353): the session's catalog is built EXCLUSIVELY
+// from the resolved def's own tools/mcpServers (never the deployment's default
+// explorer catalog), and its minted session.Authority (SessionEngineResult.Authority)
+// is derived from that SAME resolved catalog — never Config.RootAuthority's
+// build-time default closure. It mirrors DebugSessionEngineFactory's shape,
+// replacing the debug-target inputs with the def name that selects the engine;
+// no workspace parameter is needed because catalog assembly never binds a
+// filesystem root itself (the session's own tool.Environment does that at run
+// time, exactly like every other per-session factory). An unresolvable
+// defName is a loud error wrapping ErrInvalidArgument, mirroring how an
+// unknown provider_id is handled today.
+//
+// limits is the caller's REQUEST Limits, threaded in RAW (never
+// WithDefaults-filled by the caller — see createSession, which skips its
+// general WithDefaults(cfg.DefaultLimits) fold for an agent-bound create):
+// only the composition-layer factory knows the bound def's own configured
+// Limits/permissionMode ceiling (AC1.12/AC1.13, ADR 0353's tighten-only
+// clamps), so it alone can tell "a zero field means not supplied, inherit the
+// def's cap" apart from "the operator's own default already filled it in."
+// The factory returns the clamped mode via SessionEngineResult.BuiltForMode
+// (echoed exactly like every other factory when no def restricts it further)
+// and the clamped Limits via SessionEngineResult.Limits; the caller applies
+// both to what it actually persists on the session.
+//
+// A placement-aware extension (memory: project, issue #33, ADR 0353 Scenario
+// 2 AC2.5) still needs to know THIS session's own bound governance root
+// (ADR 0291) despite the factory gaining no dedicated parameter for it — the
+// caller attaches it to ctx via ContextWithAgentDefSessionRoot before invoking
+// the factory; AgentDefSessionRootFromContext reads it back inside the
+// factory's own composition-layer closure. This keeps the factory's shape
+// exactly as originally frozen (no per-feature parameter growth) while still
+// letting two agent-bound sessions on the SAME def but DIFFERENT placements
+// resolve distinct project-memory files instead of leaking one into the other.
+type AgentDefSessionEngineFactory func(ctx context.Context, sel ProviderSelector, profile SessionProfile, mode session.PermissionMode, limits session.Limits, defName string) (SessionEngineResult, error)
+
+// agentDefSessionRootContextKey is the unexported context key backing
+// ContextWithAgentDefSessionRoot/AgentDefSessionRootFromContext.
+type agentDefSessionRootContextKey struct{}
+
+// ContextWithAgentDefSessionRoot attaches an agent-bound session's own
+// resolved governance root (ADR 0291's server-owned placement, PlacementGovernanceRoot)
+// to ctx before invoking AgentDefSessionEngineFactory. root is "" when the
+// session has no placement to bind to (profile: "no-fs"), which
+// AgentDefSessionRootFromContext's callers treat as inert, never an error.
+func ContextWithAgentDefSessionRoot(ctx context.Context, root string) context.Context {
+	return context.WithValue(ctx, agentDefSessionRootContextKey{}, root)
+}
+
+// AgentDefSessionRootFromContext returns the root attached by
+// ContextWithAgentDefSessionRoot, or "" if none was set.
+func AgentDefSessionRootFromContext(ctx context.Context) string {
+	root, _ := ctx.Value(agentDefSessionRootContextKey{}).(string)
+	return root
+}
+
+// AgentDefSessionSelection identifies a bounded root build through the ordinary
+// owner/execution-scoped SessionContextEngine binding lifecycle.
+type AgentDefSessionSelection struct {
+	Name   string
+	Limits session.Limits
+}
+
+type agentDefSessionSelectionKey struct{}
+
+// AgentDefSessionSelectionFromContext reports the bounded root requested by the
+// service. SessionContextEngine must dispatch it after binding the owner sources,
+// rather than constructing an ordinary explorer catalog.
+func AgentDefSessionSelectionFromContext(ctx context.Context) (AgentDefSessionSelection, bool) {
+	selection, ok := ctx.Value(agentDefSessionSelectionKey{}).(AgentDefSessionSelection)
+	return selection, ok
+}
+
+func (s *Service) callAgentDefSessionEngine(ctx context.Context, id session.SessionID, owner *session.Principal, acquire ExecutionWorkspaceAcquirer, sel ProviderSelector, profile SessionProfile, workspace string, mode session.PermissionMode, limits session.Limits, name string, forkSource ...session.SessionID) (SessionEngineResult, error) {
+	ctx = ContextWithAgentDefSessionRoot(ctx, workspace)
+	var res SessionEngineResult
+	var err error
+	if s.cfg.SessionContextEngine != nil {
+		ctx = context.WithValue(ctx, agentDefSessionSelectionKey{}, AgentDefSessionSelection{Name: name, Limits: limits})
+		res, err = s.callSessionEngine(ctx, id, owner, acquire, sel, nil, profile, workspace, mode, nil, nil, forkSource...)
+	} else {
+		res, err = s.cfg.AgentDefSessionEngine(ctx, sel, profile, mode, limits, name)
+	}
+	if err != nil {
+		return res, err
+	}
+	// Validate a fresh payload without replacing any inherited durable authority.
+	probe := session.Session{State: session.StateIdle, AgentDefinitionName: name}
+	if res.Engine == nil || res.AgentDefinitionName != name {
+		err = fmt.Errorf("%w: factory did not acknowledge agent definition %q", ErrFailedPrecondition, name)
+	} else if bindErr := probe.BindAuthority(res.Authority); bindErr != nil {
+		err = fmt.Errorf("%w: invalid agent definition authority: %v", ErrFailedPrecondition, bindErr)
+	}
+	if err != nil {
+		if res.Close != nil {
+			_ = res.Close()
+		}
+		return SessionEngineResult{}, err
+	}
+	return res, nil
+}
+
 // ModelSnapshot captures model rows and provider statuses from one publication.
 type ModelSnapshot struct {
 	Models         []*mecatlv1.ModelInfo
@@ -250,19 +402,35 @@ type ModelInventory interface {
 	CurrentModelSnapshot() ModelSnapshot
 }
 
+// WorkspaceEnrollmentCollisionError is the presentation-safe collision result
+// exchanged only between root-internal composition and server seams.
+type WorkspaceEnrollmentCollisionError struct{ Key string }
+
+func (e *WorkspaceEnrollmentCollisionError) Error() string {
+	if e == nil || e.Key == "" {
+		return "workspace enrollment registration collision; correct the broker configuration and retry"
+	}
+	return fmt.Sprintf("workspace tool %q conflicts with an existing registration; correct the broker configuration and retry", e.Key)
+}
+
+func (*WorkspaceEnrollmentCollisionError) Unwrap() error { return ErrFailedPrecondition }
+
 // SessionEngineWithToolsFactory is the explicit per-session catalogue seam used
 // for host-owned wrapper tools. Tools are ordinary arguments: catalogue assembly
 // must not recover them from context values or a process-global fallback.
-type SessionEngineWithToolsFactory func(ctx context.Context, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, workspace string, mode session.PermissionMode, sessionTools []tool.Tool) (SessionEngineResult, error)
+type SessionEngineWithToolsFactory func(ctx context.Context, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, workspace string, mode session.PermissionMode, sessionTools []tool.Tool, sessionToolKeys []string) (SessionEngineResult, error)
 
 // ExecutionWorkspaceAcquirer lazily borrows the exact server-authorized session
 // workspace as a source-only capability. The caller owns the returned release.
 type ExecutionWorkspaceAcquirer func(context.Context) (tool.Workspace, func() error, error)
 
 // SessionContextEngineFactory builds a session engine with its stored source identity.
+// AgentDefSessionSelectionFromContext selects a bounded agent root, when present.
 // The trailing source ID is set only while constructing a same-placement successor
 // carrying a live instruction snapshot; ordinary builds and rehydration receive empty.
-type SessionContextEngineFactory func(context.Context, session.SessionID, *session.Principal, ExecutionWorkspaceAcquirer, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool, session.SessionID) (SessionEngineResult, error)
+// sessionToolKeys carries the exact frozen registration names; nil means derive
+// keys from the tools, while a non-nil empty slice requests a frozen empty set.
+type SessionContextEngineFactory func(context.Context, session.SessionID, *session.Principal, ExecutionWorkspaceAcquirer, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool, []string, session.SessionID) (SessionEngineResult, error)
 
 // Config wires the Service's collaborators and resolved composition values.
 type Config struct {
@@ -284,6 +452,12 @@ type Config struct {
 	// Nil disables creation and makes persisted debug sessions fail closed at
 	// rehydration rather than falling back to Engine or SessionEngine.
 	DebugSessionEngine DebugSessionEngineFactory
+	// AgentDefSessionEngine builds the dedicated engine for a session bound to
+	// a named AgentDef (ADR 0353). Nil rejects a create naming
+	// agent_definition_name with ErrInvalidArgument, mirroring the
+	// DebugSessionEngine-nil posture. The composition root (internal/app)
+	// supplies it.
+	AgentDefSessionEngine AgentDefSessionEngineFactory
 	// DebugMCP reports whether the debug factory can currently borrow selected
 	// direct tools from the published direct MCP runtime. It is read on every
 	// capabilities request because the runtime can change after startup. Nil
@@ -356,6 +530,10 @@ type Config struct {
 	// PlacementScope is the trusted deployment scope supplied to every provider
 	// Bind. It must be non-empty when PlacementProvider is configured.
 	PlacementScope PlacementScope
+	// ExecutionTemplateAllowed is an operator-owned per-principal grant. A nil
+	// function denies all public template selection even if the shared provider
+	// mTLS client has a broader allowlist.
+	ExecutionTemplateAllowed func(*session.Principal, string, string) bool
 	// ExecutionAccess is an optional host-only run-ownership seam. Local and no-FS
 	// placements leave it nil and perform no lifecycle RPCs.
 	ExecutionAccess ExecutionAccess
@@ -562,6 +740,10 @@ type Config struct {
 	SkillActionAvailable      func(learning.SkillPartition, string) (bool, string)
 	LearnedSkillNameAvailable func(string) bool
 	LiveSkills                func(context.Context) []*mecatlv1.SkillInfo
+	// SkillSourceFor returns the read-only skill source for the caller's skill view, the
+	// view LiveSkills lists. It backs ListSkillFiles and ReadSkillFile. Nil, or a nil
+	// result, means skills are disabled.
+	SkillSourceFor func(context.Context) tool.SkillSource
 
 	// TitleGenerationEligible is the composition-resolved eligibility check for
 	// server-owned automatic title generation. Nil and false keep the durable
@@ -1787,8 +1969,9 @@ type CreateSessionOption func(*createSessionOpts)
 // "WithSessionID was called (possibly with an empty id, which is rejected)" from
 // "WithSessionID was never called" — both leave id == "".
 type createSessionOpts struct {
-	id    session.SessionID
-	idSet bool
+	execution ExecutionSelection
+	id        session.SessionID
+	idSet     bool
 	// sourceSessionID, when non-empty, seeds the new session's conversation
 	// history from the named source session (issue #20, model-switch carryover).
 	// Validated + snapshotted in createSession via validateCarryover BEFORE the
@@ -1824,6 +2007,10 @@ type createSessionOpts struct {
 	// publication even when the provider has no detachable attachment. ACP editor
 	// buffers are the only such create-time override.
 	placementEnvironmentOverride bool
+	// agentDefinitionName persists the root's AgentDef binding and selects the
+	// dedicated factory's catalog, limits, and permission-mode restrictions.
+	// Empty uses the ordinary session path.
+	agentDefinitionName string
 }
 
 // WithSessionID overrides the session id a CreateSession* call mints. When set,
@@ -1870,6 +2057,13 @@ func WithDebugTarget(id session.SessionID) CreateSessionOption {
 // cross this seam.
 func WithDebugMCP(names []string) CreateSessionOption {
 	return func(o *createSessionOpts) { o.debugMCPServers = append([]string(nil), names...) }
+}
+
+// WithAgentDefinitionName persists a root's named AgentDef binding (ADR 0353).
+// The dedicated factory resolves the name and provider/model, builds the restricted
+// catalog, and clamps limits and permission mode. Empty uses the ordinary path.
+func WithAgentDefinitionName(name string) CreateSessionOption {
+	return func(o *createSessionOpts) { o.agentDefinitionName = name }
 }
 
 // ClientMCPGrant is a DECIDED client-MCP result: specs that have passed the shared
@@ -1953,6 +2147,27 @@ func validateDebugMCPNames(target session.SessionID, names []string) error {
 	return nil
 }
 
+// validateAgentDefCreate rejects two agent_definition_name combinations
+// (ADR 0353) at the create boundary, before any factory is consulted: a debug
+// target (AC1.5 — a named specialist root and the session-debugger admin
+// transport are unrelated concepts) and client-supplied MCP servers, wire or
+// debug-shaped (AC1.2 — the def's own mcpServers: is the exclusive MCP scope;
+// already-configured global servers the def doesn't reference must stay
+// unexposed). An empty agent_definition_name is a no-op — the byte-identical
+// default path.
+func validateAgentDefCreate(opts createSessionOpts) error {
+	if opts.agentDefinitionName == "" {
+		return nil
+	}
+	if opts.debugTargetID != "" {
+		return fmt.Errorf("%w: agent_definition_name cannot be combined with a debug target", ErrInvalidArgument)
+	}
+	if len(opts.clientMCP) > 0 || len(opts.debugMCPServers) > 0 {
+		return fmt.Errorf("%w: agent_definition_name cannot be combined with client-supplied MCP servers (the def's own mcpServers: is the exclusive MCP scope)", ErrInvalidArgument)
+	}
+	return nil
+}
+
 // WithOwner overrides the owner a CreateSession* call stamps on the new session.
 // By DEFAULT the owner comes from the verified principal
 // on the context (session.PrincipalFromContext) — a caller can never name its
@@ -1990,14 +2205,27 @@ func resolveOwner(ctx context.Context, opts createSessionOpts) *session.Principa
 }
 
 func newCreatedSession(id session.SessionID, mode session.PermissionMode, ref session.EnvironmentRef, limits session.Limits, createdAt time.Time, opts createSessionOpts) (*session.Session, error) {
+	var (
+		sess *session.Session
+		err  error
+	)
 	switch {
 	case opts.debugTargetID != "":
-		return session.NewDebug(id, mode, ref, limits, createdAt, opts.debugTargetID, opts.debugTargetIncarnation)
+		sess, err = session.NewDebug(id, mode, ref, limits, createdAt, opts.debugTargetID, opts.debugTargetIncarnation)
 	case opts.scheduled != nil:
-		return session.NewScheduled(id, mode, ref, limits, createdAt, opts.scheduled.ScheduleName, opts.scheduled.OriginSessionID, opts.scheduled.OriginIncarnation)
+		sess, err = session.NewScheduled(id, mode, ref, limits, createdAt, opts.scheduled.ScheduleName, opts.scheduled.OriginSessionID, opts.scheduled.OriginIncarnation)
 	default:
-		return session.New(id, mode, ref, limits, createdAt), nil
+		sess = session.New(id, mode, ref, limits, createdAt)
 	}
+	if err != nil {
+		return nil, err
+	}
+	// Write-once creation-time label (ADR 0353), stamped here rather than through
+	// setSessionLabels/setPerSessionLabels so both create paths (shared-engine
+	// fast path and per-session-engine path) get it uniformly without changing
+	// those functions' signatures. Empty is the byte-identical default.
+	sess.AgentDefinitionName = opts.agentDefinitionName
+	return sess, nil
 }
 
 // CreateSession allocates a new idle session on the server-owned default placement,
@@ -2014,35 +2242,37 @@ func (s *Service) CreateSessionWithProvider(ctx context.Context, mode session.Pe
 	return s.CreateSessionWithProfile(ctx, mode, limits, sel, ProfileDefault)
 }
 
-// CreateSessionWithProfile creates a session bound to an optional non-default
-// provider/model selector AND a tool-surface profile (issue #55), with no client
-// MCP. It is the gRPC/HTTP entry for a CreateSession request. The zero selector
-// + default profile uses the shared engine unless Config.MCPBroker or
-// Config.LearnedSkills forces a per-session engine; a non-zero selector OR the
-// no-fs profile always needs one. A per-session engine REQUIRES
-// Config.SessionEngine or Config.SessionEngineWithTools (else
-// ErrInvalidArgument) and resolves through the factory (an unknown/unavailable
-// provider id surfaces as ErrInvalidArgument). Setting ModelID with an empty
-// ProviderID is rejected (a bare model on the env-derived default provider is
-// ambiguous). Placement is bound exclusively from the server-owned default or
-// explicit no-FS profile.
+// CreateSessionWithProfile creates a session with an optional provider/model
+// selector and tool-surface profile. It is the gRPC/HTTP create entrypoint.
+// Ordinary sessions use the shared engine unless the selector, profile, broker,
+// or learned skills require Config.SessionEngine or Config.SessionEngineWithTools.
+// Agent-bound sessions always require Config.AgentDefSessionEngine instead.
+// Unknown/unavailable providers surface as ErrInvalidArgument. ModelID without
+// ProviderID is rejected for ordinary sessions; agent-bound sessions resolve it
+// through the dedicated factory. Placement is server-owned, including authorized
+// execution-template selections, no-FS profiles, and trusted supplied bindings.
 //
 // opts is the variadic options pattern (CreateSessionOption): WithSessionID
 // overrides the minted id (the scheduler fire
 // path mints a "sched--"-prefixed id). Zero opts mints a fresh id as usual.
 func (s *Service) CreateSessionWithProfile(ctx context.Context, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, profile SessionProfile, opts ...CreateSessionOption) (*session.Session, error) {
-	if sel.ProviderID == "" && sel.ModelID != "" {
-		return nil, fmt.Errorf("%w: model_id requires provider_id (a bare model on the default provider is ambiguous)", ErrInvalidArgument)
-	}
 	var o createSessionOpts
 	for _, opt := range opts {
 		opt(&o)
+	}
+	// A model-only selector is valid for agent-bound sessions: their dedicated
+	// factory resolves the provider from the definition.
+	if sel.ProviderID == "" && sel.ModelID != "" && o.agentDefinitionName == "" {
+		return nil, fmt.Errorf("%w: model_id requires provider_id (a bare model on the default provider is ambiguous)", ErrInvalidArgument)
 	}
 	return s.createSessionWithOptions(ctx, mode, limits, sel, profile, o)
 }
 
 func (s *Service) createSessionWithOptions(ctx context.Context, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, profile SessionProfile, opts createSessionOpts) (*session.Session, error) {
 	if err := validateDebugMCPNames(opts.debugTargetID, opts.debugMCPServers); err != nil {
+		return nil, err
+	}
+	if err := validateAgentDefCreate(opts); err != nil {
 		return nil, err
 	}
 	return s.createSession(ctx, mode, limits, sel, opts.clientMCP, profile, opts)
@@ -2072,13 +2302,42 @@ func (s *Service) createSessionWithOptions(ctx context.Context, mode session.Per
 // empty-selector default profile this writes the zero values, so a default
 // session's snapshot carries no selector/profile labels (the labels omitempty
 // out of the JSON).
-func setSessionLabels(sess *session.Session, sel ProviderSelector, profile SessionProfile, owner *session.Principal, authority session.Authority) error {
+type carriedAuthority struct {
+	authority         session.Authority
+	bound             bool
+	brokerKeys        []string
+	brokerKeysPresent bool
+}
+
+func setSessionLabels(sess *session.Session, sel ProviderSelector, profile SessionProfile, owner *session.Principal, authority session.Authority, brokerKeys []string, brokerKeysPresent bool) error {
 	sess.Profile = string(profile)
 	sess.ProviderID = sel.ProviderID
 	sess.ModelID = sel.ModelID
 	sess.ReasoningEffort = sel.ReasoningEffort
 	// Owner and authority are independently stamped at the same root seam.
-	return sess.RestoreLabels(owner, authority)
+	if err := sess.RestoreLabels(owner, authority); err != nil {
+		return err
+	}
+	return sess.RestoreWorkspaceEnrollmentBrokerKeys(brokerKeys, brokerKeysPresent)
+}
+
+// reasoningEffortAuto is the explicit "provider default, ignore the operator
+// default" reasoning-effort selector token.
+const reasoningEffortAuto = "auto"
+
+// storedProviderSelector rebuilds the construction selector from a session's
+// persisted labels. Those labels hold the EFFECTIVE reasoning effort, where an
+// agent-bound session's explicit "auto" is stored as "" (see
+// SessionEngineResult.ReasoningEffort). Feeding that "" back as a selector would
+// instead mean "inherit the operator default", so an agent-bound session's empty
+// effort is reconstructed as explicit "auto". Unbound sessions keep their
+// existing semantics.
+func storedProviderSelector(sess *session.Session) ProviderSelector {
+	sel := ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}
+	if sess.AgentDefinitionName != "" && sel.ReasoningEffort == "" {
+		sel.ReasoningEffort = reasoningEffortAuto
+	}
+	return sel
 }
 
 func (s *Service) setTitleGenerationEligibility(sess *session.Session, sel ProviderSelector) {
@@ -2087,45 +2346,64 @@ func (s *Service) setTitleGenerationEligibility(sess *session.Session, sel Provi
 	}
 }
 
-func (s *Service) setPerSessionLabels(sess *session.Session, sel ProviderSelector, profile SessionProfile, owner *session.Principal, opts createSessionOpts, res SessionEngineResult, broker []tool.Tool, carried session.Authority, carriedBound bool) error {
-	authority := s.rootAuthority(sess.Kind, carried, carriedBound)
+func (s *Service) setPerSessionLabels(sess *session.Session, sel ProviderSelector, profile SessionProfile, owner *session.Principal, opts createSessionOpts, res SessionEngineResult, carried carriedAuthority) error {
+	if opts.agentDefinitionName != "" {
+		// An agent-bound session's Authority is minted DIRECTLY from the def's
+		// own resolved catalog + resource-capability list by
+		// AgentDefSessionEngine (ADR 0353, AC1.9) — never
+		// Config.RootAuthority's deployment-default closure, and never widened
+		// by broker/client-MCP tools: neither channel reaches an agent-bound
+		// session's create path (AC1.10). It mounts no broker bundle, so a fresh
+		// session records empty (present) enrollment provenance like any root
+		// without one.
+		brokerKeys, brokerKeysPresent := carried.brokerKeys, carried.brokerKeysPresent
+		if !carried.bound {
+			brokerKeys, brokerKeysPresent = res.BrokerRegistrationKeys, true
+		}
+		sel = ProviderSelector{ProviderID: res.ProviderID, ModelID: res.ModelID, ReasoningEffort: res.ReasoningEffort}
+		return setSessionLabels(sess, sel, profile, owner, res.Authority, brokerKeys, brokerKeysPresent)
+	}
+	authority := s.rootAuthority(sess.Kind, carried)
+	brokerKeys, brokerKeysPresent := carried.brokerKeys, carried.brokerKeysPresent
 	// Broker wrappers and client-mounted MCP tools are both resolved only after
 	// the process root authority was minted (they are per-SESSION, not known at
 	// build time). Include this session's exact set in a fresh root without
 	// widening authority carried from another session.
-	if !carriedBound && (len(broker) != 0 || len(res.MountedClientMCPTools) != 0) {
-		seen := make(map[string]struct{}, len(authority.CapabilitySet.Tools)+len(broker)+len(res.MountedClientMCPTools))
-		for _, name := range authority.CapabilitySet.Tools {
-			seen[name] = struct{}{}
-		}
-		for _, candidate := range broker {
-			name := candidate.Spec().Name
-			if _, ok := seen[name]; ok {
-				continue
+	if !carried.bound {
+		brokerKeys, brokerKeysPresent = res.BrokerRegistrationKeys, true
+		if len(res.BrokerRegistrationKeys) != 0 || len(res.MountedClientMCPTools) != 0 {
+			seen := make(map[string]struct{}, len(authority.CapabilitySet.Tools)+len(res.BrokerRegistrationKeys)+len(res.MountedClientMCPTools))
+			for _, name := range authority.CapabilitySet.Tools {
+				seen[name] = struct{}{}
 			}
-			seen[name] = struct{}{}
-			authority.CapabilitySet.Tools = append(authority.CapabilitySet.Tools, name)
-		}
-		for _, name := range res.MountedClientMCPTools {
-			if _, ok := seen[name]; ok {
-				continue
+			for _, name := range res.BrokerRegistrationKeys {
+				if _, ok := seen[name]; ok {
+					continue
+				}
+				seen[name] = struct{}{}
+				authority.CapabilitySet.Tools = append(authority.CapabilitySet.Tools, name)
 			}
-			seen[name] = struct{}{}
-			authority.CapabilitySet.Tools = append(authority.CapabilitySet.Tools, name)
+			for _, name := range res.MountedClientMCPTools {
+				if _, ok := seen[name]; ok {
+					continue
+				}
+				seen[name] = struct{}{}
+				authority.CapabilitySet.Tools = append(authority.CapabilitySet.Tools, name)
+			}
+			sort.Strings(authority.CapabilitySet.Tools)
 		}
-		sort.Strings(authority.CapabilitySet.Tools)
 	}
 	if sess.Kind == session.SessionKindDebug {
 		authority.CapabilitySet.Tools = append(authority.CapabilitySet.Tools, res.DebugMCPTools...)
 		sess.DebugMCPServers = append([]string(nil), opts.debugMCPServers...)
 		sess.DebugMCPTools = append([]string(nil), res.DebugMCPTools...)
 	}
-	return setSessionLabels(sess, sel, profile, owner, authority)
+	return setSessionLabels(sess, sel, profile, owner, authority, brokerKeys, brokerKeysPresent)
 }
 
-func (s *Service) rootAuthority(kind session.SessionKind, carried session.Authority, carriedBound bool) session.Authority {
-	if carriedBound {
-		return carried
+func (s *Service) rootAuthority(kind session.SessionKind, carried carriedAuthority) session.Authority {
+	if carried.bound {
+		return carried.authority
 	}
 	if s.cfg.RootAuthority == nil {
 		return session.Authority{}
@@ -2155,18 +2433,20 @@ func seedCarryover(sess *session.Session, snap []session.Message) error {
 // must match. It deliberately excludes the owner: that comes only from the
 // verified context and is checked separately.
 type createRequest struct {
-	environmentRef session.EnvironmentRef
-	mode           session.PermissionMode
-	limits         session.Limits
-	selector       ProviderSelector
-	profile        SessionProfile
-	sourceID       session.SessionID
-	kind           session.SessionKind
-	relationship   session.SessionRelationship
+	environmentRef      session.EnvironmentRef
+	mode                session.PermissionMode
+	limits              session.Limits
+	selector            ProviderSelector
+	profile             SessionProfile
+	execution           ExecutionSelection
+	sourceID            session.SessionID
+	kind                session.SessionKind
+	relationship        session.SessionRelationship
+	agentDefinitionName string
 }
 
 func newCreateRequest(ref session.EnvironmentRef, mode session.PermissionMode, limits session.Limits, selector ProviderSelector, profile SessionProfile, sourceID session.SessionID, opts createSessionOpts) createRequest {
-	request := createRequest{environmentRef: ref, mode: mode, limits: limits, selector: selector, profile: profile, sourceID: sourceID, kind: session.SessionKindMain}
+	request := createRequest{environmentRef: ref, mode: mode, limits: limits, selector: selector, profile: profile, execution: opts.execution, sourceID: sourceID, kind: session.SessionKindMain, agentDefinitionName: opts.agentDefinitionName}
 	switch {
 	case opts.debugTargetID != "":
 		request.kind = session.SessionKindDebug
@@ -2178,11 +2458,33 @@ func newCreateRequest(ref session.EnvironmentRef, mode session.PermissionMode, l
 	return request
 }
 
+// agentIntentFingerprint covers the request values that factory resolution can
+// clamp or replace. Other immutable labels are compared directly in matches.
+// %q preserves opaque selector bytes; the version fixes the field order/encoding.
+func (r createRequest) agentIntentFingerprint() string {
+	intent := fmt.Sprintf("%q:%d:%d:%d:%q:%q:%q:%q", r.mode,
+		r.limits.MaxTurns, r.limits.MaxToolCalls, r.limits.MaxConsecutiveFailures,
+		r.selector.ProviderID, r.selector.ModelID, r.selector.ReasoningEffort, r.agentDefinitionName)
+	digest := sha256.Sum256([]byte(intent))
+	return "v1:" + hex.EncodeToString(digest[:])
+}
+
 func (r createRequest) matches(sess *session.Session) bool {
-	return r.sourceID == "" && sess.EnvironmentRef == r.environmentRef && sess.Mode == r.mode &&
-		sess.Limits == r.limits && sess.ProviderID == r.selector.ProviderID &&
-		sess.ModelID == r.selector.ModelID && sess.ReasoningEffort == r.selector.ReasoningEffort &&
-		sess.Profile == string(r.profile) && sess.Kind == r.kind && sess.Relationship == r.relationship
+	if r.sourceID != "" || sess.EnvironmentRef != r.environmentRef ||
+		sess.Profile != string(r.profile) ||
+		sess.Kind != r.kind || sess.Relationship != r.relationship ||
+		sess.ExecutionTemplateID != r.execution.ID || sess.ExecutionTemplateRevision != r.execution.Revision ||
+		sess.AgentDefinitionName != r.agentDefinitionName {
+		return false
+	}
+	if r.agentDefinitionName != "" {
+		// Legacy effective values cannot prove original intent. Refuse rather
+		// than re-resolving a possibly changed definition or guessing equality.
+		return sess.AgentCreateIntent != "" && sess.AgentCreateIntent == r.agentIntentFingerprint()
+	}
+	return sess.Mode == r.mode && sess.Limits == r.limits &&
+		sess.ProviderID == r.selector.ProviderID && sess.ModelID == r.selector.ModelID &&
+		sess.ReasoningEffort == r.selector.ReasoningEffort
 }
 
 func sameCreateOwner(a, b *session.Principal) bool {
@@ -2382,17 +2684,54 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 	if profile != ProfileDefault && profile != ProfileNoFS {
 		return nil, fmt.Errorf("%w: unknown session profile %q", ErrInvalidArgument, profile)
 	}
+	placementSelector, selectedProfile, selectionErr := opts.execution.placement()
+	if selectionErr != nil {
+		return nil, selectionErr
+	}
+	if opts.execution.Kind != "" {
+		if profile != ProfileDefault && profile != selectedProfile {
+			return nil, ErrInvalidArgument
+		}
+		profile = selectedProfile
+	}
+	if placementSelector.IsTemplate() && (!s.cfg.OwnershipEnforced || session.PrincipalFromContext(ctx) == nil || opts.ownerSet && !sameCreateOwner(opts.owner, session.PrincipalFromContext(ctx)) || opts.sourceSessionID != "" || opts.placement != nil) {
+		return nil, ErrInvalidPlacementSelection
+	}
 	if err := s.validateDebugCreate(ctx, profile, specs, opts); err != nil {
 		return nil, err
 	}
+	if opts.sourceSessionID != "" && opts.placement == nil {
+		selectedSource, sourceErr := s.GetSession(ctx, opts.sourceSessionID)
+		if sourceErr != nil {
+			return nil, sourceErr
+		}
+		if selectedSource.ExecutionTemplateRevision != "" || selectedSource.EnvironmentRef.Kind == session.EnvironmentKind("kubernetes") {
+			return nil, fmt.Errorf("%w: remote carryover requires an exact source placement", ErrInvalidPlacementSelection)
+		}
+	}
+	if placementSelector.IsTemplate() {
+		if !s.executionCatalogAvailable() {
+			return nil, ErrExecutionTemplatesDisabled
+		}
+		if !s.cfg.ExecutionTemplateAllowed(session.PrincipalFromContext(ctx), opts.execution.ID, opts.execution.Revision) {
+			return nil, ErrPlacementNotFound
+		}
+	}
 	definitelyPerSession := s.cfg.MCPBroker != nil || sel.ProviderID != "" || sel.ModelID != "" || sel.ReasoningEffort != "" || len(specs) != 0 || profile == ProfileNoFS || s.cfg.LearnedSkills != nil
 	if definitelyPerSession {
-		if opts.debugTargetID != "" {
+		switch {
+		case opts.agentDefinitionName != "":
+			if s.cfg.AgentDefSessionEngine == nil {
+				return nil, fmt.Errorf("%w: session-scoped agent identity is not supported (no agent-def session-engine factory configured)", ErrInvalidArgument)
+			}
+		case opts.debugTargetID != "":
 			if s.cfg.DebugSessionEngine == nil {
 				return nil, fmt.Errorf("%w: session debugging is not supported", ErrInvalidArgument)
 			}
-		} else if s.cfg.SessionEngine == nil && s.cfg.SessionEngineWithTools == nil {
-			return nil, fmt.Errorf("%w: per-session engine not supported (no session-engine factory configured)", ErrInvalidArgument)
+		default:
+			if s.cfg.SessionEngine == nil && s.cfg.SessionEngineWithTools == nil {
+				return nil, fmt.Errorf("%w: per-session engine not supported (no session-engine factory configured)", ErrInvalidArgument)
+			}
 		}
 		s.mu.Lock()
 		full := len(s.sessionEngines) >= s.cfg.MaxSessionEngines
@@ -2413,7 +2752,17 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 	// unbounded); a Limits that pins only some caps keeps those and inherits the
 	// rest, rather than the old all-or-nothing substitution that silently disabled
 	// the unset caps. A zero field means "unset", not "explicitly unlimited".
-	limits = limits.WithDefaults(s.cfg.DefaultLimits)
+	//
+	// Skipped for an agent-bound create (ADR 0353, AC1.12): the bound def's OWN
+	// configured Limits substitute for the deployment default there, and the
+	// AgentDefSessionEngine factory alone can tell "zero means not supplied" apart
+	// from "already filled in" — folding cfg.DefaultLimits in here first would
+	// destroy that signal before the factory ever sees it. createPerSessionEngine
+	// applies the factory-returned, already-tightened SessionEngineResult.Limits
+	// in its place.
+	if opts.agentDefinitionName == "" {
+		limits = limits.WithDefaults(s.cfg.DefaultLimits)
+	}
 
 	// The owner stamped on the new session: the explicit WithOwner injection, else
 	// the verified principal on the context, else nil (the ownerless no-auth path).
@@ -2427,6 +2776,9 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 	}
 	if !opts.idSet {
 		finalID = s.cfg.NewID()
+	}
+	if s.cfg.MCPBroker != nil && !brokercontract.ValidLogicalSessionID(finalID) {
+		return nil, fmt.Errorf("%w: session id is not admissible for broker", ErrInvalidArgument)
 	}
 	creatediag.Session(ctx, string(finalID))
 	probeDone := creatediag.Begin(ctx, "session_id_probe")
@@ -2478,7 +2830,11 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 			return nil, ErrInvalidPlacementBinding
 		}
 	} else {
-		workspace, placement, err = s.bindPlacementForCreate(ctx, profile, owner, finalID)
+		selectorForBind := placementSelector
+		if profile == ProfileNoFS {
+			selectorForBind = NoFSPlacement()
+		}
+		workspace, placement, err = s.bindPlacementForCreate(ctx, selectorForBind, profile, owner, finalID)
 		if err != nil {
 			return nil, err
 		}
@@ -2520,22 +2876,35 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 	// A carryover fork replaces the context owner with the source's owner below.
 
 	var carrySnap []session.Message
-	var carriedAuthority session.Authority
-	carriedAuthorityBound := false
+	var carried carriedAuthority
 	if opts.sourceSessionID != "" {
-		snap, srcOwner, sourceAuthority, sourceAuthorityBound, err := s.validateCarryover(ctx, opts.sourceSessionID, sel.ProviderID)
+		snap, srcOwner, sourceCarried, err := s.validateCarryover(ctx, opts.sourceSessionID, sel.ProviderID)
 		if err != nil {
 			return nil, err
 		}
 		carrySnap = snap
-		carriedAuthority, carriedAuthorityBound = sourceAuthority, sourceAuthorityBound
+		carried = sourceCarried
 		// A fork inherits the SOURCE's owner, overriding the context principal
 		// (and any WithOwner) — see validateCarryover.
 		owner = srcOwner
 	}
 
-	needPerSession := s.cfg.MCPBroker != nil || s.sessionNeedsPerFactory(sel, specs, profile, workspace) || s.cfg.LearnedSkills != nil
+	needPerSession := s.cfg.MCPBroker != nil || s.sessionNeedsPerFactory(sel, specs, profile, workspace) || s.cfg.LearnedSkills != nil || opts.agentDefinitionName != ""
 	if !needPerSession {
+		// Workspace broker wrappers only enter per-session catalogues; the shared
+		// engine can therefore identify a conflicting non-broker registration by
+		// exact catalog membership without forcing this create onto a factory.
+		if carried.brokerKeysPresent {
+			sharedRegistrationKeys := make([]string, 0, len(carried.brokerKeys))
+			for _, key := range carried.brokerKeys {
+				if s.cfg.Engine.HasTool(key) {
+					sharedRegistrationKeys = append(sharedRegistrationKeys, key)
+				}
+			}
+			if key, overlaps := workspaceEnrollmentRegistrationOverlap(carried.brokerKeys, carried.authority.CapabilitySet.Tools, sharedRegistrationKeys); overlaps {
+				return nil, &WorkspaceEnrollmentCollisionError{Key: key}
+			}
+		}
 		// Shared-engine fast path. The labels are
 		// the empty pair + default profile here (the empty-selector default profile is
 		// exactly the no-per-session case), so setLabels persists nothing new — the
@@ -2544,22 +2913,31 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 		if err != nil {
 			return nil, fmt.Errorf("server: create session metadata: %w", err)
 		}
-		if err := setSessionLabels(sess, sel, profile, owner, s.rootAuthority(sess.Kind, carriedAuthority, carriedAuthorityBound)); err != nil {
+		brokerKeysPresent := true
+		if carried.bound {
+			brokerKeysPresent = carried.brokerKeysPresent
+		}
+		if err := setSessionLabels(sess, sel, profile, owner, s.rootAuthority(sess.Kind, carried), carried.brokerKeys, brokerKeysPresent); err != nil {
 			return nil, err
 		}
+		if opts.execution.Kind == PlacementSelectorTemplate {
+			sess.ExecutionTemplateID, sess.ExecutionTemplateRevision = opts.execution.ID, opts.execution.Revision
+		}
 		s.setTitleGenerationEligibility(sess, sel)
+		stampExecutionCapabilities(sess, s.cfg.Engine, placement.Environment)
 		if err := seedCarryover(sess, carrySnap); err != nil {
 			return nil, err
 		}
 		created, err := s.persistPlacedCreatedSession(ctx, sess, owner, retryRequest, placement)
-		if err == nil && created == sess {
+		if created == sess {
+			// A lost reference-commit response does not unpublish the session.
 			s.installSessionPlacement(sess.ID, *placement, opts.placementEnvironmentOverride)
 			publishedPlacement = true
 		}
 		return created, err
 	}
 
-	return s.createPerSessionEngine(ctx, mintID, mode, workspace, limits, sel, specs, profile, carrySnap, owner, opts, carriedAuthority, carriedAuthorityBound, retryRequest, placement, &publishedPlacement)
+	return s.createPerSessionEngine(ctx, mintID, mode, workspace, limits, sel, specs, profile, carrySnap, owner, opts, carried, retryRequest, placement, &publishedPlacement)
 }
 
 // createPerSessionEngine is the per-session-engine create branch, factored out
@@ -2572,13 +2950,20 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 // profile-aware workspace rule and the carryover snapshot semantics.
 //
 //nolint:gocyclo // Creation keeps factory, authorization, broker ownership, registration, and teardown in one transaction.
-func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() session.SessionID, mode session.PermissionMode, workspace string, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, carrySnap []session.Message, owner *session.Principal, opts createSessionOpts, carriedAuthority session.Authority, carriedAuthorityBound bool, retryRequest *createRequest, placement *PlacementBinding, publishedPlacement *bool) (*session.Session, error) {
-	if opts.debugTargetID != "" {
+func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() session.SessionID, mode session.PermissionMode, workspace string, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, carrySnap []session.Message, owner *session.Principal, opts createSessionOpts, carried carriedAuthority, retryRequest *createRequest, placement *PlacementBinding, publishedPlacement *bool) (*session.Session, error) {
+	switch {
+	case opts.agentDefinitionName != "":
+		if s.cfg.AgentDefSessionEngine == nil {
+			return nil, fmt.Errorf("%w: session-scoped agent identity is not supported (no agent-def session-engine factory configured)", ErrInvalidArgument)
+		}
+	case opts.debugTargetID != "":
 		if s.cfg.DebugSessionEngine == nil {
 			return nil, fmt.Errorf("%w: session debugging is not supported", ErrInvalidArgument)
 		}
-	} else if s.cfg.SessionEngine == nil && s.cfg.SessionEngineWithTools == nil {
-		return nil, fmt.Errorf("%w: per-session engine not supported (no session-engine factory configured)", ErrInvalidArgument)
+	default:
+		if s.cfg.SessionEngine == nil && s.cfg.SessionEngineWithTools == nil {
+			return nil, fmt.Errorf("%w: per-session engine not supported (no session-engine factory configured)", ErrInvalidArgument)
+		}
 	}
 	// Cheap cap pre-check (CWE-770): reject BEFORE the factory connects MCP /
 	// allocates an engine when the registry is already full, so a hostile client
@@ -2609,7 +2994,44 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 			s.cfg.Commands.Retire(id)
 		}
 	}()
-	if opts.debugTargetID != "" {
+	switch {
+	case opts.agentDefinitionName != "":
+		// Agent-bound sessions (ADR 0353) never reach the MCPBroker attach
+		// branch below — AC1.10. Owner/execution-scoped source binding is shared
+		// with ordinary sessions, but no broker tools enter the bounded catalog.
+		// workspace (this createPerSessionEngine call's own param, resolved by
+		// createSession via PlacementGovernanceRoot) is THIS session's own bound
+		// governance root — attached to ctx so a placement-aware extension
+		// (memory: project, AC2.5) can scope itself to it instead of the
+		// deployment-wide cfg.Workspace. "" for profile: "no-fs" (AC2.6).
+		factoryDone := creatediag.Begin(ctx, "engine_factory")
+		acquire := s.executionWorkspaceAcquirer(owner, placement.Ref)
+		res, err = s.callAgentDefSessionEngine(ctx, id, owner, acquire, sel, profile, workspace, mode, limits, opts.agentDefinitionName)
+		// Like ordinary creates, only this reserved unpublished attempt may reactivate.
+		if errors.Is(err, ErrCommandBindingRetired) && s.cfg.SessionContextEngine != nil {
+			if resolver, ok := s.cfg.Commands.(executionWorkspaceCommandSourceResolver); ok {
+				err = resolver.ActivateWithExecutionWorkspace(ctx, id, owner.Clone(), string(profile), acquire)
+			} else if s.cfg.Commands != nil {
+				err = s.cfg.Commands.Activate(ctx, id, owner.Clone(), string(profile))
+			}
+			if err == nil {
+				res, err = s.callAgentDefSessionEngine(ctx, id, owner, acquire, sel, profile, workspace, mode, limits, opts.agentDefinitionName)
+			}
+		}
+		factoryDone(err)
+		if err == nil {
+			// ADR 0353 tighten-only clamps (AC1.12/AC1.13): the factory alone
+			// resolved the bound def's own configured Limits/permissionMode
+			// ceiling (opaque to this adapter, which knows nothing of AgentDef).
+			// Reassigning `mode`/`limits` here — not merely res's own cached
+			// fields — is what makes the clamp the session's ACTUAL enforced
+			// posture: newCreatedSession below persists these locals verbatim.
+			mode = res.BuiltForMode
+			if res.Limits != nil {
+				limits = *res.Limits
+			}
+		}
+	case opts.debugTargetID != "":
 		debugTarget, err = s.cfg.Store.Load(ctx, opts.debugTargetID)
 		if err != nil || debugTarget == nil || s.authorizeSession(ctx, debugTarget) != nil {
 			return nil, fmt.Errorf("%w: debug target is unavailable", ErrNotFound)
@@ -2618,7 +3040,7 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 			return nil, fmt.Errorf("%w: debug target incarnation changed during creation", ErrFailedPrecondition)
 		}
 		res, err = s.cfg.DebugSessionEngine(ctx, sel, profile, mode, opts.debugTargetID, session.DebugTargetFingerprint(debugTarget), debugTarget.Owner, opts.debugMCPServers, nil)
-	} else {
+	default:
 		if s.cfg.MCPBroker != nil {
 			if id == "" {
 				id = mintID()
@@ -2633,7 +3055,7 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		}
 		factoryDone := creatediag.Begin(ctx, "engine_factory")
 		acquire := s.executionWorkspaceAcquirer(owner, placement.Ref)
-		res, err = s.callSessionEngine(ctx, id, owner, acquire, sel, specs, profile, workspace, mode, brokerTools(broker))
+		res, err = s.callSessionEngine(ctx, id, owner, acquire, sel, specs, profile, workspace, mode, brokerTools(broker), nil)
 		// Only this reserved, unpublished create may retry a retired attempt.
 		// Ordinary rehydration must wait for explicit owner-authorized Load.
 		if errors.Is(err, ErrCommandBindingRetired) && s.cfg.SessionContextEngine != nil {
@@ -2643,7 +3065,7 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 				err = s.cfg.Commands.Activate(ctx, id, owner.Clone(), string(profile))
 			}
 			if err == nil {
-				res, err = s.callSessionEngine(ctx, id, owner, acquire, sel, specs, profile, workspace, mode, brokerTools(broker))
+				res, err = s.callSessionEngine(ctx, id, owner, acquire, sel, specs, profile, workspace, mode, brokerTools(broker), nil)
 			}
 		}
 		factoryDone(err)
@@ -2652,6 +3074,14 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		// Factory maps an unknown/unavailable provider to ErrInvalidArgument; any
 		// error is propagated as-is for the caller to map to a status.
 		return nil, err
+	}
+	if carried.brokerKeysPresent {
+		if key, overlaps := workspaceEnrollmentRegistrationOverlap(carried.brokerKeys, carried.authority.CapabilitySet.Tools, res.NonBrokerRegistrationKeys); overlaps {
+			if res.Close != nil {
+				_ = res.Close()
+			}
+			return nil, &WorkspaceEnrollmentCollisionError{Key: key}
+		}
 	}
 	eng, closeFn := res.Engine, res.Close
 	// All-or-nothing client MCP on the wire path, before a non-broker id is minted
@@ -2675,6 +3105,9 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		}
 		return nil, fmt.Errorf("server: create session metadata: %w", err)
 	}
+	if opts.idSet && opts.agentDefinitionName != "" && retryRequest != nil {
+		sess.AgentCreateIntent = retryRequest.agentIntentFingerprint()
+	}
 	if broker != nil {
 		sess.ExternalBinding = broker.attachment.Binding()
 	}
@@ -2682,11 +3115,14 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 	// creation labels on the aggregate, so a restarted process re-derives the SAME
 	// per-session engine via the factory (rehydrateSession) instead of falling to the
 	// default-provider floor / inferring the profile from the empty-workspace pun.
-	if err := s.setPerSessionLabels(sess, sel, profile, owner, opts, res, brokerTools(broker), carriedAuthority, carriedAuthorityBound); err != nil {
+	if err := s.setPerSessionLabels(sess, sel, profile, owner, opts, res, carried); err != nil {
 		if closeFn != nil {
 			_ = closeFn()
 		}
 		return nil, err
+	}
+	if opts.execution.Kind == PlacementSelectorTemplate {
+		sess.ExecutionTemplateID, sess.ExecutionTemplateRevision = opts.execution.ID, opts.execution.Revision
 	}
 	if debugTarget != nil {
 		sess.DebugTargetFingerprint = session.DebugTargetFingerprint(debugTarget)
@@ -2695,6 +3131,7 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		sess.Placement = canonicalPlacementMetadata(*placement)
 	}
 	s.setTitleGenerationEligibility(sess, sel)
+	stampExecutionCapabilities(sess, eng, placement.Environment)
 	if err := seedCarryover(sess, carrySnap); err != nil {
 		if closeFn != nil {
 			_ = closeFn()
@@ -2724,6 +3161,7 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		modelID:         res.ModelID,
 		reasoningEffort: res.ReasoningEffort,
 		builtForMode:    res.BuiltForMode,
+		runtimeRevision: res.RuntimeRevision,
 		close:           closeFn,
 	}
 	if len(specs) > 0 {
@@ -2848,6 +3286,7 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		DebugMcp:            s.cfg.DebugMCP != nil && s.cfg.DebugMCP(),
 		WorkspaceEnrollment: s.cfg.WorkspaceEnrollment,
 		McpRefresh:          s.cfg.MCPRefresh != nil,
+		ExecutionTemplates:  s.cfg.OwnershipEnforced && s.executionCatalogAvailable(),
 	}
 }
 
@@ -4342,6 +4781,15 @@ func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode sessio
 		sess = loaded
 	}
 
+	if sess.AgentDefinitionName != "" {
+		// ADR 0353 (AC3.3): an agent-bound session's mode is fixed for its entire
+		// lifetime (the bound def's own permissionMode ceiling was already resolved
+		// and clamped at create time) — rejected outright, never merely clamped,
+		// so the session's mode can never diverge from what its engine was built
+		// for. Runtime publication can still trigger a rebuild; that path must
+		// refuse a result contradicting the session's fixed configuration.
+		return nil, fmt.Errorf("%w: mode is fixed for an agent-bound session %q", ErrInvalidArgument, id)
+	}
 	if err := sess.SetMode(mode); err != nil {
 		// A mid-turn refusal from the aggregate is a client-sequencing error.
 		return nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
@@ -4407,13 +4855,13 @@ func (s *Service) LoadSession(ctx context.Context, id session.SessionID) (*sessi
 // default). The model is intentionally NOT compared: a model mismatch within a
 // provider is the point of the /models picker switch, so a same-provider
 // model change is permitted; a cross-provider model change strips and replays.
-func (s *Service) validateCarryover(ctx context.Context, srcID session.SessionID, newProviderID string) ([]session.Message, *session.Principal, session.Authority, bool, error) {
+func (s *Service) validateCarryover(ctx context.Context, srcID session.SessionID, newProviderID string) ([]session.Message, *session.Principal, carriedAuthority, error) {
 	src, err := s.loadAndReopen(ctx, srcID)
 	if err != nil {
-		return nil, nil, session.Authority{}, false, err
+		return nil, nil, carriedAuthority{}, err
 	}
 	if src.State == session.StateRunning || src.State == session.StateAwaiting || src.State == session.StateAuthorizing {
-		return nil, nil, session.Authority{}, false, fmt.Errorf("%w: carryover requires a session at a turn boundary; source %q is %s", ErrFailedPrecondition, srcID, src.State)
+		return nil, nil, carriedAuthority{}, fmt.Errorf("%w: carryover requires a session at a turn boundary; source %q is %s", ErrFailedPrecondition, srcID, src.State)
 	}
 	// The SOURCE's owner travels with the carried history:
 	// a fork is attributed to whoever owned the session it copied, never to the
@@ -4422,7 +4870,13 @@ func (s *Service) validateCarryover(ctx context.Context, srcID session.SessionID
 	// yields an ownerless fork, never a fabricated one.
 	srcOwner := src.Owner
 	srcAuthority, srcAuthorityBound := src.BoundAuthority()
-	return s.providerCarryoverSnapshot(src, newProviderID), srcOwner, srcAuthority, srcAuthorityBound, nil
+	brokerKeys, brokerKeysPresent := src.WorkspaceEnrollmentBrokerKeys()
+	return s.providerCarryoverSnapshot(src, newProviderID), srcOwner, carriedAuthority{
+		authority:         srcAuthority,
+		bound:             srcAuthorityBound,
+		brokerKeys:        brokerKeys,
+		brokerKeysPresent: brokerKeysPresent,
+	}, nil
 }
 
 func (s *Service) providerCarryoverSnapshot(src *session.Session, newProviderID string) []session.Message {
@@ -4780,10 +5234,17 @@ func (s *Service) LoadSessionWithMCP(ctx context.Context, id session.SessionID, 
 	if err != nil {
 		return nil, err
 	}
+	if sess.AgentDefinitionName != "" {
+		// ADR 0353 (AC3.5): the bound def's own resolved mcpServers: is the
+		// exclusive MCP scope for an agent-bound session (mirroring the create-time
+		// AC1.2 guard) — client-supplied MCP servers on resume are rejected
+		// outright rather than mounted alongside or instead of it.
+		return nil, fmt.Errorf("%w: client-supplied MCP servers are not supported for an agent-bound session %q", ErrInvalidArgument, id)
+	}
 	// Re-mount client MCP on resume, re-deriving provider/model and profile from
 	// persisted server-owned labels. EnvironmentRef is the sole placement identity;
 	// privateWorkspace exactly reattaches it and never infers authority from a path.
-	sel := ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}
+	sel := storedProviderSelector(sess)
 	profile := profileForSession(sess)
 	// The exact persisted placement is the session's base namespace: the rebuilt
 	// engine's child permission resolver pins to that reattached root. The MODE is
@@ -4794,7 +5255,7 @@ func (s *Service) LoadSessionWithMCP(ctx context.Context, id session.SessionID, 
 	if err != nil {
 		return nil, err
 	}
-	res, err := s.callSessionEngine(ctx, sess.ID, sess.Owner.Clone(), s.executionWorkspaceAcquirer(sess.Owner, sess.EnvironmentRef), sel, specs, profile, workspace, sess.Mode, nil)
+	res, err := s.callSessionEngine(ctx, sess.ID, sess.Owner.Clone(), s.executionWorkspaceAcquirer(sess.Owner, sess.EnvironmentRef), sel, specs, profile, workspace, sess.Mode, nil, nil)
 	if err != nil {
 		// The session was loaded + (if needed) reopened and re-persisted, but the
 		// per-session engine could not be built. We deliberately do NOT roll that
@@ -4803,6 +5264,14 @@ func (s *Service) LoadSessionWithMCP(ctx context.Context, id session.SessionID, 
 		// branch here (the asymmetry from CreateSessionWithMCP, where a persist
 		// failure tears the freshly-built engine down).
 		return nil, err
+	}
+	if priorBrokerKeys, present := sess.WorkspaceEnrollmentBrokerKeys(); present {
+		if key, overlaps := workspaceEnrollmentRegistrationOverlap(priorBrokerKeys, sess.Authority.CapabilitySet.Tools, res.NonBrokerRegistrationKeys); overlaps {
+			if res.Close != nil {
+				_ = res.Close()
+			}
+			return nil, &WorkspaceEnrollmentCollisionError{Key: key}
+		}
 	}
 	s.mu.Lock()
 	// Re-load leak guard: if a per-session engine is already registered for this id
@@ -6151,9 +6620,11 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 	}
 	switch {
 	case hasEngine && (se.runtimeRevision != desiredRuntimeRevision || se.builtForMode != "" && se.builtForMode != sess.Mode):
-		// CASE 1: the registered per-session engine was built for a
-		// DIFFERENT mode than the session now holds — a plan↔execute switch re-resolved
-		// the model. Rebuild through the shared factory path, REPLACING the prior engine.
+		// Runtime publication can rebuild even an agent-bound session whose mode
+		// is fixed. Its def-only factory path must preserve the durable configuration
+		// or fail closed; it must never fall back to the deployment catalog.
+		// CASE 1: the runtime revision or built mode differs. Rebuild through the
+		// appropriate factory path, REPLACING the prior engine.
 		// This runs only between turns (loadAndReopen drove the session idle and SetMode
 		// is rejected mid-turn). The whole engineAndEnvironmentFor call is under the caller's
 		// per-session runEntryMu, and buildAndRegisterSessionEngine re-checks s.runs[id]
@@ -6167,7 +6638,7 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 		if live {
 			return nil, tool.Environment{}, "", fmt.Errorf("%w: cannot rebuild engine for session %q mid-run (mode change must be deferred to a turn boundary)", ErrInvalidArgument, id)
 		}
-		sel := ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}
+		sel := storedProviderSelector(sess)
 		profile := profileForSession(sess)
 		rebuilt, err := s.buildAndRegisterSessionEngine(ctx, sess, sel, profile, sess.Mode, true)
 		if err != nil {
@@ -6180,12 +6651,17 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 		s.mu.Unlock()
 	case !hasEngine && !s.needsRehydration(sess) && s.cfg.SessionEngine != nil &&
 		(desiredRuntimeRevision != s.cfg.SharedEngineRevision || s.cfg.ModeNeedsEngine != nil && s.cfg.ModeNeedsEngine(sess.Mode)):
+		// ADR 0353 (Scenario 3 implementation note): this branch needs no direct
+		// edit for an agent-bound session either. needsRehydration(sess) is now
+		// unconditionally true for one (AC3.4), so this case's own
+		// !s.needsRehydration(sess) guard already excludes it before this promotion
+		// could ever fire. Closed transitively, not by a direct guard here.
 		// CASE 2: a DEFAULT-FS session that would otherwise ride the
 		// shared engine, but its mode (plan) resolves a DIFFERENT model — promote it to a
 		// per-session factory engine. A default-FS session has the empty selector + a real
 		// workspace, so no environment override is registered (the run-entry seam builds it
 		// from the shared factory below, unchanged).
-		sel := ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}
+		sel := storedProviderSelector(sess)
 		promoted, err := s.buildAndRegisterSessionEngine(ctx, sess, sel, ProfileDefault, sess.Mode, false)
 		if err != nil {
 			return nil, tool.Environment{}, "", err
@@ -6258,7 +6734,15 @@ func (s *Service) needsRehydration(sess *session.Session) bool {
 		sess.Profile == string(ProfileNoFS) ||
 		sess.ProviderID != "" || sess.ModelID != "" ||
 		sess.ReasoningEffort != "" ||
-		s.cfg.DefaultModelPending
+		s.cfg.DefaultModelPending ||
+		// ADR 0353 (AC3.4): an agent-bound session ALWAYS needs rehydration, even
+		// with an empty selector, default profile, and no MCPBroker/LearnedSkills
+		// configured — the deployment's default engine is never this session's
+		// catalog. Without this clause, that "boring" configuration would leave
+		// every other disjunct false and this method would silently return false,
+		// letting engineAndEnvironmentFor fall through onto the shared engine
+		// instead of failing closed in rehydrateSession below.
+		sess.AgentDefinitionName != ""
 }
 
 // profileForSession reconstructs the tool-surface profile from server-owned durable
@@ -6292,6 +6776,15 @@ func profileForSession(sess *session.Session) SessionProfile {
 // in FIRST-REGISTRATION-WINS mode (a concurrent rehydration losing the race keeps
 // the winner's engine and tears its own down).
 func (s *Service) rehydrateSession(ctx context.Context, sess *session.Session) (*sessionEngine, error) {
+	if sess.AgentDefinitionName != "" {
+		// ADR 0353 (AC3.4): fail closed rather than rebuild an agent-bound
+		// session's engine from the deployment's default catalog. Persisting the
+		// def's own authority so this seam could safely rebuild the SAME
+		// restricted catalog is deferred (issue #1796); until then, a lost
+		// in-memory registration (restart, eviction) must refuse to resume,
+		// never silently widen onto the shared/default engine.
+		return nil, fmt.Errorf("%w: agent-bound session %q cannot be rehydrated (session-scoped agent identity does not persist its def's authority across restart)", ErrInvalidArgument, sess.ID)
+	}
 	if sess.Kind == session.SessionKindDebug {
 		if sess.Profile != string(ProfileNoFS) || sess.EnvironmentRef.Kind != session.EnvKindNoFS || sess.Relationship.DebugTargetID == "" || sess.DebugTargetFingerprint == "" {
 			return nil, fmt.Errorf("%w: persisted debug session %q has invalid no-fs metadata", ErrInvalidArgument, sess.ID)
@@ -6309,7 +6802,7 @@ func (s *Service) rehydrateSession(ctx context.Context, sess *session.Session) (
 	// Reconstruct the selector + profile from the persisted inert labels. The
 	// ProviderSelector type stays server-adapter-owned; the aggregate only carried
 	// the two opaque strings.
-	sel := ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}
+	sel := storedProviderSelector(sess)
 	// Second-defense inference inside profileForSession: an empty persisted workspace
 	// can only be a no-fs session (every FS path requires a non-empty workspace), so a
 	// snapshot that predates the profile label still rehydrates as no-fs.
@@ -6321,7 +6814,7 @@ func (s *Service) rehydrateSession(ctx context.Context, sess *session.Session) (
 	// upper-bound capability record until the owner explicitly starts a new
 	// enrollment. Exact-tool mode with no tools keeps ordinary prompts usable while
 	// making persisted broker names non-executable.
-	return s.buildAndRegisterSessionEngineWithBrokerTools(ctx, sess, sel, profile, sess.Mode, false, nil, true)
+	return s.buildAndRegisterSessionEngineWithBrokerTools(ctx, sess, sel, profile, sess.Mode, false, nil, nil, true)
 }
 
 // buildAndRegisterSessionEngine is the ONE shared build+cap-check+register+teardown
@@ -6349,11 +6842,11 @@ func (s *Service) rehydrateSession(ctx context.Context, sess *session.Session) (
 //
 //nolint:gocyclo // Explicit validation, rebuild, broker, capacity, and rollback gates stay ordered.
 func (s *Service) buildAndRegisterSessionEngine(ctx context.Context, sess *session.Session, sel ProviderSelector, profile SessionProfile, mode session.PermissionMode, replace bool, forkSource ...session.SessionID) (*sessionEngine, error) {
-	return s.buildAndRegisterSessionEngineWithBrokerTools(ctx, sess, sel, profile, mode, replace, nil, false, forkSource...)
+	return s.buildAndRegisterSessionEngineWithBrokerTools(ctx, sess, sel, profile, mode, replace, nil, nil, false, forkSource...)
 }
 
 //nolint:gocyclo // rehydration keeps validation, factory selection, broker, capacity, and rollback gates ordered; inherent.
-func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Context, sess *session.Session, sel ProviderSelector, profile SessionProfile, mode session.PermissionMode, replace bool, exactTools []tool.Tool, useExactTools bool, forkSource ...session.SessionID) (*sessionEngine, error) {
+func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Context, sess *session.Session, sel ProviderSelector, profile SessionProfile, mode session.PermissionMode, replace bool, exactTools []tool.Tool, exactToolNames []string, useExactTools bool, forkSource ...session.SessionID) (*sessionEngine, error) {
 	id := sess.ID
 	unlockBroker := s.brokerMu.lock(id)
 	defer unlockBroker()
@@ -6367,6 +6860,11 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 			return nil, fmt.Errorf("%w: %d", ErrTooManySessionEngines, s.cfg.MaxSessionEngines)
 		}
 	}
+	if useExactTools && exactToolNames != nil {
+		if _, present := sess.WorkspaceEnrollmentBrokerKeys(); !present {
+			return nil, fmt.Errorf("%w: workspace enrollment provenance is unavailable", ErrFailedPrecondition)
+		}
+	}
 	var res SessionEngineResult
 	var err error
 	var broker *localBrokerAttachment
@@ -6377,7 +6875,32 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 	s.mu.Lock()
 	specs := s.clientMCPSpecs[id]
 	s.mu.Unlock()
-	if sess.Kind == session.SessionKindDebug {
+	if sess.AgentDefinitionName != "" {
+		// ADR 0353: an agent-bound session's engine is built EXCLUSIVELY from its
+		// own bound def's resolved catalog via AgentDefSessionEngine — never the
+		// debug/exact-tools/broker machinery below. rehydrateSession refuses an
+		// agent-bound session outright (AC3.4), and rebuildGrantedAuthorizationEngine/
+		// connectWorkspaceServicesLocked both reject one before reaching this
+		// function (AC3.6). Fork/Clear reach it with a fresh successor; runtime
+		// publication may also rebuild a live registration, whose fixed
+		// configuration must be validated rather than silently changed.
+		// sess.Limits carries the session's own already-persisted (already
+		// tighten-only clamped) value, mirroring how createPerSessionEngine
+		// threads the request's raw Limits at create time — the factory does not
+		// re-derive the def's ceiling from a bare zero Limits here. The session's
+		// own bound governance root (ADR 0291) is attached to ctx so a
+		// placement-aware extension (memory: project, AC2.5) can scope itself to
+		// it instead of the deployment-wide cfg.Workspace — see
+		// ContextWithAgentDefSessionRoot's docs.
+		if s.cfg.AgentDefSessionEngine == nil {
+			return nil, fmt.Errorf("%w: agent-bound session %q cannot be rebuilt (no agent-def session-engine factory configured)", ErrInvalidArgument, sess.ID)
+		}
+		workspace, workspaceErr := s.privateGovernanceRoot(ctx, sess)
+		if workspaceErr != nil {
+			return nil, workspaceErr
+		}
+		res, err = s.callAgentDefSessionEngine(ctx, sess.ID, sess.Owner, s.executionWorkspaceAcquirer(sess.Owner, sess.EnvironmentRef), sel, profile, workspace, mode, sess.Limits, sess.AgentDefinitionName, forkSource...)
+	} else if sess.Kind == session.SessionKindDebug {
 		target, loadErr := s.cfg.Store.Load(ctx, sess.Relationship.DebugTargetID)
 		if loadErr != nil || target == nil || sess.DebugTargetFingerprint == "" || !sess.Relationship.DebugTargetIncarnation.Valid() ||
 			target.Incarnation() != sess.Relationship.DebugTargetIncarnation ||
@@ -6392,7 +6915,7 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 		if workspaceErr != nil {
 			return nil, workspaceErr
 		}
-		res, err = s.callSessionEngine(ctx, sess.ID, sess.Owner.Clone(), s.executionWorkspaceAcquirer(sess.Owner, sess.EnvironmentRef), sel, specs, profile, workspace, mode, append([]tool.Tool(nil), exactTools...), forkSource...)
+		res, err = s.callSessionEngine(ctx, sess.ID, sess.Owner.Clone(), s.executionWorkspaceAcquirer(sess.Owner, sess.EnvironmentRef), sel, specs, profile, workspace, mode, append([]tool.Tool(nil), exactTools...), exactToolNames, forkSource...)
 	} else {
 		broker, err = s.openBrokerAttachment(ctx, id, sess.ExternalBinding, true)
 		if err != nil {
@@ -6403,10 +6926,49 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 		if workspaceErr != nil {
 			return nil, workspaceErr
 		}
-		res, err = s.callSessionEngine(ctx, sess.ID, sess.Owner.Clone(), s.executionWorkspaceAcquirer(sess.Owner, sess.EnvironmentRef), sel, specs, profile, workspace, mode, brokerTools(broker), forkSource...)
+		res, err = s.callSessionEngine(ctx, sess.ID, sess.Owner.Clone(), s.executionWorkspaceAcquirer(sess.Owner, sess.EnvironmentRef), sel, specs, profile, workspace, mode, brokerTools(broker), nil, forkSource...)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("server: build session engine %q: %w", id, err)
+	}
+	closeCandidate := func() {
+		if res.Close != nil {
+			_ = res.Close()
+		}
+	}
+	configured := *sess
+	if sess.AgentDefinitionName != "" {
+		limits := sess.Limits
+		if res.Limits != nil {
+			limits = *res.Limits
+		}
+		if replace {
+			if res.BuiltForMode != sess.Mode || limits != sess.Limits ||
+				res.ProviderID != sess.ProviderID || res.ModelID != sess.ModelID || res.ReasoningEffort != sess.ReasoningEffort {
+				err = errors.New("agent runtime contradicts fixed session configuration")
+			}
+		} else {
+			// Only an unpublished successor can adopt newly tightened configuration.
+			// Keep its inherited authority/ceiling, never the factory's fresh grant.
+			err = configured.TightenConfiguration(res.BuiltForMode, limits)
+			configured.ProviderID, configured.ModelID, configured.ReasoningEffort = res.ProviderID, res.ModelID, res.ReasoningEffort
+		}
+		if err != nil {
+			closeCandidate()
+			return nil, fmt.Errorf("%w: %v", ErrFailedPrecondition, err)
+		}
+	}
+	if useExactTools && exactToolNames != nil {
+		if !sameWorkspaceEnrollmentToolKeys(exactToolNames, res.BrokerRegistrationKeys) {
+			closeCandidate()
+			return nil, fmt.Errorf("%w: workspace enrollment catalogue registration metadata is inconsistent", ErrFailedPrecondition)
+		}
+	}
+	if priorBrokerKeys, present := sess.WorkspaceEnrollmentBrokerKeys(); present {
+		if key, overlaps := workspaceEnrollmentRegistrationOverlap(priorBrokerKeys, sess.Authority.CapabilitySet.Tools, res.NonBrokerRegistrationKeys); overlaps {
+			closeCandidate()
+			return nil, &WorkspaceEnrollmentCollisionError{Key: key}
+		}
 	}
 	se := &sessionEngine{
 		engine:          res.Engine,
@@ -6424,16 +6986,12 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 		// FIRST-REGISTRATION-WINS: a concurrent rehydration (or load) won the race;
 		// keep its engine, tear ours down so the loser leaks no MCP manager.
 		s.mu.Unlock()
-		if se.close != nil {
-			_ = se.close()
-		}
+		closeCandidate()
 		return prior, nil
 	}
 	if !replace && len(s.sessionEngines) >= s.cfg.MaxSessionEngines {
 		s.mu.Unlock()
-		if se.close != nil {
-			_ = se.close()
-		}
+		closeCandidate()
 		return nil, fmt.Errorf("%w: %d", ErrTooManySessionEngines, s.cfg.MaxSessionEngines)
 	}
 	if replace {
@@ -6455,6 +7013,9 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 			}
 			return nil, fmt.Errorf("%w: cannot rebuild engine for session %q mid-run (mode change must be deferred to a turn boundary)", ErrInvalidArgument, id)
 		}
+	}
+	if sess.AgentDefinitionName != "" && !replace {
+		*sess = configured
 	}
 	s.sessionEngines[id] = se
 	if profile == ProfileNoFS && (s.placementBinder == nil || !sess.EnvironmentRef.Valid()) {
@@ -6561,6 +7122,9 @@ func (s *Service) resolvedModelFor(sess *session.Session) ResolvedModel {
 	s.mu.Unlock()
 	if ok {
 		return s.resolveModelWindow(ResolvedModel{ProviderID: se.providerID, ModelID: se.modelID, ReasoningEffort: se.reasoningEffort})
+	}
+	if sess.AgentDefinitionName != "" {
+		return s.resolveModelWindow(ResolvedModel{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort})
 	}
 	if s.cfg.ResolveSessionModel != nil {
 		rm := s.cfg.ResolveSessionModel(ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}, sess.Mode)
@@ -9177,16 +9741,7 @@ func (s *Service) ListAgents(_ context.Context) []*mecatlv1.AgentInfo {
 
 // ListSkills returns the current skills inventory (possibly empty).
 func (s *Service) ListSkills(ctx context.Context) []*mecatlv1.SkillInfo {
-	partition, partitionErr := s.skillPartition(ctx, "")
-	if s.cfg.BeginSkillPublication != nil && partitionErr == nil {
-		unlock := s.cfg.BeginSkillPublication(partition)
-		defer unlock()
-	}
-	if s.cfg.PublishLearnedSkills != nil && partitionErr == nil {
-		publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), skillPublicationTimeout)
-		_ = s.cfg.PublishLearnedSkills(publishCtx, partition)
-		cancel()
-	}
+	defer s.beginSkillRead(ctx)()
 	if s.cfg.LiveSkills != nil {
 		return s.cfg.LiveSkills(ctx)
 	}

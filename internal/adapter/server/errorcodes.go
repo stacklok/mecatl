@@ -8,6 +8,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/tool"
 )
 
 // An error code is a STABLE OPEN STRING, not an enum value.
@@ -70,6 +71,8 @@ var genericErrorEntry = errorCodeEntry{
 // switch it replaces, preserving every existing classification exactly. A map
 // would randomise iteration and silently reclassify wrapped sentinels.
 var errorRegistry = []errorCodeEntry{
+	{Sentinel: ErrExecutionTemplatesDisabled, Code: "execution_templates_disabled", GRPC: codes.Unimplemented, HTTPStatus: http.StatusNotImplemented, Title: "Execution templates are disabled"},
+	{Sentinel: errExecutionUnauthenticated, Code: "unauthenticated", GRPC: codes.Unauthenticated, HTTPStatus: http.StatusUnauthorized, Title: "Authentication required"},
 	{Sentinel: errConnectorUnavailable, Code: "mcp_connector_unavailable", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusConflict, Title: "Failed precondition"},
 	{Sentinel: errConnectorUnauthenticated, Code: "unauthenticated", GRPC: codes.Unauthenticated, HTTPStatus: http.StatusUnauthorized, Title: "Authentication required"},
 	{Sentinel: ErrManagementUnauthorized, Code: "management_unauthorized", GRPC: codes.PermissionDenied, HTTPStatus: http.StatusForbidden, Title: "Management authorization required"},
@@ -90,6 +93,10 @@ var errorRegistry = []errorCodeEntry{
 	{Sentinel: ErrPlacementUnavailable, Code: "placement_unavailable", GRPC: codes.Unavailable, HTTPStatus: http.StatusServiceUnavailable, Title: "Placement is unavailable"},
 	{Sentinel: ErrPlacementChanged, Code: "placement_changed", GRPC: codes.Aborted, HTTPStatus: http.StatusConflict, Title: "Placement changed"},
 	{Sentinel: ErrInvalidPlacementBinding, Code: "placement_binding_invalid", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusPreconditionFailed, Title: "Placement binding is invalid"},
+	{Sentinel: tool.ErrSkillNotFound, Code: "skill_not_found", GRPC: codes.NotFound, HTTPStatus: http.StatusNotFound, Title: "Skill not found"},
+	{Sentinel: tool.ErrSkillAssetNotFound, Code: "skill_file_not_found", GRPC: codes.NotFound, HTTPStatus: http.StatusNotFound, Title: "Skill file not found"},
+	{Sentinel: ErrSkillFileTooLarge, Code: "skill_file_too_large", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusUnprocessableEntity, Title: "Skill file is too large to read"},
+	{Sentinel: ErrSkillFileNotText, Code: "skill_file_not_text", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusUnprocessableEntity, Title: "Skill file is not text"},
 	{Sentinel: ErrInvalidArgument, Code: "invalid_argument", GRPC: codes.InvalidArgument, HTTPStatus: http.StatusBadRequest, Title: "Invalid argument"},
 	{Sentinel: ErrNotFound, Code: "session_not_found", GRPC: codes.NotFound, HTTPStatus: http.StatusNotFound, Title: "Session not found"},
 	{Sentinel: ErrTeamNotFound, Code: "team_not_found", GRPC: codes.NotFound, HTTPStatus: http.StatusNotFound, Title: "Team not found"},

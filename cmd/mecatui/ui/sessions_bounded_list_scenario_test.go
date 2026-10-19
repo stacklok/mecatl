@@ -339,12 +339,13 @@ func TestMecatuiSessionsBoundedList_Scenario1_PreservesActionsAndNonInventorySta
 		func(st *sessionsState) { st.tab = tabStorageHealth },
 	} {
 		st := sessionsScenarioState(sessionsScenarioRows(2))
+		st.deps.keys = applyKeyOverrides(st.deps.keys, map[string][]string{"Down": {"j"}})
 		setup(st)
 		_, _ = st.Render(60, 10)
 		if st.list != nil {
 			t.Fatalf("non-inventory state constructed list: state=%+v", st)
 		}
-		st.HandleKey(tea.KeyPressMsg{Code: tea.KeyDown})
+		st.HandleKey(sessionsScenarioKey("j"))
 		st.HandleKey(sessionsScenarioKey("d"))
 		if st.list != nil || st.confirmDelete || st.actionID != "" {
 			t.Fatal("non-inventory state routed list navigation or an inventory action")

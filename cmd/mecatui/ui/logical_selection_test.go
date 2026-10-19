@@ -10,6 +10,175 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
 
+func TestAssistantWordSelectionSurvivesWidthReflow(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		expand bool
+		region regionKind
+		word   string
+		width  int
+	}{
+		{"comfort answer", false, conversationRegionBody, "ANSWERWORD", 40},
+		{"detail answer", true, conversationRegionBody, "ANSWERWORD", 40},
+		{"detail reasoning", true, conversationRegionReasoning, "REASONINGWORD", 40},
+		{"wide comfort answer", false, conversationRegionBody, "ANSWERWORD", 100},
+		{"wide detail answer", true, conversationRegionBody, "ANSWERWORD", 100},
+		{"wide detail reasoning", true, conversationRegionReasoning, "REASONINGWORD", 100},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := scenario2Model(t, tc.width, 60, false, phaseIdle, nil)
+			m.expandConversation = tc.expand
+			m.conv.appendReasoning(strings.Repeat("Several words precede the selected REASONINGWORD with enough following text to wrap across multiple rows.\n\n", 2))
+			m.conv.appendAssistant(strings.Repeat("Several words precede the selected ANSWERWORD with enough following text to wrap across multiple rows.\n\n", 2))
+			m.conv.endReasoningStream()
+			m.refreshView()
+			// Select the last occurrence so identical context cannot rebind to the first.
+			content := m.vp.GetContent()
+			index := strings.LastIndex(content, tc.word)
+			if index < 0 {
+				t.Fatal("fixture must expose the selected word")
+			}
+			line := strings.Count(content[:index], "\n")
+			if m.conversationView.frame.provenance[line].region != tc.region {
+				t.Fatal("fixture must expose the selected word in its assistant region")
+			}
+			plain := ansi.Strip(strings.Split(m.vp.GetContent(), "\n")[line])
+			m = m.wordSelect(line, strings.Index(plain, tc.word))
+			initialRows := len(m.conversationView.frame.lines)
+			narrowRows := 0
+			for _, width := range []int{40, 100, 40} {
+				m = applyAll(m, tea.WindowSizeMsg{Width: width, Height: 60})
+				rows := len(m.conversationView.frame.lines)
+				if narrowRows == 0 {
+					narrowRows = rows
+				}
+				if (width == 100 && rows >= narrowRows) || (width == 40 && rows != narrowRows) ||
+					(tc.width == 100 && width == 40 && rows <= initialRows) {
+					t.Fatalf("width %d did not reflow the assistant: rows=%d, narrow=%d", width, rows, narrowRows)
+				}
+				if !m.sel.active || m.sel.anchorPoint.region != tc.region || m.sel.copied != tc.word ||
+					selectedConversationText(m.conversationView.frame, m.vp.GetContent(), m.sel) != tc.word {
+					t.Fatalf("width %d lost semantic word selection: %+v", width, m.sel)
+				}
+				content = m.vp.GetContent()
+				lastWord := strings.LastIndex(content, tc.word)
+				if lastWord < 0 || m.sel.anchorL != strings.Count(content[:lastWord], "\n") {
+					t.Fatalf("width %d rebound selection to a different occurrence", width)
+				}
+				copied, cmd := m.copySelection()
+				m = copied.(Model)
+				if got, ok := osc52Payload(collectLeaves(cmd)); !ok || got != tc.word {
+					t.Fatalf("width %d clipboard = %q, ok=%v, want %q without rail", width, got, ok, tc.word)
+				}
+			}
+		})
+	}
+}
+
+func TestAssistantSelectionRejectsMutationAndAmbiguity(t *testing.T) {
+	for _, region := range []regionKind{conversationRegionBody, conversationRegionReasoning} {
+		m := scenario2Model(t, 100, 60, false, phaseIdle, nil)
+		m.expandConversation = true
+		text := strings.Repeat("before target with after\n\n", 2)
+		m.conv.appendReasoning(text)
+		m.conv.appendAssistant(text)
+		m.conv.endReasoningStream()
+		m.refreshView()
+		frame := m.conversationView.frame
+		line := -1
+		for i, row := range frame.provenance {
+			if row.region == region && row.text && strings.Contains(ansi.Strip(frame.lines[i]), "target with") {
+				line = i // last occurrence, with identical regional context
+			}
+		}
+		if line < 0 {
+			t.Fatal("fixture must expose the selected phrase")
+		}
+		plain := ansi.Strip(frame.lines[line])
+		col := strings.Index(plain, "target with")
+		m = m.wordSelect(line, col)
+		m.sel.headC += len(" with")
+		snapshotSelection(&m)
+		if m.sel.copied != "target with" || !m.sel.resolveLogical(frame) {
+			t.Fatal("unchanged phrase must resolve before mutation")
+		}
+		for _, mutation := range []struct{ old, replacement string }{
+			{"target", "TARGET"},
+			{"before", "BEFORE"},
+			{"target with", "target  with"},
+		} {
+			changed := frame
+			changed.lines = append([]string(nil), frame.lines...)
+			changed.lines[line] = strings.Replace(plain, mutation.old, mutation.replacement, 1)
+			selected := m.sel
+			if mutation.replacement == "target  with" {
+				// Normalized endpoints still match, but copied whitespace changed.
+				for _, point := range []selectionPoint{selected.anchorPoint, selected.headPoint} {
+					if _, _, ok := resolveSelectionPoint(changed, point); !ok {
+						t.Fatal("whitespace mutation must exercise the exact-copy guard")
+					}
+				}
+			}
+			if selected.resolveLogical(changed) {
+				t.Fatalf("region %v selection survived mutation %q", region, mutation.replacement)
+			}
+		}
+		ambiguous := frame
+		ambiguous.lines = append([]string(nil), frame.lines...)
+		ambiguous.lines[line] = strings.Replace(plain, "target with", "target    with", 1)
+		point, ok := selectionPointFor(ambiguous, line, col+len("target")+1)
+		if !ok {
+			t.Fatal("fixture must expose an interior whitespace endpoint")
+		}
+		if _, _, ok := resolveSelectionPoint(ambiguous, point); ok {
+			t.Fatalf("region %v ambiguous normalized whitespace endpoint must fail closed", region)
+		}
+	}
+}
+
+func TestAssistantRailSelectionCopyAndDetailToggle(t *testing.T) {
+	for _, expand := range []bool{false, true} {
+		m := scenario2Model(t, 100, 30, false, phaseIdle, nil)
+		m.expandConversation = expand
+		m.conv.appendReasoning("summary detail")
+		m.conv.appendAssistant("first answer paragraph\n\nsecond answer paragraph")
+		m.conv.endReasoningStream()
+		m.refreshView()
+		first := lineIndexContaining(m.vp.GetContent(), "first answer paragraph")
+		m = m.lineSelect(first)
+		if m.sel.anchorPoint.blockID == 0 || m.sel.copied != "first answer paragraph" {
+			t.Fatalf("line selection lacks semantic bounds: %+v", m.sel)
+		}
+		m = applyAll(m, f9)
+		if !m.sel.active || m.sel.copied != "first answer paragraph" {
+			t.Fatal("detail toggle lost assistant line selection")
+		}
+		first = lineIndexContaining(m.vp.GetContent(), "first answer paragraph")
+		last := lineIndexContaining(m.vp.GetContent(), "second answer paragraph")
+		lines := strings.Split(m.vp.GetContent(), "\n")
+		m.sel = selection{active: true, anchorL: first, anchorC: convBodyXOffset, headL: last, headC: convBodyXOffset + len("second answer paragraph")}
+		m.selBase = ""
+		snapshotSelection(&m)
+		const want = "first answer paragraph\n\nsecond answer paragraph"
+		if m.sel.copied != want || m.sel.anchorPoint.sourceOffset != 0 {
+			t.Fatalf("multi-line semantic selection = %q, anchor %+v", m.sel.copied, m.sel.anchorPoint)
+		}
+		_, cmd := m.copySelection()
+		if got, ok := osc52Payload(collectLeaves(cmd)); !ok || got != want {
+			t.Fatalf("clipboard = %q, ok=%v, want %q", got, ok, want)
+		}
+		// A drag starting on the rail takes the non-semantic fallback, but must
+		// still omit the rail from the clipboard and survive an unchanged frame.
+		m.sel = selection{active: true, anchorL: first, anchorC: 0, headL: last, headC: graphemeCount(ansi.Strip(lines[last]))}
+		m.selBase = ""
+		snapshotSelection(&m)
+		m.refreshView()
+		if !m.sel.active || m.sel.copied != want {
+			t.Fatalf("rail-origin drag = %q, active=%v", m.sel.copied, m.sel.active)
+		}
+	}
+}
+
 // TestSelectionPreservesLiveStableText pins that a selection
 // is logical text, not a rendered row range. Reflow and a pending stream delta
 // must retain its exact ANSI-free copy while its context still resolves. A pending

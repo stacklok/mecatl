@@ -2,8 +2,8 @@
 name: cut-release
 description: >-
   Cut a tagged release of mecatl — dispatch the Create Release PR workflow, review and
-  merge the release PR, then verify the tag and the artifacts it publishes (ko images +
-  Helm chart to GHCR, plus a GitHub Release with signed archives and a Homebrew formula
+  merge the release PR, then verify the tag and the artifacts it publishes (images +
+  Helm charts to GHCR, plus a GitHub Release with signed archives and a Homebrew formula
   bump). Use when asked to cut/ship/tag/publish a release or bump the version. NOT for
   general git tagging unrelated to a mecatl release.
 metadata:
@@ -39,9 +39,10 @@ you dispatch a workflow, a bot opens the PR, a human merges it, and a bot tags t
 commit. You never run `git push origin main`, and you never create the tag by hand.
 
 `VERSION` (repo root, **bare** semver — `0.0.34`, not `v0.0.34`) is the source of truth
-for the release version. The release PR propagates it to the `mecak8s` chart version,
-`appVersion`, and default image tag. The workflows verify those values directly rather
-than maintaining a fixed list of files that a release PR may change.
+for the release version. The release PR propagates it to the `mecak8s` and
+`mecatl-studio` chart versions and `appVersion`s, and to the `mecak8s` default image
+tag. The workflows verify those values directly rather than maintaining a fixed list of
+files that a release PR may change.
 
 It did not used to be. `mecatequi-reusable.yml` referenced its three sibling composite actions
 by a hardcoded `@vX.Y.Z` literal, so every release had to bump those pins in the same tagged
@@ -79,10 +80,10 @@ Run from the repo root.
    variables are required.
    If validation fails, fix the tracked pins through review (or retry a transient
    registry failure); do not bypass the check. The publishing job validates the
-   tagged checkout again. The workflow bumps
-   `VERSION`, the `mecak8s` chart version and app version, and the chart's default
-   image tag. It opens `Release vX.Y.Z` from branch `release/vX.Y.Z`, then asserts that the
-   required values are synchronized. **If that verification step fails, do not merge the PR**;
+   tagged checkout again. The workflow bumps `VERSION`, the `mecak8s` and
+   `mecatl-studio` chart versions and app versions, and the `mecak8s` chart's default
+   image tag. It opens `Release vX.Y.Z` from branch `release/vX.Y.Z`, then asserts that
+   the required values are synchronized. **If that verification step fails, do not merge the PR**;
    close it, delete the branch, and read the job log.
 
 3. **Review the release PR like any other PR** and confirm that all changes belong to the
@@ -115,10 +116,17 @@ Run from the repo root.
 6. **Confirm the release run started, then wait for every publishing job.** A
    successful CLI archive or one green image is not a complete release. In
    particular, check the `mecated`, execution provider/workload, Brood Box
-   resolution, microVM, chart, and CLI/Homebrew jobs before reporting success:
+   resolution, microVM, mecak8s/execution/Studio chart, and CLI/Homebrew jobs
+   before reporting success:
    ```sh
    gh run list --workflow=release.yml --limit 3
    gh run watch "$(gh run list --workflow=release.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
+   ```
+   The Studio chart job skips with a notice when the tag has no chart, so confirm the
+   charts actually landed in GHCR (bare `X.Y.Z`, no `v`):
+   ```sh
+   helm show chart oci://ghcr.io/stacklok/mecatl/charts/mecak8s --version X.Y.Z
+   helm show chart oci://ghcr.io/stacklok/mecatl/charts/mecatl-studio --version X.Y.Z
    ```
 
 7. **Verify the GitHub Release carries every artifact.** It must not be a draft, and it must

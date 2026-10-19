@@ -272,6 +272,9 @@ func (a *Agent) handleSessionNew(ctx context.Context, params json.RawMessage) (a
 	if err := json.Unmarshal(params, &req); err != nil {
 		return nil, newMethodErr(codeInvalidParams, "acp: session/new: "+err.Error())
 	}
+	if len(req.Execution) != 0 {
+		return nil, newMethodErr(codeInvalidParams, "acp: session/new: execution selection is unsupported")
+	}
 	if err := validateCwd(req.Cwd, "session/new"); err != nil {
 		return nil, err
 	}
@@ -377,6 +380,9 @@ func (a *Agent) handleSessionLoad(ctx context.Context, params json.RawMessage) (
 	var req loadSessionRequest
 	if err := json.Unmarshal(params, &req); err != nil {
 		return nil, newMethodErr(codeInvalidParams, "acp: session/load: "+err.Error())
+	}
+	if len(req.Execution) != 0 {
+		return nil, newMethodErr(codeInvalidParams, "acp: session/load: execution selection is unsupported")
 	}
 	if req.SessionID == "" {
 		return nil, newMethodErr(codeInvalidParams, "acp: session/load: sessionId is required")

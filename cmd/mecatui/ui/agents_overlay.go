@@ -1319,6 +1319,7 @@ func subagentRosterDetails(ln *subagentLane) string {
 // truncateDisplayWidth clips a terminal-sanitized title without allowing a wide rune
 // to push the title line past the physical card width.
 func truncateDisplayWidth(s string, width int) string {
+	s = terminaltext.ExpandTabs(s, terminaltext.DefaultTabWidth)
 	return ansi.Truncate(s, width, "…")
 }
 

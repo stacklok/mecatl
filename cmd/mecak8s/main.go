@@ -90,18 +90,14 @@ func run() error {
 
 	composition := appConfig(cfg, diag, obs)
 	if cfg.executionEnabled {
-		tlsConfig, tlsErr := executionclient.LoadTLSConfig(executionclient.TLSFiles{CA: cfg.executionTLSCA, Cert: cfg.executionTLSCert, Key: cfg.executionTLSKey})
-		if tlsErr != nil {
-			flushTelemetry(os.Stderr, obs, cfg.otlpShutdownTimeout)
-			return tlsErr
-		}
-		client, clientErr := executionclient.New(cfg.executionEndpoint, tlsConfig)
+		client, clientErr := executionclient.NewWithTLSFiles(cfg.executionEndpoint, executionclient.TLSFiles{CA: cfg.executionTLSCA, Cert: cfg.executionTLSCert, Key: cfg.executionTLSKey})
 		if clientErr != nil {
 			flushTelemetry(os.Stderr, obs, cfg.otlpShutdownTimeout)
 			return clientErr
 		}
 		defer client.Close()
-		placement, placementErr := executionclient.NewProvider(client, cfg.executionProfile)
+		go client.RunTLSReload(ctx, 2*time.Second)
+		placement, placementErr := executionclient.NewTemplateProvider(client, cfg.executionTemplateID, cfg.executionTemplateRevision)
 		if placementErr != nil {
 			flushTelemetry(os.Stderr, obs, cfg.otlpShutdownTimeout)
 			return placementErr

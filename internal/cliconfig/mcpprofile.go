@@ -72,6 +72,9 @@ type MCPProfileLoadOptions struct {
 	// SelectedName is used by targeted lifecycle commands. An empty value keeps
 	// the daemon's all-profile composition unchanged.
 	SelectedName string
+	// InitializeNativeCustody lets explicit login create missing native custody;
+	// ordinary profile loading remains read-only.
+	InitializeNativeCustody bool
 }
 
 // MCPProfileResolver binds the legacy CLI metadata and environment lookup to the
@@ -404,14 +407,37 @@ func loadOAuthProfile(profile permconfig.MCPServerProfile, lookup func(string) (
 	return opts, nil
 }
 
+func nativeMCPCustodyRemedy(server string, err error) string {
+	command := fmt.Sprintf("`mecated mcp reset-local-credentials %s`", server)
+	switch {
+	case errors.Is(err, mcpcredential.ErrResetInProgress):
+		return "rerun " + command + " to finish custody reset"
+	case errors.Is(err, mcpcredential.ErrObsoleteMarker), errors.Is(err, mcpcredential.ErrPendingArtifactMismatch), errors.Is(err, mcpcredential.ErrArtifactMissing), errors.Is(err, mcpcredential.ErrArtifactMismatch):
+		return "run " + command + " to reset local custody, then log in again"
+	default:
+		return ""
+	}
+}
+
 func loadNativeOAuthProfile(server string, local *permconfig.MCPLocalCredentialProfile, loadOpts MCPProfileLoadOptions, cacheKey string, owner *MCPProfiles, stores map[string]credentialstore.Store, opts *mcp.OAuthOptions) (*mcp.OAuthOptions, error) {
 	filePath := ""
 	if local.Key.File != nil {
 		filePath = local.Key.File.Path
 	}
-	selected, err := mcpcredential.Open(context.Background(), local.Root, local.Key.Mode, filePath, loadOpts.Keyring)
+	var selected mcpcredential.Selection
+	var err error
+	if loadOpts.InitializeNativeCustody {
+		selected, err = mcpcredential.Resolve(context.Background(), local.Root, mcpcredential.Options{
+			Requested: local.Key.Mode, FilePath: filePath, Keyring: loadOpts.Keyring,
+		})
+	} else {
+		selected, err = mcpcredential.Open(context.Background(), local.Root, local.Key.Mode, filePath, loadOpts.Keyring)
+	}
 	if err != nil {
-		return nil, &MCPProfileError{Server: server, Field: "auth.oauth.credentials.local.key", Kind: ErrMCPProfileStore}
+		return nil, &MCPProfileError{
+			Server: server, Field: "auth.oauth.credentials.local.key", Kind: ErrMCPProfileStore,
+			Remedy: nativeMCPCustodyRemedy(server, err),
+		}
 	}
 	store, err := credentialstore.NewEncryptedFile(local.Root, mcpcredential.NativeNamespace, selected.Key)
 	clear(selected.Key)

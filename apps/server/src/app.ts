@@ -6,7 +6,7 @@ import {
   problemDetailsSchema,
   runtimeResponseSchema,
 } from "@mecatl-studio/contracts";
-import { MecatlError } from "@stacklok-oss/mecatl-sdk";
+import { MecatlError, ServerFeature } from "@stacklok-oss/mecatl-sdk";
 import { HTTPException } from "hono/http-exception";
 import type { AuthenticationService } from "./auth/service.js";
 import { studioBuildId as bakedStudioBuildId } from "./build-info.js";
@@ -46,7 +46,7 @@ import { registerScheduleRoutes } from "./routes/schedules.js";
 import { registerSettingsRoutes } from "./routes/settings.js";
 import { registerStatusRoutes } from "./routes/status.js";
 import { registerStorageRoutes } from "./routes/storage.js";
-import { readInstalledSdkVersion } from "./sdk-version.js";
+import { readInstalledSdkVersion, reportedSdkVersion } from "./sdk-version.js";
 
 const sdkVersion = readInstalledSdkVersion();
 
@@ -109,6 +109,7 @@ export interface AppDependencies {
 
 export function createApp(dependencies: AppDependencies = {}) {
   const studioBuildId = dependencies.studioBuildId ?? bakedStudioBuildId;
+  const reportedSdk = reportedSdkVersion(sdkVersion, studioBuildId);
   // Every route's request validation fails as RFC 9457 problem details, never
   // the validator's raw error object; a route may still install its own hook.
   const app = new OpenAPIHono<AppEnv>({
@@ -216,7 +217,7 @@ export function createApp(dependencies: AppDependencies = {}) {
       return context.json(
         {
           ...runtime.snapshot(),
-          ...(sdkVersion === undefined ? {} : { sdkVersion }),
+          ...(reportedSdk === undefined ? {} : { sdkVersion: reportedSdk }),
           ...(studioBuildId === undefined ? {} : { studioBuildId }),
         },
         200,
@@ -232,7 +233,9 @@ export function createApp(dependencies: AppDependencies = {}) {
 
   const chat =
     dependencies.chat ??
-    (runtime === undefined ? undefined : createMecatlChatService(runtime.client));
+    (runtime === undefined
+      ? undefined
+      : createMecatlChatService(runtime.client, () => runtime.compatibility()));
   registerChatRoutes(app, chat, dependencies.activity);
   // Capability read LIVE from the negotiated snapshot: false until negotiation
   // completes or when the deployment has scheduling off.
@@ -319,6 +322,39 @@ export function createApp(dependencies: AppDependencies = {}) {
           "Mecatl rejected the current session; sign in again.",
         );
       }
+      if (
+        context.req.path === "/api/v1/execution-templates" ||
+        (context.req.path === "/api/v1/sessions" && context.req.method === "POST")
+      ) {
+        if (
+          error.code === "execution_templates_disabled" ||
+          (context.req.path === "/api/v1/execution-templates" &&
+            error.code === "unsupported_feature")
+        )
+          return problem(
+            context,
+            501,
+            "execution_templates_disabled",
+            "Template catalog disabled",
+            "Use the deployment default or no execution, or ask an operator to enable template discovery.",
+          );
+        if (error.code === "placement_unavailable")
+          return problem(
+            context,
+            503,
+            error.code,
+            "Execution backend unavailable",
+            "Retry later or choose no execution.",
+          );
+        if (context.req.path === "/api/v1/execution-templates" && error.code === "not_found")
+          return problem(
+            context,
+            404,
+            "template_unavailable",
+            "Template unavailable",
+            "Refresh the catalog and select another template; no fallback was created.",
+          );
+      }
       return problem(
         context,
         errorStatus(error),
@@ -359,8 +395,11 @@ export function createApp(dependencies: AppDependencies = {}) {
  */
 export function knowledgeCapabilities(runtime: MecatlRuntime): KnowledgeCapabilities {
   let capabilities: ReturnType<MecatlRuntime["snapshot"]>["capabilities"] | undefined;
+  let features: readonly string[] = [];
   try {
-    capabilities = runtime.snapshot().capabilities;
+    const snapshot = runtime.snapshot();
+    capabilities = snapshot.capabilities;
+    features = snapshot.features;
   } catch {
     capabilities = undefined;
   }
@@ -380,6 +419,7 @@ export function knowledgeCapabilities(runtime: MecatlRuntime): KnowledgeCapabili
       user_model: consolidation(capabilities?.manualDream?.userModel),
     },
     reflection: capabilities?.reflection ?? false,
+    skillFiles: features.includes(ServerFeature.SkillFiles),
     skills: capabilities?.skills ?? false,
     userModel: capabilities?.userModel ?? false,
   };

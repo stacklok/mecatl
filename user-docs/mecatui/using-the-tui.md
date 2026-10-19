@@ -34,14 +34,41 @@ longer than 256 bytes are omitted; child execution and the parent session
 are unaffected.
 
 Press `f9` to reveal conversation details, including reasoning summaries,
-per-turn usage, permanent error details, and changed files. Tool results stay in
-`/toolcalls`. Both shortcuts can be [remapped](./keybindings.md#remap-actions).
+per-turn usage, permanent error details, changed files, and individual settled
+tool-call summaries in source order. Use `ctrl+t` to inspect a call's arguments
+and results. Both shortcuts can be [remapped](./keybindings.md#remap-actions).
+
+In the default conversation view, adjacent completed tool, Subagent, and Team
+calls share one summary, including failures. Calls still in progress remain as
+individual cards after that summary. The grouping follows their order in the
+transcript, rather than the order in which work started or finished.
 
 `f9` also temporarily reveals retained benign guardrail notices in live and
 replayed conversations. These are completed, acceptable checks that allowed an
 action or released a result; findings, failures, unresolved reviews, and
 approvals remain visible. To keep benign notices visible, configure
 [`hook_notices.show_benign`](./customization.md#show-benign-guardrail-notices).
+
+## Start a session with an execution choice
+
+Enter `/execution` while idle. Use `↑` and `↓` to choose **Deployment default**,
+**None**, or an eligible template, then press `enter` to create a new session.
+The existing session stays intact if creation fails. **None** binds no execution
+filesystem or built-in Shell; the default uses the deployment's configured
+execution. Template rows show operator-provided display names and exact pinned
+revisions, not paths or container settings. The server checks the selected revision
+and your access again at creation time; a stale or full template never falls back
+to the default. The success status and `/session` details report whether the new
+session actually has execution files and a built-in Shell. For an operator's
+image smoke test, match both template ID and exact revision, then record the
+session ID with `/session`. To check retained files, [resume that exact
+session](sessions.md#resume-a-chat); `/execution` creates another session
+rather than changing the existing workspace.
+
+When catalog discovery is disabled or temporarily unavailable, the picker still
+allows default and none. An empty catalog has no templates eligible for your
+account. If a selected template becomes unavailable, reopen `/execution` to refresh
+and retry. Debug chats stay file-less and do not offer this switch.
 
 ## Attach a local file
 
@@ -76,19 +103,37 @@ prose.
 ## Keep working while a run is active
 
 Type your next instruction while the agent is running, then press `enter`.
-`mecatui` steers the run at the next safe turn boundary when the server supports
-steering. Otherwise, it queues the instruction as a follow-up. Images and other
-supported staged media stay attached, including media-only input. Multiple
-queued lines become one prompt.
+With no input pending, `mecatui` steers the run at the next safe turn boundary
+when the server supports steering. Otherwise, it queues a follow-up. While
+input is pending, `enter` adds to the same kind of pending input. Images and
+other supported staged media stay attached, including media-only input.
 
-Bare TUI commands stay in the client. For example, `/help` opens local help.
-While a run is active and the prompt is available, `/clear` replaces the
-session. Unknown slash commands, workspace commands, and built-in commands with
-arguments go to the model.
+To choose the timing explicitly, send one of these commands with your instruction:
 
-To revise queued input, empty the prompt and press `↑`. This restores the
-pending steer or queued follow-up with its staged media. Press `ctrl+u` to clear
-the unsent draft and its attachments.
+|Command|Timing during an active run|
+|-|-|
+|`/steer Check cancellation before continuing.`|The next safe turn boundary; requires server steering support.|
+|`/queue Add a regression test after this run.`|A follow-up run after this run finishes.|
+
+You can have pending steers or queued follow-ups, but not both. To switch,
+wait for the pending input to be consumed or pull it back for editing. If no
+run is active, either command starts a run with its instruction.
+
+Queued entries merge into one follow-up prompt after healthy completion. A
+cancelled or failed run leaves them paused for you to resume or clear.
+
+TUI commands stay in the client. For example, `/help` opens local help and
+`/title <TITLE>` renames the session. While a run is active and the prompt is
+available, `/clear` replaces the session. Unknown slash commands remain
+model-facing.
+
+To revise pending input, empty the prompt and press `↑`. This combines all
+pending messages into one draft, separated by blank lines, with one `/steer`
+or `/queue` prefix and their staged media. Keep the prefix to preserve the
+delivery method, or change it to switch methods. If the run ends while you
+edit, resubmitting starts a normal run. Pulling back a steer requests its
+cancellation; a steer already consumed by the agent cannot be recalled.
+Press `ctrl+u` to clear the unsent draft and its attachments.
 
 Pressing `esc` clears an active selection first. During a run, it cancels the
 run but preserves your draft and queued input. When the session is idle with a
@@ -202,7 +247,7 @@ for the available modes and their behavior.
 |`/compact`|Reduces model history while keeping the session and visible scrollback. Run it without arguments while idle. Creating a cascade summary can use model tokens.|
 |`/clear`|Creates an empty-history session with the same placement. It does not roll back workspace changes.|
 |`/session`|Shows path-free details for the active session.|
-|`/posture`|Shows the server's operator posture and the independent effective checker state. Off includes setup guidance; unavailable or older-server status is unknown. See [Permissions and posture](/features/security-and-execution/permissions-and-posture.md).|
+|`/posture`|Shows the server's operator posture and the independent effective checker state. Off includes setup guidance; unavailable posture status is unknown. See [Permissions and posture](/features/security-and-execution/permissions-and-posture.md).|
 
 If `/clear` cancels an active run or approval and then fails to create the
 replacement, the original session remains selected and may be cancelled. Wait

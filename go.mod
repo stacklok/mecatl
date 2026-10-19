@@ -5,24 +5,24 @@ go 1.27.2
 require (
 	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.12-20260825204119-511051f7f437.2
 	charm.land/bubbles/v2 v2.2.1
-	charm.land/bubbletea/v2 v2.0.10
+	charm.land/bubbletea/v2 v2.1.0
 	charm.land/glamour/v2 v2.0.1
 	charm.land/lipgloss/v2 v2.0.6
 	github.com/adrg/xdg v0.5.3
 	github.com/alicebob/miniredis/v2 v2.39.0
 	github.com/anthropics/anthropic-sdk-go v1.73.0
-	github.com/bmatcuk/doublestar/v4 v4.10.0
+	github.com/bmatcuk/doublestar/v4 v4.10.2
 	github.com/cedar-policy/cedar-go v1.8.0
 	github.com/charmbracelet/colorprofile v0.4.3
-	github.com/charmbracelet/x/ansi v0.11.8
-	github.com/charmbracelet/x/exp/teatest/v2 v2.0.0-20261004011457-ad85c59fdf4e
+	github.com/charmbracelet/x/ansi v0.11.9
+	github.com/charmbracelet/x/exp/teatest/v2 v2.0.0-20261018003744-cb897cb4ed72
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/goccy/go-yaml v1.19.2
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/gofrs/flock v0.13.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/jsonschema-go v0.4.3
-	github.com/google/pprof v0.0.0-20260802141513-ef3492d7dac3
+	github.com/google/pprof v0.0.0-20261008003335-7bae8d8c4c9e
 	github.com/google/uuid v1.6.0
 	github.com/itchyny/gojq v0.12.19
 	github.com/modelcontextprotocol/go-sdk v1.8.0
@@ -33,11 +33,11 @@ require (
 	github.com/prometheus/client_golang v1.24.1
 	github.com/prometheus/client_model v0.6.3
 	github.com/prometheus/procfs v0.22.0
-	github.com/redis/go-redis/v9 v9.22.0
+	github.com/redis/go-redis/v9 v9.23.0
 	github.com/stacklok/mecatl/adapters v0.1.1
 	github.com/stacklok/mecatl/authn/oidc v0.0.0-00010101000000-000000000000
 	github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver v0.1.0
-	github.com/stacklok/mecatl/engine v0.15.1-0.20260929125653-6142f5252a09
+	github.com/stacklok/mecatl/engine v0.16.1-0.20261013103539-36b6ca993df9
 	github.com/stacklok/mecatl/internal/adaptersupport v0.1.0
 	github.com/stacklok/mecatl/provider/anthropic v0.0.0-00010101000000-000000000000
 	github.com/stacklok/mecatl/provider/openai v0.0.0-00010101000000-000000000000
@@ -45,7 +45,7 @@ require (
 	github.com/stacklok/toolhive v0.50.0
 	github.com/stacklok/toolhive-core v0.0.51
 	github.com/stacklok/typesafe-go v0.1.0
-	github.com/tiktoken-go/tokenizer v0.8.0
+	github.com/tiktoken-go/tokenizer v0.8.1
 	github.com/zalando/go-keyring v0.2.8
 	go.opentelemetry.io/contrib/instrumentation/runtime v0.69.0
 	go.opentelemetry.io/otel v1.47.0
@@ -63,7 +63,6 @@ require (
 	go.uber.org/goleak v1.3.0
 	golang.org/x/net v0.60.0
 	golang.org/x/oauth2 v0.37.0
-	golang.org/x/sync v0.23.0
 	golang.org/x/sys v0.48.0
 	golang.org/x/term v0.46.0
 	golang.org/x/time v0.16.0
@@ -114,7 +113,7 @@ require (
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cenkalti/backoff/v7 v7.0.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/charmbracelet/ultraviolet v0.0.0-20260811164956-006e29f97886 // indirect
+	github.com/charmbracelet/ultraviolet v0.0.0-20261008173134-6b8d4baf91b4 // indirect
 	github.com/charmbracelet/x/exp/golden v0.0.0-20251109135125-8916d276318f // indirect
 	github.com/charmbracelet/x/exp/slice v0.0.0-20250327172914-2fdc97757edf // indirect
 	github.com/charmbracelet/x/termios v0.1.1 // indirect
@@ -132,7 +131,7 @@ require (
 	github.com/dgraph-io/ristretto v1.0.0 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/dlclark/regexp2 v1.11.0 // indirect
-	github.com/dlclark/regexp2/v2 v2.1.0 // indirect
+	github.com/dlclark/regexp2/v2 v2.5.1 // indirect
 	github.com/docker/cli v29.7.2+incompatible // indirect
 	github.com/docker/docker-credential-helpers v0.9.5 // indirect
 	github.com/docker/go-connections v0.8.1 // indirect
@@ -145,7 +144,7 @@ require (
 	github.com/evanphx/json-patch/v5 v5.9.11 // indirect
 	github.com/extism/go-sdk v1.7.1 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
-	github.com/fsnotify/fsnotify v1.9.0 // indirect
+	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.1 // indirect
 	github.com/getsentry/sentry-go v0.49.0 // indirect
 	github.com/getsentry/sentry-go/otel v0.49.0 // indirect
@@ -201,7 +200,7 @@ require (
 	github.com/jwx-go/jwkfetch/v4 v4.0.4 // indirect
 	github.com/kevinburke/ssh_config v1.6.0 // indirect
 	github.com/klauspost/compress v1.19.2 // indirect
-	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
+	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
 	github.com/lestrrat-go/blackmagic v1.0.4 // indirect
 	github.com/lestrrat-go/httpcc v1.0.1 // indirect
 	github.com/lestrrat-go/httprc/v3 v3.0.6 // indirect
@@ -211,7 +210,7 @@ require (
 	github.com/lucasb-eyer/go-colorful v1.4.1 // indirect
 	github.com/lufia/plan9stats v0.0.0-20260330125221-c963978e514e // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
-	github.com/mattn/go-runewidth v0.0.27 // indirect
+	github.com/mattn/go-runewidth v0.0.30 // indirect
 	github.com/mattn/goveralls v0.0.12 // indirect
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
@@ -278,7 +277,7 @@ require (
 	github.com/xeipuuv/gojsonpointer v0.0.0-20190905194746-02993c407bfb // indirect
 	github.com/xeipuuv/gojsonreference v0.0.0-20180127040603-bd5ef7bd5415 // indirect
 	github.com/xeipuuv/gojsonschema v1.2.0 // indirect
-	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
+	github.com/xo/terminfo v1.0.0 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	github.com/yuin/goldmark v1.7.17 // indirect
 	github.com/yuin/goldmark-emoji v1.0.5 // indirect
@@ -297,7 +296,7 @@ require (
 	go.opentelemetry.io/otel/log v1.47.0 // indirect
 	go.opentelemetry.io/otel/sdk/log v1.47.0 // indirect
 	go.starlark.net v0.0.0-20260908191801-89a6a09411d5 // indirect
-	go.uber.org/atomic v1.11.0 // indirect
+	go.uber.org/atomic v1.12.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
@@ -309,6 +308,7 @@ require (
 	golang.org/x/exp/event v0.0.0-20260824195058-e88cd73687aa // indirect
 	golang.org/x/exp/jsonrpc2 v0.0.0-20260908205506-85c1c2202aba // indirect
 	golang.org/x/mod v0.41.0 // indirect
+	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260928230214-8a89bd6388cc // indirect

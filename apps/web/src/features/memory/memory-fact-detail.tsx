@@ -11,6 +11,7 @@ import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { PageShell } from "../../components/shell/page-shell";
 import { Button } from "../../components/ui/button";
+import { errorMessage } from "../../lib/error-message";
 import { pageTitleClass } from "../../lib/typography";
 import { formatRelativeTime } from "../chat/latest-chat";
 
@@ -47,14 +48,20 @@ export function MemoryFactDetail({ memoryId }: { memoryId: string }) {
   if (!entry || isNotFound(detail.error)) {
     if (runtime.isPending || (connected && list.isPending)) {
       return (
-        <div className="flex min-h-[40vh] items-center justify-center text-sm text-muted-foreground">
+        <div
+          className="flex min-h-[40vh] items-center justify-center text-sm text-muted-foreground"
+          role="status"
+        >
           Loading…
         </div>
       );
     }
     if (!supported) {
       return (
-        <div className="flex min-h-[40vh] flex-col items-center justify-center gap-2 px-6 text-center">
+        <div
+          className="flex min-h-[40vh] flex-col items-center justify-center gap-2 px-6 text-center"
+          role="status"
+        >
           <p className="text-sm font-medium">Memory is turned off for this agent.</p>
           {list.data?.reason && <p className="text-sm text-muted-foreground">{list.data.reason}</p>}
         </div>
@@ -63,7 +70,7 @@ export function MemoryFactDetail({ memoryId }: { memoryId: string }) {
     const reachable = connected && !list.isError;
     return (
       <div className="flex min-h-[60vh] flex-col items-center justify-center px-4">
-        <div className="w-full max-w-md rounded-xl border bg-card p-8 text-center">
+        <div className="w-full max-w-md rounded-xl border bg-card p-8 text-center" role="status">
           <h1 className="text-lg font-semibold">Memory not found</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             {reachable ? (
@@ -120,9 +127,13 @@ export function MemoryFactDetail({ memoryId }: { memoryId: string }) {
           className="rounded-xl border bg-card p-5 text-sm leading-relaxed"
         >
           {detail.isPending ? (
-            <p className="text-muted-foreground">Loading value…</p>
+            <p className="text-muted-foreground" role="status">
+              Loading value…
+            </p>
           ) : detail.isError ? (
-            <p className="text-destructive">Value unavailable: {errorMessage(detail.error)}</p>
+            <p className="text-destructive" role="alert">
+              Value unavailable: {errorMessage(detail.error)}
+            </p>
           ) : (
             <pre className="whitespace-pre-wrap break-words font-mono text-sm">
               {current?.value || "(empty value)"}
@@ -175,6 +186,20 @@ function RevisionRows({ revision }: { revision: MemoryRevision }) {
             to="/workspace/chat"
           >
             {revision.sourceSessionId}
+          </Link>
+        </FactRow>
+      )}
+      {revision.sourceProposalId && (
+        <FactRow label="Proposal" mono>
+          {/* DECISION: no route addresses one proposal, so the link opens the
+              Learning settings section, as in the prototype. */}
+          <Link
+            className="hover:underline"
+            params={{ section: "learning" }}
+            search={{ item: undefined }}
+            to="/workspace/settings/$section"
+          >
+            {revision.sourceProposalId}
           </Link>
         </FactRow>
       )}
@@ -257,9 +282,4 @@ function FactRow({
 
 function isNotFound(error: unknown) {
   return typeof error === "object" && error !== null && "status" in error && error.status === 404;
-}
-
-function errorMessage(error: unknown) {
-  if (typeof error === "object" && error !== null && "detail" in error) return String(error.detail);
-  return error instanceof Error ? error.message : "The request could not be completed.";
 }

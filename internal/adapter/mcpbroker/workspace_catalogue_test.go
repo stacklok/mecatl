@@ -21,14 +21,13 @@ import (
 
 func TestAuthenticatedCatalogueReplacesDeclaredMembership(t *testing.T) {
 	runtime := testAnonymousRuntime(t)
-	attachment := testAttachment(t, runtime)
 	queries := &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{
 		"first":  {Backend: "first", Tools: []ToolDefinition{{Backend: "first", Name: "mcp__first__one", Description: "one", Schema: json.RawMessage(`{"type":"object"}`), ReadOnly: true}}},
 		"second": {Backend: "second", Tools: []ToolDefinition{{Backend: "second", Name: "mcp__second__two", Description: "two", Schema: json.RawMessage(`{"type":"object"}`)}}},
 	}}
-	process := testCatalogueProcess(runtime, queries, "first", "second")
-
-	frozen, err := attachment.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), process, staticTokenSource("opaque-broker-token"), []string{"Read"})
+	testCatalogueProcess(runtime, queries, []string{"Read"}, "first", "second")
+	attachment := testAttachment(t, runtime)
+	frozen, err := attachment.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), staticTokenSource("opaque-broker-token"))
 	if err != nil {
 		t.Fatalf("FreezeAuthenticatedCatalogue: %v", err)
 	}
@@ -53,13 +52,13 @@ func TestAuthenticatedCatalogueReplacesDeclaredMembership(t *testing.T) {
 
 func TestAuthenticatedReplacementFailsAtomically(t *testing.T) {
 	runtime := testAnonymousRuntime(t)
-	attachment := testAttachment(t, runtime)
 	queries := &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{
 		"first": {Backend: "first", Tools: []ToolDefinition{{Backend: "first", Name: "mcp__first__one", Description: "one", Schema: json.RawMessage(`{"type":"object"}`)}}},
 	}, fail: "second"}
-	process := testCatalogueProcess(runtime, queries, "first", "second")
+	testCatalogueProcess(runtime, queries, nil, "first", "second")
+	attachment := testAttachment(t, runtime)
 
-	if _, err := attachment.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), process, staticTokenSource("opaque-broker-token"), nil); !errors.Is(err, ErrAuthenticatedDiscovery) {
+	if _, err := attachment.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), staticTokenSource("opaque-broker-token")); !errors.Is(err, ErrAuthenticatedDiscovery) {
 		t.Fatalf("FreezeAuthenticatedCatalogue error = %v, want discovery failure", err)
 	}
 	if got, want := toolNames(attachment.Tools()), []string{"mcp__anonymous__status"}; !reflect.DeepEqual(got, want) {
@@ -69,51 +68,45 @@ func TestAuthenticatedReplacementFailsAtomically(t *testing.T) {
 		t.Fatal("partial route published")
 	}
 
-	collisionRaw, _, err := runtime.AttachSession(t.Context(), "collision-session")
+	collisionRuntime := testAnonymousRuntime(t)
+	testCatalogueProcess(collisionRuntime, &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{
+		"first": {Backend: "first", Tools: []ToolDefinition{{Backend: "first", Name: "mcp__first__one", Description: "one", Schema: json.RawMessage(`{"type":"object"}`)}}},
+	}}, []string{"mcp__first__one"}, "first")
+	collisionRaw, _, err := collisionRuntime.AttachSession(t.Context(), "collision-session")
 	if err != nil {
 		t.Fatal(err)
 	}
 	collision := collisionRaw.(*Attachment)
-	collisionProcess := testCatalogueProcess(runtime, &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{
-		"first": {Backend: "first", Tools: []ToolDefinition{{Backend: "first", Name: "mcp__first__one", Description: "one", Schema: json.RawMessage(`{"type":"object"}`)}}},
-	}}, "first")
-	if _, err := collision.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), collisionProcess, staticTokenSource("opaque-broker-token"), []string{"mcp__first__one"}); !errors.Is(err, ErrInvalidCatalogue) {
+	if _, err := collision.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), staticTokenSource("opaque-broker-token")); !errors.Is(err, ErrInvalidCatalogue) {
 		t.Fatalf("collision error = %v, want invalid catalogue", err)
 	}
 	if got := toolNames(collision.Tools()); !reflect.DeepEqual(got, []string{"mcp__anonymous__status"}) {
 		t.Fatalf("collision published partial catalogue: %v", got)
 	}
 
-	raceRaw, _, err := runtime.AttachSession(t.Context(), "close-race-session")
+	raceRuntime := testAnonymousRuntime(t)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	raceProcess := testCatalogueProcess(raceRuntime, &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{
+		"first": {Backend: "first", Tools: []ToolDefinition{{Backend: "first", Name: "mcp__first__one", Description: "one", Schema: json.RawMessage(`{"type":"object"}`)}}},
+	}, started: started, release: release}, nil, "first")
+	raceRaw, _, err := raceRuntime.AttachSession(t.Context(), "close-race-session")
 	if err != nil {
 		t.Fatal(err)
 	}
 	raceAttachment := raceRaw.(*Attachment)
-	started := make(chan struct{})
-	release := make(chan struct{})
-	raceProcess := testCatalogueProcess(runtime, &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{
-		"first": {Backend: "first", Tools: []ToolDefinition{{Backend: "first", Name: "mcp__first__one", Description: "one", Schema: json.RawMessage(`{"type":"object"}`)}}},
-	}, started: started, release: release}, "first")
 	freezeDone := make(chan error, 1)
 	go func() {
-		_, freezeErr := raceAttachment.FreezeAuthenticatedCatalogue(context.Background(), testEnrollmentRef(), raceProcess, staticTokenSource("opaque-broker-token"), nil)
+		_, freezeErr := raceAttachment.FreezeAuthenticatedCatalogue(context.Background(), testEnrollmentRef(), staticTokenSource("opaque-broker-token"))
 		freezeDone <- freezeErr
 	}()
 	<-started
 	closeDone := make(chan error, 1)
 	go func() { closeDone <- raceProcess.Close() }()
-	deadline := time.Now().Add(time.Second)
-	for {
-		raceProcess.lifecycleMu.Lock()
-		closed := raceProcess.closed
-		raceProcess.lifecycleMu.Unlock()
-		if closed {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("Process.Close did not win the in-flight discovery race")
-		}
-		time.Sleep(time.Millisecond)
+	select {
+	case <-raceProcess.ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("Process.Close did not cancel process-owned work")
 	}
 	close(release)
 	if freezeErr := <-freezeDone; !errors.Is(freezeErr, ErrAuthenticatedDiscovery) {
@@ -129,13 +122,14 @@ func TestAuthenticatedReplacementFailsAtomically(t *testing.T) {
 
 func TestAuthenticatedReplacementUsesAdmissionBoundary(t *testing.T) {
 	privateRuntime := testAnonymousRuntime(t)
-	privateAttachment := testAttachment(t, privateRuntime)
 	privateProcess := discoveryProcess(&discoveryQueries{response: &aggregator.BackendCapabilities{BackendID: "private", Tools: []vmcp.Tool{{
 		BackendID: "private", Name: "tool", Description: "contains broker-secret", InputSchema: map[string]any{"type": "object"},
 	}}}}, identityMiddleware("broker-secret", "provider-private", "upstream-private"), "provider-private")
 	privateProcess.Runtime = privateRuntime
 	privateProcess.construction.protectedBackends = []string{"private"}
-	if _, err := privateAttachment.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), privateProcess, staticTokenSource("broker-secret"), nil); !errors.Is(err, ErrAuthenticatedDiscovery) {
+	privateProcess.configureRuntime(nil)
+	privateAttachment := testAttachment(t, privateRuntime)
+	if _, err := privateAttachment.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), staticTokenSource("broker-secret")); !errors.Is(err, ErrAuthenticatedDiscovery) {
 		t.Fatalf("private material error = %v, want authenticated discovery failure", err)
 	}
 	if got := toolNames(privateAttachment.Tools()); !reflect.DeepEqual(got, []string{"mcp__anonymous__status"}) {
@@ -153,9 +147,9 @@ func TestAuthenticatedReplacementUsesAdmissionBoundary(t *testing.T) {
 	} {
 		t.Run(definition.Name, func(t *testing.T) {
 			runtime := testAnonymousRuntime(t)
+			testCatalogueProcess(runtime, &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{"first": {Backend: "first", Tools: []ToolDefinition{definition}}}}, nil, "first")
 			attachment := testAttachment(t, runtime)
-			process := testCatalogueProcess(runtime, &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{"first": {Backend: "first", Tools: []ToolDefinition{definition}}}}, "first")
-			if _, err := attachment.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), process, staticTokenSource("opaque-broker-token"), nil); !errors.Is(err, ErrInvalidCatalogue) {
+			if _, err := attachment.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), staticTokenSource("opaque-broker-token")); !errors.Is(err, ErrInvalidCatalogue) {
 				t.Fatalf("FreezeAuthenticatedCatalogue error = %v, want invalid catalogue", err)
 			}
 			if got := toolNames(attachment.Tools()); !reflect.DeepEqual(got, []string{"mcp__anonymous__status"}) {
@@ -171,13 +165,13 @@ func TestAuthenticatedCatalogueReplacesDeclaredToolMetadata(t *testing.T) {
 	liveSchema := json.RawMessage(`{"type":"object","properties":{"live":{"type":"boolean"}}}`)
 	static := route{backend: "first", spec: tool.ToolSpec{Name: "mcp__first__same", Description: "static description", Schema: staticSchema}, readOnly: false, oauth: &oauthRoute{}, broker: true}
 	runtime.catalogue = &Catalogue{routes: append(runtime.catalogue.routes, static)}
-	attachment := testAttachment(t, runtime)
 	queries := &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{"first": {
 		Backend: "first", Tools: []ToolDefinition{{Backend: "first", Name: "mcp__first__same", Description: "live description", Schema: liveSchema, ReadOnly: true}},
 	}}}
-	process := testCatalogueProcess(runtime, queries, "first")
+	testCatalogueProcess(runtime, queries, nil, "first")
+	attachment := testAttachment(t, runtime)
 
-	if _, err := attachment.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), process, staticTokenSource("opaque-broker-token"), nil); err != nil {
+	if _, err := attachment.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), staticTokenSource("opaque-broker-token")); err != nil {
 		t.Fatalf("FreezeAuthenticatedCatalogue: %v", err)
 	}
 	if got := toolNames(attachment.Tools()); !reflect.DeepEqual(got, []string{"mcp__anonymous__status", "mcp__first__same"}) {
@@ -193,15 +187,15 @@ func TestAuthenticatedReadOnlyHintReplacesStaticHint(t *testing.T) {
 	runtime := testAnonymousRuntime(t)
 	static := route{backend: "first", spec: tool.ToolSpec{Name: "mcp__first__declared", Description: "declared", Schema: json.RawMessage(`{"type":"object"}`)}, readOnly: true, oauth: &oauthRoute{}, broker: true}
 	runtime.catalogue = &Catalogue{routes: append(runtime.catalogue.routes, static)}
-	attachment := testAttachment(t, runtime)
-	process := testCatalogueProcess(runtime, &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{
+	testCatalogueProcess(runtime, &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{
 		"first": {Backend: "first", Tools: []ToolDefinition{
 			{Backend: "first", Name: "mcp__first__declared", Description: "live", Schema: json.RawMessage(`{"type":"object"}`)},
 			{Backend: "first", Name: "mcp__first__read", Description: "read", Schema: json.RawMessage(`{"type":"object"}`), ReadOnly: true},
 		}},
-	}}, "first")
+	}}, nil, "first")
+	attachment := testAttachment(t, runtime)
 
-	if _, err := attachment.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), process, staticTokenSource("opaque-broker-token"), nil); err != nil {
+	if _, err := attachment.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), staticTokenSource("opaque-broker-token")); err != nil {
 		t.Fatalf("FreezeAuthenticatedCatalogue: %v", err)
 	}
 	catalogue := tool.NewCatalog()
@@ -221,14 +215,14 @@ func TestAuthenticatedDeclaredMetadataIsSessionSpecific(t *testing.T) {
 	static := route{backend: "first", spec: tool.ToolSpec{Name: "mcp__first__same", Description: "static", Schema: json.RawMessage(`{"type":"object"}`)}, oauth: &oauthRoute{}, broker: true}
 	runtime.catalogue = &Catalogue{routes: append(runtime.catalogue.routes, static)}
 	queries := &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{"first": {Backend: "first", Tools: []ToolDefinition{{Backend: "first", Name: "mcp__first__same", Description: "user one", Schema: json.RawMessage(`{"type":"object","title":"one"}`), ReadOnly: true}}}}}
-	process := testCatalogueProcess(runtime, queries, "first")
+	testCatalogueProcess(runtime, queries, nil, "first")
 
 	firstRaw, _, err := runtime.AttachSession(t.Context(), "first-session")
 	if err != nil {
 		t.Fatal(err)
 	}
 	first := firstRaw.(*Attachment)
-	if _, err := first.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), process, staticTokenSource("opaque-broker-token"), nil); err != nil {
+	if _, err := first.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), staticTokenSource("opaque-broker-token")); err != nil {
 		t.Fatal(err)
 	}
 	queries.responses["first"] = AuthenticatedCapabilities{Backend: "first", Tools: []ToolDefinition{{Backend: "first", Name: "mcp__first__same", Description: "user two", Schema: json.RawMessage(`{"type":"object","title":"two"}`)}}}
@@ -237,7 +231,7 @@ func TestAuthenticatedDeclaredMetadataIsSessionSpecific(t *testing.T) {
 		t.Fatal(err)
 	}
 	second := secondRaw.(*Attachment)
-	if _, err := second.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), process, staticTokenSource("opaque-broker-token"), nil); err != nil {
+	if _, err := second.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), staticTokenSource("opaque-broker-token")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -252,9 +246,9 @@ func TestReplacedDeclaredToolRemainsBrokerRouted(t *testing.T) {
 	runtime := testAnonymousRuntime(t)
 	static := route{backend: "first", spec: tool.ToolSpec{Name: "mcp__first__same", Description: "static", Schema: json.RawMessage(`{"type":"object"}`)}, oauth: &oauthRoute{}, broker: true}
 	runtime.catalogue = &Catalogue{routes: append(runtime.catalogue.routes, static)}
+	testCatalogueProcess(runtime, &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{"first": {Backend: "first", Tools: []ToolDefinition{{Backend: "first", Name: "mcp__first__same", Description: "live", Schema: json.RawMessage(`{"type":"object"}`)}}}}}, nil, "first")
 	attachment := testAttachment(t, runtime)
-	process := testCatalogueProcess(runtime, &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{"first": {Backend: "first", Tools: []ToolDefinition{{Backend: "first", Name: "mcp__first__same", Description: "live", Schema: json.RawMessage(`{"type":"object"}`)}}}}}, "first")
-	if _, err := attachment.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), process, staticTokenSource("opaque-broker-token"), nil); err != nil {
+	if _, err := attachment.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), staticTokenSource("opaque-broker-token")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -283,12 +277,12 @@ func TestReplacedDeclaredToolRemainsBrokerRouted(t *testing.T) {
 func TestFreshSessionPerformsFreshAuthenticatedDiscovery(t *testing.T) {
 	runtime := testAnonymousRuntime(t)
 	queries := &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{"first": {Backend: "first", Tools: []ToolDefinition{{Backend: "first", Name: "mcp__first__tool", Description: "old", Schema: json.RawMessage(`{"type":"object"}`)}}}}}
-	process := testCatalogueProcess(runtime, queries, "first")
+	testCatalogueProcess(runtime, queries, nil, "first")
 	firstRaw, _, err := runtime.AttachSession(t.Context(), "fresh-one")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := firstRaw.(*Attachment).FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), process, staticTokenSource("opaque-broker-token"), nil); err != nil {
+	if _, err := firstRaw.(*Attachment).FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), staticTokenSource("opaque-broker-token")); err != nil {
 		t.Fatal(err)
 	}
 	queries.responses["first"] = AuthenticatedCapabilities{Backend: "first", Tools: []ToolDefinition{{Backend: "first", Name: "mcp__first__tool", Description: "new", Schema: json.RawMessage(`{"type":"object"}`)}}}
@@ -296,7 +290,7 @@ func TestFreshSessionPerformsFreshAuthenticatedDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := secondRaw.(*Attachment).FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), process, staticTokenSource("opaque-broker-token"), nil); err != nil {
+	if _, err := secondRaw.(*Attachment).FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), staticTokenSource("opaque-broker-token")); err != nil {
 		t.Fatal(err)
 	}
 	if queries.calls != 2 || toolByName(t, firstRaw.(*Attachment), "mcp__first__tool").Spec().Description != "old" || toolByName(t, secondRaw.(*Attachment), "mcp__first__tool").Spec().Description != "new" {
@@ -306,9 +300,9 @@ func TestFreshSessionPerformsFreshAuthenticatedDiscovery(t *testing.T) {
 
 func TestFreezeAuthenticatedCatalogueConcurrentFreezeHasOneCatalogue(t *testing.T) {
 	runtime := testAnonymousRuntime(t)
-	attachment := testAttachment(t, runtime)
 	queries := &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{"first": {Backend: "first", Tools: []ToolDefinition{{Backend: "first", Name: "mcp__first__tool", Description: "safe", Schema: json.RawMessage(`{"type":"object"}`)}}}}}
-	process := testCatalogueProcess(runtime, queries, "first")
+	testCatalogueProcess(runtime, queries, nil, "first")
+	attachment := testAttachment(t, runtime)
 	ref := testEnrollmentRef()
 
 	var group sync.WaitGroup
@@ -317,7 +311,7 @@ func TestFreezeAuthenticatedCatalogueConcurrentFreezeHasOneCatalogue(t *testing.
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			_, err := attachment.FreezeAuthenticatedCatalogue(context.Background(), ref, process, staticTokenSource("opaque-broker-token"), nil)
+			_, err := attachment.FreezeAuthenticatedCatalogue(context.Background(), ref, staticTokenSource("opaque-broker-token"))
 			errs <- err
 		}()
 	}
@@ -333,7 +327,7 @@ func TestFreezeAuthenticatedCatalogueConcurrentFreezeHasOneCatalogue(t *testing.
 	}
 	conflicting := ref
 	conflicting.ID = "other-enrollment"
-	if _, err := attachment.FreezeAuthenticatedCatalogue(t.Context(), conflicting, process, staticTokenSource("opaque-broker-token"), nil); !errors.Is(err, ErrAuthenticatedDiscovery) {
+	if _, err := attachment.FreezeAuthenticatedCatalogue(t.Context(), conflicting, staticTokenSource("opaque-broker-token")); !errors.Is(err, ErrAuthenticatedDiscovery) {
 		t.Fatalf("conflicting enrollment error = %v, want authenticated discovery failure", err)
 	}
 	if queries.calls != 1 {
@@ -380,12 +374,15 @@ func (q *orderedCapabilityQueries) query(ctx context.Context, _ oauth2.TokenSour
 	return response, nil
 }
 
-func testCatalogueProcess(runtime *Runtime, queries *orderedCapabilityQueries, backends ...string) *Process {
-	return &Process{
+func testCatalogueProcess(runtime *Runtime, queries *orderedCapabilityQueries, occupied []string, backends ...string) *Process {
+	processCtx, cancel := context.WithCancel(context.Background())
+	process := &Process{
 		Runtime: runtime, construction: toolHiveConstruction{protectedBackends: backends},
 		protectedTarget:    &oauthRoute{authorizationEndpoint: "https://issuer.example/authorize", tokenEndpoint: "https://issuer.example/token", callbackURL: "https://issuer.example/callback", clientID: "broker"},
-		queryAuthenticated: queries.query, ctx: context.Background(), cancel: func() {},
+		queryAuthenticated: queries.query, ctx: processCtx, cancel: cancel,
 	}
+	process.configureRuntime(occupied)
+	return process
 }
 
 func testAnonymousRuntime(t *testing.T) *Runtime {

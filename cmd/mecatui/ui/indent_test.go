@@ -139,14 +139,8 @@ func TestSelectionXMapWithIndent(t *testing.T) {
 	}
 }
 
-// bodyTextColumn returns the VISUAL cell column at which the body text begins — the
-// count of leading cells before the first body letter `firstLetter` on the FIRST
-// non-blank line AFTER the line containing `label` (ANSI-stripped). Skipping blank lines
-// matters because the assistant block now has a blank line between its label and body.
-// This measures true visual alignment: the user body's leading cells are " │ " (space,
-// rail glyph, space) while the assistant body's are "   " (three spaces); both land the
-// text at the same column even though their leading-SPACE counts differ, so a raw
-// leading-space compare would be wrong.
+// bodyTextColumn returns the visual cell column of the first body letter on the
+// first non-blank line after label, ignoring ANSI styles and presentation rails.
 func bodyTextColumn(t *testing.T, out, label string, firstLetter byte) int {
 	t.Helper()
 	lines := strings.Split(out, "\n")
@@ -169,13 +163,8 @@ func bodyTextColumn(t *testing.T, out, label string, firstLetter byte) int {
 	return -1
 }
 
-// TestAssistantBodyHangsUnderLabel pins CHANGE A: the assistant MESSAGE body hangs by
-// assistantBodyHang so its TEXT sits under "mecatl" (base indent + the "● " marker
-// width), matching the user body, which the gold rail + PaddingLeft(1) already lands
-// under "you". Both bodies begin at the SAME visual column == base + 2 (the marker width);
-// the labels stay at the base indent. (The two bodies' leading-cell makeup differs — the
-// user's is " │ ", the assistant's is "   " — so this asserts the VISUAL text column, not
-// a raw leading-space count.)
+// TestAssistantBodyHangsUnderLabel pins that user and assistant bodies share the
+// same text column: base indent plus a rail and one padding cell.
 func TestAssistantBodyHangsUnderLabel(t *testing.T) {
 	r := newTestRenderer()
 	r.setWidth(70)
@@ -183,13 +172,18 @@ func TestAssistantBodyHangsUnderLabel(t *testing.T) {
 	c.addUser("user body text")
 	c.appendAssistant("assistant body text")
 	out := r.renderConversation(c, true)
+	for _, body := range []string{"user body text", "assistant body text"} {
+		if !strings.Contains(ansi.Strip(out), strings.Repeat(" ", r.indent)+"│ "+body) {
+			t.Errorf("body %q lacks its rail at the shared base column", body)
+		}
+	}
 
 	wantCol := r.indent + assistantBodyHang // base + marker width
-	asstCol := bodyTextColumn(t, out, "● mecatl", 'a')
+	asstCol := bodyTextColumn(t, out, "◀ mecatl", 'a')
 	if asstCol != wantCol {
 		t.Errorf("assistant body text column = %d, want %d (base %d + hang %d, under \"mecatl\")", asstCol, wantCol, r.indent, assistantBodyHang)
 	}
-	userCol := bodyTextColumn(t, out, "▌ you", 'u')
+	userCol := bodyTextColumn(t, out, "▶ you", 'u')
 	if userCol != asstCol {
 		t.Errorf("user body text column = %d, assistant = %d — the two message bodies must align under their labels", userCol, asstCol)
 	}

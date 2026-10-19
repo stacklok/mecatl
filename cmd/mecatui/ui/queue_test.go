@@ -228,7 +228,7 @@ func TestDrainMergePausesOnPendingMode(t *testing.T) {
 	if m.queuePaused != "mode" {
 		t.Fatalf("pending mode must pause the merged drain, queuePaused=%q", m.queuePaused)
 	}
-	if got := m.prompt.Value(); got != "second"+queueMergeSep+"third" {
+	if got := m.prompt.Value(); got != "/queue second"+queueMergeSep+"third" {
 		t.Fatalf("merged text must sit in the textarea, got %q", got)
 	}
 	if len(m.queued) != 0 {
@@ -352,42 +352,18 @@ func TestPauseOnConsecutiveFailures(t *testing.T) {
 	}
 }
 
-// TestQueuePreviewBounded: renderQueue's per-frame preview flatten is bounded to
-// queuePreviewBound leading runes, so an enqueue-expanded multi-KB payload is
-// never whitespace-scanned in full on every rendered frame while queued. Two
-// behavioural pins: (1) the bounded pipeline is byte-identical to the unbounded
-// one for a short (multi-line) string; (2) two huge payloads that agree on their
-// first queuePreviewBound runes but differ wildly after render the SAME preview
-// line — the function's output cannot depend on anything past the bound, the
-// observable form of "does not scan past it". Plus a rune-correctness pin on
-// runePrefix itself.
-func TestQueuePreviewBounded(t *testing.T) {
+func TestRunePrefixBounded(t *testing.T) {
 	if got := runePrefix("漢字abc", 2); got != "漢字" {
 		t.Fatalf("runePrefix counts bytes, not runes: %q", got)
 	}
-	// The length pin is the bound's mutation-killer: output equality alone cannot
-	// catch a runePrefix that returns s whole, because identical preview output IS
-	// the requirement — only the slice length observes the bound directly.
-	huge := strings.Repeat("z", 10*queuePreviewBound)
-	if got := runePrefix(huge, queuePreviewBound); len(got) != queuePreviewBound {
-		t.Fatalf("runePrefix returned %d bytes of a huge payload, want the %d-rune bound", len(got), queuePreviewBound)
+	const bound = 240
+	huge := strings.Repeat("z", 10*bound)
+	if got := runePrefix(huge, bound); len(got) != bound {
+		t.Fatalf("runePrefix returned %d bytes of a huge payload, want the %d-rune bound", len(got), bound)
 	}
-
 	short := "alpha\nbeta\tgamma"
-	if got, want := oneLine(runePrefix(short, queuePreviewBound)), oneLine(short); got != want {
-		t.Fatalf("bounded preview differs for a short string: %q vs %q", got, want)
-	}
-
-	head := strings.Repeat("h", queuePreviewBound)
-	a := head + strings.Repeat("\n\ttail-a", 4000)
-	b := head + strings.Repeat(" tail-b!", 4000)
-	pa := truncate(oneLine(runePrefix(a, queuePreviewBound)), queuePreviewWidth)
-	pb := truncate(oneLine(runePrefix(b, queuePreviewBound)), queuePreviewWidth)
-	if pa != pb {
-		t.Fatalf("preview depends on content past the bound:\n%q\n%q", pa, pb)
-	}
-	if want := truncate(oneLine(head), queuePreviewWidth); pa != want {
-		t.Errorf("bounded preview = %q, want the bounded-prefix flatten %q", pa, want)
+	if got := runePrefix(short, bound); got != short {
+		t.Fatalf("runePrefix changed a short string: %q", got)
 	}
 }
 

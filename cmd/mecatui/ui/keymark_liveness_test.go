@@ -617,9 +617,10 @@ func TestMCPOverlayHintsReflectKeyOverride(t *testing.T) {
 // TestEffortOverlayHintsReflectKeyOverride proves the effort picker footer reads the
 // LIVE Up/Down/Choose/Close markings (issue #457).
 func TestEffortOverlayHintsReflectKeyOverride(t *testing.T) {
-	hk := liveHK()
-	th := theme.New("aztec", theme.AztecPalette())
-	got := stripANSIstr(renderEffortOverlay(th, effortState{view: effortPanel}, "auto", false, hk, 100, 30))
+	m := newModelsModel(t, sampleModels(), &fakeStore{}, modelsCaps(), client.ModelSelection{})
+	m.keys = applyKeyOverrides(defaultKeys(), overrideAll())
+	mm, _ := m.runEffort()
+	got := stripANSIstr(mm.(Model).View().Content)
 	if !strings.Contains(got, "ctrl+f26/ctrl+f27 move · ctrl+f17 apply · ctrl+f16 close") {
 		t.Errorf("effort hint should carry live move/apply/close: %q", got)
 	}
@@ -705,18 +706,29 @@ func TestScheduleOverlayHintsReflectKeyOverride(t *testing.T) {
 }
 
 // TestWorktreesOverlayHintsReflectKeyOverride proves the worktrees overlay panel/confirm
-// footers read the LIVE Choose/Close markings (issue #457).
+// footers use the Choose/Close markings captured when the surface opens.
 func TestWorktreesOverlayHintsReflectKeyOverride(t *testing.T) {
 	hk := liveHK()
 	th := theme.New("aztec", theme.AztecPalette())
 	t.Run("panel", func(t *testing.T) {
-		st := worktreesState{view: worktreesPanel, filtered: []client.Worktree{{Selector: testWorktreeSelector("opaque"), Label: "p", Branch: "b"}}}
-		got := stripANSIstr(renderWorktreesOverlay(th, st, client.Capabilities{}, hk, 100, 30))
+		st := worktreesState{deps: surfaceDeps{theme: th, keys: defaultKeys(), marks: hk}, identities: make(map[client.WorktreeSelector]string), worktrees: []client.Worktree{{Selector: testWorktreeSelector("opaque"), Label: "p", Branch: "b"}}}
+		st.syncFilter()
+		body, _ := st.Render(100, 30)
+		got := stripANSIstr(body)
 		if !strings.Contains(got, "ctrl+f17: select  ctrl+f16: close") {
 			t.Errorf("worktrees panel hint should carry live select/close: %q", got)
 		}
 		if strings.Contains(got, "enter: select  esc: close") {
 			t.Errorf("worktrees panel hint still shows defaults: %q", got)
+		}
+		st.confirm = &st.worktrees[0]
+		body, _ = st.Render(100, 30)
+		got = stripANSIstr(body)
+		if !strings.Contains(got, "ctrl+f17: start session  ctrl+f16: back") {
+			t.Errorf("worktrees confirmation did not use captured markings: %q", got)
+		}
+		if strings.Contains(got, "enter: start session  esc: back") {
+			t.Errorf("worktrees confirmation still shows defaults: %q", got)
 		}
 	})
 }

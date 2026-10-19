@@ -77,21 +77,11 @@ func (s *helpState) Render(width, height int) (string, []ClickableRegion) {
 }
 
 func (s *helpState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
-	switch {
-	case key.Matches(msg, s.deps.keys.Help), key.Matches(msg, s.deps.keys.Close):
+	if key.Matches(msg, s.deps.keys.Help) || key.Matches(msg, s.deps.keys.Close) {
 		return nil, true, true
-	case key.Matches(msg, s.deps.keys.ScrollD):
-		s.viewport.Move(bounded.PageDown, s.total)
-	case key.Matches(msg, s.deps.keys.ScrollU):
-		s.viewport.Move(bounded.PageUp, s.total)
-	case key.Matches(msg, s.deps.keys.Down):
-		s.viewport.Move(bounded.LineDown, s.total)
-	case key.Matches(msg, s.deps.keys.Up):
-		s.viewport.Move(bounded.LineUp, s.total)
-	case key.Matches(msg, s.deps.keys.ScrollBottom):
-		s.viewport.Move(bounded.End, s.total)
-	case key.Matches(msg, s.deps.keys.ScrollTop):
-		s.viewport.Move(bounded.Top, s.total)
+	}
+	if move, ok := boundedNavigationMove(msg, s.deps.keys, bounded.PageDown, bounded.PageUp, bounded.LineDown, bounded.LineUp, bounded.End, bounded.Top); ok {
+		s.viewport.Move(move, s.total)
 	}
 	return nil, true, false
 }
@@ -99,11 +89,8 @@ func (s *helpState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 func (*helpState) HandleMsg(tea.Msg) (tea.Cmd, bool, bool) { return nil, false, false }
 
 func (s *helpState) HandleWheel(msg tea.MouseWheelMsg) (tea.Cmd, bool) {
-	switch msg.Button {
-	case tea.MouseWheelUp:
-		s.viewport.Move(bounded.LineUp, s.total)
-	case tea.MouseWheelDown:
-		s.viewport.Move(bounded.LineDown, s.total)
+	if move, ok := boundedWheelMove(msg); ok {
+		s.viewport.Move(move, s.total)
 	}
 	return nil, true
 }
@@ -191,12 +178,16 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 	})
 
 	b.WriteString("\n" + heading.Render("While a run is active") + "\n")
-	streamingSubmit := "queue a follow-up to send after this run"
+	streamingSubmit := "add to pending input; otherwise queue a follow-up after this run"
 	if caps.Steer {
-		streamingSubmit = "guide the running agent at its next step; built-in commands still run here"
+		streamingSubmit = "add to pending input; otherwise guide the running agent at its next step"
 	}
 	writeHelpRows(&b, th, []helpRow{
 		{key: hk.submit, action: streamingSubmit},
+		{key: "/queue TEXT", action: "hold a follow-up until this run finishes"},
+		{key: "/steer TEXT", action: "guide this run at its next turn boundary", available: caps.Steer, gated: true},
+		{key: hk.editBack, action: "with empty input, pull pending messages into one prefixed draft"},
+		{key: "", action: "pending steers and queued follow-ups cannot mix; built-in commands still run here"},
 		{key: hk.clearPrompt, action: "clear the current draft"},
 		{key: hk.cancel, action: "cancel the current run"},
 	})

@@ -101,7 +101,7 @@ func TestRedisFollowCapacity_Scenario4_Go127SourceBuildSurfaces(t *testing.T) {
 		"user-docs/_partials/release-archives-and-source.mdx":         "requires Go 1.27.2 or later",
 		"user-docs/building/go/demo.md":                               "**Go 1.27.2 or newer**",
 		"user-docs/building/go/first-agent.md":                        "Go 1.27.2 or newer",
-		"sdk/typescript/examples/slack-bot/docker/mecated.Dockerfile": "FROM golang:1.27.2-bookworm AS build",
+		"sdk/typescript/examples/slack-bot/docker/mecated.Dockerfile": "FROM golang:1.27.2-bookworm@sha256:",
 	} {
 		body, err := os.ReadFile(filepath.Join(root, name))
 		if err != nil {

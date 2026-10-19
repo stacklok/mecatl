@@ -4,8 +4,7 @@ import type { UserMemoryResponse } from "@mecatl-studio/contracts";
 import { listUserMemoryOptions } from "@mecatl-studio/contracts/query";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useState } from "react";
-import { SortableHead, type SortDirection } from "../../components/ui/sortable-head";
+import { SortableHead, type SortDir, useTableSort } from "@/components/sortable-head";
 import { Table, TableBody, TableCell, TableHeader, TableRow } from "../../components/ui/table";
 import { Note, SettingsCard } from "../settings/settings-card";
 
@@ -21,10 +20,7 @@ const NO_DESCRIPTION = "No description recorded.";
  */
 export function FactsAboutYou() {
   const query = useQuery(listUserMemoryOptions());
-  const [sort, setSort] = useState<{ direction: SortDirection; key: FactSortKey }>({
-    direction: "asc",
-    key: "name",
-  });
+  const sort = useTableSort<FactSortKey>("name");
 
   let body: React.ReactNode;
   if (query.isPending) {
@@ -32,44 +28,33 @@ export function FactsAboutYou() {
   } else if (query.isError) {
     body = <Note role="alert">{errorMessage(query.error)}</Note>;
   } else if (!query.data.supported) {
-    body = <Note>Facts about you is off, so there is nothing to show.</Note>;
+    body = <Note role="status">Facts about you is off, so there is nothing to show.</Note>;
   } else if (query.data.items.length === 0) {
-    body = <Note>The agent hasn&rsquo;t remembered anything about you yet.</Note>;
+    body = <Note role="status">The agent hasn&rsquo;t remembered anything about you yet.</Note>;
   } else {
-    const rows = sortFacts(query.data.items, sort.key, sort.direction);
-    const toggle = (key: FactSortKey) =>
-      setSort((current) => ({
-        direction: current.key === key && current.direction === "asc" ? "desc" : "asc",
-        key,
-      }));
-    const direction = (key: FactSortKey) => (sort.key === key ? sort.direction : undefined);
+    const rows = sortFacts(query.data.items, sort.key, sort.dir);
     body = (
-      <div className="space-y-3">
+      <div className="@container space-y-3">
         <p className="text-xs text-muted-foreground" data-testid="memory-footprint">
           {footprint(rows.length)}
         </p>
         <div className="overflow-hidden rounded-lg border">
           <Table>
-            <TableHeader className="max-[499px]:hidden">
+            <TableHeader className="@max-[440px]:hidden">
               <TableRow className="hover:bg-transparent">
                 <SortableHead
-                  className="w-[280px] px-4 lg:w-[320px]"
-                  direction={direction("name")}
+                  className="w-[280px] lg:w-[320px]"
                   label="Name"
-                  onSort={() => toggle("name")}
+                  sort={sort}
+                  sortKey="name"
                 />
-                <SortableHead
-                  className="px-4"
-                  direction={direction("remembers")}
-                  label="Remembers"
-                  onSort={() => toggle("remembers")}
-                />
+                <SortableHead label="Remembers" sort={sort} sortKey="remembers" />
               </TableRow>
             </TableHeader>
             <TableBody>
               {rows.map((entry) => (
                 <TableRow key={entry.key}>
-                  <TableCell className="max-w-0 px-4 py-3 max-[499px]:w-full">
+                  <TableCell className="max-w-0 @max-[440px]:w-full">
                     <Link
                       className="block truncate text-sm font-medium hover:underline"
                       search={{ item: entry.key }}
@@ -77,12 +62,13 @@ export function FactsAboutYou() {
                     >
                       {entry.key}
                     </Link>
-                    {/* Mobile collapses to one stacked cell. */}
-                    <p className="line-clamp-2 text-xs text-muted-foreground min-[500px]:hidden">
+                    {/* A narrow column (a phone, or beside the Settings nav up to a
+                        tablet) collapses to one stacked cell. */}
+                    <p className="line-clamp-2 text-xs text-muted-foreground @min-[440px]:hidden">
                       {entry.description || NO_DESCRIPTION}
                     </p>
                   </TableCell>
-                  <TableCell className="max-w-0 px-4 py-3 max-[499px]:hidden">
+                  <TableCell className="max-w-0 @max-[440px]:hidden">
                     <p className="line-clamp-1 whitespace-normal text-xs text-muted-foreground">
                       {entry.description || NO_DESCRIPTION}
                     </p>
@@ -103,7 +89,7 @@ function footprint(count: number) {
   return `${count} ${count === 1 ? "fact" : "facts"} remembered`;
 }
 
-function sortFacts(items: MemoryEntry[], key: FactSortKey, direction: SortDirection) {
+function sortFacts(items: MemoryEntry[], key: FactSortKey, direction: SortDir) {
   const byName = (a: MemoryEntry, b: MemoryEntry) => a.key.localeCompare(b.key);
   const primary = (a: MemoryEntry, b: MemoryEntry) =>
     key === "remembers" ? (a.description || "").localeCompare(b.description || "") : byName(a, b);

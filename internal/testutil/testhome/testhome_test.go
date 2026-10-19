@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/adrg/xdg"
+
+	"github.com/stacklok/mecatl/internal/adapter/managedtemp"
 )
 
 func TestRunIsolatesAllXDGRootsAndRestoresProcessState(t *testing.T) {
@@ -91,5 +93,82 @@ func TestRunIsolatesAllXDGRootsAndRestoresProcessState(t *testing.T) {
 	}
 	if xdg.DataHome != poison["XDG_DATA_HOME"] {
 		t.Errorf("xdg.DataHome after Run = %q, want restored %q", xdg.DataHome, poison["XDG_DATA_HOME"])
+	}
+}
+
+func TestRunUsesActiveManagedCmdAndJobLeaseRuntime(t *testing.T) {
+	ns, err := managedtemp.Open(filepath.Join(t.TempDir(), "managed"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ns.Close() })
+	workspace, err := ns.OpenWorkspace("osfs", "test-home-managed-lease", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = workspace.Close() })
+	if err := os.Remove(filepath.Join(ns.Path(), "gc.lock")); err != nil {
+		t.Fatalf("remove test namespace gc lock: %v", err)
+	}
+
+	for _, kind := range []string{"cmd", "job"} {
+		t.Run(kind, func(t *testing.T) {
+			t.Cleanup(xdg.Reload)
+			lease, err := workspace.Allocate(kind)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ambient := map[string]string{
+				"HOME":            filepath.Join(t.TempDir(), "ambient-home"),
+				"XDG_CONFIG_HOME": filepath.Join(t.TempDir(), "ambient-config"),
+				"XDG_DATA_HOME":   filepath.Join(t.TempDir(), "ambient-data"),
+				"XDG_STATE_HOME":  filepath.Join(t.TempDir(), "ambient-state"),
+				"XDG_CACHE_HOME":  filepath.Join(t.TempDir(), "ambient-cache"),
+				"XDG_RUNTIME_DIR": filepath.Join(t.TempDir(), "ambient-runtime"),
+			}
+			t.Setenv("MECATL_TEST_TEMP_LEASE", lease.Path())
+			for name, value := range ambient {
+				t.Setenv(name, value)
+			}
+			xdg.Reload()
+
+			var runtime string
+			if exit := Run("managed", func() int {
+				runtime = os.Getenv("XDG_RUNTIME_DIR")
+				if want := lease.TempDir(); runtime != want {
+					t.Errorf("XDG_RUNTIME_DIR = %q, want %q", runtime, want)
+				}
+				if got, want := os.Getenv("HOME"), filepath.Join(lease.Path(), "test-home", "home"); got != want {
+					t.Errorf("HOME = %q, want isolated %q", got, want)
+				}
+				if err := os.WriteFile(filepath.Join(runtime, "test.sock"), nil, 0o600); err != nil {
+					t.Errorf("write in managed runtime: %v", err)
+					return 1
+				}
+				return 0
+			}); exit != 0 {
+				t.Fatalf("Run exit = %d", exit)
+			}
+			if _, err := os.Lstat(filepath.Join(ns.Path(), "gc.lock")); !os.IsNotExist(err) {
+				t.Fatalf("testhome created gc.lock: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(runtime, "test.sock")); err != nil {
+				t.Fatalf("runtime entry does not survive Run: %v", err)
+			}
+			for name, want := range ambient {
+				if got := os.Getenv(name); got != want {
+					t.Errorf("%s after Run = %q, want restored %q", name, got, want)
+				}
+			}
+			if got := xdg.DataHome; got != ambient["XDG_DATA_HOME"] {
+				t.Errorf("xdg.DataHome after Run = %q, want restored %q", got, ambient["XDG_DATA_HOME"])
+			}
+			if err := lease.Remove(); err != nil {
+				t.Fatalf("remove lease: %v", err)
+			}
+			if _, err := os.Stat(lease.Path()); !os.IsNotExist(err) {
+				t.Fatalf("removed lease remains at %q: %v", lease.Path(), err)
+			}
+		})
 	}
 }

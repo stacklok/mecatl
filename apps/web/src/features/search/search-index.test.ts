@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildGlobalSearchIndex,
+  createGlobalSearchProvider,
   type GlobalSearchItem,
   globalSearchPages,
   groupSearchResults,
@@ -210,5 +211,20 @@ describe("groupSearchResults", () => {
 
   it("returns an empty array for no results", () => {
     expect(groupSearchResults([])).toEqual([]);
+  });
+
+  it("serves the ranked index through the provider shape", () => {
+    const index = buildGlobalSearchIndex({
+      configuredSkills: [],
+      learnedSkills: [],
+      memory: [{ description: "help with shortcuts", key: "Shortcuts note" }],
+      schedules: [],
+      sessions: [],
+    });
+    const provider = createGlobalSearchProvider(index);
+    expect(provider.query("shortcuts").map((result) => result.entry)).toEqual(
+      searchGlobalIndex(index, "shortcuts"),
+    );
+    expect(provider.query("  ")).toEqual([]);
   });
 });

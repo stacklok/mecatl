@@ -109,6 +109,11 @@ func (f *fakeSender) frames() []*mecatlv1.ConverseRequest {
 	return out
 }
 
+type fakeClearRequest struct {
+	sourceID string
+	selector *client.WorktreeSelector
+}
+
 // fakeConv is the ui's Converser+SessionCreator backed by a fakeRecver/Sender. It
 // builds a real client.Stream so the test exercises the production ReadLoop,
 // EventToMsg, and send path — the only thing faked is the transport.
@@ -166,10 +171,13 @@ type fakeConv struct {
 	// goroutine + the test goroutine. closedIDs records CloseSession arguments.
 	echoSelAsResolved bool
 	createCount       int
-	closedIDs         []string
-	operations        []string
-	closeErr          error
-	mu                sync.Mutex
+	// clearRequests records each successor handoff's source binding and opaque
+	// authority. It is guarded by mu because commands run off the test goroutine.
+	clearRequests []fakeClearRequest
+	closedIDs     []string
+	operations    []string
+	closeErr      error
+	mu            sync.Mutex
 	// lastResolved records the resolved model the MOST RECENT CreateSession echoed
 	// back, so GetSession can return it (modelling a real server whose GetSession
 	// returns the same resolved model the create did). Without this, GetSession
@@ -425,7 +433,16 @@ func (c *fakeConv) CreateSessionWithCarryover(ctx context.Context, sourceSession
 	return c.CreateSession(ctx, sel, c.mode)
 }
 
-func (c *fakeConv) ClearSession(ctx context.Context, _ string, selector *client.WorktreeSelector) (string, client.SessionSnapshot, error) {
+func (c *fakeConv) ClearSession(ctx context.Context, sourceID string, selector *client.WorktreeSelector) (string, client.SessionSnapshot, error) {
+	var recordedSelector *client.WorktreeSelector
+	if selector != nil {
+		value := *selector
+		recordedSelector = &value
+	}
+	c.mu.Lock()
+	c.clearRequests = append(c.clearRequests, fakeClearRequest{sourceID: sourceID, selector: recordedSelector})
+	c.mu.Unlock()
+
 	id, caps, resolved, err := c.CreateSession(ctx, client.ModelSelection{}, c.mode)
 	c.mu.Lock()
 	if n := len(c.operations); n > 0 {
@@ -466,6 +483,21 @@ func (c *fakeConv) CloseSession(_ context.Context, id string) error {
 	c.closedIDs = append(c.closedIDs, id)
 	c.operations = append(c.operations, "close")
 	return c.closeErr
+}
+
+// clearCalls returns copies of the recorded successor handoff authorities.
+func (c *fakeConv) clearCalls() []fakeClearRequest {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	calls := make([]fakeClearRequest, len(c.clearRequests))
+	for i, call := range c.clearRequests {
+		calls[i].sourceID = call.sourceID
+		if call.selector != nil {
+			selector := *call.selector
+			calls[i].selector = &selector
+		}
+	}
+	return calls
 }
 
 // closed returns a copy of the recorded CloseSession ids (test-goroutine read).

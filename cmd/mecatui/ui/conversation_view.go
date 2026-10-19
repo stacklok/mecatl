@@ -17,8 +17,12 @@ func (v *conversationView) observe(vp viewport.Model) {
 		return
 	}
 	if anchor, ok := v.frame.observedAnchorForRow(vp.YOffset(), towardStart); ok {
-		anchor.bias = towardStart
-		v.anchor = anchor
+		// A collapsed member still owns the reading position while its summary
+		// remains at the viewport edge. F9 can then restore that exact member.
+		if anchor.region != conversationRegionToolSummary || v.frame.toolSummaryRow(v.anchor.blockID) != vp.YOffset() {
+			anchor.bias = towardStart
+			v.anchor = anchor
+		}
 	}
 	v.mode = anchored
 }
@@ -85,6 +89,9 @@ func (conversationView) restore(frame renderedFrame, anchor readingAnchor) int {
 		if row := sameDerivedFallbackRow(frame, anchor); row >= 0 {
 			return row
 		}
+	}
+	if row := frame.toolSummaryRow(anchor.blockID); row >= 0 {
+		return row
 	}
 	if row := sameBlockRow(frame, anchor); row >= 0 {
 		return row

@@ -41,8 +41,8 @@ irrelevant() {
   esac
 
   # Common to both categories: documentation, the docs/user-facing site, the
-  # Mecatl Studio workspace (apps/ holds no Go package and depends on the
-  # PUBLISHED SDK, so it can reach neither a macOS Go job nor the SDK spawn job),
+  # Mecatl Studio workspace (apps/ holds no Go package and nothing outside it
+  # imports it, so it can reach neither a macOS Go job nor the SDK spawn job),
   # and the terminal leaf packages that no macOS-job binary or test imports.
   case "$1" in
     README.md|docs/*.md|docs/*.mdx|user-docs/*|website/*|apps/*)

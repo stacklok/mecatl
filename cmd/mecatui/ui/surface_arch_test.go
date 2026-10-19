@@ -34,12 +34,53 @@ var surfaceFileHomes = map[string]bool{
 	"models_catalog.go":   true,
 	"models_surface.go":   true,
 	"usermodel.go":        true,
+	"effort.go":           true,
+	"worktrees.go":        true,
 	"dream.go":            true,
 }
 
 // surfaceFileCount is the explicit homes the gate counts — another surface file
 // is an explicit decision here, not a silent drift.
-const surfaceFileCount = 11
+const surfaceFileCount = 13
+
+var worktreesSymbolHomes = map[string]string{
+	"worktreesState": "worktrees.go", "worktreesResultMsg": "worktrees.go",
+	"worktreeSelectIntent": "worktrees.go", "openWorktrees": "worktrees.go",
+	"filterWorktrees": "worktrees.go", "worktreeRowText": "worktrees.go",
+}
+
+func TestModelHasNoWorktreesStateField(t *testing.T) {
+	st := reflect.TypeOf(Model{})
+	for i := 0; i < st.NumField(); i++ {
+		f := st.Field(i)
+		typ := f.Type
+		for typ.Kind() == reflect.Pointer {
+			typ = typ.Elem()
+		}
+		if f.Name == "worktrees" || typ.Name() == "worktreesState" {
+			t.Errorf("Model.%s retains worktrees open-lifetime state", f.Name)
+		}
+	}
+}
+
+var effortSymbolHomes = map[string]string{
+	"effortState": "effort.go", "effortSelectIntent": "effort.go", "openEffort": "effort.go",
+	"effortSelection": "effort.go", "effortCursorFor": "effort.go", "effortRowText": "effort.go",
+}
+
+func TestModelHasNoEffortStateField(t *testing.T) {
+	st := reflect.TypeOf(Model{})
+	for i := 0; i < st.NumField(); i++ {
+		f := st.Field(i)
+		typ := f.Type
+		for typ.Kind() == reflect.Pointer {
+			typ = typ.Elem()
+		}
+		if f.Name == "effort" || typ.Name() == "effortState" {
+			t.Errorf("Model.%s retains effort open-lifetime state", f.Name)
+		}
+	}
+}
 
 var dreamSymbolHomes = map[string]string{
 	"dreamState": "dream.go", "dreamResultMsg": "dream.go", "dreamView": "dream.go",
@@ -73,7 +114,7 @@ var modelsSymbolHomes = map[string]string{
 
 var userModelSymbolHomes = map[string]string{
 	"userModelView": "usermodel.go", "userModelPanel": "usermodel.go", "userModelDetail": "usermodel.go", "userModelState": "usermodel.go",
-	"openUserModel": "usermodel.go", "userModelMove": "usermodel.go", "userModelDisabledNote": "usermodel.go", "userModelEmptyCopy": "usermodel.go", "renderUserModelMeta": "usermodel.go",
+	"openUserModel": "usermodel.go", "userModelDisabledNote": "usermodel.go", "userModelEmptyCopy": "usermodel.go", "renderUserModelMeta": "usermodel.go",
 }
 
 // TestSurfaceSymbolsLiveInSurfaceFiles walks every non-test ui package file and
@@ -96,6 +137,22 @@ func TestSurfaceSymbolsLiveInSurfaceFiles(t *testing.T) {
 		f, err := parser.ParseFile(fset, file, nil, 0)
 		if err != nil {
 			t.Fatalf("parse %s: %v", file, err)
+		}
+		if file != "worktrees.go" {
+			ast.Inspect(f, func(node ast.Node) bool {
+				if id, ok := node.(*ast.Ident); ok && id.Name == "worktreesState" {
+					t.Errorf("concrete worktrees state referenced outside its surface: %s", fset.Position(id.Pos()))
+				}
+				return true
+			})
+		}
+		if file != "effort.go" {
+			ast.Inspect(f, func(node ast.Node) bool {
+				if id, ok := node.(*ast.Ident); ok && id.Name == "effortState" {
+					t.Errorf("concrete effort state referenced outside its surface: %s", fset.Position(id.Pos()))
+				}
+				return true
+			})
 		}
 		for _, decl := range f.Decls {
 			var names []string
@@ -121,7 +178,9 @@ func TestSurfaceSymbolsLiveInSurfaceFiles(t *testing.T) {
 				_, isModelsSymbol := modelsSymbolHomes[n]
 				_, isUserModelSymbol := userModelSymbolHomes[n]
 				_, isDreamSymbol := dreamSymbolHomes[n]
-				if !surfaceToken.MatchString(n) && !isModelsSymbol && !isUserModelSymbol && !isDreamSymbol {
+				_, isEffortSymbol := effortSymbolHomes[n]
+				_, isWorktreesSymbol := worktreesSymbolHomes[n]
+				if !surfaceToken.MatchString(n) && !isModelsSymbol && !isUserModelSymbol && !isDreamSymbol && !isEffortSymbol && !isWorktreesSymbol {
 					continue
 				}
 				if !surfaceFileHomes[file] {
@@ -132,6 +191,12 @@ func TestSurfaceSymbolsLiveInSurfaceFiles(t *testing.T) {
 				}
 				if want, ok := userModelSymbolHomes[n]; ok && file != want {
 					t.Errorf("/memory declaration %q lives in %s, want %s", n, file, want)
+				}
+				if want, ok := worktreesSymbolHomes[n]; ok && file != want {
+					t.Errorf("/worktrees declaration %q lives in %s, want %s", n, file, want)
+				}
+				if want, ok := effortSymbolHomes[n]; ok && file != want {
+					t.Errorf("/effort declaration %q lives in %s, want %s", n, file, want)
 				}
 				if want, ok := dreamSymbolHomes[n]; ok && file != want {
 					t.Errorf("/dream declaration %q lives in %s, want %s", n, file, want)

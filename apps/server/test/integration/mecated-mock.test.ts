@@ -104,7 +104,7 @@ describe.skipIf(!available)("Studio BFF against a spawned mecated --mock", () =>
 
   it("creates a session, streams a run over SSE, and reads the transcript back", async () => {
     const created = await json("/api/v1/sessions", {
-      body: JSON.stringify({ mode: "default", reasoningEffort: "default", toolAccess: "all" }),
+      body: JSON.stringify({ mode: "default", reasoningEffort: "default" }),
       headers: csrf,
       method: "POST",
     });
@@ -140,6 +140,15 @@ describe.skipIf(!available)("Studio BFF against a spawned mecated --mock", () =>
 
     const detail = await json(`/api/v1/sessions/${id}`);
     expect(detail.body).toMatchObject({ id, mode: "default", state: "completed" });
+    // The mock daemon resolves its own provider; these fields predate provider display names (#2260).
+    expect(detail.body.model).toMatchObject({
+      id: "mock",
+      providerId: "mock",
+      reasoningEffort: "default",
+    });
+    expect(typeof (detail.body.model as { contextWindow?: unknown }).contextWindow).toBe("string");
+    // The BFF names the resolved model's provider for the browser.
+    expect(detail.body.model).toMatchObject({ providerDisplayName: "Mock" });
 
     const renamed = await json(`/api/v1/sessions/${id}`, {
       body: JSON.stringify({ title: "Integration chat" }),
@@ -157,7 +166,7 @@ describe.skipIf(!available)("Studio BFF against a spawned mecated --mock", () =>
 
   it("answers 409 stale_run_control for a control on an unknown run", async () => {
     const created = await json("/api/v1/sessions", {
-      body: JSON.stringify({ mode: "default", reasoningEffort: "default", toolAccess: "all" }),
+      body: JSON.stringify({ mode: "default", reasoningEffort: "default" }),
       headers: csrf,
       method: "POST",
     });
@@ -219,6 +228,15 @@ describe.skipIf(!available)("Studio BFF against a spawned mecated --mock", () =>
     expect(missing).toMatchObject({ body: { code: "not_found" }, status: 404 });
 
     const runtime = await json("/api/v1/runtime");
+    const page = await json("/api/v1/learning-proposals?status=staged&limit=1");
+    expect(page.status).toBe(200);
+    expect(typeof page.body.nextCursor).toBe("string");
+    const absentProposal = await json("/api/v1/learning-proposals/does-not-exist");
+    expect(absentProposal).toMatchObject(
+      (runtime.body.capabilities as { learningProposals?: boolean }).learningProposals
+        ? { body: { code: "not_found" }, status: 404 }
+        : { body: { code: "learning_proposals_unsupported" }, status: 501 },
+    );
     type Dream = { generate: boolean };
     const manualDream = (
       runtime.body.capabilities as { manualDream?: { projectMemory?: Dream; userModel?: Dream } }
@@ -298,7 +316,7 @@ describe.skipIf(!available)("Studio BFF against a spawned mecated --mock", () =>
     // bound is deliberately tiny. Everything below the route is real: the SDK,
     // the spawned daemon, and its event log.
     const created = await json("/api/v1/sessions", {
-      body: JSON.stringify({ mode: "default", reasoningEffort: "default", toolAccess: "all" }),
+      body: JSON.stringify({ mode: "default", reasoningEffort: "default" }),
       headers: csrf,
       method: "POST",
     });

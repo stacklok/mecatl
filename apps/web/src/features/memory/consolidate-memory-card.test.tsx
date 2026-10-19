@@ -393,10 +393,12 @@ describe("ConsolidateMemoryCard", () => {
     expect(text(change)).toContain("Uses vim with vim keybindings");
     expect(text(change)).toContain("Merged editor preference");
 
-    const summary = within(change).getByText("Show current values");
-    const details = summary.closest("details");
+    const trigger = within(change).getByRole("button", { name: "Show current values" });
+    await user.click(trigger);
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    const details = document.getElementById(trigger.getAttribute("aria-controls") ?? "");
     expect(details).not.toBeNull();
-    await user.click(summary);
+    expect(change.contains(details)).toBe(true);
     expect(text(details)).toContain("Keeps editor");
     expect(text(details)).toContain("Uses vim");
     expect(text(details)).toContain("Merges in editor_2");

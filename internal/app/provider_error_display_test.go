@@ -25,7 +25,7 @@ import (
 
 func TestProviderErrorDisplayHTTPRelay(t *testing.T) {
 	const canary = "synthetic-relay-canary"
-	for _, protocol := range []string{"responses", "codex", "chat", "anthropic"} {
+	for _, protocol := range []string{"responses", "responses-envelope", "responses-envelope-transient", "responses-envelope-overflow", "responses-envelope-malformed", "codex", "chat", "anthropic"} {
 		for _, inBand := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/inband=%t", protocol, inBand), func(t *testing.T) {
 				var hits atomic.Int32
@@ -40,8 +40,15 @@ func TestProviderErrorDisplayHTTPRelay(t *testing.T) {
 						return
 					}
 					w.Header().Set("Content-Type", "text/event-stream")
-					if protocol == "responses" || protocol == "codex" {
+					switch protocol {
+					case "responses", "codex":
 						body = fmt.Sprintf(`{"type":"error","message":%q,"code":%q,"param":%q}`, "message-"+canary, "code-"+canary, "param-"+canary)
+					case "responses-envelope-transient":
+						body = fmt.Sprintf(`{"error":{"code":"server_error","message":%q}}`, canary)
+					case "responses-envelope-malformed":
+						body = fmt.Sprintf(`{"error":{"code":"server_error","message":[%q]}}`, canary)
+					case "responses-envelope-overflow":
+						body = fmt.Sprintf(`{"error":{"code":"server_error","param":%q}}`, "context length exceeded "+canary)
 					}
 					fmt.Fprintf(w, "event: error\ndata: %s\n\n", body)
 				}))
@@ -50,7 +57,7 @@ func TestProviderErrorDisplayHTTPRelay(t *testing.T) {
 				cfg := Config{LLMMaxAttempts: 2, Diagnostics: diag}
 				var entry providerEntry
 				switch protocol {
-				case "responses", "codex":
+				case "responses", "responses-envelope", "responses-envelope-transient", "responses-envelope-overflow", "responses-envelope-malformed", "codex":
 					id := providerOpenAI
 					if protocol == "codex" {
 						id = providerOpenAICodex
@@ -106,10 +113,16 @@ func TestProviderErrorDisplayHTTPRelay(t *testing.T) {
 					t.Fatalf("HTTP/SSE terminal = %+v", terminal)
 				}
 				wantHits := int32(2)
-				if inBand {
-					wantHits = 1 // unknown in-band codes must not become retryable
+				if inBand && protocol != "responses-envelope-transient" {
+					wantHits = 1 // unknown codes and overflow vetoes must not become retryable
 				} else if !strings.Contains(terminal.Error, "503 Service Unavailable") {
 					t.Fatalf("HTTP category lost: %+v", terminal)
+				}
+				if inBand && (protocol == "responses-envelope" || protocol == "responses-envelope-malformed") && !strings.Contains(terminal.Error, "provider stream error event") {
+					t.Fatalf("stream origin lost: %+v", terminal)
+				}
+				if inBand && protocol == "responses-envelope-overflow" && !strings.Contains(terminal.Error, "context window exceeded") {
+					t.Fatalf("overflow category lost: %+v", terminal)
 				}
 				if hits.Load() != wantHits {
 					t.Fatalf("upstream attempts = %d, want %d", hits.Load(), wantHits)
@@ -121,6 +134,102 @@ func TestProviderErrorDisplayHTTPRelay(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestProviderStreamErrorBreakerNeutral(t *testing.T) {
+	for _, tc := range []struct {
+		name, payload, display string
+	}{
+		{"nested overflow", `{"error":{"code":"server_error","param":"context length exceeded"}}`, "context window exceeded"},
+		{"direct overflow", `{"type":"error","code":"server_error","param":"context length exceeded"}`, "context window exceeded"},
+		{"malformed envelope", `{"error":{"code":"server_error","message":[]}}`, "provider stream error event"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var hits atomic.Int32
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				if hits.Add(1) <= 4 {
+					fmt.Fprintf(w, "event: error\ndata: %s\n\n", tc.payload)
+					return
+				}
+				writeRecoveryTextTurn(w, "works")
+			}))
+			defer upstream.Close()
+			entry := newOpenAICompatEntry(Config{
+				LLMMaxAttempts: 2, LLMBreakerThreshold: 3, LLMBreakerCooldown: time.Hour,
+			}, providerOpenAI, "synthetic", upstream.URL)
+			req := port.LLMRequest{Model: "test", Messages: []session.Message{session.NewUserMessage("hi")}}
+			// Exceed the threshold on the SAME wrapper, then send a valid request.
+			for i := int32(1); i <= 5; i++ {
+				seq, err := entry.provider.Stream(t.Context(), req)
+				var text string
+				if err == nil {
+					for chunk, streamErr := range seq {
+						if chunk.Kind == port.ChunkText {
+							text += chunk.Text
+						}
+						if streamErr != nil {
+							err = streamErr
+						}
+					}
+				}
+				if i <= 4 {
+					if err == nil || !strings.Contains(err.Error(), tc.display) {
+						t.Fatalf("request %d: expected request error, got %v", i, err)
+					}
+				} else if err != nil || text != "works" {
+					t.Fatalf("valid request blocked: text=%q, err=%v", text, err)
+				}
+				if hits.Load() != i {
+					t.Fatalf("request %d: upstream hits=%d (replayed or breaker rejected)", i, hits.Load())
+				}
+			}
+		})
+	}
+}
+
+func TestProviderStreamErrorRecoveryVisibility(t *testing.T) {
+	for _, visible := range []bool{false, true} {
+		t.Run(fmt.Sprintf("visible=%t", visible), func(t *testing.T) {
+			var hits atomic.Int32
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				if hits.Add(1) == 1 {
+					if visible {
+						fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n")
+					}
+					fmt.Fprint(w, "event: error\ndata: {\"error\":{\"code\":\"server_error\",\"message\":\"synthetic-visibility-canary\"}}\n\n")
+					return
+				}
+				writeRecoveryTextTurn(w, "recovered")
+			}))
+			defer upstream.Close()
+			entry := newOpenAICompatEntry(Config{LLMMaxAttempts: 2, LLMBreakerThreshold: 3}, providerOpenAI, "synthetic", upstream.URL)
+			eng := agent.NewEngine(agent.Deps{LLM: entry.provider, Model: "test", Catalog: tool.NewCatalog()})
+			sess := session.New("visibility-test", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 1}, time.Unix(0, 0))
+			run := eng.Run(t.Context(), sess, memEnvironment("/ws"), agent.RunRequest{Text: "hi"})
+			var terminal *session.ResultPayload
+			var text string
+			for event := range run.Events() {
+				if event.Type == session.EvMessageDelta {
+					text += event.Text
+				}
+				if event.Result != nil {
+					terminal = event.Result
+				}
+			}
+			if terminal == nil {
+				t.Fatal("missing terminal result")
+			}
+			if visible {
+				if hits.Load() != 1 || terminal.Stop != session.StopError || text != "partial" || terminal.Progress != session.StreamProgressVisible || !strings.Contains(terminal.Error, "503 Service Unavailable") || strings.Contains(terminal.Error, "synthetic-visibility-canary") {
+					t.Fatalf("visible failure replayed or lost: hits=%d, text=%q, terminal=%+v", hits.Load(), text, terminal)
+				}
+			} else if hits.Load() != 2 || terminal.Stop != session.StopEndTurn || text != "recovered" || terminal.Text != "recovered" || terminal.Error != "" {
+				t.Fatalf("precommit recovery failed: hits=%d, terminal=%+v", hits.Load(), terminal)
+			}
+		})
 	}
 }
 

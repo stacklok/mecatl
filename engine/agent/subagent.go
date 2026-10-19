@@ -1529,7 +1529,7 @@ func (t *SubagentTool) MutatesParent(call session.ToolCall) bool {
 		return false
 	}
 	var args subagentArgs
-	if err := json.Unmarshal(call.Args, &args); err != nil {
+	if _, ok := session.ParseArgs(call, &args); !ok {
 		return false
 	}
 	return strings.TrimSpace(args.Mode) == subagentModeReadWrite
@@ -4542,7 +4542,8 @@ func childReviewedDenyMessage(reason, verdictReason string) string {
 //     without surfacing. Deny is impossible here — a deny resolves in the
 //     ordinary fold and never becomes an ask.
 //  2. ISOLATION auto-approve (A2): an isolated child whose ask is IsolationApprovable
-//     (read-only ∪ worktree-safe go verbs, no worktree-escape verb) → AllowOnce. (A1's
+//     (read-only ∪ worktree-safe go verbs, no worktree-escape verb) and not a system
+//     temp-scope request → AllowOnce. (A1's
 //     read-only substitution carve-out already turns most read-only substitutions into
 //     Allow upstream so they never reach here as an ask; this catches the worktree-safe
 //     `go test` superset.)
@@ -4585,7 +4586,10 @@ func handleChildEvent(run *Run, ev session.Event, posture childPosture) (text st
 func autoApproveChildAsk(run *Run, ask session.PendingAsk, posture childPosture) bool {
 	switch {
 	case ask.AskProvenance == governance.AskProvenanceConfiguredAllowFloor:
-	case posture.isolated && ask.Tool == "Shell" && governance.IsolationApprovable(shellCmdFromArgs(ask.Args)):
+	case posture.isolated && ask.Tool == "Shell" && !systemScopeAsk(ask) &&
+		governance.IsolationApprovable(shellCmdFromArgs(ask.Args)):
+		// A system temp-scope ask reaches host-shared storage outside the
+		// worktree, so isolation never vouches for it.
 	default:
 		return false
 	}

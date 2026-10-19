@@ -4,12 +4,17 @@ import {
   createScheduleRequestSchema,
   isScheduleTimeZone,
   maximumInt32,
+  scheduleFireOutcomeSchema,
   scheduleTriggerSchema,
 } from "@mecatl-studio/contracts";
 import type { Client } from "@stacklok-oss/mecatl-sdk";
-import { PermissionMode } from "@stacklok-oss/mecatl-sdk/gen";
+import { PermissionMode, type ScheduleFire } from "@stacklok-oss/mecatl-sdk/gen";
 import { describe, expect, it, vi } from "vitest";
-import { createMecatlScheduleService, ScheduleTriggerImmutableError } from "./schedules";
+import {
+  createMecatlScheduleService,
+  fireOutcome,
+  ScheduleTriggerImmutableError,
+} from "./schedules";
 
 function baseWriteRequest() {
   return {
@@ -242,6 +247,7 @@ describe("Mecatl schedule spec mapping", () => {
     const rows = [
       { name: "paused", state: { enabled: false } },
       { name: "running", state: { enabled: true, lastFireStartedAt: ts(1_700_000_000) } },
+      { name: "running-paused", state: { enabled: false, lastFireStartedAt: ts(1_700_000_000) } },
       { name: "claimed", state: { enabled: true, lastFireSessionId: "pending" } },
       {
         name: "scheduled",
@@ -258,6 +264,7 @@ describe("Mecatl schedule spec mapping", () => {
       ["claimed", "claimed"],
       ["paused", "paused"],
       ["running", "running"],
+      ["running-paused", "running"],
       ["scheduled", "scheduled"],
     ]);
     expect(response.items.find((item) => item.name === "claimed")?.lastFireSessionId).toBe("");
@@ -300,8 +307,17 @@ describe("Mecatl schedule spec mapping", () => {
     const response = await service.listFires("s");
 
     expect(response.items.map((fire) => fire.id)).toEqual(["live", "old"]);
-    expect(response.items[0]).toMatchObject({ error: "boom", inFlight: true, stop: "" });
-    expect(response.items[1]).toMatchObject({ inFlight: false, stop: "end_turn" });
+    expect(response.items[0]).toMatchObject({
+      error: "boom",
+      inFlight: true,
+      outcome: "claimed",
+      stop: "",
+    });
+    expect(response.items[1]).toMatchObject({
+      inFlight: false,
+      outcome: "completed",
+      stop: "end_turn",
+    });
     expect(response.items[1]?.firedAt).toBe("1970-01-01T00:01:40.000Z");
   });
 });
@@ -355,6 +371,38 @@ describe("Mecatl schedule terminal state and numeric bounds", () => {
     // disabled flag as it is.
     const done = response.items.find((item) => item.name === "one-shot-done");
     expect(done).toMatchObject({ enabled: false, fireCount: 1, nextFireAt: null });
+  });
+
+  it("lets an in-flight or claimed fire outrank paused and completed", async () => {
+    const list = vi.fn().mockResolvedValue({
+      schedules: [
+        // The claim disables the schedule before the session id is known.
+        row("claimed-paused", { enabled: false, lastFireSessionId: "pending" }),
+        // A claimed final fire has no next fire and has fired before, which
+        // would otherwise read as completed.
+        row("claimed-final", {
+          enabled: false,
+          fireCount: 2,
+          lastFireSessionId: "pending",
+        }),
+        // Same shape once the fire has started: running, not completed.
+        row("running-final", {
+          enabled: false,
+          fireCount: 2,
+          lastFireSessionId: "session-1",
+          lastFireStartedAt: ts(1_700_000_000),
+        }),
+      ],
+    });
+    const service = createMecatlScheduleService({ schedules: { list } } as unknown as Client, true);
+
+    const response = await service.list();
+
+    expect(response.items.map((item) => [item.name, item.status])).toEqual([
+      ["claimed-final", "claimed"],
+      ["claimed-paused", "claimed"],
+      ["running-final", "running"],
+    ]);
   });
 
   it("refuses counts a signed 32-bit daemon field cannot represent", () => {
@@ -495,5 +543,76 @@ describe("Mecatl schedule trigger validation", () => {
     expect(
       scheduleTriggerSchema.safeParse({ at: "2027-01-15T10:00:00", kind: "once" }).success,
     ).toBe(false);
+  });
+});
+
+describe("Mecatl schedule fire outcome", () => {
+  const started = { nanos: 0, seconds: 1_000n };
+  const fire = (overrides: Partial<Record<keyof ScheduleFire, unknown>>) =>
+    ({ err: "", stop: "end_turn", ...overrides }) as ScheduleFire;
+
+  const cases: Array<[string, ScheduleFire, (typeof scheduleFireOutcomeSchema.options)[number]]> = [
+    ["claimed", fire({ err: "not terminal", stop: "" }), "claimed"],
+    ["in flight", fire({ err: "not terminal", startedAt: started, stop: "" }), "in_flight"],
+    ["error recorded with a clean stop", fire({ err: "provider failed" }), "failed"],
+    ["error stop", fire({ stop: "error" }), "failed"],
+    ["max consecutive failures", fire({ stop: "max_consecutive_failures" }), "failed"],
+    ["cancelled", fire({ stop: "cancelled" }), "cancelled"],
+    // The daemon records a timeout with both its stop reason and an error.
+    ["timeout with error", fire({ err: "exceeded its deadline", stop: "timeout" }), "timed_out"],
+    ["max turns", fire({ stop: "max_turns" }), "limit_reached"],
+    ["max tool calls", fire({ stop: "max_tool_calls" }), "limit_reached"],
+    ["budget", fire({ stop: "budget" }), "limit_reached"],
+    ["no progress is neither failure nor completion", fire({ stop: "no_progress" }), "stopped"],
+    ["unknown future stop", fire({ stop: "something_new" }), "stopped"],
+    ["end turn", fire({ stop: "end_turn" }), "completed"],
+    ["structured output", fire({ stop: "structured_output" }), "completed"],
+    ["plan approved", fire({ stop: "plan_approved" }), "completed"],
+    ["plan iterate", fire({ stop: "plan_iterate" }), "completed"],
+    ["padded and mixed-case stop", fire({ stop: " Cancelled " }), "cancelled"],
+  ];
+
+  it.each(cases)("maps %s", (_name, input, expected) => {
+    expect(fireOutcome(input)).toBe(expected);
+  });
+
+  it("covers every outcome in the contract", () => {
+    expect(new Set(cases.map(([, , expected]) => expected))).toEqual(
+      new Set(scheduleFireOutcomeSchema.options),
+    );
+  });
+
+  it("emits the outcome next to the raw stop, error, and inFlight facts", async () => {
+    const listFires = vi.fn().mockResolvedValue({
+      fires: [
+        { err: "", firedAt: { nanos: 0, seconds: 100n }, id: "new", stop: "something_new" },
+        {
+          err: "deadline",
+          firedAt: { nanos: 0, seconds: 50n },
+          id: "late",
+          startedAt: started,
+          stop: "timeout",
+        },
+      ],
+    });
+    const service = createMecatlScheduleService(
+      { schedules: { listFires } } as unknown as Client,
+      true,
+    );
+
+    const { items } = await service.listFires("s");
+
+    expect(items[0]).toMatchObject({
+      error: "",
+      inFlight: false,
+      outcome: "stopped",
+      stop: "something_new",
+    });
+    expect(items[1]).toMatchObject({
+      error: "deadline",
+      inFlight: false,
+      outcome: "timed_out",
+      stop: "timeout",
+    });
   });
 });

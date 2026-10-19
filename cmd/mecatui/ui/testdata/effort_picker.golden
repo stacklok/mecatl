@@ -1,23 +1,23 @@
  mecatui · Golden session · fixture/fixture-model/default · mode default
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 
-                          ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-                          ┃                                             ┃
-                          ┃  Reasoning effort                           ┃
-                          ┃                                             ┃
-                          ┃      auto    (operator / provider default)  ┃
-                          ┃      low                                    ┃
-                          ┃    ● medium                                 ┃
-                          ┃  ╭────────────╮                             ┃
-                          ┃  │  ›   high  │                             ┃
-                          ┃  ╰────────────╯                             ┃
-                          ┃      xhigh                                  ┃
-                          ┃      max                                    ┃
-                          ┃                                             ┃
-                          ┃  ↑/↓ move · enter apply · esc close         ┃
-                          ┃  ● current  ·  auto = provider default      ┃
-                          ┃                                             ┃
-                          ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+
+                           ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+                           ┃                                            ┃
+                           ┃  Reasoning effort                          ┃
+                           ┃     auto    (operator / provider default)  ┃
+                           ┃     low                                    ┃
+                           ┃   ● medium                                 ┃
+                           ┃  ▶  high                                   ┃
+                           ┃     xhigh                                  ┃
+                           ┃     max                                    ┃
+                           ┃  ↑/↓ move · enter apply · esc close        ┃
+                           ┃  pgup/pgdn page · home/end first/last      ┃
+                           ┃  ● current  ·  auto = provider default     ┃
+                           ┃                                            ┃
+                           ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
 
 
 
@@ -27,4 +27,4 @@
 │
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  connected                                                ctx ▒▒▒▒░░░░ 50% · 2K/4K · ↑0 ↓0 cache 0%
-? help · / commands · ctrl+t tool calls · f9 session details · ctrl+c quit
+? help · / commands · ctrl+c quit

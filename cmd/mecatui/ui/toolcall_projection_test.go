@@ -61,10 +61,48 @@ func TestToolcallProjectionStates(t *testing.T) {
 			if got.state != test.state {
 				t.Fatalf("state = %v, want %v", got.state, test.state)
 			}
+			if state := toolCallState(metadata); state != test.state {
+				t.Fatalf("lifecycle-only state = %v, want %v", state, test.state)
+			}
+			frame := newCacheRenderer().renderConversationFrame(&c, false)
+			plain := stripANSIstr(strings.Join(frame.lines, "\n"))
+			if got.settled() {
+				if !strings.Contains(plain, "● 1 tool run") || (got.state == toolcallFailed) != strings.Contains(plain, "1 failed") {
+					t.Fatalf("settled projection not aggregated: %q", plain)
+				}
+			} else if strings.Contains(plain, "tool run") || !strings.Contains(plain, got.line().Status()) {
+				t.Fatalf("nonsettled projection aggregated or lost status: %q", plain)
+			}
 			if got.settled() != (test.state == toolcallDone || test.state == toolcallFailed) {
 				t.Fatalf("settled = %v for state %v", got.settled(), test.state)
 			}
 		})
+	}
+}
+
+func TestRenderPassesWarmToolStateSkipsPresentationProjection(t *testing.T) {
+	var c scrollback.Conversation
+	arguments := `{"content":"` + strings.Repeat("x", 4<<20) + `"}`
+	c.Tools().Add(scrollback.ToolCall{ID: "write", Name: "Write", Arguments: arguments})
+	c.Tools().Resolve("write", scrollback.ToolResult{})
+
+	r := newCacheRenderer()
+	r.renderConversationFrame(&c, false) // cache miss: full card presentation is expected.
+	loads, prepares := r.snapshotLoads, r.cardPrepares
+	passes, firstChanged := r.renderPasses(&c, false)
+	if firstChanged != c.Len() || passes[0].toolState != toolcallDone {
+		t.Fatalf("warm lifecycle pass = firstChanged %d, state %v", firstChanged, passes[0].toolState)
+	}
+	if allocations := testing.AllocsPerRun(100, func() { r.renderPasses(&c, false) }); allocations != 0 {
+		t.Fatalf("warm lifecycle pass allocations = %v, want 0", allocations)
+	}
+
+	frame := r.renderConversationFrame(&c, false)
+	if row := frame.toolSummaryRow(uint64(c.MetadataAt(0).ID)); row < 0 {
+		t.Fatal("warm render lost settled lifecycle summary")
+	}
+	if r.snapshotLoads != loads || r.cardPrepares != prepares {
+		t.Fatal("warm render reloaded or prepared the cached tool card")
 	}
 }
 

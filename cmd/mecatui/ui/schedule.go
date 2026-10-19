@@ -706,6 +706,9 @@ func renderScheduleInspect(th theme.Theme, st scheduleState, replayerWired bool,
 			"  last update " + formatScheduleTime(s.State.LastFireProgressAt) +
 			"  deadline " + formatScheduleTime(s.State.FireDeadline) + "\n")
 	}
+	if s.State.LastFireSessionID == "pending" && s.State.LastFireStartedAt.IsZero() {
+		b.WriteString(th.Style("warning").Render("pending admission: ownership/termination unconfirmed; elapsed timeout does not prove termination") + "\n")
+	}
 	b.WriteString("\n" + muted.Render("runs") + "\n")
 	if st.firesLoading {
 		b.WriteString(muted.Render("loading…"))
@@ -813,6 +816,9 @@ func renderScheduleFireLine(f client.ScheduleFire, selected bool) string {
 	stop := terminaltext.Sanitize(f.Stop)
 	if stop == "" {
 		stop = "in-flight"
+		if !f.Deadline.IsZero() && !time.Now().Before(f.Deadline) {
+			stop = "in-flight (overdue/degraded; termination unconfirmed)"
+		}
 	}
 	line := marker + terminaltext.Sanitize(f.ID) +
 		"  " + formatScheduleTime(f.FiredAt) +

@@ -73,6 +73,117 @@ func writeIsolatedExecutionSettings(t *testing.T, placement string) {
 	}
 }
 
+func TestWarnEmbeddedPostureYolo(t *testing.T) {
+	const warning = "mecatui: WARNING: YOLO skips default approvals. Commands can delete files or expose data.\nUse an isolated, disposable environment. Explicit permission rules still apply.\n"
+
+	if got := captureStderr(t, func() {
+		warnEmbeddedPosture(config{transportMode: modeLocal, posture: "yolo", postureFlagSet: true})
+	}); got != warning {
+		t.Errorf("embedded yolo warning = %q, want %q", got, warning)
+	}
+	if got := captureStderr(t, func() {
+		warnEmbeddedPosture(config{transportMode: modeConnect, posture: "yolo", postureFlagSet: true})
+	}); got != "" {
+		t.Errorf("remote yolo warning = %q, want none", got)
+	}
+	if got := captureStderr(t, func() {
+		warnEmbeddedPosture(config{transportMode: modeLocal, posture: "auto", postureFlagSet: true})
+	}); strings.Contains(got, "YOLO skips default approvals") {
+		t.Errorf("auto posture included yolo warning: %q", got)
+	}
+}
+
+func TestEmbeddedGuardrailsAdvisoryWarning(t *testing.T) {
+	const warning = "mecatui: WARNING: AI safety checks are advisory only.\n"
+
+	for _, tc := range []struct {
+		name       string
+		settings   string
+		wantNotice bool
+		wantFact   string
+	}{
+		{
+			name:       "enabled yolo from operator settings",
+			settings:   "execution:\n  default_placement: host-local\nposture: yolo\nguardrails:\n  model: checker\n",
+			wantNotice: true,
+			wantFact:   "guardrails: ON",
+		},
+		{
+			name:     "disabled yolo from operator settings",
+			settings: "execution:\n  default_placement: host-local\nposture: yolo\nguardrails:\n  model: checker\n  disabled: true\n",
+			wantFact: "guardrails: OFF",
+		},
+		{
+			name:     "no checker yolo from operator settings",
+			settings: "execution:\n  default_placement: host-local\nposture: yolo\n",
+			wantFact: "guardrails: OFF",
+		},
+		{
+			name:     "enabled strict from operator settings",
+			settings: "execution:\n  default_placement: host-local\nposture: strict\nguardrails:\n  model: checker\n",
+			wantFact: "guardrails: ON",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			configHome := t.TempDir()
+			t.Setenv("XDG_CONFIG_HOME", configHome)
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			t.Setenv("XDG_DATA_HOME", t.TempDir())
+			writeSettings(t, "mecatl", tc.settings)
+
+			workspace := t.TempDir()
+			diagnosticsLog := filepath.Join(t.TempDir(), "mecatui.log")
+			cfg, err := parseFlags([]string{"--mock", "--toolhive-llm=false", "--product-metrics=false", "--no-store", "--no-memory", "--no-soul", "--workspace", workspace, "--user-model-dir", t.TempDir(), "--diagnostics-log", diagnosticsLog})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			got := captureStderr(t, func() {
+				_, _, cleanup, err := resolveTransportWithHook(t.Context(), cfg, nil)
+				if err != nil {
+					t.Fatalf("resolve embedded transport: %v", err)
+				}
+				cleanup()
+			})
+			if tc.wantNotice {
+				if got != warning {
+					t.Fatalf("stderr = %q, want %q", got, warning)
+				}
+			} else if got != "" {
+				t.Fatalf("stderr = %q, want none", got)
+			}
+			diagnostics, err := os.ReadFile(diagnosticsLog)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(diagnostics), tc.wantFact) {
+				t.Fatalf("diagnostics missing %q: %q", tc.wantFact, diagnostics)
+			}
+		})
+	}
+
+	t.Run("remote does not start embed or report local advisory", func(t *testing.T) {
+		cfg := config{transportMode: modeConnect, connectAddress: "127.0.0.1:8080", anonymous: true}
+		started := false
+		got := captureStderr(t, func() {
+			_, _, cleanup, err := resolveTransportWithHook(t.Context(), cfg, func(app.Config) error {
+				started = true
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("resolve remote transport: %v", err)
+			}
+			cleanup()
+		})
+		if started {
+			t.Fatal("remote transport started an embedded server")
+		}
+		if got != "" {
+			t.Fatalf("remote stderr = %q, want no local advisory", got)
+		}
+	})
+}
+
 func TestBareEmbeddedRunDiscoversConventionalMicroVMPlacement(t *testing.T) {
 	writeIsolatedExecutionSettings(t, app.PlacementMicroVMLocal)
 	stop := errors.New("configuration inspected")

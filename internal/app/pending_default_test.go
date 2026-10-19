@@ -8,6 +8,7 @@ import (
 	"time"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -97,6 +98,66 @@ func TestSessionEngineFactory_HealAdoption(t *testing.T) {
 	}
 	if got := driveOneTurn(t, res2.Engine); got != "post-heal" {
 		t.Fatalf("post-heal engine reply = %q, want %q (the factory must adopt the RE-MINTED provider via a fresh Lookup, not the Build-captured one)", got, "post-heal")
+	}
+}
+
+func TestAgentDefRootHealedDeploymentDefault(t *testing.T) {
+	for _, model := range []string{"", "inherit"} {
+		t.Run("model="+model, func(t *testing.T) {
+			transport := &toggleTransport{body: toolhiveFixtureJSON}
+			var offset atomic.Int64
+			cfg := isolateConfig(t, Config{
+				ToolhiveLLM: true, toolhiveConfigPath: writeToolhiveConfig(t, "https://upstream.example/gw"),
+				liveModelHTTPClient: &http.Client{Transport: transport},
+				modelDiscoveryNow:   func() time.Time { return time.Now().Add(time.Duration(offset.Load())) },
+				SubagentModel:       "must-not-reach-root",
+			})
+			reg, err := buildProviderRegistry(cfg, fakeEnv(nil))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer reg.discovery.Close()
+			if reg.ResolvedDefaultModel() != "" {
+				t.Fatal("probe-down startup unexpectedly resolved a model")
+			}
+			var request port.LLMRequest
+			stale := mockllm.New(mockllm.TextTurn("stale"))
+			fresh := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { request = req })}, mockllm.TextTurn("healed-instance"))
+			reg.entriesMu.Lock()
+			entry := reg.entries[providerToolhive]
+			entry.provider = stale
+			entry.remint = func(string, port.ProviderCapabilities) port.LLMProvider { return fresh }
+			reg.entries[providerToolhive] = entry
+			reg.entriesMu.Unlock()
+			store := memstore.New()
+			factory := agentDefSessionEngineFactory(cfg, reg, stale, store, testAgentDefRootPolicy(cfg), hookexec.New(nil), nil, nil,
+				catalogAssets{agentReg: agents.NewRegistry([]agents.AgentDef{{Name: "root", Model: model, Tools: []string{"Read"}}})}, nil)
+			svc, err := newTestServerService(server.Config{Engine: agent.NewEngine(agent.Deps{LLM: stale}), Store: store, AgentDefSessionEngine: factory})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer svc.Close()
+			transport.up.Store(true)
+			offset.Add(int64(discoveryCooldown))
+			reg.discovery.refresh(t.Context(), discoveryPicker)
+			sess, err := svc.CreateSessionWithProfile(t.Context(), session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithAgentDefinitionName("root"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			run, err := svc.StartRun(t.Context(), sess.ID, "hello")
+			if err != nil {
+				t.Fatal(err)
+			}
+			reply := drainRun(run)
+			svc.FinishRun(sess.ID, run)
+			if reply != "healed-instance" || request.Model != "claude-sonnet-4-6" {
+				t.Fatalf("reply=%q model=%q", reply, request.Model)
+			}
+			stored, err := store.Load(t.Context(), sess.ID)
+			if err != nil || stored.ProviderID != providerToolhive || stored.ModelID != request.Model {
+				t.Fatalf("stored identity=%+v err=%v", stored, err)
+			}
+		})
 	}
 }
 

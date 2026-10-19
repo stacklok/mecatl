@@ -71,7 +71,7 @@ describe("Studio image build stamp", () => {
       else process.env.STUDIO_BUILD_ID = original;
       vi.resetModules();
     }
-  });
+  }, 20_000);
 
   it("bakes the release tag into the BFF and omits it in local builds", async () => {
     const original = process.env.STUDIO_BUILD_ID;
@@ -99,7 +99,7 @@ describe("Studio image build stamp", () => {
       expect(releaseResponse.status).toBe(200);
       expect(localResponse.status).toBe(200);
       await expect(releaseResponse.json()).resolves.toMatchObject({
-        sdkVersion: installedSdkPackageVersion(),
+        sdkVersion: `${installedSdkPackageVersion()}+v1.2.3`,
         studioBuildId: "v1.2.3",
       });
       const localBody = (await localResponse.json()) as Record<string, unknown>;

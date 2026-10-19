@@ -1,0 +1,307 @@
+// Package sealedauthstorage seals secret fields of ToolHive's auth-server storage
+// before they reach Redis. It is unrelated to internal/adapter/credentialstore,
+// which stores opaque records in operator-owned files.
+//
+// Protected: confidentiality of access, refresh and ID tokens, the upstream
+// subject, and DCR secrets, each bound to its namespace, row and field, so a
+// stolen backup, snapshot or replica reveals no credential and ciphertext cannot
+// be moved between rows or fields.
+//
+// Not protected: integrity of the unsealed metadata (expiries, endpoints, client
+// IDs) against someone who can write to Redis. Broker profiles that use DCR must
+// configure explicit authorization and token endpoints, so ToolHive never takes
+// them from a cached row. If that requirement is relaxed, bind the endpoints into
+// the sealed fields' AAD.
+package sealedauthstorage
+
+import (
+	"context"
+	"errors"
+	"sync"
+
+	"github.com/stacklok/toolhive/pkg/authserver/storage"
+
+	"github.com/stacklok/mecatl/internal/adapter/mcpbroker/credentialenvelope"
+)
+
+// Storage decorates ToolHive's typed storage.Storage and its
+// separate DCRCredentialStore seam. It leaves Redis key construction, indexes,
+// expiry, and CAS ownership with ToolHive while sealing only the scoped fields.
+type Storage struct {
+	storage.Storage
+	dcr       storage.DCRCredentialStore
+	keys      *credentialenvelope.KeyRing
+	namespace string
+	closeOnce sync.Once
+	closeErr  error
+}
+
+var (
+	_ storage.Storage            = (*Storage)(nil)
+	_ storage.DCRCredentialStore = (*Storage)(nil)
+)
+
+// New decorates native storage using namespace as the persisted AAD binding.
+func New(inner storage.Storage, keys *credentialenvelope.KeyRing, namespace string) (*Storage, error) {
+	if inner == nil || keys == nil || namespace == "" {
+		return nil, credentialenvelope.ErrUnavailable
+	}
+	dcr, ok := inner.(storage.DCRCredentialStore)
+	if !ok || dcr == nil {
+		return nil, credentialenvelope.ErrUnavailable
+	}
+	return &Storage{Storage: inner, dcr: dcr, keys: keys, namespace: namespace}, nil
+}
+
+// Close closes the native store exactly once. No Unwrap method is provided:
+// ToolHive must continue to see this decorator as the DCR store and must not
+// reach raw Redis for legacy migration.
+func (s *Storage) Close() error {
+	if s == nil {
+		return nil
+	}
+	s.closeOnce.Do(func() { s.closeErr = s.Storage.Close() })
+	return s.closeErr
+}
+
+// StoreUpstreamTokens seals the tokens under the session-bound AAD before persisting them.
+func (s *Storage) StoreUpstreamTokens(ctx context.Context, sessionID, provider string, tokens *storage.UpstreamTokens) error {
+	if tokens == nil {
+		return s.Storage.StoreUpstreamTokens(ctx, sessionID, provider, nil)
+	}
+	sealed, err := s.sealTokens(sessionID, provider, tokens)
+	if err != nil {
+		return err
+	}
+	return s.Storage.StoreUpstreamTokens(ctx, sessionID, provider, sealed)
+}
+
+// GetUpstreamTokens opens the sealed tokens stored for the session and provider.
+func (s *Storage) GetUpstreamTokens(ctx context.Context, sessionID, provider string) (*storage.UpstreamTokens, error) {
+	raw, err := s.Storage.GetUpstreamTokens(ctx, sessionID, provider)
+	if err != nil && !errors.Is(err, storage.ErrExpired) {
+		return nil, err
+	}
+	if raw == nil {
+		return nil, err
+	}
+	plain, openErr := s.openTokens(sessionID, provider, raw)
+	if openErr != nil {
+		return nil, openErr
+	}
+	return plain, err
+}
+
+// GetAllUpstreamTokens opens every sealed token set stored for the session.
+func (s *Storage) GetAllUpstreamTokens(ctx context.Context, sessionID string) (map[string]*storage.UpstreamTokens, error) {
+	raw, err := s.Storage.GetAllUpstreamTokens(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]*storage.UpstreamTokens, len(raw))
+	for provider, tokens := range raw {
+		if tokens == nil {
+			out[provider] = nil
+			continue
+		}
+		plain, openErr := s.openTokens(sessionID, provider, tokens)
+		if openErr != nil {
+			return nil, openErr
+		}
+		out[provider] = plain
+	}
+	return out, nil
+}
+
+// CompareAndSwapUpstreamTokens replaces the sealed tokens only if the stored refresh token equals expectedRefresh.
+func (s *Storage) CompareAndSwapUpstreamTokens(ctx context.Context, sessionID, provider, expectedRefresh string, tokens *storage.UpstreamTokens) error {
+	raw, err := s.Storage.GetUpstreamTokens(ctx, sessionID, provider)
+	switch {
+	case errors.Is(err, storage.ErrNotFound):
+		// A missing row is native CAS's decision, not ours: it creates the row when
+		// expectedRefresh is empty and reports ErrConcurrentRefresh otherwise.
+		raw = nil
+	case err != nil && !errors.Is(err, storage.ErrExpired):
+		return err
+	}
+	if raw != nil {
+		plain, openErr := s.openTokens(sessionID, provider, raw)
+		if openErr != nil {
+			return openErr
+		}
+		if plain.RefreshToken != expectedRefresh {
+			return storage.ErrConcurrentRefresh
+		}
+		// Delegate the exact stored ciphertext so native CAS detects intervening writes.
+		expectedRefresh = raw.RefreshToken
+	}
+	var sealed *storage.UpstreamTokens
+	if tokens != nil {
+		sealed, err = s.sealTokens(sessionID, provider, tokens)
+		if err != nil {
+			return err
+		}
+	}
+	return s.Storage.CompareAndSwapUpstreamTokens(ctx, sessionID, provider, expectedRefresh, sealed)
+}
+
+// GetLatestUpstreamTokensForUser cannot open session-bound ciphertext: the native
+// lookup returns a row without the originating session ID required for its AAD.
+func (*Storage) GetLatestUpstreamTokensForUser(context.Context, string, string) (*storage.UpstreamTokens, error) {
+	return nil, credentialenvelope.ErrUnavailable
+}
+
+// StorePendingDeviceConfirmation fails closed: ToolHive persists the resolved
+// upstream tokens inside the pending record unsealed, and Mecatl never enables
+// the device flow.
+func (*Storage) StorePendingDeviceConfirmation(context.Context, string, *storage.PendingDeviceConfirmation) error {
+	return credentialenvelope.ErrUnavailable
+}
+
+// LoadPendingDeviceConfirmation fails closed for the same reason as
+// StorePendingDeviceConfirmation. DeletePendingDeviceConfirmation is not
+// overridden because it carries no secret.
+func (*Storage) LoadPendingDeviceConfirmation(context.Context, string) (*storage.PendingDeviceConfirmation, error) {
+	return nil, credentialenvelope.ErrUnavailable
+}
+
+// GetDCRCredentials opens the sealed DCR credentials stored for the key.
+func (s *Storage) GetDCRCredentials(ctx context.Context, key storage.DCRKey) (*storage.DCRCredentials, error) {
+	raw, err := s.dcr.GetDCRCredentials(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	return s.openDCR(key, raw)
+}
+
+// StoreDCRCredentialsIfAbsent seals and stores the credentials unless a row already exists, returning the winning row.
+func (s *Storage) StoreDCRCredentialsIfAbsent(ctx context.Context, creds *storage.DCRCredentials) (*storage.DCRCredentials, error) {
+	if creds == nil {
+		return nil, credentialenvelope.ErrUnavailable
+	}
+	sealed, err := s.sealDCR(creds.Key, creds)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := s.dcr.StoreDCRCredentialsIfAbsent(ctx, sealed)
+	if err != nil {
+		return nil, err
+	}
+	return s.openDCR(creds.Key, raw)
+}
+
+// UpdateDCRCredentialsIfPresent seals and replaces the credentials only if a row already exists.
+func (s *Storage) UpdateDCRCredentialsIfPresent(ctx context.Context, creds *storage.DCRCredentials) (*storage.DCRCredentials, error) {
+	if creds == nil {
+		return nil, credentialenvelope.ErrUnavailable
+	}
+	sealed, err := s.sealDCR(creds.Key, creds)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := s.dcr.UpdateDCRCredentialsIfPresent(ctx, sealed)
+	if err != nil {
+		return nil, err
+	}
+	return s.openDCR(creds.Key, raw)
+}
+
+func (s *Storage) sealTokens(sessionID, provider string, in *storage.UpstreamTokens) (*storage.UpstreamTokens, error) {
+	if in == nil || sessionID == "" || provider == "" || in.ProviderID != provider {
+		return nil, credentialenvelope.ErrUnavailable
+	}
+	out := *in
+	var err error
+	if out.AccessToken, err = s.sealUpstreamField(sessionID, provider, "access", out.AccessToken); err != nil {
+		return nil, err
+	}
+	if out.RefreshToken, err = s.sealUpstreamField(sessionID, provider, "refresh", out.RefreshToken); err != nil {
+		return nil, err
+	}
+	if out.IDToken, err = s.sealUpstreamField(sessionID, provider, "id", out.IDToken); err != nil {
+		return nil, err
+	}
+	if out.UpstreamSubject, err = s.sealUpstreamField(sessionID, provider, "subject", out.UpstreamSubject); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (s *Storage) openTokens(sessionID, provider string, in *storage.UpstreamTokens) (*storage.UpstreamTokens, error) {
+	if in == nil || sessionID == "" || provider == "" || in.ProviderID != provider {
+		return nil, credentialenvelope.ErrUnavailable
+	}
+	out := *in
+	var err error
+	if out.AccessToken, err = s.openUpstreamField(sessionID, provider, "access", out.AccessToken); err != nil {
+		return nil, err
+	}
+	if out.RefreshToken, err = s.openUpstreamField(sessionID, provider, "refresh", out.RefreshToken); err != nil {
+		return nil, err
+	}
+	if out.IDToken, err = s.openUpstreamField(sessionID, provider, "id", out.IDToken); err != nil {
+		return nil, err
+	}
+	if out.UpstreamSubject, err = s.openUpstreamField(sessionID, provider, "subject", out.UpstreamSubject); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (s *Storage) sealDCR(key storage.DCRKey, in *storage.DCRCredentials) (*storage.DCRCredentials, error) {
+	if in == nil || in.Key != key {
+		return nil, credentialenvelope.ErrUnavailable
+	}
+	out := *in
+	var err error
+	if out.ClientSecret, err = s.sealDCRField(key, "client_secret", out.ClientSecret); err != nil {
+		return nil, err
+	}
+	if out.RegistrationAccessToken, err = s.sealDCRField(key, "registration_access_token", out.RegistrationAccessToken); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (s *Storage) openDCR(key storage.DCRKey, in *storage.DCRCredentials) (*storage.DCRCredentials, error) {
+	if in == nil || in.Key != key {
+		return nil, credentialenvelope.ErrUnavailable
+	}
+	out := *in
+	var err error
+	if out.ClientSecret, err = s.openDCRField(key, "client_secret", out.ClientSecret); err != nil {
+		return nil, err
+	}
+	if out.RegistrationAccessToken, err = s.openDCRField(key, "registration_access_token", out.RegistrationAccessToken); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (s *Storage) sealUpstreamField(sessionID, provider, field, value string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	return s.keys.Seal(credentialenvelope.AAD(s.namespace, "upstream", sessionID, provider, field), value)
+}
+
+func (s *Storage) openUpstreamField(sessionID, provider, field, value string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	return s.keys.Open(credentialenvelope.AAD(s.namespace, "upstream", sessionID, provider, field), value)
+}
+
+func (s *Storage) sealDCRField(key storage.DCRKey, field, value string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	return s.keys.Seal(credentialenvelope.AAD(s.namespace, "dcr", key.Issuer, key.UpstreamID, key.RedirectURI, key.ScopesHash, field), value)
+}
+
+func (s *Storage) openDCRField(key storage.DCRKey, field, value string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	return s.keys.Open(credentialenvelope.AAD(s.namespace, "dcr", key.Issuer, key.UpstreamID, key.RedirectURI, key.ScopesHash, field), value)
+}

@@ -397,6 +397,28 @@ func TestPermissionModalShellPrettyUnescapesCommand(t *testing.T) {
 	}
 }
 
+// TestPermissionModalShellPrettyAnnotatesScopeAndBackground pins that the pretty
+// tier keeps the execution-relevant fields a system temp-scope approval carries:
+// the full command plus muted temp_scope and background annotations.
+func TestPermissionModalShellPrettyAnnotatesScopeAndBackground(t *testing.T) {
+	const wireArgs = `{"command":"git status && echo done","background":true,"temp_scope":"system"}`
+	th := theme.New("aztec", theme.AztecPalette())
+	pretty, _, ok := askArgsContent(th, pendingAsk{Tool: "Shell", Args: wireArgs})
+	if !ok {
+		t.Fatal("a Shell ask must be args-view capable")
+	}
+	plain := stripANSIstr(pretty)
+	for _, want := range []string{"git status && echo done", "background: true", "temp_scope: system"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("pretty tier must show %q, got %q", want, plain)
+		}
+	}
+	managed, _, _ := askArgsContent(th, pendingAsk{Tool: "Shell", Args: `{"command":"ls"}`})
+	if got := stripANSIstr(managed); got != "ls" {
+		t.Errorf("a plain Shell ask must render the command alone, got %q", got)
+	}
+}
+
 // TestAskArgsContentFallbacks pins the pretty-tier fallbacks (fix-round 4e): a
 // Shell ask whose args do not decode into a command (empty command, or invalid
 // JSON) falls back to the prettyJSON pretty tier, while the raw tier stays the

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import { LINE_DIFF_MAX_LINES } from "../../lib/line-diff";
 import {
   computeLineDiff,
   editSizeNote,
   isDiffTool,
-  LINE_DIFF_MAX_LINES,
   parseDiffArgs,
   parseEditArgs,
   parseWriteArgs,

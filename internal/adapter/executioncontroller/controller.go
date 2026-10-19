@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -91,7 +92,22 @@ func (r *Reconciler) Initialize(ctx context.Context) error {
 
 func (r *Reconciler) preflightProfiles(ctx context.Context) error {
 	runtimeClasses, storageClasses := r.profiles.clusterResources()
-	for _, name := range runtimeClasses {
+	allocations, err := r.dynamic.Resource(ExecutionEnvironmentGVR).Namespace(r.namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("profile preflight: list retained allocations: %w", err)
+	}
+	for i := range allocations.Items {
+		env := &allocations.Items[i]
+		profile, ok := r.profiles.getRevision(textNested(env.Object, "spec", "templateID"), textNested(env.Object, "spec", "templateRevision"))
+		if !ok || profile.Digest != textNested(env.Object, "spec", "templateDigest") {
+			return fmt.Errorf("profile preflight: retained allocation %q has no matching template definition", env.GetName())
+		}
+		runtimeClasses = append(runtimeClasses, profile.Spec.RuntimeClassName)
+		storageClasses = append(storageClasses, profile.Spec.StorageClass)
+	}
+	slices.Sort(runtimeClasses)
+	slices.Sort(storageClasses)
+	for _, name := range slices.Compact(runtimeClasses) {
 		runtimeClass, err := r.kube.NodeV1().RuntimeClasses().Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			return fmt.Errorf("profile preflight: RuntimeClass %q unavailable: %w", name, err)
@@ -100,7 +116,7 @@ func (r *Reconciler) preflightProfiles(ctx context.Context) error {
 			return fmt.Errorf("profile preflight: RuntimeClass %q must not define scheduling", name)
 		}
 	}
-	for _, name := range storageClasses {
+	for _, name := range slices.Compact(storageClasses) {
 		if _, err := r.kube.StorageV1().StorageClasses().Get(ctx, name, metav1.GetOptions{}); err != nil {
 			return fmt.Errorf("profile preflight: StorageClass %q unavailable: %w", name, err)
 		}
@@ -199,6 +215,8 @@ func (r *Reconciler) process(ctx context.Context) bool {
 }
 
 // Reconcile converges one ExecutionEnvironment and its runtime resources.
+//
+//nolint:gocyclo // Reconciliation order preserves lifecycle and fencing invariants.
 func (r *Reconciler) Reconcile(ctx context.Context, name string) error {
 	res := r.dynamic.Resource(ExecutionEnvironmentGVR).Namespace(r.namespace)
 	env, err := res.Get(ctx, name, metav1.GetOptions{})
@@ -208,16 +226,29 @@ func (r *Reconciler) Reconcile(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
+	revoked := r.profiles.isRevoked(env)
+	var stopErr error
+	if revoked {
+		stopErr = r.stopRevokedExecutor(ctx, env)
+	}
 	if requireCurrentSchema(env) != nil {
-		return r.setCondition(ctx, env, "Ready", false, "IncompatibleSchema", "only schema version 2 is supported")
+		return errors.Join(stopErr, r.setCondition(ctx, env, "Ready", false, "IncompatibleSchema", "only schema version 2 is supported"))
 	}
 	if expires := textNested(env.Object, "status", "activeOperation", "expiresAt"); expires != "" {
 		deadline, parseErr := time.Parse(time.RFC3339Nano, expires)
 		now := r.now()
 		if parseErr != nil || !now.Before(deadline) {
-			return r.setFenceUnknown(ctx, env, "operation holder lease expired; operation identity retained for recovery")
+			return errors.Join(stopErr, r.setExpiredOperationFence(ctx, env))
 		}
 		r.queue.AddAfter(name, deadline.Sub(now))
+	}
+	if revoked {
+		if stopErr != nil {
+			return errors.Join(stopErr, r.setCondition(ctx, env, "Ready", false, "InvalidTemplate", "retained execution template is missing or revoked"))
+		}
+		if textNested(env.Object, "status", "lifecycleOperation", "id") == "" {
+			return r.setCondition(ctx, env, "Ready", false, "InvalidTemplate", "retained execution template is missing or revoked")
+		}
 	}
 	// The admitted durable delete owns finalization, including after DELETE has
 	// set deletionTimestamp. A peer must not re-arm the generic finalizer.
@@ -244,11 +275,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, name string) error {
 	if textNested(env.Object, "spec", "desired") == "Retiring" {
 		return r.setCondition(ctx, env, "Ready", false, "UnsupportedRetirementRequest", "retirement requires the exact administrator lifecycle operation")
 	}
-	profileName := textNested(env.Object, "spec", "profile")
-	p, ok := r.profiles.get(profileName)
-	if !ok || p.Digest != textNested(env.Object, "spec", "profileDigest") {
-		return r.setCondition(ctx, env, "Ready", false, "InvalidProfile", "configured profile is unavailable or changed")
-	}
+	p, _ := r.profiles.forEnvironment(env)
 	pvcName := resourceName("workspace", name)
 	podName := resourceName("executor", name)
 	pvc, err := r.ensurePVC(ctx, env, p, pvcName)
@@ -268,6 +295,33 @@ func (r *Reconciler) Reconcile(ctx context.Context, name string) error {
 	}
 	return nil
 }
+func (r *Reconciler) stopRevokedExecutor(ctx context.Context, env *unstructured.Unstructured) error {
+	name := textNested(env.Object, "status", "pod", "name")
+	uid := textNested(env.Object, "status", "pod", "uid")
+	if name == "" {
+		name = resourceName("executor", env.GetName())
+	}
+	pod, err := r.kube.CoreV1().Pods(r.namespace).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if uid != "" && string(pod.UID) != uid || env.GetUID() == "" || !metav1.IsControlledBy(pod, env) {
+		return errors.New("revoked executor identity cannot be verified")
+	}
+	if podTerminal(pod) {
+		return nil
+	}
+	grace := int64(0)
+	preconditions := &metav1.Preconditions{UID: &pod.UID, ResourceVersion: &pod.ResourceVersion}
+	if err := r.kube.CoreV1().Pods(r.namespace).Delete(ctx, name, metav1.DeleteOptions{GracePeriodSeconds: &grace, Preconditions: preconditions}); err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+	return nil
+}
+
 func (r *Reconciler) ensurePVC(ctx context.Context, env *unstructured.Unstructured, p resolvedProfile, name string) (*corev1.PersistentVolumeClaim, error) {
 	pvcs := r.kube.CoreV1().PersistentVolumeClaims(r.namespace)
 	cur, err := pvcs.Get(ctx, name, metav1.GetOptions{})
@@ -324,7 +378,7 @@ func (r *Reconciler) ensurePod(ctx context.Context, env *unstructured.Unstructur
 	for _, secret := range p.Spec.ImagePullSecrets {
 		pullSecrets = append(pullSecrets, corev1.LocalObjectReference{Name: secret})
 	}
-	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{"execution.mecatl.dev/environment": env.GetName(), "execution.mecatl.dev/profile": hashText(textNested(env.Object, "spec", "profile"))[:16]}, Finalizers: []string{executorFinalizer}, OwnerReferences: []metav1.OwnerReference{{APIVersion: env.GetAPIVersion(), Kind: env.GetKind(), Name: env.GetName(), UID: env.GetUID(), Controller: &nonroot}}}, Spec: corev1.PodSpec{ServiceAccountName: r.profiles.executorServiceAccount, ImagePullSecrets: pullSecrets, NodeSelector: maps.Clone(p.Spec.NodeSelector), Tolerations: expectedPodTolerations(p.Spec.Tolerations), AutomountServiceAccountToken: &noPriv, RuntimeClassName: &p.Spec.RuntimeClassName, RestartPolicy: corev1.RestartPolicyNever, SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &nonroot, RunAsUser: &uid, RunAsGroup: &uid, FSGroup: &uid, SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}}, Containers: []corev1.Container{{Name: "executor", Image: p.Spec.Image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/bin/sh", "-c", "trap : TERM INT; sleep infinity & wait"}, SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &noPriv, ReadOnlyRootFilesystem: &ro, RunAsNonRoot: &nonroot, RunAsUser: &uid, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}}, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: cpuReq, corev1.ResourceMemory: memReq, corev1.ResourceEphemeralStorage: ephemeralReq}, Limits: corev1.ResourceList{corev1.ResourceCPU: cpuLim, corev1.ResourceMemory: memLim, corev1.ResourceEphemeralStorage: ephemeralLim}}, VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "tmp", MountPath: "/tmp"}}}}, Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: pvc}}}, {Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: &tmpLim}}}}}}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{"execution.mecatl.dev/environment": env.GetName(), "execution.mecatl.dev/template-id": hashText(textNested(env.Object, "spec", "templateID"))[:16]}, Finalizers: []string{executorFinalizer}, OwnerReferences: []metav1.OwnerReference{{APIVersion: env.GetAPIVersion(), Kind: env.GetKind(), Name: env.GetName(), UID: env.GetUID(), Controller: &nonroot}}}, Spec: corev1.PodSpec{ServiceAccountName: r.profiles.executorServiceAccount, ImagePullSecrets: pullSecrets, NodeSelector: maps.Clone(p.Spec.NodeSelector), Tolerations: expectedPodTolerations(p.Spec.Tolerations), AutomountServiceAccountToken: &noPriv, RuntimeClassName: &p.Spec.RuntimeClassName, RestartPolicy: corev1.RestartPolicyNever, SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &nonroot, RunAsUser: &uid, RunAsGroup: &uid, FSGroup: &uid, SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}}, Containers: []corev1.Container{{Name: "executor", Image: p.Spec.Image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/bin/sh", "-c", "trap : TERM INT; sleep infinity & wait"}, SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &noPriv, ReadOnlyRootFilesystem: &ro, RunAsNonRoot: &nonroot, RunAsUser: &uid, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}}, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: cpuReq, corev1.ResourceMemory: memReq, corev1.ResourceEphemeralStorage: ephemeralReq}, Limits: corev1.ResourceList{corev1.ResourceCPU: cpuLim, corev1.ResourceMemory: memLim, corev1.ResourceEphemeralStorage: ephemeralLim}}, VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "tmp", MountPath: "/tmp"}}}}, Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: pvc}}}, {Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: &tmpLim}}}}}}
 	created, err := pods.Create(ctx, pod, metav1.CreateOptions{})
 	if apierrors.IsAlreadyExists(err) {
 		created, err = pods.Get(ctx, name, metav1.GetOptions{})
@@ -392,7 +446,7 @@ func validatePod(env *unstructured.Unstructured, p resolvedProfile, pvcName, ser
 		return errors.New("pod is terminating")
 	}
 	storedUID := textNested(env.Object, "status", "pod", "uid")
-	if pod.Labels["execution.mecatl.dev/environment"] != env.GetName() || pod.Labels["execution.mecatl.dev/profile"] != hashText(textNested(env.Object, "spec", "profile"))[:16] || (storedUID != "" && storedUID != string(pod.UID)) || len(pod.OwnerReferences) != 1 {
+	if pod.Labels["execution.mecatl.dev/environment"] != env.GetName() || pod.Labels["execution.mecatl.dev/template-id"] != hashText(textNested(env.Object, "spec", "templateID"))[:16] || (storedUID != "" && storedUID != string(pod.UID)) || len(pod.OwnerReferences) != 1 {
 		return errors.New("pod ownership identity mismatch")
 	}
 	owner := pod.OwnerReferences[0]
@@ -445,6 +499,25 @@ func (r *Reconciler) updateRuntimeStatus(ctx context.Context, env *unstructured.
 		_ = unstructured.SetNestedMap(o.Object, map[string]any{"name": pod.Name, "uid": string(pod.UID)}, "status", "pod")
 		_ = unstructured.SetNestedField(o.Object, o.GetGeneration(), "status", "observedGeneration")
 		setConditionObject(o, "Ready", ready, "Reconciled", map[bool]string{true: "PVC and executor Pod are ready", false: "waiting for executor Pod readiness"}[ready])
+		return nil
+	})
+}
+func (r *Reconciler) setExpiredOperationFence(ctx context.Context, env *unstructured.Unstructured) error {
+	observed, found, err := unstructured.NestedMap(env.Object, "status", "activeOperation")
+	if err != nil || !found {
+		return lifecycleConflict()
+	}
+	return r.updateStatus(ctx, env, func(o *unstructured.Unstructured) error {
+		current, present, parseErr := unstructured.NestedMap(o.Object, "status", "activeOperation")
+		if parseErr != nil || !present || !reflect.DeepEqual(current, observed) || !runtimeObservationMatches(o, env) {
+			return lifecycleConflict()
+		}
+		deadline, parseErr := time.Parse(time.RFC3339Nano, text(current, "expiresAt"))
+		if parseErr == nil && r.now().Before(deadline) {
+			return lifecycleConflict()
+		}
+		_ = unstructured.SetNestedField(o.Object, "FenceUnknown", "status", "fenceState")
+		setConditionObject(o, "Ready", false, "FenceUnknown", "operation holder lease expired; operation identity retained for recovery")
 		return nil
 	})
 }

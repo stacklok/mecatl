@@ -69,7 +69,7 @@ trap 'chmod -R u+w "$work/cache" && rm -rf "$work"' EXIT
 cat > "$work/consumer/go.mod" <<EOF
 module example.com/mecatl-module-publication-check
 
-go 1.27.0
+go 1.27.2
 
 require github.com/stacklok/mecatl/adapters $version
 EOF

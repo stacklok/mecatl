@@ -4,6 +4,39 @@ Notable changes to `@stacklok-oss/mecatl-sdk` are recorded here.
 
 For installation and API entry points, see the [TypeScript SDK README](./README.md).
 
+## [0.5.0](https://www.npmjs.com/package/%40stacklok-oss%2Fmecatl-sdk/v/0.5.0)
+
+- docs: include user-docs in matlatl and use local documentation links (#1934) ([`b113292`](https://github.com/stacklok/mecatl/commit/b1132929dd9a3d881dbf059fb2b508bd1964b862))
+- feat(mecatui): restore session status metrics (#1891) ([`851b437`](https://github.com/stacklok/mecatl/commit/851b437b13087d4f6ec4933c4e62fe917de9af99))
+- feat: add microVM execution environments (#580) ([`178ed3f`](https://github.com/stacklok/mecatl/commit/178ed3fd0b264ccad4da8a4fb3cf6d5dcc2a9dd9))
+- feat: draft native Kubernetes execution provider (#1614) ([`804298a`](https://github.com/stacklok/mecatl/commit/804298a504d06b59e4b8155cc6ae94be05c91853))
+- fix(slack-bot): stop empty arg values from breaking the approval card (#1987) ([`3261c4f`](https://github.com/stacklok/mecatl/commit/3261c4f2f68a3139b21c8db1ec6534540a9b5a71))
+- fix(sdk): update fast-uri to clear Node audit (#1996) ([`8583fc0`](https://github.com/stacklok/mecatl/commit/8583fc038800344fd49b5be69e7cb37d37226b9a))
+- fix(sdk): update brace-expansion advisory resolution (#2007) ([`0213c10`](https://github.com/stacklok/mecatl/commit/0213c108fdda21ee79176ccbcf95d71ec8fdf69c))
+- Bound mecatui saved-memory browser (#2012) ([`a231359`](https://github.com/stacklok/mecatl/commit/a2313597ddf63f66f9b3b9e9f77debdcda9bba41))
+- feat: publish live tool-result availability before canonical batch drain (#2013) ([`6473fa3`](https://github.com/stacklok/mecatl/commit/6473fa34100cee15353c29c0cbd72c580d5c3069))
+- fix(slack-bot): harden release image (#1182) ([`473c050`](https://github.com/stacklok/mecatl/commit/473c05074cba0607c9d05f9f0c6e8bfdc5f05783))
+- chore(deps): update docker images (#2068) ([`e8b43d6`](https://github.com/stacklok/mecatl/commit/e8b43d61d70fbba5bc8552214397e4d6e5a9fe75))
+- chore: delete ADRs, acceptance plans, and process scaffolding (#2105) ([`b6fdf3d`](https://github.com/stacklok/mecatl/commit/b6fdf3df09904265d5876d7e09f05ef8220a6240))
+- fix(sdk): clear new dependency advisories in the SDK audit (#2132) ([`3c8366f`](https://github.com/stacklok/mecatl/commit/3c8366f5ee5f15a08a21f256c5adcc2752cba717))
+- docs: ADR-reference cleanup, rule hygiene, module AGENTS.md files (#2148) ([`443c8d3`](https://github.com/stacklok/mecatl/commit/443c8d3dc08668406cd4fc0fff7b1d0ac18fc63c))
+- docs(proto): drop ADR references from public Harness and Schedule comments (#2153) ([`a3f30b8`](https://github.com/stacklok/mecatl/commit/a3f30b84f740aebcdba7a2defed2c97b83d9aa15))
+- docs: restructure user documentation journeys (#2136) ([`21bafbc`](https://github.com/stacklok/mecatl/commit/21bafbc1a2cc1f18c1e708ee3d42407e5da0937e))
+- docs: copyedit public documentation (#2137) ([`4b834fd`](https://github.com/stacklok/mecatl/commit/4b834fd9769c5e2449e63e5d5a70cc1e814e33ca))
+- feat(mecatui): inspect Edit requests and bounded Subagent activity (#2139) ([`dcf1ea4`](https://github.com/stacklok/mecatl/commit/dcf1ea4a2c393c83f6cbcea20aebbf753e9cb2e9))
+- chore: remove dead ADR references and fix stale code comments (#2169) ([`0efb317`](https://github.com/stacklok/mecatl/commit/0efb31712d46a64e5e8c7b82bb9152e1c99a3dcb))
+- chore: drop stale acceptance-plan citations from code comments (#2187) ([`37583f5`](https://github.com/stacklok/mecatl/commit/37583f5a714d20ee028507c39d11c208a3d685ba))
+- feat(mcp): accept client secrets from bounded files (#2188) ([`024ba88`](https://github.com/stacklok/mecatl/commit/024ba883a53e82c24a6da7cf88de6ac63fba0ab3))
+- chore(deps): update typescript sdk (#1956) ([`e692a04`](https://github.com/stacklok/mecatl/commit/e692a049648c172dac3bb4b377c8242489a0031d))
+- feat: add provider-aware model aliases and delegation selectors (#2019) ([`34f485d`](https://github.com/stacklok/mecatl/commit/34f485da08490d538944314966b98a76bb333190))
+- fix(security): update Go and x/net vulnerability floors (#2221) ([`e9c216a`](https://github.com/stacklok/mecatl/commit/e9c216aa1894b120c1a2be7fb21053196f0c9301))
+- spike(mecatui): migrate help browser to the reusable scroll system (#2042) ([`c6d7338`](https://github.com/stacklok/mecatl/commit/c6d7338888b94935b67535a0bd37902dd944ff71))
+- feat: add execution templates with platform-managed identity (#2219) ([`987f0c3`](https://github.com/stacklok/mecatl/commit/987f0c31ce457ed1514c1da1a611285d9e846b2f))
+- feat(mecatui): enforce API compatibility before startup (#2269) ([`2fbdea1`](https://github.com/stacklok/mecatl/commit/2fbdea1787ab4fbccc577cacdaa174d04a29d3a6))
+- feat(skills): read a skill's files through the client API (#2192) ([`63ab9dc`](https://github.com/stacklok/mecatl/commit/63ab9dcce987d2e2e66adcb49d39a768f743cc12))
+
+[Compare changes](https://github.com/stacklok/mecatl/compare/sdk/typescript/v0.4.0...sdk/typescript/v0.5.0)
+
 ## [0.4.0](https://www.npmjs.com/package/%40stacklok-oss%2Fmecatl-sdk/v/0.4.0)
 
 - refactor(mecatui): prepare conversation cards functionally (#1744) ([`3aebbb5`](https://github.com/stacklok/mecatl/commit/3aebbb5eeb0450a501a6292f16c6e89c402f2c2f))

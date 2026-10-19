@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 
@@ -50,6 +51,82 @@ func (l *scriptedWorktreeLister) List(context.Context, string) ([]server.Worktre
 		l.responses = l.responses[1:]
 	}
 	return out, nil
+}
+
+type policyTestAccessProvider struct {
+	*compositionPlacementProvider
+	runs, successors int
+}
+
+func (*policyTestAccessProvider) Applies(session.EnvironmentRef) bool { return true }
+func (p *policyTestAccessProvider) AcquireRun(context.Context, server.ExecutionRunRequest) (server.ExecutionRunHandle, error) {
+	p.runs++
+	return nil, nil
+}
+
+func (p *policyTestAccessProvider) ReserveSuccessor(context.Context, server.PlacementSuccessorRequest) (server.PlacementBinding, error) {
+	p.successors++
+	return p.binding, nil
+}
+
+func TestRemoteDefaultBindHonorsHostOwnerPolicy(t *testing.T) {
+	remote := &policyTestAccessProvider{compositionPlacementProvider: &compositionPlacementProvider{}}
+	provider := &profilePlacementProvider{remote: remote, local: &localPlacementProvider{}, allowed: func(p *session.Principal, _, _ string) bool {
+		return p != nil && p.Subject == "alice"
+	}, ownerAllowed: func(p *session.Principal) bool { return p != nil && p.Subject == "alice" }}
+	for _, selector := range []server.PlacementSelector{server.DefaultPlacement(), server.SelectTemplate("go", "v1-"+strings.Repeat("a", 64))} {
+		if _, err := provider.Bind(t.Context(), server.PlacementBindRequest{Selector: selector, Principal: &session.Principal{Subject: "bob"}, Scope: "test", Operation: server.PlacementOperationCreate}); !errors.Is(err, server.ErrPlacementNotFound) {
+			t.Fatalf("unauthorized selection %+v returned %v", selector, err)
+		}
+	}
+	if len(remote.calls) != 0 {
+		t.Fatal("unauthorized caller reached the provider")
+	}
+	ref := session.EnvironmentRef{Kind: "kubernetes", ID: "owned", Revision: "rev"}
+	if _, err := provider.Reattach(t.Context(), server.PlacementReattachRequest{Ref: ref, Principal: &session.Principal{Subject: "bob"}, Scope: "test"}); !errors.Is(err, server.ErrPlacementNotFound) || len(remote.reattachCalls) != 0 {
+		t.Fatalf("revoked owner reattached or touched provider: %v", err)
+	}
+	if _, err := provider.AcquireRun(t.Context(), server.ExecutionRunRequest{Ref: ref, Principal: &session.Principal{Subject: "bob"}}); !errors.Is(err, server.ErrPlacementNotFound) || remote.runs != 0 {
+		t.Fatalf("revoked owner acquired remote command authority: %v", err)
+	}
+	if _, err := provider.Bind(t.Context(), server.PlacementBindRequest{Selector: server.DefaultPlacement(), Principal: &session.Principal{Subject: "alice"}, Scope: "test", Operation: server.PlacementOperationCreate}); err != nil || len(remote.calls) != 1 {
+		t.Fatalf("authorized caller did not reach provider: %v", err)
+	}
+}
+
+func TestTemplateSelectionPolicyDoesNotStrandRetainedAllocation(t *testing.T) {
+	ref := session.EnvironmentRef{Kind: "kubernetes", ID: "allocation", Revision: "allocation-revision"}
+	remote := &policyTestAccessProvider{compositionPlacementProvider: &compositionPlacementProvider{binding: server.PlacementBinding{Ref: ref}}}
+	provider := &profilePlacementProvider{remote: remote, local: &localPlacementProvider{},
+		allowed: func(p *session.Principal, id, revision string) bool {
+			return p != nil && p.Subject == "alice" && id == "go" && revision == "v1-eligible"
+		}, ownerAllowed: func(p *session.Principal) bool { return p != nil && p.Subject == "alice" },
+	}
+	alice := &session.Principal{Subject: "alice"}
+	for _, selector := range []server.PlacementSelector{server.SelectTemplate("go", "v1-old"), server.SelectTemplate("other", "v1-eligible")} {
+		if _, err := provider.Bind(t.Context(), server.PlacementBindRequest{Selector: selector, Principal: alice}); !errors.Is(err, server.ErrPlacementNotFound) {
+			t.Fatalf("ineligible selection %v admitted: %v", selector, err)
+		}
+	}
+	if _, err := provider.Reattach(t.Context(), server.PlacementReattachRequest{Ref: ref, Principal: alice}); err != nil {
+		t.Fatalf("retained allocation stranded: %v", err)
+	}
+	if _, err := provider.AcquireRun(t.Context(), server.ExecutionRunRequest{Ref: ref, Principal: alice}); err != nil || remote.runs != 1 {
+		t.Fatalf("retained run denied: %v", err)
+	}
+	if _, err := provider.ReserveSuccessor(t.Context(), server.PlacementSuccessorRequest{Ref: ref, Principal: alice}); err != nil || remote.successors != 1 {
+		t.Fatalf("retained successor denied: %v", err)
+	}
+	bob := &session.Principal{Subject: "bob"}
+	if _, err := provider.Reattach(t.Context(), server.PlacementReattachRequest{Ref: ref, Principal: bob}); !errors.Is(err, server.ErrPlacementNotFound) {
+		t.Fatalf("unauthorized reattach: %v", err)
+	}
+	if _, err := provider.AcquireRun(t.Context(), server.ExecutionRunRequest{Ref: ref, Principal: bob}); !errors.Is(err, server.ErrPlacementNotFound) {
+		t.Fatalf("unauthorized run: %v", err)
+	}
+	if _, err := provider.ReserveSuccessor(t.Context(), server.PlacementSuccessorRequest{Ref: ref, Principal: bob}); !errors.Is(err, server.ErrPlacementNotFound) || remote.successors != 1 {
+		t.Fatalf("unauthorized successor: %v", err)
+	}
 }
 
 func TestInvariant_local_placement_identity_and_atomic_worktree_binding(t *testing.T) {

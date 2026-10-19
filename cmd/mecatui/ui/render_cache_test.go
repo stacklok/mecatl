@@ -26,7 +26,6 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
-	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // newCacheRenderer builds a renderer at a fixed width, mirroring the model's
@@ -41,30 +40,20 @@ func newCacheRenderer() *renderer {
 // independent test oracle and allocation benchmark for the production frame path.
 func (r *renderer) renderConversation(c *conversation, expand bool) string {
 	var b strings.Builder
-	snapshots := c.testBlocks()
-	kinds := make([]scrollback.Kind, c.scrollback.Len())
-	for i := range kinds {
-		kinds[i] = c.scrollback.MetadataAt(i).Kind
-	}
-	var previousText string
+	passes, firstChanged := r.renderPasses(&c.scrollback, expand)
+	r.assembleToolGroups(passes, firstChanged, expand)
 	previousVisible := -1
-	for i := range snapshots {
-		text := r.renderSnapshot(i, snapshots[i], expand)
-		if text == "" {
+	for i, pass := range passes {
+		if pass.text == "" {
 			continue
 		}
 		if previousVisible >= 0 {
-			if kinds[i] == scrollback.KindAssistant &&
-				(kinds[previousVisible] == scrollback.KindTool || kinds[previousVisible] == scrollback.KindSubagent || kinds[previousVisible] == scrollback.KindTeam) &&
-				!strings.Contains(previousText, "\n") {
-				b.WriteString(interBlockSepCompact)
-			} else {
-				b.WriteString(blockSepAfter([]scrollback.Kind{kinds[previousVisible], kinds[i]}, 0))
+			for gap := 0; gap < blockBlankLinesAfterPasses(passes, previousVisible, i); gap++ {
+				b.WriteByte('\n')
 			}
 		}
-		previousText = text
 		previousVisible = i
-		b.WriteString(text)
+		b.WriteString(pass.text)
 		b.WriteByte('\n')
 	}
 	return b.String()
@@ -554,7 +543,7 @@ func TestNonTailResolveRendersThroughUpdateFlow(t *testing.T) {
 		renderTickMsg{},
 	)
 	got := m.rend.renderConversation(&m.conv, m.expandConversation)
-	if !strings.Contains(stripANSIstr(got), "✓ Shell · go test ./...") {
+	if !strings.Contains(stripANSIstr(got), "● 1 tool run") {
 		t.Errorf("non-tail resolve through Update must render the settled summary (stale cached card?), got:\n%s", stripANSIstr(got))
 	}
 	fresh := newRenderer(m.rend.th, defaultHelpKeys())
@@ -686,7 +675,7 @@ func TestIncrementalJoinTailChangesMidScrollback(t *testing.T) {
 		t.Fatalf("post-non-tail-resolve incremental join diverged from fresh oracle (stale prefix served past the changed index?)\n got %q\nwant %q",
 			stripANSIstr(got), stripANSIstr(want))
 	}
-	if !strings.Contains(stripANSIstr(got), "✓ Shell · go test ./...") {
+	if !strings.Contains(stripANSIstr(got), "● 1 tool run") {
 		t.Error("non-tail resolve must render the settled summary through the incremental path (stale prefix?)")
 	}
 }
@@ -956,7 +945,7 @@ func TestPathSwitchStalePrefix(t *testing.T) {
 		t.Fatalf("path-switch served a STALE prefix: lines join diverged from fresh oracle after a string-path re-render of a non-tail block\n got %q\nwant %q",
 			stripANSIstr(got), stripANSIstr(want))
 	}
-	if !strings.Contains(stripANSIstr(got), "✓ Shell · go test ./...") {
+	if !strings.Contains(stripANSIstr(got), "● 1 tool run") {
 		t.Error("the resolved summary must render through the line path after the path switch (stale prefix served?)")
 	}
 }
@@ -1003,7 +992,7 @@ func TestIncrementalJoinMultiBlockOneFrame(t *testing.T) {
 		t.Fatalf("multi-block frame: incremental join diverged from fresh oracle (firstChanged took max not min?)\n got %q\nwant %q",
 			stripANSIstr(got), stripANSIstr(want))
 	}
-	if !strings.Contains(stripANSIstr(got), "✓ Read · f.go") {
+	if !strings.Contains(stripANSIstr(got), "● 1 tool run") {
 		t.Error("the mid-block settled summary must render (firstChanged must be the MIN changed index)")
 	}
 }

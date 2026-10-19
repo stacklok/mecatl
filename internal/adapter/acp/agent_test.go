@@ -1083,6 +1083,20 @@ func TestServerOwnedSessionPlacement_Scenario7_ACPProjectsNoPhysicalPaths(t *tes
 	}
 }
 
+func TestACPRejectsUnsupportedExecutionSelectorAtIngress(t *testing.T) {
+	svc := newService(t, mockllm.New(), nil)
+	a := acp.NewAgent(svc, acp.WithResume(true))
+	for _, tc := range []struct{ method, params string }{
+		{"session/new", fmt.Sprintf(`{"cwd":%q,"mcpServers":[],"execution":{"none":{}}}`, testCWD(t))},
+		{"session/load", fmt.Sprintf(`{"sessionId":"unbound","cwd":%q,"mcpServers":[],"execution":{"template":{"id":"go","revision":"v1"}}}`, testCWD(t))},
+	} {
+		_, err := a.Handle(t.Context(), tc.method, json.RawMessage(tc.params), true)
+		if err == nil || !strings.Contains(err.Error(), "execution selection is unsupported") {
+			t.Fatalf("%s silently downgraded unsupported execution: %v", tc.method, err)
+		}
+	}
+}
+
 // TestSessionNewRejectsBadCwd asserts cwd validation: a relative path and a
 // nonexistent absolute path are both rejected (and no session is created).
 func TestSessionNewRejectsBadCwd(t *testing.T) {

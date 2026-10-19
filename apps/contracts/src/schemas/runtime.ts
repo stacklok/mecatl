@@ -13,6 +13,7 @@ export const serverCapabilitiesSchema = z.object({
   audio: z.boolean(),
   bash: z.boolean(),
   debugMcp: z.boolean(),
+  executionTemplates: z.boolean(),
   image: z.boolean(),
   learnedSkills: z.boolean(),
   learningProposals: z.boolean(),

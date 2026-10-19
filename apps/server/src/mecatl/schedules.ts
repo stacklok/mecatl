@@ -231,6 +231,35 @@ function scheduleFromSdk(schedule: Schedule | undefined): ScheduleResponse {
   };
 }
 
+type FireOutcome = ListScheduleFiresResponse["items"][number]["outcome"];
+
+/**
+ * DECISION: The outcome is read from the recorded `session.StopReason`, not by
+ * matching substrings. A timeout is recorded with both `timeout` and an error
+ * (`scheduler_fire.go`), so the stop reason is checked before the error. A
+ * limit stop is neither a success nor a failure, and an unknown future reason
+ * reads `stopped` rather than claiming completion.
+ */
+const COMPLETED_STOPS = new Set([
+  "",
+  "end_turn",
+  "structured_output",
+  "plan_approved",
+  "plan_iterate",
+]);
+const LIMIT_STOPS = new Set(["max_turns", "max_tool_calls", "budget"]);
+const FAILED_STOPS = new Set(["error", "max_consecutive_failures"]);
+
+export function fireOutcome(fire: ScheduleFire): FireOutcome {
+  if (!fire.stop) return timestampToIso(fire.startedAt) ? "in_flight" : "claimed";
+  const stop = fire.stop.trim().toLocaleLowerCase();
+  if (stop === "timeout") return "timed_out";
+  if (stop === "cancelled") return "cancelled";
+  if (fire.err || FAILED_STOPS.has(stop)) return "failed";
+  if (LIMIT_STOPS.has(stop)) return "limit_reached";
+  return COMPLETED_STOPS.has(stop) ? "completed" : "stopped";
+}
+
 function fireFromSdk(fire: ScheduleFire) {
   return {
     deadline: timestampToIso(fire.deadline),
@@ -238,6 +267,7 @@ function fireFromSdk(fire: ScheduleFire) {
     firedAt: timestampToIso(fire.firedAt),
     id: fire.id,
     inFlight: !fire.stop,
+    outcome: fireOutcome(fire),
     progressAt: timestampToIso(fire.progressAt),
     scheduleName: fire.scheduleName,
     sessionId: fire.sessionId,

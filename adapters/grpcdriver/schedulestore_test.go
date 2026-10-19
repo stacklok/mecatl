@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	driverv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver/v1"
 	"github.com/stacklok/mecatl/engine/adapter/memschedulestore"
 	"github.com/stacklok/mecatl/engine/port"
@@ -20,16 +21,20 @@ import (
 )
 
 // newWiredScheduleStore returns a grpcdriver ScheduleStore client over a
-// bufconn server wrapping a fresh memschedulestore, with BOTH the
+// bufconn server wrapping a fresh test-owned JSONL store, with BOTH the
 // ScheduleStoreService and ScheduleOneShotReArmerService registered over the
-// SAME memschedulestore instance (which implements both). The memschedulestore
-// instance is returned so a test can drive the re-armer directly when needed.
-func newWiredScheduleStore(t *testing.T) (*ScheduleStore, *memschedulestore.Store) {
+// SAME backend. This exercises the repaired store even with GOWORK=off,
+// where the published engine reference store still has legacy semantics.
+func newWiredScheduleStore(t *testing.T) (*ScheduleStore, port.ScheduleStore) {
 	t.Helper()
-	backend := memschedulestore.New()
+	store, err := jsonlstore.New(t.TempDir())
+	if err != nil {
+		t.Fatalf("jsonlstore.New: %v", err)
+	}
+	backend := store.ScheduleStore()
 	conn := dialBufconn(t, func(gs *grpc.Server) {
 		driverv1.RegisterScheduleStoreServiceServer(gs, NewScheduleStoreServer(backend))
-		driverv1.RegisterScheduleOneShotReArmerServiceServer(gs, NewScheduleOneShotReArmerServer(backend))
+		driverv1.RegisterScheduleOneShotReArmerServiceServer(gs, NewScheduleOneShotReArmerServer(backend.(port.ScheduleOneShotReArmer)))
 	})
 	return NewScheduleStore(conn), backend
 }
@@ -435,7 +440,7 @@ func (*countingScheduleStore) ListFires(context.Context, string) ([]port.Schedul
 // TestScheduleRecordFireIdempotentOverWire pins RecordFire idempotency over
 // the wire: recording the same fire id twice → second call nil, fire NOT
 // duplicated in ListFires (driven against the real server wrapper over
-// memschedulestore).
+// JSONL schedule store).
 func TestScheduleRecordFireIdempotentOverWire(t *testing.T) {
 	st, _ := newWiredScheduleStore(t)
 	ctx := context.Background()
@@ -624,7 +629,7 @@ func TestScheduleClaimOverWire(t *testing.T) {
 // TestScheduleClaimNowFenceOverWire pins ClaimNow's at-most-once fence over the
 // wire: ClaimNow on a not-yet-due slot succeeds, and a ClaimNow at the SAME
 // now again is rejected per the port contract (LastFireAt == now fence). It
-// verifies what memschedulestore does and asserts the same over the wire.
+// verifies the store contract over the wire.
 func TestScheduleClaimNowFenceOverWire(t *testing.T) {
 	st, _ := newWiredScheduleStore(t)
 	ctx := context.Background()
@@ -645,9 +650,15 @@ func TestScheduleClaimNowFenceOverWire(t *testing.T) {
 	if _, err := st.ClaimNow(ctx, name, now, next); !errors.Is(err, port.ErrScheduleNotFound) {
 		t.Errorf("ClaimNow (same now) = %v, want errors.Is(_, port.ErrScheduleNotFound) (LastFireAt fence)", err)
 	}
-	// A ClaimNow at a LATER now succeeds (crash-recoverable: the fence self-heals).
+	// A later timestamp still rejects an unresolved predecessor over the wire.
 	later := now.Add(time.Minute)
 	next2 := later.Add(time.Minute)
+	if _, err := st.ClaimNow(ctx, name, later, next2); !errors.Is(err, port.ErrScheduleNotFound) {
+		t.Fatalf("ClaimNow bypassed pending predecessor: %v", err)
+	}
+	if err := st.RecordFire(ctx, port.ScheduleFire{ID: "wire-settled", ScheduleName: name, FiredAt: now, Stop: session.StopCancelled}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := st.ClaimNow(ctx, name, later, next2); err != nil {
 		t.Fatalf("ClaimNow (later now): %v", err)
 	}
@@ -679,7 +690,7 @@ func TestScheduleContextCancelPassthrough(t *testing.T) {
 }
 
 // TestScheduleReArmOneShotOverWire is the re-arm happy path over the wire
-// (server wrapper over memschedulestore which implements it): a disabled
+// (server wrapper over the JSONL schedule store): a disabled
 // one-shot → re-armed (Enabled=true, NextFireAt=nextFire, OneShotRetryCount
 // incremented).
 func TestScheduleReArmOneShotOverWire(t *testing.T) {
@@ -707,6 +718,12 @@ func TestScheduleReArmOneShotOverWire(t *testing.T) {
 	got, _ := st.Load(ctx, name)
 	if got.State.Enabled {
 		t.Fatalf("Claim did not disable the one-shot (Enabled=true)")
+	}
+	if err := st.ReArmOneShot(ctx, name, now.Add(time.Minute)); !errors.Is(err, port.ErrScheduleNotFound) {
+		t.Fatalf("pending rearm = %v, want ErrScheduleNotFound", err)
+	}
+	if err := st.RecordFire(ctx, port.ScheduleFire{ID: "failed", ScheduleName: name, FiredAt: now, Stop: session.StopError}); err != nil {
+		t.Fatal(err)
 	}
 	// ReArm re-enables + advances NextFireAt + increments the counter.
 	nextFire := now.Add(time.Minute)

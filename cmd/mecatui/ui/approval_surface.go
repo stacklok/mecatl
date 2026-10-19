@@ -720,11 +720,13 @@ func (s *approvalSurface) miniScroll(step, maxOff int) {
 
 // shellAskArgs mirrors the Shell tool's args JSON shape for the ask-args pretty
 // tier (mirroring mutatedPath's editDiffArgs/writeDiffArgs precedent). The
-// envelope can also carry timeout_ms (engine's shellArgs shape); the ui layer
-// knows it as a JSON field NAME, not an import.
+// envelope can also carry timeout_ms, background, and temp_scope (engine's
+// shellArgs shape); the ui layer knows them as JSON field NAMES, not an import.
 type shellAskArgs struct {
-	Command   string `json:"command"`
-	TimeoutMS int    `json:"timeout_ms"`
+	Command    string `json:"command"`
+	TimeoutMS  int    `json:"timeout_ms"`
+	Background bool   `json:"background"`
+	TempScope  string `json:"temp_scope"`
 }
 
 // askArgsContent derives the pretty and raw display tiers of a non-diff,
@@ -736,8 +738,9 @@ type shellAskArgs struct {
 // never lie, "exactly what am I approving". The PRETTY tier is the readable
 // decode: a Shell ask's {"command": …} decodes into the command TEXT (real
 // newlines, terminal-sanitized) so a long pipeline reads as shell, not escaped
-// JSON, and a non-zero timeout_ms appends a muted "timeout_ms: N" annotation
-// line (th styles it) so the pretty tier loses nothing the envelope carries;
+// JSON, and a non-zero timeout_ms, a true background, or a temp_scope each
+// append a muted annotation line (th styles it) so the pretty tier loses
+// nothing the envelope carries;
 // every other tool/shape falls back to prettyJSON. The tiers differ for Shell
 // and for any multi-line-tool args, so the raw/pretty toggle is honest on
 // those asks; a single short line identical in both tiers (empty, or non-JSON
@@ -752,8 +755,15 @@ func askArgsContent(th theme.Theme, ask pendingAsk) (pretty string, raw string, 
 		var args shellAskArgs
 		if err := json.Unmarshal([]byte(strings.TrimSpace(ask.Args)), &args); err == nil && args.Command != "" {
 			pretty = terminaltext.Sanitize(args.Command)
+			muted := th.Style("muted")
 			if args.TimeoutMS != 0 {
-				pretty += "\n" + th.Style("muted").Render(fmt.Sprintf("timeout_ms: %d", args.TimeoutMS))
+				pretty += "\n" + muted.Render(fmt.Sprintf("timeout_ms: %d", args.TimeoutMS))
+			}
+			if args.Background {
+				pretty += "\n" + muted.Render("background: true")
+			}
+			if args.TempScope != "" {
+				pretty += "\n" + muted.Render("temp_scope: "+terminaltext.Sanitize(args.TempScope))
 			}
 		}
 	}
@@ -778,6 +788,7 @@ func askArgsTiersDiffer(th theme.Theme, ask pendingAsk) bool {
 // unbreakable long token (a space-free URL, a base64 blob) can never run off
 // the card. w <= 0 means "unknown width: no wrap".
 func wrapAskArgs(s string, w int) string {
+	s = terminaltext.ExpandTabs(s, terminaltext.DefaultTabWidth)
 	if w <= 0 {
 		return s
 	}

@@ -1,0 +1,279 @@
+suite: render-time validation
+templates:
+  - templates/deployment.yaml
+set:
+  mecatl.baseURL: https://mecak8s.example.com
+  publicURL: https://studio.example.com
+  session.secretName: studio-session
+tests:
+  - it: requires the Mecatl address
+    set:
+      mecatl.baseURL: ""
+    asserts:
+      - failedTemplate:
+          errorPattern: "mecatl.baseURL is required"
+
+  - it: rejects a Mecatl address that is not a URL
+    set:
+      mecatl.baseURL: mecak8s.example.com:443
+    asserts:
+      - failedTemplate:
+          errorPattern: "mecatl.baseURL must be an http or https scheme"
+
+  - it: rejects a Mecatl address with a path
+    set:
+      mecatl.baseURL: https://mecak8s.example.com/grpc
+    asserts:
+      - failedTemplate:
+          errorPattern: "mecatl.baseURL must be an http or https scheme, host, and optional port"
+
+  - it: rejects credentials in the Mecatl address
+    set:
+      mecatl.baseURL: https://user:secret@mecak8s.example.com
+    asserts:
+      - failedTemplate:
+          errorPattern: "mecatl.baseURL must be an http or https scheme, host, and optional port"
+
+  - it: accepts a namespaced resource
+    set:
+      mecatl.resourceURL: https://mecak8s.example.com/tenant
+    asserts:
+      - notFailedTemplate: {}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: MECATL_RESOURCE_URL
+            value: https://mecak8s.example.com/tenant
+
+  - it: rejects a query in the resource URL
+    set:
+      mecatl.resourceURL: https://mecak8s.example.com/tenant?x=1
+    asserts:
+      - failedTemplate:
+          errorPattern: "mecatl.resourceURL must be an http or https URL"
+
+  - it: accepts an in-cluster http target and a public origin with a port
+    set:
+      mecatl.baseURL: http://mecak8s.mecak8s.svc:8080
+      publicURL: https://studio.example.com:8443
+    asserts:
+      - notFailedTemplate: {}
+
+  - it: requires the public origin
+    set:
+      publicURL: ""
+    asserts:
+      - failedTemplate:
+          errorPattern: "publicURL is required"
+
+  - it: rejects a public URL with a path
+    set:
+      publicURL: https://example.com/studio
+    asserts:
+      - failedTemplate:
+          errorPattern: "publicURL must be an http or https scheme, host, and optional port"
+
+  - it: accepts a public origin with a trailing slash and an upper-case scheme, as the image does
+    set:
+      publicURL: HTTPS://studio.example.com/
+    asserts:
+      - notFailedTemplate: {}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: STUDIO_PUBLIC_URL
+            value: HTTPS://studio.example.com/
+
+  - it: rejects a non-numeric port
+    set:
+      publicURL: https://studio.example.com:abc
+    asserts:
+      - failedTemplate:
+          errorPattern: "publicURL must be an http or https scheme, host, and optional port"
+
+  - it: rejects a port outside 1 to 65535
+    set:
+      mecatl.baseURL: https://mecak8s.example.com:99999
+    asserts:
+      - failedTemplate:
+          errorPattern: "mecatl.baseURL has port 99999; ports run from 1 to 65535"
+
+  - it: requires a session secret for browser login
+    set:
+      session.secretName: ""
+    asserts:
+      - failedTemplate:
+          errorPattern: "session.secretName is required for browser login"
+
+  - it: requires a key for the session Secret
+    set:
+      session.secretKey: ""
+    asserts:
+      - failedTemplate:
+          errorPattern: "session.secretKey is required when session.secretName is set"
+
+  - it: refuses a static token without the unauthenticated opt-in
+    set:
+      mecatl.authToken.secretName: studio-token
+      mecatl.authToken.secretKey: token
+    asserts:
+      - failedTemplate:
+          errorPattern: "requires allowUnauthenticated=true"
+
+  - it: requires a key for the static-token Secret
+    set:
+      allowUnauthenticated: true
+      mecatl.authToken.secretName: studio-token
+    asserts:
+      - failedTemplate:
+          errorPattern: "mecatl.authToken.secretKey is required"
+
+  - it: refuses both an image tag and digest
+    set:
+      image.tag: v1.2.3
+      image.digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+    asserts:
+      - failedTemplate:
+          errorPattern: "set at most one of image.digest or image.tag"
+
+  - it: refuses an extra variable the chart owns
+    set:
+      extraEnv:
+        - name: STUDIO_PORT
+          value: "8080"
+    asserts:
+      - failedTemplate:
+          errorPattern: 'extraEnv name "STUDIO_PORT" collides'
+
+  - it: refuses the local mock runtime the image rejects with a Mecatl address
+    set:
+      extraEnv:
+        - name: MECATL_DEV_MOCK
+          value: "1"
+    asserts:
+      - failedTemplate:
+          errorPattern: 'extraEnv name "MECATL_DEV_MOCK" collides'
+
+  - it: refuses disabling certificate checks
+    set:
+      extraEnv:
+        - name: NODE_TLS_REJECT_UNAUTHORIZED
+          value: "0"
+    asserts:
+      - failedTemplate:
+          errorPattern: "extraEnv must not set NODE_TLS_REJECT_UNAUTHORIZED"
+
+  - it: requires parent references for the route
+    set:
+      httpRoute.enabled: true
+    asserts:
+      - failedTemplate:
+          errorPattern: "httpRoute.parentRefs is required"
+
+  - it: rejects an unknown log level through the schema
+    set:
+      logLevel: verbose
+    asserts:
+      - failedTemplate:
+          errorPattern: "/logLevel"
+
+  - it: rejects more trusted proxy hops than Studio accepts
+    set:
+      trustedProxyHops: 17
+    asserts:
+      - failedTemplate:
+          errorPattern: "/trustedProxyHops"
+
+  - it: rejects an image digest that is not sha256
+    set:
+      image.digest: latest
+    asserts:
+      - failedTemplate:
+          errorPattern: "/image/digest"
+
+  - it: refuses route hostnames when the public origin is an IP address
+    set:
+      publicURL: https://203.0.113.10
+      httpRoute.enabled: true
+      httpRoute.parentRefs:
+        - name: eg
+      httpRoute.hostnames:
+        - studio.example.com
+    asserts:
+      - failedTemplate:
+          errorPattern: "httpRoute.hostnames must be empty when publicURL uses an IP address"
+
+  - it: refuses route hostnames that omit the public host Studio answers
+    set:
+      httpRoute.enabled: true
+      httpRoute.parentRefs:
+        - name: eg
+      httpRoute.hostnames:
+        - studio.internal.example.com
+    asserts:
+      - failedTemplate:
+          errorPattern: "httpRoute.hostnames must include studio.example.com"
+
+  - it: accepts a wildcard route hostname that covers the public host
+    set:
+      httpRoute.enabled: true
+      httpRoute.parentRefs:
+        - name: eg
+      httpRoute.hostnames:
+        - "*.example.com"
+    asserts:
+      - notFailedTemplate: {}
+
+  - it: refuses a public host that is not a valid route hostname
+    set:
+      publicURL: https://studio_ui.example.com
+      httpRoute.enabled: true
+      httpRoute.parentRefs:
+        - name: eg
+    asserts:
+      - failedTemplate:
+          errorPattern: 'publicURL host "studio_ui.example.com" is not a valid route hostname'
+
+  - it: refuses trusted proxy hops behind a layer-4 Service
+    set:
+      service.type: LoadBalancer
+    asserts:
+      - failedTemplate:
+          errorPattern: "trustedProxyHops must be 0 with a LoadBalancer Service"
+
+  - it: accepts a layer-4 Service with no trusted proxy hops
+    set:
+      service.type: NodePort
+      trustedProxyHops: 0
+    asserts:
+      - notFailedTemplate: {}
+
+  - it: refuses pod labels that would change the instance selector
+    set:
+      podLabels:
+        app.kubernetes.io/instance: other
+    asserts:
+      - failedTemplate:
+          errorPattern: "podLabels must not set the selector label app.kubernetes.io/instance"
+
+  - it: refuses pod labels that would change the name selector
+    set:
+      podLabels:
+        app.kubernetes.io/name: other
+    asserts:
+      - failedTemplate:
+          errorPattern: "podLabels must not set the selector label app.kubernetes.io/name"
+
+  - it: rejects a disruption budget that is not a count or percentage
+    set:
+      podDisruptionBudget.maxUnavailable: abc
+    asserts:
+      - failedTemplate:
+          errorPattern: "/podDisruptionBudget/maxUnavailable"
+
+  - it: rejects a disruption budget of zero
+    set:
+      podDisruptionBudget.maxUnavailable: 0
+    asserts:
+      - failedTemplate:
+          errorPattern: "/podDisruptionBudget/maxUnavailable"

@@ -254,13 +254,13 @@ func mcpCatalogAssets(ctx context.Context, assets catalogAssets) catalogAssets {
 }
 
 func pinMCPRuntimeFactory(assets catalogAssets, build serveradapter.SessionEngineWithToolsFactory) serveradapter.SessionEngineWithToolsFactory {
-	return func(ctx context.Context, sel serveradapter.ProviderSelector, specs []mcp.ServerConfig, profile serveradapter.SessionProfile, workspace string, mode session.PermissionMode, sessionTools []tool.Tool) (serveradapter.SessionEngineResult, error) {
+	return func(ctx context.Context, sel serveradapter.ProviderSelector, specs []mcp.ServerConfig, profile serveradapter.SessionProfile, workspace string, mode session.PermissionMode, sessionTools []tool.Tool, sessionToolKeys []string) (serveradapter.SessionEngineResult, error) {
 		pinned, _, _, release, err := pinCatalogAssets(ctx, assets)
 		if err != nil {
 			return serveradapter.SessionEngineResult{}, err
 		}
 		defer release()
-		return build(pinned, sel, specs, profile, workspace, mode, sessionTools)
+		return build(pinned, sel, specs, profile, workspace, mode, sessionTools, sessionToolKeys)
 	}
 }
 

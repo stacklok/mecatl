@@ -29,13 +29,77 @@ annotations:
   meta.helm.sh/release-namespace: {{ .root.Release.Namespace | quote }}
 {{- end -}}
 
-{{/* Frozen workload identity prevents orphan allow policies from widening egress. */}}
-{{- define "mecatl-execution.lifetimeConfig" -}}
-{{- dict "profiles" .Values.profiles "networkPolicy" .Values.networkPolicy "securitySecretName" .Values.provider.securitySecretName | toJson -}}
+{{- define "mecatl-execution.capacitySlots" -}}
+{{- $slots := mustFromJson . -}}
+{{- if not (kindIs "slice" $slots) -}}
+{{- fail "retained capacity ledger must contain an array of unique allocation IDs" -}}
+{{- end -}}
+{{- $seen := dict -}}
+{{- range $slot := $slots -}}
+{{- if not (kindIs "string" $slot) -}}
+{{- fail "retained capacity ledger must contain string allocation IDs" -}}
+{{- end -}}
+{{- if or (gt (len $slot) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" $slot)) (hasKey $seen $slot) -}}
+{{- fail "retained capacity ledger contains an invalid or duplicate allocation ID" -}}
+{{- end -}}
+{{- $_ := set $seen $slot true -}}
+{{- end -}}
+{{- toJson $slots -}}
 {{- end -}}
 
-{{/* Validate the opt-in projection before rendering; never include manifest contents in errors. */}}
+{{/* Frozen workload identity prevents orphan allow policies from widening egress. */}}
+{{- define "mecatl-execution.lifetimeConfig" -}}
+{{- $definitions := dict -}}
+{{- $total := 0 -}}
+{{- range $id, $template := .Values.templates -}}
+{{- if hasKey $template "default" -}}
+{{- $selected := get $template.revisions $template.default | default dict -}}
+{{- if or (not (hasKey $template.revisions $template.default)) ($selected.deprecated | default false) ($selected.revoked | default false) -}}
+{{- fail (printf "execution template %s requires an eligible default revision" $id) -}}
+{{- end -}}
+{{- else -}}
+{{- range $revision, $entry := $template.revisions -}}
+{{- if not (or ($entry.deprecated | default false) ($entry.revoked | default false)) -}}
+{{- fail (printf "execution template %s has selectable revisions but no default" $id) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $revisions := dict -}}
+{{- range $revision, $definition := $template.revisions -}}
+{{- range $namespace, $fields := dig "display" "extensions" (dict) $definition -}}
+{{- range $field, $_ := $fields -}}
+{{- if gt (len (printf "%s/%s" $namespace $field)) 253 -}}
+{{- fail "execution template display metadata key exceeds 253 bytes" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if and (not ($definition.deprecated | default false)) (not ($definition.revoked | default false)) -}}
+{{- $total = add1 $total -}}
+{{- if gt $total 64 -}}
+{{- fail "execution template inventory exceeds 64 selectable revisions" -}}
+{{- end -}}
+{{- end -}}
+{{- $_ := set $revisions $revision $definition.execution -}}
+{{- end -}}
+{{- $_ := set $definitions $id $revisions -}}
+{{- end -}}
+{{- dict "definitions" $definitions "networkPolicy" .Values.networkPolicy | toJson -}}
+{{- end -}}
+
+{{/* Validate policy shape and opt-in projection without echoing manifest contents. */}}
 {{- define "mecatl-execution.securitySources" -}}
+{{- $manifest := .Values.provider.securityManifest | fromJson -}}
+{{- if or (not (kindIs "map" $manifest)) (ne (len $manifest) 4) (not (kindIs "map" (get $manifest "tls"))) (not (kindIs "slice" (get $manifest "clients"))) (ne (get $manifest "version") (float64 1)) (lt (int (get $manifest "generation")) 1) -}}
+{{- fail "provider.securityManifest requires version, generation, tls and clients only" -}}
+{{- end -}}
+{{- $tls := get $manifest "tls" -}}
+{{- if ne (len $tls) 3 -}}
+{{- fail "provider.securityManifest tls requires only certificateFile, privateKeyFile and clientCAFile" -}}
+{{- end -}}
+{{- $refs := list -}}
+{{- range $field := list "certificateFile" "privateKeyFile" "clientCAFile" -}}
+{{- $refs = append $refs (get $tls $field) -}}
+{{- end -}}
 {{- $sources := .Values.provider.securitySources | default list -}}
 {{- if $sources -}}
 {{- if .Values.provider.securitySecretName -}}
@@ -64,24 +128,6 @@ annotations:
 {{- end -}}
 {{- $_ := set $files $item.path true -}}
 {{- end -}}
-{{- end -}}
-{{- $manifest := .Values.provider.securityManifest | fromJson -}}
-{{- if or (not (kindIs "map" $manifest)) (not (kindIs "slice" (get $manifest "keys"))) (not (kindIs "map" (get $manifest "tls"))) -}}
-{{- fail "provider.securityManifest requires keys and tls file references with securitySources" -}}
-{{- end -}}
-{{- $refs := list -}}
-{{- range $key := get $manifest "keys" -}}
-{{- if not (kindIs "map" $key) -}}
-{{- fail "provider.securityManifest has invalid key file references" -}}
-{{- end -}}
-{{- $refs = append $refs (get $key "file") -}}
-{{- end -}}
-{{- if not $refs -}}
-{{- fail "provider.securityManifest requires key file references with securitySources" -}}
-{{- end -}}
-{{- $tls := get $manifest "tls" -}}
-{{- range $field := list "certificateFile" "privateKeyFile" "clientCAFile" -}}
-{{- $refs = append $refs (get $tls $field) -}}
 {{- end -}}
 {{- range $file := $refs -}}
 {{- if or (not (kindIs "string" $file)) (not (hasKey $files $file)) -}}

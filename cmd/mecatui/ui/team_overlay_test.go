@@ -131,7 +131,7 @@ func TestAgentsGatedWhileAwaitingApproval(t *testing.T) {
 // team streaming (phaseRunning), f6 opens the overlay, and the roster nav
 // keys (↑/enter/t/esc) drive the OVERLAY rather than enqueuing a follow-up or
 // cancelling the run. It asserts: the overlay opens to the roster; the queue
-// stays empty across the navigation (no enqueuePrompt); no cancel frame is sent
+// stays empty across the navigation (no deliverDefaultPrompt); no cancel frame is sent
 // (the run keeps streaming); and esc from the roster closes the overlay,
 // returning to the running phase with the input refocused.
 func TestAgentsMidRunKeysDriveOverlayNotInput(t *testing.T) {

@@ -197,12 +197,60 @@ func loadMCPLoginProfiles(explicit []string) (*cliconfig.MCPProfiles, error) {
 }
 
 func loadMCPLoginProfilesSelected(explicit []string, selected string) (*cliconfig.MCPProfiles, error) {
+	return loadMCPLoginProfilesWithCustodyMode(explicit, selected, false)
+}
+
+func loadMCPLoginProfilesForLogin(explicit []string, selected string) (*cliconfig.MCPProfiles, error) {
+	return loadMCPLoginProfilesWithCustodyMode(explicit, selected, true)
+}
+
+func loadMCPLoginProfilesWithCustodyMode(explicit []string, selected string, initializeNative bool) (*cliconfig.MCPProfiles, error) {
 	resolver := permconfig.NewWithEnv(permconfig.Options{Conventional: true, ExplicitFiles: explicit}, xdgconfig.OSEnv)
 	var operator *permconfig.MCPSection
 	if resolver != nil {
 		operator = resolver.OperatorMCP()
 	}
-	return cliconfig.LoadMCPProfiles(cliconfig.MCPProfileLoadOptions{Operator: operator, LookupEnv: os.LookupEnv, SelectedName: selected})
+	return cliconfig.LoadMCPProfiles(cliconfig.MCPProfileLoadOptions{
+		Operator: operator, LookupEnv: os.LookupEnv, SelectedName: selected,
+		InitializeNativeCustody: initializeNative,
+	})
+}
+
+func mcpLoginSourceRemedy(err error, server string, sources []mcpSettingsSource) error {
+	var profileErr *cliconfig.MCPProfileError
+	if !errors.As(err, &profileErr) || !strings.Contains(profileErr.Remedy, "reset-local-credentials") {
+		return err
+	}
+	for _, source := range sources {
+		if source.config.MCP == nil {
+			continue
+		}
+		profileName := ""
+		for _, profile := range source.config.MCP.Servers {
+			if strings.EqualFold(profile.Name, server) {
+				profileName = profile.Name
+				break
+			}
+		}
+		if profileName == "" {
+			continue
+		}
+		shadowed := false
+		for _, other := range sources {
+			if other.path != source.path && other.config.MCP != nil {
+				shadowed = true
+				break
+			}
+		}
+		command := fmt.Sprintf("`mecated mcp reset-local-credentials %s --file PATH`", profileName)
+		if shadowed {
+			profileErr.Remedy = "resolve the overlapping `mcp:` settings sources first, then run " + command + " with the source that contains this profile, and log in again"
+		} else {
+			profileErr.Remedy = "run " + command + " using the same settings source, then log in again"
+		}
+		return err
+	}
+	return err
 }
 
 func runMCPLogin(args []string, stdout io.Writer, stderr ...io.Writer) error {
@@ -255,8 +303,11 @@ func runMCPLoginContext(ctx context.Context, args []string, stdout io.Writer, st
 	if parsed.file != "" {
 		explicit = []string{path}
 	}
-	profiles, err := loadMCPLoginProfilesSelected(explicit, parsed.server)
+	profiles, err := loadMCPLoginProfilesForLogin(explicit, parsed.server)
 	if err != nil {
+		if parsed.file != "" || len(parsed.permissionConfigs) > 0 {
+			return mcpLoginSourceRemedy(err, parsed.server, sources)
+		}
 		return err
 	}
 	defer func() { _ = profiles.Close() }()
@@ -267,7 +318,26 @@ func runMCPLoginContext(ctx context.Context, args []string, stdout io.Writer, st
 	}
 
 	_, _ = fmt.Fprintln(stdout, "MCP onboarding: preparing browser authorization")
-	opts := oauthlogin.Options{NoBrowser: parsed.noBrowser}
+	// PinCallbackPath fixes the callback's path (not its port) for the preregistered
+	// and CIMD client kinds loadOAuthClient (mcpprofile.go) populates onto the
+	// server's OAuth client config: both commit to a redirect_uri that must be
+	// registered ahead of time, and a random callback path can never match a value
+	// fixed in advance. Both target MCP-shaped, RFC 8252-aware authorization
+	// servers, which accept any port for a registered loopback redirect_uri as long
+	// as the path matches — so unlike oauthlogin.ExactRedirectURL (a fully fixed
+	// callback, port included, for a general-purpose OIDC target that cannot be
+	// assumed to implement RFC 8252 dynamic-port matching), this login still gets
+	// an unpredictable port every run, preserving the squatting resistance a
+	// foreseeable port would give up.
+	//
+	// A DCR-configured server (the client's `DCR` field) never reaches this fixed
+	// path: it registers its own random redirect_uri at registration time and is
+	// driven through LoginMCPWithOptions's AuthorizeWithCallbackPath call instead,
+	// whose explicit registration-bound callback path always takes priority over
+	// PinCallbackPath (see oauthlogin.resolveCallbackMode's case order) — so setting
+	// PinCallbackPath here unconditionally is safe for every client kind
+	// selectMCPLoginServer can return.
+	opts := oauthlogin.Options{NoBrowser: parsed.noBrowser, PinCallbackPath: true}
 	if parsed.noBrowser {
 		opts.URLWriter = stdout
 	}

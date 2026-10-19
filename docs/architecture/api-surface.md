@@ -49,12 +49,55 @@ and drivers, once into `sdk/typescript/src/gen` for the TypeScript SDK. CI regen
 and fails on any diff, so a proto change and its generated code always land together.
 Required-field annotations (`buf.validate`) document intent; the Go server enforces them.
 
-Compatibility is negotiated, not inferred from versions, because Mecatl ships from
-`main` as often as from tags. A client's first call, `GetCompatibilityInfo`, returns an
-API major (`features.go`) that changes only on a genuine break, plus capabilities and
-feature identifiers that announce every additive change. Feature identifiers, event
-types, stop reasons, and watch phases are open strings, so an older client passes an
-unknown value through instead of failing.
+### Wire API compatibility
+
+The gRPC and HTTP/SSE contracts use an API major plus feature identifiers, with
+no negotiated minor version. `GetCompatibilityInfo` and `GET /v1/compatibility`
+report the major, features supported by the build and permitted on the listener,
+and capabilities available in the configured deployment. The TypeScript SDK
+checks the major before its first requested operation; `mecatui` checks it before
+session access. Software release versions are independent of this contract.
+
+**Increment the major when an existing conforming client would need changes to
+remain correct.** Examples include removing a supported RPC or route, adding a
+mandatory request field, or incompatibly changing a field's meaning, identifier
+guarantees, event ordering, control behavior, or authorization semantics. Assess
+what clients observe, including changes originating in engine code or server
+mappers. Unchanged protobuf declarations do not establish compatibility.
+
+Backward-compatible additions stay within the major. Use stable feature
+identifiers when clients need to discover support; clients ignore unknown
+identifiers. Event types, stop reasons, and watch phases also remain open strings.
+A client may require a feature and refuse servers that lack it
+without a major bump if existing clients still work. Guarantees already supplied
+by the major's baseline do not need duplicate feature identifiers. Deployment
+capabilities answer whether functionality is available here; disabling a
+capability is not version skew, and advertisement does not replace authorization.
+
+`session_agent_definitions` advertises optional root binding on both gRPC
+`CreateSession.agent_definition_name` and HTTP `POST /v1/sessions`. Both echo
+`resolved_agent_definition_name` and the effective `resolved_model`. It is a build
+fact even with no configured definitions. Clients must require the feature and
+verify the binding echo before relying on it: an older gRPC server can silently
+ignore the request field. These optional fields keep API major 1 and ordinary
+creation unchanged; required-authority restore checks enforce the bound-session
+contract rather than adding requirements to ordinary legacy records.
+
+For a breaking change, explain the old and proposed contracts, affected clients,
+and client/server upgrade implications to the operator. Obtain explicit approval
+before implementing the incompatible behavior or bumping the major. Coordinate
+`server.APIMajor` (`internal/adapter/server/features.go`), supported client majors,
+and gRPC/HTTP endpoint changes. Specify how compatibility discovery stays
+reachable across the transition so old clients receive an actionable refusal.
+Add mismatch and transport-parity tests, and describe the upgrade in release notes.
+Changing only the version constant is insufficient.
+
+Every PR affecting the wire contract must include an **API compatibility** statement:
+the assessment and rationale, major or feature changes, operator approval for any
+break, and upgrade implications. Record the same decision in a plan when one is
+used; a plan is not a prerequisite. Assess Go source and stored-data compatibility
+separately; a Go rename alone does not require a wire-major bump, and a wire bump
+does not authorize loss of persisted state.
 
 ## Runs and the live stream
 
@@ -129,24 +172,72 @@ A schedule is a saved prompt that runs on a cron expression or once, unattended 
 most once per due slot across replicas. It lives in the composition layer and reuses normal run
 entry; `engine/agent` knows nothing about it.
 
-- `port.ScheduleStore` (`engine/port/schedule.go`) is the ground truth. Its `Claim`
-  atomically advances the next fire time, which is the at-most-once fence. Store
-  adapters (`memschedulestore`, `adapters/jsonlstore`, `adapters/redisstore`, and a
-  remote gRPC driver) share the `scheduleconformance` suite.
+- `port.ScheduleStore` (`engine/port/schedule.go`) is the ground truth. `Claim` and
+  `ClaimNow` atomically reject unresolved predecessors (pending admission or a
+  started, nonterminal fire), including claims for different slots. Terminal
+  settlement must precede the next claim. The cadence advance additionally fences
+  the due slot. Late terminal records enter history but cannot clear a successor's
+  ownership: schedule settlement compares the recorded claim instant atomically.
+  Store adapters (`memschedulestore`, `adapters/jsonlstore`, `adapters/redisstore`,
+  and a remote gRPC driver) share the `scheduleconformance` suite.
 - The tick loop (`internal/adapter/scheduler`) runs only on the replica holding the
   `__scheduler__` leader lease; standby replicas take over when it lapses. Each tick
-  finds due schedules, applies the misfire policy, then claims, fires, and records each.
-  Leadership is hygiene; `Claim` is the correctness guarantee.
+  finds due schedules and admits background workers without waiting for the batch.
+  Lifetime capacity includes manual fires, cancellation, delivery, reconciliation,
+  and one-shot retry probes/actions;
+  busy names and full capacity leave slots unclaimed for a later poll. Admission is
+  closed before shutdown joins workers and survives leadership epoch changes.
+  Leadership is hygiene; the atomic store guards, not local prechecks, fence claims.
+  Due work is admitted before retry/reconciliation; candidate reloads and probes
+  run behind the bounded name guard. Uncooperative root `Due`/`List` calls can
+  still block polling.
+  An intentionally skipped misfire is settled as `cancelled`, with a policy
+  explanation and no session id: no execution was admitted. It does not leave
+  an uncertain pending owner blocking the next fresh slot.
 - Each fire creates a fresh `sched--` session owned by the schedule's captured owner,
   with bounded limits. A schedule not marked mutating runs in plan mode. The fire
   reattaches the exact placement persisted at creation, and fails before creating a
   session if that placement has drifted (`internal/app/scheduler_fire.go`).
 
-The main failure mode is a crash between `Claim` and `RecordFire`. A recurring schedule
-heals on its next due slot; a one-shot is lost unless it opts into bounded retry, which
-starts each retry fresh. A fire whose predecessor is still running is skipped. Context
-carried from a previous fire enters the prompt as a fenced, untrusted preamble, never as
-history, because that fire may have been prompt-injected.
+A fire's name gate covers reload, claim, execution, and teardown. Re-arm and
+reconciliation skip locally admitted work and reload under the same gate.
+`ReArmOneShot` also atomically validates the current store state: a disabled
+one-shot with retry enabled, remaining budget, no pending/started owner, and
+matching settled failure history. Missing history is not proof of failure.
+Concurrent rearms have one winner; a delayed replica cannot re-enable a live or
+successful successor. A newer settled failure may consume its current remaining
+budget, without admitting duplicate active execution. Drivers must enforce this
+contract too; caller prechecks and leadership cancellation are not the fence. The
+fire publishes its real session id only after admission holds its session lease.
+A lease-backed pending claim is ambiguous and stays quarantined; age alone is
+not evidence that its owner stopped. Lease probe failures likewise fail closed.
+After a process restart without a lease backend, affinity plus the stale window
+permits reconciliation of the prior process's abandoned work.
+
+The deadline context covers run admission as well as execution. A watchdog logs
+`overdue/degraded; termination unconfirmed` before calling `Service.Cancel` and
+logs cancellation errors. Once run admission succeeds, empty `Stop` plus the
+saved elapsed `Deadline` and `ProgressAt` remain the truthful degraded
+representation. If `StartScheduledRunContent` is blocked before acquiring the
+lease, there is no durable fire deadline or published execution session. Inspect
+instead reports the schedule's pending claim and `LastFireAt`, explicitly marking
+ownership/termination unconfirmed even when prior terminal fires exist. A configured
+`FireTimeout` gives a conditional elapsed-since-claim warning, not proof that
+admission began or terminated; a default timeout is not recoverable from this
+pending state. Investigate uncertain ownership before replacing a pending claim.
+The admission context and watchdog still cover this phase; when admission finally
+returns, its actual failure is recorded and resources/capacity can be released.
+The fire drains events
+to closure and joins its single watchdog worker before settling the snapshot,
+calling `FinishRun`, and closing the session. Uncooperative work retains its
+ownership and capacity, rather than permitting replacement mutations. Polling
+and leadership health are therefore separate from execution progress. Terminal
+recording and delivery use a cancel-detached context.
+
+A crash between `Claim` and `RecordFire` can lose a slot. After reconciliation,
+a recurring schedule resumes its cadence; opt-in one-shot retry starts fresh.
+Context carried from a previous fire enters the prompt as a fenced, untrusted
+preamble, never as history, because that fire may have been prompt-injected.
 
 The in-chat `Schedule` tool, `ScheduleService`, and the REST routes all go through
 `port.ScheduleManager`, so they share one registry and one validating create path.
@@ -186,15 +277,18 @@ the session mounts as an ordinary MCP server. Usage is in the
 
 ### Mecatl Studio
 
-Mecatl Studio is the browser UI, a self-contained pnpm workspace in `apps/` with three
+Mecatl Studio is the browser UI, a pnpm workspace in `apps/` with three
 packages: `web` (a Vite and React single-page app), `server` (a Hono backend for
 frontend, or BFF), and `contracts` (Zod schemas, OpenAPI, and the generated client,
 committed and drift-gated).
 
 The browser calls only the BFF's `/api/v1` product API and imports neither the SDK nor
 daemon types. The BFF holds the user's credential, serves app and API from one origin,
-and is the only part that talks to Mecatl. It depends on a released SDK version from
-npm, never the in-repo source, so a UI change that needs an unreleased SDK change waits.
+and is the only part that talks to Mecatl. It builds the SDK from the same checkout
+through a `file:` dependency, never a registry release, so Studio, the SDK, and the
+daemon contract it targets are built from one commit and a change spanning all three
+needs no intermediate SDK release. It still imports the SDK only by package name,
+through the same exports as any other consumer.
 
 The BFF resolves exactly one runtime mode at startup: `external` (an existing gRPC
 listener), `spawn` (a local `mecated`), or `mock`. Login uses the issuer named in the

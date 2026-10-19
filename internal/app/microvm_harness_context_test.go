@@ -372,8 +372,11 @@ func TestMicroVMChildRetainsParentSourceAfterRetirement(t *testing.T) {
 	}()
 	var calls atomic.Int32
 	llm := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {
+		// Count before publishing the request: once the test sees it, it starts the
+		// next run, whose call must not be mistaken for the first one and held.
+		n := calls.Add(1)
 		arrived <- req
-		if calls.Add(1) == 1 {
+		if n == 1 {
 			<-resume
 		}
 	})}, mockllm.TextTurn("child"), mockllm.TextTurn("after retirement"))

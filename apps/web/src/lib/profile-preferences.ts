@@ -13,6 +13,7 @@ const showToolCallsKey = "studio.profile.show-tool-calls";
 const expandDetailsKey = "studio.profile.expand-details";
 const enterSendBehaviorKey = "studio.chat.composer.enterToSend";
 const startOnKey = "studio.profile.start-on";
+const starterPromptsKey = "studio.profile.starter-prompts";
 
 export const uiScaleMin = 0.85;
 export const uiScaleMax = 1.3;
@@ -80,6 +81,18 @@ export function useExpandDetails() {
 
 export function useStartOn() {
   return useStoredChoice<StartOn>(startOnKey, "draft", ["draft", "latest"]);
+}
+
+/**
+ * Whether a new chat offers the suggested starter prompts. Shown by default;
+ * the account-scoped key holds "hidden" only while they are turned off.
+ */
+export function useShowStarterPrompts() {
+  const preference = useStoredChoice(starterPromptsKey, "shown", ["shown", "hidden"]);
+  return {
+    setValue: (next: boolean) => preference.setValue(next ? "shown" : "hidden"),
+    value: preference.value === "shown",
+  };
 }
 
 export function useEnterSendBehavior() {

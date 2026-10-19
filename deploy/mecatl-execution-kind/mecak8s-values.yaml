@@ -9,7 +9,9 @@ redis:
 execution:
   enabled: true
   endpoint: mecatl-execution.execution-qualification.svc.cluster.local:8443
-  profile: go
+  templateID: go
+  templateRevision: ""
+  allowedSubjects: [alice]
   tlsSecret: execution-client-tls
   caKey: ca.crt
   certKey: tls.crt

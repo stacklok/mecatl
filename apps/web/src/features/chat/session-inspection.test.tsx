@@ -18,6 +18,7 @@ import {
 } from "@tanstack/react-router";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { toast } from "sonner";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearUserScopedStorage } from "../../lib/account-storage";
 import { setRequestRecoveryState } from "../../lib/api-client";
@@ -151,6 +152,7 @@ class Bff {
         model: {
           id: "model-a",
           providerId: "provider",
+          providerDisplayName: "Provider",
           reasoningEffort: "medium",
           contextWindow: "1000",
         },
@@ -383,6 +385,16 @@ describe("session inspection", () => {
     expect(screen.queryByRole("textbox", { name: "Message Mecatl", hidden: true })).toBeNull();
   });
 
+  it("copies the session ID with a confirmation toast", async () => {
+    const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    const success = vi.spyOn(toast, "success").mockReturnValue(0);
+    await mount(new Bff());
+    const details = await screen.findByRole("dialog", { name: "Session details" });
+    fireEvent.click(within(details).getByRole("button", { name: "Copy session ID" }));
+    await waitFor(() => expect(success).toHaveBeenCalledWith("Session ID copied"));
+    expect(writeText).toHaveBeenCalledWith("child");
+  });
+
   it("explains unavailable inspection and debug capabilities", async () => {
     const bff = new Bff();
     bff.capabilities = { soul: false, worktrees: false, sessionDebug: false };
@@ -427,10 +439,11 @@ describe("session inspection", () => {
       });
       await waitFor(() => expect(bff.worktreeCalls).toBe(2));
       expect(screen.getByText(/selection is stale/i)).toBeTruthy();
-      expect(within(picker).getByRole("radio", { name: /Feature/ })).toHaveProperty(
-        "checked",
-        false,
-      );
+      expect(
+        within(picker)
+          .getByRole("radio", { name: /Feature/ })
+          .getAttribute("aria-checked"),
+      ).toBe("false");
       expect(
         within(picker).getByRole("button", { name: "Fork in selected worktree" }),
       ).toHaveProperty("disabled", true);
@@ -478,7 +491,11 @@ describe("session inspection", () => {
     };
     const first = await openPicker();
     fireEvent.click(await within(first).findByRole("radio", { name: /Feature/ }));
-    expect(within(first).getByRole("radio", { name: /Feature/ })).toHaveProperty("checked", true);
+    expect(
+      within(first)
+        .getByRole("radio", { name: /Feature/ })
+        .getAttribute("aria-checked"),
+    ).toBe("true");
     fireEvent.click(within(first).getByRole("button", { name: "Close" }));
     await waitFor(() =>
       expect(
@@ -489,10 +506,11 @@ describe("session inspection", () => {
     );
     const reopened = await openPicker();
     await waitFor(() => expect(bff.worktreeCalls).toBe(2));
-    expect(within(reopened).getByRole("radio", { name: /Feature/ })).toHaveProperty(
-      "checked",
-      false,
-    );
+    expect(
+      within(reopened)
+        .getByRole("radio", { name: /Feature/ })
+        .getAttribute("aria-checked"),
+    ).toBe("false");
     fireEvent.click(within(reopened).getByRole("radio", { name: /Feature/ }));
     await act(async () =>
       mounted.router.navigate({ search: { sessionId: "successor" }, to: "/workspace/chat" }),
@@ -507,10 +525,11 @@ describe("session inspection", () => {
       mounted.router.navigate({ search: { sessionId: "child" }, to: "/workspace/chat" }),
     );
     const afterSwitch = await openPicker();
-    expect(await within(afterSwitch).findByRole("radio", { name: /Feature/ })).toHaveProperty(
-      "checked",
-      false,
-    );
+    expect(
+      (await within(afterSwitch).findByRole("radio", { name: /Feature/ })).getAttribute(
+        "aria-checked",
+      ),
+    ).toBe("false");
     expect(
       within(afterSwitch).getByRole("button", { name: "Fork in selected worktree" }),
     ).toHaveProperty("disabled", true);

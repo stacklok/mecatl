@@ -138,7 +138,7 @@ func (s *FSSource) ReadSkillAsset(_ context.Context, skill, asset string) ([]byt
 	}
 	root, err := os.OpenRoot(dir)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %q/%q (%v)", tool.ErrSkillAssetNotFound, skill, asset, err)
+		return nil, fmt.Errorf("%w: %q/%q", tool.ErrSkillAssetNotFound, skill, asset) // err names an absolute path; not for clients
 	}
 	defer func() { _ = root.Close() }() // read-only handle
 	rel := filepath.FromSlash(asset)
@@ -153,7 +153,7 @@ func (s *FSSource) ReadSkillAsset(_ context.Context, skill, asset string) ([]byt
 	}
 	f, err := root.Open(rel)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %q/%q (%v)", tool.ErrSkillAssetNotFound, skill, asset, err)
+		return nil, fmt.Errorf("%w: %q/%q", tool.ErrSkillAssetNotFound, skill, asset) // err names an absolute path; not for clients
 	}
 	defer func() { _ = f.Close() }() // read-only handle
 	// Read at most one byte beyond the model-facing cap. This bounds allocation
@@ -161,7 +161,7 @@ func (s *FSSource) ReadSkillAsset(_ context.Context, skill, asset string) ([]byt
 	// payload rather than returning a truncated asset.
 	data, err := io.ReadAll(io.LimitReader(f, maxSkillAssetBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("skills: read asset %q/%q: %w", skill, asset, err)
+		return nil, fmt.Errorf("skills: read asset %q/%q failed", skill, asset) // err names an absolute path; not for clients
 	}
 	if len(data) > maxSkillAssetBytes {
 		return nil, fmt.Errorf("skills: asset %q/%q is too large (limit %d bytes)", skill, asset, maxSkillAssetBytes)

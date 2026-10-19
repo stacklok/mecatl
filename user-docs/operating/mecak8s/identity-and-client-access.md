@@ -49,8 +49,7 @@ The gateway must forward the original bearer token and expose only the gRPC
 route. Keep `/drain`, `/healthz`, and `/readyz` private.
 
 The chart creates no Gateway, Route, Certificate, or `BackendTLSPolicy`.
-Configure those resources or retain in-pod TLS for re-encryption. Move an
-existing in-pod TLS release to h2c through a blue-green or maintenance cutover.
+Configure those resources or retain in-pod TLS for re-encryption.
 
 ## Rotate server TLS certificates
 
@@ -71,36 +70,39 @@ teams, and memory by the verified `(issuer, subject)` owner. See
 [Caller identity and OIDC](/features/security-and-execution/caller-identity.md)
 for the shared behavior and client workflows.
 
-## Check existing data first
+<span id="check-existing-data-first"></span>
 
-Enabling OIDC changes access, not just attribution:
+## Ownership and storage safety
 
-- Callers can act on and list only their own sessions, schedules, teams, memory,
-  and event streams. Foreign resources appear absent.
-- Different callers can use the same memory keys and schedule names without
-  sharing data.
-- Existing ownerless records become unavailable. Export or back them up before
-  enabling ownership; Mecatl does not adopt them.
+With OIDC enabled, callers can act on and list only their own sessions,
+schedules, teams, memory, and event streams. Foreign resources appear absent.
+Different callers can use the same memory keys and schedule names without
+sharing data. Ownerless records are inaccessible through caller APIs and are
+excluded from retention and scheduling; Mecatl does not adopt them.
 
 OIDC does not isolate the shared pod filesystem. Isolate caller workspaces at
 the deployment layer. Raw storage drivers also remain trusted infrastructure, so
 keep them inaccessible to tenants.
 
-## Before admitting callers: inventory ownerless records
+<span id="before-admitting-callers-inventory-ownerless-records"></span>
 
-Stage the OIDC deployment with tenant traffic blocked and configure one exact
-`storage_management.principals` issuer/subject pair for the operator. Call the
-authenticated `GetStorageHealth` RPC (or `GET /v1/storage/health`) as that
-principal and inspect the `ownerless_session_count` / `ownerless_session_ids`
-and `ownerless_schedule_count` / `ownerless_schedule_names` fields. The
-identifiers are bounded samples (the corresponding `*_truncated` bit says when
-the count is larger); no transcript, memory value, or schedule prompt is
-returned. If either `*_available` field is false, do not proceed until that
-backend exposes the required metadata inventory.
+### Investigate ownerless records
 
-After ownership is enabled, retention and scheduling skip ownerless records.
-Disabling enforcement makes them accessible again but does not assign an owner
-or replay skipped work.
+Configure one exact `storage_management.principals` issuer/subject pair for the
+operator. Call the authenticated `GetStorageHealth` RPC (or
+`GET /v1/storage/health`) as that principal and inspect the
+`ownerless_session_count` / `ownerless_session_ids` and
+`ownerless_schedule_count` / `ownerless_schedule_names` fields. The identifiers
+are bounded samples (the corresponding `*_truncated` bit says when the count is
+larger); no transcript, memory value, or schedule prompt is returned. If either
+`*_available` field is false, the inventory is incomplete: verify that backend's
+metadata-inventory support before making storage decisions.
+
+Preserve backups or an authorized export of ownerless data while investigating.
+Do not disable ownership enforcement to recover access on a tenant-facing
+service: that exposes ownerless records without assigning an owner and does not
+replay skipped work. Keep any direct storage recovery isolated from tenant
+traffic and restricted to authorized operators.
 
 ## Validator and bounded signing-key cache
 
@@ -168,7 +170,7 @@ from authenticated gRPC transport.
 |-|-|
 |**Filesystem isolation**|Ownership does not isolate a shared pod filesystem. Use separate workspaces or deployments for tenants that must not share files.|
 |**Raw storage drivers**|Drivers are trusted infrastructure and do not authenticate end users. Restrict them to agent workloads and keep them off public Services.|
-|**Existing ownerless data**|Enabling ownership makes it unavailable. Export or back it up before enabling OIDC.|
+|**Ownerless data**|Caller APIs, retention, and scheduling exclude it. Preserve backups and use the [ownerless-record investigation](#investigate-ownerless-records); do not disable ownership on a tenant-facing service.|
 |**Signing-key revocation**|The default one-hour JWKS staleness bound permits cached signing keys during a short IdP outage. Tokens remain valid until their own expiry.|
 |**Rate limits and quotas**|`mecak8s` has no rate-limit flags. Enforce caller limits at the gateway or mesh.|
 |**Store confidentiality**|Production Redis requires verified TLS. Client-certificate authentication is not supported.|
@@ -218,6 +220,14 @@ enrollment discovers every protected backend and atomically replaces the
 placeholders with a frozen per-session catalog. Failure exposes no partial
 catalog. Keep preregistered client secrets in `SecretKeyRef`; broker metadata
 and profiles remain non-secret ConfigMap data.
+
+:::caution[Snapshots without provenance need a fresh session]
+
+A session snapshot without workspace broker provenance cannot identify which
+broker tools its authority covered. Mecatl cannot infer or repair that provenance.
+Start a fresh session before using `/tools-connect`.
+
+:::
 
 :::caution[Broker mode is single-replica]
 

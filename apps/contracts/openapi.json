@@ -658,6 +658,9 @@
                         "debugMcp": {
                           "type": "boolean"
                         },
+                        "executionTemplates": {
+                          "type": "boolean"
+                        },
                         "image": {
                           "type": "boolean"
                         },
@@ -774,6 +777,7 @@
                         "audio",
                         "bash",
                         "debugMcp",
+                        "executionTemplates",
                         "image",
                         "learnedSkills",
                         "learningProposals",
@@ -1162,6 +1166,53 @@
                     "minLength": 1,
                     "maxLength": 256
                   },
+                  "execution": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "none": {
+                            "type": "object",
+                            "properties": {},
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "none"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "template": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 63,
+                                "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+                              },
+                              "revision": {
+                                "type": "string",
+                                "pattern": "^v1-[0-9a-f]{64}$"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "revision"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "template"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
                   "mode": {
                     "type": "string",
                     "enum": [
@@ -1201,16 +1252,9 @@
                       "max"
                     ],
                     "default": "default"
-                  },
-                  "toolAccess": {
-                    "type": "string",
-                    "enum": [
-                      "all",
-                      "noFilesystem"
-                    ],
-                    "default": "all"
                   }
-                }
+                },
+                "additionalProperties": false
               }
             }
           }
@@ -1229,6 +1273,44 @@
                   },
                   "required": [
                     "id"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
                   ]
                 }
               }
@@ -1267,6 +1349,124 @@
                     "status",
                     "title",
                     "type"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The Mecatl runtime is unavailable.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/execution-templates": {
+      "get": {
+        "operationId": "listExecutionTemplates",
+        "responses": {
+          "200": {
+            "description": "Eligible execution templates for this caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "inventoryRevision": {
+                      "type": "string"
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "template": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "revision": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "revision"
+                            ]
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "displayToken": {
+                            "type": "string"
+                          },
+                          "extensions": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "string"
+                            }
+                          },
+                          "declaredExecutionFiles": {
+                            "type": "boolean"
+                          },
+                          "declaredBuiltInShell": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "template",
+                          "name",
+                          "description",
+                          "displayToken",
+                          "extensions",
+                          "declaredExecutionFiles",
+                          "declaredBuiltInShell"
+                        ]
+                      },
+                      "maxItems": 64
+                    }
+                  },
+                  "required": [
+                    "inventoryRevision",
+                    "items"
                   ]
                 }
               }
@@ -1578,6 +1778,15 @@
                         "image": {
                           "type": "boolean"
                         },
+                        "audio": {
+                          "type": "boolean"
+                        },
+                        "executionFiles": {
+                          "type": "boolean"
+                        },
+                        "builtInShell": {
+                          "type": "boolean"
+                        },
                         "manualCompaction": {
                           "type": "boolean"
                         },
@@ -1587,6 +1796,9 @@
                       },
                       "required": [
                         "image",
+                        "audio",
+                        "executionFiles",
+                        "builtInShell",
                         "manualCompaction",
                         "modelSelection"
                       ]
@@ -1621,6 +1833,9 @@
                         "contextWindow": {
                           "type": "string"
                         },
+                        "providerDisplayName": {
+                          "type": "string"
+                        },
                         "reasoningEffort": {
                           "type": "string",
                           "enum": [
@@ -1637,6 +1852,7 @@
                         "id",
                         "providerId",
                         "contextWindow",
+                        "providerDisplayName",
                         "reasoningEffort"
                       ]
                     },
@@ -6738,6 +6954,19 @@
                           "inFlight": {
                             "type": "boolean"
                           },
+                          "outcome": {
+                            "type": "string",
+                            "enum": [
+                              "claimed",
+                              "in_flight",
+                              "completed",
+                              "failed",
+                              "cancelled",
+                              "timed_out",
+                              "limit_reached",
+                              "stopped"
+                            ]
+                          },
                           "progressAt": {
                             "type": "string",
                             "nullable": true
@@ -6762,6 +6991,7 @@
                           "firedAt",
                           "id",
                           "inFlight",
+                          "outcome",
                           "progressAt",
                           "scheduleName",
                           "sessionId",
@@ -6952,7 +7182,380 @@
               }
             }
           },
+          "400": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
           "500": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/skills/{name}/files": {
+      "get": {
+        "operationId": "listSkillFiles",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "in": "path",
+            "name": "name"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A configured skill's files with their text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "files": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "content": {
+                            "type": "string"
+                          },
+                          "instructions": {
+                            "type": "boolean"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "size": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "unavailable": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "content",
+                          "instructions",
+                          "name",
+                          "size",
+                          "unavailable"
+                        ]
+                      }
+                    },
+                    "omitted": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "files",
+                    "omitted"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "501": {
             "description": "The request could not be completed.",
             "content": {
               "application/problem+json": {
@@ -7142,6 +7745,82 @@
               }
             }
           },
+          "400": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
           "500": {
             "description": "The request could not be completed.",
             "content": {
@@ -7291,6 +7970,82 @@
                   "required": [
                     "complete",
                     "items"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
                   ]
                 }
               }
@@ -7530,6 +8285,82 @@
               }
             }
           },
+          "400": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
           "500": {
             "description": "The request could not be completed.",
             "content": {
@@ -7710,6 +8541,82 @@
                     "diff",
                     "fromVersion",
                     "toVersion"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
                   ]
                 }
               }
@@ -7980,6 +8887,82 @@
               }
             }
           },
+          "400": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
           "500": {
             "description": "The request could not be completed.",
             "content": {
@@ -8101,6 +9084,24 @@
       "get": {
         "operationId": "listLearningProposals",
         "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
           {
             "schema": {
               "type": "string"
@@ -8233,6 +9234,9 @@
                         ]
                       }
                     },
+                    "nextCursor": {
+                      "type": "string"
+                    },
                     "reason": {
                       "type": "string"
                     },
@@ -8243,6 +9247,7 @@
                   "required": [
                     "complete",
                     "items",
+                    "nextCursor",
                     "reason",
                     "supported"
                   ]
@@ -8250,7 +9255,530 @@
               }
             }
           },
+          "400": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
           "500": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/learning-proposals/{proposalId}": {
+      "get": {
+        "operationId": "getLearningProposal",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "in": "path",
+            "name": "proposalId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One learning proposal, re-read with each evidence source's current availability.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "body": {
+                      "type": "string"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "decisions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "actor": {
+                            "type": "string"
+                          },
+                          "at": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "kind": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "actor",
+                          "at",
+                          "kind",
+                          "reason"
+                        ]
+                      }
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "evidenceCount": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "key": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "learnedSkillId": {
+                      "type": "string"
+                    },
+                    "projectScoped": {
+                      "type": "boolean"
+                    },
+                    "promotionAvailable": {
+                      "type": "boolean"
+                    },
+                    "promotionUnavailableReason": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "triggers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "value": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": "string"
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "availability": {
+                            "type": "string"
+                          },
+                          "available": {
+                            "type": "boolean"
+                          },
+                          "digest": {
+                            "type": "string"
+                          },
+                          "eventSeq": {
+                            "type": "string"
+                          },
+                          "locator": {
+                            "type": "string"
+                          },
+                          "ordinal": {
+                            "type": "integer"
+                          },
+                          "preview": {
+                            "type": "string"
+                          },
+                          "sessionId": {
+                            "type": "string"
+                          },
+                          "toolCallId": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "availability",
+                          "available",
+                          "digest",
+                          "eventSeq",
+                          "locator",
+                          "ordinal",
+                          "preview",
+                          "sessionId",
+                          "toolCallId"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "body",
+                    "createdAt",
+                    "decisions",
+                    "description",
+                    "evidenceCount",
+                    "id",
+                    "key",
+                    "kind",
+                    "learnedSkillId",
+                    "projectScoped",
+                    "promotionAvailable",
+                    "promotionUnavailableReason",
+                    "status",
+                    "title",
+                    "triggers",
+                    "updatedAt",
+                    "value",
+                    "version",
+                    "evidence"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "501": {
             "description": "The request could not be completed.",
             "content": {
               "application/problem+json": {
@@ -8492,7 +10020,83 @@
               }
             }
           },
+          "400": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
           "409": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
             "description": "The request could not be completed.",
             "content": {
               "application/problem+json": {
@@ -8797,7 +10401,83 @@
               }
             }
           },
+          "400": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
           "409": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
             "description": "The request could not be completed.",
             "content": {
               "application/problem+json": {
@@ -9016,6 +10696,82 @@
                     "reason",
                     "reflectionId",
                     "staged"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
                   ]
                 }
               }
@@ -9285,6 +11041,82 @@
               }
             }
           },
+          "400": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
           "500": {
             "description": "The request could not be completed.",
             "content": {
@@ -9494,6 +11326,44 @@
               }
             }
           },
+          "400": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
           "404": {
             "description": "The request could not be completed.",
             "content": {
@@ -9571,6 +11441,44 @@
             }
           },
           "410": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
             "description": "The request could not be completed.",
             "content": {
               "application/problem+json": {
@@ -9778,6 +11686,82 @@
               }
             }
           },
+          "400": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
           "500": {
             "description": "The request could not be completed.",
             "content": {
@@ -9891,6 +11875,9 @@
                         "origin": {
                           "type": "string"
                         },
+                        "sourceProposalId": {
+                          "type": "string"
+                        },
                         "sourceSessionId": {
                           "type": "string"
                         },
@@ -9915,6 +11902,7 @@
                         "description",
                         "key",
                         "origin",
+                        "sourceProposalId",
                         "sourceSessionId",
                         "status",
                         "updatedAt",
@@ -9935,6 +11923,9 @@
                             "type": "string"
                           },
                           "origin": {
+                            "type": "string"
+                          },
+                          "sourceProposalId": {
                             "type": "string"
                           },
                           "sourceSessionId": {
@@ -9961,6 +11952,7 @@
                           "description",
                           "key",
                           "origin",
+                          "sourceProposalId",
                           "sourceSessionId",
                           "status",
                           "updatedAt",
@@ -9983,7 +11975,83 @@
               }
             }
           },
+          "400": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
           "404": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
             "description": "The request could not be completed.",
             "content": {
               "application/problem+json": {
@@ -10733,6 +12801,9 @@
                           "image": {
                             "type": "boolean"
                           },
+                          "providerDisplayName": {
+                            "type": "string"
+                          },
                           "providerId": {
                             "type": "string"
                           },
@@ -10745,6 +12816,7 @@
                           "displayName",
                           "id",
                           "image",
+                          "providerDisplayName",
                           "providerId",
                           "reasoning"
                         ]
@@ -10770,6 +12842,9 @@
                           "defaultModelAutoSelected": {
                             "type": "boolean"
                           },
+                          "displayName": {
+                            "type": "string"
+                          },
                           "hint": {
                             "type": "string"
                           },
@@ -10787,6 +12862,7 @@
                         "required": [
                           "availableNotDefault",
                           "defaultModelAutoSelected",
+                          "displayName",
                           "hint",
                           "id",
                           "modelCount",
@@ -10936,6 +13012,9 @@
                           "image": {
                             "type": "boolean"
                           },
+                          "providerDisplayName": {
+                            "type": "string"
+                          },
                           "providerId": {
                             "type": "string"
                           },
@@ -10948,6 +13027,7 @@
                           "displayName",
                           "id",
                           "image",
+                          "providerDisplayName",
                           "providerId",
                           "reasoning"
                         ]
@@ -10961,6 +13041,9 @@
                         },
                         "defaultModelAutoSelected": {
                           "type": "boolean"
+                        },
+                        "displayName": {
+                          "type": "string"
                         },
                         "hint": {
                           "type": "string"
@@ -10979,6 +13062,7 @@
                       "required": [
                         "availableNotDefault",
                         "defaultModelAutoSelected",
+                        "displayName",
                         "hint",
                         "id",
                         "modelCount",

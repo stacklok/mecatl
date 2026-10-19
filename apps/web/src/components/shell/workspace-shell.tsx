@@ -5,6 +5,7 @@ import { ShortcutProvider } from "../../features/shortcuts/shortcut-provider";
 import { TooltipProvider } from "../ui/tooltip";
 import { ConnectionStatusBanner } from "./connection-status-banner";
 import { GlobalStatusSlot } from "./global-status-slot";
+import { StorageHealthBanner } from "./storage-health-banner";
 import { TopNav } from "./top-nav";
 
 export function WorkspaceShell() {
@@ -20,6 +21,7 @@ export function WorkspaceShell() {
             data-shell-gradient=""
           >
             <div className="shrink-0" data-shell-transient-status="">
+              <StorageHealthBanner />
               <ConnectionStatusBanner placement="transient" />
             </div>
             <TopNav />

@@ -108,8 +108,9 @@ type promptCapabilities struct {
 // --- session/new -------------------------------------------------------------
 
 type newSessionRequest struct {
-	Cwd        string      `json:"cwd"`
-	McpServers []mcpServer `json:"mcpServers"`
+	Cwd        string          `json:"cwd"`
+	McpServers []mcpServer     `json:"mcpServers"`
+	Execution  json.RawMessage `json:"execution"`
 }
 
 // mcpServer is a client-provided MCP server entry. We model the transport
@@ -198,9 +199,10 @@ type setModeResponse struct{}
 // session under sessionId, rooted at cwd. mcpServers mirrors session/new and is
 // rejected the same way (mecatl connects only its own streaming-HTTP MCP).
 type loadSessionRequest struct {
-	SessionID  string      `json:"sessionId"`
-	Cwd        string      `json:"cwd"`
-	McpServers []mcpServer `json:"mcpServers"`
+	SessionID  string          `json:"sessionId"`
+	Cwd        string          `json:"cwd"`
+	McpServers []mcpServer     `json:"mcpServers"`
+	Execution  json.RawMessage `json:"execution"`
 }
 
 // loadSessionResponse echoes the resumed session's mode state so the editor can
