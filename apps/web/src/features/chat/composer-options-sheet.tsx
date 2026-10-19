@@ -10,7 +10,7 @@ import {
   SlidersHorizontal,
   X,
 } from "lucide-react";
-import { type ReactNode, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Sheet, SheetClose, SheetContent, SheetTitle } from "../../components/ui/sheet";
 import { Toggle } from "../../components/ui/toggle";
@@ -84,6 +84,21 @@ export function ComposerOptionsSheet({
   const trigger = useRef<HTMLButtonElement>(null);
   const restoreFocus = useRef(true);
 
+  // A CSS-hidden open modal still owns its overlay and focus trap. Close when the
+  // desktop layout takes over, where this sheet has no trigger or visible content.
+  useEffect(() => {
+    const desktop = window.matchMedia("(min-width: 640px)");
+    const closeOnDesktop = () => {
+      if (!desktop.matches) return;
+      restoreFocus.current = false;
+      setOpen(false);
+      setView("main");
+    };
+    desktop.addEventListener("change", closeOnDesktop);
+    closeOnDesktop();
+    return () => desktop.removeEventListener("change", closeOnDesktop);
+  }, []);
+
   // A modal sheet: app shortcuts must not act on the chat behind it.
   useShortcutSuppression(open);
 
@@ -97,7 +112,7 @@ export function ComposerOptionsSheet({
     <>
       <Button
         aria-label="Composer options"
-        className="size-8 shrink-0 rounded-full border-0 bg-transparent text-muted-foreground shadow-none hover:bg-muted/60 min-[500px]:hidden"
+        className="size-11 shrink-0 rounded-full border-0 bg-transparent text-muted-foreground shadow-none hover:bg-muted/60 min-[640px]:hidden"
         disabled={disabled}
         onClick={() => setOpen(true)}
         ref={trigger}
@@ -115,7 +130,7 @@ export function ComposerOptionsSheet({
         open={open}
       >
         <SheetContent
-          className="max-h-[min(85dvh,40rem)] overflow-y-auto p-0 pb-[env(safe-area-inset-bottom)] min-[500px]:hidden"
+          className="max-h-[min(85dvh,40rem)] overflow-y-auto p-0 pb-[env(safe-area-inset-bottom)] min-[640px]:hidden"
           onCloseAutoFocus={(event) => {
             if (!restoreFocus.current) {
               restoreFocus.current = true;

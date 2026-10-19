@@ -1206,7 +1206,16 @@ func recordValidatedApproval(r *Run, sessionID session.SessionID, ask session.Pe
 // permissionDecision evaluates normal Shell authority and, only for the declared
 // system temporary scope, the independent tool-wide escape capability. The
 // synthetic capability is never dispatched or registered as a tool.
+//
+// It is the single entry to permission evaluation for every dispatched call
+// (fresh, hook-mutated, or resumed after approval), so it first refuses an
+// argument object that is not in the canonical form governance.CheckToolArgs
+// requires. No policy, guardrail, approval surface, hook or tool then sees
+// arguments whose fields different decoders would read differently.
 func (e *Engine) permissionDecision(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, c session.ToolCall) governance.PermissionDecision {
+	if err := governance.CheckToolArgs(c.Args); err != nil {
+		return governance.PermissionDecision{Effect: governance.Deny, Reason: governance.AmbiguousArgsReason(err)}
+	}
 	evaluate := func(c session.ToolCall) governance.PermissionDecision {
 		result := e.deps.Policy.Evaluate(ctx, sess.ID, sess.Mode, c, env.Workspace())
 		if r != nil {
@@ -1247,10 +1256,11 @@ type systemScopeApproval struct {
 
 // systemScopeApprovalArgs projects the system-scope Shell call the engine will
 // execute: the full command, a non-zero timeout, the background flag, and the
-// requested scope, re-encoded from the decoded shellArgs so duplicate or
-// case-variant keys show the value that runs. Runner-owned temporary paths and
-// environment values are chosen when the command runs and never enter the call,
-// so the projection cannot carry them.
+// requested scope, re-encoded from the decoded shellArgs (permissionDecision has
+// already refused ambiguous argument objects, so this is the decode the Shell
+// tool executes). Runner-owned temporary paths and environment values are
+// chosen when the command runs and never enter the call, so the projection
+// cannot carry them.
 func systemScopeApprovalArgs(c session.ToolCall) []byte {
 	args, _, ok := parseShellArgs(c)
 	if !ok {
@@ -1599,6 +1609,14 @@ func (e *Engine) askHookApproval(ctx context.Context, r *Run, sess *session.Sess
 // askHookApproval relies on its caller's openCard. It emits NO diagnostics line
 // (the loop's "exactly THREE lines" invariant holds).
 func (e *Engine) surfacePlanAsk(ctx context.Context, r *Run, sess *session.Session, turnIdx int, c session.ToolCall, resultEvent session.EventType) (session.ToolResult, bool) {
+	// PresentPlan is intercepted before permissionDecision, so it applies the
+	// same argument check here: an approver must never see a plan whose fields
+	// different readers would decode differently.
+	if err := governance.CheckToolArgs(c.Args); err != nil {
+		res := denyResult(c, governance.AmbiguousArgsReason(err))
+		e.publishToolResult(r, session.Event{Type: resultEvent, Turn: turnIdx, ToolResult: ptr(res)})
+		return res, false
+	}
 	// Headless degrade (mirrors preHook's askable-block degrade): a
 	// non-interactive engine has NO human to approve a plan, so it must NOT surface
 	// an ask (a headless run never emits EvPermissionAsk). Fail safe: synthesize a
@@ -1866,7 +1884,7 @@ func authorityTarget(call session.ToolCall, _ governance.CapabilitySet) (string,
 			Server string `json:"server"`
 			Tool   string `json:"tool"`
 		}
-		if err := json.Unmarshal(call.Args, &args); err != nil || strings.TrimSpace(args.Server) == "" || strings.TrimSpace(args.Tool) == "" {
+		if _, ok := session.ParseArgs(call, &args); !ok || strings.TrimSpace(args.Server) == "" || strings.TrimSpace(args.Tool) == "" {
 			return "", errors.New("CallMcpWithQuery target is invalid")
 		}
 		return "mcp__" + strings.TrimSpace(args.Server) + "__" + strings.TrimSpace(args.Tool), nil
@@ -1874,7 +1892,7 @@ func authorityTarget(call session.ToolCall, _ governance.CapabilitySet) (string,
 		var args struct {
 			Server string `json:"server"`
 		}
-		if err := json.Unmarshal(call.Args, &args); err != nil || strings.TrimSpace(args.Server) == "" {
+		if _, ok := session.ParseArgs(call, &args); !ok || strings.TrimSpace(args.Server) == "" {
 			return "", errors.New("MCP resource target is invalid")
 		}
 		return governance.MCPResourceCapability(strings.TrimSpace(args.Server)), nil

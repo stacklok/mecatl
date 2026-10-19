@@ -1,10 +1,32 @@
 package server
 
 import (
+	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"testing"
 )
+
+func TestSDKServerFeatureVocabularyParity(t *testing.T) {
+	path := filepath.Join(filepath.Dir(sdkTypescriptEventParityPaths(t).manifest), "server.ts")
+	source := sourceBetween(t, readParitySource(t, path),
+		"// BEGIN MECATL_SERVER_FEATURES", "// END MECATL_SERVER_FEATURES")
+	typed := make(map[string]struct{})
+	for _, match := range regexp.MustCompile(`(?m)^  [A-Za-z]+: "([a-z0-9_]+)",$`).FindAllStringSubmatch(source, -1) {
+		if _, duplicate := typed[match[1]]; duplicate {
+			t.Fatalf("duplicate SDK feature %q", match[1])
+		}
+		typed[match[1]] = struct{}{}
+	}
+	wire := make(map[string]struct{}, len(allFeatures))
+	for _, feature := range allFeatures {
+		wire[feature] = struct{}{}
+	}
+	if missing, extra := setDifference(wire, typed), setDifference(typed, wire); len(missing) != 0 || len(extra) != 0 {
+		t.Fatalf("Go/TypeScript feature drift: missing=%v extra=%v", missing, extra)
+	}
+}
 
 // TestFeatureScopeFieldsAllGateSomething closes the review finding that
 // permittedBy's `default: return true` makes the failure mode

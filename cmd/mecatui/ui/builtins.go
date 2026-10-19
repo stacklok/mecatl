@@ -132,6 +132,22 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 			},
 		},
 		{
+			name:        "queue",
+			desc:        "queue a follow-up prompt after the active run",
+			acceptsArgs: true,
+			run: func(m Model) (tea.Model, tea.Cmd) {
+				return m.deliverPrompt("queue", "")
+			},
+		},
+		{
+			name:        "steer",
+			desc:        "steer the active run with a prompt",
+			acceptsArgs: true,
+			run: func(m Model) (tea.Model, tea.Cmd) {
+				return m.deliverPrompt("steer", "")
+			},
+		},
+		{
 			name: "session",
 			desc: "show active session details and copy its exact ID",
 			run:  Model.runSessionDetails,
@@ -656,6 +672,7 @@ type builtinName struct {
 // before a capability-gated builtin can be dispatched.
 var builtinNameRegistry = []builtinName{
 	{name: "clear", acceptsArgs: false}, {name: "help", acceptsArgs: false}, {name: "quit", acceptsArgs: false}, {name: "title", acceptsArgs: true}, {name: "session", acceptsArgs: false},
+	{name: "queue", acceptsArgs: true}, {name: "steer", acceptsArgs: true},
 	{name: "retry", acceptsArgs: false}, {name: "toolcalls", acceptsArgs: false}, {name: "diagnostics", acceptsArgs: false}, {name: "compact", acceptsArgs: false},
 	{name: "mcp", acceptsArgs: false}, {name: "agents", acceptsArgs: false}, {name: "team", acceptsArgs: false},
 	{name: "skills", acceptsArgs: false}, {name: "soul", acceptsArgs: false}, {name: "memory", acceptsArgs: false},
@@ -737,6 +754,10 @@ func (m Model) renameTitle(title string) (tea.Model, tea.Cmd) {
 // recognized built-in that does not accept arguments keeps the input and shows a
 // local warning. Unknown slash commands remain model-facing.
 func (m Model) dispatchBareBuiltin(text string) (tea.Model, tea.Cmd, bool) {
+	if kind, payload, ok := deliveryCommand(text); ok {
+		mm, cmd := m.deliverPrompt(kind, payload)
+		return mm, cmd, true
+	}
 	if title, bare, ok := titleCommand(text); ok {
 		if bare {
 			m.prompt.Reset()

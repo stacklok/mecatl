@@ -23,7 +23,8 @@ func shellCall(cmd string) session.ToolCall {
 }
 
 func fileCall(toolName, p string) session.ToolCall {
-	args, _ := json.Marshal(map[string]string{"file_path": p})
+	// The built-in file tools act on "path", the argument their rules match.
+	args, _ := json.Marshal(map[string]string{"path": p})
 	return session.NewToolCall("c1", toolName, args)
 }
 

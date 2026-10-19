@@ -97,6 +97,36 @@ func operatorDefaultEffortFor(cfg Config, providerID string) string {
 	return clamped
 }
 
+// sessionProviderOptions applies the same effort/capability contract to ordinary
+// and agent-bound roots. Utility reviewers keep the original provider.
+func sessionProviderOptions(ctx context.Context, cfg Config, reg *providerRegistry, provider port.LLMProvider, providerID, model, requestedEffort string) (port.LLMProvider, string, port.ProviderCapabilities) {
+	effort := resolveSessionEffort(ctx, cfg, requestedEffort)
+	effort, clamped := clampEffortForProvider(providerID, effort)
+	if clamped {
+		cfg.diag().Log(ctx, port.LevelWarn,
+			"reasoning-effort: clamped for provider (this provider supports low/medium/high only)",
+			"provider", providerID, "effort", effort)
+	}
+	if effort != "" {
+		if supported, known := modelReasoningSupport(reg, providerID, model); known && !supported {
+			cfg.diag().Log(ctx, port.LevelWarn,
+				"reasoning-effort: model does not support reasoning effort; ignoring",
+				"provider", providerID, "model", model, "effort", effort)
+			effort = ""
+		}
+	}
+	caps := modelCapability(reg, providerID, model)
+	if entry, ok := reg.Lookup(providerID); ok && entry.remint != nil {
+		entryEffort, _ := NormalizeReasoningEffort(cfg.ReasoningEffort)
+		entryEffort, _ = clampEffortForProvider(providerID, entryEffort)
+		capsDiff := entry.defaultCaps != caps && entry.defaultCaps != (port.ProviderCapabilities{})
+		if effort != entryEffort || capsDiff {
+			provider = entry.remint(effort, caps)
+		}
+	}
+	return provider, effort, caps
+}
+
 // resolveSessionEffort resolves the EFFECTIVE reasoning effort for a session:
 // per-session selector value (when non-empty) OUT-RANKS the operator default
 // (cfg.ReasoningEffort). Both are normalised; an invalid per-session token falls

@@ -632,14 +632,14 @@ export function ChatComposer({
 
   return (
     <form
-      className="mx-auto w-full max-w-3xl shrink-0 px-4 pb-4 max-[499px]:px-0 max-[499px]:pb-[env(safe-area-inset-bottom)] min-[500px]:px-6 min-[500px]:pb-6"
+      className="mx-auto w-full max-w-3xl shrink-0 px-4 pb-4 max-[640px]:px-0 max-[640px]:pb-[env(safe-area-inset-bottom)] min-[640px]:px-6 min-[640px]:pb-6"
       onSubmit={handleSubmit}
     >
-      <div className="relative rounded-2xl bg-zinc-50 dark:bg-zinc-900 max-[499px]:rounded-b-none">
+      <div className="relative rounded-2xl bg-zinc-50 dark:bg-zinc-900 max-[640px]:rounded-b-none">
         {/* biome-ignore lint/a11y/noStaticElementInteractions: a drop target, not a widget; the Attach button covers the same action for keyboard and screen-reader users. */}
         <div
           className={cn(
-            "relative rounded-2xl border bg-background transition-colors focus-within:border-zinc-400 dark:focus-within:border-zinc-600 max-[499px]:rounded-b-none",
+            "relative rounded-2xl border bg-background transition-colors focus-within:border-zinc-400 dark:focus-within:border-zinc-600 max-[640px]:rounded-b-none",
             composerFrameClass({
               hasText: Boolean(prompt.trim()),
               isDragOver,
@@ -698,7 +698,7 @@ export function ChatComposer({
           <div className="px-4 pt-4 pb-2">
             <Textarea
               aria-label="Message Mecatl"
-              className="field-sizing-content max-h-48 min-h-[4.5rem] resize-none rounded-none border-0 bg-transparent px-0 py-0 text-sm shadow-none placeholder:opacity-60 focus-visible:ring-0 dark:bg-transparent max-[499px]:min-h-[1.75rem]"
+              className="field-sizing-content max-h-48 min-h-[4.5rem] resize-none rounded-none border-0 bg-transparent px-0 py-0 text-sm shadow-none placeholder:opacity-60 focus-visible:ring-0 dark:bg-transparent max-[640px]:max-h-[96px] max-[640px]:min-h-[1.75rem]"
               disabled={busy}
               onChange={(event) => setPrompt(event.target.value)}
               onCompositionEnd={() => {
@@ -773,7 +773,7 @@ export function ChatComposer({
             />
             <Button
               aria-label="Attach files"
-              className="size-8 shrink-0 rounded-full text-muted-foreground hover:bg-muted/60"
+              className="size-8 shrink-0 rounded-full text-muted-foreground hover:bg-muted/60 max-[640px]:size-11"
               disabled={attachDisabled}
               onClick={() => fileInput.current?.click()}
               size="icon"
@@ -795,7 +795,7 @@ export function ChatComposer({
               // ghost's hover ink in both states.
               className={cn(
                 buttonVariants({ size: "icon", variant: "ghost" }),
-                "size-8 min-w-0 shrink-0 rounded-full border-0 bg-transparent px-0 text-muted-foreground shadow-none hover:bg-muted/60 data-[state=on]:bg-brand/10 data-[state=on]:text-brand data-[state=on]:hover:bg-brand/20 data-[state=on]:hover:text-accent-foreground",
+                "size-8 min-w-0 shrink-0 rounded-full border-0 bg-transparent px-0 text-muted-foreground shadow-none hover:bg-muted/60 max-[640px]:size-11 data-[state=on]:bg-brand/10 data-[state=on]:text-brand data-[state=on]:hover:bg-brand/20 data-[state=on]:hover:text-accent-foreground",
               )}
               disabled={busy}
               onPressedChange={voice.toggle}
@@ -809,6 +809,7 @@ export function ChatComposer({
             </Toggle>
             <div className="ml-auto flex items-center gap-1">
               <ClearDraftButton
+                className="max-[640px]:size-11"
                 disabled={busy}
                 hasDraft={hasDraftContent}
                 onClear={clearDraftNow}
@@ -821,7 +822,7 @@ export function ChatComposer({
                       ? "Mecatl is working"
                       : "Send message"
                 }
-                className="size-8 shrink-0 rounded-full bg-brand text-brand-foreground hover:bg-brand/90"
+                className="size-8 shrink-0 rounded-full bg-brand text-brand-foreground hover:bg-brand/90 max-[640px]:size-11"
                 disabled={busy || (!prompt.trim() && images.length === 0 && textFiles.length === 0)}
                 size="icon"
                 type="submit"
@@ -839,7 +840,7 @@ export function ChatComposer({
         {showPillRow && (
           <section
             aria-label="Chat configuration and usage"
-            className="-mt-4 rounded-b-2xl border border-t-0 border-zinc-300 bg-zinc-50 px-2 pt-5 pb-1.5 dark:border-zinc-700 dark:bg-zinc-900 max-[499px]:hidden"
+            className="-mt-4 rounded-b-2xl border border-t-0 border-zinc-300 bg-zinc-50 px-2 pt-5 pb-1.5 dark:border-zinc-700 dark:bg-zinc-900 max-[640px]:hidden"
           >
             <div className="hide-scrollbar @container flex items-center gap-1 overflow-x-auto">
               {mode && (

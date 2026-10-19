@@ -152,6 +152,74 @@ display-safe metadata and an opaque caller/source-scoped selector accepted only
 by ClearSession or ForkSession. Local selectors expire on restart and must be
 relisted; they are neither paths nor durable bearer IDs.
 
+### Agent-bound session creation
+
+`CreateSessionRequest.agent_definition_name` optionally binds the session root
+to a configured agent definition. Empty or omitted preserves ordinary session
+creation. An unknown definition returns `INVALID_ARGUMENT`. The response echoes
+the exact name in `resolved_agent_definition_name` and the effective provider
+and model in `resolved_model`; an ordinary session has an empty binding echo.
+
+Clients **MUST** require `session_agent_definitions` in
+`GetCompatibilityInfo.features` before relying on binding and verify that the
+response echoes the requested name before sending a prompt. An older gRPC
+server can ignore the unknown request field and create an ordinary session.
+The feature reports build-level protocol support even when no definitions are
+configured; it grants neither access nor availability of a particular definition.
+
+The bound root uses the definition's prompt, skills, hooks, memory, and tool
+catalog, with ordinary main-session permission asks and guardrails. Only the
+MCP servers selected by the definition participate. Tools the definition
+excludes stay excluded from the catalog, granted authority, and ceiling,
+including MCP tools and the automatic `ShellStatus` companion. The ceiling
+cannot be widened by later tool grants or workspace enrollment. The
+definition's turn and tool-call limits and its permission mode are ceilings:
+create-time overrides can only tighten them, and other limit fields such as the
+consecutive-failure limit keep the inherited value. `execution.none` further
+removes filesystem and shell access; project memory is unavailable without a
+filesystem.
+
+Provider/model selection for a bound root follows these five cases:
+
+|Request selector|Result|
+|-|-|
+|Neither field|Definition's base provider/model pair over the deployment default.|
+|`model_id` only|Base provider with the request's literal model.|
+|`provider_id` only|Requested provider with that provider's default model.|
+|Both fields|Requested provider and literal model pair.|
+|Definition explicitly pins an unavailable provider, and no request provider overrides it|`INVALID_ARGUMENT`, including a model-only request.|
+
+An unknown or unavailable request provider also returns `INVALID_ARGUMENT`.
+Definition `model` selectors support configured scalar or provider/model aliases;
+root resolution excludes `SubagentModel` defaults and automatic child routing.
+An unknown or conflicting definition model alias warns and falls back as a whole
+provider/model pair, preserving an explicit provider pin. Raw wire `model_id`
+values are opaque literals, **not** alias selectors. Without a definition,
+model-only creation remains invalid.
+
+Binding cannot be combined with `debug_target_session_id`, `debug_mcp_servers`,
+or client-provided `mcp_servers`. These combinations return `INVALID_ARGUMENT`
+when the listener permits client MCP; a listener that disables client MCP can
+reject that field earlier with `client_mcp_unsupported`.
+
+The name, effective configuration, and authority ceiling persist with the
+session, including metadata used to reconstruct source evidence. Fork and clear
+preserve the binding and inherited authority ceiling, build the current definition's
+catalog, and tighten carried limits and mode against that definition. Tools must
+remain within the inherited authority as well as the current catalog.
+`SetMode` is refused for bound sessions. Stored metadata remains readable, but
+resuming execution after restart or resuming with client-supplied MCP is refused
+rather than rebuilding an unrestricted root. Bound records without valid
+authority and a ceiling are rejected on restore.
+
+`agent_definition_name` selects a definition by name. It is not an authenticated
+identity, and it does not record the definition's source or revision. Fork and
+clear create new sessions, and an existing bound session is never silently
+rebuilt from a different definition after restart. The authority ceiling bounds
+what a session can be granted; it is not an access-control or revocation
+mechanism. This feature adds no definition-specific access controls, no
+credentialed agent-instance registration, and no broker-side enforcement.
+
 ### Dedicated debugger creation
 
 Set `CreateSessionRequest.execution.none = {}` and set `debug_target_session_id`

@@ -22,7 +22,7 @@ func embeddedCaps() client.Capabilities {
 func allOnCaps() client.Capabilities {
 	return client.Capabilities{
 		MCP: true, SlashCommands: true, Memory: true, Skills: true, Teams: true, Shell: true,
-		ModelSelection: true, Scheduling: true,
+		ModelSelection: true, Scheduling: true, Steer: true,
 	}
 }
 
@@ -99,8 +99,10 @@ func TestHelpOmitsDebugOnlyBuiltins(t *testing.T) {
 // are tagged not-enabled and memory/teams are not.
 func TestHelpAnnotationsTrackCaps(t *testing.T) {
 	for _, body := range []string{stripANSIstr(m_helpBody(embeddedCaps())), stripANSIstr(m_helpBody(allOnCaps()))} {
-		if !strings.Contains(body, "/quit") || !strings.Contains(body, "alias: /exit") {
-			t.Errorf("help must document /quit and /exit alias:\n%s", body)
+		for _, want := range []string{"/quit", "alias: /exit", "/queue TEXT", "/steer TEXT", "prefixed draft"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("help must describe %q:\n%s", want, body)
+			}
 		}
 	}
 	embedded := stripANSIstr(m_helpBody(embeddedCaps()))
@@ -413,7 +415,7 @@ func TestHelpReflectsKeyOverride(t *testing.T) {
 		occurs int // rows whose action text appears on this many lines
 	}{
 		{name: "Submit", match: "send prompt", want: "ctrl+f1", absent: "enter", occurs: 1},
-		{name: "Submit queued", match: "queue a follow-up", want: "ctrl+f1", absent: "enter", occurs: 1},
+		{name: "Submit pending", match: "add to pending input", want: "ctrl+f1", absent: "enter", occurs: 1},
 		{name: "Newline", match: "newline", want: "ctrl+f2", absent: "shift+enter", occurs: 1},
 		{name: "Paste", match: "paste a clipboard image", want: "ctrl+f3", absent: "ctrl+v", occurs: 1},
 		{name: "SelectAll", match: "select all prompt text", want: "ctrl+f31", absent: "ctrl+g", occurs: 1},

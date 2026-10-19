@@ -354,33 +354,73 @@ func TestReasoningInterleavedRendersOnce(t *testing.T) {
 	}
 }
 
-// TestReasoningLiveAffordance asserts that while reasoning is streaming and no
-// answer text has arrived, the collapsed header reads "reasoning…", flipping to
-// the static expandable form once answer text begins.
+// TestReasoningLiveAffordance exercises displayed frames, including deferred
+// deltas, explicit render ticks, and the turn-end tail flush in both detail modes.
 func TestReasoningLiveAffordance(t *testing.T) {
-	m := newTestModelFromDeps(Deps{Theme: theme.New("aztec", theme.AztecPalette())})
-	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
-	m.phase = phaseRunning
-	m = applyAll(m,
-		client.TurnStartMsg{Turn: 1},
-		client.ReasoningDeltaMsg{Turn: 1, Text: "thinking about it\n"},
-	)
-	live := stripANSIstr(m.rend.renderConversation(&m.conv, false))
-	if !strings.Contains(live, "reasoning…") {
-		t.Errorf("streaming reasoning (no answer yet) should show the live affordance:\n%s", live)
-	}
-	if !strings.Contains(live, "reasoning… · f9 expand") {
-		t.Errorf("live reasoning must advertise its detail toggle:\n%s", live)
-	}
+	for _, expand := range []bool{false, true} {
+		t.Run(map[bool]string{false: "comfort", true: "detail"}[expand], func(t *testing.T) {
+			m := newCoalesceModel(t)
+			if expand {
+				m = applyAll(m, f9)
+			}
+			assertDisplay := func(live bool, answer string) {
+				t.Helper()
+				content := m.vp.GetContent()
+				lines := strings.Split(stripANSIstr(content), "\n")
+				label := lineIndexContaining(content, "◀ mecatl")
+				header := "reasoning summary · 1 line · f9 expand"
+				if expand {
+					header = "reasoning summary · 1 line · f9 collapse"
+				} else if live {
+					header = "reasoning… · f9 expand"
+				}
+				if label < 0 || label+1 >= len(lines) || strings.TrimRight(lines[label+1], " ") != " │ "+header {
+					t.Fatalf("reasoning must directly follow mecatl with a rail:\n%s", stripANSIstr(content))
+				}
+				if !strings.Contains(content, m.deps.Theme.Style("transcriptLLMRail").Render("│")) ||
+					!strings.Contains(stripANSIstr(m.View().Content), header) {
+					t.Fatal("styled rail and reasoning header must reach the displayed view")
+				}
+				if strings.Contains(stripANSIstr(content), "thinking about it") != expand {
+					t.Fatal("reasoning detail visibility does not match the mode")
+				}
+				if answer != "" {
+					row := lineIndexContaining(content, answer)
+					if row < label+3 || strings.TrimRight(lines[row], " ") != " │ "+answer ||
+						strings.TrimSpace(lines[row-1]) != "│" || strings.TrimSpace(lines[row-2]) == "│" {
+						t.Fatalf("answer must have a rail and exactly one blank row after reasoning:\n%s", stripANSIstr(content))
+					}
+				}
+			}
 
-	// Answer text begins → flips to the static, expandable header.
-	m = applyAll(m, client.AssistantDeltaMsg{Turn: 1, Text: "Done."})
-	settled := stripANSIstr(m.rend.renderConversation(&m.conv, false))
-	if strings.Contains(settled, "reasoning…") {
-		t.Errorf("reasoning should stop showing the live affordance once answer begins:\n%s", settled)
-	}
-	if !strings.Contains(settled, "reasoning summary · 1 line · f9 expand") {
-		t.Errorf("settled reasoning should show the static header:\n%s", settled)
+			before := m.vp.GetContent()
+			m = applyAll(m, client.ReasoningDeltaMsg{Turn: 1, Text: "thinking about it\n"})
+			if !m.viewDirty || m.vp.GetContent() != before || strings.Contains(stripANSIstr(m.View().Content), "reasoning") {
+				t.Fatal("reasoning delta must remain hidden until its render tick")
+			}
+			m = applyAll(m, renderTickMsg{})
+			if m.viewDirty {
+				t.Fatal("reasoning tick did not publish the dirty frame")
+			}
+			assertDisplay(true, "")
+
+			before = m.vp.GetContent()
+			m = applyAll(m, client.AssistantDeltaMsg{Turn: 1, Text: "Done."})
+			if !m.viewDirty || m.vp.GetContent() != before || strings.Contains(stripANSIstr(m.View().Content), "Done.") {
+				t.Fatal("answer delta must leave the displayed live reasoning frame unchanged")
+			}
+			m = applyAll(m, renderTickMsg{})
+			assertDisplay(false, "Done.")
+			m = applyAll(m, client.AssistantDeltaMsg{Turn: 1, Text: " Final tail."})
+			if !m.viewDirty || strings.Contains(stripANSIstr(m.View().Content), "Final tail.") {
+				t.Fatal("final answer delta should await a render boundary")
+			}
+			m = applyAll(m, client.TurnEndMsg{Turn: 1})
+			if m.viewDirty {
+				t.Fatal("turn end must flush the pending answer without another tick")
+			}
+			assertDisplay(false, "Done. Final tail.")
+		})
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
@@ -249,7 +250,7 @@ func (r *renderer) snapshotProvenanceRows(blockID uint64, kind scrollback.Kind, 
 	case scrollback.KindUser:
 		textStart, region = 1, conversationRegionBody
 	case scrollback.KindAssistant:
-		textStart = 2 // speaker label plus its blank row
+		textStart = 1 // speaker label; reasoning/body starts immediately below it
 		if strings.TrimSpace(assistant.Reasoning) != "" {
 			reasoning := r.renderReasoningSnapshot(assistant, expand)
 			reasoningRows := len(strings.Split(reasoning, "\n"))
@@ -257,12 +258,16 @@ func (r *renderer) snapshotProvenanceRows(blockID uint64, kind scrollback.Kind, 
 				rows[i] = renderedRow{blockID: blockID, region: conversationRegionReasoning, row: i - textStart}
 			}
 			if expand {
-				caveatRows := len(strings.Split(r.wrapStyled(reasoningCaveat, r.th.Style("transcriptReasoningText")), "\n"))
-				for i := textStart + 1 + caveatRows; i < min(textStart+reasoningRows, len(rows)); i++ {
+				text := terminaltext.Sanitize(strings.TrimRight(assistant.Reasoning, "\n"))
+				textRows := len(strings.Split(r.wrapStyled(text, r.th.Style("transcriptReasoningText")), "\n"))
+				for i := textStart + reasoningRows - textRows; i < min(textStart+reasoningRows, len(rows)); i++ {
 					rows[i].text = true
 				}
 			}
 			textStart += reasoningRows
+			if strings.TrimSpace(assistant.Text) != "" {
+				textStart++ // reasoning/answer separator is chrome, not semantic text
+			}
 		}
 		region = conversationRegionBody
 	default:
@@ -307,7 +312,7 @@ func canonicalRowText(kind scrollback.Kind, line string, indent int) string {
 		line = strings.TrimPrefix(line, strings.Repeat(" ", indent))
 	}
 	if kind == scrollback.KindAssistant {
-		line = strings.TrimPrefix(line, strings.Repeat(" ", assistantBodyHang))
+		line = strings.TrimPrefix(line, "│ ")
 	}
 	return strings.TrimRight(line, " ")
 }

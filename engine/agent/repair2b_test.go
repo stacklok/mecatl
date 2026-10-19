@@ -48,7 +48,11 @@ func TestReviewTargetUsesOnlyKnownLocalFileSemantics(t *testing.T) {
 	}
 }
 
-func TestReviewTargetMatchesBuiltinReadWithConflictingPathVariants(t *testing.T) {
+// TestReviewTargetMatchesBuiltinReadDecode pins that the review target and the
+// built-in Read share one decode: path variants in two spellings give no
+// workspace target and the Read refuses them, while the canonical path is both
+// the reviewed dependency and the file read.
+func TestReviewTargetMatchesBuiltinReadDecode(t *testing.T) {
 	ctx := context.Background()
 	workspace := memfs.NewWorkspace("/review")
 	for path, marker := range map[string]string{
@@ -59,12 +63,20 @@ func TestReviewTargetMatchesBuiltinReadWithConflictingPathVariants(t *testing.T)
 			t.Fatal(err)
 		}
 	}
-	call := session.NewToolCall("c", "Read", json.RawMessage(`{"path":"website/a.ts","Path":"services/a.ts"}`))
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "review"}, workspace, memledger.New(), nil)
+	conflicting := session.NewToolCall("c", "Read", json.RawMessage(`{"path":"website/a.ts","Path":"services/a.ts"}`))
+	if target, paths := reviewTarget(conflicting); target.Kind != "tool" || len(paths) != 0 {
+		t.Fatalf("conflicting variants review target=%+v paths=%v, want no workspace target", target, paths)
+	}
+	if result, err := (fstools.ReadTool{}).Execute(ctx, conflicting, env); err != nil || !result.IsError || !strings.Contains(result.Content, "ambiguous tool arguments") {
+		t.Fatalf("conflicting variants Read result=%+v err=%v, want an ambiguous-arguments error", result, err)
+	}
+
+	call := session.NewToolCall("c", "Read", json.RawMessage(`{"path":"services/a.ts"}`))
 	target, paths := reviewTarget(call)
 	if target.Display != "services/a.ts" || len(paths) != 1 || paths[0] != "services/a.ts" {
 		t.Fatalf("review target=%+v paths=%v", target, paths)
 	}
-	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "review"}, workspace, memledger.New(), nil)
 	result, err := (fstools.ReadTool{}).Execute(ctx, call, env)
 	if err != nil || result.IsError || !strings.Contains(result.Content, "SERVICES_MARKER") || strings.Contains(result.Content, "WEBSITE_MARKER") {
 		t.Fatalf("Read result=%+v err=%v", result, err)

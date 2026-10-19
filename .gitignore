@@ -19,6 +19,9 @@ coverage.*
 # Local scratch
 /.scratch/
 
+# Checkout-generated supplemental workspace checksums
+/go.work.sum
+
 # Retired generated documentation index; do not re-add without an explicit decision.
 /llms.txt
 

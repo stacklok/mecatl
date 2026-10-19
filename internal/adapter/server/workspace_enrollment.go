@@ -222,6 +222,9 @@ func (s *Service) workspaceEnrollmentTarget(ctx context.Context, id session.Sess
 	if err != nil || sess == nil || sess.ID != id || s.authorizeSession(ctx, sess) != nil {
 		return nil, nil, nil, ErrNotFound
 	}
+	if sess.AgentDefinitionName != "" {
+		return nil, nil, nil, fmt.Errorf("%w: workspace/bundle enrollment is not supported for an agent-bound session %q", ErrInvalidArgument, id)
+	}
 	if _, present := sess.WorkspaceEnrollmentBrokerKeys(); !present {
 		return sess, nil, nil, fmt.Errorf("%w: workspace enrollment provenance is unavailable; create a fresh session", ErrFailedPrecondition)
 	}

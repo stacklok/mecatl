@@ -454,12 +454,20 @@ const (
 // "still pending after it" on each drain echo, instead of collapsing everything
 // into one re-minted bundle (the duplication bug the append model exposed).
 type steerQueuedSend struct {
-	ID     string
+	ID           string
+	Text         string
+	Draft        string
+	Media        client.MediaResult
+	PendingMedia client.MediaResult
+	Staged       map[string]stagedAttachment
+	Pastes       map[string]string
+}
+
+type queuedPromptDraft struct {
 	Text   string
-	Draft  string
-	Media  client.MediaResult
 	Staged map[string]stagedAttachment
 	Pastes map[string]string
+	Media  client.MediaResult // already-prepared media inherited from an earlier pullback
 }
 
 // steerState is the ONE-ELEMENT steer-mode mid-run state: the pending bundle —
@@ -642,9 +650,10 @@ type Model struct {
 	skillsEpoch                  uint64 // model-lifetime monotonic /skills request epoch; never reset on close (the surface mints via its nextEpoch closure)
 	skillChangeLast              string // newest bounded lifecycle receipt already announced
 	executionPicker              executionPickerState
-	palette                      paletteState       // slash-command palette (open when the input starts with "/")
-	mention                      mentionState       // @-file-mention completion menu (open when the trailing word is an "@token"); mutually exclusive with palette
-	queued                       []string           // follow-up prompts staged while a run streams; MERGED into one prompt and drained on a healthy stop (see drainQueue)
+	palette                      paletteState // slash-command palette (open when the input starts with "/")
+	mention                      mentionState // @-file-mention completion menu (open when the trailing word is an "@token"); mutually exclusive with palette
+	queued                       []string     // follow-up prompts staged while a run streams; MERGED into one prompt and drained on a healthy stop (see drainQueue)
+	queuedDrafts                 []queuedPromptDraft
 	queuedMedia                  client.MediaResult // media owned by the local merge queue; sent with the merged follow-up
 	pendingPromptMedia           client.MediaResult // prepared queue media handed to submitPrompt without reconstructing markers
 	queuePaused                  string             // non-empty when a run ended on a non-clean stop with a non-empty queue: the stop reason holding the queue (see drainQueue/renderQueue)
@@ -991,7 +1000,7 @@ type Model struct {
 	// bracketed paste over the staging thresholds (pasteNeedsStaging) inserts only
 	// the marker, so the textarea buffer — which the bubbles textarea re-wraps per
 	// rendered frame — never holds the huge payload (issue #45). submitPrompt and
-	// enqueuePrompt expand surviving markers in place (expandPastePlaceholders);
+	// deliverDefaultPrompt expand surviving markers in place (expandPastePlaceholders);
 	// a deleted marker's content is silently dropped at submit. nextPasteN is its
 	// own monotonic counter (separate numbering from nextMediaN, never reused).
 	stagedPastes map[string]string
@@ -1270,6 +1279,7 @@ func (m Model) resetSessionDerived() Model {
 	// plan ask may have been open), as is the full-screen ask-args view.
 	m.closeModal()
 	m.queued = nil
+	m.queuedDrafts = nil
 	m.queuedMedia = client.MediaResult{}
 	m.pendingPromptMedia = client.MediaResult{}
 	m.queuePaused = ""

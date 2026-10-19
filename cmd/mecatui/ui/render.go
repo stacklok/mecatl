@@ -235,11 +235,9 @@ type inputRenderKey struct {
 // exactly. The width-0 team/fleet focus renderers (bare &renderer{}) keep indent 0.
 const defaultBlockIndent = 1
 
-// assistantBodyHang is the extra left indent (cells) for assistant text and
-// reasoning. In the F9 detail view it aligns the body under the "◀ mecatl"
-// label; in the normal view it keeps prose inset from tool lines. It equals the
-// label marker width lipgloss.Width("◀ ") = 2. Applied on top of the base block
-// indent; the markdown wrap budget subtracts it so wrapped text fits r.width.
+// assistantBodyHang is the assistant rail plus its one-cell padding. Applied on
+// top of the base block indent, it aligns prose under the speaker label. Markdown
+// and reasoning wrap budgets subtract it so framed text still fits r.width.
 const assistantBodyHang = 2
 
 // newRenderer builds a renderer for a theme, seeded with the LIVE chord
@@ -280,11 +278,9 @@ func (r *renderer) indentLines(s string) string {
 	return padLines(s, r.indent)
 }
 
-// padLines prefixes every line of s (including blank lines, so a multi-row block's left
-// edge stays straight) with n spaces. n <= 0 returns s unchanged with no allocation. It
-// is the shared core of the base indent (indentLines) and the assistant body hang (the
-// assistantBodyHang applied in the blockAssistant arm). The prefixed spaces are real
-// content cells, so the selection x-mapping stays identity.
+// padLines prefixes every line of s (including blank lines) with n spaces for
+// the base block indent. n <= 0 returns s unchanged with no allocation. The
+// prefixed spaces are real content cells, so selection x-mapping stays identity.
 func padLines(s string, n int) string {
 	if n <= 0 {
 		return s
@@ -699,16 +695,21 @@ func (r *renderer) renderAssistantSnapshot(idx int, s scrollback.BlockSnapshot, 
 func (r *renderer) renderAssistantSnapshotFresh(idx int, p scrollback.AssistantCardSnapshot, expand bool) string {
 	var body string
 	if strings.TrimSpace(p.Text) != "" {
-		body = padLines(r.markdownAt(idx, p.Text), assistantBodyHang)
+		body = r.markdownAt(idx, p.Text)
 	}
 	if reasoning := r.renderReasoningSnapshot(p, expand); reasoning != "" {
 		if body != "" {
-			body = "\n" + body
+			body = "\n\n" + body
 		}
-		body = padLines(reasoning, assistantBodyHang) + body
+		body = reasoning + body
 	}
 	label := r.th.Style("transcriptLLMMarker").Render(theme.TranscriptLLMGlyph) + r.th.Style("transcriptLLMHeading").Render(" mecatl")
-	return label + "\n\n" + body
+	rail := lipgloss.NewStyle().
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderLeft(true).
+		BorderForeground(r.th.Style("transcriptLLMRail").GetForeground()).
+		PaddingLeft(1)
+	return label + "\n" + rail.Render(body)
 }
 
 func (r *renderer) renderConversationLines(c *scrollback.Conversation, expand bool) []string {
@@ -767,25 +768,21 @@ func (r *renderer) renderReasoningSnapshot(p scrollback.AssistantCardSnapshot, e
 	expandMark := r.marks.expandConversation
 	if !expand {
 		if p.ReasoningStreaming {
-			return style.Render("reasoning… · " + expandMark + " expand")
+			return r.wrapStyled("reasoning… · "+expandMark+" expand", style)
 		}
-		return style.Render("reasoning summary · " + plural(n, "line") + " · " + expandMark + " expand")
+		return r.wrapStyled("reasoning summary · "+plural(n, "line")+" · "+expandMark+" expand", style)
 	}
-	header := style.Render("reasoning summary · " + plural(n, "line") + " · " + expandMark + " collapse")
+	header := r.wrapStyled("reasoning summary · "+plural(n, "line")+" · "+expandMark+" collapse", style)
 	return header + "\n" + r.wrapStyled(reasoningCaveat, style) + "\n" + r.wrapStyled(text, style)
 }
 
-// wrapStyled word-wraps s to the CONTENT width (viewport minus the left indent)
-// MINUS the style's own horizontal frame (border+padding+margin, via
-// GetHorizontalFrameSize — the single source of truth, so the wrap budget tracks
-// theme.go edits automatically and never drifts behind a hardcoded inset) and renders
-// it through st. A content width at or below the frame (e.g. the width-0 team focus
-// renderer, team.go) means "unknown/tiny: do not wrap" and the body renders unwrapped.
-// Wrapping against contentWidth (not r.width) keeps the body within budget once
-// Whole-card rendering prefixes each line with `indent` spaces.
+// wrapStyled wraps assistant reasoning within the body budget, subtracting both
+// the rail/padding and the text style's own horizontal frame. Unknown/tiny widths
+// render unwrapped, matching the markdown path.
 func (r *renderer) wrapStyled(s string, st lipgloss.Style) string {
+	s = terminaltext.ExpandStyleTabs(s, st)
 	frame := st.GetHorizontalFrameSize()
-	cw := r.contentWidth()
+	cw := r.contentWidth() - assistantBodyHang
 	if cw <= frame+1 {
 		return st.Render(s)
 	}
@@ -869,13 +866,9 @@ func renderDelegationToolCardText(style lipgloss.Style, text string, bodyWidth i
 // literal tabs before wrapping so ansi.Hardwrap and Lip Gloss measure identical text.
 const toolCardTabWidth = 4
 
-func normalizeToolCardTabs(text string) string {
-	return strings.ReplaceAll(text, "\t", strings.Repeat(" ", toolCardTabWidth))
-}
-
 // wrapToolCardText constrains raw card text before it is styled or framed.
 func wrapToolCardText(text string, bodyWidth int) string {
-	text = normalizeToolCardTabs(text)
+	text = terminaltext.ExpandTabs(text, toolCardTabWidth)
 	if text == "" || bodyWidth <= 0 {
 		return text
 	}
@@ -944,7 +937,7 @@ func renderDynamicCardChromeLine(style lipgloss.Style, prefix, raw string, width
 // prefix's alignment without letting either the prefix or style padding consume a
 // second layout pass.
 func wrapDelegationRow(prefix, text string, bodyWidth int) []string {
-	text = strings.TrimRightFunc(terminaltext.Sanitize(normalizeToolCardTabs(text)), unicode.IsSpace)
+	text = strings.TrimRightFunc(terminaltext.Sanitize(terminaltext.ExpandTabs(text, toolCardTabWidth)), unicode.IsSpace)
 	if bodyWidth <= 0 {
 		return []string{prefix + text}
 	}
@@ -978,7 +971,7 @@ func renderDelegationRows(style lipgloss.Style, prefix, text string, bodyWidth i
 // joins the card. It deliberately operates per region, never on the assembled card:
 // card.Render must only frame already fitting rows.
 func wrapToolCardRegion(region string, bodyWidth int) string {
-	region = normalizeToolCardTabs(region)
+	region = terminaltext.ExpandTabs(region, toolCardTabWidth)
 	if region == "" || bodyWidth <= 0 {
 		return region
 	}
@@ -1658,7 +1651,7 @@ func (r *renderer) truncateResultDisplayLines(lines []toolResultLine, bodyWidth,
 func wrapResultDisplayLines(lines []toolResultLine, bodyWidth int) []toolResultLine {
 	wrapped := make([]toolResultLine, 0, len(lines))
 	for _, line := range lines {
-		text := normalizeToolCardTabs(line.text)
+		text := terminaltext.ExpandTabs(line.text, toolCardTabWidth)
 		if strings.TrimSpace(text) == "" {
 			// Preserve an intentional blank source line as one display row, without
 			// retaining width-exceeding padding that could wrap into more rows.

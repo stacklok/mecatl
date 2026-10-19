@@ -82,6 +82,10 @@ const (
 	// FeatureSessionActivityInventory reports that ListSessions pages carry the
 	// atomically persisted activity projection.
 	FeatureSessionActivityInventory = "session_activity_inventory"
+
+	// FeatureSessionAgentDefinitions reports root agent-definition binding on both
+	// create transports, independent of whether any definitions are configured.
+	FeatureSessionAgentDefinitions = "session_agent_definitions"
 )
 
 // FeatureScope is what the DEPLOYMENT permits, as distinct from what the build
@@ -121,6 +125,7 @@ var allFeatures = []string{
 	FeaturePromptFreeControls,
 	FeatureServerInfo,
 	FeatureSessionActivityInventory,
+	FeatureSessionAgentDefinitions,
 	FeatureSkillFiles,
 	FeatureWatchSessionEvents,
 }

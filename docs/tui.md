@@ -191,9 +191,10 @@ Use theme-owned semantic styles so a surface works in light and dark themes.
 Transcript actor glyph constants are separate from
 `transcript{LLM,Tool,User,Harness}{Marker,Rail,Text}` styles. Marker styles own
 only the actor symbol; body and label text, reasoning, statistics, and outcome
-indicators have independent styles. Rail roles and `transcriptRunRail` are defined
-without adding connected transcript rails. Markdown keeps its dedicated palette
-and syntax styles.
+indicators have independent styles. User prompts and LLM responses use their
+actor's rail style beside the body; rails stay within each message block.
+`transcriptRunRail` remains separate. Markdown keeps its dedicated palette and
+syntax styles.
 
 Built-in Aztec and Solar have separate dark/light transcript recipes. Custom
 themes derive transcript defaults from existing palette slots, including when
@@ -209,6 +210,23 @@ Treat terminal features as capabilities: provide a keyboard path when mouse inpu
 is off and a fallback when a terminal lacks enhanced keys, color, or graphics.
 Display text goes through `cmd/mecatui/internal/terminaltext` sanitizing; never interpolate
 untrusted server text into terminal control sequences.
+
+Expand literal tabs to spaces before measuring, wrapping, or clipping display text.
+Sanitizing preserves tabs, and ANSI width and wrapping helpers do not account for
+Lip Gloss's later tab expansion (four spaces by default). Expanding tabs only in
+`Style.Render` can widen an already-wrapped line; a surrounding rail or card can
+then pad every row to that oversized width. Use `terminaltext.ExpandStyleTabs`
+for content that will receive a Lip Gloss style, or `terminaltext.ExpandTabs`
+with the owning renderer's explicit tab width. These helpers live in
+`cmd/mecatui/internal/terminaltext/tabs.go`, separate from sanitization and
+Markdown processing. The style helper resolves the implicit default as well as
+explicit tab settings; the raw `GetTabWidth()` getter does not distinguish an
+unset value from an explicit zero.
+
+Wrap against the content budget after subtracting outer indentation, rails,
+borders, and padding. Verify widths on the fully styled and framed rows passed to
+the viewport, including tabbed text and terminal resizes. Measuring only the raw
+text misses expansion and framing added later in the render path.
 
 ## Verification
 
