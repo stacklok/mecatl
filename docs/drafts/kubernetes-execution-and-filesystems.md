@@ -36,8 +36,9 @@ provider remain integration choices; the selected architecture does not require 
 model. Slash commands here are prompt shortcuts, **not** shell commands. These instruction rules also cannot replace
 the permission rules that control tool use.
 
-The operator chooses where this content comes from. A source can read an API, host files, or explicitly selected
-workspace files. The code combines these sources; it does not require a separate context service or Pod.
+The operator chooses where this content comes from, based on the configuration the user provides. A source can read an
+API, host files, or explicitly selected workspace files. The agent loop combines the sources; it does not require a
+separate context service or Pod.
 [Model][context-model] · [Context sources][context-source]
 
 `Workspace` gives file tools access to files. `CommandRunner` runs programs. An `Environment` groups these together with
@@ -95,6 +96,10 @@ command runner or ordinary Unix filesystem. Its hash-based files and Lua CAS wor
 normal Unix file operations (POSIX), such as open handles, symlinks, and permissions. It cannot become a runnable mount
 just by adding a thin wrapper; durability also depends on the Redis deployment. [Redis placement][link-9] ·
 [Redis operations][link-10]
+
+We intend to deprecate the Redis workspace. Giving shell programs access to files in any API-only filesystem, Redis or
+otherwise, requires using or building a FUSE driver for it. That may be needed later, but it is out of scope for this
+proposal, and the Redis workspace may be removed from Mecatl.
 
 ## Selected architecture: capability-based placement
 
@@ -382,7 +387,7 @@ Executor programs -> FUSE client ------> API ---+    (scope checks and operation
 
 The diagram illustrates a shared-service implementation, not a requirement to build a complete storage protocol.
 An API frontend over a mature filesystem can reuse its existing clients. Any distinct mount route still needs common
-enforcement. Mecatl's current Redis filesystem would need more functionality to serve programs.
+enforcement. Mecatl's Redis workspace is not a candidate; it is slated for deprecation.
 
 The component view below illustrates the native-client variant: both routes reach a filesystem backend or trusted
 integration responsible for scope enforcement and operation coordination. That responsibility does not require a
