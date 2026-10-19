@@ -4851,6 +4851,7 @@ func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode sessio
 	s.mu.Unlock()
 
 	var sess *session.Session
+	var recovery *refusedAwaitingRecovery
 	if live {
 		sess = st.sess
 		if err := s.authorizeSession(ctx, sess); err != nil {
@@ -4862,9 +4863,11 @@ func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode sessio
 			return nil, loadErr
 		}
 		sess = loaded
-		if err := s.cancelRefusedAwaiting(sess, mode); err != nil {
+		rec, err := s.cancelRefusedAwaiting(sess, mode)
+		if err != nil {
 			return nil, err
 		}
+		recovery = rec
 	}
 
 	if sess.AgentDefinitionName != "" {
@@ -4882,6 +4885,9 @@ func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode sessio
 	}
 	if err := s.saveSession(ctx, sess); err != nil {
 		return nil, fmt.Errorf("server: persist session: %w", err)
+	}
+	if recovery != nil {
+		s.recordRefusedAwaitingRecovery(ctx, id, recovery)
 	}
 	return sess, nil
 }
@@ -4983,14 +4989,62 @@ func (s *Service) admitStoredMode(sess *session.Session) error {
 // the ordinary interrupt path. Every other awaiting session is left for the
 // aggregate's mid-turn refusal. The caller holds runEntryMu and the mutation
 // lease, found no live run, and passes the snapshot loaded under that lease.
-func (s *Service) cancelRefusedAwaiting(sess *session.Session, mode session.PermissionMode) error {
+//
+// It returns the facts the durable event stream needs to close the parked turn
+// (recordRefusedAwaitingRecovery), captured before Cancel clears them, or nil
+// when it cancelled nothing.
+func (s *Service) cancelRefusedAwaiting(sess *session.Session, mode session.PermissionMode) (*refusedAwaitingRecovery, error) {
 	if sess.State != session.StateAwaiting || s.admitMode(sess.Mode) == nil || mode.Rank() >= sess.Mode.Rank() {
-		return nil
+		return nil, nil
+	}
+	rec := &refusedAwaitingRecovery{runID: sess.RunID(), closeOuts: sess.InterruptCloseOuts()}
+	if ask, ok := sess.PendingAsk(); ok {
+		rec.askID = ask.AskID
 	}
 	if err := sess.Cancel(); err != nil {
-		return fmt.Errorf("%w: %v", ErrInvalidArgument, err)
+		return nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
 	}
-	return nil
+	return rec, nil
+}
+
+// refusedAwaitingRecovery is what cancelRefusedAwaiting cancelled: the parked
+// run, its open ask, and the cancellation close-outs for the trailing turn's
+// unanswered tool calls.
+type refusedAwaitingRecovery struct {
+	runID     string
+	askID     string
+	closeOuts []session.ToolResult
+}
+
+// recordRefusedAwaitingRecovery closes the parked turn on the durable event
+// stream after SetMode persisted the recovery, so a watcher sees the ask
+// withdrawn and the run end instead of an ask that stays open forever. The
+// events mirror a live cancellation, all stamped with the parked run's id:
+// permission.retract for the ask, one cancellation tool.result per unanswered
+// call (the same close-out the next run's Interrupt writes into the
+// conversation, which keeps the log foldable), then result{cancelled}. Each
+// event is appended at most once on a cancellation-detached context and
+// published live after its append. The snapshot is already committed, so an
+// append failure is a diagnostic, not a SetMode failure (as for manual
+// compaction).
+func (s *Service) recordRefusedAwaitingRecovery(ctx context.Context, id session.SessionID, rec *refusedAwaitingRecovery) {
+	events := make([]session.Event, 0, len(rec.closeOuts)+2)
+	if rec.askID != "" {
+		events = append(events, session.Event{Type: session.EvPermissionRetract, RunID: rec.runID, Ask: &session.PendingAsk{AskID: rec.askID}})
+	}
+	for i := range rec.closeOuts {
+		events = append(events, session.Event{Type: session.EvToolResult, RunID: rec.runID, ToolResult: &rec.closeOuts[i]})
+	}
+	events = append(events, session.Event{Type: session.EvResult, RunID: rec.runID, Result: &session.ResultPayload{Stop: session.StopCancelled}})
+
+	appendCtx := context.WithoutCancel(ctx)
+	for _, ev := range events {
+		if err := s.appendEvent(appendCtx, id, ev); err != nil {
+			s.cfg.Diagnostics.Log(appendCtx, port.LevelWarn, "refused-mode recovery event append failed; the cancelled snapshot remains committed", "session", string(id), "event", string(ev.Type), "error", err)
+			continue
+		}
+		s.PublishSessionEvent(id, ev)
+	}
 }
 
 // adoptLeasedSession replaces a run entry's pre-lease snapshot with the

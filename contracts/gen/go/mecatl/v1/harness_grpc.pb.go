@@ -172,7 +172,9 @@ type HarnessServiceClient interface {
 	// One exception, advertised by the refused_mode_recovery feature: for a stored
 	// session awaiting an approval in a mode the server no longer admits, a change
 	// to an admitted, strictly lower mode cancels the pending turn without running
-	// it and applies the mode.
+	// it and applies the mode. The session's event log then records, for the
+	// parked run, a permission.retract of the open ask, a cancellation tool result
+	// for each unanswered call, and a cancelled result.
 	SetMode(ctx context.Context, in *SetModeRequest, opts ...grpc.CallOption) (*SetModeResponse, error)
 	// CloseSession ends a session and releases its server-side resources (learned
 	// permission rules, bound placement, and any per-session engine). Idempotent:
@@ -1454,7 +1456,9 @@ type HarnessServiceServer interface {
 	// One exception, advertised by the refused_mode_recovery feature: for a stored
 	// session awaiting an approval in a mode the server no longer admits, a change
 	// to an admitted, strictly lower mode cancels the pending turn without running
-	// it and applies the mode.
+	// it and applies the mode. The session's event log then records, for the
+	// parked run, a permission.retract of the open ask, a cancellation tool result
+	// for each unanswered call, and a cancelled result.
 	SetMode(context.Context, *SetModeRequest) (*SetModeResponse, error)
 	// CloseSession ends a session and releases its server-side resources (learned
 	// permission rules, bound placement, and any per-session engine). Idempotent:

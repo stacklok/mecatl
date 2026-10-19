@@ -11152,7 +11152,9 @@ export const HarnessService: GenService<{
    * One exception, advertised by the refused_mode_recovery feature: for a stored
    * session awaiting an approval in a mode the server no longer admits, a change
    * to an admitted, strictly lower mode cancels the pending turn without running
-   * it and applies the mode.
+   * it and applies the mode. The session's event log then records, for the
+   * parked run, a permission.retract of the open ask, a cancellation tool result
+   * for each unanswered call, and a cancelled result.
    *
    * @generated from rpc mecatl.v1.HarnessService.SetMode
    */

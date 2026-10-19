@@ -21,6 +21,12 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   branches on the value. Adapters that leave it empty keep the previous text.
   Added (minor).
 
+- **`Session.InterruptCloseOuts`** — returns the synthetic cancellation tool
+  results `Interrupt` would append for the trailing assistant turn's unanswered
+  tool calls, in call order, without mutating the session. A host that cancels a
+  parked turn out of band records the same close-out on its durable event stream,
+  so the log stays foldable. Added (minor).
+
 - **Agent-bound lifecycle persistence** — adds `Session.AgentCreateIntent`, an
   opaque original explicit-ID create fingerprint, and `Session.TightenConfiguration`
   for atomic, tighten-only configuration of an unpublished successor. Snapshot and

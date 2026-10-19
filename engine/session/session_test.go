@@ -764,6 +764,60 @@ func TestInterruptPartialToolResultsCloseOutRemainder(t *testing.T) {
 	}
 }
 
+// TestInterruptCloseOutsPredictInterruptWithoutMutating proves the read-only
+// preview returns exactly the results Interrupt then appends, and leaves the
+// conversation untouched.
+func TestInterruptCloseOutsPredictInterruptWithoutMutating(t *testing.T) {
+	s := newTestSession(Limits{})
+	if err := s.RecordUserPrompt("do three things", nil); err != nil {
+		t.Fatalf("RecordUserPrompt: %v", err)
+	}
+	if err := s.BeginTurn(); err != nil {
+		t.Fatalf("BeginTurn: %v", err)
+	}
+	calls := []ToolCall{
+		NewToolCall("call-a", "read_file", nil),
+		NewToolCall("call-b", "write_file", nil),
+		NewToolCall("call-c", "list_dir", nil),
+	}
+	if err := s.RecordAssistant(NewAssistantMessage("", "", calls)); err != nil {
+		t.Fatalf("RecordAssistant: %v", err)
+	}
+	if err := s.RecordToolResults([]ToolResult{NewToolResult("call-a", "ok")}); err != nil {
+		t.Fatalf("RecordToolResults: %v", err)
+	}
+	before := len(s.Conversation.Messages)
+
+	preview := s.InterruptCloseOuts()
+	if len(s.Conversation.Messages) != before {
+		t.Fatalf("InterruptCloseOuts mutated the conversation: %d messages, want %d", len(s.Conversation.Messages), before)
+	}
+	want := []ToolResult{
+		NewToolError("call-b", "tool call interrupted by cancellation"),
+		NewToolError("call-c", "tool call interrupted by cancellation"),
+	}
+	if !reflect.DeepEqual(preview, want) {
+		t.Fatalf("InterruptCloseOuts = %+v, want %+v", preview, want)
+	}
+
+	if err := s.Cancel(); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	if err := s.Interrupt(); err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+	var appended []ToolResult
+	for _, m := range s.Conversation.Messages[before:] {
+		appended = append(appended, *m.ToolResult)
+	}
+	if !reflect.DeepEqual(appended, want) {
+		t.Fatalf("Interrupt appended %+v, want the previewed %+v", appended, want)
+	}
+	if got := s.InterruptCloseOuts(); got != nil {
+		t.Fatalf("InterruptCloseOuts after Interrupt = %+v, want nil", got)
+	}
+}
+
 func TestInterruptNoOpWhenHistoryClean(t *testing.T) {
 	t.Run("assistant with no tool calls", func(t *testing.T) {
 		s := newTestSession(Limits{})
