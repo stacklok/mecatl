@@ -687,6 +687,11 @@ type SubagentTool struct {
 	// default) inherits the parent's mode; see effectiveChildMode.
 	childMode session.PermissionMode
 
+	// admitChildMode, when non-nil, is the host's permission-mode admission
+	// check applied to a resumed child's re-admitted mode before it runs; see
+	// WithChildModeAdmission.
+	admitChildMode func(session.PermissionMode) error
+
 	// hooks fires the SubagentStop lifecycle hook when a child finishes
 	// (best-effort; nil disables it). It is separate from the child Engine's own
 	// PreToolUse/PostToolUse hooks.
@@ -1023,6 +1028,20 @@ func WithChildLimits(l session.Limits) SubagentOption {
 // hides any non-read-only tools from the child at the catalog level.
 func WithChildMode(m session.PermissionMode) SubagentOption {
 	return func(t *SubagentTool) { t.childMode = m }
+}
+
+// WithChildModeAdmission installs the host's permission-mode admission check
+// for RESUMED children. A resume computes the child's re-admitted mode
+// (the narrower of its stored mode and what a fresh child of the current parent
+// would get) and passes it to admit before the child is recovered, forked, or
+// re-persisted; a non-nil error refuses the resume with a tool error naming the
+// mode and the error, the child does not run, and its persisted session is left
+// untouched. Hosts pass the same check they apply to stored top-level sessions,
+// so a child stored in auto cannot resume without the enforcing checker auto
+// requires. A fresh child needs no check: it inherits auto or yolo only from a
+// parent the host already admitted. Nil (the default) admits every mode.
+func WithChildModeAdmission(admit func(session.PermissionMode) error) SubagentOption {
+	return func(t *SubagentTool) { t.admitChildMode = admit }
 }
 
 // effectiveChildMode is the mode a delegated child session runs in. A child
@@ -2301,7 +2320,7 @@ func (t *SubagentTool) prepareChildSession(ctx context.Context, call session.Too
 	var resumedChild *session.Session
 	priorRef := session.EnvironmentRef{}
 	if resuming {
-		loaded, errRes, rok := t.resolveResumeSession(ctx, call.ID, childID, args)
+		loaded, errRes, rok := t.resolveResumeSession(ctx, call.ID, childID, parentMode, args)
 		if !rok {
 			return nil, tool.Environment{}, noop, "", false, errRes, false
 		}
@@ -2907,7 +2926,7 @@ func (t *SubagentTool) startBackground(ctx context.Context, b backgroundChild) s
 	// non-resumable state is the model's immediate, addressable error — never a
 	// "started" result whose collection later reveals the call never could run.
 	if b.resuming {
-		loaded, errResult, lok := t.resolveResumeSession(ctx, b.call.ID, b.childID, b.args)
+		loaded, errResult, lok := t.resolveResumeSession(ctx, b.call.ID, b.childID, b.caps.parentMode, b.args)
 		if !lok {
 			b.release()
 			abort()
@@ -4112,11 +4131,22 @@ func (t *SubagentTool) loadOwnedResumeSession(ctx context.Context, callID sessio
 // re-fails cleanly, which is strictly better than never being able to try.
 //
 // It returns the recovered session on success, or a model-addressable error ToolResult
-// (ok=false) on a load failure or non-resumable state.
-func (t *SubagentTool) resolveResumeSession(ctx context.Context, callID session.ToolCallID, id session.SessionID, args subagentArgs) (*session.Session, session.ToolResult, bool) {
+// (ok=false) on a load failure, a non-resumable state, or a re-admitted permission
+// mode the host refuses (WithChildModeAdmission).
+func (t *SubagentTool) resolveResumeSession(ctx context.Context, callID session.ToolCallID, id session.SessionID, parentMode session.PermissionMode, args subagentArgs) (*session.Session, session.ToolResult, bool) {
 	loaded, res, ok := t.loadOwnedResumeSession(ctx, callID, id)
 	if !ok {
 		return nil, res, false
+	}
+	// Host admission runs on the mode the child would resume in, before any
+	// recovery mutates the loaded copy, so a refusal fails fast and inline on both
+	// resume paths and leaves the persisted child exactly as it was.
+	if t.admitChildMode != nil {
+		mode := resumedChildMode(loaded.Mode, t.childMode, parentMode)
+		if err := t.admitChildMode(mode); err != nil {
+			return nil, session.NewToolError(callID,
+				fmt.Sprintf("Subagent: subagent %q would resume in permission mode %q, which the host does not admit (%v); it was not resumed and its history is unchanged. Start a new Subagent for this work instead of resuming this one", id, mode, err)), false
+		}
 	}
 	switch loaded.State {
 	case session.StateCompleted:

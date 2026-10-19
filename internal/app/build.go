@@ -886,6 +886,10 @@ type Config struct {
 	// the shared engine, whose rules follow the server's default session mode.
 	guardrailSessionMode session.PermissionMode
 	planApprovals        *planApprovalReceipts
+	// modeAdmission is the deployment's session-mode admission rule (ceiling and
+	// auto's enforcing-checker requirement), set once by Build and applied to
+	// resumed Subagent children. Nil outside Build admits every mode.
+	modeAdmission func(session.PermissionMode) error
 
 	// Slash commands: directory of <name>.md templates; EnableCommands turns on the
 	// default directories when CommandsDir is empty.
@@ -2129,6 +2133,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	}
 	cfg = resolveAskReviewerDefault(cfg)
 	narratePermissionMode(cfg, checkerConfigured)
+	// One mode-admission rule for stored top-level sessions (server.Config below)
+	// and resumed Subagent children (buildSubagentTool), so a child stored in auto
+	// cannot resume where a stored auto session would be refused.
+	enforcingChecker := autoCheckerEnforcing(cfg, checkerConfigured)
+	cfg.modeAdmission = server.ModeAdmission(cfg.MaxAllowedMode, enforcingChecker)
 	// Emit the build-once composition facts (token counter / compaction strategy /
 	// slash commands) EXACTLY ONCE here, through the injected Diagnostics — keyed to
 	// the resolved MAIN model. The per-derivation builders do not log these (they
@@ -2496,7 +2505,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		// server's own ModeDefault.
 		DefaultMode:                cfg.DefaultSessionMode,
 		MaxAllowedMode:             cfg.MaxAllowedMode,
-		EnforcingCheckerConfigured: autoCheckerEnforcing(cfg, checkerConfigured),
+		EnforcingCheckerConfigured: enforcingChecker,
 		BuildID:                    buildinfo.BuildID,
 		ServerImplementation:       cfg.ServerImplementation,
 		// GetServerInfo looks up only a caller-selected, already-known provider
@@ -7815,6 +7824,7 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 		// the namespace stays disjoint by prefix convention, not engineering).
 		agent.WithSubagentStore(store),
 		agent.WithSubagentOwnershipEnforced(cfg.OwnershipEnforced),
+		agent.WithChildModeAdmission(cfg.modeAdmission),
 	}
 	// Issue #40: when the WORKSPACE-TRUST gate (not --no-shell / an empty shell) is what
 	// nil'd the runner, tell the model honestly via the Spec — otherwise the description
@@ -7962,6 +7972,7 @@ func buildNoFSSubagentTool(ctx context.Context, cfg Config, provReg *providerReg
 		agent.WithSubagentStopHook(hooks),
 		agent.WithSubagentStore(store),
 		agent.WithSubagentOwnershipEnforced(cfg.OwnershipEnforced),
+		agent.WithChildModeAdmission(cfg.modeAdmission),
 		agent.WithSubagentNoFSNote(),
 		agent.WithSubagentReadLedgerFactory(func() tool.ReadLedger { return memledger.New() }),
 		agent.WithSubagentProvider(childProviderID),

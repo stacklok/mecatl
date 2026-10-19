@@ -43,6 +43,16 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   auto or yolo successor can keep or narrow its source's mode instead of being
   rejected. Added (minor).
 
+- **Resumed-child mode admission** - adds `agent.WithChildModeAdmission`, a
+  `SubagentOption` carrying the host's permission-mode admission check. A
+  `resume` call passes the child's re-admitted mode (the narrower of its stored
+  mode and what a fresh child of the current parent would get) to the check
+  before the child is recovered or run; a refusal is a tool error, the child does
+  not run, and its persisted session is unchanged. Hosts pass the rule they apply
+  to stored top-level sessions, so a child stored in `auto` cannot resume without
+  an enforcing checker. Fresh children are not checked. A nil check (the default)
+  keeps the previous behavior. Added (minor).
+
 - **Schedule-store claim and retry conformance** — adds
   `scheduleconformance.RunClaimAndRetryConformance` with the complete shared
   suite plus unresolved prior-claim rejection, late-result isolation, and

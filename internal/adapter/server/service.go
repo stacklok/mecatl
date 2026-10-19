@@ -4897,16 +4897,32 @@ func (s *Service) admitMode(mode session.PermissionMode) error {
 }
 
 func admitModeFor(cfg *Config, mode session.PermissionMode) error {
-	if mode.Rank() == 0 {
-		return fmt.Errorf("%w: unknown permission mode %q", ErrInvalidArgument, mode)
-	}
-	if cfg.MaxAllowedMode != "" && !modeWithinCeiling(mode, cfg.MaxAllowedMode) {
-		return fmt.Errorf("%w: mode %q exceeds the server ceiling %q; the server must be relaunched with a higher --permission-mode to allow it", ErrInvalidArgument, mode, cfg.MaxAllowedMode)
-	}
-	if mode == session.ModeAuto && !cfg.EnforcingCheckerConfigured {
-		return fmt.Errorf("%w: mode %q requires an enforcing guardrails checker; configure one with --guardrails-model <model> or bind the guardrail model slot, or use yolo for gate-free autonomous operation", ErrInvalidArgument, mode)
+	if err := ModeAdmission(cfg.MaxAllowedMode, cfg.EnforcingCheckerConfigured)(mode); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidArgument, err)
 	}
 	return nil
+}
+
+// ModeAdmission returns the session-mode admission rule for a deployment with
+// the given ceiling (Config.MaxAllowedMode) and checker state
+// (Config.EnforcingCheckerConfigured): an unknown mode or one above the ceiling
+// is refused, and auto requires an enforcing guardrails checker. admitMode
+// wraps its refusal in ErrInvalidArgument; the composition root passes the
+// returned function to the Subagent tool so a resumed child is admitted by the
+// same rule as a stored top-level session.
+func ModeAdmission(ceiling session.PermissionMode, enforcingChecker bool) func(session.PermissionMode) error {
+	return func(mode session.PermissionMode) error {
+		if mode.Rank() == 0 {
+			return fmt.Errorf("unknown permission mode %q", mode)
+		}
+		if ceiling != "" && !modeWithinCeiling(mode, ceiling) {
+			return fmt.Errorf("mode %q exceeds the server ceiling %q; the server must be relaunched with a higher --permission-mode to allow it", mode, ceiling)
+		}
+		if mode == session.ModeAuto && !enforcingChecker {
+			return fmt.Errorf("mode %q requires an enforcing guardrails checker; configure one with --guardrails-model <model> or bind the guardrail model slot, or use yolo for gate-free autonomous operation", mode)
+		}
+		return nil
+	}
 }
 
 // normalizeDefaultMode defaults an empty DefaultMode to default and runs the

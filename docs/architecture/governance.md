@@ -89,7 +89,11 @@ Delegated children receive the parent session's mode through `parentCaps.parentM
 `effectiveChildMode` (`engine/agent/subagent.go`) runs a default-configured Subagent
 child, Parallel branch, or Team member in its parent's mode when that mode is `auto` or
 `yolo`, and keeps an explicitly configured child mode or a member definition's
-`permissionMode`. `Service.AdmittedModes` lists the modes `admitMode` accepts, which the
+`permissionMode`. A resumed Subagent child runs in the narrower of its stored mode and
+`effectiveChildMode` for the current parent (`resumedChildMode`), and the composition
+root passes `server.ModeAdmission`, the rule behind `admitMode`, through
+`WithChildModeAdmission`, so a resumed child in a mode the server no longer admits is
+refused with a tool error before it runs. `Service.AdmittedModes` lists the modes `admitMode` accepts, which the
 ACP adapter offers as its mode picker.
 
 A mode change is a session-aggregate transition that `session.SetMode` refuses while the
